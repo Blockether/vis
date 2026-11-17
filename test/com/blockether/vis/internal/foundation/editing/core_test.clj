@@ -18,6 +18,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.test-temp :as test-temp]
             [lazytest.core :refer
              [around-each defdescribe describe expect it set-ns-context! throws?]]))
 
@@ -415,11 +416,17 @@
   (let [escape-paths ["../escape.txt" "../../etc/passwd" "/etc/passwd" "target/../../escape.txt"]]
     (it "a READ path outside cwd is refused at the same gate"
         ;; Defense in depth: even reads can't leak through path traversal.
-        (let [safe-path (private-fn "safe-path")]
-          (doseq [p escape-paths]
-            (let [err (try (safe-path p) nil (catch clojure.lang.ExceptionInfo e e))]
-              (expect (some? err))
-              (expect (= :ext.foundation.editing/path-escape (:type (ex-data err))))))))))
+        ;; A checkout under `$TMPDIR` puts `../escape.txt` in an always-reachable temp root.
+        (let [safe-path (private-fn "safe-path")
+              roots (into [] (remove test-temp/holds-checkout?) @@#'workspace/temp-roots)]
+
+          (with-redefs-fn {#'workspace/temp-roots (delay roots)}
+            #(doseq [p escape-paths] (let [err (try (safe-path p)
+                                                    nil
+                                                    (catch clojure.lang.ExceptionInfo e e))]
+                                       (expect (some? err))
+                                       (expect (= :ext.foundation.editing/path-escape
+                                                  (:type (ex-data err)))))))))))
 
 (defdescribe editing-extension-loads-test
              (it "editing exposes only the search tool"

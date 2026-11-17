@@ -36,3 +36,12 @@
   "A new temp directory with `prefix` that the JVM deletes with its content at exit."
   ^File [prefix]
   (delete-at-exit! (.toFile (Files/createTempDirectory prefix (make-array FileAttribute 0)))))
+
+(defn holds-checkout?
+  "True when the temp directory `root` holds the checkout that the tests run in.
+   The file tools always reach the temp directories, so in a checkout under
+   `$TMPDIR` no test file is outside the allowed roots. Tests of a refusal remove
+   these roots."
+  [root]
+  (.startsWith (.toPath (.getCanonicalFile (File. (str (System/getProperty "user.dir")))))
+               (.toPath (.getCanonicalFile (File. (str root))))))

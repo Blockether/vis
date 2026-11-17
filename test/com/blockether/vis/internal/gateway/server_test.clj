@@ -59,6 +59,7 @@
     [com.blockether.vis.internal.python.extensions :as python-extensions]
     [com.blockether.vis.internal.channel.slash :as slash]
     [com.blockether.vis.internal.workspace.core :as workspace]
+    [com.blockether.vis.test-temp :as test-temp]
     [com.blockether.vis.internal.channel.file-picker :as file-picker]
     [com.blockether.vis.internal.config.toggles :as toggles]
     [com.blockether.vis.internal.speech.files :as speech-files]
@@ -7929,6 +7930,13 @@
     (.mkdirs dir)
     dir))
 
+(defn- temp-roots-without-checkout
+  "The temp roots of the file tools without the root that holds the checkout, so a
+   test file stays outside the allowed roots also in a checkout under `$TMPDIR`."
+  []
+  (let [roots (into [] (remove test-temp/holds-checkout?) @@#'workspace/temp-roots)]
+    (delay roots)))
+
 (defn- ungranted-test-file
   []
   (.toFile (java.nio.file.Files/createTempFile (.toPath (file-handler-test-dir))
@@ -7978,7 +7986,8 @@
                                              :security/filesystem-roots []})
                              #'external-opener/open-file-in-editor! (fn [path]
                                                                       (swap! opened conj path)
-                                                                      outcome)}
+                                                                      outcome)
+                             #'workspace/temp-roots (temp-roots-without-checkout)}
               #(handler {:path-params {:sid (str sid)}})))]
 
       (spit inside "notes")
@@ -8060,7 +8069,8 @@
                                               {:workspace {:root workspace}
                                                :security-policy {:jail-enabled true
                                                                  :process-jail {}}
-                                               :security/filesystem-roots []})}
+                                               :security/filesystem-roots []})
+                               #'workspace/temp-roots (temp-roots-without-checkout)}
                 #(handler {:path-params {:sid (str sid)} :query-params query})))
 
             window
@@ -8156,7 +8166,8 @@
                              #'lp/env-for (fn [_]
                                             {:workspace {:root (.getPath root)}
                                              :security-policy {:jail-enabled true :process-jail {}}
-                                             :security/filesystem-roots []})}
+                                             :security/filesystem-roots []})
+                             #'workspace/temp-roots (temp-roots-without-checkout)}
               #(#'fs-api/read-file-handler {:path-params {:sid (str sid)} :query-params query})))]
 
       (with-open [out (java.io.FileOutputStream. picture)]
@@ -8410,7 +8421,8 @@
                              #'lp/env-for (fn [_]
                                             {:workspace {:root (.getPath root)}
                                              :security-policy {:jail-enabled true :process-jail {}}
-                                             :security/filesystem-roots []})}
+                                             :security/filesystem-roots []})
+                             #'workspace/temp-roots (temp-roots-without-checkout)}
               #(let [response
                      (#'turns-api/attachment-bytes-handler
                       {:request-method :get
@@ -8761,7 +8773,10 @@
                       external-opener/open-file-in-editor!
                       (fn [path]
                         (swap! opened conj path)
-                        {:status :ok})]
+                        {:status :ok})
+
+                      workspace/temp-roots
+                      (temp-roots-without-checkout)]
 
           ;; a configured read root works for preview and editor open
           (expect (= ["outside the primary workspace"] (lines (preview (.getPath readable)))))

@@ -12,10 +12,12 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
+            [com.blockether.vis.internal.python.env :as py-env]
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.sandbox.jail :as pj]
             [com.blockether.vis.internal.sandbox.scoped-policy :as scoped-policy]
             [com.blockether.vis.internal.session.model :as smodel]
+            [com.blockether.vis.test-temp :as test-temp]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
 (set-ns-context!
@@ -254,18 +256,23 @@
                    "print(session['access']['filesystem']['write_rules'])\n"
                    "print(session['agent']['files']['write'])")]
 
-          (try (with-redefs [svar/ask-code! (fn [_ opts]
-                                              (swap! calls conj (:messages opts))
-                                              (case (count @calls)
-                                                1
-                                                (code-response code)
+          ;; A write-limited sandbox keeps the temp roots writable. In a checkout under
+          ;; `$TMPDIR` that would also open `root`, so the root of the checkout is removed.
+          (try (with-redefs-fn {#'py-env/tmp-roots
+                                (let [roots ((deref #'py-env/tmp-roots))]
+                                  (constantly (into [] (remove test-temp/holds-checkout?) roots)))}
+                 #(with-redefs [svar/ask-code!
+                                (fn [_ opts]
+                                  (swap! calls conj (:messages opts))
+                                  (case (count @calls)
+                                    1
+                                    (code-response code)
 
-                                                2
-                                                (code-response
-                                                  (str "open('" root "/other.txt', 'w')"))
+                                    2
+                                    (code-response (str "open('" root "/other.txt', 'w')"))
 
-                                                {:stop-reason :end :content "Grant checked"}))]
-                 (turn/run-turn! child "Write only inside out/" {}))
+                                    {:stop-reason :end :content "Grant checked"}))]
+                    (turn/run-turn! child "Write only inside out/" {})))
                (let [output
                      (str/join "\n" (map message-text (second @calls)))
 
