@@ -95,9 +95,12 @@
   (@tool-names-fn (:root target)))
 
 (defn tool-pattern
-  "Compile one entry of a tool list. `*` matches any characters."
+  "Compile one entry of a tool list. `*` matches any characters. After the first
+   dot, a character that a Python identifier cannot have means `_`: a block calls
+   the MCP tool `get-issue` as `get_issue`, and a list can give either name."
   [s]
-  (util/glob-pattern s))
+  (let [[root tail] (str/split (str s) #"\." 2)]
+    (util/glob-pattern (if tail (str root "." (str/replace tail #"[^A-Za-z0-9_*.]" "_")) s))))
 
 (defn tool-known?
   "True when `entry` of a tool list matches a name of `known`. A name of `known`

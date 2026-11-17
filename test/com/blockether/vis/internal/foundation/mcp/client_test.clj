@@ -90,49 +90,52 @@
    "model" "small"
    "stopReason" "endTurn"})
 
-(defdescribe mcp-stdio-input-test
-             (it "gives a server the roots of the newest call"
-                 (with-stdio-conn
-                   {:roots? true}
-                   (fn [conn]
-                     (doseq [uri ["file:///work/a" "file:///work/b"]]
-                       (let [roots [{"uri" uri "name" "work"}]]
-                         (expect (= {"roots" roots} (call-json conn "roots" {:roots roots}))))))))
-             (it "gives a sampling request to the call that waits, and refuses it with no answer"
-                 (with-stdio-conn
-                   {:sampling? true}
-                   (fn [conn]
-                     (let [seen (atom nil)
-                           answer (fn [params]
-                                    (reset! seen params)
-                                    model-answer)]
-                       (expect (= model-answer (call-json conn "sample" {:on-sampling answer})))
-                       (expect (= "Capital of France?"
-                                  (get-in @seen ["messages" 0 "content" "text"])))
-                       (expect (= -1
-                                  (get (call-json conn "sample" {:on-sampling (constantly nil)})
-                                       "code"))))))))
+(defdescribe
+  mcp-stdio-input-test
+  (it "gives a server the roots of the newest call"
+      (with-stdio-conn {:roots? true}
+                       (fn [conn]
+                         (doseq [uri ["file:///work/a" "file:///work/b"]]
+                           (let [roots [{"uri" uri "name" "work"}]]
+                             (expect (= {"roots" roots}
+                                        (call-json conn "roots" {:roots roots}))))))))
+  (it "gives a sampling request to the call that waits, and refuses it with no answer"
+      (with-stdio-conn
+        {:sampling? true}
+        (fn [conn]
+          (let [seen
+                (atom nil)
 
-(defdescribe mcp-stdio-server-message-test
-             (it "answers a ping that the server sends before its reply"
-                 (with-stdio-conn (fn [conn]
-                                    (expect (= "pong"
-                                               (get-in (mcp/call-tool conn "ping" {} 3000)
-                                                       ["content" 0 "text"]))))))
-             (it "lists the tools again after the server says that they changed"
-                 (with-stdio-conn
-                   (fn [conn]
-                     (expect (= ["echo"] (mapv #(get % "name") (mcp/list-tools conn))))
-                     (mcp/call-tool conn "grow" {})
-                     (expect (= ["echo" "grown"] (mapv #(get % "name") (mcp/list-tools conn)))))))
-             (it "reads each page of a list one time, and again after the server says that it changed"
-                 (with-stdio-conn
-                   (fn [conn]
-                     (let [prompts #(mcp/list-all conn "prompts/list")]
-                       (expect (= ["first" "second"] (mapv #(get % "name") (prompts))))
-                       (expect (identical? (prompts) (prompts)))
-                       (mcp/call-tool conn "grow" {})
-                       (expect (= ["first" "second" "grown"] (mapv #(get % "name") (prompts)))))))))
+                answer
+                (fn [params]
+                  (reset! seen params)
+                  model-answer)]
+
+            (expect (= model-answer (call-json conn "sample" {:on-sampling answer})))
+            (expect (= "Capital of France?" (get-in @seen ["messages" 0 "content" "text"])))
+            (expect (= -1
+                       (get (call-json conn "sample" {:on-sampling (constantly nil)}) "code"))))))))
+
+(defdescribe
+  mcp-stdio-server-message-test
+  (it "answers a ping that the server sends before its reply"
+      (with-stdio-conn
+        (fn [conn]
+          (expect (= "pong" (get-in (mcp/call-tool conn "ping" {} 3000) ["content" 0 "text"]))))))
+  (it "lists the tools again after the server says that they changed"
+      (with-stdio-conn (fn [conn]
+                         (expect (= ["echo"] (mapv #(get % "name") (mcp/list-tools conn))))
+                         (mcp/call-tool conn "grow" {})
+                         (expect (= ["echo" "grown"]
+                                    (mapv #(get % "name") (mcp/list-tools conn)))))))
+  (it "reads each page of a list one time, and again after the server says that it changed"
+      (with-stdio-conn (fn [conn]
+                         (let [prompts #(mcp/list-all conn "prompts/list")]
+                           (expect (= ["first" "second"] (mapv #(get % "name") (prompts))))
+                           (expect (identical? (prompts) (prompts)))
+                           (mcp/call-tool conn "grow" {})
+                           (expect (= ["first" "second" "grown"]
+                                      (mapv #(get % "name") (prompts)))))))))
 
 (defdescribe mcp-stdio-kill-tree-test
              (it "closing a server kills its whole process tree, not just the launcher"
@@ -607,27 +610,33 @@
 (defn- elicitation-event
   [id]
   (str "data: "
-       (json/write-json-str
-         {"jsonrpc" "2.0"
-          "id" id
-          "method" "elicitation/create"
-          "params" {"message" "Which name?"
-                    "requestedSchema" {"type" "object"
-                                       "properties" {"name" {"type" "string" "default" "Ann"}}}}})
+       (json/write-json-str {"jsonrpc" "2.0"
+                             "id" id
+                             "method" "elicitation/create"
+                             "params" {"message" "Which name?"
+                                       "requestedSchema"
+                                       {"type" "object"
+                                        "properties" {"name" {"type" "string" "default" "Ann"}}}}})
        "\n\n"))
 
 (defdescribe
   mcp-elicitation-test
   (it "gives the elicitation of a stdio server to the call that waits"
-      (let [conn (mcp/connect "fake"
-                              {:transport :stdio
-                               :command (require-executable "python3")
-                               :args [server-path]
-                               :elicitation? true})
-            asked (atom nil)
-            answer (fn [options]
-                     (json/read-json (get-in (mcp/call-tool conn "ask" {} 5000 options)
-                                             ["content" 0 "text"])))]
+      (let [conn
+            (mcp/connect "fake"
+                         {:transport :stdio
+                          :command (require-executable "python3")
+                          :args [server-path]
+                          :elicitation? true})
+
+            asked
+            (atom nil)
+
+            answer
+            (fn [options]
+              (json/read-json (get-in (mcp/call-tool conn "ask" {} 5000 options)
+                                      ["content" 0 "text"])))]
+
         (try (expect (= {"action" "accept" "content" {"name" "Ann" "zone" "UTC" "age" 30}}
                         (answer {:on-elicitation (fn [params]
                                                    (reset! asked params)
@@ -640,6 +649,38 @@
              ;; Nobody can answer: the server gets a cancel, and the call does not hang.
              (expect (= {"action" "cancel"} (answer nil)))
              (finally (mcp/close conn)))))
+  (it "asks only the one asker of the calls that wait when the server names no call"
+      ;; Release review 2026-11-17: the pool has one connection for all sessions, and the
+      ;; question for the call of one session went to the person of another session.
+      (let [together (fn [older-asker newer-asker]
+                       (let [conn (mcp/connect "fake"
+                                               {:transport :stdio
+                                                :command (require-executable "python3")
+                                                :args [server-path]
+                                                :elicitation? true})
+                             asked (atom [])
+                             call (fn [tool asker]
+                                    (future (get-in (mcp/call-tool conn
+                                                                   tool
+                                                                   {}
+                                                                   5000
+                                                                   {:asker asker
+                                                                    :on-elicitation
+                                                                    (fn [_]
+                                                                      (swap! asked conj asker)
+                                                                      {"action" "accept"
+                                                                       "content" {}})})
+                                                    ["content" 0 "text"])))]
+
+                         (try (let [older (call "ask_later" older-asker)
+                                    _ (Thread/sleep 300)
+                                    newer (call "hold" newer-asker)]
+
+                                [(get (json/read-json (deref older 5000 "{}")) "action")
+                                 (deref newer 5000 nil) @asked])
+                              (finally (mcp/close conn)))))]
+        (expect (= ["cancel" "held" []] (together "session-a" "session-b")))
+        (expect (= ["accept" "held" ["session-a"]] (together "session-a" "session-a")))))
   (it "does not count the time of the person against the deadline of the call"
       (let [reply (promise)]
         (with-http-conn
@@ -658,19 +699,23 @@
           {:elicitation? true :timeout-ms 500}
           (fn [conn _]
             (let [result (mcp/call-tool conn
-                                        "echo"
-                                        {}
-                                        500
-                                        {:on-elicitation (fn [_]
-                                                           (Thread/sleep 1200)
-                                                           {"action" "accept" "content" {}})})]
+                                        "echo" {}
+                                        500 {:on-elicitation (fn [_]
+                                                               (Thread/sleep 1200)
+                                                               {"action" "accept" "content" {}})})]
               (expect (= {"action" "accept" "content" {"name" "Ann"}}
                          (json/read-json (get-in result ["content" 0 "text"])))))))))
   (it "hears an elicitation that the server sends on its listen channel"
       ;; The TypeScript SDK sends a server request there when it names no call.
-      (let [called (promise)
-            reply (promise)
-            release (promise)]
+      (let [called
+            (promise)
+
+            reply
+            (promise)
+
+            release
+            (promise)]
+
         (with-http-conn
           {:get (fn [_ exchange]
                   (with-open [out (open-stream! exchange)]
@@ -683,18 +728,17 @@
                                  200
                                  "application/json"
                                  (text-result (:message request)
-                                              (json/write-json-str
-                                                (get (deref reply 4000 nil) "result")))))
+                                              (json/write-json-str (get (deref reply 4000 nil)
+                                                                        "result")))))
            :reply (fn [request exchange]
                     (deliver reply (:message request))
                     (send! exchange 202 "text/plain" ""))}
           {:elicitation? true :listen? true}
           (fn [conn _]
             (try (let [result (mcp/call-tool conn
-                                             "echo"
-                                             {}
-                                             3000
-                                             {:on-elicitation (constantly {"action" "decline"})})]
+                                             "echo" {}
+                                             3000 {:on-elicitation (constantly {"action"
+                                                                                "decline"})})]
                    (expect (= {"action" "decline"}
                               (json/read-json (get-in result ["content" 0 "text"])))))
                  (finally (deliver release true))))))))
@@ -722,8 +766,7 @@
         (fn [serve]
           (reify
             HttpHandler
-              (handle [_ exchange]
-                (try (serve exchange) (catch Throwable _ (.close exchange))))))]
+              (handle [_ exchange] (try (serve exchange) (catch Throwable _ (.close exchange))))))]
 
     (.createContext server
                     "/sse"
@@ -734,35 +777,36 @@
                                    (deliver stream out)
                                    (deref release 10000 nil))
                                  (send! exchange 405 "text/plain" "Method Not Allowed")))))
-    (.createContext
-      server
-      "/messages"
-      (handler
-        (fn [^HttpExchange exchange]
-          (let [message
-                (json/read-json (slurp (.getRequestBody exchange)))
+    (.createContext server
+                    "/messages"
+                    (handler
+                      (fn [^HttpExchange exchange]
+                        (let [message
+                              (json/read-json (slurp (.getRequestBody exchange)))
 
-                reply
-                (case (get message "method")
-                  "initialize"
-                  (rpc-result message
-                              {"protocolVersion" "2024-11-05"
-                               "capabilities" {"tools" {}}
-                               "serverInfo" {"name" "legacy" "version" "1"}})
+                              reply
+                              (case (get message "method")
+                                "initialize"
+                                (rpc-result message
+                                            {"protocolVersion" "2024-11-05"
+                                             "capabilities" {"tools" {}}
+                                             "serverInfo" {"name" "legacy" "version" "1"}})
 
-                  "tools/list"
-                  (rpc-result message {"tools" [{"name" "echo"}]})
+                                "tools/list"
+                                (rpc-result message {"tools" [{"name" "echo"}]})
 
-                  "tools/call"
-                  (text-result message (.getQuery (.getRequestURI exchange)))
+                                "tools/call"
+                                (text-result message (.getQuery (.getRequestURI exchange)))
 
-                  nil)]
+                                nil)]
 
-            (send! exchange 202 "text/plain" "")
-            (when reply (event! @stream (str "event: message\ndata: " reply "\n\n")))))))
+                          (send! exchange 202 "text/plain" "")
+                          (when reply
+                            (event! @stream (str "event: message\ndata: " reply "\n\n")))))))
     (.setExecutor server pool)
     (.start server)
-    (try (f (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/sse") #(deliver release true))
+    (try (f (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/sse")
+            #(deliver release true))
          (finally (deliver release true) (.stop server 0) (.shutdownNow pool)))))
 
 (defdescribe
@@ -790,15 +834,14 @@
                  (expect (= "session=1" (call-text conn)))
                  (finally (mcp/close conn)))))))
   (it "reports the refusal of the POST when the server has no HTTP+SSE transport"
-      (with-legacy-sse
-        (fn [url _end-stream!]
-          (let [failure (try (mcp/connect "none"
-                                          {:transport :streamable-http
-                                           :url (str/replace url "/sse" "/nothing")
-                                           :timeout-ms 1000})
-                             nil
-                             (catch Exception e e))]
-            (expect (= :mcp/http-error (:type (ex-data failure)))))))))
+      (with-legacy-sse (fn [url _end-stream!]
+                         (let [failure (try (mcp/connect "none"
+                                                         {:transport :streamable-http
+                                                          :url (str/replace url "/sse" "/nothing")
+                                                          :timeout-ms 1000})
+                                            nil
+                                            (catch Exception e e))]
+                           (expect (= :mcp/http-error (:type (ex-data failure)))))))))
 
 ;; Stateless revisions (2026-07-28): no handshake, request metadata, input rounds.
 
@@ -814,19 +857,19 @@
   "The routes of a server of revision 2026-07-28 that has `tools` and declares
    `capabilities`: it refuses `initialize`, and `call` answers each `tools/call`."
   [tools capabilities call]
-  {"initialize" (fn [request exchange]
-                  (send! exchange 400 "application/json" (rpc-refusal (:message request) -32601 nil)))
-   "server/discover"
+  {"initialize"
    (fn [request exchange]
-     (send! exchange
-            200
-            "application/json"
-            (rpc-result (:message request)
-                        {"resultType" "complete"
-                         "supportedVersions" ["2026-07-28"]
-                         "capabilities" capabilities
-                         "_meta" {"io.modelcontextprotocol/serverInfo" {"name" "stateless"
-                                                                        "version" "1"}}})))
+     (send! exchange 400 "application/json" (rpc-refusal (:message request) -32601 nil)))
+   "server/discover" (fn [request exchange]
+                       (send! exchange
+                              200
+                              "application/json"
+                              (rpc-result (:message request)
+                                          {"resultType" "complete"
+                                           "supportedVersions" ["2026-07-28"]
+                                           "capabilities" capabilities
+                                           "_meta" {"io.modelcontextprotocol/serverInfo"
+                                                    {"name" "stateless" "version" "1"}}})))
    "tools/list" (fn [request exchange]
                   (send! exchange
                          200
@@ -834,9 +877,7 @@
                          (rpc-result (:message request) {"resultType" "complete" "tools" tools})))
    "tools/call" call})
 
-(defn- requests-of
-  [requests method]
-  (filterv #(= method (get-in % [:message "method"])) @requests))
+(defn- requests-of [requests method] (filterv #(= method (get-in % [:message "method"])) @requests))
 
 (defn- text-answer
   [text]
@@ -846,107 +887,120 @@
 (defdescribe
   mcp-stateless-http-test
   (it "calls a tool of a server that has no handshake"
-      (with-http-conn
-        (stateless-routes [{"name" "echo"}] {"tools" {}} (text-answer "stateless"))
-        {}
-        (fn [conn requests]
-          (expect (= "stateless" (get (:server-info conn) "name")))
-          (expect (= "stateless" (call-text conn)))
-          (let [call (first (requests-of requests "tools/call"))
-                meta (get-in call [:message "params" "_meta"])]
-            (expect (empty? (requests-of requests "initialize")))
-            (expect (= "2026-07-28" (get meta "io.modelcontextprotocol/protocolVersion")))
-            (expect (map? (get meta "io.modelcontextprotocol/clientCapabilities")))
-            (expect (= ["2026-07-28" "tools/call" "echo"]
-                       (mapv #(get-in call [:headers %])
-                             ["mcp-protocol-version" "mcp-method" "mcp-name"])))))))
+      (with-http-conn (stateless-routes [{"name" "echo"}] {"tools" {}} (text-answer "stateless"))
+                      {}
+                      (fn [conn requests]
+                        (expect (= "stateless" (get (:server-info conn) "name")))
+                        (expect (= "stateless" (call-text conn)))
+                        (let [call
+                              (first (requests-of requests "tools/call"))
+
+                              meta
+                              (get-in call [:message "params" "_meta"])]
+
+                          (expect (empty? (requests-of requests "initialize")))
+                          (expect (= "2026-07-28"
+                                     (get meta "io.modelcontextprotocol/protocolVersion")))
+                          (expect (map? (get meta "io.modelcontextprotocol/clientCapabilities")))
+                          (expect (= ["2026-07-28" "tools/call" "echo"]
+                                     (mapv #(get-in call [:headers %])
+                                           ["mcp-protocol-version" "mcp-method" "mcp-name"])))))))
   (it "asks again in a version that the server names"
-      (let [asked (atom 0)
-            routes (stateless-routes [] {} nil)]
-        (with-http-conn
-          (assoc routes
-            "server/discover" (fn [request exchange]
-                                (if (= 1 (swap! asked inc))
-                                  (send! exchange
-                                         400
-                                         "application/json"
-                                         (rpc-refusal (:message request)
-                                                      -32022
-                                                      {"supported" ["2026-07-28"]
-                                                       "requested" "2026-07-28"}))
-                                  ((get routes "server/discover") request exchange))))
-          {}
-          (fn [conn _]
-            (expect (= "2026-07-28" (:protocol-version conn)))
-            (expect (= 2 @asked))))))
-  (it "answers the input that a result asks for, in a new request with the state of the server"
-      (with-http-conn
-        (stateless-routes
-          [{"name" "echo"}]
-          {"tools" {}}
-          (fn [request exchange]
-            (send! exchange
-                   200
-                   "application/json"
-                   (if (get-in request [:message "params" "inputResponses"])
-                     (text-result (:message request) "done")
-                     (rpc-result (:message request)
-                                 {"resultType" "input_required"
-                                  "inputRequests"
-                                  {"who" {"method" "elicitation/create"
-                                          "params" {"message" "Who?"
-                                                    "requestedSchema"
-                                                    {"type" "object"
-                                                     "properties" {"name" {"type" "string"
-                                                                           "default" "Ada"}}}}}}
-                                  "requestState" "state-1"})))))
-        {:elicitation? true}
-        (fn [conn requests]
-          (let [answer {:on-elicitation (constantly {"action" "accept" "content" {}})}]
-            (expect (= "done"
-                       (get-in (mcp/call-tool conn "echo" {} 3000 answer) ["content" 0 "text"])))
-            (let [[asked answered] (mapv :message (requests-of requests "tools/call"))]
-              (expect (not= (get asked "id") (get answered "id")))
-              (expect (= {"who" {"action" "accept" "content" {"name" "Ada"}}}
-                         (get-in answered ["params" "inputResponses"])))
-              (expect (= "state-1" (get-in answered ["params" "requestState"]))))
-            ;; The state of one call is no part of the next call.
-            (mcp/call-tool conn "echo" {} 3000 answer)
-            (expect (not (contains? (get-in (nth (requests-of requests "tools/call") 2)
-                                            [:message "params"])
-                                    "requestState")))))))
-  (it "answers roots and sampling that a result asks for, and ends the call on a refusal"
-      (with-http-conn
-        (stateless-routes
-          [{"name" "echo"}]
-          {"tools" {}}
-          (fn [request exchange]
-            (send! exchange
-                   200
-                   "application/json"
-                   (if (get-in request [:message "params" "inputResponses"])
-                     (text-result (:message request) "done")
-                     (rpc-result (:message request)
-                                 {"resultType" "input_required"
-                                  "inputRequests"
-                                  {"where" {"method" "roots/list"}
-                                   "what" {"method" "sampling/createMessage"
-                                           "params" {"messages" [] "maxTokens" 9}}}})))))
-        {:roots? true :sampling? true}
-        (fn [conn requests]
-          (let [roots [{"uri" "file:///work" "name" "work"}]
-                call (fn [sample]
-                       (mcp/call-tool conn "echo" {} 3000 {:roots roots :on-sampling sample}))]
-            (expect (= "done" (get-in (call (constantly model-answer)) ["content" 0 "text"])))
-            (let [[asked answered] (mapv :message (requests-of requests "tools/call"))]
-              (expect (= {"roots" {"listChanged" true} "sampling" {}}
-                         (get-in asked
-                                 ["params" "_meta" "io.modelcontextprotocol/clientCapabilities"])))
-              (expect (= {"where" {"roots" roots} "what" model-answer}
-                         (get-in answered ["params" "inputResponses"]))))
-            (expect (= :mcp/input-refused
-                       (try (call (constantly nil))
-                            (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+      (let [asked
+            (atom 0)
+
+            routes
+            (stateless-routes [] {} nil)]
+
+        (with-http-conn (assoc routes
+                          "server/discover" (fn [request exchange]
+                                              (if (= 1 (swap! asked inc))
+                                                (send! exchange
+                                                       400
+                                                       "application/json"
+                                                       (rpc-refusal (:message request)
+                                                                    -32022
+                                                                    {"supported" ["2026-07-28"]
+                                                                     "requested" "2026-07-28"}))
+                                                ((get routes "server/discover") request exchange))))
+                        {}
+                        (fn [conn _]
+                          (expect (= "2026-07-28" (:protocol-version conn)))
+                          (expect (= 2 @asked))))))
+  (it
+    "answers the input that a result asks for, in a new request with the state of the server"
+    (with-http-conn
+      (stateless-routes [{"name" "echo"}]
+                        {"tools" {}}
+                        (fn [request exchange]
+                          (send! exchange
+                                 200
+                                 "application/json"
+                                 (if (get-in request [:message "params" "inputResponses"])
+                                   (text-result (:message request) "done")
+                                   (rpc-result (:message request)
+                                               {"resultType" "input_required"
+                                                "inputRequests"
+                                                {"who" {"method" "elicitation/create"
+                                                        "params" {"message" "Who?"
+                                                                  "requestedSchema"
+                                                                  {"type" "object"
+                                                                   "properties"
+                                                                   {"name" {"type" "string"
+                                                                            "default" "Ada"}}}}}}
+                                                "requestState" "state-1"})))))
+      {:elicitation? true}
+      (fn [conn requests]
+        (let [answer {:on-elicitation (constantly {"action" "accept" "content" {}})}]
+          (expect (= "done"
+                     (get-in (mcp/call-tool conn "echo" {} 3000 answer) ["content" 0 "text"])))
+          (let [[asked answered] (mapv :message (requests-of requests "tools/call"))]
+            (expect (not= (get asked "id") (get answered "id")))
+            (expect (= {"who" {"action" "accept" "content" {"name" "Ada"}}}
+                       (get-in answered ["params" "inputResponses"])))
+            (expect (= "state-1" (get-in answered ["params" "requestState"]))))
+          ;; The state of one call is no part of the next call.
+          (mcp/call-tool conn "echo" {} 3000 answer)
+          (expect (not (contains? (get-in (nth (requests-of requests "tools/call") 2)
+                                          [:message "params"])
+                                  "requestState")))))))
+  (it
+    "answers roots and sampling that a result asks for, and ends the call on a refusal"
+    (with-http-conn
+      (stateless-routes [{"name" "echo"}]
+                        {"tools" {}}
+                        (fn [request exchange]
+                          (send! exchange
+                                 200
+                                 "application/json"
+                                 (if (get-in request [:message "params" "inputResponses"])
+                                   (text-result (:message request) "done")
+                                   (rpc-result (:message request)
+                                               {"resultType" "input_required"
+                                                "inputRequests" {"where" {"method" "roots/list"}
+                                                                 "what"
+                                                                 {"method" "sampling/createMessage"
+                                                                  "params" {"messages" []
+                                                                            "maxTokens" 9}}}})))))
+      {:roots? true :sampling? true}
+      (fn [conn requests]
+        (let [roots
+              [{"uri" "file:///work" "name" "work"}]
+
+              call
+              (fn [sample]
+                (mcp/call-tool conn "echo" {} 3000 {:roots roots :on-sampling sample}))]
+
+          (expect (= "done" (get-in (call (constantly model-answer)) ["content" 0 "text"])))
+          (let [[asked answered] (mapv :message (requests-of requests "tools/call"))]
+            (expect (= {"roots" {"listChanged" true} "sampling" {}}
+                       (get-in asked
+                               ["params" "_meta" "io.modelcontextprotocol/clientCapabilities"])))
+            (expect (= {"where" {"roots" roots} "what" model-answer}
+                       (get-in answered ["params" "inputResponses"]))))
+          (expect (= :mcp/input-refused
+                     (try (call (constantly nil))
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
   (it "reads a resource of a server and names it in the headers"
       (with-http-conn
         (assoc (stateless-routes [] {"resources" {}} nil)
@@ -992,21 +1046,23 @@
             (expect (not (contains? headers "mcp-param-limit")))))))
   (it "keeps the connection after a refusal that comes with an HTTP error status"
       (with-http-conn
-        (stateless-routes [{"name" "echo"}]
-                          {"tools" {}}
-                          (fn [request exchange]
-                            (send! exchange
-                                   400
-                                   "application/json"
-                                   (rpc-refusal (:message request) -32602 nil))))
+        (stateless-routes
+          [{"name" "echo"}]
+          {"tools" {}}
+          (fn [request exchange]
+            (send! exchange 400 "application/json" (rpc-refusal (:message request) -32602 nil))))
         {}
         (fn [conn _]
           (let [failure (try (mcp/call-tool conn "echo" {}) nil (catch Exception e e))]
             (expect (= :mcp/rpc-error (:type (ex-data failure))))
             (expect (true? (mcp/alive? conn)))))))
   (it "hears that the tools changed on the stream of its subscription"
-      (let [heard (promise)
-            release (promise)]
+      (let [heard
+            (promise)
+
+            release
+            (promise)]
+
         (with-http-conn
           (assoc (stateless-routes [] {"tools" {"listChanged" true}} nil)
             "subscriptions/listen"
@@ -1029,16 +1085,24 @@
                                     [:message "params" "notifications"])))
                  (finally (deliver release true))))))))
 
-(defdescribe mcp-stateless-stdio-test
+(defdescribe
+  mcp-stateless-stdio-test
   (it "calls a tool of a stdio server that has no handshake, and hears that its tools changed"
-      (let [conn (mcp/connect "fake"
-                              {:transport :stdio
-                               :command (require-executable "python3")
-                               :args [(.getPath (io/file server-path)) "stateless"]})
-            names #(mapv (fn [tool] (get tool "name")) (mcp/list-tools conn))]
+      (let [conn
+            (mcp/connect "fake"
+                         {:transport :stdio
+                          :command (require-executable "python3")
+                          :args [(.getPath (io/file server-path)) "stateless"]})
+
+            names
+            #(mapv (fn [tool]
+                     (get tool "name"))
+                   (mcp/list-tools conn))]
+
         (try (expect (= "fake" (get (:server-info conn) "name")))
              (expect (= ["echo"] (names)))
-             (expect (= "echo: hi" (get-in (mcp/call-tool conn "echo" {"msg" "hi"}) ["content" 0 "text"])))
+             (expect (= "echo: hi"
+                        (get-in (mcp/call-tool conn "echo" {"msg" "hi"}) ["content" 0 "text"])))
              (mcp/call-tool conn "grow" {})
              (expect (= ["echo" "grown"] (names)))
              (finally (mcp/close conn))))))
@@ -1070,8 +1134,12 @@
                                               "capabilities" {"tools" {}}
                                               "serverInfo" {"name" "local" "version" "1"}})))))
      "tools/call" (fn [request exchange]
-                    (let [stateless? (some? (get-in request [:message "params" "_meta"]))
-                          session? (some? (get-in request [:headers "mcp-session-id"]))]
+                    (let [stateless?
+                          (some? (get-in request [:message "params" "_meta"]))
+
+                          session?
+                          (some? (get-in request [:headers "mcp-session-id"]))]
+
                       (cond (and @modern? stateless?) ((text-answer "stateless") request exchange)
                             (and (not @modern?) session?) ((text-answer "legacy") request exchange)
                             :else (refuse request exchange))))}))
@@ -1082,19 +1150,21 @@
    and what a new connection answers."
   [modern-first?]
   (let [modern? (atom modern-first?)]
-    (with-mcp-http
-      (era-routes modern?)
-      (fn [url _]
-        (let [spec {:transport :streamable-http :url url :timeout-ms 3000}
-              conn (mcp/connect "era" spec)]
-          (try (swap! modern? not)
-               (let [stale? (try (call-text conn)
-                                 (catch clojure.lang.ExceptionInfo failure
-                                   (mcp/stale-era? conn failure)))
-                     fresh (mcp/connect "era" spec)]
-                 (try [(:modern? conn) stale? (boolean (:modern? fresh)) (call-text fresh)]
-                      (finally (mcp/close fresh))))
-               (finally (mcp/close conn))))))))
+    (with-mcp-http (era-routes modern?)
+                   (fn [url _]
+                     (let [spec {:transport :streamable-http :url url :timeout-ms 3000}
+                           conn (mcp/connect "era" spec)]
+
+                       (try (swap! modern? not)
+                            (let [stale? (try (call-text conn)
+                                              (catch clojure.lang.ExceptionInfo failure
+                                                (mcp/stale-era? conn failure)))
+                                  fresh (mcp/connect "era" spec)]
+
+                              (try [(:modern? conn) stale? (boolean (:modern? fresh))
+                                    (call-text fresh)]
+                                   (finally (mcp/close fresh))))
+                            (finally (mcp/close conn))))))))
 
 (defdescribe mcp-era-change-test
              (it "sees that a server of an older revision became stateless"
@@ -1102,32 +1172,58 @@
              (it "sees that a stateless server became a server of an older revision"
                  (expect (= [true true false "legacy"] (era-change true)))))
 
+(defdescribe mcp-probe-refusal-test
+             (it "gives `initialize` to a server that refuses the probe with another client error"
+                 ;; Release review 2026-11-17: rmcp 1.7.0 answers a request without a
+                 ;; session with 422, and Vis knew only 400, 404 and 405.
+                 (doseq [status [406 415 422]]
+                   (with-mcp-http (assoc (era-routes (atom false))
+                                    "server/discover" (fn [_ exchange]
+                                                        (send! exchange status "text/plain" "")))
+                                  (fn [url _]
+                                    (let [conn (mcp/connect "strict"
+                                                            {:transport :streamable-http
+                                                             :url url
+                                                             :timeout-ms 3000})]
+                                      (try (expect (= "legacy" (call-text conn)) (str status))
+                                           (finally (mcp/close conn)))))))))
+
 (defn- stdio-era
   "Connect to the fake stdio server with `modes` and give `[modern? echo ms]`."
   [modes]
-  (let [started (System/currentTimeMillis)
-        conn (mcp/connect "fake"
-                          {:transport :stdio
-                           :command (require-executable "python3")
-                           :args (into [(.getPath (io/file server-path))] modes)})]
+  (let [started
+        (System/currentTimeMillis)
+
+        conn
+        (mcp/connect "fake"
+                     {:transport :stdio
+                      :command (require-executable "python3")
+                      :args (into [(.getPath (io/file server-path))] modes)})]
+
     (try [(boolean (:modern? conn))
           (get-in (mcp/call-tool conn "echo" {"msg" "hi"}) ["content" 0 "text"])
           (- (System/currentTimeMillis) started)]
          (finally (mcp/close conn)))))
 
-(defdescribe mcp-stdio-era-test
+(defdescribe
+  mcp-stdio-era-test
   (it "connects without a long wait to a server that is silent on an unknown request"
       ;; #458: such a server got `initialize` only after five seconds of silence.
       (let [[modern? echo ms] (stdio-era ["mute"])]
         (expect (false? modern?))
         (expect (= "echo: hi" echo))
         (expect (< (long ms) 4000) (str ms " ms"))))
+  (it "connects to a server that exits on a request before `initialize`"
+      ;; Release review 2026-11-17: rmcp 1.7.0 ends on `server/discover`, so such a
+      ;; server never connected. A slow one gets both requests and ends too.
+      (with-redefs-fn {#'mcp/stdio-hedge-ms 100}
+        (fn []
+          (doseq [modes [["strict"] ["strict" "slow"]]]
+            (expect (= [false "echo: hi"] (subvec (stdio-era modes) 0 2)) (str modes))))))
   (it "finds the era of a server that starts after the client asked for both eras"
       ;; #458: a slow server of both eras got the old handshake.
       (with-redefs-fn {#'mcp/stdio-hedge-ms 100}
         (fn []
-          (doseq [[modes modern?] [[["dual" "slow"] true]
-                                   [["stateless" "slow"] true]
-                                   [["slow"] false]
-                                   [["mute" "slow"] false]]]
+          (doseq [[modes modern?] [[["dual" "slow"] true] [["stateless" "slow"] true]
+                                   [["slow"] false] [["mute" "slow"] false]]]
             (expect (= [modern? "echo: hi"] (subvec (stdio-era modes) 0 2)) (str modes)))))))

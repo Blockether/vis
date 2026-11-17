@@ -284,9 +284,10 @@
 
 (defn- expired?
   "Skew the reported expiry by 60s so we refresh proactively, never at the
-   exact instant of the 401."
+   exact instant of the 401. A token whose server gave no expiry is good until a
+   server refuses it."
   [{:keys [expires-at-ms]}]
-  (or (nil? expires-at-ms) (< (- (long expires-at-ms) 60000) (util/now-ms))))
+  (boolean (and expires-at-ms (< (- (long expires-at-ms) 60000) (util/now-ms)))))
 
 (defn- ->tokens
   "Normalize a token endpoint response into `{:token :refresh-token :expires-at-ms

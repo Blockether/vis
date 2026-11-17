@@ -6,11 +6,14 @@
 # prompt to prompts/list, which has two pages, and says so. The tool "ask"
 # sends a form elicitation and reports the answer of the client. The tools
 # "roots" and "sample" do the same with roots/list and sampling/createMessage.
+# The tool "ask_later" sends its elicitation only when a call of the tool "hold"
+# waits too, and "hold" ends after it.
 # With the argument "stateless" it is a server of revision 2026-07-28: it has no
 # handshake, each request must name its protocol version, and it says that its
 # tools changed only on a subscription.
 # More arguments: "dual" also answers the handshake of an older revision, "mute"
-# gives no answer to a request that it does not know, and "slow" starts late.
+# gives no answer to a request that it does not know, "slow" starts late, and
+# "strict" exits on a first request that is not initialize or ping.
 import json
 import sys
 import time
@@ -20,6 +23,8 @@ grown = False
 dual = "dual" in modes
 stateless = dual or "stateless" in modes
 subscription = None
+strict = "strict" in modes
+waiting = {}
 
 if "slow" in modes:
     time.sleep(0.6)
@@ -51,6 +56,10 @@ for line in sys.stdin:
     mid = msg.get("id")
     method = msg.get("method")
     meta = (msg.get("params") or {}).get("_meta") or {}
+    if strict and mid is not None:
+        if method not in ("initialize", "ping"):
+            sys.exit(1)
+        strict = method != "initialize"
     if (
         stateless
         and not dual
@@ -185,6 +194,27 @@ for line in sys.stdin:
             )
             answer = json.loads(sys.stdin.readline() or "{}")
             text_result(mid, json.dumps(answer.get("result"), sort_keys=True))
+        elif name in ("ask_later", "hold"):
+            waiting[name] = mid
+            if len(waiting) == 2:
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "server-4",
+                        "method": "elicitation/create",
+                        "params": {
+                            "message": "Who asked later?",
+                            "requestedSchema": {"type": "object", "properties": {}},
+                        },
+                    }
+                )
+                answer = json.loads(sys.stdin.readline() or "{}")
+                text_result(
+                    waiting["ask_later"],
+                    json.dumps(answer.get("result"), sort_keys=True),
+                )
+                text_result(waiting["hold"], "held")
+                waiting = {}
         elif name in ("roots", "sample"):
             send(
                 {"jsonrpc": "2.0", "id": "server-3", "method": "roots/list"}

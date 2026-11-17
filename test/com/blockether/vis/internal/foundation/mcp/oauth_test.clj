@@ -40,18 +40,19 @@
   ([f] (with-browser-flow {} f))
   ([context f]
    (let [exchanges (atom [])]
-    (with-redefs-fn {#'oauth/auth-context (fn [& _]
-                                            (merge {:state "test-state" :code-verifier "test-verifier"}
-                                                   context))
-                     #'oauth/authorize-url
-                     (fn [_ _ redirect]
-                       {:url (str "https://gateway.example.com/authorize?redirect_uri=" redirect)
-                        :client-id "test-client"})
-                     #'oauth/exchange-code! (fn [_ _ _ code redirect]
-                                              (swap! exchanges conj [code redirect]))}
-      (fn []
-        (let [flow (oauth/start-authorization! "test" "https://gateway.example.com/mcp" {})]
-          (try (f flow exchanges) (finally (oauth/cancel-authorization! (get flow "flow_id"))))))))))
+     (with-redefs-fn {#'oauth/auth-context
+                      (fn [& _]
+                        (merge {:state "test-state" :code-verifier "test-verifier"} context))
+                      #'oauth/authorize-url
+                      (fn [_ _ redirect]
+                        {:url (str "https://gateway.example.com/authorize?redirect_uri=" redirect)
+                         :client-id "test-client"})
+                      #'oauth/exchange-code! (fn [_ _ _ code redirect]
+                                               (swap! exchanges conj [code redirect]))}
+       (fn []
+         (let [flow (oauth/start-authorization! "test" "https://gateway.example.com/mcp" {})]
+           (try (f flow exchanges)
+                (finally (oauth/cancel-authorization! (get flow "flow_id"))))))))))
 
 (defn- await-verdict
   [id]
@@ -216,6 +217,20 @@
               (expect (empty? (filter #(= :com.blockether.vis.internal.provider.oauth/token-refresh
                                           (:id %))
                                       signals))))))))
+  (it "uses a token whose server gave no expiry, until a server refuses it"
+      ;; Release review 2026-11-17: a token response without `expires_in` gave a token
+      ;; that Vis never sent, so each call asked for a new sign-in.
+      (let [file (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")]
+        (try (spit file (pr-str {:token "test-access" :refresh-token nil :expires-at-ms nil}))
+             (with-redefs-fn {#'oauth/token-file (constantly file)}
+               (fn []
+                 (let [bearer
+                       (oauth/make-bearer-fn "remote" "https://gateway.example.com/mcp" (atom nil))]
+                   (expect (= "test-access" (bearer)))
+                   (expect (= :mcp/oauth-required
+                              (try (bearer "test-access")
+                                   (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+             (finally (.delete file) (.delete (java.io.File. (str file ".lock")))))))
   (it "asks for sign-in and logs no-refresh-token when nothing can be refreshed"
       ;; Regression: a missing refresh token was logged as a failed exchange.
       (let [file (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")]
@@ -288,79 +303,89 @@
                                      :body "{\"access_token\":\"test-access\",\"expires_in\":3600}"}
       :else {:status 404 :body ""})))
 
-(defdescribe oauth-client-name-test
-  (it "sends each server's OAuth name without changing the default for other servers"
-      (doseq [[hint expected] [[{:client-name "vis MCP client"} "vis MCP client"]
-                              [{} "Claude Code"]]]
-        (let [seen (atom [])
-              request (authorization-server 403 seen)]
-          (with-redefs [http/request
-                        (fn [{:keys [uri] :as req}]
-                          (let [response (request req)]
-                            (if (str/ends-with? uri "/register")
-                              {:status 201 :body "{\"client_id\":\"registered-client\"}"}
-                              response)))]
-            (let [flow (oauth/start-authorization! "client-name-test"
-                                                  "https://mcp.example.test/mcp"
-                                                  {:auth-hint hint})]
-              (try
-                (let [registration (first (filter #(str/ends-with? (:uri %) "/register") @seen))]
-                  (expect (= expected (get (json/read-json (:body registration)) "client_name")))
-                  ;; A web application may not register a loopback redirect (OpenID
-                  ;; Connect registration), and `web` is the default.
-                  (expect (= "native"
-                             (get (json/read-json (:body registration)) "application_type")))
-                  (expect (str/includes? (get flow "url") "client_id=registered-client")))
-                (finally (oauth/cancel-authorization! (get flow "flow_id"))))))))))
-
-(defdescribe registered-client-secret-test
-  (it "signs in and refreshes with the secret that registration issued"
-      ;; Regression #458: Figma issues a secret at registration, and its token endpoint
-      ;; refuses a request without it. Vis dropped the secret, so sign-in always failed.
+(defdescribe
+  oauth-client-name-test
+  (it
+    "sends each server's OAuth name without changing the default for other servers"
+    (doseq [[hint expected] [[{:client-name "vis MCP client"} "vis MCP client"] [{} "Claude Code"]]]
       (let [seen (atom [])
-            discovery (authorization-server 403 seen)
-            file (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")
-            basic (str "Basic "
-                       (.encodeToString (java.util.Base64/getEncoder)
-                                        (.getBytes "registered-client:issued-secret" "UTF-8")))]
-        (try
-          (with-redefs-fn
-            {#'oauth/token-file (constantly file)
-             #'http/request
-             (fn [{:keys [uri headers body] :as request}]
-               (cond
-                 (str/ends-with? uri "/register")
-                 {:status 201
-                  :body (str "{\"client_id\":\"registered-client\","
-                             "\"client_secret\":\"issued-secret\","
-                             "\"token_endpoint_auth_method\":\"none\"}")}
+            request (authorization-server 403 seen)]
 
-                 (not (str/ends-with? uri "/token")) (discovery request)
-
-                 (not= basic (get headers "Authorization"))
-                 {:status 401 :body "{\"error\":\"invalid_client\"}"}
-
-                 (str/includes? body "grant_type=refresh_token")
-                 {:status 200 :body "{\"access_token\":\"refreshed-access\",\"expires_in\":3600}"}
-
-                 :else
-                 {:status 200
-                  :body (str "{\"access_token\":\"test-access\","
-                             "\"refresh_token\":\"test-refresh\",\"expires_in\":3600}")}))}
-            (fn []
-              (let [flow (oauth/start-authorization! "registered-secret-test"
-                                                    "https://mcp.example.test/mcp"
-                                                    {})
-                    state (second (re-find #"[?&]state=([^&]+)" (get flow "url")))
-                    bearer (oauth/make-bearer-fn "registered-secret-test"
+        (with-redefs [http/request (fn [{:keys [uri] :as req}]
+                                     (let [response (request req)]
+                                       (if (str/ends-with? uri "/register")
+                                         {:status 201 :body "{\"client_id\":\"registered-client\"}"}
+                                         response)))]
+          (let [flow (oauth/start-authorization! "client-name-test"
                                                  "https://mcp.example.test/mcp"
-                                                 (atom nil))]
-                (oauth/complete-authorization!
-                  (get flow "flow_id")
-                  (str (get flow "redirect_uri") "?code=test-code&state=" state))
-                (expect (= "test-access" (bearer)))
-                (expect (= "refreshed-access" (bearer "test-access"))))))
-          (finally (.delete file) (.delete (java.io.File. (str file ".lock"))))))))
+                                                 {:auth-hint hint})]
+            (try (let [registration (first (filter #(str/ends-with? (:uri %) "/register") @seen))]
+                   (expect (= expected (get (json/read-json (:body registration)) "client_name")))
+                   ;; A web application may not register a loopback redirect (OpenID
+                   ;; Connect registration), and `web` is the default.
+                   (expect (= "native"
+                              (get (json/read-json (:body registration)) "application_type")))
+                   (expect (str/includes? (get flow "url") "client_id=registered-client")))
+                 (finally (oauth/cancel-authorization! (get flow "flow_id"))))))))))
+
+(defdescribe
+  registered-client-secret-test
+  (it
+    "signs in and refreshes with the secret that registration issued"
+    ;; Regression #458: Figma issues a secret at registration, and its token endpoint
+    ;; refuses a request without it. Vis dropped the secret, so sign-in always failed.
+    (let [seen
+          (atom [])
+
+          discovery
+          (authorization-server 403 seen)
+
+          file
+          (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")
+
+          basic
+          (str "Basic "
+               (.encodeToString (java.util.Base64/getEncoder)
+                                (.getBytes "registered-client:issued-secret" "UTF-8")))]
+
+      (try
+        (with-redefs-fn
+          {#'oauth/token-file (constantly file)
+           #'http/request
+           (fn [{:keys [uri headers body] :as request}]
+             (cond (str/ends-with? uri "/register")
+                   {:status 201
+                    :body (str "{\"client_id\":\"registered-client\","
+                               "\"client_secret\":\"issued-secret\","
+                               "\"token_endpoint_auth_method\":\"none\"}")}
+                   (not (str/ends-with? uri "/token")) (discovery request)
+                   (not= basic (get headers "Authorization"))
+                   {:status 401 :body "{\"error\":\"invalid_client\"}"}
+                   (str/includes? body "grant_type=refresh_token")
+                   {:status 200 :body "{\"access_token\":\"refreshed-access\",\"expires_in\":3600}"}
+                   :else {:status 200
+                          :body (str "{\"access_token\":\"test-access\","
+                                     "\"refresh_token\":\"test-refresh\",\"expires_in\":3600}")}))}
+          (fn []
+            (let [flow
+                  (oauth/start-authorization! "registered-secret-test"
+                                              "https://mcp.example.test/mcp"
+                                              {})
+
+                  state
+                  (second (re-find #"[?&]state=([^&]+)" (get flow "url")))
+
+                  bearer
+                  (oauth/make-bearer-fn "registered-secret-test"
+                                        "https://mcp.example.test/mcp"
+                                        (atom nil))]
+
+              (oauth/complete-authorization!
+                (get flow "flow_id")
+                (str (get flow "redirect_uri") "?code=test-code&state=" state))
+              (expect (= "test-access" (bearer)))
+              (expect (= "refreshed-access" (bearer "test-access"))))))
+        (finally (.delete file) (.delete (java.io.File. (str file ".lock"))))))))
 
 (defdescribe
   sign-in-refusal-test
@@ -391,7 +416,7 @@
                        (oauth/start-authorization! "figma"
                                                    "https://mcp.example.test/mcp"
                                                    {:auth-hint {:client-name "Claude Code"
-                                                                 :client-id "vis-test"
+                                                                :client-id "vis-test"
                                                                 :client-secret "s3cret"}})
 
                        state
@@ -418,14 +443,16 @@
   (fn [{:keys [uri]}]
     (swap! seen conj uri)
     (cond (contains? documents uri) {:status 200 :body (json/write-json-str (get documents uri))}
-          (str/ends-with? uri "/register") {:status 201 :body "{\"client_id\":\"registered-client\"}"}
+          (str/ends-with? uri "/register") {:status 201
+                                            :body "{\"client_id\":\"registered-client\"}"}
           :else {:status 404 :body "Not Found"})))
 
 (defn- authorization-query
   "The query parameters of the authorization URL that sign-in gives for `documents`."
   [documents seen options]
   (with-redefs [http/request (discovery-server documents seen)]
-    (let [flow (oauth/start-authorization! "discovery-test" "https://mcp.example.test/v1/mcp" options)]
+    (let [flow
+          (oauth/start-authorization! "discovery-test" "https://mcp.example.test/v1/mcp" options)]
       (oauth/cancel-authorization! (get flow "flow_id"))
       (assoc (#'oauth/query-parse (second (str/split (get flow "url") #"\?" 2)))
         ::endpoint (first (str/split (get flow "url") #"\?"))))))
@@ -435,28 +462,33 @@
    "token_endpoint" "https://auth.example.test/token"
    "registration_endpoint" "https://auth.example.test/register"})
 
-(defdescribe metadata-discovery-test
+(defdescribe
+  metadata-discovery-test
   (it "reads the metadata URL that the server names in its challenge, and no other"
-      (let [seen (atom [])
-            query (authorization-query
-                    {"https://mcp.example.test/custom/metadata.json"
-                     {"resource" "https://mcp.example.test/v1/mcp"
-                      "authorization_servers" ["https://auth.example.test"]}
-                     "https://auth.example.test/.well-known/oauth-authorization-server" endpoints}
-                    seen
-                    {:www-auth (str "Bearer resource_metadata="
-                                    "\"https://mcp.example.test/custom/metadata.json\"")})]
+      (let [seen
+            (atom [])
+
+            query
+            (authorization-query
+              {"https://mcp.example.test/custom/metadata.json"
+               {"resource" "https://mcp.example.test/v1/mcp"
+                "authorization_servers" ["https://auth.example.test"]}
+               "https://auth.example.test/.well-known/oauth-authorization-server" endpoints}
+              seen
+              {:www-auth (str "Bearer resource_metadata="
+                              "\"https://mcp.example.test/custom/metadata.json\"")})]
+
         (expect (= "https://auth.example.test/authorize" (::endpoint query)))
         (expect (not-any? #(str/includes? % "oauth-protected-resource") @seen))))
-  (it "finds the metadata of a server with a path before the metadata of its host"
-      (let [seen (atom [])]
-        (authorization-query
-          {"https://mcp.example.test/.well-known/oauth-protected-resource/v1/mcp"
-           {"authorization_servers" ["https://auth.example.test"]}
-           "https://auth.example.test/.well-known/openid-configuration" endpoints}
-          seen
-          {})
-        (expect (not-any? #{"https://mcp.example.test/.well-known/oauth-protected-resource"} @seen))))
+  (it
+    "finds the metadata of a server with a path before the metadata of its host"
+    (let [seen (atom [])]
+      (authorization-query {"https://mcp.example.test/.well-known/oauth-protected-resource/v1/mcp"
+                            {"authorization_servers" ["https://auth.example.test"]}
+                            "https://auth.example.test/.well-known/openid-configuration" endpoints}
+                           seen
+                           {})
+      (expect (not-any? #{"https://mcp.example.test/.well-known/oauth-protected-resource"} @seen))))
   (it "finds an authorization server that has a path in its issuer"
       (doseq [location ["https://auth.example.test/.well-known/oauth-authorization-server/tenant1"
                         "https://auth.example.test/.well-known/openid-configuration/tenant1"
@@ -468,6 +500,7 @@
                        location endpoints}
                       seen
                       {})]
+
           (expect (= "https://auth.example.test/authorize" (::endpoint query)))
           ;; The host can serve another tenant there.
           (expect (not-any? #{"https://auth.example.test/.well-known/oauth-authorization-server"}
@@ -475,64 +508,86 @@
   (it "signs in to a server of protocol 2025-03-26, which has no resource metadata"
       (let [query (authorization-query
                     {"https://mcp.example.test/.well-known/oauth-authorization-server"
-                     (assoc endpoints "authorization_endpoint" "https://mcp.example.test/oauth/start")}
+                     (assoc endpoints
+                       "authorization_endpoint" "https://mcp.example.test/oauth/start")}
                     (atom [])
                     {})]
         (expect (= "https://mcp.example.test/oauth/start" (::endpoint query))))
-      (let [seen (atom [])
-            query (authorization-query {} seen {})]
+      (let [seen
+            (atom [])
+
+            query
+            (authorization-query {} seen {})]
+
         (expect (= "https://mcp.example.test/authorize" (::endpoint query)))
         (expect (some #{"https://mcp.example.test/register"} @seen)))))
 
-(defdescribe authorization-scope-test
+(defdescribe
+  authorization-scope-test
   (it "asks for the scope of the challenge, then the scopes of the resource, then none"
-      (let [documents (fn [resource]
-                        {"https://mcp.example.test/.well-known/oauth-protected-resource"
-                         (merge {"authorization_servers" ["https://auth.example.test"]} resource)
-                         "https://auth.example.test/.well-known/oauth-authorization-server" endpoints})
-            scope (fn [resource options]
-                    (get (authorization-query (documents resource) (atom []) options) "scope" ::none))]
+      (let [documents
+            (fn [resource]
+              {"https://mcp.example.test/.well-known/oauth-protected-resource"
+               (merge {"authorization_servers" ["https://auth.example.test"]} resource)
+               "https://auth.example.test/.well-known/oauth-authorization-server" endpoints})
+
+            scope
+            (fn [resource options]
+              (get (authorization-query (documents resource) (atom []) options) "scope" ::none))]
+
         (expect (= "files:read"
                    (scope {"scopes_supported" ["a" "b"]}
                           {:www-auth "Bearer error=\"insufficient_scope\", scope=\"files:read\""})))
         (expect (= "a b" (scope {"scopes_supported" ["a" "b"]} {})))
         (expect (= ::none (scope {} {})))
-        (expect (= "configured" (scope {"scopes_supported" ["a" "b"]}
-                                       {:www-auth "Bearer scope=\"files:read\""
-                                        :auth-hint {:scope "configured"}})))))
+        (expect (= "configured"
+                   (scope {"scopes_supported" ["a" "b"]}
+                          {:www-auth "Bearer scope=\"files:read\""
+                           :auth-hint {:scope "configured"}})))))
   (it "keeps the scope of the last sign-in when the server asks for one more scope"
       ;; SEP-2350: the server names only the scope of the refused operation. Vis asked
       ;; for that scope alone, lost the first one, and signed in again without end.
-      (let [file (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")
-            discovery (discovery-server
-                        {"https://mcp.example.test/.well-known/oauth-protected-resource"
-                         {"authorization_servers" ["https://auth.example.test"]}
-                         "https://auth.example.test/.well-known/oauth-authorization-server" endpoints}
-                        (atom []))
-            start (fn [challenge]
-                    (oauth/start-authorization! "step-up-test"
-                                                "https://mcp.example.test/v1/mcp"
-                                                {:www-auth challenge}))]
-        (try
-          (with-redefs-fn
-            {#'oauth/token-file (constantly file)
-             #'http/request
-             (fn [{:keys [uri] :as request}]
-               (if (str/ends-with? uri "/token")
-                 {:status 200 :body "{\"access_token\":\"test-access\",\"expires_in\":3600}"}
-                 (discovery request)))}
-            (fn []
-              (let [flow (start "Bearer scope=\"files:read\"")
-                    state (second (re-find #"[?&]state=([^&]+)" (get flow "url")))]
-                (oauth/complete-authorization!
-                  (get flow "flow_id")
-                  (str (get flow "redirect_uri") "?code=test-code&state=" state))
-                (let [step-up (start "Bearer error=\"insufficient_scope\", scope=\"files:write\"")]
-                  (oauth/cancel-authorization! (get step-up "flow_id"))
-                  (expect (= "files:read files:write"
-                             (get (#'oauth/query-parse (second (str/split (get step-up "url") #"\?" 2)))
-                                  "scope")))))))
-          (finally (.delete file) (.delete (java.io.File. (str file ".lock")))))))
+      (let [file
+            (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")
+
+            discovery
+            (discovery-server {"https://mcp.example.test/.well-known/oauth-protected-resource"
+                               {"authorization_servers" ["https://auth.example.test"]}
+                               "https://auth.example.test/.well-known/oauth-authorization-server"
+                               endpoints}
+                              (atom []))
+
+            start
+            (fn [challenge]
+              (oauth/start-authorization! "step-up-test"
+                                          "https://mcp.example.test/v1/mcp"
+                                          {:www-auth challenge}))]
+
+        (try (with-redefs-fn {#'oauth/token-file (constantly file)
+                              #'http/request
+                              (fn [{:keys [uri] :as request}]
+                                (if (str/ends-with? uri "/token")
+                                  {:status 200
+                                   :body "{\"access_token\":\"test-access\",\"expires_in\":3600}"}
+                                  (discovery request)))}
+               (fn []
+                 (let [flow
+                       (start "Bearer scope=\"files:read\"")
+
+                       state
+                       (second (re-find #"[?&]state=([^&]+)" (get flow "url")))]
+
+                   (oauth/complete-authorization!
+                     (get flow "flow_id")
+                     (str (get flow "redirect_uri") "?code=test-code&state=" state))
+                   (let [step-up (start
+                                   "Bearer error=\"insufficient_scope\", scope=\"files:write\"")]
+                     (oauth/cancel-authorization! (get step-up "flow_id"))
+                     (expect (= "files:read files:write"
+                                (get (#'oauth/query-parse
+                                      (second (str/split (get step-up "url") #"\?" 2)))
+                                     "scope")))))))
+             (finally (.delete file) (.delete (java.io.File. (str file ".lock")))))))
   (it "asks for offline_access with the scope when the authorization server lists it"
       ;; Without it, such a server issues no refresh token: a sign-in each hour.
       (let [scope (fn [resource options]
@@ -559,13 +614,15 @@
        nil
        (catch clojure.lang.ExceptionInfo e (assoc (ex-data e) :message (ex-message e)))))
 
-(defdescribe metadata-validation-test
+(defdescribe
+  metadata-validation-test
   (it "refuses resource metadata that is for another resource"
       (let [refusal (fn [resource]
                       (sign-in-refusal
                         {"https://mcp.example.test/.well-known/oauth-protected-resource/v1/mcp"
                          {"resource" resource "authorization_servers" ["https://auth.example.test"]}
-                         "https://auth.example.test/.well-known/oauth-authorization-server" endpoints}))]
+                         "https://auth.example.test/.well-known/oauth-authorization-server"
+                         endpoints}))]
         (doseq [resource ["https://mcp.example.test/v1/mcp" "https://mcp.example.test/v1/mcp/"
                           "https://mcp.example.test/v1" "https://mcp.example.test"
                           "https://MCP.example.test/"]]
@@ -590,19 +647,26 @@
           (expect (= :mcp/oauth-discovery (:type data)))
           (expect (str/includes? (str (:message data)) "https://attacker.example.test"))))))
 
-(defdescribe authorization-response-issuer-test
-  (let [completes? (fn [context query]
-                     (with-browser-flow
-                       context
-                       (fn [flow exchanges]
-                         (try (oauth/complete-authorization!
-                                (get flow "flow_id")
-                                (str (get flow "redirect_uri") "?code=test-code&state=test-state" query))
-                              (catch clojure.lang.ExceptionInfo _ nil))
-                         (= 1 (count @exchanges)))))
-        issuer "https://auth.example.test"
-        sends-issuer {:as-url issuer
-                      :asmeta {"issuer" issuer "authorization_response_iss_parameter_supported" true}}]
+(defdescribe
+  authorization-response-issuer-test
+  (let [completes?
+        (fn [context query]
+          (with-browser-flow
+            context
+            (fn [flow exchanges]
+              (try (oauth/complete-authorization!
+                     (get flow "flow_id")
+                     (str (get flow "redirect_uri") "?code=test-code&state=test-state" query))
+                   (catch clojure.lang.ExceptionInfo _ nil))
+              (= 1 (count @exchanges)))))
+
+        issuer
+        "https://auth.example.test"
+
+        sends-issuer
+        {:as-url issuer
+         :asmeta {"issuer" issuer "authorization_response_iss_parameter_supported" true}}]
+
     (it "exchanges the code only when the response comes from the authorization server"
         (expect (completes? sends-issuer "&iss=https%3A%2F%2Fauth.example.test"))
         (expect (not (completes? sends-issuer "&iss=https%3A%2F%2Fattacker.example.test")))
@@ -625,7 +689,7 @@
           (expect (str/includes? (verdict "&code=c&iss=https%3A%2F%2Fattacker.example.test")
                                  "another issuer (https://attacker.example.test)"))
           (expect (str/includes? (verdict (str "&error=access_denied&error_description=No+consent"
-                                              "&iss=https%3A%2F%2Fauth.example.test"))
+                                               "&iss=https%3A%2F%2Fauth.example.test"))
                                  "access_denied (No consent)"))))))
 
 (def ^:private client-document "https://vis.blockether.com/oauth/mcp-client.json")
@@ -635,20 +699,29 @@
    authorization server has `server` in its metadata and the web has `published`
    (URL to document)."
   [server published options]
-  (let [seen (atom [])
-        query (authorization-query
-                (merge {"https://mcp.example.test/.well-known/oauth-protected-resource"
-                        {"authorization_servers" ["https://auth.example.test"]}
-                        "https://auth.example.test/.well-known/oauth-authorization-server"
-                        (merge endpoints server)}
-                       published)
-                seen
-                options)]
+  (let [seen
+        (atom [])
+
+        query
+        (authorization-query (merge
+                               {"https://mcp.example.test/.well-known/oauth-protected-resource"
+                                {"authorization_servers" ["https://auth.example.test"]}
+                                "https://auth.example.test/.well-known/oauth-authorization-server"
+                                (merge endpoints server)}
+                               published)
+                             seen
+                             options)]
+
     [(get query "client_id") (boolean (some #(str/ends-with? % "/register") @seen))]))
 
-(defdescribe client-id-metadata-document-test
-  (let [reads-documents {"client_id_metadata_document_supported" true}
-        document {"client_id" client-document "redirect_uris" ["http://127.0.0.1/mcp-callback"]}]
+(defdescribe
+  client-id-metadata-document-test
+  (let [reads-documents
+        {"client_id_metadata_document_supported" true}
+
+        document
+        {"client_id" client-document "redirect_uris" ["http://127.0.0.1/mcp-callback"]}]
+
     (it "names its published document as the client, and registers nothing"
         (expect (= [client-document false]
                    (client-of reads-documents {client-document document} {}))))
@@ -657,9 +730,8 @@
     (it "registers a client when its document is not the one that the server would read"
         (doseq [published [{}
                            {client-document (assoc document "client_id" "https://other.example/c")}
-                           {client-document (assoc document
-                                              "redirect_uris"
-                                              ["http://127.0.0.1/other-callback"])}]]
+                           {client-document
+                            (assoc document "redirect_uris" ["http://127.0.0.1/other-callback"])}]]
           (expect (= ["registered-client" true] (client-of reads-documents published {})))))
     (it "names the configured document without reading it, and none when it is off"
         (expect (= ["https://id.example/vis.json" false]
@@ -676,7 +748,8 @@
                               {:auth-hint {:client-id "configured-client"}}))))
     (it "publishes a document that names itself and has each redirect of Vis"
         (let [published {client-document (json/read-json
-                                           (slurp (io/resource "vis-contract/oauth/mcp-client.json")))}]
+                                           (slurp (io/resource
+                                                    "vis-contract/oauth/mcp-client.json")))}]
           (doseq [mode [nil "app"]]
             (expect (= [client-document false]
                        (client-of reads-documents published {:callback-mode mode}))))))))
@@ -695,17 +768,29 @@
     (try (with-redefs-fn {#'oauth/token-file (constantly file) #'http/request handler} f)
          (finally (.delete file) (.delete (java.io.File. (str file ".lock")))))))
 
-(defdescribe machine-grant-test
+(defdescribe
+  machine-grant-test
   (it "gets a token with client credentials after a refusal, with no browser"
       ;; #458: a server for machines has no person to sign in. Vis asked for a sign-in.
-      (let [seen (atom [])
-            auth {:grant "client_credentials" :client-id "vis-test" :client-secret "s3cret"}]
+      (let [seen
+            (atom [])
+
+            auth
+            {:grant "client_credentials" :client-id "vis-test" :client-secret "s3cret"}]
+
         (with-token-file
           (authorization-server 403 seen)
           (fn []
-            (let [bearer (oauth/make-bearer-fn "machine" "https://mcp.example.test/mcp" (atom nil)
-                                               "s3cret" auth)
-                  token-requests #(filter (fn [r] (str/ends-with? (:uri r) "/token")) @seen)]
+            (let [bearer
+                  (oauth/make-bearer-fn "machine"
+                                        "https://mcp.example.test/mcp" (atom nil)
+                                        "s3cret" auth)
+
+                  token-requests
+                  #(filter (fn [r]
+                             (str/ends-with? (:uri r) "/token"))
+                           @seen)]
+
               (expect (= "test-access" (bearer nil)))
               (expect (str/includes? (:body (first (token-requests)))
                                      "grant_type=client_credentials"))
@@ -725,52 +810,66 @@
               {:status 401 :body "{\"error\":\"invalid_client\"}"}
               (discovery request)))
           (fn []
-            (let [bearer (oauth/make-bearer-fn "machine" "https://mcp.example.test/mcp" (atom nil)
+            (let [bearer (oauth/make-bearer-fn "machine"
+                                               "https://mcp.example.test/mcp" (atom nil)
                                                "wrong" {:grant "client_credentials"
                                                         :client-id "vis-test"
                                                         :client-secret "wrong"})
                   data (try (bearer nil) nil (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+
               (expect (= :mcp/oauth-token (:type data)))
               (expect (= "invalid_client" (:oauth-error data)))))))))
 
-(defdescribe dpop-test
-  (it "binds the token to a key, and answers the nonce that the token endpoint asks for"
-      ;; #458: a server that wants DPoP refused each token of Vis, which sent Bearer only.
-      (let [proofs (atom [])
-            documents
-            {"https://mcp.example.test/.well-known/oauth-protected-resource"
-             {"resource" "https://mcp.example.test/mcp"
-              "authorization_servers" ["https://auth.example.test"]}
-             "https://auth.example.test/.well-known/oauth-authorization-server"
-             (assoc endpoints
-               "issuer" "https://auth.example.test"
-               "dpop_signing_alg_values_supported" ["ES256"])}
-            discovery (discovery-server documents (atom []))]
-        (with-token-file
-          (fn [{:keys [uri headers] :as request}]
-            (if (str/ends-with? uri "/token")
-              (let [claims (jwt-claims (get headers "DPoP"))]
-                (swap! proofs conj claims)
-                (if (= "nonce-1" (get claims "nonce"))
-                  {:status 200
-                   :body "{\"access_token\":\"bound-access\",\"token_type\":\"DPoP\",\"expires_in\":3600}"}
-                  {:status 400
-                   :headers {"dpop-nonce" "nonce-1"}
-                   :body "{\"error\":\"use_dpop_nonce\"}"}))
-              (discovery request)))
-          (fn []
-            (let [bearer (oauth/make-bearer-fn "bound" "https://mcp.example.test/mcp"
-                                               (atom "DPoP algs=\"ES256\"") "s3cret"
-                                               {:grant "client_credentials"
+(defdescribe
+  dpop-test
+  (it
+    "binds the token to a key, and answers the nonce that the token endpoint asks for"
+    ;; #458: a server that wants DPoP refused each token of Vis, which sent Bearer only.
+    (let [proofs
+          (atom [])
+
+          documents
+          {"https://mcp.example.test/.well-known/oauth-protected-resource"
+           {"resource" "https://mcp.example.test/mcp"
+            "authorization_servers" ["https://auth.example.test"]}
+           "https://auth.example.test/.well-known/oauth-authorization-server"
+           (assoc endpoints
+             "issuer" "https://auth.example.test"
+             "dpop_signing_alg_values_supported" ["ES256"])}
+
+          discovery
+          (discovery-server documents (atom []))]
+
+      (with-token-file
+        (fn [{:keys [uri headers] :as request}]
+          (if (str/ends-with? uri "/token")
+            (let [claims (jwt-claims (get headers "DPoP"))]
+              (swap! proofs conj claims)
+              (if (= "nonce-1" (get claims "nonce"))
+                {:status 200
+                 :body
+                 "{\"access_token\":\"bound-access\",\"token_type\":\"DPoP\",\"expires_in\":3600}"}
+                {:status 400
+                 :headers {"dpop-nonce" "nonce-1"}
+                 :body "{\"error\":\"use_dpop_nonce\"}"}))
+            (discovery request)))
+        (fn []
+          (let [bearer
+                (oauth/make-bearer-fn "bound"
+                                      "https://mcp.example.test/mcp" (atom "DPoP algs=\"ES256\"")
+                                      "s3cret" {:grant "client_credentials"
                                                 :client-id "vis-test"
                                                 :client-secret "s3cret"})
-                  proof (oauth/make-proof-fn "bound")]
-              (expect (= "bound-access" (bearer nil)))
-              (expect (= [nil "nonce-1"] (mapv #(get % "nonce") @proofs)))
-              (expect (= #{"https://auth.example.test/token"} (set (map #(get % "htu") @proofs))))
-              (let [claims (jwt-claims (proof "POST" "https://mcp.example.test/mcp?a=1"
-                                              "bound-access" "nonce-2"))]
-                (expect (= ["POST" "https://mcp.example.test/mcp" "nonce-2"]
-                           (mapv claims ["htm" "htu" "nonce"])))
-                (expect (string? (get claims "ath"))))
-              (expect (nil? (proof "POST" "https://mcp.example.test/mcp" "other-token" nil)))))))))
+
+                proof
+                (oauth/make-proof-fn "bound")]
+
+            (expect (= "bound-access" (bearer nil)))
+            (expect (= [nil "nonce-1"] (mapv #(get % "nonce") @proofs)))
+            (expect (= #{"https://auth.example.test/token"} (set (map #(get % "htu") @proofs))))
+            (let [claims (jwt-claims (proof "POST" "https://mcp.example.test/mcp?a=1"
+                                            "bound-access" "nonce-2"))]
+              (expect (= ["POST" "https://mcp.example.test/mcp" "nonce-2"]
+                         (mapv claims ["htm" "htu" "nonce"])))
+              (expect (string? (get claims "ath"))))
+            (expect (nil? (proof "POST" "https://mcp.example.test/mcp" "other-token" nil)))))))))

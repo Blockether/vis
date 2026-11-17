@@ -351,6 +351,14 @@
         ;; update turns no tool on. The door stays in the sandbox.
         (expect (= ['call] (door-allows [{:deny ["door_call"]}] ['call "srv.read" "other.read"])))
         (expect (= ['call "srv.read"] (door-allows [{:deny ["__door__"]}] ['call "srv.read"]))))
+    (it "reads the name that a server gives a tool as the name that a block calls"
+        ;; Release review 2026-11-17: Vis took `-srv.get-issue` and left `srv.get_issue` on.
+        (let [handles ["srv" "srv.get_issue" "srv.read" "srv.prompts.say_hi"]]
+          (expect (= ["srv" "srv.read" "srv.prompts.say_hi"]
+                     (door-allows [{:deny ["srv.get-issue"]}] handles)))
+          (expect (= ["srv" "srv.get_issue"] (door-allows [{:allow ["srv.get-issue"]}] handles)))
+          (expect (= ["srv" "srv.get_issue" "srv.read"]
+                     (door-allows [{:deny ["srv.prompts.say-hi"]}] handles)))))
     (it "keeps only the named handles of the first name that an allow list names"
         ;; The call of `srv` itself lists its tools. Only a list that names `srv` turns it off.
         (expect (= ["srv" "srv.read" "other.read"] (door-allows [{:allow ["srv.read"]}] handles)))

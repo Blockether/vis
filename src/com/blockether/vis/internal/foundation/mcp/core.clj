@@ -1667,7 +1667,8 @@
         spec
         (:spec conn)]
 
-    {:on-elicitation (when sid #(elicitation/ask! sid server %))
+    {:asker sid
+     :on-elicitation (when sid #(elicitation/ask! sid server %))
      :on-sampling (when (and sid (:sampling? spec)) #(sampling/ask! sid server %))
      :roots (when (:roots? spec) (roots-of env))}))
 

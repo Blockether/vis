@@ -481,11 +481,12 @@
 
         ::timeout))))
 
-(defn- without-caller [callers inbox] (vec (remove #(identical? inbox %) callers)))
+(defn- without-caller [callers inbox] (vec (remove #(identical? inbox (first %)) callers)))
 
 (defn- input-state
   "The state of one transport for the input requests of its server. `:callers` is
-   an atom with the calls that can answer a person input, newest last. `:roots` is
+   an atom with the calls that can answer a person input, newest last, each as
+   `[inbox asker]`. `:roots` is
    an atom with the roots of the connection. Each is nil when the client of `spec`
    did not declare that input."
   [spec]
@@ -495,16 +496,24 @@
 
 (defn- handle-incoming!
   "Handle a message of the server that is not a reply. A person input goes to the
-   newest call that waits in `inputs`, and has no answer when none waits. A
+   newest call that waits in `inputs`. It has no answer when none waits, and when
+   the calls that wait have more than one asker: the server names no call, and a
+   guess can ask the person of another session. A
    `roots/list` gets the roots of the connection. Any other request gets its
    answer through `send!`, and a notification goes to the fn in the atom
    `incoming`. Never throws."
   [msg send! incoming {:keys [spec callers roots]}]
   (try (case (declared-input spec msg)
          ("elicitation/create" "sampling/createMessage")
-         (if-let [^LinkedBlockingQueue inbox (peek @callers)]
-           (.put inbox [:input msg send!])
-           (send! (unanswered msg)))
+         (let [waiting
+               @callers
+
+               [^LinkedBlockingQueue inbox]
+               (peek waiting)]
+
+           (if (and inbox (apply = (map second waiting)))
+             (.put inbox [:input msg send!])
+             (send! (unanswered msg))))
 
          "roots/list"
          (let [{:keys [read] :as state} (swap! roots assoc :asked? true)]
@@ -565,7 +574,7 @@
               (when callers (answers-of opts))]
 
           (.put pending id inbox)
-          (when answers (swap! callers conj inbox))
+          (when answers (swap! callers conj [inbox (:asker opts)]))
           (try (write! (cond-> {"jsonrpc" "2.0" "id" id "method" method}
                          (some? params)
                          (assoc "params" params)))
@@ -1064,7 +1073,7 @@
                       (LinkedBlockingQueue.)]
 
                   (when answers
-                    (swap! callers conj inbox)
+                    (swap! callers conj [inbox (:asker opts)])
                     ;; A server can send its person input on the listen channel only.
                     (when @listen-thread (deref listening 2000 nil)))
                   (try
@@ -1318,11 +1327,17 @@
   [conn]
   (initialized! conn (initialize-request conn)))
 
+(def ^:private probe-final-statuses
+  "The client error statuses of `server/discover` that say nothing about the era:
+   a sign-in, a proxy sign-in and a rate limit."
+  #{401 403 407 429})
+
 (defn- discover!
   "Ask the server of `conn` for `server/discover`, the request that only a server
    of a stateless revision knows. Returns `{:version :result}` for such a server.
    Returns `{:legacy? true}` for a server that wants `initialize`, also when it
-   gave no answer for `timeout-ms`. A stateless server that names
+   gave no answer for `timeout-ms` or refused the request with a client error
+   status. A stateless server that names
    its versions gets one more request, in a version that Vis speaks too. Throws
    when a stateless server refuses the client, and when the answer says nothing
    about the era: a sign-in, a server failure or a lost connection."
@@ -1354,8 +1369,12 @@
                       :else (throw failure)))
               ;; A header mismatch or a missing capability: a stateless server refused.
               (and (= :mcp/rpc-error type) (contains? #{-32020 -32021} code)) (throw failure)
+              ;; A server refuses a request that it does not know with one of many
+              ;; statuses. `initialize` then gets the real answer.
               (or (contains? #{:mcp/rpc-error :mcp/protocol :mcp/timeout} type)
-                  (and (= :mcp/http-error type) (contains? #{400 404 405} status)))
+                  (and (= :mcp/http-error type)
+                       (<= 400 (long (or status 0)) 499)
+                       (not (contains? probe-final-statuses status))))
               {:legacy? true}
               :else (throw failure))))))
 
@@ -1442,9 +1461,10 @@
 (defn- connect-as
   "Connect to MCP server `name` on `transport` and find its era. With `probe?`,
    the first request is `server/discover`: a server of a stateless revision
-   answers it and gets no handshake. Any other server gets `initialize`. A failed
-   connect always closes the transport it already opened, so failed stdio starts
-   cannot orphan processes."
+   answers it and gets no handshake. Any other server gets `initialize`. A stdio
+   server can exit on a request that comes before `initialize`: it starts again
+   and gets only the handshake. A failed connect always closes the transport it
+   already opened, so failed stdio starts cannot orphan processes."
   ([name spec transport] (connect-as name spec transport (not= :sse transport)))
   ([name spec transport probe?]
    (let [t
@@ -1480,16 +1500,24 @@
 
                                    (swap! (:lists conn) dissoc request)))
                                (when user-cb (try (user-cb msg) (catch Throwable _ nil))))))
-     (try (let [answer (cond (not probe?) {:legacy? true}
-                             http? (do (when-let [modern (:modern-atom t)]
-                                         (reset! modern true))
-                                       (discover! conn
-                                                  (min (long timeout-ms)
-                                                       (long http-probe-timeout-ms))))
-                             :else (stdio-era! conn timeout-ms))]
+     (try (let [ended?
+                (fn []
+                  (and probe? (not http?) (not ((:alive-fn conn)))))
+
+                answer
+                (cond (not probe?) {:legacy? true}
+                      http? (do (when-let [modern (:modern-atom t)]
+                                  (reset! modern true))
+                                (discover! conn
+                                           (min (long timeout-ms) (long http-probe-timeout-ms))))
+                      :else (try (stdio-era! conn timeout-ms)
+                                 (catch clojure.lang.ExceptionInfo failure
+                                   (if (ended?) {:legacy? true} (throw failure)))))]
+
             (cond (:version answer) (modern-conn conn (:version answer) (:result answer))
-                  ;; The refused request can be the end of an HTTP transport: open a new one.
-                  (and probe? http?) (do ((:close-fn conn)) (connect-as name spec transport false))
+                  ;; The refused request can be the end of a transport: open a new one.
+                  (and probe? (or http? (ended?))) (do ((:close-fn conn))
+                                                       (connect-as name spec transport false))
                   (contains? answer :init) (initialized! conn (:init answer))
                   :else (initialize! conn)))
           (catch Throwable failure
@@ -1612,16 +1640,18 @@
 
    `:roots` is the vector of roots (`{\"uri\" \"name\"}`) for `roots/list`.
 
-   A server that names no call sends its request to the newest call that waits on
-   the connection."
+   `:asker` names who gives those answers, such as a session id. A server that
+   names no call sends its request to the newest call that waits on the
+   connection. When the calls that wait have more than one asker, nobody is
+   asked: the request gets no answer."
   ([conn method params] (request conn method params (or (:timeout-ms conn) default-timeout-ms) nil))
-  ([conn method params timeout-ms {:keys [on-elicitation on-sampling roots headers]}]
+  ([conn method params timeout-ms {:keys [on-elicitation on-sampling roots headers asker]}]
    (use-roots! conn roots)
    ((:request-fn conn)
      method
      params
      timeout-ms
-     (cond-> {:ask on-elicitation :sample on-sampling :roots roots}
+     (cond-> {:ask on-elicitation :sample on-sampling :roots roots :asker asker}
        headers
        (assoc :headers headers)))))
 
@@ -1643,7 +1673,7 @@
               "tools/call"
               {"name" tool-name "arguments" arguments}
               timeout-ms
-              (cond-> (select-keys opts [:on-elicitation :on-sampling :roots])
+              (cond-> (select-keys opts [:on-elicitation :on-sampling :roots :asker])
                 tool
                 (assoc :headers (param-headers tool arguments)))))))
 
