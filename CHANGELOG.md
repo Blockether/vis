@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Sandbox: `defs["name"]` does the same lookup as `defs("name")`. Before, the subscript failed with `TypeError: 'function' object is not subscriptable`. The Python runtime is now at commit d20f31f.
+
 ## [v0.5.21] - 2026-11-17
 
 ### Fixed
