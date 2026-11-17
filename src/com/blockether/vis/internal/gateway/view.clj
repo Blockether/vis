@@ -720,17 +720,34 @@
                     update
                     view-id
                     (fn [frame]
-                      (-> (or frame
-                              {:session-id sid
-                               :view-id view-id
-                               :first-seq (:seq patch)
-                               :ops []
-                               :is-app app?
-                               :is-global global?})
-                          (assoc :seq (:seq patch))
-                          ;; The first string of a node and key is the one before the frame.
-                          (update :bases #(merge bases %))
-                          (update :ops #(reduce coalesce % (:ops patch))))))]
+                      (let [frame
+                            (or frame
+                                {:session-id sid
+                                 :view-id view-id
+                                 :first-seq (:seq patch)
+                                 :ops []
+                                 :is-app app?
+                                 :is-global global?})
+
+                            ;; A node that the frame added has no string before the frame.
+                            added
+                            (into #{}
+                                  (comp (filter #(= :add-node (:op %)))
+                                        (mapcat #(nodes-in (:node-spec %)))
+                                        (keep :id))
+                                  (:ops frame))
+
+                            bases
+                            (into {}
+                                  (remove (fn [[[id _] _]]
+                                            (contains? added id)))
+                                  bases)]
+
+                        (-> frame
+                            (assoc :seq (:seq patch))
+                            ;; The first string of a node and key is the one before the frame.
+                            (update :bases #(merge bases %))
+                            (update :ops #(reduce coalesce % (:ops patch)))))))]
 
     (when (nil? (get old view-id))
       (.schedule ^ScheduledExecutorService @flusher

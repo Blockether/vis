@@ -2069,6 +2069,33 @@
                 (get-in (json-body (app-answer sid view-id since)) ["patches" 0 "patch" "ops"])]
 
             (expect (= {"op" "set" "node_id" "note" "text" "three"} (last ops)))))))
+  ;; Review: the frame took the string that its own `add-node` gave as the string
+  ;; before the frame. No reader holds it, so each reader took the whole app.
+  (it "gives a reader a patch for a node that one frame adds and then changes"
+      (with-large-app
+        (fn [sid view-id first-read]
+          (let [text
+                (apply str (repeat 3600 "ten chars "))
+
+                _
+                (app-op! {"op" "patch"
+                          "view_id" view-id
+                          "patch" {"ops" [{"op" "add-node"
+                                           "node_spec"
+                                           {"id" "note" "type" "paragraph" "text" text}}]}})
+
+                _
+                (app-patch! view-id [{"op" "set" "node_id" "note" "text" (str text "more")}])
+
+                [delta]
+                (get (json-body
+                       (app-answer sid view-id (get-in (json-body first-read) ["view" "seq"])))
+                     "patches")
+
+                patch
+                (hi-spec/resolved-delta (held-in first-read) delta)]
+
+            (expect (= (str text "more") (get-in patch ["ops" 1 "text"])))))))
   (it "gives the whole app to a reader after a new owner changes its icon"
       (gw-hi/install!)
       (recorded
