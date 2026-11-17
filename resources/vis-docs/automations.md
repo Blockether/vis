@@ -1,8 +1,8 @@
 # Automations
 
 An automation gives Vis a prompt without a message from you. It starts on a schedule, at a set
-time or when another service sends a webhook. Vis reports each result in a session, as a phone
-notification or at an address that you choose. You do not need to turn automations on.
+time, or when another service sends a webhook. Vis reports each result in a session, as a phone
+notification, or at an address that you choose. Automations need no setting to turn them on.
 
 ## When to use
 
@@ -13,7 +13,7 @@ notification or at an address that you choose. You do not need to turn automatio
   run from a webhook](#start-a-run-from-a-webhook) and keep only the events that you need.
 - **Your own system must receive each result.** [Receive callbacks](#receive-callbacks) at an
   address that you choose.
-- **You want to test, pause or remove an automation.** [Manage your
+- **You want to test, pause, or remove an automation.** [Manage your
   automations](#manage-automations) in the TUI or the app.
 - **A setup script must create or pause automations without the app.** Use the [command
   line](#manage-automations-from-the-command-line).
@@ -27,22 +27,9 @@ second review, use [Council](council.md).
 
 ## How automations work
 
-An automation is a saved prompt with three rules: when it runs, where the agent works and how you
+An automation is a saved prompt with three rules: when it runs, where the agent works, and how you
 get the result. Each time a trigger fires, Vis creates a run. The run gives the prompt to the agent
 in the target session. Vis records the status and the answer, then sends the result to you.
-
-Automations support these features:
-
-- **Schedules.** Cron expressions with time zones, fixed intervals and one-time runs.
-- **Webhooks.** Runs from GitHub, GitLab, Standard Webhooks senders and your own scripts. Vis checks
-  the signature, filters the events and can put payload values in the prompt.
-- **Targets.** An existing session, a new session for each run, a temporary session or one session
-  that Vis keeps for all runs.
-- **Extensions.** An extension can declare an automation that calls its own Python function.
-- **Delivery.** Phone notifications and signed callbacks. `[SILENT]` reports only changes.
-- **Control.** Manual runs, pause and resume, secrets and the last 200 runs of each automation.
-- **Access.** The app, the TUI, the `vis-agent automations` command and the [Automations
-  API](automations-api.md).
 
 Each automation has these parts:
 
@@ -54,30 +41,32 @@ Each automation has these parts:
 | `target` | The [session](#targets) where a run works. |
 | `delivery` | How you [get the results](#runs-and-results). |
 | `model` | Optional. A fixed `provider` and `model` for each run. Without it, Vis chooses the model as for any other turn. |
-| `deliver_only` | Optional. Vis sends the prompt as the answer and does not call a model. Use it to forward a webhook to your phone. |
-| `enabled` | Whether the triggers start runs. A paused automation does not start runs from its triggers. |
+| `deliver_only` | Optional. Vis sends the prompt as the answer and calls no model. Use it to forward a webhook to your phone. |
+| `enabled` | Whether the triggers start runs. A paused automation starts no runs from its triggers. |
 
 ### Triggers
 
 | Trigger | When it starts a run | Example |
 |---|---|---|
-| `cron` | At the times of a five-field cron expression: minute, hour, day of month, month and day of week | `{"kind": "cron", "expression": "0 8 * * 1-5", "timezone": "Europe/Warsaw"}` |
+| `cron` | At the times of a five-field cron expression: minute, hour, day of month, month, and day of week | `{"kind": "cron", "expression": "0 8 * * 1-5", "timezone": "Europe/Warsaw"}` |
 | `every` | At a fixed interval from the creation time, from 60 seconds to one year | `{"kind": "every", "seconds": 3600}` |
 | `once` | One time, at a time in milliseconds since 1970 UTC | `{"kind": "once", "at": 1767254400000}` |
-| `webhook` | When a signed request arrives, see [Start a run from a webhook](#start-a-run-from-a-webhook) | `{"kind": "webhook", "signature": "github"}` |
+| `webhook` | When a signed request arrives, as in [Start a run from a webhook](#start-a-run-from-a-webhook) | `{"kind": "webhook", "signature": "github"}` |
 
 A `cron` trigger uses its `timezone`, or the time zone of the gateway. It also accepts `@hourly`,
-`@daily`, `@weekly`, `@monthly` and `@yearly`. When a clock change skips a time, the run starts at
+`@daily`, `@weekly`, `@monthly`, and `@yearly`. When a clock change skips a time, the run starts at
 the end of the gap. When a time occurs twice, the run starts only at the first one. An automation
 can have only one `webhook` trigger.
 
-Vis does not catch up on missed schedules. If the gateway was stopped at a scheduled time, Vis
-waits for the next time. A missed `once` trigger still runs if it is at most one day late.
+Vis does not catch up on a scheduled time that passed while the gateway was stopped. It waits for
+the next time. A missed `once` trigger still runs if it is at most one day late.
 
-An automation works on one run at a time. If a scheduled time arrives while a run still works, Vis
-skips the new run with the reason `overlap`. Webhook and manual runs wait in a queue of up to 8
-runs for each automation. When the queue is full, Vis skips the run with the reason `queue_full`.
-One gateway works on at most 4 runs at the same time.
+An automation works on one run at a time:
+
+- A scheduled time that arrives during a run is skipped with the reason `overlap`.
+- Webhook runs and manual runs wait in a queue of up to 8 runs for each automation. When the queue
+  is full, Vis skips the run with the reason `queue_full`.
+- One gateway works on at most 4 runs at the same time.
 
 ### Targets
 
@@ -88,22 +77,22 @@ One gateway works on at most 4 runs at the same time.
 | `temporary` | Creates a session for the run and deletes it after the run. The run keeps the answer | Checks that need no history |
 | `persistent` | Creates a session at the first run and keeps it for the next runs. If you delete that session, the next run creates a new one. `root` sets the project folder | A task that needs earlier context, without a session ID |
 
-A run cannot ask you questions. If a run asks for input, it fails with the error `The run asked for
+A run cannot ask you questions. A run that asks for input fails with the error `The run asked for
 input. An automation cannot answer questions.` If the target session no longer exists, the run
 fails with `The target session does not exist.`
 
 ### Runs and results
 
-Vis records the status and the answer of each run. You find the result in these places:
+Vis records the status and the answer of each run. The result is in these places:
 
-- **The session.** With the `session`, `new` and `persistent` targets, the answer stays in the
+- **The session.** With the `session`, `new`, and `persistent` targets, the answer stays in the
   session as a normal turn.
 - **Runs.** The [automation views](#manage-automations) show the last 200 runs of each automation.
   Your program reads them with the [Automations API](automations-api.md#read-runs).
 - **A notification.** Push is on by default. The Vis app on your phone shows a notification for
   each run that Vis did not skip.
-- **A callback.** Vis sends each run event to an address that you choose. See [Receive
-  callbacks](#receive-callbacks).
+- **A callback.** Vis sends each run event to an address that you choose, as
+  [Receive callbacks](#receive-callbacks) describes.
 
 To report only changes, tell Vis to start its answer with `[SILENT]` when nothing changed. Vis then
 sends no notification and no callback for that completed run. The run keeps its answer. A failed
@@ -123,24 +112,27 @@ run always reports.
 
 Each new automation starts enabled. To stop its triggers, [pause that automation](#manage-automations).
 
-Vis runs automations only while the gateway runs. For schedules and webhooks that work when your
-computer sleeps, [run the gateway on a server](gateway-service.md). If the gateway stops during a
-run, the run ends as `unknown`.
+Vis runs automations only while the gateway runs. If the gateway stops during a run, the run ends
+as `unknown`. For schedules and webhooks that work while your computer sleeps,
+[run the gateway on a server](gateway-service.md).
 
 ## Create an automation
 
-Create an automation in the app. Open **Settings** and open the row of the machine. Select **+** in
-the header of its **Automations** band. The app asks one question at a time. It asks what starts
-the automation, when it runs, what Vis does, where it runs and how Vis answers. Check the summary on
-the **Review** step, then select **Create automation**.
+Create an automation in the app:
+
+1. Open **Settings** and open the row of the machine.
+2. Select **+** in the header of its **Automations** band.
+3. Answer one question at each step. The app asks what starts the automation, when it runs, what
+   Vis does, where it runs, and how Vis answers.
+4. Check the summary on the **Review** step, then select **Create automation**.
 
 To change an automation, open it and select **Edit**. The review opens, and **Change** opens the
 step of that line.
 
-A chat cannot create, change or run automations. The TUI can run, pause, resume and delete them,
+A chat cannot create, change, or run automations. The TUI can run, pause, resume, and delete them,
 but it cannot create them. To create automations from your own program, use the [Automations
-API](automations-api.md#create-an-automation). [How automations work](#how-automations-work) lists
-the parts of an automation.
+API](automations-api.md#create-an-automation) with the parts in
+[How automations work](#how-automations-work).
 
 ### Add payload filters in the app
 
@@ -148,32 +140,34 @@ A webhook trigger in the app has a **Payload filters** list. Select **Add filter
 three fields:
 
 1. The payload field as a dot path, for example `pull_request.base.ref`.
-2. The test: **Equals**, **Contains** or **Is one of**.
+2. The test: **Equals**, **Contains**, or **Is one of**.
 3. The value. For **Is one of**, put commas between the values, for example `main, develop`.
 
-For **Equals** and **Is one of**, the app reads `12`, `true`, `false` and `null` as JSON values. To
-compare text, put the value in double quotes, for example `"12"`. Select the trash button of a
-filter to remove it. [Filter events](#filter-events) tells how Vis tests each filter.
+For **Equals** and **Is one of**, the app reads `12`, `true`, `false`, and `null` as JSON values. To
+compare text, put the value in double quotes, for example `"12"`. To remove a filter, select its
+trash button. [Filter events](#filter-events) explains how Vis tests each filter.
 
 ## Manage automations
 
 In the TUI, open the command palette and choose **Automations**. Select an automation to see
-**Details**, **Run now**, **Pause** or **Resume**, **Runs** and **Delete**. An automation with a
+**Details**, **Run now**, **Pause** or **Resume**, **Runs**, and **Delete**. An automation with a
 webhook trigger also shows **Create webhook secret**. An automation with a callback also shows
 **Create callback secret**.
 
-In the app, open **Settings**, open the row of the machine and open its **Automations** band. The
+In the app, open **Settings**, open the row of the machine, and open its **Automations** band. The
 band shows only when the machine answers the automations request. Select an automation. The app
-shows its triggers, next run, target, delivery, webhook address and recent runs. It has buttons for
-the same actions. The **+** of the band and **Edit** open the steps from [Create an
+shows its triggers, next run, target, delivery, webhook address, and recent runs, with buttons for
+the same actions. The **+** of the band and **Edit** open the steps of [Create an
 automation](#create-an-automation).
 
-An automation from an extension shows the name of the extension and its key. It has no **Edit**.
-[Automations from extensions](#automations-from-extensions) tells why.
+| Action | Effect |
+|---|---|
+| **Run now** | Starts a manual run at once. |
+| **Pause** | Stops the triggers until you select **Resume**. |
+| **Replace webhook secret**, **Replace callback secret** | Creates a new secret. The old secret stops working at once, so update the other service right after the change. |
 
-**Run now** starts a manual run at once. **Pause** stops the triggers until you select **Resume**.
-**Replace webhook secret** and **Replace callback secret** create a new secret. The old secret
-stops working at once, so update the other service right after the change.
+An automation from an extension shows the name of the extension and its key, and has no **Edit**.
+[Automations from extensions](#automations-from-extensions) gives the reason.
 
 ## Manage automations from the command line
 
@@ -192,33 +186,35 @@ vis-agent automations delete 9f2c1a44          # also deletes its runs
 ```
 
 `create` reads one automation as JSON from a file, or from standard input when you give `-`. The
-JSON has the fields of the [Automations API](automations-api.md#create-an-automation). When one
-automation with the same `name` exists and no extension owns it, `create` changes that automation
-and prints `Updated <ID>`. Otherwise it creates an automation and prints `Created <ID>`. So a setup
-script can run the same command again and does not make copies. When two or more automations have
-the same name, `create` stops and lists them.
+JSON has the fields of the [Automations API](automations-api.md#create-an-automation). A setup
+script can run the same `create` command again and makes no copies:
 
-Add `--json` to `list` or `show` to get the JSON answer of the gateway. When a command fails, it
+| Automations with the same `name` that no extension owns | Result |
+|---|---|
+| None | `create` creates an automation and prints `Created <ID>`. |
+| One | `create` changes that automation and prints `Updated <ID>`. |
+| Two or more | `create` stops and lists them. |
+
+To get the JSON answer of the gateway, add `--json` to `list` or `show`. A command that fails
 writes the reason to standard error and exits with status 2.
 
 ## Automations from extensions
 
 An extension can declare an automation. A run of this automation calls a Python function of the
-extension and does not call a model. The run sends no provider request and uses no tokens. Use it
-for work that code can do alone, for example a sync or a cleanup every hour. [Extension
-API](extension-api.md#automations) tells how to declare one.
-
-Vis adds the automation when the extension loads. After the gateway starts, it loads the global
-extensions and the extensions of each project in the background, also of archived projects. When
-you add a project, Vis loads the extensions of that project. So the automations are ready without a
-step from you.
+extension, sends no provider request, and uses no tokens. Use it for work that code can do alone,
+for example a sync or a cleanup every hour. [Extension API](extension-api.md#automations) explains
+how to declare one.
 
 Adding a project lets the code of its extensions run on this computer, also on a schedule. Add only
 the projects that you trust.
 
+Vis adds the automation when the extension loads, with no step from you. After the gateway starts,
+it loads the global extensions and the extensions of each project in the background, archived
+projects included. When you add a project, Vis loads the extensions of that project.
+
 The extension owns the definition. The app and the TUI show **From extension** with the name of
-the extension and the key of the automation. You can run, pause, resume and delete the automation,
-but you cannot edit it. To change it, change the extension.
+the extension and the key of the automation. You can run, pause, resume, and delete the
+automation, but you cannot edit it. To change it, change the extension.
 
 - **Pause** stays when the extension loads again.
 - **Delete** removes the automation and its runs. The automation comes back when the extension
@@ -272,12 +268,12 @@ JSON body for each run event:
 }
 ```
 
-The `type` is `run.completed`, `run.failed`, `run.cancelled`, `run.skipped` or `run.unknown`. Set
-`events` in the callback to receive only some types. Without `events`, Vis sends every type.
+The `type` is `run.completed`, `run.failed`, `run.cancelled`, `run.skipped`, or `run.unknown`. To
+receive only some types, set `events` in the callback. Without `events`, Vis sends every type.
 
-Create a callback secret in the [automation views](#manage-automations) to sign each request. Vis
+To sign each request, create a callback secret in the [automation views](#manage-automations). Vis
 then sends the [Standard Webhooks](https://www.standardwebhooks.com/) headers `webhook-id`,
-`webhook-timestamp` and `webhook-signature`. Without a callback secret, the requests have no
+`webhook-timestamp`, and `webhook-signature`. Without a callback secret, the requests have no
 signature. This Python function checks a signed request:
 
 ```python
@@ -295,13 +291,15 @@ def is_from_vis(secret: str, headers: dict[str, str], body: bytes) -> bool:
     return any(hmac.compare_digest(expected, item) for item in headers["webhook-signature"].split())
 ```
 
-Answer with a `2xx` status within 10 seconds. Otherwise Vis tries again after 30 seconds, 2
-minutes, 10 minutes, 1 hour and 6 hours. It stops after 6 attempts. A repeated attempt keeps its
+Answer with a `2xx` status within 10 seconds. If you do not, Vis tries again after 30 seconds, 2
+minutes, 10 minutes, 1 hour, and 6 hours. It stops after 6 attempts. A repeated attempt keeps its
 `webhook-id`, so your receiver can drop a copy.
 
 ## Start a run from a webhook
 
-A webhook trigger starts a run when another service sends a signed request.
+The other service must reach your gateway at the webhook address. In most networks, a gateway on a
+laptop is not reachable from the internet. [Running a gateway](gateway-service.md) explains how to
+run a gateway on a server.
 
 1. [Create an automation](#create-an-automation) with a **Webhook** trigger. Choose the signature
    of the service and give the events, for example `pull_request`. To keep only some events, [add
@@ -310,12 +308,8 @@ A webhook trigger starts a run when another service sends a signed request.
    secret** and copy the secret. Vis shows it only once.
 3. Copy the webhook address. The app shows it as **Webhook address**. It is the gateway address
    followed by `/v1/hooks/<automation-id>`.
-4. In the other service, add a webhook with this address, the content type `application/json` and
+4. In the other service, add a webhook with this address, the content type `application/json`, and
    the secret.
-
-The other service must reach your gateway at this address. A gateway on a laptop is usually not
-reachable from the internet. [Running a gateway](gateway-service.md) explains how to run a gateway
-on a server.
 
 ### Signatures
 
@@ -330,18 +324,18 @@ The `github` and `generic` kinds use the whole secret as the HMAC key. The `stan
 base64-decoded part after `whsec_`. A `standard` or `generic` timestamp is in seconds. It must be
 within 300 seconds of the gateway clock.
 
-To send a signed request from your own code, see [Automations
+To send a signed request from your own code, read [Automations
 API](automations-api.md#send-a-webhook).
 
 ### Filter events
 
-An empty `events` list accepts every event. Otherwise, Vis reads the event name from the
-`X-GitHub-Event`, `X-Gitlab-Event` or `X-Webhook-Event` header. Without these headers, it uses the
-`type`, `event_type` or `object_kind` field of the payload. An entry matches the event name, or the
+An empty `events` list accepts every event. For any other list, Vis reads the event name from the
+`X-GitHub-Event`, `X-Gitlab-Event`, or `X-Webhook-Event` header. Without these headers, it uses the
+`type`, `event_type`, or `object_kind` field of the payload. An entry matches the event name, or the
 name and the `action` field, for example `pull_request.opened`.
 
 Each filter reads one `field` of the payload as a dot path, for example `pull_request.base.ref` or
-`commits.0.id`. It compares the value with `equals`, `contains` or `in`. A run starts only when
+`commits.0.id`. It compares the value with `equals`, `contains`, or `in`. A run starts only when
 every filter passes.
 
 ```json
@@ -358,15 +352,15 @@ every filter passes.
 
 ### Use the payload in the prompt
 
-Write `{dot.path}` in the prompt to insert a value from the payload. Write `{__raw__}` to insert the
-whole body. A path that does not exist stays as written. Vis clips each value to 4000 bytes.
+To insert a value from the payload, write `{dot.path}` in the prompt. To insert the whole body,
+write `{__raw__}`. A path that does not exist stays as written. Vis clips each value to 4000 bytes.
 
 ```text
 Review pull request {pull_request.number}: {pull_request.title}. The diff is at {pull_request.diff_url}.
 ```
 
 Vis marks the text from a webhook as untrusted, so the agent treats it as data and not as
-instructions. The payload fills only the prompt. It cannot choose the target, the model or a tool.
+instructions. The payload fills only the prompt. It cannot choose the target, the model, or a tool.
 
 ### Check a delivery
 
@@ -381,7 +375,7 @@ instructions. The payload fills only the prompt. It cannot choose the target, th
 | `429` | The automation received more than 30 requests with a valid signature in one minute. Requests that fail the check do not count. |
 
 Vis drops a repeated delivery by its delivery ID. It reads the ID from `X-GitHub-Delivery`,
-`webhook-id`, `X-Gitlab-Event-UUID`, `Idempotency-Key` or `X-Request-Id`.
+`webhook-id`, `X-Gitlab-Event-UUID`, `Idempotency-Key`, or `X-Request-Id`.
 
 ## Limits
 
@@ -403,8 +397,8 @@ Vis drops a repeated delivery by its delivery ID. It reads the ID from `X-GitHub
 
 ## See also
 
-- [Sessions](sessions.md) — find and continue the sessions that runs create.
-- [Running a gateway](gateway-service.md) — keep a gateway online, so that schedules and webhooks
-  work.
-- [Python SDK](python-sdk.md) — install the SDK and run agents from your own code.
-- [Extension API](extension-api.md#automations) — declare an automation in an extension.
+- To find and continue the sessions that runs create, read [Sessions](sessions.md).
+- To keep a gateway online, so that schedules and webhooks work, read
+  [Running a gateway](gateway-service.md).
+- To install the SDK and run agents from your own code, read [Python SDK](python-sdk.md).
+- To declare an automation in an extension, read [Extension API](extension-api.md#automations).

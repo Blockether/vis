@@ -1,109 +1,102 @@
 # Python sandbox
 
-Vis uses a CPython sandbox to run the agent's tool calls and calculations, and to
-start its shell commands. It is separate from your project's Python environment:
-a package that you install in one is not always available in the other.
-This page explains which environment to use, how to install packages with `pip`
-and what the sandbox can access.
+Vis runs the tool calls and calculations of the agent in a CPython sandbox, and starts its shell
+commands from there. The sandbox is separate from the Python environment of your project, so a
+package in one is not always available in the other. This page explains which environment to use,
+how to install packages with `pip`, and what the sandbox can access.
 
 ## When to use
 
-- **The agent cannot import a package that your project already has.** The sandbox
-  has its own packages. [Install the package there](#packages).
-- **You want to try an extension declaration before you save a file.** [Experiment
-  in the sandbox](#experiment-with-extension-declarations).
-- **You need to know what the agent's code can read, write or connect to.** See
+- **The agent cannot import a package that your project has.**
+  [Install the package in the sandbox](#packages).
+- **You want to try an extension declaration before you save a file.**
+  [Experiment in the sandbox](#experiment-with-extension-declarations).
+- **You need to know what the code of the agent can read, write, or connect to.** Read
   [What the sandbox may do](#what-the-sandbox-may-do).
-- **Python HTTPS requests fail a strict certificate check.** See [TLS
-  compatibility](#tls-compatibility).
-- **The Python worker stops responding.** Look for the [hang
-  evidence](#diagnosing-an-unresponsive-worker) that Vis tries to save.
-- **A helper or variable from an earlier turn is gone.** See [Sandbox state after a
-  restart](#sandbox-state-after-a-restart).
+- **Python HTTPS requests fail a strict certificate check.** Read
+  [TLS compatibility](#tls-compatibility).
+- **The Python worker does not respond.** Find the
+  [hang evidence](#diagnosing-an-unresponsive-worker).
+- **A helper or a variable from an earlier turn is gone.** Read
+  [Sandbox state after a restart](#sandbox-state-after-a-restart).
+- **The agent must give you a file or a report.** Read [Attachments](#attachments).
 
-To limit what the agent's commands can reach, turn on the [process jail](jail.md).
+To limit what the commands of the agent can reach, turn on the [process jail](jail.md).
 
 ## Running Python
 
-Each session has its own Python state. The sandbox and trusted Python extensions
-use separate namespaces.
-Tools such as `grep`, `ls` and `shell` are available as
-Python functions. The agent reads and writes files with plain Python. `apropos` and `doc` show the available functions.
+Each session has its own Python state. The sandbox and the trusted Python extensions use separate
+namespaces. Tools such as `grep`, `ls`, and `shell` are Python functions. The agent reads and
+writes files with plain Python. `apropos` and `doc` show the available functions.
 
 ### Unbalanced quotes and brackets
 
-Sometimes the agent writes a block that Python cannot parse because a quote or bracket does not
-balance. For example:
+The agent can write a block that Python cannot parse, because a quote or a bracket does not
+balance:
 
 - A string never closes.
-- A quote inside a string ends it too early.
-- A bracket is closed by the wrong character or not closed at all.
+- A quote in a string ends the string too early.
+- The wrong character closes a bracket, or nothing closes it.
 
-Literal braces in an f-string and a backslash escape that Python rejects stop a block in the same
-way. Vis repairs such a block with parinferish. It runs the repaired code only when Python can
-parse it. The output of the block then starts with a note that names the Python error and each
-fix. Vis also marks the block as repaired. The agent reads the same note, so it can check that the
-repaired code did what it meant.
+Literal braces in an f-string, and a backslash escape that Python rejects, stop a block in the
+same way. Vis repairs such a block with parinferish and runs the repaired code only when Python
+can parse it. The output then starts with a note of the Python error and each fix, and Vis marks
+the block as repaired. The agent reads the same note, so it can check the repaired code.
 
-If the repair cannot make the block parse, the block does not run. The error shows Python's own
-message and the first wrong quote, bracket or escape. It also shows the line with that problem.
+If the repair cannot make the block parse, the block does not run. The error shows the message of
+Python, the first wrong quote, bracket, or escape, and the line that holds it.
 
 ### File edits and formatting
 
-The agent writes files with plain Python inside its blocks. Language extensions inspect changed files
-after the block, including a block that raises an exception. They can then repair invalid files and
-report corrections in the next context. These checks do not intercept each write or roll back a block.
+After a block, also one that raises an exception, the language extensions inspect the changed
+files. They can repair invalid files and
+report the corrections in the next context. These checks do not intercept a write and do not roll
+back a block.
 
 The Clojure extension checks and repairs files in Python, without a JVM. A Python port of the
-Clojure reader must accept each repair. Clojure and Python formatters change layout, not program
-structure.
+Clojure reader must accept each repair. The Clojure and Python formatters change layout, not
+program structure.
 
 ## Sandbox state after a restart
 
-The sandbox keeps your helpers and variables while you work. You can use a result
-from an earlier turn without computing it again.
+The sandbox keeps your helpers and variables while you work, for any number of turns. The sandbox
+process stops only in these cases:
 
-The sandbox process stops only in these cases:
-
-- The session was idle for 15 minutes. Set `VIS_ENV_IDLE_TTL_MS` on the gateway to
-  change this time.
+- The session was idle for 15 minutes. To change this time, set `VIS_ENV_IDLE_TTL_MS` on the
+  gateway.
 - You changed settings that need a new sandbox, for example with `/reload`.
-- The gateway freed memory for other sessions. See [Resource
-  limits](gateway-service.md#resource-limits).
+- The gateway released memory for other sessions. Read
+  [Resource limits](gateway-service.md#resource-limits).
 - The gateway restarted.
-
-The number of turns does not stop the sandbox. A session that stays active keeps
-the same process.
 
 After each block, Vis saves a snapshot of the session:
 
 - The source of each helper function and class, and each `import`.
-- Each variable that Python can pickle. One value can use up to 1 MiB, and all
-  values together up to 4 MiB.
-- Each `bytes` or `str` value that is larger than these limits, up to 32 MiB.
-  All these values together can use up to 128 MiB. Vis keeps them in separate
-  files beside the snapshot, and deletes the files when you delete the session.
+- Each variable that Python can pickle. One value can use up to 1 MiB, and all values together up
+  to 4 MiB.
+- Each `bytes` or `str` value above these limits, up to 32 MiB. All these values together can use
+  up to 128 MiB. Vis keeps them in separate files next to the snapshot, and deletes the files when
+  you delete the session.
 
-The next sandbox restores this snapshot before it runs your next block. The output
-of that block shows no sign of the restart. If a block uses a name that did not
-come back, the error gives the reason.
+The next sandbox restores the snapshot before it runs your next block. The output of that block
+shows no sign of the restart. If a block uses a name that did not come back, the error gives the
+reason.
 
-These values never survive a restart. Create them again when you need them:
+These values are never in the snapshot, so create them again:
 
-- Open files, sockets and other handles.
+- Open files, sockets, and other handles.
 - Generators and running processes.
-- Other values that are larger than the limits.
+- Other values above the limits.
 
-`defs()` lists your helpers and variables. A variable row shows the type and size
-of the value, and tells you if Vis saved it. `defs()` never shows values. To remove
-a helper or variable from the snapshot, delete it with `del name`. This also frees
-its memory.
+`defs()` lists your helpers and variables. A variable row shows the type and the size of the
+value, and tells you if Vis saved it. `defs()` never shows values. To remove a helper or a
+variable from the snapshot and release its memory, run `del name`.
 
 ## Experiment with extension declarations
 
-Ask Vis to inspect an SDK type or prototype a tool declaration in `python_execution`.
-The sandbox includes the bundled `blockether.vis.extension` module. You do not need
-to install `vis-agent` to import it. For example:
+Ask Vis to inspect an SDK type or to prototype a tool declaration in `python_execution`. The
+sandbox includes the bundled `blockether.vis.extension` module, so the import needs no installed
+`vis-agent`:
 
 ```python
 from __future__ import annotations
@@ -126,35 +119,35 @@ symbol = sdk.Symbol(greet)
 print(symbol.contract)
 ```
 
-You can inspect public types, validate declarations and call your own Python
-functions. This does not install a tool. `sdk.register_extension(...)` and
-extension host operations such as `sdk.state`, `sdk.shell(...)` and
-`sdk.notify(...)` raise `RuntimeError` explaining that they are unavailable in
-`python_execution`. Native filesystem helpers such as `sdk.fs.read(...)` remain
-restricted to trusted extensions and raise `PermissionError` in the sandbox.
-Importing the SDK does not relax filesystem, process or network restrictions or
-initialize the standalone SDK host.
+In the sandbox, you can inspect public types, validate declarations, and call your own Python
+functions. You cannot install a tool:
+
+- `sdk.register_extension(...)` and host operations such as `sdk.state`, `sdk.shell(...)`, and
+  `sdk.notify(...)` raise `RuntimeError`. The message says that they are unavailable in
+  `python_execution`.
+- Native filesystem helpers such as `sdk.fs.read(...)` are for trusted extensions only. They raise
+  `PermissionError` in the sandbox.
+- An import of the SDK does not relax the filesystem, process, or network restrictions. It does
+  not initialize the standalone SDK host.
 
 ### What the sandbox does not provide
 
-The sandbox carries one SDK module, `blockether.vis.extension`, and nothing else
-under `blockether.vis`, so imports that work against an installed `vis-agent`
-package fail here:
+The sandbox has one module under `blockether.vis`, which is `blockether.vis.extension`. An import
+that works against an installed `vis-agent` package fails here:
 
 ```python
 import blockether.vis.extension as sdk   # the bundled module
 from blockether.vis.engine import Agent  # ModuleNotFoundError
 ```
 
-`blockether.vis.engine` and `blockether.vis.views` belong to the
-[Python SDK](python-sdk.md), which drives Vis from your own program. Install
-`vis-agent` and run that code in your own interpreter.
+`blockether.vis.engine` and `blockether.vis.views` belong to the [Python SDK](python-sdk.md),
+which drives Vis from your own program. Install `vis-agent` and run that code in your own
+interpreter.
 
-Names that start with an underscore in the bundled module are internal. No extension registers in `python_execution`, so the
-registration record of the module stays empty.
-
-Running an extension entry file yourself does not change that. `importlib` runs the file, and the
-file stops at its first host operation while it declares itself:
+A name in the bundled module that starts with `_` is internal. No extension registers in
+`python_execution`, so the registration record of the module stays empty. That is also true when
+you run an extension entry file yourself. `importlib` runs the file, and the file stops at its
+first host operation while it declares itself:
 
 ```text
 RuntimeError: Extension host operation 'declare_env' is unavailable in
@@ -162,16 +155,15 @@ python_execution. You can inspect SDK types and construct declarations here;
 load an extension to use its host APIs.
 ```
 
-To register tools and test their host operations, load an extension using the
-[extension tutorial](extending.md). Trusted extension code runs in a separate
-process with its own host bindings. The bundled SDK takes precedence over pip and
-editable copies in both contexts.
+To register tools and test their host operations, load an extension as the
+[extension tutorial](extending.md) shows. Trusted extension code runs in a separate process with
+its own host bindings. In both places, the bundled SDK wins over pip copies and editable copies.
 
 ## Reading tool results
 
-A tool returns its complete result to Python, but only printed text reaches the next model request.
-The agent can keep a large result in a variable and inspect only the fields it needs. For example,
-each of these calls shows more of a shell result:
+A tool returns its complete result to Python, but only printed text reaches the next model
+request. The agent keeps a large result in a variable and prints only the fields that it needs.
+Each of these calls shows more of a shell result:
 
 ```python
 r = await shell("ls -la")
@@ -180,145 +172,154 @@ print(r.logs(-20))       # the last twenty output lines
 print(r["out"])          # everything the process has written
 ```
 
-Shell results are dictionary-like handles with `wait`, `logs`, `type` and `stop`
-methods. Their short view includes status, exit and timeout information. When it
-omits text, it names the field or log cursor that holds the rest. `dict(r)` exposes
-the full mapping and `json.dumps(r)` serializes every field. Both can produce much
-more output than the model needs.
+A shell result is a handle that reads as a dictionary and has the `wait`, `logs`, `type`, and
+`stop` methods. Its short view has the status, exit, and timeout information. When the view omits
+text, it names the field or the log cursor that holds the rest. `dict(r)` gives the full mapping,
+and `json.dumps(r)` serializes every field. Both can print much more than the model needs.
 
-You can read a result map either way: `r["status"]` and `r.status` return the same
-field, and that holds at any depth, so `r["transcript"]["turns"]` is
-`r.transcript.turns`. Dictionary names keep their dictionary meaning, so `r.items` is
-the mapping method and the field of that name stays `r["items"]`. A name that is not
-a field raises `KeyError` or `AttributeError` listing the fields the result does
-carry. `session` reads the same way.
+Read a result map by key or by attribute. `r["status"]` and `r.status` return the same field, at
+each depth, so `r["transcript"]["turns"]` is `r.transcript.turns`. `session` reads the same way.
 
-`apropos(pattern)` remains a list of `(type, name, body)` records. Printing it
-shows one compact row per symbol. Attributes, indexing and `doc(row)` still work.
+`apropos(pattern)` is still a list of `(type, name, body)` records. Its print shows one compact
+row for each symbol. Attributes, indexes, and `doc(row)` still work.
 
-Extension tools answer with records built from their public fields, not with the extension's own
-Python objects. For example, a `PageList` result has `r.results` or `r["results"]` and `r.total`,
-but none of the original methods.
+An extension tool answers with a record of its public fields, not with the Python object of the
+extension. For example, a `PageList` result has `r.results` or `r["results"]`, and `r.total`, but
+none of the original methods.
 
-A record is a read-only dictionary of its fields. `r.get("total")`, `r.keys()`, `r.items()` and
-`r.values()` read them. `json.dumps(r)` writes the fields, also for a record inside a record and
-with your own `default=`. `dict(r)` gives a copy that you can change. Dictionary names keep their
-dictionary meaning: on a record with an `items` field, `r.items` is the mapping method and
-`r["items"]` is the field.
+A record is a read-only dictionary of its fields:
 
-A name that is not a field raises an error that lists the fields of the record:
+- `r.get("total")`, `r.keys()`, `r.items()`, and `r.values()` read the fields.
+- `json.dumps(r)` writes the fields, also for a record in a record and with your own `default=`.
+- `dict(r)`, `r | other`, and `r.copy()` give a plain dictionary that you can change.
+- Two records with equal fields are equal, also when their class names differ. A record is also
+  equal to a plain dictionary with the same fields.
+
+On a result map and on a record, a dictionary name keeps its dictionary meaning. With an `items`
+field, `r.items` is the mapping method and `r["items"]` is the field. A name that is not a field
+raises an error that lists the real fields:
 
 - `r["methods"]` raises `KeyError`.
 - `r.methods` raises `AttributeError`.
 
-Use a listed field. Do not guess another one. `doc(tool)` shows the same fields under **Model
-schemas**. When the extension declares a
-[backing field](extension-api.md#field-backed-sequences), iteration, `len(r)` and `r[0]` read that
-field. Another record iterates over its field names, as a dictionary does.
+Use a listed field. `doc(tool)` shows the same fields under **Model schemas**.
 
-On a record with a backing field, `x in r` tests the rows, and a record with no rows is false. For
-that record `json.dump(r, file)` writes `{}`: use `file.write(json.dumps(r))`. Two records with equal
-fields are equal, also when their class names differ. A record is also equal to a plain dictionary
-with the same fields. `r | other` and `r.copy()` give a plain dictionary.
+When the extension declares a [backing field](extension-api.md#field-backed-sequences),
+iteration, `len(r)`, and `r[0]` read that field. `x in r` tests the rows, and a record with no
+rows is false. For such an empty record, `json.dump(r, file)` writes `{}`, so use
+`file.write(json.dumps(r))`. A record without a backing field iterates over its field names, as a
+dictionary does.
 
-`read_session()` also returns more data than its printed summary. The full history,
-including folded steps, is under `transcript["turns"]`, then `iterations`, then
-`blocks`. Each block holds `code`, `stdout` and any `error`. `list_sessions()`
-finds other saved sessions.
+`read_session()` also returns more data than its printed summary. The full history, folded steps
+included, is under `transcript["turns"]`, then `iterations`, then `blocks`. Each block holds
+`code`, `stdout`, and an `error` if one occurred. `list_sessions()` finds other saved sessions.
 
 ## What the sandbox may do
 
-These limits come from the process jail, which is off by default. Until you turn it on,
-sandbox code reaches the same files and hosts your own account can, and
-`session["access"]["is_jailed"]` is `false`. With the jail enabled, a CPython audit hook
-checks filesystem, process and network operations, including operations made through
-imported libraries.
+The limits in the table come from the process jail, which is off by default. With the jail off,
+sandbox code reaches the same files and hosts as your account, and
+`session["access"]["is_jailed"]` is `false`. With the jail on, a CPython audit hook checks
+filesystem, process, and network operations, also those of imported libraries.
 
 | Capability | Policy with the jail enabled |
 | --- | --- |
-| Filesystem IO | confined to allowed workspace roots |
-| Spawning a process (`subprocess`, `os.system`, `os.popen`) | refused (use `shell(...)`, which applies the process policy) |
-| `ctypes` and foreign libraries | refused |
-| HTTP clients | routed through the gateway policy and network filters |
-| Raw sockets | guarded at the socket level |
-| Threads | capped per process, and exhaustion raises `RuntimeError` (also without the jail) |
-| Wall-clock time | every block has a timeout, lifted while a live view is open (also without the jail) |
-| Open files and sockets | capped by `VIS_PY_MAX_OPEN_FILES`, and a full table stops `shell` from starting processes (also without the jail) |
+| Filesystem IO | Confined to the allowed workspace roots |
+| Start of a process (`subprocess`, `os.system`, `os.popen`) | Refused. Use `shell(...)`, which applies the process policy |
+| `ctypes` and foreign libraries | Refused |
+| HTTP clients | Sent through the gateway policy and the network filters |
+| Raw sockets | Guarded at the socket level |
+| Threads | Limited for each process. At the limit, a new thread raises `RuntimeError`. Also without the jail |
+| Wall-clock time | Each block has a timeout, which does not apply while a live view is open. Also without the jail |
+| Open files and sockets | Limited by `VIS_PY_MAX_OPEN_FILES`. A full table stops `shell` from starting processes. Also without the jail |
 
-Host functions exposed from Clojure always apply their own permission checks. For example,
-`sdk.fs.read(...)` raises `PermissionError` in `python_execution`, with or without the jail. To turn
-the jail on and to read the complete policy, see [Process jail and network policy](jail.md).
+Host functions from Clojure always apply their own permission checks. For example,
+`sdk.fs.read(...)` raises `PermissionError` in `python_execution`, with or without the jail. To
+turn the jail on and to read the complete policy, go to
+[Process jail and network policy](jail.md).
 
 ## Packages
 
-`python_execution` imports explicitly installed shared packages from
-**`~/.vis/python/packages`**. Install them with the CLI below rather than from a block.
-Extensions without a declared uv project also use that directory, and every project
-on the gateway shares it. Vis prepares the uv environment of an extension package or
-declared uv project when it loads that extension. Such extensions run in separate
-trusted workers with their own dependencies and no shared-package fallback. Preparing
-that environment does not add its dependencies to `python_execution`.
+Imports do not install packages. A missing import raises `ModuleNotFoundError`.
 
-Imports do not install packages. Use `vis-agent python --shared -m pip install <package>`
-for shared sandbox packages and `vis-agent python --shared -m <module>` to run a
-shared tool, including from a project directory.
+### Where each kind of code gets its packages
 
-From a terminal, `vis-agent python` runs programs the way the `python` command does.
-`-c CODE`, `-m MODULE`, a script path or `-` for standard input runs as `__main__`, with
-the remaining arguments in `sys.argv`. An uncaught error prints its traceback to stderr,
-and the command exits with your program's status. Unlike `python_execution`, it has no
-tool functions or automatic imports. `vis-agent python --version` prints the Python
-version. Other interpreter options, such as `-u` or `-X`, are not supported.
+| Code | Packages |
+| --- | --- |
+| `python_execution` | The shared packages in `~/.vis/python/packages`, which you install explicitly |
+| An extension without a declared uv project | The same shared directory. Every project on the gateway shares it |
+| An extension package or a declared uv project | Its own uv environment, which Vis prepares when it loads the extension. No fallback to shared packages |
 
-Each word after the program goes to the program, also `--help` and `-v`. Put the options of
-Vis before the program: `vis-agent python --no-network script.py --help`.
+An extension with its own environment runs in a separate trusted worker. Its dependencies do not
+become available in `python_execution`.
 
-`vis-agent python uv sync --project PATH` is upstream uv. It prepares the environment of the
-project, normally `.venv`, not the shared sandbox packages. From that project,
-`vis-agent python -m <module>` uses that environment with the embedded Python of Vis. It does not
-use shared packages or their startup hooks. A missing or incompatible environment reports an error
-and does not fall back to shared packages.
+### Install shared packages
 
-Without a project, the CLI uses shared packages. For selection rules and explicit source paths, see
-[Python import roots](configuration.md#python-import-roots). To use the project's own interpreter,
-run `vis-agent python uv run --project PATH --no-sync python -m <module>`.
+Install from a terminal, not from a block:
 
-`vis-agent python -m pip install` installs into the environment that the CLI uses: the
-environment of the project, or shared packages without a project. A child process that your
-program starts with `sys.executable` imports the same packages. A console script that pip
-installed there also runs by itself. In a project, the child process is the interpreter of the
-project environment. A uv environment has no pip, so run pip as `vis-agent python -m pip`.
+- `vis-agent python --shared -m pip install <package>` installs a shared sandbox package.
+- `vis-agent python --shared -m <module>` runs a shared tool, also from a project directory.
 
-Missing imports raise `ModuleNotFoundError`. Sharing installed files does not relax
-sandbox restrictions: a package requiring refused native operations may work only
-in an extension. After updating shared packages, use `/reload` to rebuild session workers.
+After you update shared packages, run `/reload` to build the session workers again. Shared files
+do not relax the sandbox restrictions. A package that needs a refused native operation may work
+only in an extension.
 
-A locked uv project can install its own package and local dependencies editably.
-Their `.pth` files or backend import hooks resolve imports to the source checkout.
-After editing Python source, `/reload` refreshes editable imports and extension
-tools without another sync or gateway restart. Dependency or packaging-metadata
-changes require another sync. See the
-[editable-project guide](extension-development.md).
+### Run programs with `vis-agent python`
 
-Editable source is not a frozen snapshot. Modules that are already imported can keep old code until
-a reload, and a running call can still use old bindings. Native extension libraries do not
-hot-reload. Source paths of an editable install must stay inside the allowed filesystem roots of the
-sandbox. Installing a package gives no extra access. To check whether your package resolves to the
-checkout or an installed copy, import it and run `print(package.__file__)`.
+From a terminal, `vis-agent python` runs programs as the `python` command does. `-c CODE`,
+`-m MODULE`, a script path, or `-` for standard input runs as `__main__`, with the remaining
+arguments in `sys.argv`. An uncaught error prints its traceback to stderr, and the command exits
+with the status of your program. Unlike `python_execution`, the command has no tool functions and
+no automatic imports. `vis-agent python --version` prints the Python version. Other interpreter
+options, such as `-u` or `-X`, are not supported.
 
-Attachment functions are available without an import. `attach(...)` stores a
-file and returns its descriptor. Use `list_attachments()`, `get_attachment(...)`,
-`read_attachment(...)` and `show_attachment(...)` to retrieve attachments by
-filename or id. Saving another file with the same name creates a new version.
+Each word after the program goes to the program, also `--help` and `-v`. Put the options of Vis
+before the program: `vis-agent python --no-network script.py --help`.
 
-For example, store a Markdown report that you produced as `report`:
+- Without a project, the CLI uses the shared packages.
+- `vis-agent python uv sync --project PATH` is upstream uv. It prepares the environment of the
+  project, normally `.venv`, not the shared sandbox packages.
+- From that project, `vis-agent python -m <module>` uses that environment with the embedded Python
+  of Vis. It does not use the shared packages or their startup hooks. A missing or incompatible
+  environment reports an error, with no fallback to the shared packages.
+- To use the interpreter of the project, run
+  `vis-agent python uv run --project PATH --no-sync python -m <module>`.
+
+[Python import roots](configuration.md#python-import-roots) has the selection rules and the
+explicit source paths.
+
+`vis-agent python -m pip install` installs into the environment that the CLI uses. A child process
+that your program starts with `sys.executable` imports the same packages. In a project, that child
+process is the interpreter of the project environment. A console script that pip installed there
+also runs by itself. A uv environment has no pip, so run pip as `vis-agent python -m pip`.
+
+### Editable projects
+
+A locked uv project can install its own package and its local dependencies as editable. Their
+`.pth` files or backend import hooks resolve imports to the source checkout. After you edit Python
+source, `/reload` refreshes the editable imports and the extension tools, with no sync and no
+gateway restart. A change to dependencies or packaging metadata needs a new sync. The
+[editable-project guide](extension-development.md) has the steps.
+
+Editable source is not a frozen snapshot. An imported module can keep old code until a reload, and
+a running call can still use old bindings. Native extension libraries do not reload. The source
+paths of an editable install must stay in the allowed filesystem roots of the sandbox. An
+installed package gets no extra access. To check that your package resolves to the checkout,
+import it and run `print(package.__file__)`.
+
+## Attachments
+
+Attachment functions need no import. `attach(...)` stores a file and returns its descriptor.
+`list_attachments()`, `get_attachment(...)`, `read_attachment(...)`, and `show_attachment(...)`
+get attachments by filename or id. A second file with the same name becomes a new version.
+
+To store a Markdown report that you produced as `report`:
 
 ```python
 attach(report.encode("utf-8"), filename="IMPLEMENTATION-search.md", kind="doc",
        media_type="text/markdown")
 ```
 
-`attach(...)` also opens an app: a live view that people use after your block ends. Import the
+`attach(...)` also opens an app, a live view that people use after your block ends. Import the
 builders with `from blockether.vis.extension import ui`, then call `attach(ui.app(...))`.
 [Apps](live-views.md#apps) shows the components and how you answer a Send.
 
@@ -327,44 +328,43 @@ builders with `from blockether.vis.extension import ui`, then call `attach(ui.ap
 | Runtime | Location |
 | --- | --- |
 | JVM | Git-pinned `vis-python-runtime` bridge, with the platform archive cached under `~/.vis/python/runtime/<version>/<platform>/` |
-| Native binary and release bundle | `vis-agent-python/` beside the executable |
+| Native binary and release bundle | `vis-agent-python/` next to the executable |
 
-`VIS_PYTHON_NATIVE_PATH` points a run at another copy of the library and
-`VIS_PYTHON_HOME` at another interpreter tree. Neither is needed in a normal
-install.
+`VIS_PYTHON_NATIVE_PATH` selects a different copy of the library, and `VIS_PYTHON_HOME` a
+different interpreter tree. A normal installation needs neither.
 
 ## TLS compatibility
 
-`python.tls_strict` defaults to `true`. An explicit `false` clears only strict
-X.509 validation for sandbox execution, trusted Python extensions and
-`vis-agent python`. Certificate trust and hostname checks remain enabled.
-Configure it in user or project YAML. See
-[TLS validation](configuration.md#python-tls-validation) for security
-trade-offs, scope and worker reload requirements.
+`python.tls_strict` defaults to `true`. An explicit `false` turns off only strict X.509 validation
+for sandbox execution, trusted Python extensions, and `vis-agent python`. Certificate trust and
+hostname checks stay on. Set the key in user or project YAML.
+[TLS validation](configuration.md#python-tls-validation) explains the security cost, the scope,
+and the worker reload.
 
 ## Diagnosing an unresponsive worker
 
-If Vis must stop a Python worker that does not respond, it first tries to save local hang evidence.
-It saves the evidence under `~/.vis/logs/YYYY-MM-DD/pyext-*/`, with the start date of the worker in
-UTC. For locations and retention, see [Logs and diagnostics](logging.md).
+Before Vis stops a Python worker that does not respond, it tries to save local hang evidence. The
+evidence goes under `~/.vis/logs/YYYY-MM-DD/pyext-*/`, with the UTC start date of the worker.
+[Logs and diagnostics](logging.md) has the locations and the retention.
 
 The warning in the gateway log gives the path to `hang.edn`. This file records the worker PID, the
-active and last completed RPCs, and capped JVM stacks. When the runtime supports it,
-`python-stacks.log` contains Python frames, even if native code holds the GIL. The report records
-whether that capture succeeded, failed or timed out.
+active RPC, the last completed RPC, and limited JVM stacks. When the runtime supports it,
+`python-stacks.log` holds the Python frames, also when native code holds the GIL. The report
+records if that capture succeeded, failed, or timed out.
 
-Collection adds at most 500 ms before the worker stops. A failed diagnostic does not prevent
-Vis from stopping the worker. Healthy readiness checks and ordinary session
-cleanup do not dump stacks.
+Collection adds at most 500 ms before the worker stops, and a failed diagnostic does not prevent
+the stop. Successful readiness checks and ordinary session cleanup dump no stacks.
 
-Both files are private to your OS account. They omit Python source, arguments,
-return values and local variables, but stack frames can contain file paths and
-function names. Review and redact them before sharing a bug report. Do not upload
-them automatically. Python frame locations show the function's definition line
-and bytecode offset, not a decoded current source line.
+Both files are private to your OS account. They omit Python source, arguments, return values, and
+local variables. Stack frames can still hold file paths and function names. Review and redact the
+files before you add them to a bug report, and do not upload them automatically. A Python frame
+location shows the definition line of the function and the bytecode offset, not the current source
+line.
 
 ## See also
 
-- [Context management](context-management.md) — batching tool calls and storing results in Python.
-- [Process jail and network policy](jail.md) — the policy the sandbox runs under.
-- [Configuration](configuration.md#python-import-roots) — making your own modules importable.
+- To batch tool calls and keep results in Python, read
+  [Context management](context-management.md).
+- For the policy that limits the sandbox, read [Process jail and network policy](jail.md).
+- To make your own modules importable, read
+  [Python import roots](configuration.md#python-import-roots).

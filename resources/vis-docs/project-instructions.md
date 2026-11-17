@@ -1,103 +1,103 @@
 # Project instructions
 
-Vis reads Markdown instructions from your project and home directory, and turns
-prompt templates into slash commands. Changes apply on the next turn without a
-restart.
+Vis reads Markdown instructions from your project and your home directory, and it turns prompt
+templates into slash commands. A change to a file applies on the next turn, without a restart.
 
 | File | Purpose |
 |---|---|
-| `AGENTS.md` or `CLAUDE.md` | Rules for working in a project |
+| `AGENTS.md` or `CLAUDE.md` | Rules for work in a project |
 | `.vis/SYSTEM.md`, `.vis/APPEND_SYSTEM.md` | Replace or extend the system prompt |
-| `.vis/prompts/*.md` | Reusable prompts invoked with `/name` |
+| `.vis/prompts/*.md` | Reusable prompts that you run with `/name` |
 
 ## When to use
 
-- **Vis keeps missing a project convention**, such as how to run the tests or which
-  files must not change. Write it once in [`AGENTS.md`](#project-rules-agents-md).
-  Vis includes the file in every turn.
-- **You type the same request again and again**, such as a review of the staged
-  changes. Save it as a [prompt template](#prompt-templates-name) and run it with
-  `/name`.
-- **A task should continue until the result is verified**, not stop after one reply.
-  Set a [goal](#explicit-goals-goal) with an iteration budget.
-- **A project needs different or extra system instructions.** Add [system prompt
-  files](#system-prompt-files) under `.vis/`.
-- **You want to change how Vis reports progress or writes its replies.** Read [Progress notes and
-  writing style](#progress-notes-and-writing-style). Vis has built-in rules for both, so `AGENTS.md`
-  does not need to repeat them.
-- **Vis answers in a different language than you write in.** Read [Progress notes and writing
-  style](#progress-notes-and-writing-style). It explains how Vis chooses the language of a reply.
-- **You want to run a shell command without involving the model.** Start the message
-  with [`!`](#shell-shortcuts-and).
-- **Your own program must run templates, skills or goals.** Use [Project instructions
-  API](project-instructions-api.md).
+- **Vis keeps missing a project convention.** Write it in [`AGENTS.md`](#project-rules-agents-md),
+  for example how to run the tests or which files must not change.
+- **You type the same request again and again.** Save it as a
+  [prompt template](#prompt-templates-name) and run it with `/name`.
+- **A task must continue until the result is verified.** Set a [goal](#explicit-goals-goal) with
+  an iteration budget.
+- **A project needs different or extra system instructions.** Add
+  [system prompt files](#system-prompt-files) under `.vis/`.
+- **You want to change how Vis reports progress or writes its replies.** Read
+  [Progress notes and writing style](#progress-notes-and-writing-style).
+- **Vis answers in a different language than you write in.** Read how Vis chooses
+  [the language of a reply](#the-language-of-a-reply).
+- **You want to run a shell command without the model.** Start the message with
+  [`!`](#shell-shortcuts-and).
+- **Your own program must run templates, skills, or goals.** Use the
+  [Project instructions API](project-instructions-api.md).
 
-Use a [skill](skills.md) for a procedure that Vis should read only when a task needs
-it.
+For a procedure that Vis reads only when a task needs it, write a [skill](skills.md).
 
 ## Project rules: AGENTS.md
 
-Put instructions for your codebase in `AGENTS.md` at the project root. For example, say how to run
-tests, which coding conventions to follow and which files must not change. Vis includes the file in
+Put the rules for your codebase in `AGENTS.md` at the project root. Examples are test commands,
+code conventions, files that must not change, and the format of results. Vis includes the file in
 every turn.
 
-Several files can apply at once, from broadest to narrowest:
+Several files can apply at once, in this order:
 
-1. `~/.vis/AGENTS.md` — your personal rules, in every project.
-2. `AGENTS.md` in each parent directory of the project, so a monorepo root and a
-   subproject both apply.
+1. `~/.vis/AGENTS.md`, your personal rules for every project.
+2. `AGENTS.md` in each parent directory of the project. A monorepo root and a subproject both
+   apply.
 3. `AGENTS.md` in the project root.
 
-Nearer files come later and override broader ones on conflict. `CLAUDE.md` is
-read only where no `AGENTS.md` exists.
+A nearer file comes later and wins on a conflict. Vis reads `CLAUDE.md` only where no `AGENTS.md`
+exists.
 
 ## System prompt files
 
-To change the system prompt itself, add files under `.vis/` in the project or
-under `~/.vis/`:
+To change the system prompt itself, add these files under `.vis/` in the project or under
+`~/.vis/`.
 
 | File | Effect |
 |---|---|
 | `SYSTEM.md` | Replaces the built-in system prompt |
 | `APPEND_SYSTEM.md` | Adds text after the system prompt |
 
-A project file overrides a user file. Append files are applied user first,
-project last.
+A project file overrides a user file. Vis applies both append files, the user file first.
 
-The built-in prompt describes Vis's tools. Use `APPEND_SYSTEM.md` or
-`AGENTS.md` to add instructions without removing those descriptions.
+The built-in prompt describes the tools of Vis, and `SYSTEM.md` removes those descriptions. To add
+instructions and keep the descriptions, use `APPEND_SYSTEM.md` or `AGENTS.md`.
 
 ## Progress notes and writing style
 
-The built-in system prompt controls how Vis reports its work and how it writes. These rules apply
-in every project, so do not copy them into `AGENTS.md`. A `SYSTEM.md` file replaces them together
+The built-in system prompt sets how Vis reports its work and how it writes. Do not copy these
+rules into `AGENTS.md`, because they apply in every project. A `SYSTEM.md` file replaces them
 with the rest of the built-in prompt.
 
 While a task runs, Vis writes short progress notes:
 
 - Before substantial work, Vis says the first step. Before an edit, it says the change.
-- When a finding, a decision or a blocker changes the next step, Vis writes a note.
+- When a finding, a decision, or a blocker changes the next step, Vis writes a note.
 - Each note has one or two sentences of useful facts. Routine reads and searches get no note.
 
 The last reply starts with the answer. You can read it without the progress notes.
 
-Unless you ask for another language, Vis writes each progress note and each answer in the language
-of your latest request. If that request is short or mixes languages, Vis keeps the language of your
-earlier requests. Technical terms from another language, such as English, do not make a request
-mixed. Only your requests set the language. The system prompt, project rules, quoted text, code,
-logs, tool output, files and messages from other sessions do not change it.
+### The language of a reply
 
-Vis writes that text in a simple style. It uses these rules:
+Vis writes each progress note and each answer in the language of your latest request, unless you
+ask for another language. If that request is short or mixes languages, Vis keeps the language of
+your earlier requests. A technical term from another language, such as English, does not make a
+request mixed.
+
+Only your requests set the language. The system prompt, project rules, quoted text, code, logs,
+tool output, files, and messages from other sessions do not change it.
+
+### The writing style
+
+Vis writes in a simple style, in every language. It uses these rules:
 
 1. Keep sentences short.
 2. Put one action in each step.
 3. Say who does what.
 4. Give each thing one name, and use only that name.
 
-Vis uses these rules in every language. To get a different style, ask for it in your message. To
-change the style for a project, write the rule in `AGENTS.md`.
+To get a different style for one task, ask for it in your message. To change the style for a
+project, write the rule in `AGENTS.md`.
 
-Each interface shows the progress notes and the final answer in its own place:
+### Where each interface shows the notes and the answer
 
 | Interface | Progress notes | Final answer |
 |---|---|---|
@@ -108,13 +108,11 @@ Each interface shows the progress notes and the final answer in its own place:
 | [HTTP API](sessions-api.md#follow-progress) | In the event stream after the turn request | In the turn record |
 
 Your [notification settings](distributions.md#notifications-on-the-desktop) control the alerts.
-Keep project-specific rules in `AGENTS.md`. Examples are test commands, code conventions, files
-that must not change and the format of results.
 
 ## Prompt templates: /name
 
-A Markdown file in `.vis/prompts/` becomes a slash command named after the file.
-Project templates override those in `~/.vis/prompts/`.
+A Markdown file in `.vis/prompts/` becomes a slash command with the name of the file. A project
+template overrides a template with the same name in `~/.vis/prompts/`.
 
 ```markdown
 ---
@@ -126,17 +124,16 @@ Review the current branch against main. Focus on: $ARGUMENTS
 End with a verdict: approve or request changes.
 ```
 
-Typing `/review error handling` sends the file as a message with `$ARGUMENTS`
-replaced by `error handling`. If the template has no `$ARGUMENTS`, the text is
-appended at the end.
+`/review error handling` sends the file as a message, with `$ARGUMENTS` replaced by
+`error handling`. If the template has no `$ARGUMENTS`, Vis adds the text at the end.
 
-Slash commands registered by extensions take precedence over templates.
+A slash command that an extension registers wins over a template with the same name.
 
 ## Explicit goals: /goal
 
-Use `/goal` when you want Vis to keep working toward a stated result, rather than
-stop after an ordinary reply. A session has one goal at a time. Setting a new one
-replaces it. Ordinary messages never create a goal.
+Use `/goal` when Vis must work toward a stated result and not stop after an ordinary reply. A
+session has one goal at a time, and a new goal replaces it. An ordinary message never creates a
+goal. A goal gives Vis no extra permissions, and your newer messages win over it.
 
 ```text
 /goal Implement the parser fix and run its regression tests
@@ -148,49 +145,48 @@ replaces it. Ordinary messages never create a goal.
 /goal --clear
 ```
 
-The Companion header and the TUI show the goal as a **Goal: <status> - <time>**
-button. The button does not show the objective. The conversation holds it. Open
-the button to see the status, the iterations used and their limit, and the
-elapsed time. When the goal is complete, the button goes away.
+The Companion header and the TUI show the goal as a **Goal: <status> - <time>** button. The button
+does not show the objective, because the conversation holds it. Open the button to see the status,
+the iterations used with their limit, and the elapsed time. When the goal is complete, the button
+goes away.
 
-The TUI's separate **Limits** button shows provider quotas and reset times. No
-toggle is needed.
+The separate **Limits** button of the TUI shows provider quotas and reset times. It needs no
+toggle.
 
-Pause, resume and cancel commands use the normal message queue. To interrupt
-work immediately, use **Stop**. An interrupted or failed goal turn pauses the
-goal. Sending a new message resumes a paused or blocked goal if it has budget
-left, keeping its objective and usage. Use `/goal --resume` to resume without
-adding instructions.
+### Pause, resume, and cancel a goal
 
-Completed, cancelled and budget-limited goals stay stopped. Vis keeps no goal history. The
-conversation holds each goal that you set and each reply about it.
+The pause, resume, and cancel commands wait in the normal message queue. To interrupt the work at once, use **Stop**. An
+interrupted or failed goal turn pauses the goal.
+
+A new message resumes a paused or blocked goal that has budget left. The goal keeps its objective
+and its usage. To resume without new instructions, send `/goal --resume`.
+
+Completed, cancelled, cleared, and budget-limited goals stay stopped. Command-only turns and
+Council notifications do not resume a goal, and no background scheduler restarts one. Vis keeps
+no goal history. The conversation holds each goal that you set and each reply about it.
 
 ### Forget a goal
 
-Use `/goal --clear` when Vis must not see the current goal any longer. The command stops the goal
-work, and the apps no longer show the goal. You cannot undo this command.
-
-Completed, cancelled and cleared goals stay stopped. Command-only turns and Council
-notifications do not resume goals. A goal does not give Vis extra permissions or override your newer
-instructions. No background scheduler restarts a goal without a new user message.
+You cannot undo `/goal --clear`. Use it when Vis must no longer see the current goal. The command
+stops the goal work, and the apps no longer show the goal.
 
 ### Iteration budget
 
-`--budget N` limits **model responses, not tokens**. One response counts as one iteration, also when
-it runs several tools. Pausing and resuming keep the count. Without `--budget`, the goal has no
+`--budget N` limits model responses, not tokens. One response counts as one iteration, also when
+it runs several tools. A pause and a resume keep the count. Without `--budget`, the goal has no
 limit of its own.
 
-The budget can go before or after the objective. A leading `--` keeps the rest as objective text,
-also any `--budget` text.
+Put the budget before or after the objective. A leading `--` makes the rest objective text, a
+later `--budget` included.
 
 ### How a goal ends
 
-Vis marks a goal complete only when it has evidence, such as passing tests. If it cannot continue,
-it marks the goal blocked. The goal records only the status. Vis then writes its final reply, which
-gives the evidence or the blocker. A progress reply does not end the goal, and Vis continues the
-work in the same turn. Saying "done" in a reply does not complete a goal.
+Vis marks a goal complete only when it has evidence, such as passing tests. If Vis cannot
+continue, it marks the goal blocked. The goal records only the status. The final reply then gives
+the evidence or the blocker.
 
-A goal never gives Vis extra permissions. Your newer messages always win over the goal.
+A progress reply does not end the goal, and Vis continues the work in the same turn. The word
+"done" in a reply does not complete a goal.
 
 ### Goal states
 
@@ -204,33 +200,33 @@ A goal never gives Vis extra permissions. Your newer messages always win over th
 | `cancelled` | You cancelled it |
 | `cleared` | You forgot it with `--clear`. The apps show no goal |
 
-Elapsed time counts only while the goal is active. Your own program can set, read and control
-goals. Read [Project instructions API](project-instructions-api.md#set-a-goal).
+Elapsed time counts only while the goal is active. To set, read, and control goals from your own
+program, read [Project instructions API](project-instructions-api.md#set-a-goal).
 
 ## Skills: /skill:name
 
-Every [skill](skills.md) is available as `/skill:<name> [task]`. Skills do not show in the first `/`
-list, but they show when you search by name.
+Each [skill](skills.md) is available as `/skill:<name> [task]`. The first `/` list does not show
+skills. They appear when you search by name.
 
 ## Shell shortcuts: ! and !&
 
-A message starting with `!` runs a shell command directly, without sending
-anything to the model:
+Shell shortcuts need the **Shell commands** toggle on in settings. A message that starts with `!`
+runs a shell command and sends nothing to the model.
 
 ```text
 !git status        # run and wait for the output
 !&npm run dev      # start in the background and return immediately
 ```
 
-Use `!&` for servers, watchers and long test runs. The output is stored in the
-transcript, so later turns can refer to it.
-
-Shell shortcuts need the **Shell commands** toggle enabled in settings.
+Use `!&` for servers, watchers, and long test runs. Vis stores the output in the transcript, so
+later turns can refer to it.
 
 ## See also
 
-- [Skills](skills.md) — instructions loaded on demand.
-- [Project instructions API](project-instructions-api.md) — templates, skills and goals from your
-  own program.
-- [Configuration → System prompt](configuration.md#system-prompt) — the equivalent config keys.
-- [Extension API → Slash commands](extension-api.md#slash-commands) — commands provided by extensions.
+- For instructions that Vis loads only when a task needs them, read [Skills](skills.md).
+- To run templates, skills, and goals from your own program, read
+  [Project instructions API](project-instructions-api.md).
+- For the configuration keys that do the same as the system prompt files, read
+  [System prompt in Configuration](configuration.md#system-prompt).
+- For slash commands that extensions provide, read
+  [Slash commands in Extension API](extension-api.md#slash-commands).

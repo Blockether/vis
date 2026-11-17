@@ -1,46 +1,28 @@
 # Skills
 
-A skill gives Vis reusable instructions for a task, such as reviewing a change
-or preparing a release. It is a folder containing a `SKILL.md` file, with any
-scripts or templates the task needs. Vis lists available skills in its prompt
-and reads the full instructions when a task needs one.
+A skill is a folder with a `SKILL.md` file that holds reusable instructions for a task, such as a
+review or a release. The folder also holds the scripts and templates that the task needs. Vis lists
+the available skills in its prompt and reads the full instructions when a task needs one.
 
-Skills written for Claude Code, pi, opencode or the
+Skills written for Claude Code, pi, opencode, or the
 [agent skills standard](https://agentskills.io) work without changes.
 
 ## When to use
 
-- **You explain the same workflow to Vis for every release, review or migration.** [Write it once as
-  a skill](#write-a-skill), with the scripts and templates it needs. Vis reads the skill when a task
-  needs it.
-- **The procedure is too long to keep in `AGENTS.md`**, which Vis includes in every
-  turn. Vis lists only a skill's name and description until a task needs the full
-  instructions.
-- **You already use skills with Claude Code, pi or opencode.** Vis searches [the
-  same folders](#where-vis-looks), so they work without changes.
+- **You explain the same workflow to Vis for every release, review, or migration.**
+  [Write it once as a skill](#write-a-skill), with its scripts and templates.
+- **The procedure is too long for `AGENTS.md`.** Vis includes `AGENTS.md` in every turn. For a
+  skill, Vis lists only the name and the description until a task needs the full instructions.
+- **You already use skills with Claude Code, pi, or opencode.** Vis searches
+  [the same folders](#where-vis-looks).
 - **You want Vis to follow a particular skill now.** Name it with
   [`/skill:<name>`](#use-a-skill-explicitly).
-- **A skill should not be offered for this task or project.** Control its
-  [availability](#control-availability) without deleting the skill files.
+- **A skill must not be offered for this task or project.**
+  [Switch it off](#control-availability). The skill files stay.
 
 Put rules that apply to every task in
-[`AGENTS.md`](project-instructions.md#project-rules-agents-md). When the task needs a
-tool that Vis can call rather than instructions, write an [extension](extending.md).
-
-## Control availability
-
-Open global settings or the current project, group or session's settings and
-find the skill under **Skills**. Switch it off to remove it from future discovery,
-`doc()` lookups, prompt inventories and slash expansion. Use **Use inherited
-value** to follow the parent scope again. The global switch affects sessions
-without a more specific override.
-
-An extension can bundle a skill without its own switch. That skill follows the
-extension's Auto, On or Off choice. Switch the extension off to remove the skill.
-
-Availability does not erase instructions already in the conversation and is not
-a filesystem permission. See [scoped settings](configuration.md#project-group-and-session-settings)
-for inheritance and [the process jail](jail.md) for access restrictions.
+[`AGENTS.md`](project-instructions.md#project-rules-agents-md). When the task needs a tool that Vis
+can call, write an [extension](extending.md).
 
 ## Write a skill
 
@@ -64,17 +46,15 @@ description: Use when the user requests a release. Verifies, tags and publishes.
 3. Tag and push.
 ```
 
-Vis reads `name` and `description` from the frontmatter. State when the skill
-should be used in `description`. The model uses it to select a skill. If `name`
-is missing, Vis uses the folder name.
+Vis reads `name` and `description` from the frontmatter. In `description`, state when to use the
+skill. The model selects a skill by its description. If `name` is missing, Vis uses the folder name.
 
-Bundled files (scripts, templates, references) are read with ordinary file tools
-when the skill is used.
+When Vis uses the skill, it reads the bundled scripts, templates, and references with the ordinary
+file tools.
 
 ## Where Vis looks
 
-Vis searches these sources in order. The first skill with a given name is used.
-Later matches are ignored.
+Vis searches these sources in order and uses the first skill with a given name.
 
 | Location | Scope |
 |---|---|
@@ -91,33 +71,47 @@ Later matches are ignored.
 | `~/.config/opencode/skills`, then `~/.config/opencode/skill` | User |
 | Registered extension packages | Qualified `package/skill` names |
 
-Project locations are also searched in parent directories up to the Git root.
-At the Git root, Vis skips nested projects that Git ignores. It also skips
-projects inside dependency directories, such as `.venv`, `venv`,
-`site-packages` and `node_modules`. Skills that installed packages ship are not loaded.
+Vis also searches the project locations in each parent directory up to the Git root. At the Git
+root, Vis skips nested projects that Git ignores. It also skips projects in dependency directories,
+such as `.venv`, `venv`, `site-packages`, and `node_modules`. Vis does not load skills that
+installed packages ship.
 
-Changes to local skills are loaded without restarting Vis. Skills bundled with
-an extension update when you run `/reload`. If reload fails, Vis keeps the last
-working version. A local skill with the same qualified name overrides the
-package skill without changing the package's tools.
+Vis loads changes to local skills without a restart. Skills that an extension bundles update when
+you run `/reload`. If the reload fails, Vis keeps the last version that worked. A local skill with
+the same qualified name overrides the package skill. The tools of the package do not change.
 
-See [bundled skills](extension-packages.md#bundled-skills) to ship a procedure and
-its resources with an extension. Installing a package or reading `doc(name)` does
-not execute its skill or grant permission for actions described by it.
+To ship a procedure and its resources with an extension, read
+[bundled skills](extension-packages.md#bundled-skills). To install a package or to read `doc(name)`
+does not run a skill, and it gives no permission for the actions that the skill describes.
 
 ## Use a skill explicitly
 
-The model chooses skills on its own. To name one yourself, type `/skill:<name>`
-followed by an optional task:
+The model chooses skills itself. To name one, type `/skill:<name>`, then an optional task.
 
 ```text
 /skill:release-checklist
 /skill:release-checklist for the 2.1 branch
 ```
 
-The `/` list does not show skills at first. They appear when you search by name.
+The `/` list does not show skills at first. Skills appear when you search by name.
+
+## Control availability
+
+Open the settings of the scope: global, the current project, the group, or the session. Find the
+skill under **Skills**. Switch the skill off to remove it from future discovery, `doc()` lookups,
+prompt inventories, and slash expansion. To follow the parent scope again, choose
+**Use inherited value**. The global switch applies to each session that has no more specific
+override.
+
+A skill that an extension bundles has no switch of its own. The skill follows the Auto, On, or Off
+choice of the extension. To remove the skill, switch the extension off.
+
+A switch does not erase instructions that are already in the conversation, and it is not a
+filesystem permission. For inheritance, read
+[scoped settings](configuration.md#project-group-and-session-settings). To restrict access, read
+[the process jail](jail.md).
 
 ## See also
 
-- [Project instructions](project-instructions.md) — project rules and prompt templates.
-- [Extending Vis](extending.md) — when a task needs a tool rather than instructions.
+- For project rules and prompt templates, read [Project instructions](project-instructions.md).
+- When a task needs a tool and not instructions, read [Extending Vis](extending.md).

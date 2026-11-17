@@ -1,6 +1,6 @@
 # Automations API
 
-Create, change and run [automations](automations.md) from your own program.
+Create, change, and run [automations](automations.md) from your own program.
 
 <div data-variant="python">
 
@@ -55,7 +55,7 @@ The next examples are calls on this `client` inside the `with` block.
 <div data-variant="http">
 
 Define the `vis_api` function from [Authenticate requests](http-api.md#authenticate-requests). The
-examples use it. The webhook route is the exception: it uses a webhook secret, not the gateway
+examples use it. The webhook route is the exception. It uses a webhook secret, not the gateway
 token.
 
 </div>
@@ -65,8 +65,7 @@ token.
 <div data-variant="python">
 
 `GatewayClient` has one method for each automation route. A method sends the same request as the
-[HTTP API](http-api.md) and returns the parsed JSON answer. You give a body or a query as a Python
-`dict` with the same fields.
+[HTTP API](http-api.md). Give a body or a query as a Python `dict` with the same fields.
 
 | Task | Method |
 |---|---|
@@ -79,13 +78,11 @@ token.
 | List runs | `get_automation_runs(query=...)` |
 | Read one run | `get_automation_run(run_id)` |
 | Delete an automation | `delete_automation(automation_id)` |
-| Send a webhook | Any HTTP library, see [Send a webhook](#send-a-webhook) |
+| Send a webhook | Any HTTP library, as in [Send a webhook](#send-a-webhook) |
 
 </div>
 
 <div data-variant="http">
-
-Requests and answers are JSON.
 
 | Task | Method and path |
 |---|---|
@@ -115,15 +112,7 @@ automation = client.get_automation(automation_id)
 print(automation["webhook"], automation["secrets"], automation["last_run"])
 ```
 
-The list contains `automations`. Each automation has the [parts](automations.md#how-automations-work)
-that you set and these fields:
-
-- `next_run_at` is the next scheduled time in milliseconds since 1970 UTC, or `None`.
-- `webhook` has the `path` of the webhook address, or is `None`.
-- `secrets` tells whether a `webhook` secret and a `callback` secret exist. It never contains a secret.
-- `last_run` is the newest run, or `None`.
-- `owner` names the extension that declares the automation, or is `None`. It has `extension`, `key`
-  and `root`. The `root` is the project folder, or an empty text for a global extension.
+A field without a value is `None`.
 
 </div>
 
@@ -134,17 +123,20 @@ vis_api "$VIS_GATEWAY_URL/v1/automations"
 vis_api "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID"
 ```
 
+A field without a value is `null`.
+
+</div>
+
 The list contains `automations`. Each automation has the [parts](automations.md#how-automations-work)
 that you set and these fields:
 
-- `next_run_at` is the next scheduled time in milliseconds since 1970 UTC, or `null`.
-- `webhook` has the `path` of the webhook address, or is `null`.
-- `secrets` tells whether a `webhook` secret and a `callback` secret exist. It never contains a secret.
-- `last_run` is the newest run, or `null`.
-- `owner` names the extension that declares the automation, or is `null`. It has `extension`, `key`
-  and `root`. The `root` is the project folder, or an empty text for a global extension.
-
-</div>
+| Field | Value |
+|---|---|
+| `next_run_at` | The next scheduled time in milliseconds since 1970 UTC, when a schedule has one. |
+| `webhook` | The `path` of the webhook address, for an automation with a webhook trigger. |
+| `secrets` | Whether a `webhook` secret and a `callback` secret exist. It never contains a secret. |
+| `last_run` | The newest run, when the automation has one. |
+| `owner` | The extension that declares the automation, with `extension`, `key`, and `root`. The `root` is the project folder, or an empty text for a global extension. |
 
 ## Create an automation
 
@@ -169,8 +161,7 @@ automation = client.post_automations(
 automation_id = automation["id"]
 ```
 
-The body needs `name`, `triggers`, `prompt` and `target`. `enabled` and `push` are `True` when you
-do not send them. The answer is the new automation with its `id`.
+`enabled` and `push` are `True` when you do not send them.
 
 </div>
 
@@ -198,10 +189,12 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/automations" \
   -H 'content-type: application/json' --data @morning-review.json
 ```
 
-The body needs `name`, `triggers`, `prompt` and `target`. `enabled` and `push` are `true` when you
-do not send them. The answer is the new automation with its `id`.
+`enabled` and `push` are `true` when you do not send them.
 
 </div>
+
+The body needs `name`, `triggers`, `prompt`, and `target`. The answer is the new automation with
+its `id`.
 
 ## Change or pause an automation
 
@@ -216,12 +209,8 @@ client.patch_automation(
 )
 ```
 
-The body changes only the fields that it names. Vis replaces `triggers`, `target` and `delivery` as a
-whole, so send the full new value. The answer is the changed automation.
-
-For an automation with an `owner`, the body can change only `enabled`. Any other field raises
-`GatewayError` with the status `409` and the code `extension-owned`. To change the automation,
-change the extension.
+For an automation with an `owner`, any field other than `enabled` raises `GatewayError` with the
+status `409` and the code `extension-owned`.
 
 </div>
 
@@ -232,14 +221,14 @@ vis_api -X PATCH "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID" \
   -H 'content-type: application/json' --data '{"enabled": false}'
 ```
 
-Send `{"enabled": true}` to resume. The body changes only the fields that it names. Vis replaces
-`triggers`, `target` and `delivery` as a whole, so send the full new value. The answer is the
-changed automation.
-
-For an automation with an `owner`, the body can change only `enabled`. Any other field gets the
-status `409` and the type `extension-owned`. To change the automation, change the extension.
+To resume, send `{"enabled": true}`. For an automation with an `owner`, any field other than
+`enabled` gets the status `409` and the type `extension-owned`.
 
 </div>
+
+The body changes only the fields that it names. Vis replaces `triggers`, `target`, and `delivery` as
+a whole, so send the full new value. The answer is the changed automation. To change an automation
+with an `owner`, change the extension.
 
 ## Start a run
 
@@ -272,9 +261,6 @@ created = client.post_automation_secrets(automation_id, body={"kind": "webhook"}
 webhook_secret = created["secret"]
 ```
 
-The `kind` is `webhook` or `callback`. The answer is the only copy of the secret, so store it at
-once. A new secret replaces the old secret immediately.
-
 </div>
 
 <div data-variant="http">
@@ -284,10 +270,12 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID/secrets" \
   -H 'content-type: application/json' --data '{"kind": "webhook"}'
 ```
 
-The `kind` is `webhook` or `callback`. The answer has `kind` and `secret`. It is the only copy of
-the secret, so store it at once. A new secret replaces the old secret immediately.
+The answer has `kind` and `secret`.
 
 </div>
+
+The `kind` is `webhook` or `callback`. The answer is the only copy of the secret, so store it at
+once. A new secret replaces the old secret immediately.
 
 ## Read runs
 
@@ -302,10 +290,6 @@ run = client.get_automation_run(run_id)
 print(run["answer"])
 ```
 
-The list starts with the newest run. You can filter by `automation_id`, `status` and `session_id`.
-`limit` is from 1 to 200, and the default is 50. A run has the fields of the `data` object in
-[Receive callbacks](automations.md#receive-callbacks).
-
 </div>
 
 <div data-variant="http">
@@ -315,11 +299,13 @@ vis_api "$VIS_GATEWAY_URL/v1/automations/runs?automation_id=$AUTOMATION_ID&statu
 vis_api "$VIS_GATEWAY_URL/v1/automations/runs/$RUN_ID"
 ```
 
-The list has `runs` and starts with the newest run. You can filter by `automation_id`, `status` and
-`session_id`. `limit` is from 1 to 200, and the default is 50. A run has the fields of the `data`
-object in [Receive callbacks](automations.md#receive-callbacks).
+The list has `runs`.
 
 </div>
+
+The list starts with the newest run. Filter it by `automation_id`, `status`, and `session_id`.
+`limit` is from 1 to 200, and the default is 50. A run has the fields of the `data` object in
+[Receive callbacks](automations.md#receive-callbacks).
 
 ## Delete an automation
 
@@ -330,9 +316,6 @@ deleted = client.delete_automation(automation_id)
 print(deleted["is_deleted"])
 ```
 
-Vis deletes the automation and its runs. An automation with an `owner` comes back when its
-extension loads again. To stop its runs, pause it.
-
 </div>
 
 <div data-variant="http">
@@ -341,10 +324,12 @@ extension loads again. To stop its runs, pause it.
 vis_api -X DELETE "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID"
 ```
 
-Vis deletes the automation and its runs. The answer has `id` and `is_deleted`. An automation with
-an `owner` comes back when its extension loads again. To stop its runs, pause it.
+The answer has `id` and `is_deleted`.
 
 </div>
+
+Vis deletes the automation and its runs. An automation with an `owner` comes back when its
+extension loads again. To stop its runs, pause it.
 
 ## Handle errors
 
@@ -442,7 +427,7 @@ curl -X POST "https://gateway.example.com/v1/hooks/$AUTOMATION_ID" \
 
 ## See also
 
-- [Automations](automations.md) — triggers, targets, callbacks and webhook signatures.
-- [Extension API](extension-api.md#automations) — declare an automation in an extension.
-- [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
-- [HTTP API](http-api.md) — authentication, the OpenAPI document and gateway errors.
+- For triggers, targets, callbacks, and webhook signatures, read [Automations](automations.md).
+- To declare an automation in an extension, read [Extension API](extension-api.md#automations).
+- To install the SDK, connect a client, and handle gateway errors, read [Python SDK](python-sdk.md).
+- For authentication, the OpenAPI document, and gateway errors, read [HTTP API](http-api.md).

@@ -1,18 +1,17 @@
 # Components
 
-Vis builds every form and live view from one list of components. This page describes each
-component, its Python builder and where it works.
+Vis builds every form and every live view from one list of components. This page describes each
+component, its Python builder, and where it works.
 
 ## When to use
 
 - **You build a form and need the right input for a value.** Find it in [Inputs](#inputs).
-- **You show work in a live view and want progress, counters or a log.** Read
-  [State](#state).
-- **You want rows, links or cards that a person can select.** Read [Data](#data).
-- **You want short labels, a list of points or numbers as a chart.** Read [Badge](#badge),
-  [List](#list) and [Chart](#chart).
+- **You show work in a live view and want progress, counters, or a log.** Read [State](#state).
+- **You want rows, links, or cards that a person can select.** Read [Data](#data).
+- **You want short labels, a list of points, or numbers as a chart.** Read [Badge](#badge),
+  [List](#list), and [Chart](#chart).
 - **You need a date or a time from a person.** Read [Datetime](#datetime).
-- **You want controls side by side, a folding section or a small form inside a view.** Read
+- **You want controls side by side, a folding section, or a small form inside a view.** Read
   [Layout](#layout) and [Button](#button).
 
 To ask a question and wait for the answer, read [Forms and user input](human-input.md). To keep a
@@ -20,8 +19,8 @@ view open while work runs, read [Live views](live-views.md).
 
 ## How components work
 
-A component is a JSON object with an `id` and a `type`. Each builder in
-`blockether.vis.extension` returns one. A form and a live view take the same components:
+A component is a JSON object with an `id` and a `type`. Each builder in `blockether.vis.extension`
+returns one component. A form and a live view take the same components:
 
 ```python
 import blockether.vis.extension as vis
@@ -34,15 +33,15 @@ with vis.live("Deploy", [vis.ui.status("state", "Waiting", tone="idle"),
 ```
 
 - A form returns the input values when the person submits it.
-- A live view keeps each input `value` while it is open. Read the values with `view.values()`.
-  Read each change with `view.events()`.
+- A live view keeps each input `value` while it is open. Read the values with `view.values()`, and
+  read each change with `view.events()`.
 - The engine validates each component against the `component` schema in
-  `packages/vis-contract/resources/vis-contract/schema/view.json`. An unknown key is refused.
-- Every surface draws the same component in its own style. The terminal and the Companion app
-  show the same text, values and state.
+  `packages/vis-contract/resources/vis-contract/schema/view.json`. It refuses an unknown key.
+- Each client draws a component in its own style. The terminal and the Companion app show the same
+  text, values, and state.
 
-Text and status fields accept inline Markdown: `` `code` ``, `**bold**`, `_italic_` and links. A
-`tone` is one of `idle`, `running`, `ok`, `warn` and `error`.
+Text and status fields accept inline Markdown: `` `code` ``, `**bold**`, `_italic_`, and links. A
+`tone` is one of `idle`, `running`, `ok`, `warn`, and `error`.
 
 ## Text
 
@@ -50,48 +49,49 @@ Text components show content and take no input.
 
 ### Heading
 
-`vis.ui.heading(id, text, level=2)` shows a title. `level` is 1 to 6. In a form,
-`vis.ui.heading(text)` without an id is also accepted.
+`vis.ui.heading(id, text, level=2)` shows a title. `level` is 1 to 6. A form also accepts
+`vis.ui.heading(text)` without an id.
 
 ### Paragraph
 
-`vis.ui.paragraph(id, text)` shows a paragraph of inline Markdown. In a form, `vis.ui.paragraph(text)`
-without an id is also accepted.
+`vis.ui.paragraph(id, text)` shows a paragraph of inline Markdown. A form also accepts
+`vis.ui.paragraph(text)` without an id.
 
 ### Code
 
-`vis.ui.code(id, text, language="python")` shows literal code. Vis keeps the whitespace and never runs
-the code.
+`vis.ui.code(id, text, language="python")` shows literal code. Vis keeps the whitespace and never
+runs the code.
 
 ### Divider
 
-`vis.ui.divider(id)` draws a rule across its container, like an HTML `<hr>`. It has no text or options.
-Directly inside a `vis.ui.wrap` group, it draws a vertical separator between the items of that line.
+`vis.ui.divider(id)` draws a rule across its container, like an HTML `<hr>`. It has no text and no
+options. Directly inside a `vis.ui.wrap` group, it draws a vertical separator between the items of
+that line.
 
 ## State
 
-State components show how work moves. A live view changes them while the work runs.
+State components show the progress of work. A live view changes them while the work runs.
 
 ### Status
 
-`vis.ui.status(id, text, tone="running", detail=None)` shows one line about the current state. Change
-it with `view[id].set(text, tone=...)`.
+`vis.ui.status(id, text, tone="running", detail=None)` shows one line about the current state.
+Change it with `view[id].set(text, tone=...)`.
 
 ### Spinner
 
-`vis.ui.spinner(id, text, variant="braille", is_active=True)` shows activity without a known end. The
-variants are `braille`, `dots`, `line` and `pulse`. A completed view never animates.
+`vis.ui.spinner(id, text, variant="braille", is_active=True)` shows activity without a known end.
+The variants are `braille`, `dots`, `line`, and `pulse`. A completed view never animates.
 
 ### Progress
 
-`vis.ui.progress(id, value=0.4)` shows a bar from 0 to 1. Give `done` and `total` instead to show a
-count. A bar without a value shows work of unknown length.
+`vis.ui.progress(id, value=0.4)` shows a bar from 0 to 1. To show a count, give `done` and `total`.
+A bar without a value shows work of unknown length.
 
 ### Stat
 
-`vis.ui.stat(id, stats=[...])` shows a strip of counters. Each item has `id`, `label`, `value_text`
+`vis.ui.stat(id, stats=[...])` shows a strip of counters. Each item has `id`, `label`, `value_text`,
 and an optional `tone`. The Companion app shows each counter as a tile. A counter with the tone
-`running`, `ok`, `warn` or `error` shows the mark of that tone before its value.
+`running`, `ok`, `warn`, or `error` shows the mark of that tone before its value.
 
 ```python
 vis.ui.stat("summary", stats=[{"id": "open", "label": "Open", "value_text": "3"},
@@ -101,32 +101,32 @@ vis.ui.stat("summary", stats=[{"id": "open", "label": "Open", "value_text": "3"}
 
 ### Steps
 
-`vis.ui.steps(id, steps=[...])` shows a checklist. Each step has `id`, `label`, `tone` and an optional
-`detail`. Add or change one step with `view[id].set(step_id, label, tone="ok")`.
+`vis.ui.steps(id, steps=[...])` shows a checklist. Each step has `id`, `label`, `tone`, and an
+optional `detail`. Add or change one step with `view[id].set(step_id, label, tone="ok")`.
 
 ### Timeline
 
 `vis.ui.timeline(id, lanes=[...])` draws one bar for each lane on a shared time axis. Each lane has
-`id`, `label`, `tone`, `start` and optional `end` and `detail`. The times are epoch milliseconds.
-A lane without `end` is still running and grows to the current time. Add or change one lane with
+`id`, `label`, `tone`, `start`, and optional `end` and `detail`. The times are epoch milliseconds. A
+lane without `end` still runs and grows to the current time. Add or change one lane with
 `view[id].set(lane_id, label, start, end=None, tone="running")`.
 
 ### Log
 
 `vis.ui.output(id, label="Build log")` shows output lines. Its type on the wire is `log`. Add lines
-with `view[id].write(...)` and an optional line `tone`. [Live views](live-views.md#add-severity-to-streaming-output)
-explains windows, search and severity.
+with `view[id].write(...)` and an optional line `tone`. [Add severity to streaming
+output](live-views.md#add-severity-to-streaming-output) explains windows, search, and severity.
 
 ## Data
 
-Data components show records that a person can read, open or select.
+Data components show records that a person can read, open, or select.
 
 ### Table
 
-`vis.ui.table(id, columns=[...], rows=[...])` shows rows with an id each. Use `vis.ui.table_column`,
-`vis.ui.table_row` and `vis.ui.table_group` to build them. With `is_selectable=True`, a person can select
-rows, and `selected_ids` holds the selection. Each surface marks a selectable row with `●` when it
-is selected and with `○` when it is not.
+`vis.ui.table(id, columns=[...], rows=[...])` shows rows, each with an id. Build them with
+`vis.ui.table_column`, `vis.ui.table_row`, and `vis.ui.table_group`. With `is_selectable=True`, a
+person can select rows, and `selected_ids` holds the selection. Each client marks a selected row
+with `●` and an unselected row with `○`.
 
 ### Choose one value for each item
 
@@ -154,17 +154,17 @@ Use a selectable table only when the person picks items, not values for items.
 ### Link
 
 `vis.ui.link(id, links=[...])` shows targets that a person can open. Each link has `id`, `label`,
-`target` and a `target_kind` of `url`, `path` or `attachment`.
+`target`, and a `target_kind` of `url`, `path`, or `attachment`.
 
 ### Card
 
-`vis.ui.card(id, title, text=None, tone=None, meta=None)` shows a titled box with short text and meta
-lines. With `is_selectable=True`, a person can activate the card like a button. Read
+`vis.ui.card(id, title, text=None, tone=None, meta=None)` shows a titled box with short text and
+meta lines. With `is_selectable=True`, a person can activate the card like a button. Read
 `view[id].clicks` or handle the `activate` event.
 
-Give `reveals="key"` to a selectable card or a button to show another app of the same owner. When a
-person activates the node, the surface shows the app with that key. If the app is not open yet, the
-surface waits for it. Open the app in your `activate` handler.
+To show another app of the same owner, give `reveals="key"` to a selectable card or a button. When
+a person activates the node, the client shows the app with that key. If the app is not open yet,
+the client waits for it. Open the app in your `activate` handler.
 
 ```python
 vis.ui.card("task-7", "T7 Fix the login timeout", text="In review", tone="warn",
@@ -173,8 +173,8 @@ vis.ui.card("task-7", "T7 Fix the login timeout", text="In review", tone="warn",
 
 ### Badge
 
-`vis.ui.badge(id, badges=[...])` shows a row of short labels, such as `Stable`, `Beta` or `3 open`.
-Each badge has `id`, `label` and an optional `tone`. A badge with a tone shows the mark of that
+`vis.ui.badge(id, badges=[...])` shows a row of short labels, such as `Stable`, `Beta`, or `3 open`.
+Each badge has `id`, `label`, and an optional `tone`. A badge with a tone shows the mark of that
 tone before its label. A node holds 32 badges at most. Add or change one badge with
 `view[id].set(badge_id, label, tone="ok")`.
 
@@ -185,9 +185,9 @@ vis.ui.badge("labels", badges=[{"id": "stable", "label": "Stable", "tone": "ok"}
 
 ### List
 
-`vis.ui.listing(id, items=[...])` shows a list of points. Each item has `id`, `text` and an optional
-`detail` and `tone`. `is_ordered=True` numbers the items. A node holds 200 items at most. Its type
-on the wire is `list`. The builder name keeps the Python built-in `list` free.
+`vis.ui.listing(id, items=[...])` shows a list of points. Each item has `id`, `text`, and an
+optional `detail` and `tone`. `is_ordered=True` numbers the items. A node holds 200 items at most.
+Its type on the wire is `list`. The builder name keeps the Python built-in `list` free.
 
 Add or change one item with `view[id].set(item_id, text, detail=None, tone=None)`. Change the
 numbers with `view[id].order(True)`.
@@ -201,8 +201,8 @@ vis.ui.listing("todo", is_ordered=True,
 ### Chart
 
 `vis.ui.chart(id, series=[...], kind="bar", categories=[...])` shows numbers as bars or as lines.
-Each series has `id`, `label`, `values` and an optional `tone`. `categories` names the values of
-every series in order, such as the days of a week. `kind` is `bar` (the default) or `line`.
+Each series has `id`, `label`, `values`, and an optional `tone`. `categories` names the values of
+every series in order, such as the days of a week. `kind` is `bar`, the default, or `line`.
 
 - A chart holds 8 series at most, and each series holds 64 values at most.
 - A bar chart always shows zero, so the length of a bar is in proportion to its value. A negative
@@ -219,8 +219,8 @@ vis.ui.chart("load", categories=["Mon", "Tue", "Wed"],
 
 ## Inputs
 
-Inputs take a value from a person. Each input has a `name`, a `label` and optional
-`description`, `placeholder`, `default`, `is_required` and `validate` keys. In a form, the answer
+An input takes a value from a person. Each input has a `name`, a `label`, and optional
+`description`, `placeholder`, `default`, `is_required`, and `validate` keys. In a form, the answer
 holds each value under its `name`. In a live view, the input keeps its `value`.
 
 | Builder | Type | Value |
@@ -233,7 +233,7 @@ holds each value under its `name`. In a live view, the input keeps its `value`.
 | `vis.ui.multiselect(name, options)` | `multiselect` | A list of option values |
 | `vis.ui.checkbox(name)` | `checkbox` | `True` or `False` |
 | `vis.ui.slider(name, min=0, max=100, step=1)` | `range` | A number |
-| `vis.ui.datetime(name, mode="datetime")` | `datetime` | Text for a date, a time or both |
+| `vis.ui.datetime(name, mode="datetime")` | `datetime` | Text for a date, a time, or both |
 
 [Forms and user input](human-input.md#fields) gives the rules for each input.
 
@@ -249,12 +249,12 @@ holds each value under its `name`. In a live view, the input keeps its `value`.
 
 `vis.ui.password(name, label="Token")` masks the text. The value is an opaque `vis-secret:` handle.
 Read the text on the trusted side with `vis.reveal(handle)`. A live view never shows or stores the
-text. A `change` event gives only `is_set`.
+text, and a `change` event gives only `is_set`.
 
 ### Otp
 
-`vis.ui.otp(name, label="Code")` shows one box for each digit. `min_length` and `max_length` set the
-length, 6 by default and 12 at most. The value is a `vis-secret:` handle.
+`vis.ui.otp(name, label="Code")` shows one box for each digit. `min_length` and `max_length` set
+the length, 6 by default and 12 at most. The value is a `vis-secret:` handle.
 
 ### Select
 
@@ -266,13 +266,13 @@ more options as a list that opens on a press. It shows other sets of options as 
 
 ### Multiselect
 
-`vis.ui.multiselect(name, options)` takes any number of options. The value is a list in the declared
-order.
+`vis.ui.multiselect(name, options)` takes any number of options. The value is a list in the
+declared order.
 
 ### Checkbox
 
-`vis.ui.checkbox(name, label="I read the runbook")` takes `True` or `False`. A required checkbox must
-be ticked.
+`vis.ui.checkbox(name, label="I read the runbook")` takes `True` or `False`. A person must tick a
+required checkbox.
 
 ### Range
 
@@ -281,7 +281,7 @@ builder name keeps the Python built-in `range` free.
 
 ### Datetime
 
-`vis.ui.datetime(name, mode="date", min="2026-01-01", max="2026-12-31")` takes a date, a time or
+`vis.ui.datetime(name, mode="date", min="2026-01-01", max="2026-12-31")` takes a date, a time, or
 both. The value is text without a time zone. `mode` sets its form:
 
 | `mode` | Form | Example |
@@ -290,7 +290,7 @@ both. The value is text without a time zone. `mode` sets its form:
 | `time` | `HH:MM` | `09:30` |
 | `datetime`, the default | `YYYY-MM-DDTHH:MM` | `2026-03-14T09:30` |
 
-`min`, `max` and `default` have the form of the mode. Vis refuses text in another form and a value
+`min`, `max`, and `default` have the form of the mode. Vis refuses text in another form and a value
 outside the bounds. The Companion app shows the date or time control of the device. The terminal
 takes typed text and shows the form as a hint.
 
@@ -298,8 +298,8 @@ takes typed text and shows the form as a hint.
 
 ### Button
 
-`vis.ui.button(id, label, action="activate")` is an action that a person presses. No code goes to the
-client. The extension decides what a press does.
+`vis.ui.button(id, label, action="activate")` is an action that a person presses. No code goes to
+the client. The extension decides what a press does.
 
 - `action="activate"`, the default, counts the press in `clicks` and sends an `activate` event.
 - `action="submit"` collects the inputs of the nearest group of the button. Vis checks each
@@ -307,11 +307,12 @@ client. The extension decides what a press does.
 - `is_disabled=True` refuses presses. Change it with `view[id].set(is_disabled=False)`.
 - `is_selected=True` or `False` makes the button one choice of a set, such as a tab. Put only such
   buttons in one `vis.ui.wrap` or `vis.ui.row`. The Companion app shows that group as a strip of
-  tabs. Each surface marks the choice that holds, and the terminal marks it with `•`.
-- `variant` sets the rank of the button: `primary`, `secondary` (the default) or `destructive`.
-  Give the main action of a group `variant="primary"`. Give an action that deletes or discards
-  data `variant="destructive"`. The terminal fills a primary button, so its rank does not need
-  colour. An unknown variant is refused, with the allowed names in the error.
+  tabs. Each client marks the selected choice, and the terminal marks it with `•`.
+- `variant` sets the rank of the button. It is `primary`, `secondary`, or `destructive`, and
+  `secondary` is the default. Give the main action of a group `variant="primary"`. Give an action
+  that deletes or discards data `variant="destructive"`. The terminal fills a primary button, so
+  its rank needs no colour. Vis refuses an unknown variant and names the allowed variants in the
+  error.
 
 A form has its own submit and cancel buttons. Use buttons in live views.
 
@@ -323,17 +324,17 @@ A form has its own submit and cancel buttons. Use buttons in live views.
 
 - `direction="row"` puts the children side by side. They stack when the space is too narrow.
 - `direction="grid"` puts the children in equal columns that continue on new rows. Use it for many
-  cards. `max_columns` (1 to 12) sets the most columns. Only a grid accepts `max_columns`.
+  cards. `max_columns`, 1 to 12, sets the most columns. Only a grid accepts `max_columns`.
 - `direction="wrap"` puts the children side by side at their own width. A child that does not fit
-  starts a new line. Use it for buttons, stats and statuses.
+  starts a new line. Use it for buttons, stats, and statuses.
 - `label` and `description` show a title and a short text above the children.
 - `is_collapsible=True` lets a person fold the group. `default_expanded` sets the first state.
-- A submit button collects only the inputs of its own group. So one view can hold several small
+- A submit button collects only the inputs of its own group, so one view can hold several small
   forms.
 
-`vis.ui.row(id, ...)`, `vis.ui.column(id, ...)`, `vis.ui.grid(id, ..., max_columns=3)` and
+`vis.ui.row(id, ...)`, `vis.ui.column(id, ...)`, `vis.ui.grid(id, ..., max_columns=3)`, and
 `vis.ui.wrap(id, ...)` are short forms of a group. `vis.ui.disclosure(id, label,
-...)` is a collapsible column that starts folded. In a form, a group without an id is accepted.
+...)` is a collapsible column that starts folded. A form accepts a group without an id.
 
 ```python
 vis.ui.group("new-task",
@@ -345,7 +346,8 @@ vis.ui.group("new-task",
 
 ## See also
 
-- [Live views](live-views.md) — open a view, change its components and handle events.
-- [Forms and user input](human-input.md) — ask with the same components and wait for the answer.
-- [Extension API](extension-api.md#asking-the-human-and-showing-live-work) — where each builder
-  belongs in an extension.
+- To open a view, change its components, and handle events, read [Live views](live-views.md).
+- To ask with the same components and wait for the answer, read [Forms and user
+  input](human-input.md).
+- To see where each builder belongs in an extension, read [Extension
+  API](extension-api.md#asking-the-human-and-showing-live-work).

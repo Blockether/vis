@@ -1,20 +1,20 @@
 # Speech API
 
-Speak text, transcribe recordings and add, change or remove your own voices from your own program
-or from an extension. The gateway runs the speech engines.
+Speak text, transcribe recordings, and add, change, or remove your own voices from a program or
+from an extension. The gateway runs the speech engines.
 
 The examples use the [Python SDK](python-sdk.md). To see the same steps as [HTTP API](http-api.md)
 requests, select **HTTP** at the top of the page.
 
 ## When to use
 
-- **A script must turn text into audio.** [Speak text](#speak-text).
-- **A program must add a voice from a recording.** [Add a voice](#add-a-voice), then [list the
+- **A script must turn text into audio.** Read [Speak text](#speak-text).
+- **A program must add a voice from a recording.** Read [Add a voice](#add-a-voice), then [List the
   voices](#list-the-voices).
-- **A voice has a wrong name, language or transcript.** [Change a voice](#change-a-voice).
-- **A voice is no longer necessary.** [Remove a voice](#remove-a-voice).
-- **A program must check what an audio file says.** [Transcribe audio](#transcribe-audio).
-- **An extension tool must speak or manage voices.** [Use speech in an
+- **A voice has a wrong name, language, or transcript.** Read [Change a voice](#change-a-voice).
+- **A voice is no longer necessary.** Read [Remove a voice](#remove-a-voice).
+- **A program must check what an audio file says.** Read [Transcribe audio](#transcribe-audio).
+- **An extension tool must speak or manage voices.** Read [Use speech in an
   extension](#use-speech-in-an-extension).
 
 To learn what each engine does and how to record a good voice, read [Speech and voices](speech.md).
@@ -25,7 +25,7 @@ To learn what each engine does and how to record a good voice, read [Speech and 
 
 Connect a `GatewayClient` as in [Connect to a gateway and run a
 task](python-sdk.md#connect-to-a-gateway-and-run-a-task). The examples use `client` and its
-`speech` property. Its methods wait for gateway jobs and return typed records.
+`speech` property.
 
 </div>
 
@@ -36,14 +36,15 @@ examples use it.
 
 </div>
 
-The first use of an engine downloads its model. Until the model is ready, a request gets status 425.
+The first use of an engine downloads its model. Until the model is ready, a request gets status
+425.
 
 ## Operations
 
 <div data-variant="python">
 
-Typed calls wait for jobs and return records. Generated methods send one request and return its
-answer.
+A typed call waits for its gateway job and returns a typed record. A generated method sends one
+request and returns its answer.
 
 | Task | Typed call | Generated method |
 |---|---|---|
@@ -111,7 +112,7 @@ for voice in client.speech.voices("pocket-tts-local"):
     print(voice.id, voice.label, voice.language, voice.is_imported)
 ```
 
-Each `Voice` record has an `id`, a `label` and its `engine`. A voice that you added has
+Each `Voice` record has an `id`, a `label`, and its `engine`. A voice that you added has
 `is_imported` set to true.
 
 </div>
@@ -122,8 +123,7 @@ Each `Voice` record has an `id`, a `label` and its `engine`. A voice that you ad
 vis_api "$VIS_GATEWAY_URL/v1/speech/voices?engine=pocket-tts-local"
 ```
 
-The answer has the `engine` and its `voices`. A voice that you added has `is_imported` set to
-true.
+The answer has the `engine` and its `voices`. A voice that you added has `is_imported` set to true.
 
 </div>
 
@@ -138,8 +138,8 @@ voice = client.speech.add_voice(
 print(voice.id)
 ```
 
-The recording is a path or bytes. A recording that the engine cannot use raises `GatewayError`
-with status 400. A voice with the same ID is replaced, with its new audio.
+The recording is a path or bytes. A recording that the engine cannot use raises `GatewayError` with
+status 400. If a voice has the same ID, the call replaces the voice and its audio.
 
 </div>
 
@@ -150,7 +150,7 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/speech/voices?engine=pocket-tts-local&name=
   -H 'content-type: audio/wav' --data-binary @recordings/anna.wav
 ```
 
-The body is the recording. The `name`, `lang` and `text` query parameters describe it. The answer
+The body is the recording. The `name`, `lang`, and `text` query parameters describe it. The answer
 has the new `voice`. A recording that the engine cannot use gets status 400.
 
 </div>
@@ -175,7 +175,7 @@ vis_api -X PATCH "$VIS_GATEWAY_URL/v1/speech/voices/anna?engine=pocket-tts-local
   -H 'content-type: application/json' --data '{"name": "Anna (studio)", "text": ""}'
 ```
 
-The body has `name`, `language` or `text`. A key that you omit keeps its value. An empty value
+The body has `name`, `language`, or `text`. A key that you omit keeps its value. An empty value
 removes it. A voice that you did not add gets status 404.
 
 </div>
@@ -222,8 +222,8 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/voice?engine=vibevoice-asr-local" \
   -H 'content-type: audio/wav' --data-binary @line.wav
 ```
 
-The answer has status 202 and a job. Read it with `GET /v1/voice/jobs/{job_id}` until `is_done`
-is true. The finished job has the `text`.
+The answer has status 202 and a job. Read the job with `GET /v1/voice/jobs/{job_id}` until
+`is_done` is true. The finished job has the `text`.
 
 </div>
 
@@ -241,21 +241,24 @@ class Narrator:
         return str(vis.speech.speak(text, voice="emma").save(path))
 ```
 
-`vis.speech` has the same methods as `client.speech`. Add, change or remove voices only while a tool
-call runs. Background work of an extension can list voices, speak and transcribe.
+`vis.speech` has the same methods as `client.speech`. Add, change, or remove voices only while a
+tool call runs. Background work of an extension can list voices, speak, and transcribe.
 
 </div>
 
 <div data-variant="http">
 
-An extension uses the Python `vis.speech` object. It sends the same requests as the HTTP examples on
-this page.
+An extension uses the Python `vis.speech` object. It sends the same requests as the HTTP examples
+on this page.
 
 </div>
 
 ## See also
 
-- [Speech and voices](speech.md) — engines, good recordings and voice IDs.
-- [Extension API](extension-api.md) — declarations and host operations for extension tools.
-- [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
-- [HTTP API](http-api.md) — authentication, the OpenAPI document and gateway errors.
+- To choose an engine, record a good voice, and learn about voice IDs, read [Speech and
+  voices](speech.md).
+- For the declarations and host operations of extension tools, read [Extension
+  API](extension-api.md).
+- To install the SDK, connect a client, and handle gateway errors, read [Python
+  SDK](python-sdk.md).
+- For authentication, the OpenAPI document, and gateway errors, read [HTTP API](http-api.md).

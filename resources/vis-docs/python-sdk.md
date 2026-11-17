@@ -1,31 +1,30 @@
 # Python SDK basics
 
 Use `Agent()` to embed Vis in your program and run tasks in your current project. To use a gateway
-that runs separately, give `Agent()` a `GatewayClient`. Add your application's functions with
-`extensions=[...]`. They keep access to your Python objects in both modes. Both modes provide
-`run()`, `send()` and one conversation for follow-up requests.
+that runs separately, give `Agent()` a `GatewayClient`. Add the functions of your application with
+`extensions=[...]`. They keep access to your Python objects in both modes. Both modes have
+`run()`, `send()`, and one conversation for follow-up requests.
 
-For classes, methods, signatures and type annotations, browse the
-[generated Python SDK API reference](https://vis.blockether.com/python-sdk-api/).
-The reference follows `main`, so it can show APIs that the newest PyPI release does not have.
-Use this guide for installation and task examples.
+For classes, methods, signatures, and type annotations, browse the
+[generated Python SDK API reference](https://vis.blockether.com/python-sdk-api/). The reference
+follows `main`, so it can show APIs that the newest PyPI release does not have. This guide has the
+installation and the task examples.
 
 ## When to use
 
-- **Your script or application should give Vis a task in your project and use the
-  answer.** Start with [a private agent](#let-your-program-own-a-private-agent) that
-  your program owns.
-- **Your program needs fields it can check, not prose.** Pass a Pydantic model to
-  get a [validated result](#get-a-validated-result).
-- **The agent needs your application's rules, data or services.** [Give it your
-  functions](#give-the-agent-your-functions) without installing an extension.
-- **Conversations must outlive your script or appear in the Vis app.** [Connect to a
-  gateway](#connect-to-a-gateway-and-run-a-task).
+- **Your script or application must give Vis a task in your project and use the answer.** Start
+  with [a private agent](#let-your-program-own-a-private-agent) that your program owns.
+- **Your program needs fields that it can check, not prose.** Pass a Pydantic model to get a
+  [validated result](#get-a-validated-result).
+- **The agent needs the rules, data, or services of your application.**
+  [Give it your functions](#give-the-agent-your-functions). You install no extension.
+- **Conversations must outlive your script or appear in the Vis app.**
+  [Connect to a gateway](#connect-to-a-gateway-and-run-a-task).
 - **The agent must not use some tools, such as `py.repl_start`.** Pass `tools` to `Agent()`, as
-  shown in [Let your program own a private agent](#let-your-program-own-a-private-agent).
-- **Your program must work with sessions, Council, automations or settings.** Read [Sessions
-  API](sessions-api.md), [Council API](council-api.md), [Automations API](automations-api.md) or
-  [Configuration API](configuration-api.md).
+  [Let your program own a private agent](#let-your-program-own-a-private-agent) shows.
+- **Your program must work with sessions, Council, automations, or settings.** Read
+  [Sessions API](sessions-api.md), [Council API](council-api.md),
+  [Automations API](automations-api.md), or [Configuration API](configuration-api.md).
 
 For a program in another language, read [HTTP API](http-api.md).
 
@@ -39,15 +38,15 @@ python3 -m venv .venv
 python -m pip install --upgrade vis-agent
 ```
 
-You do not have to install Vis first. When your program starts a private agent, the SDK uses
-the Vis engine of its own release:
+You do not have to install Vis first. When your program starts a private agent, the SDK uses the
+Vis engine of its own release:
 
 - If the installed `vis-agent` runs that release, the SDK uses it.
-- Otherwise the SDK downloads that release once into `~/.vis/sdk` and uses that copy.
+- If not, the SDK downloads that release one time into `~/.vis/sdk` and uses that copy.
 
-The download has only the engine and its Python runtime, not the terminal, web or desktop app.
-The SDK checks it against the release checksums. It does not change your shell profile or your
-installed Vis. Only the first run needs network access. To turn off the download, set
+The download has only the engine and its Python runtime, not the terminal, web, or desktop app.
+The SDK checks the download against the release checksums. It does not change your shell profile
+or your installed Vis. Only the first run needs network access. To turn off the download, set
 `VIS_NO_AUTO_INSTALL=1`.
 
 To download the engine ahead of time, for example in a container image, call `install()`:
@@ -60,14 +59,15 @@ print(ensure_installed())  # the command that a private agent uses, downloaded i
 ```
 
 `install()` always uses the copy in `~/.vis/sdk`, also when you have Vis installed. Pass
-`force=True` to download it again. Both functions raise `InstallError` when the download fails.
+`force=True` to download the engine again. Both functions raise `InstallError` when the download
+fails.
 
-Before the first task, configure a [provider and model](configuration.md). A gateway
-client needs only the Python package, because the provider runs on the gateway machine.
+Before the first task, configure a [provider and model](configuration.md). A gateway client needs
+only the Python package, because the provider runs on the gateway machine.
 
-Requests can incur model charges and use the engine's tools and files. Choose an
-appropriate account and [access policy](jail.md) before you run a task. Keep
-credentials and engine state outside the project you ask the agent to inspect.
+A request can cost model charges, and it uses the tools and the files of the engine. Choose an
+account and an [access policy](jail.md) before you run a task. Keep credentials and engine state
+outside the project that the agent inspects.
 
 ## Let your program own a private agent
 
@@ -92,23 +92,22 @@ if __name__ == "__main__":
     main()
 ```
 
-`.` means the current directory when you construct the agent. `Agent()` is
-identical. Entering the context starts a private engine with no HTTP listener.
-Leaving it stops that process and discards its temporary session database.
-It does not undo file edits or isolate your credentials and configuration.
+You see a session ID, `Status: completed`, and the content blocks of the answer.
 
-You should see a session ID, `Status: completed` and the answer's content blocks.
-By default, `run()` returns a turn record, not a text string. A failed,
-cancelled or suspended turn also returns a record: always check `status`.
+`.` is the current directory when you construct the agent, and `Agent()` means the same. On entry
+to the context, a private engine starts, without an HTTP listener. On exit, the engine stops and
+discards its temporary session database. The exit does not undo file edits. A private agent does
+not isolate your credentials or your configuration.
 
-The record has no `answer` field. The answer is in `content`, a list of blocks.
-To get the answer as text, call `final_answer(result)` from
-`blockether.vis.engine`. It returns the Markdown of the last `prose` block, or
-`None` when the turn has no answer.
+By default, `run()` returns a turn record, not a text string. A failed, cancelled, or suspended
+turn also returns a record, so always check `status`.
 
-To continue the conversation, call `agent.run()` again on the same `Agent`. Each
-call is a new turn in the same session. The agent sees your earlier messages,
-its answers and its tool results:
+The record has no `answer` field. The answer is in `content`, a list of blocks. For the answer as
+text, call `final_answer(result)` from `blockether.vis.engine`. It returns the Markdown of the last
+`prose` block, or `None` when the turn has no answer.
+
+To continue the conversation, call `agent.run()` again on the same `Agent`. Each call is a new turn
+in the same session. The agent sees your earlier messages, its answers, and its tool results:
 
 ```python
 # conversation.py
@@ -131,20 +130,19 @@ if __name__ == "__main__":
     main()
 ```
 
-The second answer names one of the files from the first answer. To test such a
-conversation on many tasks and get a score, read [Write a task with several
-turns](evals.md#write-a-task-with-several-turns).
+The second answer names one of the files from the first answer. To test such a conversation on
+many tasks and get a score, read
+[Write a task with several turns](evals.md#write-a-task-with-several-turns).
 
-To keep the agent away from some tools, pass `tools`. For example,
-`Agent(tools=["-py.repl_start", "-py.repl_stop"])` turns off those two tools of the
-`py` extension. [Choose single tools](configuration.md#choose-single-tools) describes
-the names and rules. To change the list later, call `agent.session.update(tools=[...])`.
+To turn off some tools, pass `tools`. For example,
+`Agent(tools=["-py.repl_start", "-py.repl_stop"])` turns off those two tools of the `py` extension.
+[Choose single tools](configuration.md#choose-single-tools) describes the names and the rules. To
+change the list later, call `agent.session.update(tools=[...])`.
 
 ## Get a validated result
 
-When your program needs fields rather than a prose answer, define a Pydantic
-model and pass it to `Agent.run()`. Pydantic is installed with `vis-agent`.
-There is no separate extra to enable:
+When your program needs fields and not prose, define a Pydantic model and pass it to
+`Agent.run()`. Pydantic comes with `vis-agent`, so you install no extra:
 
 ```python
 # structured_quote.py
@@ -179,68 +177,73 @@ if __name__ == "__main__":
 Run `python structured_quote.py` in a project with a configured provider. A valid result prints
 `1200 False`.
 
-With `response_model=Quote`, `run()` does three things. It includes the model's validation JSON
-Schema in the request. It checks the final prose block against that schema. Then it uses Pydantic to
-run your Python validators and return a `Quote`. Without `response_model`, `run()` returns the
-original turn record. Both modes work with a private local engine or a borrowed `GatewayClient`.
+With `response_model=Quote`, `run()` does three things:
 
-The schema is a **request to the model**, not provider-enforced JSON mode: Vis
-uses plain-text completions. The result must be one complete JSON
-value matching your model (an object for `Quote`), without a Markdown fence
-or commentary.
+1. It includes the validation JSON Schema of `Quote` in the request.
+2. It checks the final prose block against that schema.
+3. It runs your Python validators with Pydantic and returns a `Quote`.
+
+Without `response_model`, `run()` returns the turn record. Both forms work with a private local
+engine and with a borrowed `GatewayClient`.
+
+The schema is a request to the model, not a JSON mode that the provider enforces. Vis uses
+plain-text completions. The answer must be one complete JSON value that matches your model, an
+object for `Quote`, with no Markdown fence and no commentary.
 
 ### Handle invalid answers
 
-If the answer is not valid JSON, `run()` asks the agent to correct it in the same conversation. It
-does the same when the answer does not match the schema or fails one of your validators. The request
-lists each problem with its location, where `$` is the whole value. It also repeats the schema. For
-example, the answer `{"cents": -5, "express": "no"}` gets this feedback:
+`run()` asks the agent for a correction, in the same conversation, in three cases. The answer is
+not valid JSON, it does not match the schema, or it fails one of your validators. The correction
+request lists each problem with its location, where `$` is the whole value. It also repeats the
+schema. For example, the answer `{"cents": -5, "express": "no"}` gets this feedback:
 
 ```text
 - $.cents: does not satisfy minimum 0 (input: -5)
 - $.express: expected boolean, got string (input: "no")
 ```
 
-By default, `run()` sends up to two corrections. To change the limit, set `max_corrections`.
-`max_corrections=0` accepts only the first answer. Each correction is another model call, which can
-cost money. The `timeout` covers the first answer and all corrections.
+By default, `run()` sends up to two corrections. `max_corrections` changes the limit, and
+`max_corrections=0` accepts only the first answer. Each correction is one more model call, and a
+model call can cost money. The `timeout` covers the first answer and all corrections.
 
-The agent is asked to keep work it has already done. Corrections do not undo earlier tool calls and
-file edits. Closing a private agent discards its session database, not those file edits.
+The correction request asks the agent to keep its earlier work. A correction does not undo tool
+calls or file edits.
 
 `run()` raises `StructuredOutputError` in these cases:
 
-- A turn fails, is cancelled or suspends.
+- A turn fails, is cancelled, or suspends.
 - The answer is still invalid after the last correction.
 - The timeout leaves no time for another correction.
 
-Its message lists up to 10 problems, and its attributes show what went wrong:
+The error message lists up to 10 problems. The attributes of the error show what went wrong:
 
 | Attribute | Contents |
 | --- | --- |
-| `errors` | Problems in the last answer, each with a `path`, a `message` and a `source` |
-| `attempts` | One entry per turn, with its `turn` record, final prose `answer` and `errors` |
+| `errors` | The problems in the last answer, each with a `path`, a `message`, and a `source` |
+| `attempts` | One entry for each turn, with its `turn` record, its final prose `answer`, and its `errors` |
 | `turn` | The last turn record |
 
 The `source` names the check that found the problem:
 
-- `turn`: a turn that did not complete.
-- `answer`: a turn without a final prose answer.
-- `json`: text that is not one JSON value.
-- `schema`: a schema mismatch.
-- `pydantic`: your model's validators.
+| `source` | Problem |
+| --- | --- |
+| `turn` | A turn that did not complete |
+| `answer` | A turn without a final prose answer |
+| `json` | Text that is not one JSON value |
+| `schema` | A schema mismatch |
+| `pydantic` | A failure in the validators of your Pydantic model |
 
 Messages quote short values from the answer, such as numbers and short strings, but never whole
-objects or arrays. If your model sets Pydantic's `hide_input_in_errors`, messages quote no values.
+objects or arrays. If your Pydantic model sets `hide_input_in_errors`, messages quote no values.
 
 ## Use stdio from the Python SDK
 
-The local `Agent` example above starts `vis-agent stdio` for you. In this mode, Python owns a
-private Vis process and talks to it over standard input and output. It does not start an HTTP
-gateway, and it is not an MCP server or a terminal chat.
+The local `Agent` example starts `vis-agent stdio` for you. In this mode, Python owns a private Vis
+process and talks to it over standard input and output. The process starts no HTTP gateway. It is
+not an MCP server or a terminal chat.
 
-To choose the executable yourself or share one local process between agents,
-use `LocalEngine`:
+To choose the executable yourself, or to share one local process between agents, use
+`LocalEngine`:
 
 ```python
 from blockether.vis.engine import Agent, LocalEngine
@@ -252,20 +255,22 @@ with LocalEngine(executable="vis-agent", root=".") as layer:
 ```
 
 `LocalEngine` gives the process a temporary session database and a log file for its standard
-error. When the context closes, it stops the process and removes both files. If the engine fails,
-the error shows the exit status and the end of the log.
+error. When the context closes, `LocalEngine` stops the process and removes both files. If the
+engine fails, the error shows the exit status and the end of the log.
 
 With the default `executable="vis-agent"`, the SDK uses the installed command or
 [downloads it](#install-the-sdk). To use another Vis build, pass the absolute path of its
-`vis-agent` launcher. Pass the launcher, not the bare native binary: the launcher also loads
-the bundled Python runtime. Starting or stopping this process does not affect a running gateway.
+`vis-agent` launcher, not the bare native binary. The launcher also loads the bundled Python
+runtime. A start or a stop of this process does not affect a running gateway.
 
 ## Connect to a gateway and run a task
 
-Use a gateway when conversations must survive your script or be shared with the
-Vis app. You need only the Python SDK on the client machine, not a local engine.
-[Start a gateway](gateway-service.md#start-a-local-gateway), then set these
-variables in your private terminal for a local, default-state installation:
+Use a gateway when conversations must survive your script or appear in the Vis app. The client
+machine needs only the Python SDK, not a local engine.
+
+Do not print or commit the token. [Start a gateway](gateway-service.md#start-a-local-gateway).
+Then set these variables in your private terminal. The values are for a local installation with
+the default state:
 
 ```bash
 export VIS_GATEWAY_URL=http://127.0.0.1:7890
@@ -273,13 +278,12 @@ export VIS_GATEWAY_TOKEN="$(cat "$HOME/.vis/gateway.token")"
 export VIS_PROJECT_ROOT="$PWD"
 ```
 
-Do not print or commit the token. For a [remote
-gateway](gateway-service.md#connect-from-another-machine), use its HTTPS origin. Get its token from
-the operator through a secure channel. `VIS_PROJECT_ROOT` must be an **absolute path on the gateway
-machine**, not a path on your laptop. Remote Agent rejects `.` and does not guess a server
-directory.
+For a [remote gateway](gateway-service.md#connect-from-another-machine), use its HTTPS origin, and
+get its token from the operator through a secure channel. `VIS_PROJECT_ROOT` must be an absolute
+path on the gateway machine, not a path on your laptop. A remote `Agent` rejects `.` and does not
+guess a server directory.
 
-Save this independent example as `gateway_task.py` and run `python gateway_task.py`:
+Save this as `gateway_task.py` and run `python gateway_task.py`:
 
 ```python
 # gateway_task.py
@@ -308,58 +312,53 @@ if __name__ == "__main__":
     main()
 ```
 
-The script reads the environment variables. Neither object discovers a gateway
-or loads a local token. `GatewayClient` accepts an HTTP(S) **origin** with no
-path prefix, query, fragment or URL credentials. TLS verification stays enabled
-and redirects are refused. Transport options belong to the execution layer,
-not to `Agent`.
+Neither object discovers a gateway or loads a local token. The script reads both from the
+environment. `GatewayClient` accepts an HTTP or HTTPS origin with no path prefix, query, fragment,
+or URL credentials. TLS verification stays on, and the client refuses redirects. Transport options
+belong to the execution layer, not to `Agent`.
 
-An Agent borrows the execution layer you pass in. Closing it detaches its
-application extensions. Closing the outer `GatewayClient` releases the client
-lease and closes its streams. Neither action stops the gateway or deletes the
-saved conversation. A running turn may continue, but it cannot call application
-functions after their Agent closes.
-
-A `GatewayClient` continues to work when the gateway restarts. A short outage does
-not end its client lease. When the gateway no longer holds the lease, the client
-takes a new lease. Application extensions cannot move to a new lease, so a client
-with an Agent that has extensions raises `TransportError` for each request. Then
-create a new client and a new Agent.
-
-The session uses the `app` channel, so it is visible in the app on that gateway.
-Keep the printed session ID: to resume it later, open a
-`GatewayClient(url, token=...)` context and use `client.session(session_id)`.
-Each new Agent creates a new session. It does not implicitly resume an old one.
-
-When the `with` block starts, `GatewayClient` calls `get_capabilities()` and checks the protocol. It
-then sends the token with each request. The client also has one generated method for each gateway
-route. The method name is the HTTP method and the words of the route path, for example
+When the `with` block starts, `GatewayClient` calls `get_capabilities()` and checks the protocol.
+It then sends the token with each request. The client also has one generated method for each
+gateway route. The method name is the HTTP method and the words of the route path, for example
 `get_session_usage()`. Each generated method returns the parsed JSON answer.
+
+The session uses the `app` channel, so the app on that gateway shows it. Each new `Agent` creates a
+new session and does not resume an old one. Keep the printed session ID. To resume the session
+later, open a `GatewayClient(url, token=...)` context and call `client.session(session_id)`.
 
 To follow the progress of a turn, read [Follow progress](sessions-api.md#follow-progress).
 
+### What a close or a gateway restart changes
+
+An `Agent` borrows the execution layer that you pass in. A closed `Agent` detaches its application
+extensions. A closed `GatewayClient` releases the client lease and closes its streams. Neither
+close stops the gateway or deletes the saved conversation. A running turn can continue, but it
+cannot call application functions after their `Agent` closes.
+
+A `GatewayClient` continues to work when the gateway restarts. A short outage does not end its
+client lease. When the gateway no longer holds the lease, the client takes a new lease.
+Application extensions cannot move to a new lease. A client with an `Agent` that has extensions
+then raises `TransportError` for each request. Create a new client and a new `Agent`.
+
 ## Give the agent your functions
 
-Pass an `Extension` to your Agent to let it use business rules, query your data
-or call your services. You do not need a `.vis/extensions/` file or a global
-registration call. The extension belongs to that Agent's conversation, not to
-other agents sharing its execution layer.
+Pass an `Extension` to your `Agent` to let it use business rules, query your data, or call your
+services. You need no `.vis/extensions/` file and no global registration call. The extension
+belongs to the conversation of that `Agent`, not to other agents that share its execution layer.
 
-**Your functions run in your application process, on the SDK calling thread.**
-They can capture existing objects such as a database client or an in-memory
-list. This also works with a remote gateway: function code, closures and local
-objects are not uploaded. Install their dependencies in your application's
-Python environment.
+Your functions run in your application process, on the SDK calling thread. They can capture
+existing objects, such as a database client or an in-memory list. The same is true with a remote
+gateway, because Vis uploads no function code, closures, or local objects. Install their
+dependencies in the Python environment of your application.
 
-These functions run with **your application's permissions**, outside the model's
-sandbox. Review what they expose. Arguments and returned data cross to the
-engine and can become model context. Do not return credentials or unrelated
-private data.
+These functions run with the permissions of your application, outside the sandbox of the model.
+Review what they expose. Arguments and returned data cross to the engine and can become model
+context. Do not return credentials or unrelated private data.
 
 ### Register a function
 
-Save this complete application as `delivery_task.py`. Its closure records quoted
-weights in a list owned by the application. No code is installed on the gateway:
+Save this application as `delivery_task.py`. Its closure records the quoted weights in a list that
+the application owns. No code is installed on the gateway:
 
 ```python
 # delivery_task.py
@@ -427,70 +426,76 @@ if __name__ == "__main__":
     main()
 ```
 
-`vis.Symbol` exposes the function's name, annotations and docstring to the agent. Here the callable
-is `delivery_quote`, not `delivery.delivery_quote`, because `alias` identifies the extension, not a
-function-name prefix. `prompt` explains when to use the function. `symbols` makes it callable.
+`vis.Symbol` gives the agent the name, the annotations, and the docstring of the function. The
+callable is `delivery_quote`, not `delivery.delivery_quote`. The `alias` identifies the extension
+and is not a prefix of function names. `prompt` explains when to use the function, and `symbols`
+makes it callable.
 
-Every exported function needs an Activity presentation. This quick calculation shows its price when
-it completes and adds no running indicator. Failures keep their error details.
+Every exported function needs an Activity presentation. This short calculation shows its price
+when it completes and adds no running indicator. A failure keeps its error details.
 
 ### Ask the agent to use it
 
-Run `python delivery_task.py` from your project. The function returns **1200
-cents**, the Activity reads **Quote delivery · 1200 cents**, and your application
-prints `Quoted weights: [1200]` after one call. The agent can discover the contract
-through `apropos` and `doc`, call the function through `python_execution`, and use
-its result in the answer. This is a model request and can incur provider charges.
+This run is a model request and can cost provider charges. Run `python delivery_task.py` from your
+project. The function returns 1200 cents, and the Activity reads **Quote delivery · 1200 cents**.
+After one call, your application prints `Quoted weights: [1200]`.
 
-You can also add an extension after entering the Agent context, before its first
-request: call `agent.register_extension(extension)`. Both forms use the same
-`Extension` declaration. For a remote agent, pass the same extension object to
-`Agent(execution_layer=execution_layer, extensions=[extension], ...)` inside the
-gateway context above. It still executes in your application.
+The agent finds the contract through `apropos` and `doc`, calls the function through
+`python_execution`, and uses the result in the answer.
 
-### Understand callback lifetime and supported declarations
+You can also add an extension after you enter the `Agent` context and before its first request.
+Call `agent.register_extension(extension)`. Both forms use the same `Extension` declaration. For a
+remote agent, pass the same extension object to
+`Agent(execution_layer=execution_layer, extensions=[extension], ...)` inside the gateway context.
+The extension still runs in your application.
 
-Callbacks run while your program drives the SDK: `run()`, turn waiting, session
-or turn reads, and event iteration service pending calls. `send()` alone does not
-start a background thread that executes your application code. Keep driving the
-SDK and keep the application alive while the agent needs its functions.
+### When your functions run
 
-Closing the Agent detaches its extensions. Disconnecting or cancelling releases the engine's wait,
-but it cannot stop a synchronous Python function that is already running in your process. A repeated
-delivery of the same pending call uses its saved result and does not run the function again. This is
-not an exactly-once guarantee across application restarts or new agent requests.
+Your functions run while your program drives the SDK. `run()`, a turn wait, a session or turn
+read, and event iteration each service the pending calls. `send()` alone starts no background
+thread for your application code. While the agent needs its functions, keep driving the SDK and
+keep the application alive.
 
-Client extensions support functions, bound methods and object namespaces declared
-with `Symbol`, an explicit Activity for every exported method, and a static
-`prompt`. For an object namespace, use `Symbol(object, name="inventory")` and
-annotate its methods with `@vis.method(activity=...)`. See the
-[extension API](extension-api.md). Host-only `activation`, `ctx`, `env`, providers,
-op hooks, network filters, slash commands and callable prompts are rejected, not
-silently ignored. Use an [engine-side extension](extending.md) for those features.
-Its registration entry point is `vis.register_extension(...)`.
+A disconnect or a cancel releases the wait of the engine, but it cannot stop a synchronous Python
+function that already runs in your process. A repeated delivery of the same pending call uses its
+saved result and does not run the function again. That is not an exactly-once guarantee across
+application restarts or new agent requests.
 
-Arguments must be JSON data. Results can be JSON values, tuples or dataclass
-instances. Tuples become lists and dataclass fields become ordinary data, keeping
-`None` fields. Live object identity stays in your application, not in the returned
-value. Async functions are awaited on the SDK calling thread, which must not
-already be running an asyncio event loop.
+An async function is awaited on the SDK calling thread. That thread must not already run an
+asyncio event loop.
+
+### What a client extension can declare
+
+A client extension declares functions, bound methods, and object namespaces with `Symbol`. It
+needs an explicit Activity for every exported method, and it can have a static `prompt`. For an
+object namespace, use `Symbol(object, name="inventory")` and annotate its methods with
+`@vis.method(activity=...)`. The [extension API](extension-api.md) has the details.
+
+Vis rejects the host-only features and does not ignore them: `activation`, `ctx`, `env`,
+providers, op hooks, network filters, slash commands, and callable prompts. For those features,
+write an [engine-side extension](extending.md). Its registration entry point is
+`vis.register_extension(...)`.
+
+Arguments must be JSON data. A result can be a JSON value, a tuple, or a dataclass instance. A
+tuple becomes a list, and dataclass fields become ordinary data that keeps `None` fields. The
+identity of a live object stays in your application, not in the returned value.
 
 ## Handle failures and choose a lifecycle
 
 | Situation | Meaning and next step |
 | --- | --- |
-| `ProtocolError` | SDK and gateway protocols disagree. Install compatible versions |
-| `GatewayError` | Inspect `status` and `code` for authentication, permissions or request errors |
-| `TransportError` | Read the engine's exit status and standard error in the message, if present. Then check the executable or gateway, network and TLS setup |
-| `VisTimeout` from `run()` or `turn.wait()` | The wait ended, but the turn can still be running. Inspect it or call `turn.cancel()` |
-| `StructuredOutputError` from `run()` | No valid structured result. Read its `errors` and `attempts` |
-| A record whose `status` is not `completed` | The task did not complete normally. Inspect its content and input requirements |
+| `ProtocolError` | The SDK and the gateway have no common protocol. Install compatible versions |
+| `GatewayError` | Read `status` and `code` for an authentication, permission, or request error |
+| `TransportError` | Read the exit status and the standard error of the engine in the message, if present. Then check the executable or the gateway, the network, and the TLS setup |
+| `VisTimeout` from `run()` or `turn.wait()` | The wait ended, but the turn can still run. Inspect the turn or call `turn.cancel()` |
+| `StructuredOutputError` from `run()` | No structured result was valid. Read its `errors` and `attempts` |
+| A record whose `status` is not `completed` | The task did not complete normally. Inspect its content and its input requirements |
 
-A wait timeout is separate from the execution layer's transport `timeout`. A local pipe timeout
-stops its engine. Leaving a default local Agent context also stops unfinished work. An Agent with a
-borrowed layer leaves that layer running. A remote turn can outlive the client.
+A wait timeout is separate from the transport `timeout` of the execution layer. A local pipe
+timeout stops its engine. The exit from a default local `Agent` context also stops unfinished work.
+An `Agent` with a borrowed layer leaves that layer running. A remote turn can outlive the client.
 
-When you retry a submission, reuse the same explicit `idempotency_key`. A new key means a new
+When you retry a submission, send the same explicit `idempotency_key`. A new key means a new
 request.
 
 ### Catch gateway errors
@@ -516,21 +521,21 @@ except TransportError:
 
 ### Choose a lifecycle
 
-| API | Use it for | Closing it |
+| API | Use it for | When it closes |
 | --- | --- | --- |
-| `Agent(project=".")` | One local conversation, no gateway or HTTP listener | Stops its engine and discards session history |
-| `Agent(project=..., execution_layer=layer)` | One conversation on a caller-owned local engine or gateway client | Detaches its application extensions, but leaves the layer and saved conversation open |
-| `LocalEngine(executable=..., root=...)` | Several sessions in one owned stdio process | Stops that process and discards its session database |
-| `GatewayClient(url, token=...)` | Persistent or shared sessions on a separately running gateway | Closes streams and releases its client lease |
+| `Agent(project=".")` | One local conversation, with no gateway and no HTTP listener | It stops its engine and discards the session history |
+| `Agent(project=..., execution_layer=layer)` | One conversation on a local engine or a gateway client that the caller owns | It detaches its application extensions. The layer and the saved conversation stay open |
+| `LocalEngine(executable=..., root=...)` | Several sessions in one stdio process that you own | It stops that process and discards its session database |
+| `GatewayClient(url, token=...)` | Persistent or shared sessions on a gateway that runs separately | It closes its streams and releases its client lease |
 
-`Agent` never picks a transport for you: pass a `LocalEngine` or a `GatewayClient` when the default
-private engine does not fit. Each layer and its session handles use one calling thread. Closing a
-layer never deletes a saved conversation. To delete one, call `conversation.delete()`.
+`Agent` never chooses a transport for you. Pass a `LocalEngine` or a `GatewayClient` when the
+default private engine does not fit. Each layer and its session handles use one calling thread. A
+close of a layer never deletes a saved conversation. To delete one, call `conversation.delete()`.
 
 ## See also
 
-- [HTTP API](http-api.md) — the same gateway from any language.
-- [Sessions API](sessions-api.md) — send messages, follow progress and manage sessions.
-- [Running a gateway](gateway-service.md) — install and secure a shared agent service.
-- [Configuration](configuration.md) — choose a provider and model before the first task.
-- [Extending Vis](extending.md) — add tools inside the agent.
+- For the same gateway from any language, read [HTTP API](http-api.md).
+- To send messages, follow progress, and manage sessions, read [Sessions API](sessions-api.md).
+- To install and secure a shared agent service, read [Running a gateway](gateway-service.md).
+- To choose a provider and a model before the first task, read [Configuration](configuration.md).
+- To add tools inside the agent, read [Extending Vis](extending.md).

@@ -1,83 +1,70 @@
 # Extension design
 
-A useful extension gives Vis a clear way to do a job that your project needs. For example, it runs
-the right tests, inspects a service or checks a result. This guide gives best practices to choose an
-operation, explain its inputs and test it. Start with the [one-file tutorial](extending.md). When
-you need a larger example, use the [tested greeter
+A useful extension gives Vis one clear way to do a job that your project needs. This guide shows how
+to choose an operation, describe its inputs, and test it. Start with the [one-file
+tutorial](extending.md). For a larger example, use the [tested greeter
 package](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter).
 
 ## When to use
 
 - **The agent repeats the same sequence of calls to get one answer.** [Choose a tool
   boundary](#choose-a-useful-tool-boundary) that returns that answer directly.
-- **The agent calls your tool with the wrong arguments or misreads its result.**
-  [Describe its structure once](#describe-structure-once) and [document default
+- **The agent calls your tool with the wrong arguments or misreads its result.** [Describe
+  structure once](#describe-structure-once) and [document default
   behavior](#document-default-behavior).
-- **The extension is growing and needs tests.** [Keep the entrypoint
-  small](#keep-the-entrypoint-small) and [test both
-  boundaries](#test-both-boundaries).
-- **People cannot quickly see what a tool did.** [Design its
-  Activity](#design-the-activity-with-the-tool), as in the [CI
-  report](#show-a-ci-report-without-hiding-failures).
-- **A team rule should be measured after every edit, not left to a reminder.** Build
-  an [edit–check–fix cycle](#check-code-complexity-after-edits).
+- **The extension grows and needs tests.** [Keep the entrypoint small](#keep-the-entrypoint-small)
+  and [test both boundaries](#test-both-boundaries).
+- **People cannot see what a tool did.** [Design its Activity](#design-the-activity-with-the-tool),
+  as in the [CI report](#show-a-ci-report-without-hiding-failures).
+- **A team rule must be measured after every edit.** Build a [check that runs after each
+  edit](#check-code-complexity-after-edits).
 - **Other Python programs need the same tool descriptions and help.** Use a [typed
   catalog](#typed-catalog-and-generated-help).
 
-Follow the greeter example from its contract through registration, Activity and
-tests. Then try the [CI report](#show-a-ci-report-without-hiding-failures) and
-[edit–check–fix cycle](#check-code-complexity-after-edits). The optional
-[catalog example](#typed-catalog-and-generated-help) comes last.
-
 ## Choose a useful tool boundary
 
-Choose an operation with a clear result. Then the agent does not have to rebuild the same sequence
-for every call. Return Python values that callers can use directly. Do not return CLI output or JSON
-text that callers must parse. A string is enough for a text result. A frozen dataclass helps when
-several fields have different meanings.
+Choose an operation with one clear result, so that the agent does not rebuild a sequence for every
+call. Return Python values, not CLI output or JSON text that callers must parse. A string is enough
+for text. Use a frozen dataclass when several fields have different meanings.
 
-Keep reads separate from mutations. Tag each tool by what it does:
+Keep reads separate from mutations, and tag each tool by what it does:
 
-- Mark state-changing tools with `tag="mutation"`, or `@vis.method(tag="mutation")` on a namespace
-  method.
-- Mark tools that check work, such as tests and lint, with `tag="verification"`.
-- Mark tools that reach people or systems outside the session with `tag="external"`.
+- `tag="mutation"` marks a tool that changes state. On a namespace method, write
+  `@vis.method(tag="mutation")`.
+- `tag="verification"` marks a tool that checks work, such as tests and lint.
+- `tag="external"` marks a tool that reaches people or systems outside the session.
 
-Vis uses the tag to summarize a finished turn. See [Report checks and outside
-effects](extension-api.md#report-checks-and-outside-effects). The tag describes the operation. It
-does not grant permission or enforce a policy.
+Vis uses the tag to [summarize a finished
+turn](extension-api.md#report-checks-and-outside-effects). The tag grants no permission and enforces
+no policy.
 
-Validate domain constraints in the implementation. When they fail, raise a useful exception. Type
-annotations describe the API. They do not validate calls.
+Validate domain constraints in the implementation, and raise a useful exception when one fails.
+Type annotations describe the API. They do not validate calls.
 
 ## Describe structure once
 
-The registered callable signature and resolved types are the source of truth for the call shape.
-This includes parameter names and kinds, required or default status, and result structure. When you
-need those details, inspect the narrow `doc("tool.name")` page, its `.contract`, or a `ToolSpec`
-from `Catalog.spec()`. Do not rely on a signature written by hand in prose.
+The registered signature and its resolved types define the parameter names and kinds, the required
+or default status, and the result structure. To see them, read `doc("tool.name")`, its `.contract`,
+or a `ToolSpec` from `Catalog.spec()`. Do not trust a signature written by hand in prose.
 
-Keep docstrings short and semantic. Vis combines them with the registered metadata
-to build `doc()`. You do not need to repeat signatures, default declarations or
-complete return schemas. Every public callable still needs a nonblank docstring.
-Its first line supplies the short `apropos()` preview, so begin with what the tool
-does. Search matches tool names, not that preview: choose predictable names.
+Keep the docstring short and about meaning. Vis combines it with the registered metadata to build
+`doc()`, so it repeats no signature, default declaration, or return schema. Every public callable
+needs a nonblank docstring. Its first sentence is the `apropos()` preview, so begin with what the
+tool does. `apropos()` matches the name and that preview only, so choose predictable names.
 
-Document what the signature and types cannot explain:
+Document what the signature and the types cannot say:
 
-- When to call the tool and what must already be true.
-- Units, limits, contextual defaults and the meaning of empty or missing results.
-- Side effects, safety constraints and external services the call uses.
-- Failure conditions and whether retrying is safe.
+- When to call the tool, and what must already be true.
+- Units, limits, contextual defaults, and the meaning of an empty or missing result.
+- Side effects, safety constraints, and the external services that the call uses.
+- Failure conditions, and whether a retry is safe.
 
-Use `Annotated[T, "meaning"]` for parameter and result-field descriptions. Keep
-preconditions, side effects and failure conditions in the docstring. Do not copy
-the signature into prose or maintain a second schema. Keep result classes at
-module level so Vis can resolve their names safely. Vis loads the extension file
-itself as if it began with `from __future__ import annotations`. Package and helper
-modules that define tools need that import themselves.
+Describe a parameter or a result field with `Annotated[T, "meaning"]`. Define result classes at
+module level so that Vis can resolve their names. Vis loads the extension file as if it began with
+`from __future__ import annotations`. A package or helper module that defines tools needs that
+import itself.
 
-The packaged example's `src/vis_greeter/__init__.py` is ordinary Python with no Vis dependency:
+`src/vis_greeter/__init__.py` of the packaged example is ordinary Python with no Vis dependency:
 
 ```python
 """Ordinary Python code, usable and testable without a Vis session."""
@@ -118,32 +105,31 @@ class Greeter:
 
 ## Document default behavior
 
-Explain omitted-argument behavior when it matters to the caller, without maintaining
-a second list of default declarations. The greeter says that it preserves
-capitalization unless uppercase is requested. Its signature already declares the
-optional flag. Test omission and an explicit override so this meaning stays accurate.
+Say what an omitted argument does when the caller needs to know. The greeter states that it
+preserves capitalization unless uppercase is requested, and its signature declares the flag. Test
+the omission and an explicit override, so that the statement stays true.
 
-For contextual defaults, name the resolution rule: for example, “Omitting `repo`
-uses the current project's repository.” For `None`, say whether it means automatic
-selection, no limit, or absence. Avoid vague phrases such as “uses the default.”
+For a contextual default, name the rule, for example "Omitting `repo` uses the repository of the
+current project." For `None`, say whether it means automatic selection, no limit, or absence. Do not
+write "uses the default."
 
-Vis exposes ordinary literal defaults in signatures and generated help, so you do not need to copy
-their values into prose. Instead, explain what a timeout controls and its units, or what an empty
-collection means. Opaque objects and defaults outside the inspection budget appear as `...`. Omit
-such an argument to use the original default, not `Ellipsis`.
+Vis shows literal defaults in signatures and generated help, so do not copy the values. Explain
+what a timeout controls and its units, or what an empty collection means. An opaque object, or a
+default outside the inspection budget, appears as `...`. Omit that argument to use the real
+default. Do not pass `Ellipsis`.
 
-Custom `repr()` methods and factories never run during inspection. Declared defaults are public
-metadata, so resolve credentials inside the tool. Do not put them in parameter defaults. See the
-[contract reference](extension-api.md#defaults-and-introspection).
+Inspection never runs a custom `repr()` or a factory. Declared defaults are public metadata, so
+resolve credentials inside the tool, not in a parameter default. Read the [contract
+reference](extension-api.md#defaults-and-introspection).
 
 ## Keep the entrypoint small
 
-For reusable code, keep business logic in an importable package and registration
-in `extension.py`. A CLI, if useful, is another caller of the same functions.
-Do not import the entrypoint from domain code, change `sys.path`, or start login,
-network requests or background work during registration.
+Keep reusable business logic in an importable package and the registration in `extension.py`. A
+CLI, if useful, is another caller of the same functions. Do not import the entrypoint from domain
+code or change `sys.path`. Do not start a login, a network request, or background work during
+registration.
 
-The packaged example connects the implementation to Vis with this entire entrypoint:
+This entrypoint is all that connects the packaged example to Vis:
 
 ```python
 """Vis entrypoint. The business logic lives in vis_greeter, not in this file."""
@@ -179,128 +165,124 @@ vis.register_extension(
 )
 ```
 
-`Symbol(Greeter(), name="greet")` exports `greet.hello(...)`. The public namespace
-comes from `Symbol.name`, not `Extension.alias`. Declare import roots in the
-[package manifest](extension-packages.md#package-manifest), or use an
-[editable project](extension-development.md). Do not combine both import strategies
-for the same source.
+`Symbol(Greeter(), name="greet")` exports `greet.hello(...)`. The public namespace comes from
+`Symbol.name`, not from `Extension.alias`. Declare import roots in the [package
+manifest](extension-packages.md#package-manifest), or use an [editable
+project](extension-development.md). Do not use both for the same source.
 
-## Design the activity with the tool
+## Design the Activity with the tool
 
-Every registered callable owns its Activity presentation, including every public
-method in an object namespace. Declare it at the binding, not as a later UI task.
-The example decorates `Greeter.hello` in the entrypoint so its ordinary Python
-implementation stays independent of Vis.
+Every registered callable owns its Activity, each public method of an object namespace included.
+Declare it at the binding, not as a later UI task. The example decorates `Greeter.hello` in the
+entrypoint, so the implementation stays independent of Vis.
 
-Someone who reads an Activity should understand what happened without knowing Python method names or
-result types. Use sentence-case English labels such as "Greet person" or "Run tests". Keep proper
-names and acronyms. Use consistent terms, without profanity or vulgarity. Show a meaningful target,
-count or outcome in the summary. Put selected evidence behind disclosure instead of serializing the
-returned object.
+A person must understand the Activity without Python method names or result types:
 
-Never change the case of code, paths or returned content only to format a label.
+- Write the label in English and in sentence case, such as "Greet person" or "Run tests". Keep
+  proper names and acronyms.
+- Use consistent terms, without profanity or vulgarity.
+- Show a meaningful target, count, or outcome in the summary.
+- Put selected evidence behind disclosure. Do not serialize the returned object.
+- Never change the case of code, paths, or returned content to format a label.
 
-Choose whether a person needs to see the operation begin. Fast local reads,
-patches and greetings use `show_start=False`: only the end result is visible.
-The example uses this policy because generating a greeting is immediate. Slow
-work, network requests and user input keep `show_start=True` and can publish
-meaningful intermediate updates. The engine always tracks start/end internally.
-Hiding progress never hides failures, cancellation or the final result.
+Decide whether a person must see the operation begin. Fast local reads, patches, and greetings use
+`show_start=False`, so only the end result is visible. Slow work, network requests, and user input
+keep `show_start=True` and can publish intermediate updates. The engine always tracks the start and
+the end. Hidden progress never hides a failure, a cancellation, or the final result.
 
-Test empty results, the chosen start visibility, success, failure and cancellation.
-Verify that presentation errors cannot change the tool result. The engine supplies
-execution state and errors, but no generic result view. Follow the canonical
-[Activity API](extension-api.md#activity-presentation) for declarations and limits.
+Test empty results, the start visibility, success, failure, and cancellation. Verify that a
+presentation error cannot change the tool result. The engine supplies execution state and errors,
+but no generic result view. The [Activity API](extension-api.md#activity-presentation) has the
+declarations and the limits.
 
 ## Give each kind of instruction one owner
 
 | Information | Owner |
 | --- | --- |
-| Parameter names, kinds, required/default status and result structure | The registered signature and resolved types |
-| Preconditions, units, meaningful default behavior, side effects and failures | `Annotated` descriptions and a short docstring |
+| Parameter names, kinds, required or default status, and result structure | The registered signature and resolved types |
+| Preconditions, units, meaningful default behavior, side effects, and failures | `Annotated` descriptions and a short docstring |
 | When to use this extension and where to discover its tools | A short extension `prompt` |
-| A multi-step procedure spanning tools | A skill with a clear trigger in its description |
-| Project-wide rules | Project instructions, not every tool's prompt |
+| A procedure of many steps that spans tools | A skill with a clear trigger in its description |
+| Project-wide rules | Project instructions, not the prompt of every tool |
 
-Link from a skill to `doc("greet.hello")` instead of copying the API reference.
-Keep references and templates beside `SKILL.md` and read them when needed.
-Installing or reading a skill never executes its procedure or supplies authorization.
-See [prompts and discovery](extension-api.md#prompts-and-discovery) and
-[bundled skills](extension-packages.md#bundled-skills).
+In a skill, link to `doc("greet.hello")` and do not copy the API reference. Keep references and
+templates beside `SKILL.md`, and read them when needed. To install or read a skill does not run its
+procedure and gives no authorization. Read [Prompts and
+discovery](extension-api.md#prompts-and-discovery) and [Bundled
+skills](extension-packages.md#bundled-skills).
 
 ## Test both boundaries
 
 ### Test the Python implementation
 
-From a development environment containing the SDK and pytest, run the example's
-tests from the copied `greeter/` directory:
+In a development environment with the SDK and pytest, run the example tests from the copied
+`greeter/` directory:
 
 ```bash
 python -m pip install vis-agent pytest
 python -m pytest tests
 ```
 
-Cover the normal result, omitted arguments, explicit overrides, invalid input and
-side effects. The example's tests run without a gateway. Use your project's own
-test environment. Installing the SDK there does not install an extension into Vis.
+Cover the normal result, omitted arguments, explicit overrides, invalid input, and side effects.
+These tests need no gateway. Use the test environment of your project. The SDK that you install
+there installs no extension into Vis.
 
-Outside the engine, `vis.state`, `vis.log` and `vis.shell` use a local host, and
-`vis.ask` prompts in the terminal. Supply answers with
-`vis.outside.answer_with({...})` or `VIS_OUTSIDE_ANSWERS` JSON. Set
-`VIS_OUTSIDE_NONINTERACTIVE=1` to make input requests undeliverable. Session-only
-operations cannot be proved by an outside test. For views, use the existing
-[LiveRecorder](live-views.md#testing-a-view).
+Outside the engine, the SDK works as follows:
+
+- `vis.state`, `vis.log`, and `vis.shell` use a local host.
+- `vis.ask` prompts in the terminal. Supply answers with `vis.outside.answer_with({...})` or with
+  JSON in `VIS_OUTSIDE_ANSWERS`.
+- `VIS_OUTSIDE_NONINTERACTIVE=1` makes input requests undeliverable.
+- An outside test cannot prove a session-only operation. For views, use the
+  [LiveRecorder](live-views.md#testing-a-view).
 
 ### Test the registered tool
 
-1. [Install the local package](extension-packages.md#install-a-package), then start
-   Vis in the target project or run `/reload`.
-2. On the next turn, inspect `apropos(r"^greet\.")`, `doc("greet.hello")` and
-   `greet.hello.contract`. Confirm the inputs, public default behavior and result fields.
-3. Call `await greet.hello("Ada")` and `await greet.hello("Ada", uppercase=True)`.
-   Check the returned `.text`, not only registration or the extension list.
-4. After an edit, reload and repeat a call. Vis can keep the last working version and mark it stale.
-   In that case, fix the load failure and repeat the call with the updated code.
+1. [Install the local package](extension-packages.md#install-a-package). Then start Vis in the
+   target project or run `/reload`.
+2. On the next turn, inspect `apropos(r"^greet\.")`, `doc("greet.hello")`, and
+   `greet.hello.contract`. Confirm the inputs, the default behavior, and the result fields.
+3. Call `await greet.hello("Ada")` and `await greet.hello("Ada", uppercase=True)`. Check the
+   returned `.text`. Registration or the extension list proves no call.
+4. After an edit, reload and repeat a call. If Vis kept the last working version and marked it
+   stale, fix the load failure and call again.
 
-The repository's regression suite executes the documented package and loads it
-through the real host, including discovery, sandbox results, skill reload and
-removal. Your integration also needs a representative call against its own
-required dependencies. For tests in Vis's shared environment, use
-`vis-agent python -m pytest`, not `vis-agent python pytest`.
+The repository suite loads this package through the real host and covers discovery, sandbox
+results, skill reload, and removal. Your integration still needs a representative call against its
+own dependencies. For tests in the shared environment of Vis, run `vis-agent python -m pytest`, not
+`vis-agent python pytest`.
 
 ## Show a CI report without hiding failures
 
-Use a custom Activity when a raw return value would leave the reader to work out
-what happened. This example reads an existing local test summary. It does not
-run tests, contact a CI service or check whether the report is current.
+Use a custom Activity when a raw return value leaves the reader to work out what happened. This
+example reads an existing local test summary. It does not run tests, contact a CI service, or check
+whether the report is current.
 
-After [installing the reader](#install-the-report-reader), ask Vis:
+After you [install the report reader](#install-the-report-reader), ask Vis:
 
 > Read the CI report at `/workspace/ci-report.json` and show the passed and failed counts.
 
-The Activity says **Read CI report**, summarizes **42 passed · 1 failed** and
-includes the source path as expandable evidence. The agent still receives a
-frozen `CIReport` with all three fields. Reading a report with failing tests is a
-successful *read*, not a claim that the tests passed.
+The Activity says **Read CI report**, summarizes **42 passed · 1 failed**, and holds the source path
+as expandable evidence. The agent receives a frozen `CIReport` with all three fields. A report with
+failed tests is a successful read, not a claim that the tests passed.
 
-With both counts at zero, the summary is **No tests reported**. Missing files, invalid JSON and
-invalid counts fail the call. The Activity keeps the error type and message, with a labeled excerpt
-for long messages. The engine owns the operation's state, timing and error, independently of this
-presentation.
+When both counts are zero, the summary is **No tests reported**. A missing file, invalid JSON, or
+an invalid count fails the call. The Activity keeps the error type and the message, with a labeled
+excerpt of a long message. The engine owns the state, the timing, and the error of the operation,
+whatever the presentation does.
 
 ### Install the report reader
 
-Prepare a UTF-8 JSON file with this shape. Adapt your CI job's output to it if
-needed. Counts must be nonnegative integers, not booleans. Extra fields are
-ignored.
+Prepare a UTF-8 JSON file with this shape, and adapt the output of your CI job to it if needed.
+Counts must be nonnegative integers, not booleans. The reader ignores extra fields.
 
 ```json
 {"passed": 42, "failed": 1}
 ```
 
-Save the following as `.vis/extensions/ci_report.py`, then
-[reload extensions](extending.md#2-load-it). Only load code you trust:
-extensions run in host CPython, not in the agent's sandbox.
+Save the following as `.vis/extensions/ci_report.py`, then [reload
+extensions](extending.md#2-load-it). Load only code that you trust. An extension runs in host
+CPython, not in the sandbox of the agent.
 
 ```python
 # ci_report.py
@@ -391,7 +373,7 @@ vis.register_extension(
 
 ### Call the report reader
 
-The agent can discover `read_ci_report` and call it directly. For a file at
+The agent discovers `read_ci_report` and calls it directly. For a file at
 `/workspace/ci-report.json`, the call is:
 
 ```python
@@ -399,81 +381,73 @@ report = read_ci_report("/workspace/ci-report.json")
 print(report)
 ```
 
-This quick local read uses `show_start=False`, so it does not display a running row. The callback
-also handles `start`. If you adapt the tool to do slow work, use `show_start=True` so people can see
-it begin. Before you publish the adapted tool, test its running, success, failure and empty states.
+This quick local read uses `show_start=False`. The callback also handles `start`. If you adapt the
+tool to slow work, set `show_start=True`. Before you publish the adapted tool, test its running,
+success, failure, and empty states.
 
 ## Check code complexity after edits
 
-Suppose your team wants Python code to stay easy to follow. A skill can remind the agent to check
-complexity, but a reminder is not a measurement. Put the check in an extension hook, so it runs at
-the edit boundary. Then give the agent the findings on its next turn. You decide which metric,
-threshold and source files matter to your project.
+A skill can remind the agent to check complexity, but a reminder is not a measurement. A hook runs
+the check at the edit boundary and gives the agent the findings on its next turn. You choose the
+metric, the threshold, and the source files.
 
-This example measures **control-flow nesting**, not cyclomatic complexity. It
-reports the deepest chain of `if`, loops, `try`, `with` and `match` statements in
-each Python file. A new function, class or lambda starts at depth zero. `elif`
-counts as another nested `if` in Python's syntax tree. Comprehensions and boolean
-expressions do not add depth. The limit of three is an example policy, not a
+This example measures control-flow nesting, not cyclomatic complexity. It reports the deepest chain
+of `if`, loop, `try`, `with`, and `match` statements in each Python file. A new function, class, or
+lambda starts at depth zero. `elif` counts as another nested `if` in the Python syntax tree.
+Comprehensions and boolean expressions add no depth. The limit of three is an example policy, not a
 universal definition of good code.
 
-### See the edit–check–fix cycle
+### See the cycle of edit, check, and fix
 
-After [installing the check](#install-the-check), ask Vis:
+After you [install the check](#install-the-check), ask Vis:
 
 > Update the order-processing code. Show the nesting check, simplify any reported
 > nesting, then show the check again. Run the normal tests before finishing.
 
-1. **Edit.** The hook scans `src/**/*.py` at the edit boundaries and supplies
-   findings to the agent on its next request.
-2. **Check.** The agent calls `check_nesting()` to scan the current files and show
-   you a **Check code nesting** Activity. Expand it to see the scope, limit and
-   file-and-line findings.
-3. **Fix and repeat.** After simplifying the code, the agent calls the check again.
-   The new Activity shows the new result. The earlier finding remains in history.
+1. **Edit.** The hook scans `src/**/*.py` at the edit boundaries and gives the findings to the
+   agent on its next request.
+2. **Check.** The agent calls `check_nesting()`, and you see a **Check code nesting** Activity.
+   Expand it to see the scope, the limit, and each finding with its file and line.
+3. **Fix and repeat.** The agent simplifies the code and calls the check again. The new Activity
+   shows the new result. The earlier finding stays in the history.
 
-The hook supplies automatic feedback, but does not create its own Activity or
-force the agent to fix anything. The registered tool provides the visible check.
-It runs a fresh scan, so you can also ask for it before making an edit. This quick
-local check uses `show_start=False`: you see the result, not a running row.
+The hook gives feedback without an Activity and forces no fix. The registered tool is the visible
+check. It runs a fresh scan with `show_start=False`, so you can also ask for it before an edit.
 
-Select either image to view it full size.
+Select an image to view it at full size.
 
-**Before the fix:** four files checked, with one location above the nesting limit.
+**Before the fix.** Four files are checked, and one location is above the nesting limit.
 
 [![Expanded Check code nesting Activity: four files checked, one finding at src/orders.py line 18, nesting 4 exceeds the limit of 3.](assets/screenshots/nesting-finding.png)](assets/screenshots/nesting-finding.png)
 
-**After the fix:** the same four files checked, with no nesting findings.
+**After the fix.** The same four files are checked, with no nesting findings.
 
 [![Expanded Check code nesting Activity after the fix: four files checked, zero findings, and No nesting findings.](assets/screenshots/nesting-clear.png)](assets/screenshots/nesting-clear.png)
 
-A successful Activity means the scan returned a report, not that every file
-passed. Findings include parse and read errors. **No Python files found** is a
-separate empty state, not a passing check.
+A successful Activity means that the scan returned a report, not that every file passed. Findings
+include parse errors and read errors. **No Python files found** is a separate empty state, not a
+passed check.
 
 ### Know what this checks
 
-- A `python_execution` hook runs when the whole Python block returns, including
-  a normal Python error after a write. That covers `Path.write_text()` and
-  `with open(..., "w")`. The report is replaced, not accumulated.
-- Writes are checked **at these boundaries**, not at every filesystem write.
-  Unfinished background processes, a killed interpreter and edits made outside
-  Vis are not continuously watched. Wait for any work you start before relying
-  on the report, and run your normal checks before accepting changes.
-- This is feedback, not a rollback or a security boundary. An after hook cannot
-  undo an edit or refuse it after the fact. For a hard rule, validate inside the
-  domain operation or use a `before` hook with `vis.block(reason)` on the
-  operation you want to refuse. Keep access controls in the sandbox policy and
-  repeat acceptance checks in CI. Ordinary tool-hook errors are logged and do
-  not block the operation.
+- A `python_execution` hook runs when the whole Python block returns, also after a normal Python
+  error that follows a write. So it covers `Path.write_text()` and `with open(..., "w")`. Each run
+  replaces the report.
+- The hook checks writes at these boundaries, not at every filesystem write. It does not watch
+  unfinished background processes, a killed interpreter, or edits made outside Vis. Wait for work
+  that you start before you rely on the report. Run your normal checks before you accept changes.
+- The report is feedback, not a rollback or a security boundary. An after hook cannot undo or
+  refuse an edit. For a hard rule, validate inside the domain operation, or use a `before` hook
+  with `vis.block(reason)` on the operation to refuse. Keep access controls in the sandbox policy,
+  and repeat acceptance checks in CI. Vis logs an ordinary tool-hook error and does not block the
+  operation.
 
 ### Install the check
 
 For a small Python project with a `src/` directory, save this complete file as
-`.vis/extensions/code_quality.py`, then use `/reload`. It needs Python 3.11 or
-later, the SDK supplied by Vis and no other packages. Like every extension, it
-runs as trusted host code: review it before loading it. Keep `src/` limited to
-code you intend to scan, including any linked files.
+`.vis/extensions/code_quality.py`, then run `/reload`. The file needs Python 3.11 or later and the
+SDK that Vis supplies, and no other packages. It runs as trusted host code, so review it first.
+Keep `src/` limited to code that you intend to scan, linked files included.
 
 ```python
 # code_quality.py
@@ -614,14 +588,14 @@ vis.register_extension(
 ```
 
 The callback reads the current files, not the text of the tool call. It scans all `src/**/*.py`
-files each time. So it includes new files, deletions and several writes in one block, and it does
-not have to parse Python write commands. For a large repository, narrow the scope or move this work
-into your existing analyzer.
+files each time. So it sees new files, deletions, and several writes in one block, and it parses no
+Python write commands. For a large repository, narrow the scope or move the work into your existing
+analyzer.
 
 ### Use the findings
 
-The hook supplies the report on the next model request as a
-`session["code_quality"]` contribution such as:
+The hook supplies the report on the next model request as a `session["code_quality"]` contribution
+such as:
 
 ```python
 {
@@ -637,40 +611,38 @@ The agent can show you a fresh result with the registered tool:
 print(check_nesting())
 ```
 
-The file and line tell it where to review the change. It can flatten a branch or extract a focused
-function, then inspect the next report. A parse or read error is a finding, not a passing check. An
-empty `findings` list means the scanned files passed this metric. It says nothing about tests or
+The file and the line show the agent where to flatten a branch or extract a function. An empty
+`findings` list means that the scanned files passed this metric. It says nothing about tests or
 overall code quality.
 
-The SDK's `vis.state` stores the report per project, and `ctx` supplies it on the next model
-request. Text returned from an after hook would not do that, because Vis ignores its return value.
+`vis.state` stores the report per project, and `ctx` supplies it on the next model request. Text
+returned from an after hook cannot do that, because Vis ignores the return value.
 
-The repository tests run this exact extension through the SDK and the host. They cover patching,
-both Python write forms, a write followed by an exception, and clearing findings after a fix. They
-also call the registered check. They verify its end-only Activity, findings, clear results and empty
-source tree. The metric has tests for scope boundaries, syntax errors and missing source
-directories.
+The repository tests run this exact extension through the SDK and the host. They cover patches,
+both Python write forms, a write followed by an exception, and cleared findings after a fix. They
+call the registered check and verify its end-only Activity, findings, clear results, and empty
+source tree. The metric tests cover scope boundaries, syntax errors, and missing source directories.
 
 ## Typed catalog and generated help
 
-Use a catalog when you want structured tool descriptions and generated help for
-Vis and other Python callers. This optional example reuses your existing tool
-contracts. You do not need a catalog to register tools.
+Use a catalog when Vis and other Python callers need structured tool descriptions and generated
+help. Registration needs no catalog.
 
-`vis.Catalog(symbols)` is an immutable-data adapter over the same `Symbol` contracts that
-registration uses. It is not a second registry. It answers these calls:
+`vis.Catalog(symbols)` adapts the same `Symbol` contracts that registration uses into immutable
+data. It is not a second registry. It answers these calls:
 
 - `spec()` returns typed top-level entries.
 - `spec("counter.write")` returns a `ToolSpec`.
 - `help("counter.write")` returns `HelpDocument(tool, text)`.
 
-A namespace's `members` keep full public names, including nested capabilities. Hidden tools are
-excluded. A wrong name type raises `TypeError`. An unknown or hidden name raises `ValueError`.
-Discovery does not validate configuration, authenticate, create files or call the described tools.
+The `members` of a namespace keep full public names, nested capabilities included. The catalog
+excludes hidden tools. A name of the wrong type raises `TypeError`. An unknown or hidden name raises
+`ValueError`. Discovery does not validate configuration, authenticate, create files, or call the
+described tools.
 
-This complete, tested entrypoint includes a read and a mutation. Both ordinary Python
-callers and Vis invoke the same methods. An optional CLI should call those methods too,
-not parse generated help. No CLI framework or inheritance is required.
+This complete, tested entrypoint has a read and a mutation. Python callers and Vis invoke the same
+methods. An optional CLI calls those methods too and does not parse generated help. You need no CLI
+framework and no inheritance.
 
 ```python
 # counter.py
@@ -754,18 +726,18 @@ vis.register_extension(vis.Extension(
 ))
 ```
 
-The same callable metadata supplies structured values, generated help and Vis `doc()`.
-`ParameterSpec` keeps parameter kind, requiredness, `has_default` and `default_is_none`. It never
-contains the actual default value. `TypeSpec` recursively describes result fields, containers,
-literals and `Annotated` meaning.
+The same callable metadata supplies structured values, generated help, and `doc()` in Vis.
+`ParameterSpec` keeps the parameter kind, requiredness, `has_default`, and `default_is_none`, and
+never the default value. `TypeSpec` describes result fields, containers, literals, and `Annotated`
+meaning at every level of nesting.
 
-Records and nested collections returned by the catalog are frozen dataclasses and tuples. When
-declarations change, rebuild the catalog. Lookup does not inspect mutable runtime state.
+The catalog returns records and nested collections as frozen dataclasses and tuples. Lookup does
+not inspect mutable runtime state, so rebuild the catalog when declarations change.
 
-In Vis, inspect `await doctor.spec("counter.write")` and
-`await doctor.help("counter.write")`, then compare `doc("counter.write")`. The catalog
-covers the `symbols` passed to it. The separate `doctor` discovery adapter is not itself
-in that snapshot. Test the same scope against the actual registered public names:
+In Vis, inspect `await doctor.spec("counter.write")` and `await doctor.help("counter.write")`, then
+compare `doc("counter.write")`. The catalog covers the `symbols` that you pass to it. The separate
+`doctor` discovery adapter is not in that snapshot. Test the same scope against the registered
+public names:
 
 ```python
 vis.testing.assert_catalog(
@@ -775,23 +747,26 @@ vis.testing.assert_catalog(
 )
 ```
 
-`assert_catalog` checks name and mutation parity, generated help and unresolved types, including
-decorated methods and nested result fields. It allows explicitly opaque or `Any` data. It is not a
-runtime type checker.
+`assert_catalog` checks name parity, mutation parity, generated help, and unresolved types, with
+decorated methods and nested result fields included. It allows data that is explicitly opaque or
+`Any`. It is not a runtime type checker.
 
-In integration tests, pass names that you got from registration or `apropos()`. Successful
-construction is not proof. Also call registered tools, and test keyword-only binding, invalid input
-before IO, operational exceptions and result immutability. The SDK suite runs the code above. The
-real host verifies `spec`, `help`, `doc`, discovery and invocation together.
+In integration tests, pass names that come from registration or `apropos()`, because successful
+construction is not proof. Also call the registered tools. Test keyword-only binding, invalid input
+before IO, operational exceptions, and result immutability. The SDK suite runs the code above. The
+real host verifies `spec`, `help`, `doc`, discovery, and invocation together.
 
-For long-running observations, use the [synchronous monitoring recipe](live-views.md#monitor-a-fixed-build-set)
-and its cancellation tests. Catalog inspection must not start its readers. The catalog
-regression also invokes that registered observation, cancels it and checks reader cleanup.
-Cancellation is never converted into a successful observation. Activity is the human
-presentation, not a replacement for typed result data. Serialize only at a transport edge.
+For long-running observations, use the [synchronous monitoring
+recipe](live-views.md#monitor-a-fixed-build-set) and its cancellation tests. Catalog inspection must
+not start the readers of an observation. The catalog regression invokes that registered
+observation, cancels it, and checks reader cleanup. A cancellation never becomes a successful
+observation. An Activity presents a result to people and does not replace typed result data.
+Serialize only at a transport edge.
 
 ## See also
 
-- [Extension API](extension-api.md) — exact declarations, contracts and callback rules.
-- [Using an existing Python project](extension-development.md) — editable imports and dependency preparation.
-- [Installing and sharing extensions](extension-packages.md) — the distributable package layout.
+- For exact declarations, contracts, and callback rules, read [Extension API](extension-api.md).
+- For editable imports and dependency preparation, read [Using an existing Python
+  project](extension-development.md).
+- For the package layout that you distribute, read [Installing and sharing
+  extensions](extension-packages.md).

@@ -1,57 +1,56 @@
 # Project instructions API
 
-Run prompt templates, skills and goals from your own program. The program sends the same commands
-that you type in a session.
+Your program runs prompt templates, skills, and goals with the same commands that you type in a
+session.
 
-The examples use the [Python SDK](python-sdk.md). To see the same steps as [HTTP API](http-api.md)
+The examples use the [Python SDK](python-sdk.md). For the same steps as [HTTP API](http-api.md)
 requests, select **HTTP** at the top of the page.
 
 ## When to use
 
-- **Your program must run a saved prompt template or a skill.** [Run a prompt template or a
-  skill](#run-a-prompt-template-or-a-skill) with one message.
-- **A script must show the commands that a session accepts.** [List slash
-  commands](#list-slash-commands).
+- **Your program must run a saved prompt template or a skill.**
+  [Run a prompt template or a skill](#run-a-prompt-template-or-a-skill) with one message.
+- **A script must show the commands that a session accepts.**
+  [List slash commands](#list-slash-commands).
 - **A batch job must continue until a result is verified.** [Set a goal](#set-a-goal) with an
   iteration budget.
 - **A dashboard must show the progress of a goal.** [Read the goal state](#read-the-goal-state).
-- **A program must stop or continue a goal.** [Pause, resume or cancel a
-  goal](#pause-resume-or-cancel-a-goal).
+- **A program must stop or continue a goal.**
+  [Pause, resume or cancel a goal](#pause-resume-or-cancel-a-goal).
 
-To learn how project rules, prompt templates, skills and goals work, read [Project
-instructions](project-instructions.md).
+To learn how project rules, prompt templates, skills, and goals work, read
+[Project instructions](project-instructions.md).
 
 ## Before you start
 
 <div data-variant="python">
 
-Connect a `GatewayClient` as in [Connect to a gateway and run a
-task](python-sdk.md#connect-to-a-gateway-and-run-a-task). The examples use `client` and `session`, a
-`Session` from `client.session(session_id)`.
+Connect a `GatewayClient` as in
+[Connect to a gateway and run a task](python-sdk.md#connect-to-a-gateway-and-run-a-task). The
+examples use `client` and `session`, a `Session` from `client.session(session_id)`.
 
 </div>
 
 <div data-variant="http">
 
 Define the `vis_api` function from [Authenticate requests](http-api.md#authenticate-requests). The
-examples use it. They also use `SESSION_ID` for the ID of a session that you created or found.
+examples also use `SESSION_ID`, the ID of a session that you created or found.
 
 </div>
 
-Vis adds the project rules in `AGENTS.md` and the system prompt files to every message. Your program
-does not send them. [Project rules: AGENTS.md](project-instructions.md#project-rules-agents-md)
-explains the files.
+Your program does not send `AGENTS.md` or the system prompt files. Vis adds them to every message,
+as [Project rules: AGENTS.md](project-instructions.md#project-rules-agents-md) explains.
 
 ## Operations
 
 <div data-variant="python">
 
-Typed calls check the answers and return records. Generated methods return the JSON answer of one
-request.
+A typed call checks the answer and returns a record. A generated method returns the JSON answer of
+one request.
 
 | Task | Typed call | Generated method |
 |---|---|---|
-| List slash commands | — | `get_session_slashes(sid, query=...)` |
+| List slash commands | No typed call | `get_session_slashes(sid, query=...)` |
 | Run a prompt template or a skill | `session.send(request)` | `post_session_turns(sid, body=...)` |
 | Set a goal | `session.goal(objective, ...)` | `post_session_turns(sid, body=...)` |
 | Read the goal state | `session.read()` | `get_session(sid)` |
@@ -81,13 +80,6 @@ for command in commands:
     print(command["name"], command["doc"])
 ```
 
-The list has the commands of the extensions, the commands of the channel and the prompt templates of
-the project. The `channel` is `web` or `tui`, `web` by default. Skills are not in the list. Each
-skill has the command `/skill:<name>`, as [Skills](skills.md) explains.
-
-A command with `saveable` set to true is prompt content, such as `/goal`. A client can keep it in its
-prompt history. Other commands do not have the field.
-
 </div>
 
 <div data-variant="http">
@@ -96,15 +88,16 @@ prompt history. Other commands do not have the field.
 vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/slashes?channel=tui"
 ```
 
-The answer has `commands`, with `name` and `doc` for each command. The list has the commands of the
-extensions, the commands of the channel and the prompt templates of the project. The `channel` is
-`web` or `tui`, `web` by default. Skills are not in the list. Each skill has the command
-`/skill:<name>`, as [Skills](skills.md) explains.
-
-A command with `saveable` set to true is prompt content, such as `/goal`. A client can keep it in its
-prompt history. Other commands do not have the field.
+The answer has `commands`, with `name` and `doc` for each command.
 
 </div>
+
+The list has the commands of the extensions, the commands of the channel, and the prompt templates
+of the project. The `channel` is `web` or `tui`, and the default is `web`. Skills are not in the
+list. Each skill has the command `/skill:<name>`, as [Skills](skills.md) explains.
+
+A command with `saveable` set to true is prompt content, such as `/goal`. A client can keep that
+command in its prompt history. Other commands do not have the field.
 
 ## Run a prompt template or a skill
 
@@ -117,10 +110,6 @@ print(review.wait(timeout=600)["status"])
 checklist = session.send("/skill:release-checklist Prepare the 2.4.0 release")
 ```
 
-A template sends its file as the message, with `$ARGUMENTS` replaced by the text after the name. A
-slash command of an extension wins over a template with the same name. A skill command loads the
-skill and gives it the task after the name.
-
 </div>
 
 <div data-variant="http">
@@ -132,11 +121,13 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/turns" -H 'content-typ
   --data '{"request": "/skill:release-checklist Prepare the 2.4.0 release", "idempotency_key": "release-1"}'
 ```
 
-Each answer has the `turn_id` of the message. A template sends its file as the message, with
-`$ARGUMENTS` replaced by the text after the name. A slash command of an extension wins over a
-template with the same name. A skill command loads the skill and gives it the task after the name.
+Each answer has the `turn_id` of the message.
 
 </div>
+
+A template sends its file as the message, with `$ARGUMENTS` replaced by the text after the name. A
+slash command of an extension wins over a template with the same name. A skill command loads the
+skill and gives it the task after the name.
 
 ## Set a goal
 
@@ -148,9 +139,8 @@ result = turn.wait(timeout=3600)
 print(result["status"])
 ```
 
-`goal()` sends a `/goal` command and returns the same `Turn` as `send()`. A session has one goal at a
-time, and a new goal replaces it. `iteration_budget` limits the model iterations of the goal. Without
-it, the goal has no limit of its own. Follow the work with `turn.wait()` or the event stream in
+`goal()` sends a `/goal` command and returns the same `Turn` as `send()`. `iteration_budget` limits
+the model iterations of the goal. Follow the work with `turn.wait()` or the event stream in
 [Follow progress](sessions-api.md#follow-progress).
 
 </div>
@@ -162,12 +152,14 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/turns" -H 'content-typ
   --data '{"request": "/goal --budget 30 -- Implement the parser fix and run its regression tests", "idempotency_key": "goal-1"}'
 ```
 
-A goal is a message with the `/goal` command. A session has one goal at a time, and a new goal
-replaces it. `--budget` limits the model iterations of the goal. Without it, the goal has no limit of
-its own. Read the turn, or follow the event stream as in [Follow
-progress](sessions-api.md#follow-progress).
+A goal is a message with the `/goal` command. `--budget` limits the model iterations of the goal.
+Read the turn, or follow the event stream as in [Follow progress](sessions-api.md#follow-progress).
 
 </div>
+
+A session has one goal at a time, and a new goal replaces it. Without a budget, the goal has no
+limit of its own. [Explicit goals](project-instructions.md#explicit-goals-goal) explains how a goal
+runs and ends.
 
 ## Read the goal state
 
@@ -179,17 +171,7 @@ if goal:
     print(goal["status"], goal["iterations_used"], goal["iteration_budget"])
 ```
 
-The session detail and each row of `client.list_sessions()` have `goal`, an object or `None`. The
-event stream also sends it in the `subscription.ready` event, also when the session is idle.
-
-- `status` is `active`, `paused`, `blocked`, `budget_limited`, `complete`, `cancelled` or `cleared`.
-  The apps show `budget_limited` as "iteration-limit reached" and show no goal for `cleared`.
-  The goal has no reason text. The final reply of the turn gives the evidence or the blocker.
-- `iteration_budget` is a positive integer or `None`. `iterations_used` is zero or more.
-- `tokens_used` counts the measured input, output and cached input. It is for statistics and does
-  not limit the work.
-- `time_used_ms` is the active time up to `updated_at`. While the goal is active, the elapsed time
-  is `time_used_ms + max(0, now - updated_at)` milliseconds.
+The session detail and each row of `client.list_sessions()` have `goal`, an object or `None`.
 
 </div>
 
@@ -200,21 +182,25 @@ vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID" |
   python3 -c 'import json, sys; print(json.load(sys.stdin)["goal"])'
 ```
 
-The session detail and each row of the session list have `goal`, an object or `null`. The event
-stream also sends it in the `subscription.ready` event, also when the session is idle.
-
-- `status` is `active`, `paused`, `blocked`, `budget_limited`, `complete`, `cancelled` or `cleared`.
-  The apps show `budget_limited` as "iteration-limit reached" and show no goal for `cleared`.
-  The goal has no reason text. The final reply of the turn gives the evidence or the blocker.
-- `iteration_budget` is a positive integer or `null`. `iterations_used` is zero or more.
-- `tokens_used` counts the measured input, output and cached input. It is for statistics and does
-  not limit the work.
-- `time_used_ms` is the active time up to `updated_at`. While the goal is active, the elapsed time
-  is `time_used_ms + max(0, now - updated_at)` milliseconds.
+The session detail and each row of the session list have `goal`, an object or `null`.
 
 </div>
 
-## Pause, resume or cancel a goal
+The event stream also sends `goal` in the `subscription.ready` event, also when the session is
+idle. The goal has no reason text. The final reply of the turn gives the evidence or the blocker.
+
+| Field | Value |
+|---|---|
+| `status` | `active`, `paused`, `blocked`, `budget_limited`, `complete`, `cancelled`, or `cleared`. The apps show `budget_limited` as "iteration-limit reached" and show no goal for `cleared` |
+| `iteration_budget` | A positive integer, or `None` in Python and `null` in JSON |
+| `iterations_used` | Zero or more |
+| `tokens_used` | The measured input, output, and cached input. It is for statistics and does not limit the work |
+| `time_used_ms` | The active time up to `updated_at` |
+
+While the goal is active, the elapsed time is `time_used_ms + max(0, now - updated_at)`
+milliseconds.
+
+## Pause, resume, or cancel a goal
 
 <div data-variant="python">
 
@@ -225,10 +211,8 @@ session.send("/goal --cancel")
 session.send("/goal --clear")
 ```
 
-`--clear` forgets the goal: its status becomes `cleared`, and the model no longer sees it.
-
-These commands wait in the normal message queue. To stop the work at once, cancel the running turn
-as in [Queue and cancel messages](sessions-api.md#queue-and-cancel-messages). The SDK has no other
+To stop the work at once, cancel the running turn as in
+[Queue and cancel messages](sessions-api.md#queue-and-cancel-messages). The SDK has no other
 methods to read or change a goal.
 
 </div>
@@ -240,15 +224,19 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/turns" -H 'content-typ
   --data '{"request": "/goal --pause", "idempotency_key": "goal-pause-1"}'
 ```
 
-Send `/goal --resume`, `/goal --cancel` or `/goal --clear` in the same way. `--clear` forgets the
-goal. These commands wait in the normal message queue. To stop the work at once, cancel the running turn as in [Queue and cancel
-messages](sessions-api.md#queue-and-cancel-messages). The API has no other requests to read or
-change a goal.
+Send `/goal --resume`, `/goal --cancel`, or `/goal --clear` in the same way. To stop the work at
+once, cancel the running turn as in
+[Queue and cancel messages](sessions-api.md#queue-and-cancel-messages). The API has no other
+requests to read or change a goal.
 
 </div>
 
+These commands wait in the normal message queue. `--clear` forgets the goal. Its status becomes
+`cleared`, and the model no longer sees it.
+
 ## See also
 
-- [Project instructions](project-instructions.md) — project rules, prompt templates, skills and goals.
-- [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
-- [HTTP API](http-api.md) — authentication, the OpenAPI document and gateway errors.
+- To learn how project rules, prompt templates, skills, and goals work, read
+  [Project instructions](project-instructions.md).
+- To install the SDK, connect a client, and handle gateway errors, read [Python SDK](python-sdk.md).
+- For authentication, the OpenAPI document, and gateway errors, read [HTTP API](http-api.md).

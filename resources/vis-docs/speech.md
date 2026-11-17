@@ -1,26 +1,27 @@
 # Speech and voices
 
-Vis can speak text and transcribe recordings with speech engines that run on your gateway. You can
-also add your own voice from a short recording and use it like a built-in voice.
+Vis speaks text and transcribes recordings with speech engines that run on your gateway. You can
+add your own voice from a short recording and use it like a built-in voice.
 
 ## When to use
 
-- **You want spoken audio for a podcast, a summary or a voice message.** Read [Speak
+- **You want spoken audio for a podcast, a summary, or a voice message.** Read [Speak
   text](#speak-text).
-- **You want a voice that sounds like you or like a colleague.** [Add your own
-  voice](#add-your-own-voice) from a short recording.
+- **You want a voice that sounds like you or like a colleague.** Read [Add your own
+  voice](#add-your-own-voice).
 - **You want to change or remove a voice that you added.** Read [Change or remove a
   voice](#change-or-remove-a-voice).
-- **You want to check what a recording says.** Read [Transcribe a recording](#transcribe-a-recording).
+- **You want to check what a recording says.** Read [Transcribe a
+  recording](#transcribe-a-recording).
 - **You want the voice models to use less memory.** Read [Memory use](#memory-use).
 
-To make these calls from a program or an extension, read [Speech API](speech-api.md). To choose
-the engines in the app, read [Configuration](configuration.md).
+To make these calls from a program or an extension, read [Speech API](speech-api.md). To find the
+settings in the Companion app, read [Machine settings](configuration.md#machine-settings).
 
 ## Speech engines
 
-The gateway runs each engine on its own computer. The first use of an engine downloads its model.
-The download can take some minutes.
+Each engine runs on the gateway computer. The first use of an engine downloads its model, and the
+download can take some minutes.
 
 | Engine | Use | Voices |
 |---|---|---|
@@ -28,62 +29,63 @@ The download can take some minutes.
 | `qwen3-tts-local` | Expressive speech in ten languages | Built-in voices, such as `ryan` and `serena`, and voices that you add |
 | `pocket-tts-local` | Fast speech with your own voices | Built-in voices and voices that you add |
 | `piper-local` | Small and fast speech | Built-in voices |
-| `parakeet-local` | Fast transcription of short recordings | — |
-| `vibevoice-asr-local` | Transcription of long recordings | — |
+| `parakeet-local` | Fast transcription of short recordings | None |
+| `vibevoice-asr-local` | Transcription of long recordings | None |
 
-The **General** section of the Companion settings selects the default engines.
+Select the default engines in the **General** section of the Companion app settings.
 
-The `qwen3-tts-local` model is 3.7 GB, and Vis downloads it on first use. On a CPU, it speaks at about
-the speed of playback.
+The `qwen3-tts-local` model is 3.7 GB. On a CPU, it speaks at about the speed of playback.
 
 ## Memory use
 
-A loaded model stays in the memory of the gateway, so the next request does not wait for it. Two
-settings in the **General** section control this memory:
+A loaded model stays in the memory of the gateway, so the next request does not wait for it. Three
+settings in the **General** section control this memory.
 
-- **Voice model memory limit** (default 4 GB): when the loaded models are larger than the limit, the
-  gateway unloads the least recently used model. It does not unload a model that a request uses, or
-  the model that it used last.
-- **Unload idle voice models** (default 5 minutes): the gateway unloads a model that nothing used for
-  this time. The next request loads the model again, and this takes some seconds.
+| Setting | Default | Effect |
+|---|---|---|
+| **Voice model memory limit** | 4 GB | When the loaded models are larger than the limit, the gateway unloads the least recently used model. |
+| **Unload idle voice models** | 5 minutes | The gateway unloads a model that nothing used for this time. The next request loads the model again in some seconds. |
+| **Preload the voice model** | Off | When the setting is on, the gateway keeps the transcription model while the model is idle. |
 
-When **Preload the voice model** is on, the gateway keeps the transcription model when it is idle. The
-limit compares the sizes of the model files, and the gateway process uses more memory than that.
+The gateway does not unload a model that a request uses, or the model that it used last. The limit
+compares the sizes of the model files. The gateway process uses more memory than that.
 
 ## Speak text
 
-A request sends the text, an optional voice and an optional engine. Short text comes back at once.
-Long text runs as a job, and the client waits for its audio. The answer is usually a 24 kHz mono WAV
-file.
+Send the text, with an optional voice and an optional engine. Short text comes back at once. Long
+text runs as a job, and the client waits for the audio. The audio is a mono WAV file, at 24 kHz for
+most engines.
 
-Engines such as `vibevoice-local` and `qwen3-tts-local` sample noise. Give a `seed` to get the same take again. Give
-another seed to get a different take of the same text.
+`vibevoice-local` and `qwen3-tts-local` sample noise. Give a `seed` to get the same take again.
+Give another seed to get a different take of the same text.
 
 ## Add your own voice
 
-Record 3 to 30 seconds of one person who speaks clearly, without music or other voices. Then add the
-recording with a name. `pocket-tts-local` learns the voice from it.
+Record only people who agree to the use of their voice.
 
-- Add what the recording says as its transcript. The transcript improves the voice.
-- Record only people who agree to the use of their voice.
-- Vis keeps the voices that you add in `~/.vis/voices` on the gateway computer. Every program that
-  uses this gateway can use them.
+1. Record 3 to 30 seconds of one person who speaks clearly, without music or other voices.
+2. Add the recording with a name.
+3. Add what the recording says as its transcript. The transcript makes the voice closer to the
+   recording.
 
-The voice gets an ID from its name. Scripts and settings use this ID.
+`pocket-tts-local` learns the voice from the recording. The voice gets an ID from its name, and
+scripts and settings use this ID. Vis keeps the voices that you add in `~/.vis/voices` on the
+gateway computer. Every program that uses this gateway can use them.
 
 `qwen3-tts-local` also speaks the voices that you add. For these voices, Vis downloads a second
 model of about 1.8 GB on first use. On a CPU, one second of speech takes about 1 to 2 seconds.
-A transcript makes the voice closer to the recording.
 
-For the best copy of a voice with `qwen3-tts-local`, use these steps:
+For the best copy of a voice with `qwen3-tts-local`, do these steps:
 
 1. Use 5 to 10 seconds of calm reading, and end the recording at the end of a sentence.
-2. Give the exact transcript. If a sentence starts with words of the recording, cut the recording again.
-3. Use speech in one of the ten languages of the model. Other languages, such as Polish, get an accent.
+2. Give the exact transcript. If the speech starts with words of the recording, cut the recording
+   again.
+3. Use speech in one of the ten languages of the model. Other languages, such as Polish, get an
+   accent.
 
 ## Change or remove a voice
 
-You can change the name, the language and the transcript of a voice that you added. The ID stays
+You can change the name, the language, and the transcript of a voice that you added. The ID stays
 the same, so scripts that use the voice continue to work. To replace the audio, add a new recording
 with the same name.
 
@@ -91,11 +93,13 @@ When you remove a voice, Vis deletes its recording. You cannot remove a built-in
 
 ## Transcribe a recording
 
-Send a 16-bit PCM WAV recording. The engine returns the text and its time segments. Use
-`vibevoice-asr-local` for recordings that are longer than a few sentences.
+Send a 16-bit PCM WAV recording. The engine returns the text and its time segments. For a recording
+that is longer than a few sentences, use `vibevoice-asr-local`.
 
 ## See also
 
-- [Speech API](speech-api.md) — speak, transcribe and manage voices from Python or with HTTP requests.
-- [Extension API](extension-api.md) — use `vis.speech` in the tools of an extension.
-- [Configuration](configuration.md) — choose the default speech engines.
+- To speak, transcribe, and manage voices from Python or with HTTP requests, read [Speech
+  API](speech-api.md).
+- To use `vis.speech` in the tools of an extension, read [Extension API](extension-api.md).
+- To find where the Companion app keeps the speech settings, read
+  [Configuration](configuration.md).

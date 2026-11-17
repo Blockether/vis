@@ -33,9 +33,8 @@ examples use it. They also use `SESSION_ID` for the ID of a session that you cre
 
 </div>
 
-Turn on Council for the session. [Groups and settings](council.md#groups-and-settings) explains the
-settings. Every session in a group can read its messages, so keep credentials and private data out
-of them.
+Turn on Council for the session, as [Groups and settings](council.md#groups-and-settings) explains.
+Every session in a group can read its messages. Keep credentials and private data out of them.
 
 ## Operations
 
@@ -80,7 +79,7 @@ print(council.group_id)
 
 The handle uses the default Council group of the session. A `LocalEngine` session has the same
 handle. To publish, get the handle while the session is active. The handle stays bound to that
-group and to the active run. Get a new handle for a later run. Reads do not need an active run.
+group and to the active run. Get a new handle for a later run. A read needs no active run.
 
 If Council is off, or the session has no available group, `group_id` and every call raise the
 captured error. Get a new handle after you change the Council settings or the session group.
@@ -111,9 +110,6 @@ for member in council.members():
     print(member.session_id, member.title, member.state)
 ```
 
-The list is a snapshot of the active sessions in the group. The `state` is `running`, `queued` or
-`held`.
-
 </div>
 
 <div data-variant="http">
@@ -122,10 +118,12 @@ The list is a snapshot of the active sessions in the group. The `state` is `runn
 vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/council/members?group_id=$GROUP_ID"
 ```
 
-The answer is a list with `session_id`, `title` and `state` for each active session in the group.
-The `state` is `running`, `queued` or `held`. The list is a snapshot.
+The answer is a list with `session_id`, `title`, and `state` for each active session in the group.
 
 </div>
+
+The list is a snapshot of the active sessions in the group. The `state` is `running`, `queued`, or
+`held`.
 
 ## Publish a message
 
@@ -140,12 +138,7 @@ entry = council.publish(
 print(entry.entry_id, entry.thread_id)
 ```
 
-Give `thread_id` to continue a thread. Without it, the message starts a new thread with the
-optional `title`.
-
-To ask for an answer, give `ping` with session IDs and `reply_required=True`. The string `"all"`
-notifies every active session in the group. To answer a request, give `reply_to` with the ID of the
-request. A message has at most 64 KiB of text.
+To ask for an answer, give `ping` with session IDs and `reply_required=True`.
 
 </div>
 
@@ -159,34 +152,40 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/council/entries" \
 EOF
 ```
 
-The answer is the new entry with `entry_id`, `thread_id` and `replies`. Give `thread_id` to
-continue a thread. Without it, the message starts a new thread with the optional `title`.
-
-To ask for an answer, give `ping` with a list of session IDs and `"reply_required": true`. The
-string `"all"` notifies every active session in the group. To answer a request, give `reply_to` with
-the ID of the request. A message has at most 64 KiB of text.
+The answer is the new entry with `entry_id`, `thread_id`, and `replies`. To ask for an answer, give
+`ping` with a list of session IDs and `"reply_required": true`.
 
 </div>
+
+These fields set the thread and the recipients:
+
+- `thread_id` continues a thread. Without it, the message starts a new thread with the optional
+  `title`.
+- `ping` with the string `"all"` notifies every active session in the group.
+- `reply_to` with the ID of a request answers that request.
+
+A message has at most 64 KiB of text. [Council](council.md#choose-who-to-notify) explains
+notifications and automatic replies.
 
 ### Retry a publication
 
 <div data-variant="python">
 
-Give an `idempotency_key` and send the identical request again through the same handle. Council
-returns the original entry without another message or notification. Required reply states show
-their current values. A changed request with the same key raises the `idempotency-conflict` error.
-Keys are scoped to the author. Without a key, each call makes a new key.
+Give an `idempotency_key` and send the identical request again through the same handle. A changed
+request with the same key raises the `idempotency-conflict` error. Without a key, each call makes a
+new key.
 
 </div>
 
 <div data-variant="http">
 
-Send the identical request again with the same `idempotency_key` and `activation_id`. Council
-returns the original entry without another message or notification. Required reply states show
-their current values. A changed request with the same key returns 409 with the code
-`idempotency-conflict`. Keys are scoped to the author.
+Send the identical request again with the same `idempotency_key` and `activation_id`. A changed
+request with the same key returns 409 with the code `idempotency-conflict`.
 
 </div>
+
+For an identical request, Council returns the original entry and sends no second message or
+notification. Required reply states show their current values. Keys are scoped to the author.
 
 ## Read threads and replies
 
@@ -205,12 +204,7 @@ for reply in council.get(entry.entry_id).replies:
 ```
 
 `threads` lists the first message of each thread in ID order. `read` returns the messages of the
-group, or of one thread. A page has `entries`, `after` and `has_more`. To read the next page, give
-the `after` value of the last page. A page has at most 50 entries.
-
-Reading never consumes or acknowledges a notification. A reply state is `pending`, `delivered`,
-`replied`, `unavailable` or `interrupted`. Only `replied` means that an answer arrived, in the entry
-`reply_entry_id`.
+group, or of one thread. A page has at most 50 entries.
 
 </div>
 
@@ -223,15 +217,17 @@ vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/council/entries/$ENTRY_ID?grou
 ```
 
 The threads request lists the first message of each thread in ID order. The entries request returns
-the messages of the group, or of one thread with `thread_id`. A page has `entries`, `after` and
-`has_more`. To read the next page, give the `after` value of the last page. The `limit` is 1 to 50,
-50 by default.
-
-Reading never consumes or acknowledges a notification. In `replies`, a state is `pending`,
-`delivered`, `replied`, `unavailable` or `interrupted`. Only `replied` means that an answer arrived,
-in the entry `reply_entry_id`.
+the messages of the group, or of one thread with `thread_id`. The `limit` is 1 to 50, 50 by
+default.
 
 </div>
+
+A page has `entries`, `after`, and `has_more`. To read the next page, give the `after` value of the
+last page. A read never consumes or acknowledges a notification.
+
+In `replies`, a state is `pending`, `delivered`, `replied`, `unavailable`, or `interrupted`. Only
+`replied` means that an answer arrived, in the entry `reply_entry_id`.
+[Check for an answer](council.md#check-for-an-answer) explains each state.
 
 ## Wake a session
 
@@ -241,9 +237,7 @@ in the entry `reply_entry_id`.
 council.wake("The nightly build failed. Check the parser tests.", title="Nightly build")
 ```
 
-`wake` notifies the bound session, also after the active run of the handle ended. An active session
-receives the message as a notification. An idle independent session does not start a turn: the message waits in the group until it runs again.
-Held queues stay held. The same `idempotency_key` returns the original entry without another notification.
+`wake` notifies the bound session, also after the active run of the handle ended.
 
 </div>
 
@@ -257,12 +251,13 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/council/wake" \
 EOF
 ```
 
-A wake notifies the session, also when no run is active. An active session receives the message as
-a notification. An idle independent session does not start a turn: the message waits in the group until it runs again.
-Held queues stay held. The same
-`idempotency_key` returns the original entry without another notification.
+A wake notifies the session, also when no run is active.
 
 </div>
+
+An active session receives the message as a notification. An idle independent session does not
+start a turn. The message waits in the group until the session runs again. Held queues stay held.
+The same `idempotency_key` returns the original entry and sends no second notification.
 
 ## Handle errors
 
@@ -281,12 +276,12 @@ the code.
 
 | Status | Codes | Meaning |
 |---|---|---|
-| 400 | `invalid-request`, `invalid-thread`, `invalid-reply` | The request, the thread or the reply target is not valid. |
-| 404 | `group-not-found`, `entry-not-found`, `session-not-found` | The group, the message or the session does not exist. |
+| 400 | `invalid-request`, `invalid-thread`, `invalid-reply` | The request, the thread, or the reply target is not valid. |
+| 404 | `group-not-found`, `entry-not-found`, `session-not-found` | The group, the message, or the session does not exist. |
 | 409 | `disabled`, `inactive-session`, `invalid-recipient`, `idempotency-conflict` | Council is off, the run ended, or the request conflicts with an earlier one. |
 
 ## See also
 
-- [Council](council.md) — groups and the calls that sessions use in chat.
-- [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
-- [HTTP API](http-api.md) — authentication, the OpenAPI document and gateway errors.
+- To learn about groups and the calls that sessions use in chat, read [Council](council.md).
+- To install the SDK, connect a client, and handle gateway errors, read [Python SDK](python-sdk.md).
+- For authentication, the OpenAPI document, and gateway errors, read [HTTP API](http-api.md).

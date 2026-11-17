@@ -1,17 +1,17 @@
 # White label API
 
-Read, set and remove the brand of the web app that a gateway serves. A brand gives the web app
-your name, logo, header links and theme.
+Read, set, and remove the brand of the web app that a gateway serves. A brand gives the web app
+your name, logo, header links, and theme.
 
 The examples use the [Python SDK](python-sdk.md). To see the same steps as [HTTP API](http-api.md)
 requests, select **HTTP** at the top of the page.
 
 ## When to use
 
-- **A setup script must brand a new gateway.** [Set the brand](#set-the-brand) with one call.
-- **A tool must add a link to the header.** [Read the brand](#read-the-brand), add the link and
-  set the brand again.
-- **You must go back to the Vis look.** [Remove the brand](#remove-the-brand).
+- **A setup script must brand a new gateway.** Read [Set the brand](#set-the-brand).
+- **A tool must add a link to the header.** Read [Read the brand](#read-the-brand). Add the link
+  and set the brand again.
+- **You must go back to the Vis look.** Read [Remove the brand](#remove-the-brand).
 
 To learn what each key does and where the brand shows, read [White label](white-label.md). That
 page also explains how to put a brand in your own build of the web app.
@@ -54,8 +54,8 @@ examples use it.
 
 </div>
 
-A set replaces the whole brand. A key that you omit goes back to the Vis default. A page that is
-open shows the new brand after a reload.
+A set replaces the whole brand. A key that you omit goes back to the Vis default. An open page
+shows the new brand after a reload.
 
 ## Set the brand
 
@@ -153,6 +153,9 @@ brand, that brand stays.
 
 ## See also
 
-- [White label](white-label.md) — what each key of a brand does, and how to put a brand in a build.
-- [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
-- [HTTP API](http-api.md) — authenticate requests and handle gateway errors from any language.
+- To learn what each key of a brand does and how to put a brand in a build, read [White
+  label](white-label.md).
+- To install the SDK, connect a client, and handle gateway errors, read [Python
+  SDK](python-sdk.md).
+- To authenticate requests and handle gateway errors from any language, read [HTTP
+  API](http-api.md).

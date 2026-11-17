@@ -1,7 +1,7 @@
 # Configuration API
 
-Read and change Vis settings from your own program. The program changes the same settings as the
-Settings views, for the gateway, a project, a group or one session.
+Read and change Vis settings from your own program. A program changes the same settings as the
+Settings views, for the gateway, a project, a group, or one session.
 
 The examples use the [Python SDK](python-sdk.md). To see the same steps as [HTTP API](http-api.md)
 requests, select **HTTP** at the top of the page.
@@ -16,17 +16,19 @@ requests, select **HTTP** at the top of the page.
   a context session.
 - **A deployment script must give its gateway a name that people know.** [Name the
   machine](#name-the-machine).
-- **You edited an extension and the gateway must load the new code.** [Reload
+- **Nobody must rename the agent that you serve under your own name.** [Keep one agent
+  name](#keep-one-agent-name).
+- **You edited an extension, and the gateway must load the new code.** [Reload
   extensions](#reload-extensions).
 
-To learn the settings and the configuration files, read [Configuration](configuration.md).
+For the settings and the configuration files, read [Configuration](configuration.md).
 
 ## Before you start
 
 <div data-variant="python">
 
-Connect a `GatewayClient` as in [Connect to a gateway and run a
-task](python-sdk.md#connect-to-a-gateway-and-run-a-task). The examples are calls on that `client`.
+Connect a `GatewayClient` as [Connect to a gateway and run a
+task](python-sdk.md#connect-to-a-gateway-and-run-a-task) shows. The examples call that `client`.
 
 </div>
 
@@ -50,7 +52,7 @@ examples use it.
 | Change one setting | `post_settings(body=...)` |
 | Change many settings at once | `patch_settings(body=...)` |
 | Read or save the machine name | `machine_name()`, `set_machine_name(name)` |
-| Read, save or lock the agent name | `agent_name()`, `set_agent_name(name, locked=...)` |
+| Read, save, or lock the agent name | `agent_name()`, `set_agent_name(name, locked=...)` |
 | Reload extensions | `post_extensions_reload(body=...)` |
 
 </div>
@@ -71,45 +73,42 @@ examples use it.
 
 <div data-variant="python">
 
-The methods send and receive the JSON of the HTTP routes. You give a body or a query as a Python
-`dict`. To read the scopes, the catalog fields and the status codes, select **HTTP** at the top of
-the page. A failed request raises `GatewayError` with that status.
+Each method sends and receives the JSON of its HTTP route. Give a body or a query as a Python
+`dict`. A failed request raises `GatewayError` with the status of the answer. For the scopes, the
+catalog fields, and the status codes, select **HTTP** at the top of the page.
 
 </div>
 
 <div data-variant="http">
 
-Your program reads and changes the same settings as the Settings views. The Python SDK sends the
-same JSON and gets the same answers.
+A request names its target with `scope` and `target_id`. The `scope` is `global`, `project`,
+`group`, or `session`, and each scope except `global` needs a `target_id`. Without a `scope`, a
+request uses the global settings, never the session that you see.
 
-A request names its target with `scope` and `target_id`. The `scope` is `global`, `project`, `group`
-or `session`. Without a scope, a request uses the global settings, never the session that you see.
-A scope other than `global` needs a `target_id`.
+The catalog of a target has a `revision` and `groups`. The `revision` is a hash of the saved values
+of the target. Each group has `toggles`, which are the setting rows. A row has `scopes`, `scope`,
+`source`, and `is_override`. A boolean row has `enabled`, and each other row has `value`.
 
-The catalog of a target has its `revision` and its `groups`. Each group has `toggles`, the setting
-rows. A row has `scopes`, `scope`, `source` and `is_override`. A boolean row has `enabled`, and
-other rows have `value`. The `revision` is a hash of the saved values of the target.
+A row can have `children`, the rows that belong under it, in display order. A child row has
+`parent` with the `id` of its parent row, and rows nest at any depth. The row of a one-setting read
+or write has no `children`, so keep the cached children when you replace a row.
 
-A row can have `children`: the rows that belong under it, in display order. A child row has
-`parent` with the `id` of its parent row. Rows nest at any depth. When you read or write one
-setting, its row has no `children`. Keep the cached children when you replace a row.
+To mark the rows that a more specific scope decides for a session, add `context_session_id` to a
+read. A marked row has `overridden_by` with the deciding `scope` and its `enabled` or `value`. An
+unknown session, or a session outside the target, marks no rows. Vis accepts a write to a marked
+row, because the global value still applies to other projects. Clients lock the row only for the
+open session.
 
-Add `context_session_id` to a read to mark the rows that a more specific scope decides for that
-session. Such a row has `overridden_by` with the deciding `scope` and its `enabled` or `value`. An
-unknown session, or a session outside the target, marks no rows. Vis does not refuse a write to a
-marked row, because the global value still applies to other projects. Clients lock the row only for
-the open session.
-
-An extension group in the catalog has `extension` with `name`, `origin` and `status`. The `origin`
-is `built_in`, `global` or `project`, and the `status` is `loaded`, `stale` or `failed`. A `global`
-or `project` extension also has `path`. A `stale` or `failed` extension has `error`. A failed
-extension that never loaded has a group with no rows.
+An extension group has `extension` with `name`, `origin`, and `status`. The `origin` is `built_in`,
+`global`, or `project`. The `status` is `loaded`, `stale`, or `failed`. A `global` or `project`
+extension also has `path`, and a `stale` or `failed` extension has `error`. A failed extension that
+never loaded has a group with no rows.
 
 | Status | Meaning |
 |---|---|
-| `400` | A value, a scope or a batch is not valid. A batch error names the setting `id`. Access errors also list `field_errors`. |
-| `404` | The target, the context session or the setting ID does not exist. |
-| `409` | The `revision` of a batch is stale. Read the catalog again. |
+| `400` | A value, a scope, or a batch is not valid. A batch error names the setting `id`. Access errors also list `field_errors`. |
+| `404` | The target, the context session, or the setting ID does not exist. |
+| `409` | The `revision` of a batch is stale. Read the catalog again. A change to a fixed agent name also gets this status. |
 
 </div>
 
@@ -131,7 +130,8 @@ for group in catalog["groups"]:
 print(client.get_setting("agent_name")["value"])
 ```
 
-`get_session(session_id)` also returns the resolved `agent_name` of a session.
+`get_session(session_id)` also returns the resolved `agent_name` of a session. A client that
+connects again reads the current name there.
 
 </div>
 
@@ -142,7 +142,8 @@ vis_api "$VIS_GATEWAY_URL/v1/settings?scope=session&target_id=$SESSION_ID"
 vis_api "$VIS_GATEWAY_URL/v1/settings/agent_name"
 ```
 
-`GET /v1/sessions/{sid}` also returns the resolved `agent_name` of a session.
+`GET /v1/sessions/{sid}` also returns the resolved `agent_name` of a session. A client that
+connects again reads the current name there.
 
 </div>
 
@@ -157,10 +158,6 @@ client.post_settings(
 )
 ```
 
-The `action` is `value`, `toggle`, `cycle` or `inherit`. A `value` action needs `value`, also when
-the value is `False`. `inherit` removes one key at this scope, not a parent map. The answer is the
-changed row.
-
 </div>
 
 <div data-variant="http">
@@ -170,11 +167,14 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/jso
   --data '{"id": "agent_name", "action": "value", "value": "Ada"}'
 ```
 
-The `action` is `value`, `toggle`, `cycle` or `inherit`. A `value` action needs `value`, also when
-the value is `false`. `inherit` removes one key at this scope, not a parent map. The answer is the
-changed row.
-
 </div>
+
+The `action` is `value`, `toggle`, `cycle`, or `inherit`. A `value` action needs `value`, also for
+a false value. `inherit` removes one key at this scope, not a parent map. The answer is the changed
+row.
+
+The agent name is a `string` row in the `general` group. A name that breaks the [name
+rules](configuration.md#coding-agent-name) gets status 400, and the saved name does not change.
 
 ## Change many settings
 
@@ -199,7 +199,7 @@ client.patch_settings(
 
 <div data-variant="http">
 
-Save the batch as `changes.json`, with the `revision` from your last read:
+Put the batch in `changes.json`, with the `revision` of your last read:
 
 ```json
 {
@@ -220,8 +220,8 @@ vis_api -X PATCH "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/js
 
 </div>
 
-A batch has 1 to 256 changes for one target. Each change has a unique `id` and the action `value` or
-`inherit`. Vis applies the whole batch or none of it. Optional `channel` and `context_session_id`
+A batch holds 1 to 256 changes for one target, and Vis applies all of them or none. Each change has
+a unique `id` and the action `value` or `inherit`. The optional `channel` and `context_session_id`
 work as in a read. The answer is the full catalog with its new `revision`.
 
 ## Name the machine
@@ -234,9 +234,9 @@ print(client.machine_name())
 client.set_machine_name(None)
 ```
 
-`machine_name()` returns the name in effect, or `None` when the machine has no name.
+`machine_name()` returns the name in effect, or `None` for a machine without a name.
 `set_machine_name(None)` removes the saved name. Each call returns the name in effect after the
-change. The two calls use `get_setting` and `post_settings` with the setting `machine_name`.
+change. Both calls use `get_setting` and `post_settings` with the setting `machine_name`.
 
 </div>
 
@@ -250,14 +250,14 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/jso
   --data '{"scope": "global", "id": "machine_name", "action": "inherit"}'
 ```
 
-The `value` of the answer is the name in effect, or an empty string when the machine has no name.
+The `value` of the answer is the name in effect, or an empty string for a machine without a name.
 The `inherit` action removes the saved name. `GET /healthz` reports the name in effect as
-`machine_name`, without a token. The field is absent when the machine has no name.
+`machine_name` and needs no token. The field is absent for a machine without a name.
 
 </div>
 
-When the environment variable `VIS_MACHINE_NAME` is set on the gateway, the name in effect is the
-name from that variable. See [Machine name](configuration.md#machine-name).
+When `VIS_MACHINE_NAME` is set on the gateway, that variable gives the name in effect. Read
+[Machine name](configuration.md#machine-name).
 
 ## Keep one agent name
 
@@ -269,12 +269,12 @@ print(client.agent_name())
 client.set_agent_name("Acme", locked=False)
 ```
 
-`locked=True` saves the name and locks it. The name is then the only name of the agent. No project
-changes it, and no client can rename the agent. `locked=False` saves the name and removes the lock.
+`locked=True` saves the name and locks it. `locked=False` saves the name and removes the lock.
+Without `locked`, the call is a rename, and the lock does not change. The gateway refuses the
+rename of a locked name with `GatewayError`, status 409.
 
-Without `locked`, the call is a rename, and the lock stays as it is. The gateway refuses the rename
-of a locked name with `GatewayError`, status 409. Each call returns the name in effect. The two
-calls use `get_setting` and `post_settings` with the setting `agent_name`.
+Each call returns the name in effect. Both calls use `get_setting` and `post_settings` with the
+setting `agent_name`.
 
 </div>
 
@@ -288,19 +288,20 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/jso
   --data '{"scope": "global", "id": "agent_name", "action": "value", "value": "Acme", "is_locked": false}'
 ```
 
-`"is_locked": true` saves the name and locks it. The name is then the only name of the agent. No
-project changes it, and no client can rename the agent. `"is_locked": false` saves the name and
-removes the lock.
+`"is_locked": true` saves the name and locks it. `"is_locked": false` saves the name and removes
+the lock. Without `is_locked`, the request is a rename, and the lock does not change. The gateway
+answers the rename of a locked name with 409 and the error type `setting-locked`.
 
-Without `is_locked`, the request is a rename, and the lock stays as it is. The gateway answers the
-rename of a locked name with 409 and the error type `setting-locked`. The row of a fixed name has
-`lock_reason`, a sentence that tells a person why the name cannot change.
+The row of a fixed name has `lock_reason`, a sentence that tells a person why the name cannot
+change.
 
 </div>
 
-When the environment variable `VIS_AGENT_NAME` is set on the gateway, the name in effect is the name
-from that variable. The gateway then refuses each change with 409. See
-[One fixed name](configuration.md#one-fixed-name).
+A locked name is the only name of the agent. No project changes it, and no client can rename the
+agent.
+
+When `VIS_AGENT_NAME` is set on the gateway, that variable gives the name in effect, and the
+gateway refuses each change with 409. Read [One fixed name](configuration.md#one-fixed-name).
 
 ## Reload extensions
 
@@ -323,16 +324,17 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/extensions/reload" -H 'content-type: applic
 
 </div>
 
-Vis runs the extension files of the target again. A global target reloads machine extensions only.
-Reading the catalog never runs extension code.
+Vis runs the extension files of the target again. A global target reloads only machine extensions.
+A read of the catalog never runs extension code.
 
-The answer has the totals `loaded` and `failed`. Its `scopes` list has one entry for each scanned
-scope. An entry has `scope` (`global` or `project`), the scanned `dirs`, and `loaded` and `failed`
-for that scope. Its `extensions` list names the loaded extensions. A scope with no loaded or failed
-extensions found nothing in its directories.
+The answer has the totals `loaded` and `failed`, and a `scopes` list with one entry for each
+scanned scope. An entry has `scope`, which is `global` or `project`, the scanned `dirs`, and
+`loaded` and `failed` for that scope. Its `extensions` list names the loaded extensions. A scope
+with no loaded and no failed extensions found nothing in its directories.
 
 ## See also
 
-- [Configuration](configuration.md) — every setting, configuration file and scope.
-- [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
-- [HTTP API](http-api.md) — authentication, the OpenAPI document and gateway errors.
+- To learn each setting, configuration file, and scope, read [Configuration](configuration.md).
+- To install the SDK, connect a client, and handle gateway errors, read [Python
+  SDK](python-sdk.md).
+- For authentication, the OpenAPI document, and gateway errors, read [HTTP API](http-api.md).

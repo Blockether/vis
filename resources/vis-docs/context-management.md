@@ -1,70 +1,47 @@
 # Context management
 
-Long sessions can fill the model's context window with old file reads and tool
-results. Vis returns only selected tool output and can compress completed work
-into a summary without deleting your session history.
+A long session fills the context window of the model with old file reads and tool results. Vis
+returns only selected tool output, and it can replace completed work with a summary. Your session
+history stays saved.
 
 ## When to use
 
 - **A long session spends tokens on old file reads and tool output.** Ask Vis to
-  [fold the settled work](#folding-settled-work) into a summary before the next
-  phase.
-- **Another session already investigated your problem.** [Reuse its
-  findings](#reuse-another-session-s-findings) instead of repeating the research.
-- **You need a helper that Vis wrote earlier, with changes.** Ask Vis to [find and
-  refine it](#reuse-and-refine-session-helpers) instead of writing a new one.
-- **You want to know why Vis prints only part of a result, or how it edits files.** See
-  [One tool, many functions](#one-tool-many-functions) and [Read and edit files](#read-and-edit-files).
-- **Your own program must show the context budget, the usage or the cost of a session.** Use
+  [fold the settled work](#folding-settled-work) into a summary before the next phase.
+- **Another session already investigated your problem.**
+  [Reuse its findings](#reuse-another-session-s-findings).
+- **You need a helper that Vis wrote earlier, with changes.** Ask Vis to
+  [find and refine it](#reuse-and-refine-session-helpers).
+- **You want to know why Vis prints only part of a result, or how it edits files.** Read
+  [One tool, many functions](#one-tool-many-functions) and
+  [Read and edit files](#read-and-edit-files).
+- **Your own program must show the context budget, the usage, or the cost of a session.** Use the
   [Context management API](context-management-api.md).
 
 ## Folding settled work
 
-When research is done, you can say:
+When a phase of research is complete, ask for a summary:
 
 > Summarize what we learned and what remains open, then continue with the fix.
 
-Vis calls a summary a **fold**. It replaces completed steps in the model's
-active context with conclusions, open questions, relevant files and test state.
-The originals stay saved, but the summary is what the model sees next. With
-session introspection enabled, you can inspect the raw transcript. A call to
-`read_session()` alone will not put folded steps back into the conversation.
+Vis calls that summary a **fold**. In the active context of the model, a fold replaces completed
+steps with conclusions, open questions, relevant files, and test state. The steps stay saved. With
+session introspection on, you can inspect the raw transcript. A call to `read_session()` alone
+does not put folded steps back into the conversation.
 
-Fold when a completed phase makes room for substantial new work. Vis provides
-a `hint` when the context budget calls for it. Folding after every small tool
-call can undermine prompt-cache reuse.
+Fold when a completed phase makes room for substantial new work. Vis gives the model a `hint` when
+the context budget calls for a fold. A fold after every small tool call can reduce the reuse of the
+prompt cache.
 
 ## Reuse another session's findings
 
-Ask Vis to [consult another session](council.md#ask-vis-to-consult-another-session)
-if it has already investigated your problem. Vis brings back relevant findings
-and checks them against the current code, rather than copying a transcript.
-Consultation may incur model charges. It does not guarantee lower cost.
-
-## Example editing workflow
-
-Ask Vis to find a function, change it and test it. It can keep file reads short,
-reuse intermediate results and fold the investigation before editing. A useful
-session helper can later become an [extension](extending.md) if you request it,
-after reviewing its dependencies, preconditions and tests.
-
-## One tool, many functions
-
-`python_execution` provides search, reads, edits and tests through Python.
-Only printed output returns to the model. Other results can stay in variables,
-and related work can share a call. Vis rebuilds `session` before each block
-with the latest turn, workspace roots, budget and extension context.
-
-## Discovery instead of catalogs
-
-The prompt does not carry every function signature. `apropos(pattern)` matches a
-regular expression, ignoring case, against public symbol names in manifest order.
-Guides and skills also match by their title, opening, headings and `When to use`
-problems. `doc(name)` reads a contract, guide or skill when needed.
+Ask Vis to [consult the other session](council.md#ask-vis-to-consult-another-session). Vis brings
+back the relevant findings and checks them against the current code. It does not copy the
+transcript. A consultation can cost model charges, and it does not guarantee a lower cost.
 
 ## Reuse and refine session helpers
 
-You can ask Vis to adapt a helper it already wrote:
+Ask Vis to adapt a helper that it already wrote:
 
 > Find the helper that summarized those rows, update it for the new columns,
 > and check its callers.
@@ -73,63 +50,99 @@ A one-line docstring makes a helper easier to find with `defs()`. `doc(name)` re
 docstring. Helpers do not appear in `apropos`.
 
 After each block, Vis saves your helpers and variables. A new sandbox restores them, for example
-after an idle timeout or a gateway restart. [Sandbox state after a
-restart](python-sandbox.md#sandbox-state-after-a-restart) gives the limits.
+after an idle timeout or a gateway restart.
+[Sandbox state after a restart](python-sandbox.md#sandbox-state-after-a-restart) gives the limits.
 
-If you define a name again, Vis replaces its saved copy. `del name` removes a helper or variable
-and frees its memory. Before you redefine or remove a name, check aliases, captured defaults and
-callers. Python references do not update automatically.
+If you define a name again, Vis replaces its saved copy. `del name` removes a helper or a variable
+and frees its memory. Python does not update references. Before you redefine or remove a name,
+check its aliases, captured defaults, and callers.
 
-## Read and edit files
+On your request, a useful helper can become an [extension](extending.md), after a review of its
+dependencies, preconditions, and tests.
+
+## How Vis keeps the context small
+
+For a task such as "find a function, change it, and test it", Vis keeps the file reads short. It
+reuses intermediate results and can fold the investigation before the edit.
+
+### One tool, many functions
+
+`python_execution` gives the model search, reads, edits, and tests as Python. Only printed output
+returns to the model. Other results stay in variables, and related work shares one call. Before
+each block, Vis builds `session` again with the latest turn, workspace roots, budget, and
+extension context.
+
+### Discovery instead of catalogs
+
+The prompt does not carry every function signature. `apropos(pattern)` matches a regular
+expression against the public symbol names, in manifest order and without regard to case. Guides
+and skills also match by their title, opening, headings, and `When to use` problems. `doc(name)`
+reads a contract, a guide, or a skill.
+
+### Read and edit files
 
 The agent reads and writes files with plain Python. It prints only the lines that it needs, with
-line numbers. To edit, it replaces exact text and first checks that the text occurs one time.
-`grep` finds the lines and shows a `path` header with numbered rows.
+line numbers. To edit, it replaces exact text, and it first checks that the text occurs one time.
+`grep` finds the lines and shows numbered rows under a `path` header.
 
 ## Reference: folds and context budget
 
-`fold_session(key, gist)` replaces settled steps with your summary. A string key selects one of these:
+### Fold keys
 
-- A turn: `"t2"`.
-- A range: `"t2/i4-i5"`.
-- Everything through an iteration: `"-t3/i9"`.
-- Every turn through a turn: `"-t3"`.
-- Settled steps since an iteration: `"t2/i5-"`.
+`fold_session(key, gist)` replaces settled steps with your summary. A string key selects them:
 
-Commas join disjoint ranges. You cannot fold the live step. Without `gist`, the steps leave active
-context and no summary replaces them. History is still saved. There is no inline undo.
+| Key | Steps |
+|---|---|
+| `"t2"` | One turn |
+| `"t2/i4-i5"` | A range of iterations |
+| `"-t3/i9"` | Everything through an iteration |
+| `"-t3"` | Every turn through a turn |
+| `"t2/i5-"` | The settled steps since an iteration |
 
-A turn key, or a range that covers a whole turn, also removes the request and answer of that turn.
-This applies only to turns before the current turn. A chat turn without tool calls folds the same
-way, so a long conversation of pasted text can fold too.
+Commas join separate ranges. You cannot fold the live step. Without `gist`, the steps leave the
+active context and no summary replaces them. The history stays saved. A fold has no inline undo.
 
-Iteration numbers start again in each turn. `fold_session` refuses a range that ends at an iteration
-that an earlier turn does not have. For example, it refuses `"-t1/i16"` when turn 1 has two
-iterations. The refusal names the key for every earlier turn.
+A turn key, or a range that covers a whole turn, also removes the request and the answer of that
+turn. The turn must be before the current turn. A chat turn without tool calls folds the same way,
+so a long conversation of pasted text can fold too.
+
+Iteration numbers start again in each turn. `fold_session` refuses a range that ends at an
+iteration that an earlier turn does not have. For example, it refuses `"-t1/i16"` when turn 1 has
+two iterations. The refusal names the key for every earlier turn.
+
+### Context budget
 
 `session["utilization"]` reports these values:
 
-- `latest_measured_input_tokens` is the latest request **input** that the provider measured,
-  including context. It can include a rejected overflow request. It is not a live count, output
-  usage or turn total.
-- `auto_compress_above` is the soft budget.
-- `model_input_limit` is the hard input limit for each request.
-- `hint` is conditional. It starts at 75% of the soft budget. From 90%, it asks for a fold before
-  the next answer. Above 100%, it requires a fold while the pressure remains. After the first turn,
-  it gives the exact key that folds every earlier turn that is not folded yet, so your earlier gists
-  stay. A fold that covers an earlier fold replaces its gist.
+| Key | Value |
+|---|---|
+| `latest_measured_input_tokens` | The latest request input that the provider measured, context included. It can include a rejected overflow request. It is not a live count, output usage, or a turn total |
+| `auto_compress_above` | The soft budget |
+| `model_input_limit` | The hard input limit for each request |
+| `hint` | A request to fold. It is absent below 75% of the soft budget |
 
-The soft budget depends on the model. Claude Opus, Claude Fable and Claude Sonnet models get 250k
-tokens. GPT models get 230k and other models get 200k. The budget is never more than 90% of a known
-input limit, so smaller windows get a lower budget. For example, a 204k input limit gives a GPT model
-a budget of 183,600 tokens. When the input limit is unknown, the soft budget is 200k.
+From 90% of the soft budget, the `hint` asks for a fold before the next answer. Above 100%, it
+requires a fold while the pressure remains. After the first turn, it gives the exact key that
+folds every earlier turn that is not folded yet, so your earlier gists stay. A fold that covers an
+earlier fold replaces its gist.
+
+| Model | Soft budget |
+|---|---|
+| Claude Opus, Claude Fable, and Claude Sonnet | 250k tokens |
+| GPT | 230k tokens |
+| Other models, or an unknown input limit | 200k tokens |
+
+The soft budget is never more than 90% of a known input limit, so a smaller window gets a lower
+budget. For example, a 204k input limit gives a GPT model a budget of 183,600 tokens.
+
+### Fold measurement
 
 A fold receipt estimates the removed text locally. The next provider response measures the input
-change for the **whole request**, not only the savings of the fold. This needs no extra call. New
-tool output, the summary and other prompt changes also count.
+change for the whole request, without an extra call. That change includes new tool output, the
+summary, and other prompt changes, so it differs from the savings of the fold.
 
 Request health records `fold_measurement` with `status: "measured"`, `before_input_tokens`,
-`after_input_tokens` and `net_reduction_tokens`. A positive `net_reduction_tokens` means less
+`after_input_tokens`, and `net_reduction_tokens`. A positive `net_reduction_tokens` means less
 input, and a negative value means growth. All folds between two requests share one measurement and
 its `fold_count`.
 
@@ -137,16 +150,14 @@ The status is `pending` until the response arrives. It is `unavailable`, with a 
 cases:
 
 - Usage is missing.
-- The provider or model is unknown or changed.
+- The provider or the model is unknown or changed.
 - The turn changes.
 
-Detailed metrics are in session diagnostics, not in every model request.
+The detailed metrics are in the session diagnostics, not in every model request.
 
 ## Reference: session helpers
 
-### Helper lookup reference
-
-For a helper named `summarize_rows`:
+These calls look up a helper named `summarize_rows`:
 
 ```python
 print(defs(pattern="summar|count"))
@@ -154,26 +165,25 @@ print(defs("summarize_rows"))
 print(defs("summarize_rows", details=True))
 ```
 
-- `defs()` lists up to 20 helpers alphabetically, with a call hint and a docstring
-  gist. Call hints are at most 120 characters, omit annotations and show only a
-  default's type (`=<int>`), not its value. Hints are not source. Your variables
-  follow, with type and size but never values. A row marks a restored helper and a
-  value that is not saved. Match counts appear only when a pattern or a page hides rows.
-- `defs(pattern="summar|count", limit=10, offset=0)` matches names, first-line docstring gists
-  and variable types with a case-sensitive regex. `limit` is 1–100, and `offset` is nonnegative.
-  For more results, increase the offset or narrow the pattern.
-- `defs("summarize_rows")` returns unchanged source. For a variable, it returns
-  the listing row. Check source for secrets before sharing.
-- `defs("summarize_rows", details=True)` returns origin, source SHA-256
-  and up to 20 source-derived global or captured names with types and presence.
-  These hints do not prove dependencies or liveness. Default and decorator
-  expressions are not analyzed. The digest identifies source, not argument
-  defaults, captured values or mutable state.
+- `defs()` lists up to 20 helpers in alphabetical order, each with a call hint and a docstring
+  gist. A call hint has at most 120 characters and no annotations. It shows the type of a default
+  (`=<int>`), not its value. A hint is not source. Your variables follow, with type and size but
+  never values. A row marks a restored helper and a value that is not saved.
+- Match counts appear only when a pattern or a page hides rows.
+- `defs(pattern="summar|count", limit=10, offset=0)` matches a case-sensitive regex against names,
+  first-line docstring gists, and variable types. `limit` is from 1 to 100, and `offset` is zero or
+  more. For more results, increase the offset or narrow the pattern.
+- `defs("summarize_rows")` returns the unchanged source. For a variable, it returns the listing
+  row. Check the source for secrets before you share it.
+- `defs("summarize_rows", details=True)` returns the origin, the SHA-256 of the source, and up to
+  20 global or captured names from the source, with types and presence. These hints do not prove
+  dependencies or liveness. Vis does not analyze default and decorator expressions. The digest
+  identifies the source, not argument defaults, captured values, or mutable state.
 
 ## See also
 
-- [Context management API](context-management-api.md) — context, usage and cache health from your
-  own program.
-- [Python sandbox](python-sandbox.md) — the interpreter the model's programs run in.
-- [Extending Vis](extending.md) — turning a recurring helper into a tool.
-- [Skills](skills.md) — instructions loaded when needed rather than included in every request.
+- To read context, usage, and cache health from your own program, read
+  [Context management API](context-management-api.md).
+- For the interpreter that runs the programs of the model, read [Python sandbox](python-sandbox.md).
+- To turn a repeated helper into a tool, read [Extending Vis](extending.md).
+- For instructions that Vis loads only on demand, read [Skills](skills.md).

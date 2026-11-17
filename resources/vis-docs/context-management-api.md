@@ -1,17 +1,19 @@
 # Context management API
 
-Read the context budget, the usage and the cache health of a session from your own program. The
-answers have the same values that the model and the session diagnostics show.
+Your program reads the context budget, the usage, and the cache health of a session. The answers
+have the same values that the model and the session diagnostics show.
 
-The examples use the [Python SDK](python-sdk.md). To see the same steps as [HTTP API](http-api.md)
+The examples use the [Python SDK](python-sdk.md). For the same steps as [HTTP API](http-api.md)
 requests, select **HTTP** at the top of the page.
 
 ## When to use
 
-- **A dashboard must show how full the context of a session is.** [Read the context of a
-  session](#read-the-context-of-a-session) and compare the measured input with the budgets.
-- **You must know what a long session costs.** [Read usage and cache
-  health](#read-usage-and-cache-health) for the tokens, the cache reuse and the cost.
+- **A dashboard must show how full the context of a session is.**
+  [Read the context of a session](#read-the-context-of-a-session) and compare the measured input
+  with the budgets.
+- **You must know what a long session costs.**
+  [Read usage and cache health](#read-usage-and-cache-health) for the tokens, the cache reuse, and
+  the cost.
 - **A long session must continue with less context.** [Fold settled work](#fold-settled-work) with
   a message to the session.
 
@@ -21,16 +23,16 @@ To learn how Vis keeps the context small, read [Context management](context-mana
 
 <div data-variant="python">
 
-Connect a `GatewayClient` as in [Connect to a gateway and run a
-task](python-sdk.md#connect-to-a-gateway-and-run-a-task). The examples use `client` and `session`, a
-`Session` from `client.session(session_id)`.
+Connect a `GatewayClient` as in
+[Connect to a gateway and run a task](python-sdk.md#connect-to-a-gateway-and-run-a-task). The
+examples use `client` and `session`, a `Session` from `client.session(session_id)`.
 
 </div>
 
 <div data-variant="http">
 
 Define the `vis_api` function from [Authenticate requests](http-api.md#authenticate-requests). The
-examples use it. They also use `SESSION_ID` for the ID of a session that you created or found.
+examples also use `SESSION_ID`, the ID of a session that you created or found.
 
 </div>
 
@@ -38,12 +40,12 @@ examples use it. They also use `SESSION_ID` for the ID of a session that you cre
 
 <div data-variant="python">
 
-Generated methods return the JSON answer of one request.
+A generated method returns the JSON answer of one request.
 
 | Task | Typed call | Generated method |
 |---|---|---|
-| Read the context of a session | — | `get_session_context(sid)` |
-| Read usage and cache health | — | `get_session_usage(sid)` |
+| Read the context of a session | No typed call | `get_session_context(sid)` |
+| Read usage and cache health | No typed call | `get_session_usage(sid)` |
 | Fold settled work | `session.send(request)` | `post_session_turns(sid, body=...)` |
 
 </div>
@@ -80,11 +82,13 @@ vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/context" |
 </div>
 
 The answer is the read-only `session` object that the model sees in its sandbox. It has the
-`utilization`, the `workspace`, the `access` rules, the `routing` and the `council` state of the
-session. [Reference: folds and context
-budget](context-management.md#reference-folds-and-context-budget) explains the budget values.
+`utilization`, the `workspace`, the `access` rules, the `routing`, and the `council` state of the
+session. For the budget values, read
+[Reference: folds and context budget](context-management.md#reference-folds-and-context-budget).
 
 ## Read usage and cache health
+
+The gateway reads every step of the session for this answer. Do not request it in a fast loop.
 
 <div data-variant="python">
 
@@ -95,7 +99,7 @@ if usage:
     print(usage["cache_read_share_percent"], usage["health"]["budget_state"])
 ```
 
-`usage` is `None` until the session has a turn. It has these values for the whole session:
+`usage` is `None` until the session has a turn.
 
 </div>
 
@@ -105,21 +109,21 @@ if usage:
 vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/usage"
 ```
 
-The answer has `usage`, which is `null` until the session has a turn. It has these values for the
-whole session:
+The answer has `usage`, and `usage` is `null` until the session has a turn.
 
 </div>
 
-- `turn_count`, `iteration_count`, `tool_call_count` and `fold_count`.
-- `input_tokens`, split into `input_regular_tokens`, `input_cache_read_tokens` and
+`usage` has these values for the whole session:
+
+- `turn_count`, `iteration_count`, `tool_call_count`, and `fold_count`.
+- `input_tokens`, split into `input_regular_tokens`, `input_cache_read_tokens`, and
   `input_cache_write_tokens`.
 - `output_tokens` and `output_reasoning_tokens`.
 - `cost_usd` and `duration_ms`.
 - `cache_read_share_percent` and `reusable_prefix_coverage_percent`, the reuse of the prompt cache.
 
 `health` describes the latest request. Its `budget_state` is `within-budget`, `fold-reminder`,
-`over-budget`, `input-limit` or `budget-unreported`. The gateway reads every step of the session for
-this answer, so do not request it in a fast loop.
+`over-budget`, `input-limit`, or `budget-unreported`.
 
 ## Fold settled work
 
@@ -143,12 +147,12 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/turns" -H 'content-typ
 </div>
 
 Only the agent folds its context, with `fold_session`. Your program asks for a fold in a message.
-The saved history keeps every step. [Folding settled work](context-management.md#folding-settled-work)
-explains what a fold keeps.
+The saved history keeps every step. To learn what a fold keeps, read
+[Folding settled work](context-management.md#folding-settled-work).
 
 ## See also
 
-- [Context management](context-management.md) — folds, budgets and helpers that keep the context
-  small.
-- [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
-- [HTTP API](http-api.md) — authentication, the OpenAPI document and gateway errors.
+- For folds, budgets, and the helpers that keep the context small, read
+  [Context management](context-management.md).
+- To install the SDK, connect a client, and handle gateway errors, read [Python SDK](python-sdk.md).
+- For authentication, the OpenAPI document, and gateway errors, read [HTTP API](http-api.md).

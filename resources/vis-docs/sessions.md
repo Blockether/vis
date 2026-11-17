@@ -1,54 +1,51 @@
 # Sessions
 
-Vis saves each conversation as a session, so you can close it and continue later.
-This page shows how to control a session while Vis works, and how to find, fork,
-organize, export and move saved sessions. It covers the terminal, the desktop and phone
-apps and the command line.
+Vis saves each conversation as a session, so you can close it and continue later. This page shows
+how to control a session while Vis works, and how to find, fork, organize, export, and move saved
+sessions. It covers the terminal, the desktop and phone apps, and the command line.
 
 ## When to use
 
-- **You think of a follow-up while Vis is still working.** Send it now. It [waits in
-  the queue](#queue-a-message) and runs when the current turn finishes. You can edit
-  it until then.
-- **Vis must read your correction before the turn ends.** [Send the queued message
-  now](#send-a-queued-message-now). The running turn reads it at its next step.
-- **Vis is going in the wrong direction and you want to stop it.** [Cancel the
-  turn](#cancel-a-turn). Your queued messages return to the composer so you can
-  send them again.
-- **You want to leave the session.** See [Quit](#quit) for what **Ctrl+C** does in
-  each state.
-- **The session must work in another directory.** [Change the directory of the
-  session](#change-the-directory-of-a-session).
-- **You need a conversation from last week.** [Find the
-  session](#find-a-saved-session) by its title or by something said in it.
-- **Your program must create sessions, send messages or find saved sessions.** Read [Sessions
-  API](sessions-api.md).
-- **You want to try another approach without losing this conversation.** [Fork
-  the session](#fork-a-session).
-- **The last few turns went wrong and you want to go back.** [Fork from an earlier
-  turn](#fork-from-an-earlier-turn).
-- **Your project has more sessions than you can scan.** [Put them into
-  groups](#organize-sessions-into-groups), star the ones you use often and
-  [archive](#rename-star-archive-or-delete-a-session) the ones you have finished.
-- **You want to share a conversation or keep a readable transcript.** [Export the
-  session](#export-a-session) as an HTML page, or as Markdown with every tool call.
-- **You want to continue a conversation on another computer.** [Move the
-  session](#move-a-session-to-another-computer) with a snapshot file.
-- **A bug report needs the conversation that shows the problem.** Export it, then
-  remove private details as described in [Reporting a
-  bug](reporting-bugs.md#sharing-a-transcript).
-- **You want another session to help or to review the work.** Read
-  [Council](council.md) instead.
+- **You think of a follow-up while Vis is still working.** Send it now. It
+  [waits in the queue](#queue-a-message).
+- **Vis must read your correction before the turn ends.**
+  [Send the queued message now](#send-a-queued-message-now).
+- **Vis is going in the wrong direction and you want to stop it.**
+  [Cancel the turn](#cancel-a-turn). Your queued messages return to the composer.
+- **You want to leave the session.** [Quit](#quit) lists what **Ctrl+C** does in each state.
+- **The session must work in another directory.**
+  [Change the directory of the session](#change-the-directory-of-a-session).
+- **You need a conversation from last week.** [Find the session](#find-a-saved-session) by its
+  title or by something said in it.
+- **Your program must create sessions, send messages, or find saved sessions.** Read
+  [Sessions API](sessions-api.md).
+- **You want to try another approach without losing this conversation.**
+  [Fork the session](#fork-a-session).
+- **The last few turns went wrong and you want to go back.**
+  [Fork from an earlier turn](#fork-from-an-earlier-turn).
+- **Your project has more sessions than you can scan.**
+  [Put them into groups](#organize-sessions-into-groups), star the ones that you use most, and
+  [archive](#rename-star-archive-or-delete-a-session) the finished ones.
+- **You want to share a conversation or keep a readable transcript.**
+  [Export the session](#export-a-session) as an HTML page, or as Markdown with every tool call.
+- **You want to continue a conversation on another computer.**
+  [Move the session](#move-a-session-to-another-computer) with a snapshot file.
+- **A bug report needs the conversation that shows the problem.** Export it, then remove private
+  details as [Reporting a bug](reporting-bugs.md#sharing-a-transcript) describes.
+- **You want another session to help or to review the work.** Read [Council](council.md).
 
 ## Start a new session
 
-In the terminal, press **Ctrl+X s n**. In the desktop or phone app, choose **New session**. To start
-it inside a group, use the **+** on the group's band in the app. In the terminal, select the group in
-[Projects](#find-a-saved-session) and press **n**. The session then opens at the top of that group.
+- In the terminal, press **Ctrl+X s n**. To start in a group, select the group in
+  [Projects](#find-a-saved-session) and press **n**.
+- In the desktop or phone app, choose **New session**. To start in a group, use the **+** on the
+  band of the group.
+
+A session that starts in a group opens at the top of that group.
 
 ## Change the directory of a session
 
-A session works in one directory. Shell commands, file tools and search start there. To see that
+Shell commands, file tools, and search start in the one directory of the session. To see that
 directory, send `/cd`. To move the session, send `/cd` with a path:
 
 ```text
@@ -63,87 +60,87 @@ that directory, the session leaves its project and its group.
 
 ## Control a running session
 
-You can keep typing while Vis works. A message that you send during a running turn
-waits in a queue. You can also cancel the running turn or quit the session.
+While Vis works, you can queue a message, cancel the turn, or quit the session.
 
 ### Follow progress
 
-Vis adds short notes while it works. Under each note, one digest row gives a summary of the steps after the note.
-The row shows what their calls did, for example `1 mutation · 3 observations`.
-It also shows any running, failed or cancelled calls and the time that the steps took.
-When you stop a turn, the stopped step counts as a failure, so the row turns red.
+Vis adds short notes while it works. Under each note, one digest row sums up the steps after the
+note, for example `1 mutation · 3 observations`. The row counts the calls by kind. It also shows
+running, failed, and cancelled calls, and the time that the steps took. A step that you stop
+counts as a failure, so the row turns red.
 
-A mutation changes something, for example a file. An observation only reads.
-A verification checks the work, for example with tests. An external action reaches outside the computer that runs Vis.
-The mutation count always shows, also when it is 0, so you can see at once if the steps changed anything.
+| Kind of call | Meaning |
+|---|---|
+| Mutation | Changes something, for example a file. The count always shows, also when it is 0 |
+| Observation | Only reads |
+| Verification | Checks the work, for example with tests |
+| External action | Reaches outside the computer that runs Vis |
 
-Open the digest to see the thinking, code and Activity of these steps. Failures, files and images stay visible when the digest is closed.
-The Interrupted message of a stopped step shows only in the open digest.
+Open the digest to see the thinking, the code, and the Activity of its steps. A closed digest
+still shows failures, files, and images. Only the open digest shows the Interrupted message of a
+stopped step.
 
-When the steps open live views, a closed row ends its counts with **live**, for example `1 mutation · 1 running · live`. Select **live** to open the newest running live view, or else the newest recording.
+When the steps open live views, a closed row ends its counts with **live**, for example
+`1 mutation · 1 running · live`. Select **live** to open the newest running live view, or else the
+newest recording.
 
-To see each step as a separate Activity, turn off **Compact mode** in Settings.
-The terminal and each app keep their own choice.
+To see each step as a separate Activity, turn off **Compact mode** in Settings. The terminal and
+each app keep their own choice.
 
-In the desktop or phone app, a large turn first shows only its newest steps, so that the session opens quickly.
-The app loads the older steps when you scroll near them, and then shows every step, as the terminal does.
-If the app cannot load them, it shows the error and a **Try again** button.
+In the desktop or phone app, a large turn first shows only its newest steps, so the session opens
+faster. The app loads the older steps when you scroll near them, and then shows every step, as the
+terminal does. If the load fails, the app shows the error and a **Try again** button.
 
 ### Queue a message
 
-Press **Enter** to send. If no turn is running, the message starts one.
-Otherwise it is added to the queue below the progress display.
+Press **Enter** to send. If no turn runs, the message starts one. If a turn runs, the message goes
+to the queue below the progress display.
 
-Queued messages run in submission order. The queue pauses after a failed turn.
-Resume it manually to send the next message.
+Queued messages run in the order that you sent them. After a failed turn, the queue pauses until
+you resume it. The queue stays when the gateway restarts.
 
 To edit a queued message:
 
-- **Terminal:** press **↑** to move the newest queued message back into the
-  composer.
-- **Desktop or phone app:** choose the message to edit it, or choose **×** to
-  remove it.
-
-The queue stays when the gateway restarts.
+- In the terminal, press **↑** to move the newest queued message back into the composer.
+- In the desktop or phone app, choose the message to edit it, or choose **×** to remove it.
 
 ### Send a queued message now
 
-Use this when the running turn must read your message before it finishes, for example
-a correction or a fact that changes the next step. By default a queued message waits
-for the turn end.
+A queued message waits for the end of the turn. Send it now when the running turn must read it
+first, for example a correction.
 
-- **Terminal:** press **Ctrl+X q s** to send the whole queue now. To send one message,
-  click **Send it now** at the end of its row, or press **Ctrl+X q** and its row number.
-- **Desktop or phone app:** choose **Send all now** in the queue header to send the whole
-  queue. To send one message, choose **Send it now** on its row.
+- In the terminal, press **Ctrl+X q s** to send the whole queue. To send one message, click
+  **Send it now** at the end of its row, or press **Ctrl+X q** and its row number.
+- In the desktop or phone app, choose **Send all now** in the queue header. To send one message,
+  choose **Send it now** on its row.
 
-A sent message shows **next iter** on its row, and its button changes to **Unsend**. Choose
-**Unsend** to let the message wait for the turn end. The running turn reads the sent
-messages, in queue order, when it starts its next step. The conversation then shows each one
-as a normal **You** message under a **Queued · sent now · iter N** header. N is the iteration
-that the message reached.
+A sent message shows **next iter** on its row, and its button changes to **Unsend**. **Unsend**
+makes the message wait for the end of the turn again.
 
-Images attached to a sent message go with it to the running turn. Vis keeps them with
-that turn, so the desktop and phone app show them, also after a reload.
+The running turn reads the sent messages, in queue order, when it starts its next step. The
+conversation then shows each one as a normal **You** message under a
+**Queued · sent now · iter N** header. N is the iteration that the message reached.
 
-Two cases keep a different order:
+Images attached to a sent message go to the running turn with it. Vis keeps them with that turn,
+so the desktop and phone apps show them, also after a reload.
 
-- If the turn ends before its next step, the sent messages start their own turns first,
-  before the rest of the queue.
-- A queued command (`/` or `!`) cannot go into a running turn. It stays in the queue
-  and runs as its own turn.
+Two cases have a different order:
+
+- If the turn ends before its next step, the sent messages start their own turns, before the rest
+  of the queue.
+- A queued command (`/` or `!`) cannot go into a running turn. It stays in the queue and runs as
+  its own turn.
 
 ### Cancel a turn
 
 Press **Esc** or **Ctrl+G** to cancel the running turn.
 
-Your queued messages return to the composer as one draft. Submit the draft again to run them.
-
-The cancelled message stays in the conversation. To send it again in the terminal, press **↑**.
+Your queued messages return to the composer as one draft. Submit the draft to run them. The
+cancelled message stays in the conversation. To send it again in the terminal, press **↑**.
 
 ### Quit
 
-**Ctrl+C** depends on the current state:
+The effect of **Ctrl+C** depends on the state:
 
 | State | Ctrl+C |
 |---|---|
@@ -154,25 +151,26 @@ The cancelled message stays in the conversation. To send it again in the termina
 
 ## Find a saved session
 
-Each result shows its project, its group and its status, such as `IDLE`, `NEW` or `LIVE`.
+Search matches session titles and conversation text. Each result shows its project, its group,
+and its status, such as `IDLE`, `NEW`, or `LIVE`.
 
-Project and group filters apply to recent sessions and text searches. Selecting several
-groups searches any of them. A project and group selection narrows both together.
+Project and group filters apply to recent sessions and to text searches. A selection of several
+groups searches any of them. A project and a group selection narrow the search together.
+
+The terminal switcher and the search dialog of the apps always have two sides with a border
+between them. One side lists the recent sessions or the sessions that match. The other side shows
+messages of the selected session, so you always see a part of its conversation. Before you type,
+and when no message matches, you see the newest messages. When messages match, you see them with
+your search words highlighted.
 
 ### In the terminal
 
-Press **Ctrl+X s s** to open the session switcher. Before you type, it lists your
-recent sessions. Type to search session titles and conversation text, choose a
-session with **↑** and **↓**, and press **Enter** to open it.
+Press **Ctrl+X s s** to open the session switcher. Type to search, choose a session with **↑** and
+**↓**, and press **Enter** to open it.
 
-A border always divides the switcher, also before you type. The left side lists the
-recent sessions or the sessions that match. The right side shows messages of the selected
-session, so you always see a part of its conversation.
-
-Before you type, the right side shows the newest messages, newest turn first. When you
-search, it shows the matching messages, with your search words highlighted. If no message
-matches, a short note says so above the newest messages. Each message shows who wrote it,
-**You** or **Vis**, and when. The messages stay beside the list in a narrow terminal.
+The list is on the left and the messages are on the right, also in a narrow terminal. The newest
+messages show newest turn first. If no message matches, a note above them says so. Each message
+shows who wrote it, **You** or **Vis**, and when.
 
 The switcher also has these keys:
 
@@ -187,154 +185,139 @@ The switcher also has these keys:
 | Ctrl+X | Export the selected session to a file |
 | Esc | Close the switcher |
 
-To browse by project, press **Ctrl+X b w** to open **Projects**. It lists saved
-sessions from the connected gateway, including ones you have not opened in this
-terminal. Use **↑** and **↓** to choose a project, group or session, and press
-**Enter** to expand it or to resume a session.
+To browse by project, press **Ctrl+X b w** to open **Projects**. It lists the saved sessions of
+the connected gateway, also sessions that you did not open in this terminal. Use **↑** and **↓**
+to choose a project, a group, or a session. Press **Enter** to expand the row or to resume the
+session.
 
-Press **?** for the sidebar menu. It lists every key of Projects and runs the one that you choose on
-the selected row. If your terminal reports mouse clicks, you can click rows and menu items instead.
-Right-click a row to open the menu for it.
+Press **?** for the sidebar menu. It lists every key of Projects and runs your choice on the
+selected row. If your terminal reports mouse clicks, click rows and menu items. Right-click a row
+to open its menu.
 
-Each project shows only its name. A new project takes the name of its folder. To rename a project
-or change its folder, select the project row. Then press **R** to rename it, or **F** to change its
-folder. For a new folder, type its path and press **Enter**. The project keeps its sessions, and Vis
-does not move your files.
+To search, press **/** while Projects has focus. The search also finds sessions outside the pages
+on screen. Result-page rows show more matches. Press **Esc** to go back to your previous folds and
+page.
 
-To search saved session titles and conversation text, press **/** while Projects has focus. The
-search also finds sessions outside the pages on screen. Result-page rows show more matches. Press
-**Esc** to go back to your previous folds and page.
-
-Projects shows only part of your sessions and groups at a time. Use the page controls to see more
-sessions or groups. New sessions and groups appear automatically. If your selected row remains in
-the list, it keeps focus.
+Projects shows only a part of your sessions and groups at a time. Use the page controls to see
+more. New sessions and groups appear without a refresh. If your selected row stays in the list, it
+keeps focus.
 
 ### In the desktop or phone app
 
-The app lists sessions under their projects, with groups inside each project.
-Choose a session to open it.
+The app lists sessions under their projects, with groups inside each project. Choose a session to
+open it.
 
-Each project shows only its name. A new project takes the name of its folder. To add a project,
-choose the folder icon next to the **+** button. Then choose the project folder.
+To search, choose the search icon in the app bar or press **Ctrl+/**. The shortcut also works
+while you type in a text box. When you do not type, **/** works too. On a phone, you can also pull
+the session list down. The search opens in its own dialog, and the session list behind it does not
+change.
 
-To change a project, right-click it or choose the three-dot button at its right. The menu has
-**Rename project**, **Change folder**, **Settings** and **Delete project**. When you change the
-folder, the project keeps its sessions. Vis does not move your files.
+The dialog opens on your recent sessions, the most recent first. A typed search also finds
+archived sessions, and the line below the menus shows the number of matches. More results load
+when you scroll to the end. If they cannot load, choose **Try again** below the last result.
 
-To search your sessions, choose the search icon in the app bar. On a phone, you can also
-pull the session list down. The search opens in its own dialog. The session list behind
-the dialog does not change.
+The menus below the search field set where the search looks:
 
-The dialog opens on your recent sessions, with the most recent at the top. Type to
-search session titles and conversation text. When you type, the search also finds
-sessions that you archived.
+- **Machine** chooses the machine to search, if you added more than one. You cannot choose a
+  machine that does not answer.
+- **Project** chooses **All projects** or one named project. **All projects** also clears the
+  groups.
+- **Groups** appears if the chosen project has groups. Select several groups. The list stays open
+  while you select. **All groups** clears the selection.
 
-Menus below the search field control where the search looks. If you added more than one
-machine, use **Machine** to choose the machine to search. You cannot choose a machine that
-does not answer.
+The sessions are on the left and the messages are on the right. On a phone or in a narrow window,
+the messages are below the sessions. The messages of the first result show first. Choose another
+session to see its messages.
 
-Use **Project** to choose **All projects** or one named project.
-If the project you choose has groups, the **Groups** menu appears.
-Use **Groups** to select several groups. The list stays open while you select them.
-Choose **All groups** to clear the group selection.
-To search all projects and groups again, choose **All projects**.
+To open a session, choose it again, choose **Open**, or choose one of its messages. Before you
+type, one choice opens a recent session. To close the search, press **Esc** or choose the close
+button.
 
-When you type, the line below the menus shows the number of matches. When you scroll to
-the end of the results, more results load automatically. If they cannot load, choose
-**Try again** below the last result.
+## Add, rename, or move a project
 
-With a keyboard, press **Ctrl+/** to open the search. This shortcut also works while you
-type in a text box. When you are not typing, you can also press **/**.
+Each project shows only its name. A new project takes the name of its folder. When you change the
+folder, the project keeps its sessions, and Vis does not move your files.
 
-A border always divides the dialog in the same way as the terminal switcher. The sessions
-are on the left. The messages of one session are on the right. Before you type, and when no
-message matches, you see its newest messages. When messages match, you see them with your
-search words highlighted. On a phone or in a narrow window, the messages are below the sessions.
-
-The messages of the first session in the results show first. To see the messages of a
-different session, choose that session. To open the session, choose it again. You
-can also choose **Open** or one of its messages. Before you type, choose a recent session
-once to open it. To close the search, press **Esc** or choose the close button.
+- In the terminal, select the project row in Projects. Press **R** to rename the project. Press
+  **F** to change its folder, then type the path and press **Enter**.
+- In the desktop or phone app, choose the folder icon next to the **+** button to add a project,
+  then choose its folder. To change a project, right-click it or choose the three-dot button at
+  its right. The menu has **Rename project**, **Change folder**, **Settings**, and
+  **Delete project**.
 
 ## Fork a session
 
-A fork is a new session that starts with a copy of another session's
-conversation. The two sessions then continue separately, and the original does
-not change. You can fork a session once it has a turn.
+A fork is a new session that starts with a copy of the conversation of another session. The
+original does not change. You can fork a session after its first turn.
+
+A fork does not copy or restore your project files. The changes that Vis made in later turns stay
+in place, so a fork from an earlier turn does not undo them.
 
 ### Fork the whole conversation
 
-- **Terminal:** press **Ctrl+X s f**. Vis opens the fork and switches to it. To fork
-  another session, select it in the session switcher and press **Ctrl+F**.
-- **Desktop or phone app:** open the session's actions in the session list and
-  choose **Fork**. The app opens the fork.
+- In the terminal, press **Ctrl+X s f**. Vis opens the fork and switches to it. To fork another
+  session, select it in the session switcher and press **Ctrl+F**.
+- In the desktop or phone app, open the actions of the session in the session list and choose
+  **Fork**. The app opens the fork.
 
 ### Fork from an earlier turn
 
-A turn is one message you sent and the work Vis did to answer it. The fork keeps
-the turn you choose and every turn before it.
+A turn is one message that you sent and the work that Vis did to answer it. The fork keeps the
+turn that you choose and every turn before it.
 
-- **Terminal:** press **Ctrl+X s t** to open **Fork session at…**, which lists the
-  message that started each turn. Type to filter the list, choose the last turn to
-  keep and press **Enter**.
-- **Desktop or phone app, or a terminal that reports mouse clicks:** choose **Fork
-  from this turn** in the header of a finished answer. In a narrow terminal
-  window, the button reads **Fork**.
+- In the terminal, press **Ctrl+X s t** to open **Fork session at…**. It lists the message that
+  started each turn. Type to filter the list, choose the last turn to keep, and press **Enter**.
+- In an app, or in a terminal that reports mouse clicks, choose **Fork from this turn** in the
+  header of a finished answer. In a narrow terminal window, the button reads **Fork**.
 
 ### What a fork keeps
 
-- **Conversation:** the copied turns, with the work Vis did and the files attached
-  to them.
-- **Title:** the original title followed by `(fork)`. Rename the fork to tell the
-  two sessions apart.
-- **Project and group:** the same as the original session.
-- **Settings:** your global, project and group
-  [settings](configuration.md#project-group-and-session-settings), but not the
-  settings you changed for the original session only.
-- **A turn that still runs:** the turn as it is at the moment of the fork. The
-  copy shows **Forked from this point.** The turn continues in the original session.
-
-A fork does not copy or restore your project files. Changes Vis made in later
-turns stay in place, so forking from an earlier turn does not undo them.
+| Part | In the fork |
+|---|---|
+| Conversation | The copied turns, with the work that Vis did and the files attached to them |
+| Title | The original title, then `(fork)`. Rename the fork to tell the two sessions apart |
+| Project and group | The same as the original session |
+| Settings | Your global, project, and group [settings](configuration.md#project-group-and-session-settings), without the settings that you changed for the original session only |
+| A turn that still runs | The turn as it is at the moment of the fork. The copy shows **Forked from this point.** The turn continues in the original session |
 
 ## Organize sessions into groups
 
-A group collects related sessions under a project, such as "Release apps" or
-"Bug triage". It shows its own name, colour and session count, and opens and
-closes like any other fold. A group also narrows which sessions talk to each
-other in [Council](council.md#groups-and-settings).
+A group collects related sessions under a project, such as "Release apps" or "Bug triage". It
+shows its own name, colour, and session count, and it opens and closes like any other fold. A
+group also narrows which sessions talk to each other in [Council](council.md#groups-and-settings).
 
-- **Desktop or phone app:** open the **⋮** menu in a project's header and choose
-  **New group**. The same menu renames a group, changes its colour, deletes it and
-  files the sessions listed on that page into a group. To move one session, choose
-  **Move to...** in its actions or drag its row onto a group's band.
-- **Terminal:** in Projects, press **G** on a project, **Groups** or **Sessions**
-  row to create a group. On a group row, **R** renames it, **c** changes its
-  colour, **A** archives it and **D** deletes it. To file sessions, press **m** on
-  a session row, or mark several with **Space** and press **m** on the group row.
-  **Ctrl+X s m** moves the session you are in.
+- In the desktop or phone app, open the **⋮** menu in the header of a project and choose
+  **New group**. The same menu renames a group, changes its colour, and deletes it. It also files
+  the sessions listed on that page into a group. To move one session, choose **Move to...** in its
+  actions, or drag its row onto the band of a group.
+- In the terminal, open Projects. Press **G** on a project, **Groups**, or **Sessions** row to
+  create a group. On a group row, **R** renames the group, **c** changes its colour, **A**
+  archives it, and **D** deletes it. To file sessions, press **m** on a session row, or mark
+  several with **Space** and press **m** on the group row. **Ctrl+X s m** moves the session that
+  you are in.
 
-Deleting a group asks whether to keep its sessions, which return to the project
-ungrouped, or to delete them with the group.
+When you delete a group, Vis asks if it must also delete the sessions. Kept sessions return to
+the project without a group.
 
-## Rename, star, archive or delete a session
+## Rename, star, archive, or delete a session
 
-- **Desktop or phone app:** a session's actions include **Rename**, **Star**,
-  **Archive** and **Delete**.
-- **Terminal:** in Projects, select a session row. Press **d** for its details,
-  **R** to rename it, **f** to star it, **A** to archive it or **D** to delete it.
-  Press **v** to show archived sessions and **V** to show archived groups.
+You cannot undo the deletion of saved sessions. Vis asks you to confirm before it removes a
+project or deletes a group or a session.
 
-Stars are shared, so a session you star in the terminal is also starred in the
-apps. Archived sessions leave the usual lists until you show them. Removing a
-project or deleting a group or session asks for confirmation, and deleting saved
-sessions cannot be undone.
+- In the desktop or phone app, the actions of a session include **Rename**, **Star**,
+  **Archive**, and **Delete**.
+- In the terminal, select a session row in Projects. The keys are **d** for its details, **R** to
+  rename it, **f** to star it, **A** to archive it, and **D** to delete it. Press **v** to show
+  archived sessions and **V** to show archived groups.
+
+Stars are shared, so a session that you star in the terminal is also starred in the apps.
+Archived sessions leave the usual lists until you show them.
 
 ## Manage sessions from the command line
 
-The `vis-agent sessions` commands read the sessions saved on this computer, even
-when you connect the terminal to a remote gateway. A session id can be the full id
-or any unambiguous prefix from `vis-agent sessions list`.
+The `vis-agent sessions` commands read the sessions saved on this computer, also when your
+terminal connects to a remote gateway. A session id is the full id or any unambiguous prefix from
+`vis-agent sessions list`.
 
 ```bash
 vis-agent sessions list                   # saved sessions and their ids
@@ -343,40 +326,35 @@ vis-agent sessions show 3a7b2c1d          # one session's details and turns
 vis-agent sessions delete 3a7b2c1d        # permanent
 ```
 
-`vis-agent sessions fork` does not create a second session: it records a branch
-point in the same session, which `vis-agent sessions show` lists. To get a
-separate copy, fork in the terminal or an app.
+`vis-agent sessions fork` does not create a second session. It records a branch point in the same
+session, and `vis-agent sessions show` lists that point. For a separate copy, fork in the terminal
+or in an app.
 
 ## Export a session
 
-Export a saved session to share a conversation, review its tool calls or keep a
-readable transcript. You can export a session once it has a turn. An export is one
-file in one of these formats:
+Vis does not remove private data from an export. Read an export before you share it. To remove
+private details, follow [Reporting a bug](reporting-bugs.md#sharing-a-transcript).
+
+You can export a session after its first turn. An export is one file in one of these formats:
 
 - **HTML** is a self-contained page that opens in a browser.
-- **Markdown** is the text of each turn, including tool calls.
+- **Markdown** is the text of each turn, tool calls included.
 - **Snapshot** is a `.vissnap` file that Vis imports as a new session. To use it, read
   [Move a session to another computer](#move-a-session-to-another-computer).
 
 To export a session:
 
-- **Terminal:** press **Ctrl+X s e**, then choose the format. Vis saves the file in
-  **Vis Artifacts** in your downloads folder and shows a notice with the file name.
-  Click the file name to open its folder. To export another session, select it in the
-  session switcher and press **Ctrl+X**, or press **e** on its row in **Projects**.
-- **Desktop or phone app:** open the session's actions in the session list and choose
-  **Export**, then the format. The desktop app saves the file in a new folder in
-  **Vis Artifacts** in your downloads folder and shows it in the file manager. Its notice
-  shows the path of the file. Click the path to show the file again. The phone app opens
-  the share sheet.
-- **Browser:** the file goes to your downloads.
+- In the terminal, press **Ctrl+X s e**, then choose the format. Vis saves the file in
+  **Vis Artifacts** in your downloads folder and shows a notice with the file name. Click the file
+  name to open its folder. To export another session, select it in the session switcher and press
+  **Ctrl+X**, or press **e** on its row in **Projects**.
+- In the desktop or phone app, open the actions of the session in the session list. Choose
+  **Export**, then the format. The desktop app saves the file in a new folder in **Vis Artifacts**
+  in your downloads folder and shows it in the file manager. Click the path in the notice to show
+  the file again. The phone app opens the share sheet.
+- In a browser, the file goes to your downloads.
 
-If the desktop app or the browser can share a file, Vis asks you to keep the file or to
-share it.
-
-Vis does not remove private data from an export. Read an export before you share
-it. To remove private details, follow [Reporting a
-bug](reporting-bugs.md#sharing-a-transcript).
+If the desktop app or the browser can share a file, Vis asks you to keep the file or to share it.
 
 ### Export from the command line
 
@@ -388,7 +366,7 @@ vis-agent sessions export <SESSION-ID> [--md | --html PATH | --snapshot PATH]
 
 ### Markdown
 
-Markdown is the default format. The export prints the transcript, including tool calls, to stdout:
+Markdown is the default format. The command prints the transcript, tool calls included, to stdout:
 
 ```bash
 vis-agent sessions export 3a7b2c1d > session.md
@@ -396,10 +374,9 @@ vis-agent sessions export 3a7b2c1d > session.md
 
 ### HTML
 
-Use `--html` for a self-contained page you can open in a browser. The page also holds the
-conversation of each subagent. Select a subagent row to open its conversation, then use the
-path at the top of the page to go back. Vis creates missing directories and adds `.html` if
-the output path has no extension:
+`--html` writes a self-contained page that also holds the conversation of each subagent. Select a
+subagent row to open its conversation. Use the path at the top of the page to go back. Vis creates
+missing directories and adds `.html` if the output path has no extension:
 
 ```bash
 vis-agent sessions export 3a7b2c1d --html report.html
@@ -407,9 +384,12 @@ vis-agent sessions export 3a7b2c1d --html report.html
 
 ## Move a session to another computer
 
-A snapshot is one `.vissnap` file with a session, its subagent sessions and their Council
-messages. When you import it, you get a new session that you can continue. Use it to move
-work to another computer or to keep a full backup.
+A snapshot is one `.vissnap` file with a session, its subagent sessions, and their Council
+messages. An import gives you a new session that you can continue. A snapshot is also a full
+backup.
+
+A snapshot holds the full conversation, also tool output and attached files. Vis does not remove
+private data from it. Share it only with people who may read the whole session.
 
 1. On the first computer, write the snapshot. Vis adds `.vissnap` if the path has no
    extension:
@@ -434,15 +414,14 @@ work to another computer or to keep a full backup.
 
 You can also import the file without the command line:
 
-- **Desktop app, phone app or browser:** in the session list, open the actions of
-  **Sessions** in a project. Choose **Import snapshot…**, then choose the file. Vis opens
-  the new session. To put the new session in a group, use the actions of that group.
-- **Terminal:** press **Ctrl+X s i** and type the path of the file. If the project has
-  groups, choose its sessions or one group. Vis opens the new session. In **Projects**,
-  press **i** on a row to import into the project or the group of that row.
+- In the desktop app, the phone app, or a browser, open the actions of **Sessions** in a project
+  in the session list. Choose **Import snapshot…**, then choose the file. Vis opens the new
+  session. To put the new session in a group, use the actions of that group.
+- In the terminal, press **Ctrl+X s i** and type the path of the file. If the project has groups,
+  choose its sessions or one group. Vis opens the new session. In **Projects**, press **i** on a
+  row to import into the project or the group of that row.
 
-The session that the command restores uses the folder where you run the import. Use these
-options to change that:
+The imported session uses the folder where you run the command. These options change that:
 
 | Option | Effect |
 |---|---|
@@ -451,17 +430,20 @@ options to change that:
 | `--key KEY` | Import only once. A second import with the same key prints the first session and creates nothing. |
 
 The permissions on the new computer come from its own policy, not from the snapshot. The
-**Session snapshot limit** setting sets the largest snapshot. The default is 1 GiB. A program
-can do the same steps with the [Sessions API](sessions-api.md#save-and-restore-a-session-snapshot).
-
-A snapshot holds the full conversation, also tool output and attached files. Vis does not
-remove private data from it. Share it only with people who may read the whole session.
+**Session snapshot limit** setting sets the largest snapshot, and its default is 1 GiB. A program
+can do the same steps with the
+[Sessions API](sessions-api.md#save-and-restore-a-session-snapshot).
 
 ## See also
 
-- [Keyboard shortcuts](keyboard-shortcuts.md) — every terminal key, including the session commands on this page.
-- [Desktop and mobile setup](index.md#connect-an-app) — follow and control the same session from another device.
-- [Council](council.md) — ask another session for help or a second review.
-- [Reporting a bug](reporting-bugs.md) — remove private information before you share an export.
-- [Project instructions](project-instructions.md) — slash commands and shell shortcuts you can queue.
-- [Sessions API](sessions-api.md) — create, follow and manage sessions from your own program.
+- For every terminal key, the session commands on this page included, read
+  [Keyboard shortcuts](keyboard-shortcuts.md).
+- To follow and control the same session from another device, read
+  [Desktop and mobile setup](index.md#connect-an-app).
+- To ask another session for help or a second review, read [Council](council.md).
+- To remove private information before you share an export, read
+  [Reporting a bug](reporting-bugs.md).
+- For the slash commands and shell shortcuts that you can queue, read
+  [Project instructions](project-instructions.md).
+- To create, follow, and manage sessions from your own program, read
+  [Sessions API](sessions-api.md).

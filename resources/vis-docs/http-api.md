@@ -1,7 +1,7 @@
 # HTTP API basics
 
 Call the Vis gateway with HTTP requests from any language. This page shows how to get the OpenAPI
-document, authenticate requests and read gateway errors. Each feature page shows the requests for
+document, authenticate requests, and read gateway errors. Each feature page shows the requests for
 its tasks.
 
 ## When to use
@@ -9,17 +9,17 @@ its tasks.
 - **Your program is not written in Python.** [Authenticate requests](#authenticate-requests).
   Then open the API page of your feature, for example [Sessions API](sessions-api.md), and select
   **HTTP** at the top of that page.
-- **You need the exact request and answer formats.** [Get the OpenAPI
-  document](#get-the-openapi-document).
+- **You need the exact request and answer formats.**
+  [Get the OpenAPI document](#get-the-openapi-document).
 - **A request fails with an error status.** [Handle gateway errors](#handle-gateway-errors).
 
-To use typed calls from Python, read [Python SDK](python-sdk.md). To install and run the gateway,
-read [Running a gateway](gateway-service.md).
+For typed calls from Python, read [Python SDK](python-sdk.md). To install and run the gateway, read
+[Running a gateway](gateway-service.md).
 
 ## Before you start
 
 [Start a gateway](gateway-service.md#start-a-local-gateway). For a gateway on another computer,
-follow [Connect from another machine](gateway-service.md#connect-from-another-machine) and get its
+follow [Connect from another machine](gateway-service.md#connect-from-another-machine). Get its
 token from the operator through a secure channel.
 
 ## Get the OpenAPI document
@@ -30,20 +30,20 @@ The gateway serves its OpenAPI 3.1 document without a token:
 curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
 ```
 
-Use the document for routes, request formats and answers. The feature pages explain when to use
-each request.
+The document has the routes, the request formats, and the answers. The feature pages explain when
+to use each request.
 
 ## Authenticate requests
 
 Each request needs these headers:
 
-- `x-vis-protocol` with the protocol number of the gateway. `GET /v1/capabilities` returns it as
-  `protocol.protocol`. An incompatible client receives `HTTP 426`.
-- `Authorization: Bearer <token>` when the gateway requires a token. [Tokens and HTTP
-  401](gateway-service.md#tokens-and-http-401) tells when it does.
+- `x-vis-protocol` with the protocol number of the gateway. `GET /v1/capabilities` returns the
+  number as `protocol.protocol`. An incompatible client receives `HTTP 426`.
+- `Authorization: Bearer <token>` when the gateway requires a token.
+  [Tokens and HTTP 401](gateway-service.md#tokens-and-http-401) tells when it does.
 
-This setup reads the token and the protocol number once. The `vis_api` function then sends both
-headers. The feature pages use this function in their examples. Do not print or commit the token.
+Do not print or commit the token. This setup reads the token and the protocol number one time. The
+`vis_api` function then sends both headers. The examples on the feature pages use this function.
 
 ```bash
 export VIS_GATEWAY_URL=http://127.0.0.1:7890
@@ -73,6 +73,6 @@ An error answer has a JSON body with `error.type` and `error.message`:
 
 ## See also
 
-- [Python SDK](python-sdk.md) — the same gateway with typed Python calls.
-- [Sessions API](sessions-api.md) — send messages, follow progress and manage sessions.
-- [Running a gateway](gateway-service.md) — install, secure and troubleshoot the gateway.
+- For the same gateway with typed Python calls, read [Python SDK](python-sdk.md).
+- To send messages, follow progress, and manage sessions, read [Sessions API](sessions-api.md).
+- To install, secure, and troubleshoot the gateway, read [Running a gateway](gateway-service.md).

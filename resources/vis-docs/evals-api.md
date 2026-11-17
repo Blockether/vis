@@ -1,21 +1,21 @@
 # Evaluations API
 
-Write and run evaluation tasks, then summarize, score, diagnose and compare the rounds from your
-own program. Read [Evaluations](evals.md) first for the steps by hand and the meaning of the
+Write and run evaluation tasks from your own program, then summarize, score, diagnose, and compare
+the rounds. Read [Evaluations](evals.md) first for the steps by hand and the meaning of the
 numbers.
 
 <div data-variant="python">
 
-The `blockether.vis.evals` package does all the work on your computer. It writes task folders,
-runs them with Harbor and reads the Harbor job folders. It needs no gateway.
+The `blockether.vis.evals` package does all the work on your computer and needs no gateway. It
+writes task folders, runs them with Harbor, and reads the Harbor job folders.
 
 </div>
 
 <div data-variant="http">
 
-The gateway routes score, diagnose and compare a round summary that you send. They run the same
-Python code as the SDK, on the gateway. They save nothing: each answer comes from the request
-body only.
+The gateway routes score, diagnose, and compare a round summary that you send. They run the same
+Python code as the SDK, on the gateway. They save nothing, and each answer comes from the
+request body only.
 
 </div>
 
@@ -40,9 +40,9 @@ requests, select **HTTP** at the top of the page.
 
 <div data-variant="python">
 
-Install the SDK with Python 3.12 or later. It installs Harbor 0.24.0 with it. To run tasks, also
-configure a provider, as in [Evaluations](evals.md#step-1-install-the-tools). The SDK downloads Vis
-when it is not installed.
+Install the SDK with Python 3.12 or later. The installation includes Harbor 0.24.0. To run tasks,
+also configure a provider, as in [Evaluations](evals.md#step-1-install-the-tools). The SDK
+downloads Vis when it is not installed.
 
 ```bash
 python -m pip install vis-agent
@@ -60,8 +60,8 @@ examples use it. Each request sends a JSON file with `--data @file.json`.
 
 The routes need a round summary, and only the Python SDK makes one. The summary comes from the
 Harbor job folders, which are on the computer that ran Harbor. So you need the Python SDK there,
-also when another program sends the requests. Keep the summary and the answers yourself. The
-gateway does not store them.
+also when another program sends the requests. Keep the summary and the answers yourself, because
+the gateway does not store them.
 
 </div>
 
@@ -91,8 +91,8 @@ work, for example from a computer without the job folders.
 
 <div data-variant="http">
 
-Each route takes a JSON object and gives a JSON object. No route writes or runs tasks or reads
-job folders. Do these steps with the Python SDK or the `harbor` command.
+Each route takes a JSON object and gives a JSON object. No route writes tasks, runs tasks, or
+reads job folders. Do these steps with the Python SDK or the `harbor` command.
 
 | Task | Method and path |
 |---|---|
@@ -124,27 +124,24 @@ print(task.name, task.path, task.agent_timeout_sec)
 ```
 
 The call writes the folder `tasks/add-function` with the files of [a
-task](evals.md#step-2-write-a-task). `files` maps each seed file path to its text. `checks` is the
-content of `tests/checks.json`. It raises `FileExistsError` when the task folder exists. Give a list
-of strings as the instruction to write a [task with several
-turns](evals.md#write-a-task-with-several-turns): one string for each user message.
+task](evals.md#step-2-write-a-task). It raises `FileExistsError` when the task folder exists. It
+raises `ValueError` for an unknown key in `checks`, with the nearest known key.
 
-`artifacts` lists the workspace files that Harbor copies to the trial folder, for example the
-record of a [mock extension](evals.md#replace-an-extension-with-a-mock). `filesystem_roots` maps
-each filesystem root id to a workspace folder, for example `{"library": "library"}`. The trial
-registers each root in `.vis/config.yml`, and the agent finds it with `ls`. The
-`e2e/py-project-paths` task uses it.
-
-`test_files` maps each new file name in `tests/` to its text, for example `{"verify.py": source}` for
-the [`verify` check](evals.md#grade-with-the-rules-of-the-task). The call raises `ValueError` for an
-unknown key in `checks`, with the nearest known key.
+| Argument | Content |
+|---|---|
+| The instruction | A string. A list of strings writes a [task with several turns](evals.md#write-a-task-with-several-turns), with one string for each user message. |
+| `checks` | The content of `tests/checks.json`. |
+| `files` | Maps each seed file path to its text. |
+| `artifacts` | Lists the workspace files that Harbor copies to the trial folder, for example the record of a [mock extension](evals.md#replace-an-extension-with-a-mock). |
+| `filesystem_roots` | Maps each filesystem root ID to a workspace folder, for example `{"library": "library"}`. The trial registers each root in `.vis/config.yml`, and the agent finds it with `ls`. The `e2e/py-project-paths` task uses it. |
+| `test_files` | Maps each new file name in `tests/` to its text, for example `{"verify.py": source}` for the [`verify` check](evals.md#grade-with-the-rules-of-the-task). |
 
 </div>
 
 <div data-variant="http">
 
-No route writes a task, because Harbor reads the task folder on the computer that runs it. Write
-the files of [a task](evals.md#step-2-write-a-task) yourself, or run the Python example on that
+Harbor reads the task folder on the computer that runs it, so no route writes a task. Write the
+files of [a task](evals.md#step-2-write-a-task) yourself, or run the Python example on that
 computer:
 
 ```bash
@@ -178,11 +175,14 @@ trial makes paid model calls. The call waits until all trials end.
 checkout, and `{"native_bin": "/path/to/vis"}` tests a raw native image. The call sets
 `HARBOR_TELEMETRY=off`, so Harbor sends no usage data.
 
+After the run, `run_tasks` also writes the [round report](#report-a-round) to
+`jobs/first/vis-report.json`. Give `report=False` to skip it.
+
 </div>
 
 <div data-variant="http">
 
-No route runs tasks. Run them with Harbor on the computer that has the task folders:
+Run the tasks with Harbor on the computer that has the task folders:
 
 ```bash
 HARBOR_TELEMETRY=off harbor run --path tasks \
@@ -194,8 +194,7 @@ HARBOR_TELEMETRY=off harbor run --path tasks \
 </div>
 
 Harbor writes the job folder `jobs/first`. [Read the results](evals.md#step-5-read-the-results)
-describes its files. After the run, `run_tasks` also writes the [round report](#report-a-round)
-to `jobs/first/vis-report.json`. Give `report=False` to skip it.
+describes its files.
 
 ## Report a round
 
@@ -222,7 +221,7 @@ print(Path("jobs/first", REPORT_FILE).exists())  # True, run_tasks wrote it
 | `diagnosis` | The [`diagnose`](#find-the-failure-causes) result, with the `label_check` of `labels.json`. |
 | `judge` | The stage agreement of a judge, or `None` without `judge_stages.json`. |
 
-`round_report` raises `FileNotFoundError` when the folder holds no trial. `labels`, `judge_dir`
+`round_report` raises `FileNotFoundError` when the folder holds no trial. `labels`, `judge_dir`,
 and `stage_labels` replace the default paths of the [label and judge
 files](evals.md#check-the-causes-with-labels). `write_report(full, path)` writes the JSON.
 
@@ -230,7 +229,7 @@ files](evals.md#check-the-causes-with-labels). `write_report(full, path)` writes
 
 <div data-variant="http">
 
-No route reads job folders. Run the report command on the computer that has the job folder:
+Run the report command on the computer that has the job folder:
 
 ```bash
 python -m blockether.vis.evals.report jobs/first --tasks tasks --json
@@ -238,9 +237,9 @@ python -m blockether.vis.evals.report jobs/first --tasks tasks --json
 
 </div>
 
-The repeat rows use the unbiased estimators of
-[Repeated attempts](evals.md#repeated-attempts). To compute them for your own counts, use
-`pass_at_k(runs, passed, k)` and `pass_all_k(runs, passed, k)`.
+The repeat rows use the unbiased estimators of [Repeated attempts](evals.md#repeated-attempts). To
+compute them for your own counts, use `pass_at_k(runs, passed, k)` and
+`pass_all_k(runs, passed, k)`.
 
 ## Summarize a round
 
@@ -266,8 +265,8 @@ attempt of another model does not count.
 
 <div data-variant="http">
 
-No route reads job folders, because the gateway can run on another computer. Build the summary
-with the Python SDK, then send it:
+The gateway can run on another computer, so no route reads job folders. Build the summary with
+the Python SDK, then send it:
 
 ```bash
 python3 - <<'EOF'
@@ -284,7 +283,7 @@ jq '{summary: .}' summary.json > report.json
 </div>
 
 The summary is plain JSON. It has the counts, `task_outcomes`, `agent_limits`, `usage_totals`,
-`repeated_final_errors` and one row in `trials` for each attempt. It has no prompts, messages or
+`repeated_final_errors`, and one row in `trials` for each attempt. It has no prompts, messages, or
 logs, so you can share it.
 
 ## Score a round
@@ -311,7 +310,7 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/report" \
 </div>
 
 The answer has the [pass rates](evals.md#scores-and-intervals) with their 95% intervals, the
-`outcomes` and the usage. The round name is optional. It only names the round in the answer.
+`outcomes`, and the usage. The round name is optional and only names the round in the answer.
 
 ## Find the failure causes
 
@@ -338,11 +337,14 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/diagnose" \
 
 </div>
 
-Each finding has a `kind`, a `title`, a `task_count`, a `share` of the scored tasks, a `detail` and
-the `tasks`. The limits map each task to its agent time limit in seconds. Without limits, the
-answer uses the `agent_limits` of the summary. Without both, no attempt counts as an
-[early stop](evals.md#failure-causes). Labels are optional. With labels, the answer also has a
-`label_check`.
+Each finding has a `kind`, a `title`, a `task_count`, a `share` of the scored tasks, a `detail`,
+and the `tasks`.
+
+The limits map each task to its agent time limit in seconds. Without limits, the answer uses the
+`agent_limits` of the summary. Without both, no attempt counts as an
+[early stop](evals.md#failure-causes).
+
+Labels are optional. With labels, the answer also has a `label_check`.
 
 ## Check the labels
 
@@ -377,7 +379,7 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/labels" \
 </div>
 
 The answer has the `labelled` count, the `agreement_percent`, the `kappa`, the Krippendorff
-`alpha`, the `disagreements` and the `advice`. The advice uses the [kappa
+`alpha`, the `disagreements`, and the `advice`. The advice uses the [kappa
 limits](evals.md#check-the-causes-with-labels).
 
 To check other automatic results, for example the stages of a judge, send your own items:
@@ -397,7 +399,7 @@ check = agreement(
 print(check.kappa, check.advice)
 ```
 
-Each item is a trial name, the automatic result and the human result.
+Each item is a trial name, the automatic result, and the human result.
 
 </div>
 
@@ -414,12 +416,15 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/agreement" \
 
 </div>
 
-`source`, `noun`, `labeller` and `fix` are optional. They change only the words of the advice.
+`source`, `noun`, `labeller`, and `fix` are optional. They change only the words of the advice.
 
-To check repeated samples of one judge, use `sample_alpha(samples)`. It maps each trial name to
-the results of its samples and gives Krippendorff's alpha. `alpha_advice(alpha)` gives the advice
-for the [alpha limits](evals.md#check-a-judge). For other data with missing values, use
-`krippendorff_alpha(units)`. Each unit is a list of values, with `None` for a missing value.
+These functions check other agreement data:
+
+| Function | Use |
+|---|---|
+| `sample_alpha(samples)` | Checks repeated samples of one judge. It maps each trial name to the results of its samples and gives Krippendorff's alpha. |
+| `alpha_advice(alpha)` | Gives the advice for the [alpha limits](evals.md#check-a-judge). |
+| `krippendorff_alpha(units)` | Handles other data with missing values. Each unit is a list of values, with `None` for a missing value. |
 
 ## Compare two runs
 
@@ -462,21 +467,24 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/compare" \
   -H 'content-type: application/json' --data @compare.json
 ```
 
-Each case has a `task`, an `agent`, a `model`, the `passed` runs and all `runs`.
+Each case has a `task`, an `agent`, a `model`, the `passed` runs, and all `runs`.
 
 </div>
 
 A case is one task with one agent and one model. The answer has the `verdict`, the rates, the
-difference with its interval, the `routes` tests, the `worse` and `better` cases and the
+difference with its interval, the `routes` tests, the `worse` and `better` cases, and the
 `caveats`. The baseline and candidate names are optional names for the error messages.
 
 `margin_points` is optional. It is the smallest change in points that matters to you, above 0
-and at most 100. Without it, a result without a clear change is `no measurable difference`. With
-it, the verdict is `equivalent`, `not worse`, `not better` or `inconclusive`. The answer repeats
-the margin in `margin_points`.
+and at most 100. The answer repeats the margin in `margin_points`.
 
-A `better` or `worse` change that is, or can be, smaller than the margin gets a caveat. Read
-[Decide on a change](evals.md#decide-on-a-change) to choose an action from the verdict.
+| Margin | Verdict for a result without a clear change |
+|---|---|
+| Not given | `no measurable difference` |
+| Given | `equivalent`, `not worse`, `not better`, or `inconclusive` |
+
+A `better` or `worse` change that is, or can be, smaller than the margin gets a caveat. To choose
+an action from the verdict, read [Decide on a change](evals.md#decide-on-a-change).
 
 ## Read the leaderboard position
 
@@ -503,9 +511,9 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/leaderboard" \
 
 </div>
 
-This is the only evaluation operation that uses the network: it reads the board from Harbor Hub.
-The package and the name select the board. Without a summary, the answer has only the board
-`rows`, and `vis` has no value.
+Only this evaluation operation uses the network. It reads the board from Harbor Hub. The package
+and the name select the board. Without a summary, the answer has only the board `rows`, and `vis`
+has no value.
 
 ## Handle errors
 
@@ -539,8 +547,9 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/report" \
 
 ## See also
 
-- [Evaluations](evals.md) — the steps by hand and the meaning of the scores, causes and verdicts.
-- [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
-- [HTTP API](http-api.md) — authentication, the OpenAPI document and gateway errors.
-- [Harbor documentation](https://docs.harborframework.com/) — tasks, jobs and the `harbor`
-  command.
+- For the steps by hand and the meaning of the scores, causes, and verdicts, read
+  [Evaluations](evals.md).
+- To install the SDK, connect a client, and handle gateway errors, read [Python SDK](python-sdk.md).
+- For authentication, the OpenAPI document, and gateway errors, read [HTTP API](http-api.md).
+- For tasks, jobs, and the `harbor` command, read the [Harbor
+  documentation](https://docs.harborframework.com/).

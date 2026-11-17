@@ -1,8 +1,8 @@
 # Sounds API
 
-Choose the sound preset that the gateway plays, and save your own presets. A sound plays when a
-turn finishes, when Vis waits for your answer and when a turn fails or stops. The values are the
-settings of the **Sounds** section in the Companion app and the TUI.
+This API reads and changes the sound settings of the gateway. It turns sounds on, chooses a preset,
+saves your own presets, and previews a sound. The values are the settings of the **Sounds** section in the
+Companion app and the TUI.
 
 The examples use the [Python SDK](python-sdk.md). To see the same steps as [HTTP API](http-api.md)
 requests, select **HTTP** at the top of the page.
@@ -16,7 +16,7 @@ requests, select **HTTP** at the top of the page.
 - **A tool must play a sound before a person saves it.** [Preview a sound](#preview-a-sound).
 - **A tool must show the current sounds.** [Read the presets](#read-the-presets).
 
-To learn which events play a sound and where it plays, read [Sounds](sounds.md).
+To learn which events play a sound and where the sound plays, read [Sounds](sounds.md).
 
 ## Before you start
 
@@ -61,9 +61,13 @@ examples use it.
 
 </div>
 
-A preset gives one value to each slot: `finish`, `input` (the question sound) and `error`. A slot
-value is empty for no sound, the name of a built-in preset for its sound, or a file path on the
-gateway computer. The built-in presets are `classic`, `glass`, `soft`, `minimal` and `bright`.
+A preset has one value for each slot: `finish`, `input`, and `error`. The `input` slot holds the
+question sound. A slot value is one of these:
+
+- An empty value, for no sound.
+- The name of a built-in preset, for the sound of that preset. The built-in presets are `classic`,
+  `glass`, `soft`, `minimal`, and `bright`.
+- A file path on the gateway computer.
 
 ## Read the presets
 
@@ -102,8 +106,8 @@ sounds = client.sounds.set(enabled=True, preset="glass")
 print(sounds.active)
 ```
 
-Arguments that you omit do not change. A preset name matches without regard to case. An unknown
-name raises `ValueError` and changes nothing.
+An argument that you omit changes nothing. A preset name matches in any case. An unknown name
+raises `ValueError` and changes nothing.
 
 </div>
 
@@ -117,7 +121,7 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/jso
            "value": {"active": "glass", "custom": []}}'
 ```
 
-The value replaces all presets, so send your `custom` presets again with each change.
+The value replaces all presets. Send your `custom` presets again with each change.
 
 </div>
 
@@ -139,8 +143,8 @@ print(sounds.preset)
 client.sounds.delete_preset("My mix")
 ```
 
-A preset with the same name is replaced. `None` or an empty value plays no sound in that slot.
-After a delete of the active preset, the first built-in preset plays.
+`save_preset()` replaces a preset that has the same name. `None` or an empty value plays no sound
+in that slot. After you delete the active preset, the first built-in preset plays.
 
 </div>
 
@@ -155,9 +159,9 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/jso
 
 </div>
 
-The gateway checks each file path when you save. A path that names no file gives an error with a
-message, and the gateway saves nothing. A path can start with `~`, which the gateway expands on its
-own computer.
+The gateway checks each file path when you save. For a path that names no file, the gateway returns
+an error with a message and saves nothing. A path can start with `~`. The gateway expands `~` on
+its own computer.
 
 ## Preview a sound
 
@@ -168,8 +172,8 @@ played = client.sounds.preview("input", "glass")
 print(played)
 ```
 
-`preview()` plays one slot value on the gateway computer and saves nothing. It returns `False` for
-an empty value, while another sound plays, or when the computer has no sound program.
+`preview()` plays one slot value on the gateway computer and saves nothing. It returns `False`
+when the value is empty, when another sound plays, or when the computer has no sound program.
 
 </div>
 
@@ -186,6 +190,6 @@ The answer is `{"is_played": true}` when a sound starts.
 
 ## See also
 
-- [Sounds](sounds.md) — which events play a sound, and where it plays.
-- [Configuration API](configuration-api.md) — read and change all settings.
-- [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
+- To learn which events play a sound and where the sound plays, read [Sounds](sounds.md).
+- To read and change all settings, read [Configuration API](configuration-api.md).
+- To install the SDK, connect a client, and handle gateway errors, read [Python SDK](python-sdk.md).

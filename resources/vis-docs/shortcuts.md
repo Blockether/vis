@@ -1,8 +1,8 @@
 # Siri and Shortcuts
 
-The Vis app for iPhone adds Siri and Shortcuts actions. Talk to Vis from the Action Button or ask
-Vis a question with your voice. Your shortcuts can also get a text or JSON answer from Vis. The
-actions use the same machines and sessions as the app.
+The Vis app for iPhone adds actions to Siri and to the Shortcuts app. Talk to Vis from the Action
+Button, or ask Vis a question with your voice. A shortcut can also get a text or JSON answer from
+Vis. The actions use the same machines and sessions as the app.
 
 ## When to use
 
@@ -23,38 +23,38 @@ API](sessions-api.md). To run a prompt on a schedule, use [Automations](automati
 - Install the Vis app on an iPhone with iOS 16 or later.
 - Pair the app with at least one machine. The actions use the machines that the app knows.
 
-Most actions have an optional **Machine** parameter. If you leave it empty, the action uses your
-primary machine.
+Most actions have an optional **Machine** parameter. An empty **Machine** means your primary
+machine.
 
 ## Talk to Vis from the Action Button
 
-**Talk to Vis** opens the app in a session and starts a voice conversation. Tap the microphone to
-speak.
+**Talk to Vis** opens the app in a session and starts a voice conversation.
 
 1. Open **Settings** > **Action Button**.
 2. Select **Shortcut**, then select **Talk to Vis**.
 3. Press the Action Button.
+4. Tap the microphone to speak.
 
-Set **Session** to **New session**, **Last session** or **Chosen session**. You can also say "Talk
-to Vis" to Siri.
+Set **Session** to **New session**, **Last session**, or **Chosen session**. To start the same
+action with Siri, say "Talk to Vis".
 
 ## Ask Vis with Siri
 
-Say "Ask Vis". Siri asks "What should Vis do?". Say your request. Siri reads the final answer to you
-when the task ends.
+1. Say "Ask Vis". Siri asks "What should Vis do?".
+2. Say your request. When the task ends, Siri reads the final answer to you.
 
 In the Shortcuts app, **Ask Vis** returns the final answer as text. Use that text in the next
 action, for example **Create Note** or **Send Message**.
 
-**Ask Vis** waits up to 300 seconds for the answer. Change **Timeout (seconds)** for longer tasks.
+**Ask Vis** waits up to 300 seconds for the answer. For a longer task, change **Timeout (seconds)**.
 
 ## Get a structured answer
 
 Put a JSON Schema in the **Response schema** parameter of **Ask Vis**. Vis then returns JSON that
-matches the schema, not free text. This works like `response_schema` in the [Python
+matches the schema, not free text. The parameter works like `response_schema` in the [Python
 SDK](python-sdk.md).
 
-For example, this schema asks for a city and a temperature:
+This schema asks for a city and a temperature:
 
 ```json
 {
@@ -71,7 +71,7 @@ Vis checks each answer against the schema. If the answer does not match, Vis ask
 correct it. **Max corrections** sets the number of tries, 2 by default. If no answer matches, the
 action stops with an error.
 
-Use **Get Dictionary from Input** on the result to read each field in the shortcut.
+To read each field in the shortcut, use **Get Dictionary from Input** on the result.
 
 ## Choose the session and the model
 
@@ -83,8 +83,7 @@ Use **Get Dictionary from Input** on the result to read each field in the shortc
 | Last session | Vis continues the last session that a Vis action used on this machine. Without one, Vis creates a session. |
 | Chosen session | Vis continues the session in **Chosen session**. |
 
-Set **Model** to choose the model for the request. Use these actions to work with models and
-sessions:
+**Model** sets the model for the request. These actions work with models and sessions:
 
 | Action | Result |
 |---|---|
@@ -94,16 +93,16 @@ sessions:
 | Get Vis Session Model | The model of the last or the chosen session. |
 | Set Vis Session Model | Changes the model of the last or the chosen session. |
 
-Each model has the properties **Provider**, **Name**, **Label**, **Billing**, **Is available** and
+Each model has the properties **Provider**, **Name**, **Label**, **Billing**, **Is available**, and
 **Is default**.
 
 ## Send now and wait later
 
-**Send Vis Request** gives the request to Vis and returns its turn at once. Vis works on the request
-while the shortcut continues. Later, give that turn to **Wait for Vis Answer** to get the final
-answer as text.
-
 Use this pattern when a task takes longer than a shortcut can wait.
+
+1. Add **Send Vis Request**. It gives the request to Vis and returns the turn at once.
+2. Let the shortcut continue. Vis works on the request in the meantime.
+3. Give the turn to **Wait for Vis Answer**. It returns the final answer as text.
 
 ## Share text or a link
 
@@ -112,7 +111,8 @@ or say "Send to Vis" to Siri.
 
 ## See also
 
-- [Python SDK basics](python-sdk.md) — the same requests, structured answers and model choice from
-  Python.
-- [Sessions](sessions.md) — follow, continue and organize the sessions that the actions create.
-- [Configuration](configuration.md) — sign in to providers and set the default model.
+- To make the same requests from Python, with structured answers and a model choice, read
+  [Python SDK basics](python-sdk.md).
+- To follow, continue, and organize the sessions that the actions create, read
+  [Sessions](sessions.md).
+- To sign in to providers and set the default model, read [Configuration](configuration.md).

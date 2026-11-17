@@ -19,9 +19,8 @@
 
 # Vis
 
-Vis is a coding agent you can adapt to your tools and workflow.
-Give it tools for your project, measure the results on real tasks, and use failures
-to improve those tools and checks.
+Vis is a coding agent that you adapt to your tools and your workflow. Give it tools for your
+project. Measure the results on real tasks. Use each failure to improve the tools and the checks.
 
 <p align="center">
   <picture>
@@ -30,22 +29,21 @@ to improve those tools and checks.
   </picture>
 </p>
 
-Repeat the same tasks after each change to compare the results.
+Run the same tasks again after each change, and compare the results.
 
-Follow the work from your terminal, browser, desktop or phone, with the same
-sessions on each.
+Follow the work from your terminal, browser, desktop, or phone. Each client shows the same sessions.
 
 ## Install
 
-For macOS (Apple silicon) and Linux (x64 or ARM64). On Windows, use WSL2.
-You can [read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent) first.
+The installer supports macOS on Apple silicon and Linux on x64 or ARM64. On Windows, use WSL2.
+[Read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent) before you run it.
 
 ```bash
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
 ```
 
-Then run `vis-agent tui` (terminal), `vis-agent web` (browser) or `vis-agent desktop` (desktop app).
-All clients show the same sessions.
+Then run `vis-agent tui` for the terminal, `vis-agent web` for the browser, or `vis-agent desktop`
+for the desktop app.
 
 <p>
 <a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.21/vis-companion-0.5.21-windows-x64.msi"><img src="resources/vis-docs/assets/install-windows.png" alt="Download Vis for Windows x64" height="40"></a>
@@ -63,7 +61,7 @@ Read the manual at [vis.blockether.com](https://vis.blockether.com/).
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Vis uses the Apache License 2.0. See [LICENSE](LICENSE).
 
-The speech service can install third-party models with separate license terms.
+The speech service can install third-party models that have their own license terms.
 [THIRD_PARTY_MODELS.md](THIRD_PARTY_MODELS.md) lists their authors and licenses.

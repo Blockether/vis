@@ -1,5 +1,5 @@
-Use Vis to explore a project, change code and run checks.
-Start in your terminal, or connect the desktop or phone app.
+Vis explores a project, changes code, and runs checks. On this page, you install Vis, run a first
+task, and connect the desktop app or the phone app.
 
 <nav class="quick-links" aria-label="Getting started">
   <a href="#install">Install</a>
@@ -11,26 +11,27 @@ Start in your terminal, or connect the desktop or phone app.
 
 ### Install Vis where your work runs
 
-Install Vis on the computer with your project. Native packages support
-Apple silicon macOS and Linux (x64 or ARM64). On Windows, use Linux in WSL2.
-For other platforms or source builds, see [Runtime distributions](distributions.md).
+Install Vis on the computer that holds your project. Native packages support macOS on Apple silicon
+and Linux on x64 or ARM64. On Windows, use Linux in WSL2. For other platforms or a source build,
+read [Runtime distributions](distributions.md).
 
-The installer needs `curl` and `tar`, but not Java or Git.
-It writes to `~/.local/bin` and can update your shell profile.
-[Read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent) before running it:
+The installer needs `curl` and `tar`. It does not need Java or Git. It writes to `~/.local/bin` and
+can update your shell profile.
+[Read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent) before you run it.
 
 ```bash
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
 ```
 
-The desktop and phone apps connect to this engine. They do not run it themselves.
-For a Python program, `pip install vis-agent` is enough: the [Python SDK](python-sdk.md#install-the-sdk) downloads Vis on first use.
+The desktop app and the phone app connect to this engine. They do not run it. For a Python program,
+`pip install vis-agent` is enough, because the [Python SDK](python-sdk.md#install-the-sdk) downloads
+Vis on first use.
 
 ### Get the desktop app
 
-Use the buttons below to download Vis for Windows x64, universal macOS, or Linux x64.
-For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.5.21/vis-companion-0.5.21-linux-arm64.AppImage). You can also browse all packages
-on the [latest GitHub release](https://github.com/Blockether/vis/releases/latest).
+Download Vis for Windows x64, universal macOS, or Linux x64 with the buttons below.
+For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.5.21/vis-companion-0.5.21-linux-arm64.AppImage).
+The [latest GitHub release](https://github.com/Blockether/vis/releases/latest) lists all packages.
 
 <div class="store-links" aria-label="Download the desktop app">
 <a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.21/vis-companion-0.5.21-windows-x64.msi"><img src="assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a>
@@ -40,15 +41,15 @@ on the [latest GitHub release](https://github.com/Blockether/vis/releases/latest
 <a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.21/vis-companion-0.5.21-linux-x64.AppImage"><img src="assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a>
 </div>
 
-Install the package, open Vis, then follow the [connection steps below](#connect-an-app).
-See [Desktop setup](distributions.md#open-the-desktop-app) for installation and launcher options.
+Install the package and open Vis. Then [connect the desktop app](#connect-the-desktop-app).
+[Desktop setup](distributions.md#open-the-desktop-app) describes the installation and launcher
+options.
 
 <span id="get-the-phone-app"></span>
 
-### iPhone, iPad and Android
+### iPhone, iPad, and Android
 
-These apps are public betas.
-After installing one, [connect it](#pair-a-phone).
+These apps are public betas. Install one, then [pair it](#pair-a-phone).
 
 <div class="store-links" aria-label="Install the Companion app">
 <a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a>
@@ -58,11 +59,11 @@ After installing one, [connect it](#pair-a-phone).
 
 ## First session
 
-Choose a provider and model before sending a task. A provider may need an account
-or API key and may charge for use. You can also use Ollama or LM Studio for a local model.
-See [Providers and models](configuration.md#providers-and-models).
+Choose a provider and a model before you send a task. A provider may need an account or an API key,
+and it may charge for use. For a local model, use Ollama or LM Studio.
+[Providers and models](configuration.md#providers-and-models) lists the options.
 
-Vis can edit files and run commands. Start with a read-only task while you get familiar with it.
+Vis can edit files and run commands. Start with a task that changes no files.
 
 ### In the terminal
 
@@ -73,38 +74,41 @@ cd /path/to/project
 vis-agent tui
 ```
 
-Vis starts a local gateway if needed.
+Vis starts a local gateway if none runs.
 
 1. Add a provider in the provider picker.
 2. Follow its sign-in instructions.
 3. Select a model.
 
-Press **Enter** to send a message. See [Keyboard shortcuts](keyboard-shortcuts.md)
-for new lines and other keys.
+Press **Enter** to send a message. [Keyboard shortcuts](keyboard-shortcuts.md) lists the key for a
+new line and the other keys.
 
 ### In the desktop or phone app
 
-[Connect the app](#connect-an-app), then open your project and start a session.
-Choose a provider and model there.
+[Connect the app](#connect-an-app). Then open your project, start a session, and choose a provider
+and a model.
 
 ### Try a first task
 
+Send this message:
+
 > Explain how this project is organized and where its tests live. Don't change any files.
 
-The answer should describe your project's structure and tests.
-Open Activities to see the searches and files Vis read.
+The answer describes the structure of your project and its tests. Open **Activities** to see the
+searches that Vis ran and the files that Vis read.
 
-Next, ask for a small change and the tests for it. Review the diff before using the changes.
-To limit what Vis can access, see [Process jail and network policy](jail.md).
+Next, ask for a small change and the tests for it. Review the diff before you use the change.
+To limit what Vis can access, read [Process jail and network policy](jail.md).
 
 <span id="connecting-the-companion-app"></span>
 
 ## Connect an app
 
-The desktop and phone apps connect to a **gateway**, the Vis service on the computer with your project.
-Your files and commands stay on that computer. You can use the same sessions as in the terminal.
+The desktop app and the phone app connect to a **gateway**, the Vis service on the computer that
+holds your project. Your files and commands stay on that computer. The apps show the same sessions
+as the terminal.
 
-[Install Vis](#install) there first. You do not need a separate Vis account to connect an app.
+[Install Vis](#install) on that computer first. An app needs no separate Vis account.
 
 ### Connect the desktop app
 
@@ -114,72 +118,74 @@ On macOS and Linux, open the app from a terminal:
 vis-agent desktop
 ```
 
-This command opens the app. If no local gateway runs, it starts one in the background. The gateway stays up while the app runs.
+The command opens the app. If no local gateway runs, the command starts one in the background. That
+gateway runs while the app runs.
 
 1. In **Add a machine**, enter `http://127.0.0.1:7890`.
 2. Leave the bearer token empty for the default local gateway.
 
-You add the machine only once.
+You add the machine only one time.
 
-If you open the app another way, no gateway starts. Check for a running gateway:
+If you open the app another way, no gateway starts. Check for a gateway:
 
 ```bash
 vis-agent gateway status
 ```
 
-If none is running, start one:
+If none runs, start one:
 
 ```bash
 vis-agent gateway start --host 127.0.0.1
 ```
 
-Keep that terminal open. This command runs the gateway in the foreground.
+This command runs the gateway in the foreground, so keep that terminal open.
 
-If you enabled token authentication, enter its token. If you reused a running gateway,
-use the address shown by `vis-agent gateway status`.
+If you turned on token authentication, enter the token. If you reuse a gateway that already runs,
+use the address that `vis-agent gateway status` shows.
 
-The app can reach a local WSL2 gateway through localhost forwarding.
-On an Intel Mac, use the [JVM distribution](distributions.md#native-vs-jvm) or a gateway on another computer.
+The app reaches a local WSL2 gateway through localhost forwarding. On an Intel Mac, use the
+[JVM distribution](distributions.md#native-vs-jvm) or a gateway on another computer.
 
 For a gateway on another computer, [pair the app](#pair-a-phone) and paste the pairing link.
-`127.0.0.1` only reaches the device you are using.
+`127.0.0.1` reaches only the device that you use.
 
 ### Pair a phone
 
-Your phone needs an address it can reach over your local network or a private VPN.
-A gateway on `127.0.0.1` is not reachable from your phone.
+Your phone needs an address that it can reach over your local network or a private VPN. It cannot
+reach a gateway on `127.0.0.1`.
 
-Keep token authentication enabled for remote access.
-Pairing links and QR codes include the token. Treat them like passwords and do not share them publicly.
-Use a trusted network, VPN or HTTPS for remote connections.
+Keep token authentication on for remote access. A pairing link and a QR code each include the token.
+Treat them as passwords, and do not share them in public. Use a trusted network, a VPN, or HTTPS
+for remote connections.
 
-On the computer running Vis, replace `10.0.0.5` with its network address:
+On the computer that runs Vis, replace `10.0.0.5` with the network address of that computer:
 
 ```bash
 vis-agent gateway start --host 10.0.0.5 --require-token --pair
 ```
 
-Keep that terminal open. In **Add a machine**, scan the QR code or paste the pairing link.
-You can now open projects and sessions from that computer.
+Keep that terminal open. In **Add a machine**, scan the QR code or paste the pairing link. The app
+then opens the projects and sessions of that computer.
 
-If a gateway is already running, create a pairing link without restarting it:
+If a gateway already runs, create a pairing link without a restart:
 
 ```bash
 vis-agent gateway pair
 ```
 
-If it listens only on `127.0.0.1`, you need to restart it with a reachable address.
-Check for active work before stopping it. See [Stop or restart a gateway](gateway-service.md#stop-or-restart-a-gateway).
+A gateway that listens only on `127.0.0.1` needs a restart with an address that the phone can reach.
+Check for active work before you stop the gateway.
+[Stop or restart a gateway](gateway-service.md#stop-or-restart-a-gateway) has the steps.
 
 <span id="access-from-anywhere-with-tailscale"></span>
 
-For access away from home or custom pairing addresses, see
+For access away from home or a custom pairing address, read
 [Remote connections](gateway-service.md#connect-from-another-machine).
 
 ## See Vis in action
 
-All images come from one demo project, `fieldnotes`, after real tasks: a project tour,
-a bug fix with a regression test and a release preparation.
+All images show one demo project, `fieldnotes`, after real tasks: a project tour, a bug fix with a
+regression test, and a release preparation.
 
 <section class="screenshot-gallery" id="screenshot-gallery" data-screenshot-gallery role="region" aria-roledescription="carousel" aria-label="Vis screenshots">
   <div class="screenshot-gallery__track" id="screenshot-slides" tabindex="0" aria-label="Vis screenshots; use Left and Right arrow keys to browse">
@@ -265,8 +271,9 @@ a bug fix with a regression test and a release preparation.
 <span id="python-sdk"></span>
 <span id="resource-limits"></span>
 
-For remote connections, tokens and service setup, see [Running a gateway](gateway-service.md). To
-use Vis from your own code, see [Python SDK basics](python-sdk.md) or [HTTP API basics](http-api.md).
+For remote connections, tokens, and service setup, read [Running a gateway](gateway-service.md). To
+use Vis from your own code, read [Python SDK basics](python-sdk.md) or
+[HTTP API basics](http-api.md).
 
 <span id="see-also"></span>
 
@@ -279,76 +286,88 @@ use Vis from your own code, see [Python SDK basics](python-sdk.md) or [HTTP API 
 
 ### Intro
 
-- [Rationale](rationale.md) — the reasons behind the design of Vis.
-- [Running a gateway](gateway-service.md) — install and operate a shared agent service.
-- [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
+| Page | Read it to |
+| --- | --- |
+| [Rationale](rationale.md) | Learn the reasons behind the design of Vis. |
+| [Running a gateway](gateway-service.md) | Install and operate a shared agent service. |
+| [Reporting a bug](reporting-bugs.md) | Report a problem without exposing private data. |
 
 ### Concepts
 
-Each concept page explains one feature: what it does, when to use it and how to start.
+Each concept page explains one feature: what it does, when to use it, and how to start.
 
-- [Sessions](sessions.md) — continue, stop or find your work.
-- [Context management](context-management.md) — how filtering and summaries keep conversations manageable.
-- [Project instructions](project-instructions.md) — tell the agent how your codebase works.
-- [Skills](skills.md) — reusable task instructions.
-- [Council](council.md) — ask another session for help or a second review.
-- [Automations](automations.md) — run a prompt on a schedule or from a webhook.
-- [Siri and Shortcuts](shortcuts.md) — talk to Vis with the Action Button and use answers in shortcuts.
-- [Evaluations](evals.md) — score benchmark rounds, find failure causes and compare runs.
-- [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.
-- [Live views](live-views.md) — show progress a person can watch and stop.
-- [Speech and voices](speech.md) — speak text, transcribe recordings and add your own voices.
-- [Sounds](sounds.md) — hear a sound when a turn finishes, waits for you or fails.
-- [White label](white-label.md) — give the web app your own name, logo, links and theme.
-- [Python sandbox](python-sandbox.md) — Python execution, packages and permissions.
-- [Configuration](configuration.md) — providers, models and project settings.
-- [Decision models](decision-models.md) — download Laya, train and publish FP32 versions.
+| Page | Read it to |
+| --- | --- |
+| [Sessions](sessions.md) | Continue, stop, or find your work. |
+| [Context management](context-management.md) | Learn how filters and summaries keep a long conversation usable. |
+| [Project instructions](project-instructions.md) | Tell the agent how your codebase works. |
+| [Skills](skills.md) | Give Vis reusable instructions for a task. |
+| [Council](council.md) | Ask another session for help or a second review. |
+| [Automations](automations.md) | Run a prompt on a schedule or from a webhook. |
+| [Siri and Shortcuts](shortcuts.md) | Talk to Vis with the Action Button and use answers in shortcuts. |
+| [Evaluations](evals.md) | Score benchmark rounds, find failure causes, and compare runs. |
+| [Forms and user input](human-input.md) | Ask for a choice, a credential, or a confirmation. |
+| [Live views](live-views.md) | Show progress that a person can watch and stop. |
+| [Speech and voices](speech.md) | Speak text, transcribe recordings, and add your own voices. |
+| [Sounds](sounds.md) | Hear a sound when a turn finishes, waits for you, or fails. |
+| [White label](white-label.md) | Give the web app your own name, logo, links, and theme. |
+| [Python sandbox](python-sandbox.md) | Learn where Python runs, which packages it has, and what it can access. |
+| [Configuration](configuration.md) | Choose providers and models, and save project settings. |
+| [Decision models](decision-models.md) | Download Laya, train it, and publish FP32 versions. |
 
 ### Programmatic access
 
-Use these pages to drive the same features from your own code. Start with the basics page for
-Python or for HTTP. Then read the API page for the feature. Each API page shows the Python examples.
+Use these pages to control the same features from your own code. Start with the basics page for
+Python or for HTTP. Then read the API page of the feature. Each API page shows the Python examples.
 To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 
 **Basics**
 
-- [Python SDK basics](python-sdk.md) — install the SDK, run a private agent and connect to a gateway.
-- [HTTP API basics](http-api.md) — authenticate requests, read the OpenAPI document and handle errors.
-- [Extension API](extension-api.md) — declarations, tool contracts and host operations for extensions.
+| Page | Read it to |
+| --- | --- |
+| [Python SDK basics](python-sdk.md) | Install the SDK, run a private agent, and connect to a gateway. |
+| [HTTP API basics](http-api.md) | Authenticate requests, read the OpenAPI document, and handle errors. |
+| [Extension API](extension-api.md) | Look up declarations, tool contracts, and host operations for extensions. |
 
 **Feature APIs**
 
-- [Sessions API](sessions-api.md) — sessions, messages, progress and saved work from Python or HTTP.
-- [Context management API](context-management-api.md) — context budget, usage and cache health from Python or HTTP.
-- [Project instructions API](project-instructions-api.md) — prompt templates, skills and goals from Python or HTTP.
-- [Council API](council-api.md) — Council messages and wakes from Python or HTTP.
-- [Automations API](automations-api.md) — automations, runs, secrets and webhooks from Python or HTTP.
-- [Evaluations API](evals-api.md) — benchmark scores, failure causes and comparisons from Python or HTTP.
-- [Speech API](speech-api.md) — speech, transcription and your own voices from Python or HTTP.
-- [Sounds API](sounds-api.md) — sound settings and your own sound files from Python or HTTP.
-- [White label API](white-label-api.md) — the brand of the web app from Python or HTTP.
-- [Configuration API](configuration-api.md) — settings and extension reloads from Python or HTTP.
+| Page | Read it to |
+| --- | --- |
+| [Sessions API](sessions-api.md) | Create sessions, send messages, follow progress, and manage saved work. |
+| [Context management API](context-management-api.md) | Read the context budget, the usage, and the cache health. |
+| [Project instructions API](project-instructions-api.md) | Run prompt templates and skills, and control goals. |
+| [Council API](council-api.md) | Publish and read Council messages, and wake sessions. |
+| [Automations API](automations-api.md) | Manage automations, runs, secrets, and webhooks. |
+| [Evaluations API](evals-api.md) | Read benchmark scores, failure causes, and comparisons. |
+| [Speech API](speech-api.md) | Speak text, transcribe audio, and manage your own voices. |
+| [Sounds API](sounds-api.md) | Change the sound settings and choose your own sound files. |
+| [White label API](white-label-api.md) | Read and set the brand of the web app. |
+| [Configuration API](configuration-api.md) | Change settings and reload extensions. |
 
 <span id="put-your-expertise-into-code"></span>
 <span id="combine-steps-in-python"></span>
 
 ### Extensions
 
-- [Extending Vis](extending.md) — choose a capability and build your first tool.
-- [Extension design](extension-design.md) — design and test typed tools.
-- [Installing and sharing extensions](extension-packages.md) — add an extension or share your own.
-- [Using an existing Python project](extension-development.md) — prepare editable uv packages for Vis.
-- [Native builds for Java and Clojure extensions](jvm-native-image.md) — add Java or Clojure tools to Vis.
-- [Extension troubleshooting](extension-troubleshooting.md) — diagnose loading and call errors.
-- [Provider extensions](provider-extensions.md) — register an LLM provider from an extension.
+| Page | Read it to |
+| --- | --- |
+| [Extending Vis](extending.md) | Choose a capability and build your first tool. |
+| [Extension design](extension-design.md) | Design and test typed tools. |
+| [Installing and sharing extensions](extension-packages.md) | Add an extension or share your own. |
+| [Using an existing Python project](extension-development.md) | Prepare editable uv packages for Vis. |
+| [Native builds for Java and Clojure extensions](jvm-native-image.md) | Add Java or Clojure tools to Vis. |
+| [Extension troubleshooting](extension-troubleshooting.md) | Diagnose loading errors and call errors. |
+| [Provider extensions](provider-extensions.md) | Register an LLM provider from an extension. |
 
 <span id="updating-vis"></span>
 <span id="native-vs-jvm"></span>
 
 ### Reference
 
-- [Keyboard shortcuts](keyboard-shortcuts.md) — keys for the terminal app.
-- [Process jail and network policy](jail.md) — rules for child processes.
-- [Runtime distributions](distributions.md) — installation methods and updates.
-- [Logs and diagnostics](logging.md) — file locations, formats, retention and sharing.
-- [Components](components.md) — every component of forms and live views.
+| Page | Read it to |
+| --- | --- |
+| [Keyboard shortcuts](keyboard-shortcuts.md) | Look up the keys of the terminal app. |
+| [Process jail and network policy](jail.md) | Set the rules for child processes. |
+| [Runtime distributions](distributions.md) | Compare installation methods and update Vis. |
+| [Logs and diagnostics](logging.md) | Find log files, formats, and retention, and learn what to share. |
+| [Components](components.md) | Look up every component of forms and live views. |
