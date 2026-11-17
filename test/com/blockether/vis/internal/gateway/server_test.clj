@@ -3520,10 +3520,11 @@
   (it "router handler preserves model wire capabilities"
       ;; Regression, Vis session 95c4a9b0-ba88-4e8d-86ef-252cb522bcf4: the gateway
       ;; sent names only, so the TUI hid verbosity even for Codex gpt-6-astra.
+      ;; gpt-6-astra is retired (svar 0.7.241), so the test uses its successor.
       (with-redefs [providers/picker-fleet
-                    (constantly [{:id :openai-codex :models [{:name "gpt-6-astra"}]}
+                    (constantly [{:id :openai-codex :models [{:name "gpt-6.2-astra"}]}
                                  {:id :github-copilot
-                                  :models [{:name "gpt-6-astra"} {:name "claude-opus-5"}]}
+                                  :models [{:name "gpt-6.2-astra"} {:name "claude-opus-5"}]}
                                  {:id :anthropic :models [{:name "claude-opus-5"}]}])
 
                     providers/default-selection
@@ -3557,8 +3558,8 @@
               (get by-id "anthropic")]
 
           (expect (= 200 (:status response)))
-          (expect (= ["gpt-6-astra"] (get codex "models")))
-          (expect (= [{"name" "gpt-6-astra"
+          (expect (= ["gpt-6.2-astra"] (get codex "models")))
+          (expect (= [{"name" "gpt-6.2-astra"
                        "is_reasoning_effort_configurable" true
                        "reasoning_effort_options" ["low" "medium" "high" "xhigh" "max"]
                        "verbosity_style" "openai-text"
