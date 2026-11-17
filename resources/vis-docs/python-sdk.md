@@ -21,6 +21,10 @@ follows `main`, so it can show APIs that the newest PyPI release does not have.
   [Connect to a gateway](#connect-to-a-gateway-and-run-a-task).
 - **The agent must not use some tools, such as `py.repl_start`.** Pass `tools` to `Agent()`, as
   [Let your program own a private agent](#let-your-program-own-a-private-agent) shows.
+- **The first `Agent()` takes a long time or raises `VisTimeout`.** Read
+  [The first start of a private agent](#the-first-start-of-a-private-agent).
+- **Your program must find the session that it created or show events while Vis works.**
+  [List sessions and follow events](#list-sessions-and-follow-events).
 - **Your program must work with sessions, Council, automations, or settings.** Read
   [Sessions API](sessions-api.md), [Council API](council-api.md),
   [Automations API](automations-api.md), or [Configuration API](configuration-api.md).
@@ -60,6 +64,31 @@ print(ensure_installed())  # the command that a private agent uses, downloaded i
 `install()` always uses the copy in `~/.vis/sdk`, also when you have Vis installed. Pass
 `force=True` to download the engine again. Both functions raise `InstallError` when the download
 fails.
+
+### The first start of a private agent
+
+The first `Agent()` with a new engine copy takes longer than the next ones. On entry to its
+context, `Agent()` does these steps:
+
+1. It downloads the engine if no matching copy is installed. The copy uses about 420 MB of disk
+   space. Each network read must continue within 120 seconds.
+2. It starts `vis-agent stdio` and waits up to `startup_timeout` for the engine to answer. The
+   default is 120 seconds.
+3. It creates the session. For the first session of a new engine copy, the engine prepares each
+   installed Python extension: it installs the dependencies and compiles the code. This step can
+   take more than one minute. `Agent()` waits up to `startup_timeout` for it.
+
+A project with its own extensions can need this preparation one time too. When the engine does not
+answer in time, `Agent()` raises `VisTimeout` and stops the engine. To wait longer, give a
+`LocalEngine` with a longer `startup_timeout`:
+
+```python
+from blockether.vis.engine import Agent, LocalEngine
+
+with LocalEngine(root=".", startup_timeout=300) as layer:
+    with Agent(project=".", execution_layer=layer) as agent:
+        print(agent.run("Summarize this project without changing files.")["status"])
+```
 
 Before the first task, configure a [provider and model](configuration.md). A gateway client needs
 only the Python package, because the provider runs on the gateway machine.
@@ -137,6 +166,12 @@ To turn off some tools, pass `tools`. For example,
 `Agent(tools=["-py.repl_start", "-py.repl_stop"])` turns off those two tools of the `py` extension.
 [Choose single tools](configuration.md#choose-single-tools) describes the names and the rules. To
 change the list later, call `agent.session.update(tools=[...])`.
+
+To pin the model of the conversation, give `provider` and `model` together, for example
+`Agent(provider="anthropic", model="claude-sonnet-4-5")`. Give both or neither, or `Agent()` raises
+`ValueError`. A `provider` and a `model` option of one `run()` or `send()` call change the model of
+that turn only. [Choose the model of a session](sessions-api.md#choose-the-model-of-a-session)
+lists the models.
 
 ## Get a validated result
 
@@ -322,6 +357,36 @@ later, open a `GatewayClient(url, token=...)` context and call `client.session(s
 
 To follow the progress of a turn, read [Follow progress](sessions-api.md#follow-progress).
 
+## List sessions and follow events
+
+Save this as `session_events.py`. Both functions work with a `GatewayClient` and with the
+execution layer of an `Agent`:
+
+```python
+# session_events.py
+def recent_session_ids(layer):
+    page = layer.list_sessions(limit=20, include_empty="true")
+    return [row["id"] for row in page["sessions"]]
+
+
+def print_events(conversation, seconds=30):
+    with conversation.events(idle_timeout=seconds) as events:
+        for event in events:
+            print(event.type)
+```
+
+`recent_session_ids(agent.execution_layer)` returns the IDs of up to 20 recent sessions. Without
+`include_empty="true"`, the list leaves out a session that has no turns yet, also the session of
+your `Agent`.
+
+`print_events(agent.session)` prints the type of each event of the session. The loop ends normally
+when no event comes for 30 seconds. To stop a stream from another thread, call its `close()` method.
+In a coroutine, iterate the stream with `async for`.
+
+[Find a saved session](sessions-api.md#find-a-saved-session) gives the list options.
+[Stop following events](sessions-api.md#stop-following-events) gives the stream options and an
+`async` example.
+
 ### What a close or a gateway restart changes
 
 [Choose a lifecycle](#choose-a-lifecycle) lists what each close does. A close of an `Agent` or a
@@ -436,8 +501,26 @@ After one call, your application prints `Quoted weights: [1200]`.
 The agent finds the contract through `apropos` and `doc`, calls the function through
 `python_execution`, and uses the result in the answer.
 
-To add an extension after you enter the `Agent` context and before its first request, call
-`agent.register_extension(extension)`. For a remote agent, pass the same extension object to
+### Add or change a function between turns
+
+To add an extension after you enter the `Agent` context, call `agent.register_extension(extension)`.
+To replace the static prompt of an extension, call `agent.update_extension_prompt(name, prompt)`.
+`prompt=None` removes the prompt, and the functions of the extension stay the same:
+
+```python
+with Agent(project=".") as agent:
+    agent.run("Read the project layout. Do not change files.")
+    agent.register_extension(make_delivery_extension(quoted_weights))
+    agent.update_extension_prompt("delivery", "Quote only standard delivery.")
+    agent.run("Quote delivery for a 1200-gram parcel.")
+```
+
+Call both methods only while no turn runs. The new functions and the new prompt apply from the next
+turn. During a turn, both methods raise `GatewayError` with the status 409 and the code
+`client_extension_busy`. `update_extension_prompt()` raises `ValueError` when no registered extension
+has that name.
+
+For a remote agent, pass the same extension object to
 `Agent(execution_layer=execution_layer, extensions=[extension], ...)` inside the gateway context.
 
 ### When your functions run
@@ -479,6 +562,7 @@ identity of a live object stays in your application.
 | `GatewayError` | Read `status` and `code` for an authentication, permission, or request error |
 | `TransportError` | Read the exit status and the standard error of the engine in the message, if present. Then check the executable or the gateway, the network, and the TLS setup |
 | `VisTimeout` from `run()` or `turn.wait()` | The wait ended, but the turn can still run. Inspect the turn or call `turn.cancel()` |
+| `VisTimeout` when a private `Agent` starts | The engine did not answer in `startup_timeout`. Read [The first start of a private agent](#the-first-start-of-a-private-agent) |
 | `StructuredOutputError` from `run()` | No structured result was valid. Read its `errors` and `attempts` |
 | A record whose `status` is not `completed` | The task did not complete normally. Inspect its content and its input requirements |
 
@@ -520,8 +604,11 @@ except TransportError:
 | `GatewayClient(url, token=...)` | Persistent or shared sessions on a gateway that runs separately | It closes its streams and releases its client lease |
 
 Pass a `LocalEngine` or a `GatewayClient` when the default private engine does not fit. Each layer
-and its session handles use one calling thread. To delete a saved conversation, call
-`conversation.delete()`.
+and its session handles use one calling thread. Only the `close()` of an event stream is safe from
+another thread. To delete a saved conversation, call `conversation.delete()`.
+
+Always close an `Agent` or a layer, for example with `with`. If you do not close a `LocalEngine`,
+its process stops only when Python collects the object or exits.
 
 ## See also
 

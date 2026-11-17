@@ -1,5 +1,6 @@
 """Execute SDK recipes against HTTP doubles, native engines and opt-in live models."""
 
+import asyncio
 import json
 import os
 import re
@@ -7,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 from types import ModuleType
 from urllib.parse import parse_qs, urlsplit
@@ -206,6 +208,81 @@ def test_progress_recipe_replays_from_submission_and_stops_for_its_turn(
         "turn.completed",
     ]
     assert calls[-1][:2] == ("DELETE", "/v1/clients/sdk-lease")
+
+
+def _quiet_events(*events):
+    """Answer an SSE body with `events`, then stay quiet until the client leaves."""
+
+    def write(out):
+        for event in events:
+            out.write(("data: " + json.dumps(event) + "\n\n").encode())
+        out.flush()
+        for _ in range(100):
+            time.sleep(0.05)
+            out.write(b": ping\n\n")
+            out.flush()
+
+    return write
+
+
+def test_session_events_recipe_lists_empty_sessions_and_stops_when_quiet(
+    recipe, capsys
+):
+    queries = []
+
+    def respond(method, path, body):
+        if response := compatible(method, path, body):
+            return response
+        if path.startswith("/v1/sessions?"):
+            queries.append(parse_qs(urlsplit(path).query))
+            return 200, {"sessions": [{"id": "session-one", "title": ""}]}
+        if path.startswith("/v1/events?"):
+            ready = {"type": "subscription.ready", "session_id": "session-one"}
+            return 200, _quiet_events({**ready, "cursor": 0}), "text/event-stream"
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    module = recipe("session_events")
+    with endpoint(respond) as (url, _), engine.GatewayClient(url) as client:
+        assert module.recent_session_ids(client) == ["session-one"]
+        started = time.monotonic()
+        module.print_events(client.session("session-one"), seconds=0.3)
+        assert time.monotonic() - started < 3
+    assert queries == [{"limit": ["20"], "include_empty": ["true"]}]
+    assert capsys.readouterr().out.splitlines() == ["subscription.ready"]
+
+
+def test_async_recipe_returns_the_end_of_its_turn_or_none_when_quiet(recipe):
+    turn_events = [
+        {"type": "subscription.ready", "session_id": "session-one", "cursor": 3},
+        {
+            "type": "turn.completed",
+            "session_id": "session-one",
+            "turn_id": "other",
+            "seq": 4,
+        },
+        {
+            "type": "turn.failed",
+            "session_id": "session-one",
+            "turn_id": "turn-one",
+            "seq": 5,
+        },
+    ]
+    bodies = [turn_events, turn_events[:1]]
+
+    def respond(method, path, body):
+        if response := compatible(method, path, body):
+            return response
+        if path.startswith("/v1/events?"):
+            return 200, _quiet_events(*bodies.pop(0)), "text/event-stream"
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    follow = recipe("follow_async").follow
+    with endpoint(respond) as (url, _), engine.GatewayClient(url) as client:
+        conversation = client.session("session-one")
+        turn = engine.Turn(conversation, "turn-one", cursor=3)
+        assert asyncio.run(follow(conversation, turn)) == "turn.failed"
+        assert asyncio.run(follow(conversation, turn, seconds=0.3)) is None
+        assert not client._streams
 
 
 @pytest.mark.parametrize("transport", ["http", "stdio"])

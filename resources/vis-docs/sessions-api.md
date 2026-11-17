@@ -287,7 +287,9 @@ The project root must be an absolute path on the gateway machine.
 A failed request does not keep its key, so a retry creates the session.
 
 The gateway refuses these values with 400: an unknown tier, an unknown extension, and an unknown
-tool. It also refuses an empty `tools` list and a `tools` list that mixes the two forms.
+tool. It also refuses an empty `tools` list and a `tools` list that mixes the two forms. A `root`
+that is not an existing directory gets 400 with the type `not-a-directory`, and the gateway creates
+no session.
 
 ## Change the tools of a session
 
@@ -715,6 +717,67 @@ The stream follows the whole session and does not end with a turn. Stop when a `
 `turn.failed`, or `turn.cancelled` event has the ID of your turn. A closed stream does not cancel
 work.
 
+### Stop following events
+
+<div data-variant="python">
+
+To end the loop when no event comes for some time, give `idle_timeout` in seconds:
+
+```python
+with session.events(cursor=turn.cursor, idle_timeout=60) as events:
+    for event in events:
+        print(event.type)
+print(turn.read()["status"])
+```
+
+The loop then ends normally, with no exception. The time starts when you call `events()` and again
+after each event. Heartbeats of the gateway do not count as events. After the loop, the turn can
+still run, so check its `status`.
+
+Without `idle_timeout`, the stream follows the session until you close it. A stream of a private
+engine, or of an `Agent` with application functions, reads pages. Without `idle_timeout`, that
+stream raises `VisTimeout` when no event comes for the `timeout` of the execution layer. The
+default `timeout` is 30 seconds.
+
+To stop a stream from another thread, call `events.close()`. The loop ends at once, and the stream
+does not connect again.
+
+In a coroutine, use `async with` and `async for`:
+
+```python
+# follow_async.py
+TERMINAL = {"turn.completed", "turn.failed", "turn.cancelled"}
+
+
+async def follow(conversation, turn, seconds=60):
+    async with conversation.events(cursor=turn.cursor, idle_timeout=seconds) as events:
+        async for event in events:
+            print(event.type)
+            if event.turn_id == turn.id and event.type in TERMINAL:
+                return event.type
+    return None
+```
+
+`follow()` returns the type of the last event of your turn, or `None` when no event came for
+`seconds`. The stream reads on one worker thread that the stream owns. Do not iterate one stream
+from two tasks. When you cancel the task, the stream closes.
+
+</div>
+
+<div data-variant="http">
+
+To stop, close the connection. To limit the time of the whole request, give `curl` a limit in
+seconds:
+
+```bash
+vis_api -N --max-time 60 "$VIS_GATEWAY_URL/v1/events?sids=$SESSION_ID:$cursor&replay=full"
+```
+
+The gateway sends heartbeat comment lines while no event comes. To end the read when no event comes
+for some time, measure the time since the last `data` line in your client.
+
+</div>
+
 ### Read Activity and view receipts
 
 <div data-variant="python">
@@ -921,6 +984,42 @@ match.
 Without `project_id`, `root`, and `group_ids`, the search includes every project and group. These
 scopes apply before the gateway calculates `total`, the page window, and its cursor. `total` is
 the number of sessions in all pages. When `has_more` is false, there are no more pages.
+
+### List recent sessions
+
+<div data-variant="python">
+
+```python
+page = client.list_sessions(limit=20, include_empty="true")
+for row in page["sessions"]:
+    print(row["id"], row["title"])
+```
+
+`get_sessions(query=...)` sends the same request.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/sessions?limit=20&include_empty=true"
+```
+
+</div>
+
+The answer lists one page of active sessions in the order of the app. By default, the list leaves
+out a session that has no title, no turns, and no running turn. A session that you created and did
+not use yet is such a session. To find it, add `include_empty=true`.
+
+| Parameter | Effect |
+|---|---|
+| `limit` | The page size. Without `limit` and without a scope, the page has 20 sessions |
+| `after` | The `next_cursor` value of the previous page |
+| `root` | Restricts the list to one project directory |
+| `project_id` | Restricts the list to one saved project |
+| `include_empty` | `true` also lists the sessions with no title, no turns, and no running turn. The default is `false`. Another value gets 400 with the type `invalid-request` |
+
+`total`, `next_cursor`, and `has_more` count the same sessions as the page.
 
 ## Fork a session
 
