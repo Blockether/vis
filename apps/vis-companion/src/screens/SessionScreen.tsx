@@ -4547,6 +4547,11 @@ export function SessionScreen({
     const anchor = disclosureAnchor(viewport, disclosure);
     const anchorTop = anchor.getBoundingClientRect().top;
     followingRef.current = false;
+    // The transcript observer holds its own reading anchor while the body slides. One read
+    // before a running turn grew is stale, and its first correction undid `preserveAnchor`.
+    correctedTopRef.current = -1;
+    captureScrollAnchor();
+    correctedTopRef.current = viewport.scrollTop;
     if (disclosureScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(disclosureScrollFrameRef.current);
     }

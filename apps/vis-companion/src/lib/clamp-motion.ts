@@ -41,10 +41,8 @@ export function useClampMotion(body: RefObject<HTMLElement | null>): {
     if (!element || start === null) return;
     motion.current?.cancel();
     motion.current = null;
-    // A closing body has no clamp yet. Measure the clamped height without a paint.
-    if (!isOpen) element.classList.add(CLAMP_CLASS);
-    const end = element.getBoundingClientRect().height;
-    if (!isOpen) element.classList.remove(CLAMP_CLASS);
+    // A closing body has no clamp yet. Measure the clamped height on a copy.
+    const end = isOpen ? element.getBoundingClientRect().height : measureClamped(element).height;
     if (
       Math.abs(end - start) < 1 ||
       typeof element.animate !== 'function' ||
@@ -84,6 +82,38 @@ export function useClampMotion(body: RefObject<HTMLElement | null>): {
       setClamped(false);
     },
   };
+}
+
+/**
+ * The box of this element with the clamp, measured without a change to the element itself.
+ *
+ * A clamp on an open body made the page shorter for one layout. Near the end of the
+ * transcript the browser then moved the scroll position up, and a running turn pinned it
+ * back one frame later: the session flickered after "Show full message". So an open body
+ * is measured on a hidden copy out of the flow, which changes no height around it.
+ */
+export function measureClamped(element: HTMLElement): { height: number; overflows: boolean } {
+  const read = (box: HTMLElement) => ({
+    height: box.getBoundingClientRect().height,
+    overflows: box.scrollHeight > box.clientHeight + 1,
+  });
+  if (element.classList.contains(CLAMP_CLASS)) return read(element);
+  const copy = element.cloneNode(true) as HTMLElement;
+  copy.removeAttribute('id');
+  copy.setAttribute('aria-hidden', 'true');
+  copy.classList.add(CLAMP_CLASS);
+  Object.assign(copy.style, {
+    position: 'absolute',
+    visibility: 'hidden',
+    pointerEvents: 'none',
+    width: `${element.getBoundingClientRect().width}px`,
+  });
+  element.after(copy);
+  try {
+    return read(copy);
+  } finally {
+    copy.remove();
+  }
 }
 
 /**

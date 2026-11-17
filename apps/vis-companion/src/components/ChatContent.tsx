@@ -20,7 +20,7 @@ import {
 } from 'react';
 import { CODE_DEFAULT_CLASS, highlightSegments, type SyntaxSegment } from '../lib/syntax';
 import { ArtifactLinkContext } from '../lib/artifact-links';
-import { CLAMP_CLASS, useClampMotion } from '../lib/clamp-motion';
+import { measureClamped, useClampMotion } from '../lib/clamp-motion';
 import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
 import { LiveRunDialog, LiveRunRow, liveRunName } from './LiveArtifact';
@@ -4923,10 +4923,7 @@ function CouncilRequestBody({ children }: { children: string }) {
       if (isPaintSkipped(body) || body.getAnimations?.().length) return;
       // Ask the clamp itself whether it cuts text. Each authored line is a block with a
       // gap, so four short lines were taller than four line heights and got a toggle.
-      const isClamped = body.classList.contains(CLAMP_CLASS);
-      if (!isClamped) body.classList.add(CLAMP_CLASS);
-      const overflows = body.scrollHeight > body.clientHeight + 1;
-      if (!isClamped) body.classList.remove(CLAMP_CLASS);
+      const { overflows } = measureClamped(body);
       return () => setCollapsible(overflows);
     };
     measure()?.();

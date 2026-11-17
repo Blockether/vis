@@ -392,6 +392,29 @@ describe('request speaker labels', () => {
     }
   });
 
+  // User report 2026-11-17: "Show full message" on the Council request of a working subagent
+  // made the session flicker. Each measure put the clamp on the open body, so the page got
+  // shorter for one layout and the browser moved the scroll position up.
+  it('measures an open body without the clamp on it', () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(200);
+    const request = 'Line one\nLine two\nLine three\nLine four\nLine five';
+    try {
+      const view = render(<UserMessage requestKind="council">{request}</UserMessage>);
+      fireEvent.click(view.getByRole('button', { name: 'Show full message' }));
+      const toggle = view.getByRole('button', { name: 'Show less' });
+      const body = document.getElementById(toggle.getAttribute('aria-controls')!)!;
+      const watch = new MutationObserver(() => {});
+      watch.observe(body, { attributeFilter: ['class'], attributeOldValue: true });
+      view.rerender(<UserMessage requestKind="council">{`${request}\nLine six`}</UserMessage>);
+      const changes = watch.takeRecords().map((record) => record.oldValue);
+      watch.disconnect();
+      expect(changes).toEqual([]);
+      expect(view.getByRole('button', { name: 'Show less' })).toBeInTheDocument();
+    } finally {
+      height.mockRestore();
+    }
+  });
+
   // User report 2026-11-04, Council thread #2509: a reply of four short lines showed "Show less"
   // with no more text. Its line gaps made it taller than four line heights, but the clamp cut nothing.
   it('shows no disclosure when the four-line clamp cuts nothing', () => {
