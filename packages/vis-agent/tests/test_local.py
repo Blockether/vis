@@ -566,3 +566,94 @@ def test_threads_sharing_an_engine_each_get_their_own_reply(tmp_path):
         for t in threads:
             t.join()
     assert wrong == []
+
+
+def test_first_session_may_take_the_startup_deadline(tmp_path):
+    import json
+    import sys
+
+    # The engine prepares Python extensions on the first session (#486).
+    hello = json.dumps({"protocol": _PROTOCOL})
+    code = f"""import base64, json, sys, time
+print({hello!r}, flush=True)
+for line in sys.stdin:
+    if json.loads(line)["route"] == "/v1/sessions":
+        time.sleep(1)
+    content = base64.b64encode(json.dumps({{"id": "first"}}).encode()).decode()
+    print(json.dumps({{"status": 200, "headers": {{}}, "content": content}}), flush=True)
+"""
+    with LocalEngine(
+        executable=[sys.executable, "-c", code],
+        root=tmp_path,
+        timeout=0.3,
+        startup_timeout=10,
+    ) as engine:
+        assert engine.create_session(root=str(tmp_path)).id == "first"
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _wait_gone(pid, seconds=10):
+    import time
+
+    deadline = time.monotonic() + seconds
+    while _alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return not _alive(pid)
+
+
+# An engine that does not stop on stdin EOF, like one busy with a slow shutdown.
+_STUBBORN = "import time; print({hello!r}, flush=True); time.sleep(60)"
+
+
+def test_collected_engine_stops_its_process_and_removes_its_directory(tmp_path):
+    import gc
+    import json
+    import signal
+    import sys
+
+    code = _STUBBORN.format(hello=json.dumps({"protocol": _PROTOCOL}))
+    engine = LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path)
+    engine.connect()
+    process, home = engine._process, engine._home.name
+    del engine
+    gc.collect()
+    try:
+        assert process.poll() is not None
+        assert not os.path.exists(home)
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)
+
+
+def test_engine_left_open_at_exit_stops_with_the_interpreter(tmp_path):
+    import json
+    import signal
+    import subprocess
+    import sys
+
+    code = _STUBBORN.format(hello=json.dumps({"protocol": _PROTOCOL}))
+    script = f"""import json
+from blockether.vis.engine import LocalEngine
+engine = LocalEngine(executable={[sys.executable, "-c", code]!r}, root={str(tmp_path)!r})
+engine.connect()
+print(json.dumps([engine._process.pid, engine._home.name]), flush=True)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stderr
+    pid, home = json.loads(result.stdout)
+    try:
+        assert _wait_gone(pid)
+        assert not os.path.exists(home)
+    finally:
+        if _alive(pid):
+            os.killpg(pid, signal.SIGKILL)

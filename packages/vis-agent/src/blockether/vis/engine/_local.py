@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import weakref
 from email.message import Message
 from pathlib import Path
 from urllib.parse import urlencode
@@ -38,6 +39,7 @@ from ._client import (
     _PollingEvents,
     _SessionPollingEvents,
 )
+from ._groups import SessionGroup
 from ._install import _COMMAND, InstallError, ensure_installed
 
 # Errors quote at most this much of the engine's stderr, starting at a line.
@@ -82,6 +84,46 @@ def _envelope(response, what):
     return status, decoded, headers
 
 
+def _stop(process):
+    """Close the pipes of `process` and stop its group: wait, then SIGTERM, then SIGKILL."""
+    if process.stdin:
+        process.stdin.close()
+
+    def signal_process(sig):
+        # The child owns a new session. Prefer its group so subprocesses
+        # are stopped too; a denied group signal need not deny its PID.
+        if process.poll() is not None:
+            return
+        try:
+            os.killpg(process.pid, sig)
+        except (PermissionError, ProcessLookupError):
+            # Popen checks for exit before signaling this owned child.
+            # Other failures propagate: cleanup must remain retryable.
+            process.send_signal(sig)
+
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        signal_process(signal.SIGTERM)
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            signal_process(signal.SIGKILL)
+            process.wait()
+    if process.stdout:
+        process.stdout.close()
+
+
+def _reap(process, home):
+    """Stop an engine that nobody closed, then remove its temporary directory.
+
+    The engine stops first: a live engine can write its database again after the
+    directory is removed.
+    """
+    _stop(process)
+    home.cleanup()
+
+
 def _reply(status, decoded, headers):
     """Raise the gateway error of a refused reply, or wrap a successful one."""
     if status >= 400:
@@ -105,13 +147,22 @@ class LocalEngine(ExecutionLayer):
             appends `stdio`. It does not parse shell commands.
         root: Existing local working directory, resolved at construction.
         timeout: Positive finite timeout in seconds for each transport operation.
-        startup_timeout: Positive finite deadline in seconds for initial boot.
+        startup_timeout: Positive finite deadline in seconds for initial boot and,
+            when it is longer than `timeout`, for each session creation.
 
     Construction is lazy. `connect` or context entry starts the subprocess, and repeated
     connection calls reuse it. `close` stops only this owned process and discards its
     temporary session database. It does not revert project edits or stop any separately
     running Vis server. Explicitly injected agents borrow this layer. Close those agents
-    before you leave the layer's context.
+    before you leave the layer's context. If you do not close the layer, the process
+    stops and the temporary database is removed when Python collects the layer or exits.
+    Do not rely on this: an unclosed layer keeps its process until then.
+
+    The first session of a new engine copy can take more than a minute, for example
+    after the first download or an SDK update. The engine then prepares the installed
+    Python extensions for its embedded Python: it installs their dependencies and
+    compiles them. A project with its own extensions can need this once too. So
+    `create_session` waits up to `startup_timeout`.
 
     ```python
     from blockether.vis.engine import Agent, LocalEngine
@@ -153,6 +204,7 @@ class LocalEngine(ExecutionLayer):
         self._exit_status = None
         self._stderr_tail = ""
         self._cleanup_complete = False
+        self._reaper = None
         # The stdio frames carry no request ids, so only one exchange can be in flight.
         self._exchange = threading.RLock()
 
@@ -234,6 +286,8 @@ class LocalEngine(ExecutionLayer):
                     stderr=stderr,
                     start_new_session=True,
                 )
+            # Registered after the directory, so at exit it runs first.
+            self._reaper = weakref.finalize(self, _reap, self._process, self._home)
             assert self._process.stdin is not None  # Popen got stdin=PIPE.
             os.set_blocking(self._process.stdin.fileno(), False)
             hello = self._read_line(time.monotonic() + self._startup_timeout)
@@ -306,6 +360,31 @@ class LocalEngine(ExecutionLayer):
             ) from None
         return _reply(status, decoded, headers)
 
+    def create_session(
+        self,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        group: SessionGroup | str | None = None,
+        timeout: float | None = None,
+        **options: object,
+    ) -> Session:
+        """Create a conversation and return a `Session` handle.
+
+        The arguments are the same as for `ExecutionLayer.create_session`. Without
+        `timeout`, this waits up to the longer of `timeout` and `startup_timeout` of
+        the layer: the engine can prepare Python extensions for the first session.
+        """
+        return super().create_session(
+            provider=provider,
+            model=model,
+            group=group,
+            timeout=max(self.timeout, self._startup_timeout)
+            if timeout is None
+            else timeout,
+            **options,
+        )
+
     def session(self, sid):
         return _LocalSession(self, sid)
 
@@ -330,35 +409,12 @@ class LocalEngine(ExecutionLayer):
         if process is not None:
             # Before stdin closes: only an exit the engine chose explains a failure.
             self._exit_status = process.poll()
-            if process.stdin:
-                process.stdin.close()
-
-            def signal_process(sig):
-                # The child owns a new session. Prefer its group so subprocesses
-                # are stopped too; a denied group signal need not deny its PID.
-                if process.poll() is not None:
-                    return
-                try:
-                    os.killpg(process.pid, sig)
-                except (PermissionError, ProcessLookupError):
-                    # Popen checks for exit before signaling this owned child.
-                    # Other failures propagate: cleanup must remain retryable.
-                    process.send_signal(sig)
-
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                signal_process(signal.SIGTERM)
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    signal_process(signal.SIGKILL)
-                    process.wait()
-            if process.stdout:
-                process.stdout.close()
+            _stop(process)
         if self._home is not None:
             self._stderr_tail = self._stderr_end(self._home.name)
             self._home.cleanup()
+        if self._reaper is not None:
+            self._reaper.detach()
         self._cleanup_complete = True
 
     def _stderr_end(self, home):
