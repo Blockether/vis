@@ -39,7 +39,6 @@ from ._client import (
     _PollingEvents,
     _SessionPollingEvents,
 )
-from ._groups import SessionGroup
 from ._install import _COMMAND, InstallError, ensure_installed
 
 # Errors quote at most this much of the engine's stderr, starting at a line.
@@ -360,30 +359,9 @@ class LocalEngine(ExecutionLayer):
             ) from None
         return _reply(status, decoded, headers)
 
-    def create_session(
-        self,
-        *,
-        provider: str | None = None,
-        model: str | None = None,
-        group: SessionGroup | str | None = None,
-        timeout: float | None = None,
-        **options: object,
-    ) -> Session:
-        """Create a conversation and return a `Session` handle.
-
-        The arguments are the same as for `ExecutionLayer.create_session`. Without
-        `timeout`, this waits up to the longer of `timeout` and `startup_timeout` of
-        the layer: the engine can prepare Python extensions for the first session.
-        """
-        return super().create_session(
-            provider=provider,
-            model=model,
-            group=group,
-            timeout=max(self.timeout, self._startup_timeout)
-            if timeout is None
-            else timeout,
-            **options,
-        )
+    def _session_create_timeout(self, timeout: float | None) -> float | None:
+        """Wait for the first session up to the startup deadline of the layer."""
+        return max(self.timeout, self._startup_timeout) if timeout is None else timeout
 
     def session(self, sid):
         return _LocalSession(self, sid)

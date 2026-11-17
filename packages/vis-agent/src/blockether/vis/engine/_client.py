@@ -718,9 +718,16 @@ class ExecutionLayer(ABC):
         if group is not None:
             options = {**options, "group_id": _group_id(group)}
         data = self._request(
-            "POST", "/v1/sessions", body=options, timeout=timeout
+            "POST",
+            "/v1/sessions",
+            body=options,
+            timeout=self._session_create_timeout(timeout),
         ).json()
         return self.session(_field(data, "id", str))
+
+    def _session_create_timeout(self, timeout: float | None) -> float | None:
+        """Return the timeout of a session creation request."""
+        return timeout
 
     def groups(
         self,
