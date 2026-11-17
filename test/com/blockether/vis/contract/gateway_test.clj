@@ -44,7 +44,7 @@
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= {:json 189 :resource 2 :sse 5 :empty 4 :binary 7 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= 42 (count contract/event-types)))
+    (expect (= 43 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
     (expect (= #{"model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
                  "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
@@ -405,3 +405,19 @@
           (expect (= {"anyOf" [{"$ref" (row-ref k)} {"type" "null"}]}
                      (get-in change ["properties" k]))
                   k)))))
+
+(defdescribe session-event-payload-schema-test
+             (it "gives each session event type a payload schema that is not empty"
+                 ;; A type without a payload schema leaves its clients with untyped data (#487).
+                 (let [defs (get (document/schema-document "gateway") "$defs")]
+                   (doseq [type (sort contract/session-event-types)
+                           :let [schema-name (get contract/session-event-payloads type)
+                                 schema (get defs schema-name)]]
+
+                     (expect (string? schema-name) type)
+                     (expect (map? schema) type)
+                     (expect (or (contains? schema "$ref")
+                                 (false? (get schema "additionalProperties"))
+                                 (seq (get schema "required"))
+                                 (seq (get schema "allOf")))
+                             type)))))

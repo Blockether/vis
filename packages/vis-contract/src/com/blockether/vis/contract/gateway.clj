@@ -152,6 +152,11 @@
   "Closed built-in vocabulary carried by the session journal and multiplexed SSE stream."
   (set (map #(get % "const") session-event-variants)))
 
+(def session-event-payloads
+  "The `$defs` name of the payload schema of each session event type: the fields
+   that the event has after its envelope."
+  (into {} (map (juxt #(get % "const") #(get % "x-vis-payload"))) session-event-variants))
+
 (def job-events
   "Directional event names carried by dedicated speech job streams."
   (into {}
@@ -162,7 +167,7 @@
 
 (def voice-job-event "Transcription job stream event name." (:transcribe job-events))
 
-(def ^:private notification-properties (get-in @source ["$defs" "notification_event" "properties"]))
+(def ^:private notification-properties (get-in @source ["$defs" "notification_payload" "properties"]))
 
 (def notification-levels
   "Levels of a `notification` toast, in schema order."

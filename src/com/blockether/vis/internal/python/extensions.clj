@@ -697,7 +697,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
 (defn- sdk-notice
   "The notice of one `vis.notify` call. An unknown level shows as info. A title, id
-   or duration outside the `notification_event` bounds throws, so the caller sees it."
+   or duration outside the `notification_payload` bounds throws, so the caller sees it."
   [text level title duration-ms notice-id]
   (let [{:keys [title-max-chars notice-id-max-chars] [low high] :duration-ms}
         gateway-contract/notification-limits

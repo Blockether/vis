@@ -5,7 +5,11 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.session.model :as smodel]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
+            [com.blockether.vis.internal.gateway.event-check :as event-check]))
+
+;; Each published event payload must match its payload schema (#487).
+(set-ns-context! [(around-each [f] (event-check/checked f))])
 
 (defdescribe
   turn-headers-use-durable-metadata-after-allocation
@@ -79,7 +83,7 @@
                 (state/append-event! sid "block.started" {:turn_id tid :iteration 7 :form_index 3})
 
                 terminal
-                (state/append-event! sid "turn.completed" {:turn_id tid})
+                (state/append-event! sid "turn.completed" {:turn_id tid :status "completed"})
 
                 turn
                 (state/get-turn sid tid)
@@ -187,7 +191,7 @@
              ;; No progress event ran before the terminal archived the engine result.
              (#'state/archive-terminal-turn! sid tid {:status "completed"})
              (let [event
-                   (state/append-event! sid "turn.completed" {:turn_id tid})
+                   (state/append-event! sid "turn.completed" {:turn_id tid :status "completed"})
 
                    turn
                    (state/get-turn sid tid)]

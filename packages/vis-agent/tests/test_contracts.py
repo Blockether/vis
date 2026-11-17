@@ -427,11 +427,12 @@ def render_types(gateway, documents):
         "one type here. Run `python tests/test_contracts.py` in `packages/vis-agent` to\n"
         'write this file again.\n"""\n\n'
         "from __future__ import annotations\n\n"
-        "from typing import Literal, NotRequired, TypeAlias, TypedDict\n\n"
+        "from typing import TYPE_CHECKING, Literal, NotRequired, TypeAlias, TypedDict\n\n"
         "JSONValue: TypeAlias = (\n"
         '    str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]\n'
         ")\n"
     )
+    events = _EventRenderer(renderer).render()
     blocks = "\n\n".join(renderer.blocks[title] for title in renderer.order)
     table = "".join(
         f"    {json.dumps(key)}: {json.dumps(value)},\n"
@@ -441,7 +442,117 @@ def render_types(gateway, documents):
         f"{head}\n\n{blocks}\n\n"
         "RESPONSE_TYPES: dict[str, str] = {\n" + table + "}\n"
         '"""The response type name of each `METHOD path`."""\n'
+        f"\n\n{events}"
     )
+
+
+# The keys that `Event.from_wire` keeps out of `Event.data`.
+_EVENT_ENVELOPE = ("type", "session_id", "seq", "cursor", "turn_id")
+_VIEW_FIELDS = ("kind", "view_id", "view", "patch", "result", "first_seq")
+
+
+class _EventRenderer:
+    """Renders one `Event` type for each session event type (#487).
+
+    Each type gets a TypedDict of its `Event.data` and an `Event` subclass for
+    type checkers only, so a check of `event.type` narrows `event.data`.
+    """
+
+    def __init__(self, renderer):
+        self.renderer = renderer
+
+    def resolve(self, node):
+        """The payload object schema of `node` and its document."""
+        document = None
+        while "$ref" in node:
+            target, _, _ = node["$ref"].partition("#")
+            document = target or document
+            self.renderer.document, outer = document, self.renderer.document
+            try:
+                node = self.renderer.target(node["$ref"])
+            finally:
+                self.renderer.document = outer
+        return node, document
+
+    def data_type(self, event_type, payload_name):
+        node, document = self.resolve(self.renderer.gateway["$defs"][payload_name])
+        branches = node.get("oneOf", [node])
+        properties, required = {}, None
+        for branch in branches:
+            properties.update(branch.get("properties", {}))
+            names = set(branch.get("required", []))
+            required = names if required is None else required & names
+        dropped = set(_EVENT_ENVELOPE)
+        if event_type == "block.activity":
+            dropped.add("activity")
+        if event_type.startswith("view."):
+            dropped.update(_VIEW_FIELDS)
+        kept = {key: value for key, value in properties.items() if key not in dropped}
+        if event_type != "subscription.ready":
+            kept |= {"schema": {"type": "integer"}, "ts": {"type": "integer"}}
+            required = (required or set()) | {"schema", "ts"}
+        title = _camel(event_type) + "Data"
+        assert title not in self.renderer.blocks, title
+        self.renderer.document, outer = document, self.renderer.document
+        try:
+            self.renderer.typed_dict(
+                title,
+                {
+                    "description": f"The `data` of an event of type `{event_type}`.",
+                    "properties": kept,
+                    "required": sorted(required or ()),
+                },
+            )
+        finally:
+            self.renderer.document = outer
+        return title, "turn_id" in (required_of(node) & set(properties))
+
+    def render(self):
+        variants = self.renderer.gateway["$defs"]["session_event_type"]["oneOf"]
+        classes, names = [], []
+        for variant in variants:
+            event_type = variant["const"]
+            data, has_turn = self.data_type(event_type, variant["x-vis-payload"])
+            name = _camel(event_type) + "Event"
+            assert name not in self.renderer.blocks, name
+            rows = [f"type: Literal[{json.dumps(event_type)}]"]
+            rows.append(
+                "cursor: int" if event_type == "subscription.ready" else "seq: int"
+            )
+            if has_turn:
+                rows.append("turn_id: str")
+            rows.append(f"data: {data}")
+            if event_type == "block.activity":
+                rows.append("activity: ActivityProjection")
+            if event_type.startswith("view."):
+                rows.append("view: ViewEvent")
+            body = "".join(f"        {row}\n" for row in rows)
+            classes.append(
+                f"    class {name}(Event):\n"
+                f'        """An event of type `{event_type}`."""\n\n{body}'
+            )
+            names.append(name)
+        union = "".join(f"        | {name}\n" for name in names)[10:]
+        return (
+            "if TYPE_CHECKING:\n"
+            "    from blockether.vis.activity import ActivityProjection\n"
+            "    from blockether.vis.engine._client import Event\n"
+            "    from blockether.vis.views import ViewEvent\n\n"
+            + "\n".join(classes)
+            + "\n    StreamEvent: TypeAlias = (\n        "
+            + union
+            + "    )\n"
+            '    """An event of a session stream. Check `type` to narrow `data`."""\n'
+        )
+
+
+def required_of(node):
+    """The keys that each branch of `node` requires."""
+    required = None
+    for branch in node.get("oneOf", [node]):
+        names = set(branch.get("required", []))
+        required = names if required is None else required & names
+    return required or set()
 
 
 _TYPES = Path(__file__).parents[1] / "src/blockether/vis/engine/_types.py"

@@ -9,6 +9,7 @@ from functools import lru_cache
 from itertools import islice
 from typing import Any, TypeVar, overload
 
+from blockether.vis.engine import _types
 from jsonschema import Draft202012Validator, validators
 from jsonschema.exceptions import ValidationError, best_match
 from pydantic import BaseModel
@@ -263,7 +264,7 @@ def final_answer(turn: Mapping[str, object]) -> str | None:
     return None
 
 
-def _turn_problem(turn: dict) -> dict:
+def _turn_problem(turn: Mapping[str, Any]) -> dict:
     content = turn.get("content")
     detail = next(
         (
@@ -381,7 +382,7 @@ def _run(
     response_model: type[ResponseModel] | None,
     max_corrections: int,
     options: dict[str, Any],
-) -> dict | ResponseModel:
+) -> _types.Turn | ResponseModel:
     """Submit one turn and wait; with a response model, validate and correct it.
 
     `connect` gives the session only after the options are valid.
@@ -605,7 +606,7 @@ class Agent:
         timeout: float = 300,
         response_model: None = None,
         **options,
-    ) -> dict: ...
+    ) -> _types.Turn: ...
 
     @overload
     def run(
@@ -626,7 +627,7 @@ class Agent:
         response_model: type[ResponseModel] | None = None,
         max_corrections: int = 2,
         **options,
-    ) -> dict | ResponseModel:
+    ) -> _types.Turn | ResponseModel:
         """Submit a request and wait for its result in the same conversation.
 
         Without `response_model`, return the turn dictionary in contract form. Check its

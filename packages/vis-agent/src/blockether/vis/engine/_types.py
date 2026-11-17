@@ -7,7 +7,7 @@ write this file again.
 
 from __future__ import annotations
 
-from typing import Literal, NotRequired, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Literal, NotRequired, TypeAlias, TypedDict
 
 JSONValue: TypeAlias = (
     str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
@@ -826,6 +826,7 @@ SessionEventType: TypeAlias = Literal[
     "iteration.completed",
     "iteration.error",
     "notification",
+    "provider.limits_changed",
     "provider.retry",
     "queue.paused",
     "queue.resumed",
@@ -1077,7 +1078,7 @@ class TurnTrace(TypedDict):
 
 
 class SessionUsage(TypedDict):
-    usage: dict[str, JSONValue]
+    usage: dict[str, JSONValue] | None
 
 
 class ViewRequests(TypedDict):
@@ -1872,6 +1873,632 @@ class AutomationsWebhookResult(TypedDict):
     reason: str | None
 
 
+class BlockActivityData(TypedDict):
+    """The `data` of an event of type `block.activity`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    form_index: int
+    iteration: NotRequired[int]
+    schema: int
+    ts: int
+
+
+class BlockOutputData(TypedDict):
+    """The `data` of an event of type `block.output`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    form_index: int
+    iteration: NotRequired[int]
+    code: NotRequired[str | None]
+    display_code: NotRequired[str]
+    display_language: NotRequired[str]
+    comment: NotRequired[str]
+    scope: NotRequired[str]
+    started_at_ms: NotRequired[int]
+    op: NotRequired[str]
+    render_segments: NotRequired[JSONValue]
+    result_kind: NotRequired[str]
+    result_detail: NotRequired[JSONValue]
+    tag: NotRequired[JSONValue]
+    tool_call_id: NotRequired[str]
+    llm_model: NotRequired[str]
+    is_timeout: NotRequired[bool]
+    is_repaired: NotRequired[bool]
+    silent: NotRequired[bool]
+    stdout: NotRequired[str]
+    error: NotRequired[str]
+    duration_ms: NotRequired[int]
+    schema: int
+    ts: int
+
+
+class BlockPreviewData(TypedDict):
+    """The `data` of an event of type `block.preview`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    form_index: int
+    iteration: NotRequired[int]
+    code: NotRequired[str | None]
+    display_code: NotRequired[str]
+    display_language: NotRequired[str]
+    comment: NotRequired[str]
+    scope: NotRequired[str]
+    started_at_ms: NotRequired[int]
+    op: NotRequired[str]
+    render_segments: NotRequired[JSONValue]
+    result_kind: NotRequired[str]
+    result_detail: NotRequired[JSONValue]
+    tag: NotRequired[JSONValue]
+    tool_call_id: NotRequired[str]
+    llm_model: NotRequired[str]
+    is_timeout: NotRequired[bool]
+    is_repaired: NotRequired[bool]
+    schema: int
+    ts: int
+
+
+class BlockStartedData(TypedDict):
+    """The `data` of an event of type `block.started`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    form_index: int
+    iteration: NotRequired[int]
+    code: NotRequired[str | None]
+    display_code: NotRequired[str]
+    display_language: NotRequired[str]
+    comment: NotRequired[str]
+    scope: NotRequired[str]
+    started_at_ms: NotRequired[int]
+    op: NotRequired[str]
+    render_segments: NotRequired[JSONValue]
+    result_kind: NotRequired[str]
+    result_detail: NotRequired[JSONValue]
+    tag: NotRequired[JSONValue]
+    tool_call_id: NotRequired[str]
+    llm_model: NotRequired[str]
+    is_timeout: NotRequired[bool]
+    is_repaired: NotRequired[bool]
+    schema: int
+    ts: int
+
+
+class ContentBlockCompletedData(TypedDict):
+    """The `data` of an event of type `content.block.completed`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    block_id: str
+    schema: int
+    ts: int
+
+
+class ContentBlockDeltaData(TypedDict):
+    """The `data` of an event of type `content.block.delta`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    block_id: str
+    field: Literal["text", "markdown"]
+    text: str
+    offset: int
+    iteration: NotRequired[int]
+    schema: int
+    ts: int
+
+
+class ContentBlockVariant1(TypedDict):
+    id: CommonNonBlankString
+    type: Literal["prose"]
+    markdown: str
+
+
+class ContentBlockVariant2(TypedDict):
+    id: CommonNonBlankString
+    type: Literal["speech"]
+    text: CommonNonBlankString
+
+
+class ContentBlockVariant3(TypedDict):
+    id: CommonNonBlankString
+    type: Literal["code"]
+    text: str
+    language: NotRequired[CommonNonBlankString]
+
+
+class ContentBlockVariant4(TypedDict):
+    id: CommonNonBlankString
+    type: Literal["tool"]
+    tool: CommonNonBlankString
+    status: Literal["cancelled", "completed", "failed", "pending", "running"]
+
+
+class ContentBlockVariant5(TypedDict):
+    id: CommonNonBlankString
+    type: Literal["reasoning"]
+    text: str
+    visibility: NotRequired[Literal["private", "visible"]]
+
+
+CommonSnakeCaseId: TypeAlias = str
+
+
+class ContentBlockVariant6(TypedDict):
+    id: CommonNonBlankString
+    type: Literal["error"]
+    code: CommonSnakeCaseId
+    message: CommonNonBlankString
+    retryable: NotRequired[bool]
+
+
+class ContentBlockVariant7(TypedDict):
+    id: CommonNonBlankString
+    type: Literal["attachment"]
+    attachment_id: CommonNonBlankString
+    name: CommonNonBlankString
+    media_type: CommonNonBlankString
+
+
+class ContentBlockVariant8(TypedDict):
+    id: CommonNonBlankString
+    type: Literal["notice"]
+    code: CommonSnakeCaseId
+    message: CommonNonBlankString
+
+
+ContentBlock: TypeAlias = (
+    ContentBlockVariant1
+    | ContentBlockVariant2
+    | ContentBlockVariant3
+    | ContentBlockVariant4
+    | ContentBlockVariant5
+    | ContentBlockVariant6
+    | ContentBlockVariant7
+    | ContentBlockVariant8
+)
+
+
+class ContentBlockStartedData(TypedDict):
+    """The `data` of an event of type `content.block.started`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    block: ContentBlock
+    schema: int
+    ts: int
+
+
+class ContextUpdatedData(TypedDict):
+    """The `data` of an event of type `context.updated`."""
+
+    utilization: dict[str, JSONValue]
+    schema: int
+    ts: int
+
+
+class ExtensionsReloadedData(TypedDict):
+    """The `data` of an event of type `extensions.reloaded`."""
+
+    reload_id: str
+    schema: int
+    ts: int
+
+
+class IterationCompletedData(TypedDict):
+    """The `data` of an event of type `iteration.completed`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    done: NotRequired[bool]
+    thinking: NotRequired[str | None]
+    assistant_prose: NotRequired[str]
+    attachments: NotRequired[list[dict[str, JSONValue]]]
+    iteration: NotRequired[int]
+    schema: int
+    ts: int
+
+
+class IterationErrorData(TypedDict):
+    """The `data` of an event of type `iteration.error`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    error: NotRequired[str | None]
+    thinking: NotRequired[str | None]
+    error_data: NotRequired[dict[str, JSONValue]]
+    provider_error_data: NotRequired[dict[str, JSONValue]]
+    iteration: NotRequired[int]
+    schema: int
+    ts: int
+
+
+class NotificationData(TypedDict):
+    """The `data` of an event of type `notification`."""
+
+    text: str
+    level: Literal["info", "success", "warn", "error"]
+    extension: NotRequired[str]
+    notice_id: NotRequired[str]
+    title: NotRequired[str]
+    duration_ms: NotRequired[int]
+    scope: Literal["session", "global"]
+    schema: int
+    ts: int
+
+
+class ProviderLimitsChangedData(TypedDict):
+    """The `data` of an event of type `provider.limits_changed`."""
+
+    provider_id: str
+    schema: int
+    ts: int
+
+
+class ProviderRetryData(TypedDict):
+    """The `data` of an event of type `provider.retry`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    attempt: NotRequired[int]
+    max_retries: NotRequired[int]
+    delay_ms: NotRequired[int]
+    error: NotRequired[dict[str, JSONValue]]
+    event: NotRequired[dict[str, JSONValue]]
+    iteration: NotRequired[int]
+    schema: int
+    ts: int
+
+
+class QueuePausedData(TypedDict):
+    """The `data` of an event of type `queue.paused`."""
+
+    reason: str
+    held: int
+    schema: int
+    ts: int
+
+
+class QueueResumedData(TypedDict):
+    """The `data` of an event of type `queue.resumed`."""
+
+    is_auto: bool
+    schema: int
+    ts: int
+
+
+class SessionAgentNameUpdatedData(TypedDict):
+    """The `data` of an event of type `session.agent_name_updated`."""
+
+    agent_name: str | None
+    schema: int
+    ts: int
+
+
+class SessionCreatedData(TypedDict):
+    """The `data` of an event of type `session.created`."""
+
+    root: NotRequired[str]
+    project_id: NotRequired[str]
+    group_id: NotRequired[str]
+    schema: int
+    ts: int
+
+
+class SessionDeletedData(TypedDict):
+    """The `data` of an event of type `session.deleted`."""
+
+    schema: int
+    ts: int
+
+
+class SessionGoalUpdatedData(TypedDict):
+    """The `data` of an event of type `session.goal_updated`."""
+
+    goal: None | SessionGoal
+    schema: int
+    ts: int
+
+
+class SessionModelUpdatedData(TypedDict):
+    """The `data` of an event of type `session.model_updated`."""
+
+    provider: str | None
+    model: str | None
+    reason: NotRequired[str]
+    schema: int
+    ts: int
+
+
+class SessionStatusData(TypedDict):
+    """The `data` of an event of type `session.status`."""
+
+    is_live: bool
+    is_awaiting_input: bool
+    awaiting_input_count: int
+    current_turn_id: str | None
+    schema: int
+    ts: int
+
+
+class TeamChange(TypedDict):
+    """The change of one team row since the last row that the gateway pushed for that
+    child. Each key other than session_id has a value of the agent row shape, or
+    null when the key went away. Null and a missing key mean the same: the gateway
+    sends a key that becomes null or goes away once as null, and a key that is null
+    or missing in both rows not at all. A client removes a key with a null value
+    from the row. A lifecycle or request change never comes as a change: it comes as
+    a whole row in agents.
+    """
+
+    session_id: JSONValue
+    id: NotRequired[JSONValue]
+    parent_id: NotRequired[JSONValue]
+    leader_id: NotRequired[JSONValue]
+    team_id: NotRequired[JSONValue]
+    task: NotRequired[JSONValue]
+    title: NotRequired[JSONValue]
+    role: NotRequired[JSONValue]
+    status: NotRequired[JSONValue]
+    after: NotRequired[list[dict[str, JSONValue]] | None]
+    iteration_budget: NotRequired[JSONValue]
+    iterations_used: NotRequired[JSONValue]
+    provider: NotRequired[JSONValue]
+    model: NotRequired[JSONValue]
+    fallback_model: NotRequired[JSONValue]
+    routing_locked: NotRequired[JSONValue]
+    pending_input: NotRequired[JSONValue]
+    pending_input_count: NotRequired[JSONValue]
+    question: NotRequired[JSONValue]
+    question_entry_id: NotRequired[JSONValue]
+    budget_request: NotRequired[dict[str, JSONValue] | None]
+    files_request: NotRequired[dict[str, JSONValue] | None]
+    activity: NotRequired[JSONValue]
+    note: NotRequired[JSONValue]
+    result: NotRequired[JSONValue]
+    outcome: NotRequired[JSONValue]
+    usage: NotRequired[JSONValue]
+    files: NotRequired[JSONValue]
+    created_at: NotRequired[JSONValue]
+    resumed_at: NotRequired[JSONValue]
+    finished_at: NotRequired[JSONValue]
+    runs: NotRequired[list[dict[str, JSONValue]] | None]
+
+
+class SessionTeamUpdatedData(TypedDict):
+    """The `data` of an event of type `session.team_updated`."""
+
+    team: SessionTeam
+    child_id: NotRequired[str]
+    agents: list[AgentsAgent]
+    changes: NotRequired[list[TeamChange]]
+    schema: int
+    ts: int
+
+
+class SessionTitleUpdatedData(TypedDict):
+    """The `data` of an event of type `session.title_updated`."""
+
+    title: str
+    titled_session_id: NotRequired[str]
+    schema: int
+    ts: int
+
+
+class SettingsTarget(TypedDict):
+    scope: ToggleScope
+    target_id: NotRequired[str]
+
+
+class SettingsChangedData(TypedDict):
+    """The `data` of an event of type `settings.changed`."""
+
+    target: SettingsTarget
+    id: NotRequired[str]
+    schema: int
+    ts: int
+
+
+class SubscriptionReadyData(TypedDict):
+    """The `data` of an event of type `subscription.ready`."""
+
+    current_turn_id: str | None
+    is_live: bool
+    server_time_ms: int
+    goal: None | SessionGoal
+    agent_name: NotRequired[str]
+    latest_iteration: NotRequired[int]
+    agents: NotRequired[list[AgentsAgent]]
+
+
+class TurnCancelledData(TypedDict):
+    """The `data` of an event of type `turn.cancelled`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    status: str
+    request_kind: NotRequired[str]
+    subagent: NotRequired[bool]
+    idempotency_key: NotRequired[str]
+    content: NotRequired[list[ContentBlock]]
+    error: NotRequired[str]
+    schema: int
+    ts: int
+
+
+class TurnCompletedData(TypedDict):
+    """The `data` of an event of type `turn.completed`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    status: str
+    request_kind: NotRequired[str]
+    subagent: NotRequired[bool]
+    idempotency_key: NotRequired[str]
+    content: NotRequired[list[ContentBlock]]
+    error: NotRequired[str]
+    schema: int
+    ts: int
+
+
+class TurnFailedData(TypedDict):
+    """The `data` of an event of type `turn.failed`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    status: str
+    request_kind: NotRequired[str]
+    subagent: NotRequired[bool]
+    idempotency_key: NotRequired[str]
+    content: NotRequired[list[ContentBlock]]
+    error: NotRequired[str]
+    schema: int
+    ts: int
+
+
+class TurnInputDataMessagesItem(TypedDict):
+    queued_turn_id: str
+    request: str
+    display_request: NotRequired[str]
+    attachment_previews: NotRequired[list[dict[str, JSONValue]]]
+
+
+class TurnInputData(TypedDict):
+    """The `data` of an event of type `turn.input`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    iteration: NotRequired[int]
+    messages: list[TurnInputDataMessagesItem]
+    schema: int
+    ts: int
+
+
+class TurnProgressData(TypedDict):
+    """The `data` of an event of type `turn.progress`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    progress: str
+    iteration: NotRequired[int]
+    reason: NotRequired[str]
+    model: NotRequired[str]
+    cmd: NotRequired[str]
+    op: NotRequired[str]
+    phrase: NotRequired[str]
+    label: NotRequired[str]
+    busy_ms: NotRequired[int]
+    deadline_in_ms: NotRequired[int]
+    cpu_percent: NotRequired[float]
+    silent_ms: NotRequired[int]
+    connection: NotRequired[Literal["alive", "silent"]]
+    awaiting_output: NotRequired[bool]
+    deadline_action: NotRequired[Literal["retry", "timeout"]]
+    schema: int
+    ts: int
+
+
+class TurnQueuedData(TypedDict):
+    """The `data` of an event of type `turn.queued`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    request: str
+    deliver: Literal["turn_end", "next_iteration"]
+    idempotency_key: NotRequired[str]
+    request_preview: NotRequired[str]
+    attachment_previews: NotRequired[list[dict[str, JSONValue]]]
+    display_request: NotRequired[str]
+    schema: int
+    ts: int
+
+
+class TurnQueuedDeletedData(TypedDict):
+    """The `data` of an event of type `turn.queued.deleted`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    request: NotRequired[str]
+    reason: NotRequired[str]
+    attachments: NotRequired[list[dict[str, JSONValue]]]
+    schema: int
+    ts: int
+
+
+class TurnQueuedDrainedData(TypedDict):
+    """The `data` of an event of type `turn.queued.drained`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    schema: int
+    ts: int
+
+
+class TurnQueuedSentData(TypedDict):
+    """The `data` of an event of type `turn.queued.sent`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    into_turn_id: str
+    iteration: NotRequired[int]
+    schema: int
+    ts: int
+
+
+class TurnQueuedUpdatedData(TypedDict):
+    """The `data` of an event of type `turn.queued.updated`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    request: str
+    deliver: Literal["turn_end", "next_iteration"]
+    request_preview: NotRequired[str]
+    attachment_previews: NotRequired[list[dict[str, JSONValue]]]
+    schema: int
+    ts: int
+
+
+class TurnStartedData(TypedDict):
+    """The `data` of an event of type `turn.started`."""
+
+    position: NotRequired[int]
+    created_at: NotRequired[int]
+    request: NotRequired[str | None]
+    display_request: NotRequired[str | None]
+    request_kind: NotRequired[str]
+    council: NotRequired[dict[str, JSONValue] | None]
+    started_at: NotRequired[int]
+    is_queued: NotRequired[bool]
+    resumed: NotRequired[bool]
+    idempotency_key: NotRequired[str]
+    attachments: NotRequired[list[dict[str, JSONValue]]]
+    schema: int
+    ts: int
+
+
+class ViewCloseData(TypedDict):
+    """The `data` of an event of type `view.close`."""
+
+    schema: int
+    ts: int
+
+
+class ViewOpenData(TypedDict):
+    """The `data` of an event of type `view.open`."""
+
+    schema: int
+    ts: int
+
+
+class ViewPatchData(TypedDict):
+    """The `data` of an event of type `view.patch`."""
+
+    schema: int
+    ts: int
+
+
 RESPONSE_TYPES: dict[str, str] = {
     "DELETE /v1/automations/:automation-id": "AutomationsDeleted",
     "DELETE /v1/clients/:cid": "ClientRelease",
@@ -2064,3 +2691,358 @@ RESPONSE_TYPES: dict[str, str] = {
     "PUT /v1/web/brand": "WebBrand",
 }
 """The response type name of each `METHOD path`."""
+
+
+if TYPE_CHECKING:
+    from blockether.vis.activity import ActivityProjection
+    from blockether.vis.engine._client import Event
+    from blockether.vis.views import ViewEvent
+
+    class BlockActivityEvent(Event):
+        """An event of type `block.activity`."""
+
+        type: Literal["block.activity"]
+        seq: int
+        turn_id: str
+        data: BlockActivityData
+        activity: ActivityProjection
+
+    class BlockOutputEvent(Event):
+        """An event of type `block.output`."""
+
+        type: Literal["block.output"]
+        seq: int
+        turn_id: str
+        data: BlockOutputData
+
+    class BlockPreviewEvent(Event):
+        """An event of type `block.preview`."""
+
+        type: Literal["block.preview"]
+        seq: int
+        turn_id: str
+        data: BlockPreviewData
+
+    class BlockStartedEvent(Event):
+        """An event of type `block.started`."""
+
+        type: Literal["block.started"]
+        seq: int
+        turn_id: str
+        data: BlockStartedData
+
+    class ContentBlockCompletedEvent(Event):
+        """An event of type `content.block.completed`."""
+
+        type: Literal["content.block.completed"]
+        seq: int
+        turn_id: str
+        data: ContentBlockCompletedData
+
+    class ContentBlockDeltaEvent(Event):
+        """An event of type `content.block.delta`."""
+
+        type: Literal["content.block.delta"]
+        seq: int
+        turn_id: str
+        data: ContentBlockDeltaData
+
+    class ContentBlockStartedEvent(Event):
+        """An event of type `content.block.started`."""
+
+        type: Literal["content.block.started"]
+        seq: int
+        turn_id: str
+        data: ContentBlockStartedData
+
+    class ContextUpdatedEvent(Event):
+        """An event of type `context.updated`."""
+
+        type: Literal["context.updated"]
+        seq: int
+        data: ContextUpdatedData
+
+    class ExtensionsReloadedEvent(Event):
+        """An event of type `extensions.reloaded`."""
+
+        type: Literal["extensions.reloaded"]
+        seq: int
+        data: ExtensionsReloadedData
+
+    class IterationCompletedEvent(Event):
+        """An event of type `iteration.completed`."""
+
+        type: Literal["iteration.completed"]
+        seq: int
+        turn_id: str
+        data: IterationCompletedData
+
+    class IterationErrorEvent(Event):
+        """An event of type `iteration.error`."""
+
+        type: Literal["iteration.error"]
+        seq: int
+        turn_id: str
+        data: IterationErrorData
+
+    class NotificationEvent(Event):
+        """An event of type `notification`."""
+
+        type: Literal["notification"]
+        seq: int
+        data: NotificationData
+
+    class ProviderLimitsChangedEvent(Event):
+        """An event of type `provider.limits_changed`."""
+
+        type: Literal["provider.limits_changed"]
+        seq: int
+        data: ProviderLimitsChangedData
+
+    class ProviderRetryEvent(Event):
+        """An event of type `provider.retry`."""
+
+        type: Literal["provider.retry"]
+        seq: int
+        turn_id: str
+        data: ProviderRetryData
+
+    class QueuePausedEvent(Event):
+        """An event of type `queue.paused`."""
+
+        type: Literal["queue.paused"]
+        seq: int
+        data: QueuePausedData
+
+    class QueueResumedEvent(Event):
+        """An event of type `queue.resumed`."""
+
+        type: Literal["queue.resumed"]
+        seq: int
+        data: QueueResumedData
+
+    class SessionAgentNameUpdatedEvent(Event):
+        """An event of type `session.agent_name_updated`."""
+
+        type: Literal["session.agent_name_updated"]
+        seq: int
+        data: SessionAgentNameUpdatedData
+
+    class SessionCreatedEvent(Event):
+        """An event of type `session.created`."""
+
+        type: Literal["session.created"]
+        seq: int
+        data: SessionCreatedData
+
+    class SessionDeletedEvent(Event):
+        """An event of type `session.deleted`."""
+
+        type: Literal["session.deleted"]
+        seq: int
+        data: SessionDeletedData
+
+    class SessionGoalUpdatedEvent(Event):
+        """An event of type `session.goal_updated`."""
+
+        type: Literal["session.goal_updated"]
+        seq: int
+        data: SessionGoalUpdatedData
+
+    class SessionModelUpdatedEvent(Event):
+        """An event of type `session.model_updated`."""
+
+        type: Literal["session.model_updated"]
+        seq: int
+        data: SessionModelUpdatedData
+
+    class SessionStatusEvent(Event):
+        """An event of type `session.status`."""
+
+        type: Literal["session.status"]
+        seq: int
+        data: SessionStatusData
+
+    class SessionTeamUpdatedEvent(Event):
+        """An event of type `session.team_updated`."""
+
+        type: Literal["session.team_updated"]
+        seq: int
+        data: SessionTeamUpdatedData
+
+    class SessionTitleUpdatedEvent(Event):
+        """An event of type `session.title_updated`."""
+
+        type: Literal["session.title_updated"]
+        seq: int
+        data: SessionTitleUpdatedData
+
+    class SettingsChangedEvent(Event):
+        """An event of type `settings.changed`."""
+
+        type: Literal["settings.changed"]
+        seq: int
+        data: SettingsChangedData
+
+    class SubscriptionReadyEvent(Event):
+        """An event of type `subscription.ready`."""
+
+        type: Literal["subscription.ready"]
+        cursor: int
+        data: SubscriptionReadyData
+
+    class TurnCancelledEvent(Event):
+        """An event of type `turn.cancelled`."""
+
+        type: Literal["turn.cancelled"]
+        seq: int
+        turn_id: str
+        data: TurnCancelledData
+
+    class TurnCompletedEvent(Event):
+        """An event of type `turn.completed`."""
+
+        type: Literal["turn.completed"]
+        seq: int
+        turn_id: str
+        data: TurnCompletedData
+
+    class TurnFailedEvent(Event):
+        """An event of type `turn.failed`."""
+
+        type: Literal["turn.failed"]
+        seq: int
+        turn_id: str
+        data: TurnFailedData
+
+    class TurnInputEvent(Event):
+        """An event of type `turn.input`."""
+
+        type: Literal["turn.input"]
+        seq: int
+        turn_id: str
+        data: TurnInputData
+
+    class TurnProgressEvent(Event):
+        """An event of type `turn.progress`."""
+
+        type: Literal["turn.progress"]
+        seq: int
+        turn_id: str
+        data: TurnProgressData
+
+    class TurnQueuedEvent(Event):
+        """An event of type `turn.queued`."""
+
+        type: Literal["turn.queued"]
+        seq: int
+        turn_id: str
+        data: TurnQueuedData
+
+    class TurnQueuedDeletedEvent(Event):
+        """An event of type `turn.queued.deleted`."""
+
+        type: Literal["turn.queued.deleted"]
+        seq: int
+        turn_id: str
+        data: TurnQueuedDeletedData
+
+    class TurnQueuedDrainedEvent(Event):
+        """An event of type `turn.queued.drained`."""
+
+        type: Literal["turn.queued.drained"]
+        seq: int
+        turn_id: str
+        data: TurnQueuedDrainedData
+
+    class TurnQueuedSentEvent(Event):
+        """An event of type `turn.queued.sent`."""
+
+        type: Literal["turn.queued.sent"]
+        seq: int
+        turn_id: str
+        data: TurnQueuedSentData
+
+    class TurnQueuedUpdatedEvent(Event):
+        """An event of type `turn.queued.updated`."""
+
+        type: Literal["turn.queued.updated"]
+        seq: int
+        turn_id: str
+        data: TurnQueuedUpdatedData
+
+    class TurnStartedEvent(Event):
+        """An event of type `turn.started`."""
+
+        type: Literal["turn.started"]
+        seq: int
+        turn_id: str
+        data: TurnStartedData
+
+    class ViewCloseEvent(Event):
+        """An event of type `view.close`."""
+
+        type: Literal["view.close"]
+        seq: int
+        data: ViewCloseData
+        view: ViewEvent
+
+    class ViewOpenEvent(Event):
+        """An event of type `view.open`."""
+
+        type: Literal["view.open"]
+        seq: int
+        data: ViewOpenData
+        view: ViewEvent
+
+    class ViewPatchEvent(Event):
+        """An event of type `view.patch`."""
+
+        type: Literal["view.patch"]
+        seq: int
+        data: ViewPatchData
+        view: ViewEvent
+
+    StreamEvent: TypeAlias = (
+        BlockActivityEvent
+        | BlockOutputEvent
+        | BlockPreviewEvent
+        | BlockStartedEvent
+        | ContentBlockCompletedEvent
+        | ContentBlockDeltaEvent
+        | ContentBlockStartedEvent
+        | ContextUpdatedEvent
+        | ExtensionsReloadedEvent
+        | IterationCompletedEvent
+        | IterationErrorEvent
+        | NotificationEvent
+        | ProviderLimitsChangedEvent
+        | ProviderRetryEvent
+        | QueuePausedEvent
+        | QueueResumedEvent
+        | SessionAgentNameUpdatedEvent
+        | SessionCreatedEvent
+        | SessionDeletedEvent
+        | SessionGoalUpdatedEvent
+        | SessionModelUpdatedEvent
+        | SessionStatusEvent
+        | SessionTeamUpdatedEvent
+        | SessionTitleUpdatedEvent
+        | SettingsChangedEvent
+        | SubscriptionReadyEvent
+        | TurnCancelledEvent
+        | TurnCompletedEvent
+        | TurnFailedEvent
+        | TurnInputEvent
+        | TurnProgressEvent
+        | TurnQueuedEvent
+        | TurnQueuedDeletedEvent
+        | TurnQueuedDrainedEvent
+        | TurnQueuedSentEvent
+        | TurnQueuedUpdatedEvent
+        | TurnStartedEvent
+        | ViewCloseEvent
+        | ViewOpenEvent
+        | ViewPatchEvent
+    )
+    """An event of a session stream. Check `type` to narrow `data`."""

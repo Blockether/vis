@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.gateway.server-test
   (:require
     [lazytest.core :refer [around-each defdescribe expect it set-ns-context! throws?]]
+    [com.blockether.vis.internal.gateway.event-check :as event-check]
     [babashka.http-client :as http]
     [clojure.java.io :as io]
     [clojure.string :as str]
@@ -75,7 +76,8 @@
 (wiring/install!)
 
 ;; Each JSON answer of a router-built handler must match its response schema.
-(set-ns-context! [(around-each [f] (response-check/checked f))])
+(set-ns-context! [(around-each [f] (response-check/checked f))
+                  (around-each [f] (event-check/checked f))])
 
 (defdescribe
   file-suggestions-use-the-session-workspace-and-requested-limit
@@ -2708,6 +2710,7 @@
                 (expect (wait-until-slow #(pos? @baselines)))
                 (reset! snapshot {sid {"is_live" true
                                        "is_awaiting_input" false
+                                       "awaiting_input_count" 0
                                        "current_turn_id" "t-1"}})
                 (expect (wait-until-slow #(seq (mine))))
                 (reset! snapshot {})
@@ -7608,9 +7611,11 @@
                                         "view.close"
                                         {:kind :live
                                          :view-id "v1"
-                                         :result {:view {:id "v1" :title "Activity" :nodes []}
+                                         :result {:view-id "v1"
+                                                  :view {:title "Activity" :nodes []}
                                                   :reason "completed"
-                                                  :is-completed true}})
+                                                  :is-completed true
+                                                  :is-from-human false}})
                    (expect (wait-until #(every? (fn [out]
                                                   (re-find #"view.close" (text out)))
                                                 outputs)))

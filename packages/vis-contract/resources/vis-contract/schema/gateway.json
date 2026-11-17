@@ -3267,47 +3267,6 @@
         },
         "type": {
           "const": "notification"
-        },
-        "text": {
-          "type": "string",
-          "minLength": 1
-        },
-        "level": {
-          "enum": [
-            "info",
-            "success",
-            "warn",
-            "error"
-          ]
-        },
-        "extension": {
-          "type": "string",
-          "minLength": 1
-        },
-        "notice_id": {
-          "type": "string",
-          "description": "The toast identity. A later notice with the same id replaces the shown toast.",
-          "minLength": 1,
-          "maxLength": 128
-        },
-        "title": {
-          "type": "string",
-          "description": "One short bold line above the text.",
-          "minLength": 1,
-          "maxLength": 120
-        },
-        "duration_ms": {
-          "type": "integer",
-          "description": "How long the toast shows on screen. Without it, the client chooses by level.",
-          "minimum": 1000,
-          "maximum": 60000
-        },
-        "scope": {
-          "description": "global: every open session shows the toast. session: only session_id shows it.",
-          "enum": [
-            "session",
-            "global"
-          ]
         }
       },
       "required": [
@@ -3315,10 +3274,12 @@
         "seq",
         "ts",
         "session_id",
-        "type",
-        "text",
-        "level",
-        "scope"
+        "type"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/$defs/notification_payload"
+        }
       ]
     },
     "keybinding_list": {
@@ -3474,146 +3435,190 @@
       "oneOf": [
         {
           "const": "block.activity",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "block_activity_payload"
         },
         {
           "const": "block.output",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "block_output_payload"
         },
         {
           "const": "block.preview",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "block_preview_payload"
         },
         {
           "const": "block.started",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "block_started_payload"
         },
         {
           "const": "content.block.completed",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "content_block_completed_payload"
         },
         {
           "const": "content.block.delta",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "content_block_delta_payload"
         },
         {
           "const": "content.block.started",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "content_block_started_payload"
         },
         {
-          "const": "context.updated"
+          "const": "context.updated",
+          "x-vis-payload": "context_updated_payload"
         },
         {
-          "const": "extensions.reloaded"
+          "const": "extensions.reloaded",
+          "x-vis-payload": "extensions_reloaded_payload"
         },
         {
           "const": "iteration.completed",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "iteration_completed_payload"
         },
         {
           "const": "iteration.error",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "iteration_error_payload"
         },
         {
-          "const": "notification"
+          "const": "notification",
+          "x-vis-payload": "notification_payload"
+        },
+        {
+          "const": "provider.limits_changed",
+          "x-vis-payload": "provider_limits_changed_payload"
         },
         {
           "const": "provider.retry",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "provider_retry_payload"
         },
         {
           "const": "queue.paused",
-          "x-vis-queue-mirror": true
+          "x-vis-queue-mirror": true,
+          "x-vis-payload": "queue_paused_payload"
         },
         {
           "const": "queue.resumed",
-          "x-vis-queue-mirror": true
+          "x-vis-queue-mirror": true,
+          "x-vis-payload": "queue_resumed_payload"
         },
         {
-          "const": "session.agent_name_updated"
+          "const": "session.agent_name_updated",
+          "x-vis-payload": "session_agent_name_updated_payload"
         },
         {
-          "const": "session.created"
+          "const": "session.created",
+          "x-vis-payload": "session_created_payload"
         },
         {
-          "const": "session.deleted"
+          "const": "session.deleted",
+          "x-vis-payload": "session_deleted_payload"
         },
         {
-          "const": "session.goal_updated"
+          "const": "session.goal_updated",
+          "x-vis-payload": "session_goal_updated_payload"
         },
         {
-          "const": "session.model_updated"
+          "const": "session.model_updated",
+          "x-vis-payload": "session_model_updated_payload"
         },
         {
-          "const": "session.status"
+          "const": "session.status",
+          "x-vis-payload": "session_status_payload"
         },
         {
           "const": "session.team_updated",
-          "description": "Live only. A subagent of a leader changed: it started, took a step, opened or closed a request, ended or was cancelled. The payload has the team_update shape. child_id names the child that changed, when one did."
+          "description": "Live only. A subagent of a leader changed: it started, took a step, opened or closed a request, ended or was cancelled. The payload has the team_update shape. child_id names the child that changed, when one did.",
+          "x-vis-payload": "team_update"
         },
         {
-          "const": "session.title_updated"
+          "const": "session.title_updated",
+          "x-vis-payload": "session_title_updated_payload"
         },
         {
           "const": "settings.changed",
-          "description": "Live only, on the fleet feed. A setting changed. target names its owner and id names the setting, when one setting changed. A client reads its open settings again."
+          "description": "Live only, on the fleet feed. A setting changed. target names its owner and id names the setting, when one setting changed. A client reads its open settings again.",
+          "x-vis-payload": "settings_changed_payload"
         },
         {
-          "const": "subscription.ready"
+          "const": "subscription.ready",
+          "x-vis-payload": "subscription_ready_payload"
         },
         {
           "const": "turn.cancelled",
-          "x-vis-turn-terminal": true
+          "x-vis-turn-terminal": true,
+          "x-vis-payload": "turn_terminal_payload"
         },
         {
           "const": "turn.completed",
-          "x-vis-turn-terminal": true
+          "x-vis-turn-terminal": true,
+          "x-vis-payload": "turn_terminal_payload"
         },
         {
           "const": "turn.failed",
-          "x-vis-turn-terminal": true
+          "x-vis-turn-terminal": true,
+          "x-vis-payload": "turn_terminal_payload"
         },
         {
           "const": "turn.input",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "turn_input_payload"
         },
         {
           "const": "turn.progress",
-          "x-vis-turn-stream": true
+          "x-vis-turn-stream": true,
+          "x-vis-payload": "turn_progress_payload"
         },
         {
           "const": "turn.queued",
-          "x-vis-queue-mirror": true
+          "x-vis-queue-mirror": true,
+          "x-vis-payload": "turn_queued_payload"
         },
         {
           "const": "turn.queued.deleted",
-          "x-vis-queue-mirror": true
+          "x-vis-queue-mirror": true,
+          "x-vis-payload": "turn_queued_deleted_payload"
         },
         {
           "const": "turn.queued.drained",
-          "x-vis-queue-mirror": true
+          "x-vis-queue-mirror": true,
+          "x-vis-payload": "turn_queued_drained_payload"
         },
         {
           "const": "turn.queued.sent",
-          "x-vis-queue-mirror": true
+          "x-vis-queue-mirror": true,
+          "x-vis-payload": "turn_queued_sent_payload"
         },
         {
           "const": "turn.queued.updated",
-          "x-vis-queue-mirror": true
+          "x-vis-queue-mirror": true,
+          "x-vis-payload": "turn_queued_updated_payload"
         },
         {
-          "const": "turn.started"
+          "const": "turn.started",
+          "x-vis-payload": "turn_started_payload"
         },
         {
-          "const": "view.close"
+          "const": "view.close",
+          "x-vis-payload": "view_close_payload"
         },
         {
-          "const": "view.open"
+          "const": "view.open",
+          "x-vis-payload": "view_open_payload"
         },
         {
-          "const": "view.patch"
+          "const": "view.patch",
+          "x-vis-payload": "view_patch_payload"
         }
-      ]
+      ],
+      "description": "The closed vocabulary of session events. x-vis-payload names the $defs schema of the fields that an event of that type has after its envelope (schema, seq, ts, session_id and type)."
     },
     "job_event_type": {
       "oneOf": [
@@ -3744,57 +3749,16 @@
         "session_id": {
           "type": "string",
           "minLength": 1
-        },
-        "cursor": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "current_turn_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "is_live": {
-          "type": "boolean"
-        },
-        "server_time_ms": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "goal": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/session_goal"
-            }
-          ]
-        },
-        "agent_name": {
-          "type": "string"
-        },
-        "latest_iteration": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "agents": {
-          "type": "array",
-          "description": "Since protocol 22: the team rows of the session at the time of this frame. For a leader, each child that it started. For a subagent, each member of its team. Absent when the session has no team. A client replaces its team rows with these rows, then applies each session.team_updated after this frame.",
-          "items": {
-            "$ref": "agents.json#/$defs/agent"
-          }
         }
       },
       "required": [
         "type",
-        "session_id",
-        "cursor",
-        "current_turn_id",
-        "is_live",
-        "server_time_ms",
-        "goal"
+        "session_id"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/$defs/subscription_ready_payload"
+        }
       ]
     },
     "settings_target": {
@@ -5121,7 +5085,11 @@
       "type": "object",
       "properties": {
         "usage": {
-          "type": "object"
+          "description": "The usage rollup, or null when the session has no turns.",
+          "type": [
+            "object",
+            "null"
+          ]
         }
       },
       "required": [
@@ -6864,6 +6832,1267 @@
     "app_door_answer": {
       "type": "object",
       "description": "The live seam answer of an app door call. Its shape depends on the live operation in the envelope."
+    },
+    "block_activity_payload": {
+      "type": "object",
+      "description": "The payload of block.activity: one whole Activity snapshot of the form at form_index.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "form_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "activity": {
+          "$ref": "activity.json#/$defs/projection"
+        }
+      },
+      "required": [
+        "turn_id",
+        "form_index",
+        "activity"
+      ]
+    },
+    "block_preview_payload": {
+      "type": "object",
+      "description": "The payload of block.preview: the display fields of a tool call while the model writes it.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "form_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display_code": {
+          "type": "string"
+        },
+        "display_language": {
+          "type": "string"
+        },
+        "comment": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "started_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "op": {
+          "type": "string"
+        },
+        "render_segments": {},
+        "result_kind": {
+          "type": "string"
+        },
+        "result_detail": {},
+        "tag": {},
+        "tool_call_id": {
+          "type": "string"
+        },
+        "llm_model": {
+          "type": "string"
+        },
+        "is_timeout": {
+          "type": "boolean"
+        },
+        "is_repaired": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "turn_id",
+        "form_index"
+      ]
+    },
+    "block_started_payload": {
+      "type": "object",
+      "description": "The payload of block.started: the display fields of a form when it starts to run.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "form_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display_code": {
+          "type": "string"
+        },
+        "display_language": {
+          "type": "string"
+        },
+        "comment": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "started_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "op": {
+          "type": "string"
+        },
+        "render_segments": {},
+        "result_kind": {
+          "type": "string"
+        },
+        "result_detail": {},
+        "tag": {},
+        "tool_call_id": {
+          "type": "string"
+        },
+        "llm_model": {
+          "type": "string"
+        },
+        "is_timeout": {
+          "type": "boolean"
+        },
+        "is_repaired": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "turn_id",
+        "form_index"
+      ]
+    },
+    "block_output_payload": {
+      "type": "object",
+      "description": "The payload of block.output: the result of the form at form_index.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "form_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display_code": {
+          "type": "string"
+        },
+        "display_language": {
+          "type": "string"
+        },
+        "comment": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "started_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "op": {
+          "type": "string"
+        },
+        "render_segments": {},
+        "result_kind": {
+          "type": "string"
+        },
+        "result_detail": {},
+        "tag": {},
+        "tool_call_id": {
+          "type": "string"
+        },
+        "llm_model": {
+          "type": "string"
+        },
+        "is_timeout": {
+          "type": "boolean"
+        },
+        "is_repaired": {
+          "type": "boolean"
+        },
+        "silent": {
+          "type": "boolean"
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "turn_id",
+        "form_index"
+      ]
+    },
+    "content_block_completed_payload": {
+      "type": "object",
+      "description": "The payload of content.block.completed: the block with block_id has its final text.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "turn_id",
+        "block_id"
+      ]
+    },
+    "content_block_delta_payload": {
+      "type": "object",
+      "description": "The payload of content.block.delta: text adds to field of the block with block_id. offset is the UTF-16 start position of text in the block text.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "field": {
+          "enum": [
+            "text",
+            "markdown"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "turn_id",
+        "block_id",
+        "field",
+        "text",
+        "offset"
+      ]
+    },
+    "content_block_started_payload": {
+      "type": "object",
+      "description": "The payload of content.block.started: a new empty block of the turn.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "block": {
+          "$ref": "content.json#/$defs/block"
+        }
+      },
+      "required": [
+        "turn_id",
+        "block"
+      ]
+    },
+    "context_updated_payload": {
+      "type": "object",
+      "description": "The payload of context.updated: the new context use of the session.",
+      "additionalProperties": false,
+      "properties": {
+        "utilization": {
+          "type": "object",
+          "description": "The context use of the session. The engine adds fields, so a client reads only the fields that it knows."
+        }
+      },
+      "required": [
+        "utilization"
+      ]
+    },
+    "extensions_reloaded_payload": {
+      "type": "object",
+      "description": "The payload of extensions.reloaded. A client skips a reload_id that it saw before.",
+      "additionalProperties": false,
+      "properties": {
+        "reload_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "reload_id"
+      ]
+    },
+    "iteration_completed_payload": {
+      "type": "object",
+      "description": "The payload of iteration.completed: the settled thinking and prose of one iteration.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "done": {
+          "type": "boolean"
+        },
+        "thinking": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "assistant_prose": {
+          "type": "string"
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "turn_id"
+      ]
+    },
+    "iteration_error_payload": {
+      "type": "object",
+      "description": "The payload of iteration.error: the error of one iteration.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thinking": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error_data": {
+          "type": "object"
+        },
+        "provider_error_data": {
+          "type": "object"
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "turn_id"
+      ]
+    },
+    "provider_limits_changed_payload": {
+      "type": "object",
+      "description": "The payload of provider.limits_changed: a credential of provider_id changed, so its limits can be different. A client reads the limits again.",
+      "additionalProperties": false,
+      "properties": {
+        "provider_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "provider_id"
+      ]
+    },
+    "provider_retry_payload": {
+      "type": "object",
+      "description": "The payload of provider.retry: the engine sends the provider request again after delay_ms.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "delay_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "type": "object"
+        },
+        "event": {
+          "type": "object"
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "turn_id"
+      ]
+    },
+    "queue_paused_payload": {
+      "type": "object",
+      "description": "The payload of queue.paused: the queue holds held turns for reason.",
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "held": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "reason",
+        "held"
+      ]
+    },
+    "queue_resumed_payload": {
+      "type": "object",
+      "description": "The payload of queue.resumed. is_auto is true when the gateway resumed the queue without a person.",
+      "additionalProperties": false,
+      "properties": {
+        "is_auto": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "is_auto"
+      ]
+    },
+    "session_agent_name_updated_payload": {
+      "type": "object",
+      "description": "The payload of session.agent_name_updated.",
+      "additionalProperties": false,
+      "properties": {
+        "agent_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "agent_name"
+      ]
+    },
+    "session_created_payload": {
+      "type": "object",
+      "description": "The payload of session.created on the fleet stream.",
+      "additionalProperties": false,
+      "properties": {
+        "root": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        }
+      }
+    },
+    "session_deleted_payload": {
+      "type": "object",
+      "description": "The payload of session.deleted. It has no fields.",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "session_goal_updated_payload": {
+      "type": "object",
+      "description": "The payload of session.goal_updated. A null goal means that the session has no goal.",
+      "additionalProperties": false,
+      "properties": {
+        "goal": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/session_goal"
+            }
+          ]
+        }
+      },
+      "required": [
+        "goal"
+      ]
+    },
+    "session_model_updated_payload": {
+      "type": "object",
+      "description": "The payload of session.model_updated. reason is there only when a person did not choose the model.",
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ]
+    },
+    "session_status_payload": {
+      "type": "object",
+      "description": "The payload of session.status on the fleet stream.",
+      "additionalProperties": false,
+      "properties": {
+        "is_live": {
+          "type": "boolean"
+        },
+        "is_awaiting_input": {
+          "type": "boolean"
+        },
+        "awaiting_input_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "current_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "is_live",
+        "is_awaiting_input",
+        "awaiting_input_count",
+        "current_turn_id"
+      ]
+    },
+    "session_title_updated_payload": {
+      "type": "object",
+      "description": "The payload of session.title_updated. titled_session_id is there when another session got the title.",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "titled_session_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "title"
+      ]
+    },
+    "settings_changed_payload": {
+      "type": "object",
+      "description": "The payload of settings.changed: a setting of target changed. id names the setting when the writer knows it.",
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/settings_target"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "target"
+      ]
+    },
+    "turn_terminal_payload": {
+      "type": "object",
+      "description": "The payload of a terminal turn event. status is the end state of the turn. content has the settled blocks: a failed turn has all its blocks, other turns have only the prose, speech and leader stop blocks. error is the reason of a failed turn.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "request_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subagent": {
+          "type": "boolean"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "content.json#/$defs/block"
+          }
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "status"
+      ]
+    },
+    "turn_input_payload": {
+      "type": "object",
+      "description": "The payload of turn.input: queued messages that went into the running turn at iteration.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "queued_turn_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "request": {
+                "type": "string"
+              },
+              "display_request": {
+                "type": "string"
+              },
+              "attachment_previews": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "required": [
+              "queued_turn_id",
+              "request"
+            ]
+          }
+        }
+      },
+      "required": [
+        "turn_id",
+        "messages"
+      ]
+    },
+    "turn_progress_payload": {
+      "type": "object",
+      "description": "The payload of turn.progress: what the turn does now. busy_ms, silent_ms and deadline_in_ms are clocks of a long wait.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "progress": {
+          "type": "string",
+          "minLength": 1
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "cmd": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string"
+        },
+        "phrase": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "busy_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deadline_in_ms": {
+          "type": "integer"
+        },
+        "cpu_percent": {
+          "type": "number"
+        },
+        "silent_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "connection": {
+          "enum": [
+            "alive",
+            "silent"
+          ]
+        },
+        "awaiting_output": {
+          "type": "boolean"
+        },
+        "deadline_action": {
+          "enum": [
+            "retry",
+            "timeout"
+          ]
+        }
+      },
+      "required": [
+        "turn_id",
+        "progress"
+      ]
+    },
+    "turn_queued_payload": {
+      "type": "object",
+      "description": "The payload of turn.queued: a new turn waits in the queue.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "request": {
+          "type": "string"
+        },
+        "deliver": {
+          "enum": [
+            "turn_end",
+            "next_iteration"
+          ]
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "request_preview": {
+          "type": "string"
+        },
+        "attachment_previews": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "display_request": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "request",
+        "deliver"
+      ]
+    },
+    "turn_queued_deleted_payload": {
+      "type": "object",
+      "description": "The payload of turn.queued.deleted: a queued turn left the queue and will not start.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "request": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "turn_id"
+      ]
+    },
+    "turn_queued_drained_payload": {
+      "type": "object",
+      "description": "The payload of turn.queued.drained: the queued turn left the queue to start.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "turn_id"
+      ]
+    },
+    "turn_queued_sent_payload": {
+      "type": "object",
+      "description": "The payload of turn.queued.sent: the queued turn went into the running turn into_turn_id.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "into_turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "turn_id",
+        "into_turn_id"
+      ]
+    },
+    "turn_queued_updated_payload": {
+      "type": "object",
+      "description": "The payload of turn.queued.updated: the whole new row of a queued turn.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "request": {
+          "type": "string"
+        },
+        "deliver": {
+          "enum": [
+            "turn_end",
+            "next_iteration"
+          ]
+        },
+        "request_preview": {
+          "type": "string"
+        },
+        "attachment_previews": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "turn_id",
+        "request",
+        "deliver"
+      ]
+    },
+    "turn_started_payload": {
+      "type": "object",
+      "description": "The payload of turn.started.",
+      "additionalProperties": false,
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "request": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display_request": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "request_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "council": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "started_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "is_queued": {
+          "type": "boolean"
+        },
+        "resumed": {
+          "type": "boolean"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "turn_id"
+      ]
+    },
+    "view_close_payload": {
+      "$ref": "view.json#/$defs/close_event"
+    },
+    "view_open_payload": {
+      "$ref": "view.json#/$defs/open_event"
+    },
+    "view_patch_payload": {
+      "$ref": "view.json#/$defs/patch_event"
+    },
+    "notification_payload": {
+      "type": "object",
+      "description": "The payload of a notification event: the fields after the envelope.",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "level": {
+          "enum": [
+            "info",
+            "success",
+            "warn",
+            "error"
+          ]
+        },
+        "extension": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notice_id": {
+          "type": "string",
+          "description": "The toast identity. A later notice with the same id replaces the shown toast.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "One short bold line above the text.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "duration_ms": {
+          "type": "integer",
+          "description": "How long the toast shows on screen. Without it, the client chooses by level.",
+          "minimum": 1000,
+          "maximum": 60000
+        },
+        "scope": {
+          "description": "global: every open session shows the toast. session: only session_id shows it.",
+          "enum": [
+            "session",
+            "global"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "level",
+        "scope"
+      ]
+    },
+    "subscription_ready_payload": {
+      "type": "object",
+      "description": "The payload of subscription.ready: the fields after type and session_id.",
+      "properties": {
+        "cursor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "current_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_live": {
+          "type": "boolean"
+        },
+        "server_time_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/session_goal"
+            }
+          ]
+        },
+        "agent_name": {
+          "type": "string"
+        },
+        "latest_iteration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "agents": {
+          "type": "array",
+          "description": "Since protocol 22: the team rows of the session at the time of this frame. For a leader, each child that it started. For a subagent, each member of its team. Absent when the session has no team. A client replaces its team rows with these rows, then applies each session.team_updated after this frame.",
+          "items": {
+            "$ref": "agents.json#/$defs/agent"
+          }
+        }
+      },
+      "required": [
+        "cursor",
+        "current_turn_id",
+        "is_live",
+        "server_time_ms",
+        "goal"
+      ]
     }
   }
 }

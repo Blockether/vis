@@ -12,8 +12,12 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.env :as python-env]
-            [lazytest.core :refer [defdescribe expect it]]
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
+            [com.blockether.vis.internal.gateway.event-check :as event-check]
             [next.jdbc :as jdbc]))
+
+;; Each published event payload must match its payload schema (#487).
+(set-ns-context! [(around-each [f] (event-check/checked f))])
 
 (defn- temp-dir
   [prefix]

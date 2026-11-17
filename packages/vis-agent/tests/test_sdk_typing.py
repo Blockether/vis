@@ -82,7 +82,7 @@ WRONG = final_answer("text")
 """
 
 
-_EVENTS_FIXTURE = """from typing import assert_type
+_EVENTS_FIXTURE = """from typing import Literal, assert_type
 
 from blockether.vis.engine import Event, Events, Session
 
@@ -97,9 +97,26 @@ async def follow_async(session: Session) -> list[Event]:
     seen: list[Event] = []
     async with session.events(reconnects=0) as events:
         async for event in events:
-            assert_type(event, Event)
+            assert_type(event.session_id, str)
             seen.append(event)
     return seen
+
+
+def answers(session: Session) -> list[str]:
+    # A check of `type` narrows `data` to the payload of that event type (#487).
+    found: list[str] = []
+    with session.events(idle_timeout=5.0) as events:
+        for event in events:
+            if event.type == "turn.completed":
+                assert_type(event.turn_id, str)
+                assert_type(event.data["status"], str)
+                found.append(event.data["status"])
+            elif event.type == "queue.paused":
+                assert_type(event.data["held"], int)
+            elif event.type == "content.block.delta":
+                assert_type(event.data["field"], Literal["text", "markdown"])
+                found.append(event.data["state"])
+    return found
 
 
 def wrong(session: Session) -> None:
@@ -187,8 +204,8 @@ def test_session_calls_have_known_types_under_pyright_strict(tmp_path):
 
 
 def test_event_streams_have_known_types_under_pyright_strict(tmp_path):
-    # `for` and `async for` over `Session.events` yield `Event` (#485). Only
-    # the wrong argument of the last line is a finding.
+    # `for` and `async for` over `Session.events` yield typed events (#485,
+    # #487). Only an unknown payload key and the wrong argument are findings.
     fixture = tmp_path / "event_streams.py"
     fixture.write_text(_EVENTS_FIXTURE)
     result = _pyright(tmp_path, fixture, mode="strict")
@@ -197,8 +214,14 @@ def test_event_streams_have_known_types_under_pyright_strict(tmp_path):
         (item["range"]["start"]["line"], item["rule"])
         for item in report["generalDiagnostics"]
     ]
-    wrong = _EVENTS_FIXTURE.splitlines().index('    session.events(idle_timeout="5")')
-    assert found == [(wrong, "reportArgumentType")], result.stdout
+    lines = _EVENTS_FIXTURE.splitlines()
+    unknown = lines.index('                found.append(event.data["state"])')
+    wrong = lines.index('    session.events(idle_timeout="5")')
+    assert found == [
+        (unknown, "reportGeneralTypeIssues"),
+        (unknown, "reportUnknownArgumentType"),
+        (wrong, "reportArgumentType"),
+    ], result.stdout
 
 
 # A raw decoder and a local file manifest have no route schema to name.
@@ -209,8 +232,9 @@ _UNTYPED_RETURNS = {
 
 
 def test_public_client_methods_return_known_types():
-    # A route method names its generated response type, never a bare JSON value
-    # (#487). Only the methods in `_UNTYPED_RETURNS` can return `Any`.
+    # A public method names its return type, and a route method names its
+    # generated response type, never a bare JSON value or no type (#487). Only
+    # the methods in `_UNTYPED_RETURNS` can return `Any`.
     source = Path(vis.__file__).resolve().parent / "engine" / "_client.py"
     untyped = set()
     for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
@@ -220,8 +244,10 @@ def test_public_client_methods_return_known_types():
             if (
                 isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef)
                 and not method.name.startswith("_")
-                and method.returns is not None
-                and re.search(r"\b(?:JSONValue|Any)\b", ast.unparse(method.returns))
+                and (
+                    method.returns is None
+                    or re.search(r"\b(?:JSONValue|Any)\b", ast.unparse(method.returns))
+                )
             ):
                 untyped.add((node.name, method.name))
     assert untyped == set(_UNTYPED_RETURNS)

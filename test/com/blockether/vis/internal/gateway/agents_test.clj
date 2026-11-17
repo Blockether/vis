@@ -17,10 +17,14 @@
             [com.blockether.vis.internal.sandbox.jail :as jail]
             [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.test-temp :as test-temp]
-            [lazytest.core :refer [defdescribe expect it]]
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
+            [com.blockether.vis.internal.gateway.event-check :as event-check]
             [next.jdbc :as jdbc]
             [reitit.core :as r])
   (:import [java.io ByteArrayInputStream]))
+
+;; Each published event payload must match its payload schema (#487).
+(set-ns-context! [(around-each [f] (event-check/checked f))])
 
 (wiring/install!)
 

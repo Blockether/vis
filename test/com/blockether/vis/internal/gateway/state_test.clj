@@ -32,8 +32,12 @@
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.util :as util]
-            [lazytest.core :refer [defdescribe expect it]]
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
+            [com.blockether.vis.internal.gateway.event-check :as event-check]
             [taoensso.telemere :as tel]))
+
+;; Each published event payload must match its payload schema (#487).
+(set-ns-context! [(around-each [f] (event-check/checked f))])
 
 (wiring/install!)
 
@@ -5080,36 +5084,52 @@
           @registry]
 
       (with-redefs [bus/publish! (fn [& _])]
-        (try (reset! registry {sid {:next-seq 0 :current-turn tid :turns {tid {:turn_id tid}}}})
-             (state/append-event! sid "turn.started" {:turn_id tid :request "Inspect"})
-             (state/append-event! sid "block.started" {:turn_id tid :iteration 1 :form_index 0})
-             (state/append-event! sid
-                                  "block.activity"
-                                  {:turn_id tid :iteration 1 :form_index 0 :activity {:revision 1}}
-                                  {:store? false})
-             (state/append-event! sid
-                                  "block.activity"
-                                  {:turn_id tid :iteration 1 :form_index 0 :activity {:revision 2}}
-                                  {:store? false})
-             (let [replay (state/subscribe! sid
-                                            "activity-resume"
-                                            (fn [_])
-                                            (state/running-turn-start-cursor sid))
-                   activities (filterv #(= "block.activity" (get % "type")) replay)]
+        (try
+          (reset! registry {sid {:next-seq 0 :current-turn tid :turns {tid {:turn_id tid}}}})
+          (state/append-event! sid "turn.started" {:turn_id tid :request "Inspect"})
+          (state/append-event! sid "block.started" {:turn_id tid :iteration 1 :form_index 0})
+          (state/append-event! sid
+                               "block.activity"
+                               {:turn_id tid
+                                :iteration 1
+                                :form_index 0
+                                :activity {:state "running"
+                                           :counts {:running 1 :succeeded 0 :failed 0 :cancelled 0}
+                                           :rows []}}
+                               {:store? false})
+          (state/append-event! sid
+                               "block.activity"
+                               {:turn_id tid
+                                :iteration 1
+                                :form_index 0
+                                :activity {:state "running"
+                                           :counts {:running 2 :succeeded 0 :failed 0 :cancelled 0}
+                                           :rows []}}
+                               {:store? false})
+          (let [replay (state/subscribe! sid
+                                         "activity-resume"
+                                         (fn [_])
+                                         (state/running-turn-start-cursor sid))
+                activities (filterv #(= "block.activity" (get % "type")) replay)]
 
-               (expect (= 1 (count activities)))
-               (expect (= 2 (get-in activities [0 "activity" "revision"]))))
-             (state/append-event! sid
-                                  "block.activity"
-                                  {:turn_id tid :iteration 1 :form_index 0 :activity {:revision 3}})
-             (state/append-event! sid
-                                  "block.output"
-                                  {:turn_id tid :iteration 1 :form_index 0 :stdout "done"})
-             (let [activities (filterv #(= "block.activity" (get % "type"))
-                                (state/events-since sid 0))]
-               (expect (= 1 (count activities)))
-               (expect (= 3 (get-in activities [0 "activity" "revision"]))))
-             (finally (state/unsubscribe! sid "activity-resume") (reset! registry saved)))))))
+            (expect (= 1 (count activities)))
+            (expect (= 2 (get-in activities [0 "activity" "counts" "running"]))))
+          (state/append-event! sid
+                               "block.activity"
+                               {:turn_id tid
+                                :iteration 1
+                                :form_index 0
+                                :activity {:state "running"
+                                           :counts {:running 3 :succeeded 0 :failed 0 :cancelled 0}
+                                           :rows []}})
+          (state/append-event! sid
+                               "block.output"
+                               {:turn_id tid :iteration 1 :form_index 0 :stdout "done"})
+          (let [activities (filterv #(= "block.activity" (get % "type"))
+                             (state/events-since sid 0))]
+            (expect (= 1 (count activities)))
+            (expect (= 3 (get-in activities [0 "activity" "counts" "running"]))))
+          (finally (state/unsubscribe! sid "activity-resume") (reset! registry saved)))))))
 
 (defdescribe
   running-turn-progress-resume-test
@@ -7932,9 +7952,10 @@
                        (atom [])]
 
                    (state/subscribe! sid "sub-1" #(swap! seen conj %) 0)
-                   (try (state/append-event! (str sid) "view.open" {:kind :input :view {:id "r1"}})
-                        (expect (= ["view.open"] (mapv #(get % "type") @seen)))
-                        (expect (= ["view.open"] (mapv #(get % "type") (state/events-since sid 0))))
+                   (try (state/append-event! (str sid) "session.title_updated" {:title "r1"})
+                        (expect (= ["session.title_updated"] (mapv #(get % "type") @seen)))
+                        (expect (= ["session.title_updated"]
+                                   (mapv #(get % "type") (state/events-since sid 0))))
                         (finally (state/unsubscribe! sid "sub-1")))))
              (it "reads one session's state under either spelling"
                  (let [sid
@@ -7944,8 +7965,8 @@
                        (atom [])]
 
                    (state/subscribe! (str sid) "sub-2" #(swap! seen conj %) 0)
-                   (try (state/append-event! sid "view.open" {:kind :input :view {:id "r2"}})
-                        (expect (= ["view.open"] (mapv #(get % "type") @seen)))
+                   (try (state/append-event! sid "session.title_updated" {:title "r2"})
+                        (expect (= ["session.title_updated"] (mapv #(get % "type") @seen)))
                         (expect (= (state/current-seq sid) (state/current-seq (str sid))))
                         (expect (= 1 (count (state/events-since (str sid) 0))))
                         (finally (state/unsubscribe! (str sid) "sub-2"))))))
@@ -8521,6 +8542,7 @@
                                                 (.interrupt (Thread/currentThread))
                                                 {"goal-session" {"is_live" true
                                                                  "is_awaiting_input" false
+                                                                 "awaiting_input_count" 0
                                                                  "current_turn_id" "goal-turn"}})}
         (fn []
           (let [watcher (#'state/spawn-fleet-watch-thread!)]

@@ -154,6 +154,9 @@
                      ["/v1/sessions/:sid/views/input" "/views/input"]
                      ["/v1/sessions/:sid/views/live" "/views/live"]]]
               (check! :get path (str "/v1/sessions/" sid suffix)))
+            ;; A session with no turns has no usage rollup yet: `usage` is null.
+            (let [empty-sid (str (h/store-session! store {:channel :api}))]
+              (check! :get "/v1/sessions/:sid/usage" (str "/v1/sessions/" empty-sid "/usage")))
             (doseq [path ["/v1/capabilities" "/v1/projects" "/v1/projects/overview" "/v1/apps"
                           "/v1/models" "/v1/router" "/v1/sessions/actions/search"]]
               (check! :get path path))

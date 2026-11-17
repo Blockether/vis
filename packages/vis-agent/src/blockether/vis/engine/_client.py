@@ -49,9 +49,13 @@ from blockether.vis.engine._models import Model, SessionModel
 from blockether.vis.views import EVENT_DEFINITIONS, InputView, LiveView, ViewEvent
 
 if TYPE_CHECKING:
+    from blockether.vis.extension import LiveAttachment
+
     from ._agent import ResponseModel
+    from ._council import Council
     from ._sounds import Sounds
     from ._speech import Speech
+    from ._types import StreamEvent
 
 JSONValue: TypeAlias = (
     str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
@@ -335,7 +339,8 @@ class Event:
         turn_id: Request associated with this event, or `None` for session
             events.
         data: Event-specific dictionary. It is not a final turn result by
-            itself.
+            itself. A check of `type` gives `data` the typed fields of that
+            event type, from the payload schema of the gateway contract.
         activity: Validated activity projection, when this event carries one.
         view: Validated view event, when this event carries one.
 
@@ -349,7 +354,7 @@ class Event:
     seq: int | None = None
     cursor: int | None = None
     turn_id: str | None = None
-    data: dict[str, Any] = field(default_factory=dict)
+    data: Mapping[str, Any] = field(default_factory=dict)
     activity: ActivityProjection | None = None
     view: ViewEvent | None = None
 
@@ -581,7 +586,7 @@ class ExecutionLayer(ABC):
         """
         return Session(self, sid)
 
-    def attach_app(self, app, *, owner: str, on_event=None):
+    def attach_app(self, app, *, owner: str, on_event=None) -> LiveAttachment:
         """Open or adopt a global app as owner program `owner`.
 
         A global app belongs to no session; people open it from the global apps
@@ -1020,7 +1025,7 @@ class ExecutionLayer(ABC):
             timeout=timeout,
         ).json()
 
-    def list_sessions(self, **query):
+    def list_sessions(self, **query) -> _types.SessionList:
         """Return one page with next_cursor. It does not fetch every session.
 
         By default the list does not show a session that has no title, no turns
@@ -3947,7 +3952,7 @@ class Session:
         )
         return response.json() if response.content else None
 
-    def council(self, *, group_id: str | None = None):
+    def council(self, *, group_id: str | None = None) -> Council:
         """Bind communication to the current run without blocking session-only controls.
 
         Disabled or unavailable Council groups are reported when you use
@@ -3969,7 +3974,7 @@ class Session:
         validate("council", "binding", binding)
         return Council(self, binding["default_group_id"], binding["activation_id"])
 
-    def read(self):
+    def read(self) -> _types.Session:
         """Fetch the current session record as a dictionary.
 
         Pending application-owned tool calls are serviced on the calling thread
@@ -3986,7 +3991,7 @@ class Session:
         """
         return self._call("PATCH", body=fields)
 
-    def set_group(self, group: SessionGroup | str | None):
+    def set_group(self, group: SessionGroup | str | None) -> _types.Session:
         """Put this session in a group and return the session record.
 
         The session moves to the project of the group. With None, the session
@@ -3995,7 +4000,7 @@ class Session:
         group_id = None if group is None else _group_id(group)
         return self._call("PUT", "/group", body={"group_id": group_id})
 
-    def delete(self):
+    def delete(self) -> None:
         """Ask the engine to delete this conversation and return its response.
 
         This is a destructive session operation, not a connection close. It does
@@ -4008,7 +4013,7 @@ class Session:
         """Read turn history, or the queued subset with status='queued'."""
         return _field(self._call("GET", "/turns", query=query), "turns", list)
 
-    def artifacts(self, **query):
+    def artifacts(self, **query) -> _types.SessionArtifacts:
         """Return the gateway's artifact inventory without downloading its bytes."""
         return self._call("GET", "/artifacts", query=query)
 
@@ -4024,7 +4029,9 @@ class Session:
             query=query,
         )
 
-    def upload(self, content: bytes, *, filename: str, media_type: str):
+    def upload(
+        self, content: bytes, *, filename: str, media_type: str
+    ) -> _types.Upload:
         """Upload bytes. Pass the returned upload_id in send(attachments=[...])."""
         if not filename or not media_type:
             raise ValueError("filename and media_type are required")
@@ -4168,7 +4175,7 @@ class Session:
         timeout: float = 300,
         response_model: None = None,
         **options,
-    ) -> dict: ...
+    ) -> _types.Turn: ...
 
     @overload
     def run(
@@ -4189,7 +4196,7 @@ class Session:
         response_model: type[ResponseModel] | None = None,
         max_corrections: int = 2,
         **options,
-    ) -> dict | ResponseModel:
+    ) -> _types.Turn | ResponseModel:
         """Submit a request and wait for its result, as `Agent.run` does.
 
         Without `response_model`, return the turn dictionary in contract form.
@@ -4292,7 +4299,7 @@ class Session:
         except ValueError:
             raise ProtocolError("invalid live View response") from None
 
-    def view_action(self, view_id: str, action: str, **values):
+    def view_action(self, view_id: str, action: str, **values) -> _types.ViewOutcome:
         """Send an operator action to a view and return the engine's JSON response.
 
         `values` supplies the action-specific fields of the operator action
@@ -4310,7 +4317,7 @@ class Session:
             body=body,
         )
 
-    def attach(self, app, *, owner, on_event=None):
+    def attach(self, app, *, owner, on_event=None) -> LiveAttachment:
         """Open or adopt an app in this session as owner program `owner`.
 
         `app` is a `vis.ui.app(...)` declaration or an app attachment row. The
@@ -4354,7 +4361,7 @@ class Session:
             raise ProtocolError("invalid key binding run result")
         return cast(_types.KeybindingRunResult, dict(answer))
 
-    def answer(self, view_id, values):
+    def answer(self, view_id, values) -> _types.ViewOutcome:
         """Submit input values to a view, returning the engine's response.
 
         Pass a view ID from `input_views` and values matching that input request.
@@ -4423,7 +4430,7 @@ class Turn:
     id: str
     cursor: int = 0
 
-    def read(self, *, timeout=None):
+    def read(self, *, timeout=None) -> _types.Turn:
         """Fetch this turn's current record, including its `status`.
 
         `timeout` optionally overrides this request's transport deadline in
@@ -4434,7 +4441,7 @@ class Turn:
             "GET", "/turns/:tid", path={"tid": self.id}, timeout=timeout
         )
 
-    def cancel(self):
+    def cancel(self) -> _types.TurnCancel:
         """Request cancellation of this turn and return the engine's response.
 
         Use `read` or `wait` to inspect the resulting status. Cancellation does
@@ -4450,7 +4457,7 @@ class Turn:
         """
         return self.session.attachments(self)
 
-    def wait(self, *, timeout: float = 300):
+    def wait(self, *, timeout: float = 300) -> _types.Turn:
         """Wait until this turn finishes or suspends, returning its record.
 
         Args:
@@ -4911,7 +4918,7 @@ class _PollingEvents(_EventStream[_T]):
         raise NotImplementedError
 
 
-class Events(_EventStream[Event]):
+class Events(_EventStream["StreamEvent"]):
     """Iterate typed session events, with replay and bounded reconnection.
 
     Get a stream from `Session.events`. It yields `Event` objects. Inspect
@@ -4953,8 +4960,8 @@ class Events(_EventStream[Event]):
             "replay": "full",
         }
 
-    def _accept(self, name, value):
-        event = Event.from_wire(value)
+    def _accept(self, name, value) -> StreamEvent | None:
+        event = cast("StreamEvent", Event.from_wire(value))
         if event.session_id != self.session.id:
             raise ProtocolError("unexpected event session")
         if name is not None and name != event.type:
@@ -4967,7 +4974,7 @@ class Events(_EventStream[Event]):
         return None
 
 
-class _SessionPollingEvents(_PollingEvents[Event], Events):
+class _SessionPollingEvents(_PollingEvents["StreamEvent"], Events):
     """Use the session journal for stdio and application-owned gateway callbacks."""
 
     def _pump(self):

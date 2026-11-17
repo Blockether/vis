@@ -29,12 +29,16 @@
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.contract.view :as hi-spec]
-            [lazytest.core :refer [defdescribe expect it]]
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
+            [com.blockether.vis.internal.gateway.event-check :as event-check]
             [reitit.ring :as ring]
             [ring.adapter.jetty9 :as jetty]
             [ring.core.protocols :as ring-protocols])
   (:import [java.net URLEncoder]
            [org.eclipse.jetty.server Server ServerConnector]))
+
+;; Each published event payload must match its payload schema (#487).
+(set-ns-context! [(around-each [f] (event-check/checked f))])
 
 (defn- spec
   [& {:as overrides}]

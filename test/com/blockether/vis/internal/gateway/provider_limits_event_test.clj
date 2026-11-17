@@ -2,7 +2,11 @@
   (:require [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.provider.limits :as limits]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
+            [com.blockether.vis.internal.gateway.event-check :as event-check]))
+
+;; Each published event payload must match its payload schema (#487).
+(set-ns-context! [(around-each [f] (event-check/checked f))])
 
 (defdescribe provider-limits-change-test
              ;; Issue #214: credential transitions must reach both SSE and polling clients.
