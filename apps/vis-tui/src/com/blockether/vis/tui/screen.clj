@@ -4242,6 +4242,20 @@
     (p/set-colors! g t/text-fg t/terminal-bg)
     (p/put-str! g 0 row (p/center-text label (long cols)))))
 
+(defn- paint-agent-wait!
+  "Paint why the subagent session of `db` did not start, such as `Waiting for a7`, on the last
+   transcript row. Its leader gives it work, so its empty transcript has nothing else to say.
+   Caller holds `draw-lock`."
+  [g db cols messages-bottom]
+  (when-let [line (and (empty? (:messages db))
+                       (get-in db [:session :agent :parent-id])
+                       (agent-team/wait-line (get-in db [:session :id])))]
+    (p/set-colors! g t/dialog-hint t/terminal-bg)
+    (p/put-str! g
+                render/MESSAGE_MARGIN_LEFT
+                (- (long messages-bottom) (long render/MESSAGE_MARGIN_BOTTOM) 1)
+                (p/ellipsize line (max 0 (- (long cols) (long render/MESSAGE_SIDE_PAD)))))))
+
 (defn- progress-live-runs
   "Project active views only when their receipt has not landed on an earlier turn. Held
    apps join too: their rows land only when the block ends (#429)."
@@ -4581,8 +4595,9 @@
                                                     messages-bottom
                                                     cols
                                                     (get-in db [:workspace "agent_name"])))
-                      (when (tab-content-loading? db)
-                        (paint-content-loading! graphics cols messages-top messages-bottom now-ms)))
+                      (if (tab-content-loading? db)
+                        (paint-content-loading! graphics cols messages-top messages-bottom now-ms)
+                        (paint-agent-wait! graphics db cols messages-bottom)))
                     :header (fn [graphics _]
                               (header/draw-header! graphics db header-top cols))
                     :dock (fn [graphics _]
@@ -11970,15 +11985,20 @@
                                                      :level :warn
                                                      :ttl-ms copy-success-ttl-ms)))
                  ;; C-x t 1-9: open the subagent that shows this digit in the dock.
-                 open-agent-nth! (fn [n]
-                                   (if-let [id (agent-team/dock-agent-id (current-session-id)
-                                                                         (running-turn-id
-                                                                           @state/app-db)
-                                                                         n)]
-                                     (switch-session! {:action :switch :id id})
-                                     (vis/notify! (str "No subagent " n " in the dock")
-                                                  :level :warn
-                                                  :ttl-ms copy-success-ttl-ms)))
+                 ;; A task that did not start has no session yet: the toast says what it waits for.
+                 open-agent-nth!
+                 (fn [n]
+                   (let [row (agent-team/dock-row (current-session-id)
+                                                  (running-turn-id @state/app-db)
+                                                  n)]
+                     (cond (nil? row) (vis/notify! (str "No subagent " n " in the dock")
+                                                   :level :warn
+                                                   :ttl-ms copy-success-ttl-ms)
+                           (:pending? row) (vis/notify! (str "Subagent " n
+                                                             " did not start: " (:now row))
+                                                        :level :info
+                                                        :ttl-ms copy-success-ttl-ms)
+                           :else (switch-session! {:action :switch :id (:session-id row)}))))
                  ;; A click on a subagent row opens its session at once.
                  open-agent! (fn [child-id]
                                (when-not (:dialog-open? @state/app-db)

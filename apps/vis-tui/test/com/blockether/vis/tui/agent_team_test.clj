@@ -513,6 +513,23 @@
                             "Report")]))]
         (expect (= (title-at "verify") (title-at "implement"))))))
 
+;; User report 2026-11-17: a task that waited for an earlier task opened an empty session, and
+;; its row named each task of its after, also the completed ones.
+(defdescribe pending-agent-test
+  (it "opens no session for a task that did not start, and names the tasks that it waits for"
+      (let [agents [(agent-row 1 "completed" "id" "a1")
+                    (agent-row 2 "running" "id" "a2")
+                    (agent-row 3 "waiting" "id" "a3" "after" ["a1" "a2"])]
+            blocked (assoc-in agents [2 "status"] "blocked")]
+        (expect (= "waiting for a2" (:now (last (team/team-rows "turn-1" agents)))))
+        (expect (= "a2 did not complete" (:now (last (team/team-rows "turn-1" blocked)))))
+        (expect (nil? (:agent-id (last (team/items agents nil)))) "Enter in the team modal opens nothing")
+        (with-redefs [team/summary (constantly {:agents agents})]
+          (expect (nil? (team/dock-agent-id "leader" "turn-1" 3)) "C-x t 3 opens nothing")
+          (expect (= "s2" (team/dock-agent-id "leader" "turn-1" 2)))
+          (expect (= "Waiting for a2" (team/wait-line "s3")) "The empty child transcript says why")
+          (expect (nil? (team/wait-line "s2")))))))
+
 (defdescribe
   team-rows-test
   (it

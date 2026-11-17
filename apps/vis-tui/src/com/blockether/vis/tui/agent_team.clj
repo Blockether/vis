@@ -164,6 +164,23 @@
 
 (defn- active? [agent] (contains? #{"queued" "running"} (get agent "status")))
 
+(defn- pending?
+  "Whether `agent` did not start: a task in its after did not complete yet, or never will. It has
+   no session to open yet."
+  [agent]
+  (contains? #{"waiting" "blocked"} (get agent "status")))
+
+(defn- waits-for
+  "The task ids in the after of `agent` that did not complete, from the rows `agents`. An id
+   without a row stays, because nothing shows that it completed."
+  [agent agents]
+  (remove (fn [id]
+            (some #(and (= (get agent "parent_id") (get % "parent_id"))
+                        (= id (get % "id"))
+                        (= "completed" (get % "status")))
+                  agents))
+    (get agent "after")))
+
 (defn- role-rank
   [agent]
   (or (first (keep-indexed #(when (= (get %2 "const") (get agent "role")) %1) (roles)))
@@ -315,11 +332,21 @@
 
 (defn- end-reason
   "The end that `FAILED` hides, for an agent without a result: `cancelled` or `out of budget`. A
-   task that did not start names the tasks in its after."
-  [agent]
+   task that did not start names the tasks of its after that did not complete, from `agents`:
+   `waiting for a2` or `a2 did not complete`."
+  [agent agents]
   (case (get agent "status")
     ("waiting" "blocked")
-    (str "after " (str/join ", " (get agent "after")))
+    (let [ids
+          (str/join ", " (waits-for agent agents))
+
+          waiting?
+          (= "waiting" (get agent "status"))]
+
+      (cond (str/blank? ids)
+            (if waiting? "waits for earlier tasks" "an earlier task did not complete")
+            waiting? (str "waiting for " ids)
+            :else (str ids " did not complete")))
 
     "cancelled"
     "cancelled"
@@ -347,12 +374,12 @@
   "The newest progress note or Activity line of a working agent, else its result, else the
    reason of its end. The questions and grant requests of an agent go to its leader, never to
    the person, so no row shows them."
-  [agent]
+  [agent agents]
   (let [live? (active? agent)]
     (cond (and live? (get agent "note")) (markdown-line (get agent "note"))
           (and live? (get agent "activity")) (one-line (get agent "activity"))
           (get agent "result") (markdown-line (get agent "result"))
-          :else (one-line (end-reason agent)))))
+          :else (one-line (end-reason agent agents)))))
 
 (defn- start-ms
   [agent]
@@ -368,22 +395,25 @@
 
 (defn team-row
   "The row data of agent `agent` with start order `n`. Plain data, so an unchanged agent
-   compares equal across polls. The painter computes the running time."
-  [n agent]
-  (let [word (status-word agent)]
-    {:n n
-     :team-id (get agent "team_id")
-     :session-id (get agent "session_id")
-     :role (or (role-word agent) "")
-     :role-key (role-name agent)
-     :label (agent-label n agent)
-     :status word
-     :tone (tone word)
-     :now (now-text agent)
-     :active? (active? agent)
-     :start (start-ms agent)
-     :end (when (and (not (active? agent)) (number? (get agent "finished_at")))
-            (long (get agent "finished_at")))}))
+   compares equal across polls. The painter computes the running time. `agents` are the rows of
+   the team, which tell which tasks of an after completed."
+  ([n agent] (team-row n agent []))
+  ([n agent agents]
+   (let [word (status-word agent)]
+     {:n n
+      :team-id (get agent "team_id")
+      :session-id (get agent "session_id")
+      :role (or (role-word agent) "")
+      :role-key (role-name agent)
+      :label (agent-label n agent)
+      :status word
+      :tone (tone word)
+      :now (now-text agent agents)
+      :active? (active? agent)
+      :pending? (pending? agent)
+      :start (start-ms agent)
+      :end (when (and (not (active? agent)) (number? (get agent "finished_at")))
+             (long (get agent "finished_at")))})))
 
 (defn team-rows
   "The rows of team `team-id` from `agents`, in start order, so a row never moves."
@@ -392,7 +422,7 @@
        (filter #(= team-id (get (second %) "team_id")))
        (sort-by first)
        (mapv (fn [[n agent]]
-               (team-row n agent)))))
+               (team-row n agent agents)))))
 
 (defn- leader? [row] (= "leader" (:role-key row)))
 
@@ -672,11 +702,12 @@
     t/dialog-hint))
 
 (defn- register-row!
-  "A click on a row opens the session of its agent. A row of the dock of `dock` also takes the
-   wheel of that dock."
+  "A click on a row opens the session of its agent. A task that did not start has no session to
+   open yet, so its row opens nothing. A row of the dock of `dock` also takes the wheel of that
+   dock."
   ([row screen-row left width] (register-row! row screen-row left width nil))
   ([row screen-row left width dock]
-   (when-let [id (:session-id row)]
+   (when-let [id (when-not (:pending? row) (:session-id row))]
      (.register
        interactions/hit-map
        (cond-> {:bounds {:row screen-row :col left :width width} :kind :agent-open :text id}
@@ -1178,16 +1209,22 @@
          (sort-by (fn [[n agent]]
                     [(or (get agent "created_at") 0) (str (get agent "team_id")) n]))
          (map-indexed (fn [i [n agent]]
-                        (cond-> (team-row n agent)
+                        (cond-> (team-row n agent agents)
                           (< (long i) (long dock-keys))
                           (assoc :key (str (inc (long i)))))))
          vec)))
 
-(defn dock-agent-id
-  "The session id of dock row `n` of `sid`, the row that shows digit `n`, or nil."
+(defn dock-row
+  "Dock row `n` of `sid`, the row that shows digit `n`, or nil."
   [sid running-turn n]
-  (when (<= 1 (long n) (long dock-keys))
-    (:session-id (get (dock-rows sid running-turn) (dec (long n))))))
+  (when (<= 1 (long n) (long dock-keys)) (get (dock-rows sid running-turn) (dec (long n)))))
+
+(defn dock-agent-id
+  "The session id of dock row `n` of `sid`, or nil. A task that did not start has no session to
+   open yet, so its row gives nil."
+  [sid running-turn n]
+  (let [row (dock-row sid running-turn n)]
+    (when-not (:pending? row) (:session-id row))))
 
 (defn scroll-dock!
   "Move the agent table of the dock of `sid` by `delta` rows. Returns true when the shown rows
@@ -1397,6 +1434,16 @@
                       " → "
                       (name-of pair))})))))
 
+(defn wait-line
+  "Why child session `sid` did not start, from its cached team, such as `Waiting for a7`, or nil
+   when it started or the TUI does not know it."
+  [sid]
+  (let [agents (:agents (summary sid))]
+    (when-let [agent (some #(when (= (str sid) (get % "session_id")) %) agents)]
+      (when (pending? agent)
+        (let [line (end-reason agent agents)]
+          (str (str/upper-case (subs line 0 1)) (subs line 1)))))))
+
 (defn- shown-change?
   "Whether a refresh from `before`, the last snapshot, to `after` can change the screen. An
    active agent shows an elapsed time."
@@ -1521,7 +1568,8 @@
                              (map (fn [row]
                                     {:label (first (row-lines row columns width now))
                                      :search-text (str (:role row) " " (:label row))
-                                     :agent-id (:session-id row)}))
+                                     ;; A task that did not start has no session to open yet.
+                                     :agent-id (when-not (:pending? row) (:session-id row))}))
                              team))))
            teams))))
 
