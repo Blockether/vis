@@ -409,7 +409,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
     conn: GatewayConn;
     sid: string;
     fresh?: boolean;
-    /** The nonce of a Talk link: a new value arms voice conversation once. */
+    /** The nonce of a Talk link: a new value requests hands-free voice once. */
     talk?: string;
   } | null>(null);
   // A Talk link waits here until the launch route is applied.
@@ -1284,7 +1284,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   }, [pushIntent, routeApplied, conns, active, openGatewaySession]);
 
   // The Action Button (`Talk to Vis`): open the session of the link, or a new one,
-  // and arm voice conversation there. Like a parked tap, it waits for the route.
+  // and request hands-free voice there. Like a parked tap, it waits for the route.
   useEffect(() => {
     if (!talkIntent || !routeApplied || conns.length === 0) return;
     const link = talkIntent;

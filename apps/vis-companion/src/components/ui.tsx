@@ -1472,7 +1472,6 @@ function useTapPress(
 export function ComposerButton({
   label,
   tone = 'quiet',
-  surface = 'strip',
   isHolding = false,
   className = '',
   children,
@@ -1484,9 +1483,7 @@ export function ComposerButton({
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   /** Icon-only, so the name is not optional. */
   label: string;
-  tone?: 'quiet' | 'send' | 'stop' | 'recording' | 'voice';
-  /** A lone control over content keeps the platform's full finger target. */
-  surface?: 'strip' | 'overlay';
+  tone?: 'quiet' | 'send' | 'stop' | 'recording';
   /**
    * A press-and-hold is UNDERWAY. The paper rises through the button for as
    * long as the switch takes, so the gesture reports itself while it happens
@@ -1497,13 +1494,10 @@ export function ComposerButton({
 }) {
   const press = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
   const frame =
-    surface === 'overlay'
-      ? 'size-11'
-      : 'size-8 after:absolute after:left-1/2 after:top-1/2 after:h-11 after:w-9 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none';
+    'size-8 after:absolute after:left-1/2 after:top-1/2 after:h-11 after:w-9 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none';
   const face = {
     quiet: 'text-dialog-hint enabled:hover:text-dialog-hint-key disabled:text-muted',
     recording: 'animate-pulse text-err-ink disabled:text-muted motion-reduce:animate-none',
-    voice: 'text-accent-ink enabled:hover:text-white disabled:text-muted',
     send: 'text-accent-ink enabled:hover:text-white disabled:scale-100 disabled:text-muted',
     stop: 'text-err-ink starting:scale-90 starting:opacity-0',
   }[tone];

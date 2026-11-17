@@ -10,7 +10,6 @@ interface AndroidAudioRoutePlugin {
 const androidAudioRoute = registerPlugin<AndroidAudioRoutePlugin>('AudioRoute');
 
 let androidBluetoothRoute: Promise<boolean> | null = null;
-let retainAndroidBluetoothRoute = false;
 
 async function claimAndroidBluetoothMicrophone(): Promise<boolean> {
   if (Capacitor.getPlatform() !== 'android') return false;
@@ -30,22 +29,6 @@ async function releaseAndroidBluetoothMicrophone(): Promise<void> {
   if (Capacitor.getPlatform() !== 'android') return;
   androidBluetoothRoute = null;
   await androidAudioRoute.stopBluetoothMicrophone().catch(() => undefined);
-}
-
-/**
- * Keep Android's Bluetooth communication route alive across every utterance in
- * one voice conversation. Releasing SCO after each tap makes many headsets say
- * “disconnected”, then reconnect on the next utterance. A voice conversation is
- * one call-like audio session; only leaving the mode should tear its route down.
- */
-export async function beginVoiceAudioSession(): Promise<void> {
-  retainAndroidBluetoothRoute = true;
-  await claimAndroidBluetoothMicrophone();
-}
-
-export async function endVoiceAudioSession(): Promise<void> {
-  retainAndroidBluetoothRoute = false;
-  await releaseAndroidBluetoothMicrophone();
 }
 
 export interface WavRecording {
@@ -223,9 +206,7 @@ export async function startWavRecording(options: WavRecordingOptions = {}): Prom
   // before WebView chooses an input device.
   const heldAndroidRoute = await claimAndroidBluetoothMicrophone();
   const releaseAndroidRoute = async () => {
-    if (heldAndroidRoute && !retainAndroidBluetoothRoute) {
-      await releaseAndroidBluetoothMicrophone();
-    }
+    if (heldAndroidRoute) await releaseAndroidBluetoothMicrophone();
   };
 
   let stream: MediaStream;

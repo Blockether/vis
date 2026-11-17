@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.speech.live
   "Bounded local speech streams. Call inference from a worker, never a socket thread."
-  (:require [com.blockether.vis.internal.speech.assets :as assets]
+  (:require [com.blockether.vis.contract.voice :as contract]
+            [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.engine :as engine]
             [com.blockether.vis.internal.speech.tts :as tts]
             [com.blockether.vis.internal.speech.vibevoice :as vibevoice])
@@ -9,7 +10,11 @@
 
 (set! *warn-on-reflection* true)
 
-(def max-samples "Thirty seconds of mono audio at 24 kHz." 720000)
+(def ^:private sample-rate (long (:sample-rate contract/limits)))
+
+(def max-samples
+  "The longest utterance of the voice contract, in mono samples."
+  (quot (* sample-rate (long (:max-utterance-ms contract/limits))) 1000))
 
 (defonce ^{:private true :tag Semaphore} asr-permit (Semaphore. 1))
 
@@ -30,14 +35,14 @@
     (cond-> {:available (and asr? tts?)
              :asr {:available asr?
                    :engine :vibevoice-asr-local
-                   :sample-rate 24000
+                   :sample-rate sample-rate
                    :max-samples max-samples
                    :concurrency 1
                    :languages ["en"]
                    :abort-bound-ms nil}
              :tts {:available tts?
                    :engine :pocket-tts-local
-                   :sample-rate 24000
+                   :sample-rate sample-rate
                    :max-characters tts/live-max-characters
                    :concurrency 1
                    :abort-bound-ms nil}}
@@ -67,19 +72,19 @@
 
 (defn open-asr!
   "Open one serialized ASR stream. Feed offsets count samples, not bytes."
-  [{:keys [on-partial max-samples] :or {max-samples 720000}}]
-  (when-not (and (integer? max-samples) (<= 1 max-samples 720000))
+  [{:keys [on-partial] limit :max-samples :or {limit max-samples}}]
+  (when-not (and (integer? limit) (<= 1 limit max-samples))
     (throw (ex-info "Invalid speech sample limit" {:type :speech-live/sample-limit})))
   (when-not (.tryAcquire ^Semaphore asr-permit)
     (throw (ex-info "Local ASR stream is busy" {:type :speech-live/busy})))
   (try (let [decoder
              (*open-decoder*)
 
-             {:keys [window chunk sample-rate]}
+             {:keys [window chunk] rate :sample-rate}
              decoder]
 
          (if-not
-           (and (= 24000 sample-rate) (integer? chunk) (integer? window) (<= 1 chunk window 240000))
+           (and (= sample-rate rate) (integer? chunk) (integer? window) (<= 1 chunk window 240000))
            (do ((:close! decoder))
                (throw (ex-info "Unsupported ASR window" {:type :speech-live/model-contract})))
            {:decoder decoder
@@ -87,7 +92,7 @@
             :cancelled? (atom false)
             :release! #(.release ^Semaphore asr-permit)
             :on-partial on-partial
-            :limit max-samples
+            :limit limit
             :state (atom {:state :open
                           :closed? false
                           :pending (float-array window)

@@ -83,7 +83,6 @@ import {
   MessageSquareMore,
   Maximize2,
   Mic,
-  MicVocal,
   Minus,
   PanelLeft,
   PanelRight,
@@ -319,16 +318,6 @@ export function ImageIcon({ className }: { className?: string }) {
 /** Dictation. */
 export function MicIcon({ className }: { className?: string }) {
   return <Mark icon={Mic} className={className} />;
-}
-
-/**
- * VOICE CONVERSATION — the microphone that answers back. Dictation's mic writes
- * into the box and stops; this one sends what you said and reads the reply
- * aloud, so it is the same capsule with the reply coming out of it. One control
- * now carries two modes, and the mode has to be visible without a word beside it.
- */
-export function VoiceLoopIcon({ className }: { className?: string }) {
-  return <Mark icon={MicVocal} className={className} />;
 }
 
 /** Take back what was just started — a drawing stroke, a line opened in a band. */

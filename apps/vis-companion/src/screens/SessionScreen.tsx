@@ -27,7 +27,6 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { LiveVoicePanel } from '../components/LiveVoicePanel';
 import { TurnAgents, agentsByTurn, dockTeams, leaderLane, storedAgents, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
@@ -65,7 +64,7 @@ import { disclosureAnchor, isDisclosureMoving } from '../lib/clamp-motion';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
 import { BrandLogo } from '../components/BrandLogo';
 import { Banner, ComposerButton, IconButton, LoadMore, Spinner } from '../components/ui';
-import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon, ZenIcon } from '../components/icons';
+import { MicIcon, SendIcon, StopIcon, ZenIcon } from '../components/icons';
 import { ZenPictures } from '../components/ZenPictures';
 import { setZenMode, useZenMode } from '../lib/transcript-display';
 import { useCommands } from '../lib/commands';
@@ -87,7 +86,7 @@ import { livePlacement } from '../lib/live-view';
 import { reduceRunningTurnEvent, withStoredSteps, type RunningTurn } from '../lib/running-turn';
 import { eventString, sessionEventBatch } from '../lib/session-stream';
 import { speechOutput } from '../lib/speech';
-import { VoiceTurnOwnership, type VoiceModeLease } from '../lib/voice-conversation';
+import { splitScreen } from '../lib/split-screen';
 import { ProviderRouterDialog } from './RouterScreen';
 import {
   attachmentsFromFiles,
@@ -205,7 +204,6 @@ import type {
   CouncilRequest,
 } from '../lib/types';
 import {
-  endVoiceAudioSession,
   startWavRecording,
   voiceProgressLabel,
   type WavRecording,
@@ -337,10 +335,28 @@ const LOADING_VEIL_MAX_MS = 12_000;
 // WebKit acquisition and cleanup can outlive the screen that started them.
 let dictationAudioWork: Promise<void> = Promise.resolve();
 function trackDictationAudio(work: Promise<void>): void {
-  dictationAudioWork = Promise.all([dictationAudioWork, work]).then(() => undefined);
-  // Keep a failed release closed to native handoff without an unhandled rejection.
+  // An earlier failure stops one handoff only. It must not fail the work that follows.
+  const earlier = dictationAudioWork.catch(() => undefined);
+  dictationAudioWork = Promise.all([earlier, work]).then(() => undefined);
   void dictationAudioWork.catch(() => undefined);
 }
+/** Wait for the tracked microphone work. A failed release rejects once, then clears. */
+async function dictationAudioSettled(): Promise<void> {
+  const work = dictationAudioWork;
+  try {
+    await work;
+  } catch (cause) {
+    if (dictationAudioWork === work) dictationAudioWork = Promise.resolve();
+    throw cause;
+  }
+}
+
+// Hands-free voice loads at its first request. A session that never starts it does not load it.
+const liveVoicePanel = splitScreen(
+  () => import('../components/LiveVoicePanel').then((module) => module.LiveVoicePanel),
+  null,
+);
+const LiveVoicePanel = liveVoicePanel.Screen;
 
 // How long a following reader is carried across a HANDOVER. The running-turn bubble
 // leaving and its persisted row arriving is ONE transaction spread over frames: the
@@ -894,7 +910,7 @@ export function SessionScreen({
   /** Open this gateway's settings, where provider accounts and OAuth live; an id focuses one provider. */
   onManageProviders?: (providerId?: string) => void;
   fresh?: boolean;
-  /** The nonce of a Talk link (the Action Button). A new value arms voice conversation once. */
+  /** The nonce of a Talk link (the Action Button). A new value requests hands-free voice once. */
   talk?: string;
   /** The desk's list toggle, handed to the header's leading edge. */
   sidebar?: { isShown: boolean; onToggle: () => void };
@@ -1234,8 +1250,8 @@ export function SessionScreen({
   );
   // Native hides two distinct acts behind one composer control, so the plus has
   // to ask which one: the OS gallery sheet never opens a shutter.
-  // Dictation and voice conversation are ONE control: a tap acts in the current
-  // mode, a press and hold flips it. `voiceModeHolding` paints the hold while it
+  // Dictation and hands-free voice are ONE control: a tap dictates, a press and
+  // hold starts hands-free voice. `voiceModeHolding` paints the hold while it
   // fills; `voiceModeSwitchedRef` swallows the click that iOS still delivers
   // when the finger comes off after a long press.
   const [voiceModeHolding, setVoiceModeHolding] = useState(false);
@@ -1276,12 +1292,6 @@ export function SessionScreen({
   // engine has not reported yet (the bytes are still leaving this phone).
   const [voiceProgress, setVoiceProgress] = useState<VoiceProgress | null>(null);
   const [voiceRequested, setVoiceRequested] = useState(false);
-  const [voiceConversation, setVoiceConversation] = useState(false);
-  const voiceConversationRef = useRef(false);
-  const [voiceSpeaking, setVoiceSpeaking] = useState(false);
-  const voiceOwnershipRef = useRef(new VoiceTurnOwnership());
-  const voiceLeaseRef = useRef<VoiceModeLease | null>(null);
-  const [pendingVoiceSend, setPendingVoiceSend] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   // One user activation, one post-commit reveal. Keeping this as state (rather than
@@ -1526,7 +1536,6 @@ export function SessionScreen({
     voiceHandoffRef.current = null;
     if (recordingRef.current) trackDictationAudio(recordingRef.current.cancel());
     recordingRef.current = null;
-    void endVoiceAudioSession();
     pendingVoiceRef.current = null;
     setTurns(cachedTranscript ?? []);
     setTurnsFresh(false);
@@ -1563,13 +1572,7 @@ export function SessionScreen({
     setComposerNotice(null);
     setVoicePhase('idle');
     setVoiceRequested(false);
-    voiceConversationRef.current = false;
-    voiceLeaseRef.current = null;
-    voiceOwnershipRef.current.leave();
-    setVoiceConversation(false);
     speechOutput.stop();
-    setVoiceSpeaking(false);
-    setPendingVoiceSend(null);
     if (voiceModeHoldRef.current != null) {
       clearTimeout(voiceModeHoldRef.current);
       voiceModeHoldRef.current = null;
@@ -1812,10 +1815,6 @@ export function SessionScreen({
   const verbosityAvailable = modelInfo?.verbosity_style != null && verbosity;
   // Only Claude adaptive thinking can show or omit its summary; Z.ai GLM cannot.
   const thinkingSummaryAvailable = modelInfo?.thinking_display_style != null && thinkingSummary;
-  function turnFeaturesFor(voiceProjection: boolean): Record<string, boolean> | undefined {
-    // The gateway snapshots response settings at submission, not from this UI cache.
-    return voiceProjection ? { voice_projection: true } : undefined;
-  }
 
   // The header chip shows whatever model this session actually runs on, so read
   // the gateway's answer rather than assuming the global default.
@@ -2823,13 +2822,9 @@ export function SessionScreen({
         // hijacked mic records perfect silence), so it has to say so: dropping it
         // silently is what makes the button feel dead.
         if (text) {
-          if (voiceConversationRef.current) {
-            setPendingVoiceSend(text);
-          } else {
-            setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
-            // Show the TAIL of the dictation, not its opening line.
-            revealComposerEnd();
-          }
+          setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
+          // Show the TAIL of the dictation, not its opening line.
+          revealComposerEnd();
         } else {
           setComposerNotice('No speech recognised — nothing was captured.');
         }
@@ -2962,12 +2957,8 @@ export function SessionScreen({
       voiceVisitRef.current++;
       if (voiceAcquisitionRef.current) voiceAcquisitionRef.current.cancelled = true;
       voiceHandoffRef.current = null;
-      voiceConversationRef.current = false;
-      voiceLeaseRef.current = null;
-      voiceOwnershipRef.current.leave();
       if (recordingRef.current) trackDictationAudio(recordingRef.current.cancel());
       recordingRef.current = null;
-      void endVoiceAudioSession();
       speechOutput.stop();
     };
   }, []);
@@ -2990,19 +2981,6 @@ export function SessionScreen({
       const terminalBlocks = Array.isArray(event.content)
         ? (event.content as ContentBlock[])
         : undefined;
-      const voiceOwned = voiceOwnershipRef.current.settle(finishedId);
-      if (type === 'turn.completed' && voiceConversationRef.current && voiceOwned) {
-        const spoken = terminalBlocks?.find((block) => block.type === 'speech')?.text?.trim();
-        if (spoken) {
-          setVoiceSpeaking(true);
-          void speechOutput
-            .speak(spoken)
-            .catch((cause: unknown) => setComposerNotice((cause as Error).message))
-            .finally(() => setVoiceSpeaking(false));
-        } else {
-          setComposerNotice('The answer is ready on screen — no spoken version was returned.');
-        }
-      }
       if (!runningTurnRef.current || ownsTerminal(runningTurnRef.current)) setRunning(false);
       // Settle the running-turn bubble ITSELF, synchronously. The transcript refetch below
       // is a network round-trip and may fail outright, and until it lands the
@@ -4281,17 +4259,15 @@ export function SessionScreen({
     })();
     trackDictationAudio(acquisition);
     await acquisition.catch(() => {
-      if (!operation.cancelled) {
-        setComposerNotice('Microphone cleanup failed. Reload before starting voice.');
-      }
+      if (!operation.cancelled) setComposerNotice('Microphone cleanup failed. Try again.');
     });
   }
 
-  async function send(voiceRequest?: string, voiceProjection = false) {
+  async function send() {
     // iOS may commit an autocorrection into the native textarea before React has
     // delivered the matching change event. Read the control at the press boundary
     // so the turn carries the text the operator can actually see.
-    const authoredRequest = (voiceRequest ?? composerRef.current?.value ?? prompt).trim();
+    const authoredRequest = (composerRef.current?.value ?? prompt).trim();
     const ownedAttachments = referencedAttachments(
       composerRef.current?.value ?? prompt,
       attachmentsRef.current,
@@ -4303,10 +4279,6 @@ export function SessionScreen({
     // shows what the human actually authored: for attachment-only turns, the media.
     const displayRequest = collapsePastePlaceholders(authoredRequest, pastes);
     if (!request || voicePhase !== 'idle') return;
-    // Capture the activation that authored this turn before any network await.
-    // Leave/session navigation invalidates it, so a late POST response cannot
-    // register an abandoned turn for playback in a newly opened voice mode.
-    const voiceLease = voiceProjection ? voiceLeaseRef.current : null;
 
     const [command = '', ...argParts] = authoredRequest.split(/\s+/);
     const args = argParts.join(' ');
@@ -4388,10 +4360,8 @@ export function SessionScreen({
         const submitted = await client.submitTurn(sid, request, {
           displayRequest,
           attachments: sent,
-          turnFeatures: turnFeaturesFor(voiceProjection),
         });
         const queuedId = submitted.turn_id;
-        if (voiceProjection) voiceOwnershipRef.current.claim(queuedId, voiceLease);
         rememberSent(queuedId, sent);
         // Keep the AUTHORED shape (raw text, pastes, image bytes) so a cancel can
         // hand it straight back to the composer instead of losing it with the
@@ -4477,10 +4447,8 @@ export function SessionScreen({
       const submitted = await client.submitTurn(sid, request, {
         displayRequest,
         attachments: sent,
-        turnFeatures: turnFeaturesFor(voiceProjection),
       });
       const submittedId = submitted.turn_id;
-      if (voiceProjection) voiceOwnershipRef.current.claim(submittedId, voiceLease);
       rememberSent(submittedId, sent);
       if (isQueuedSubmission(submitted)) {
         // The gateway QUEUED us: a turn started between our liveness read and this
@@ -5767,30 +5735,6 @@ export function SessionScreen({
       .forkPoints(sid, signal)
       .then((points) => (points ?? []).map((point) => outlineEntry(point)));
 
-  useEffect(() => {
-    if (!pendingVoiceSend || voicePhase !== 'idle') return;
-    const text = pendingVoiceSend;
-    setPendingVoiceSend(null);
-    void send(text, true);
-  }, [pendingVoiceSend, voicePhase]);
-
-  const leaveVoiceConversation = async () => {
-    voiceConversationRef.current = false;
-    voiceLeaseRef.current = null;
-    voiceOwnershipRef.current.leave();
-    setVoiceConversation(false);
-    setPendingVoiceSend(null);
-    speechOutput.stop();
-    setVoiceSpeaking(false);
-    if (recordingRef.current) {
-      const recording = recordingRef.current;
-      recordingRef.current = null;
-      await recording.cancel().catch(() => undefined);
-      setVoicePhase('idle');
-    }
-    await endVoiceAudioSession();
-  };
-
   // How long the finger stays down before the mode flips. Long enough that a tap
   // is never a switch, short enough that the switch is not a wait.
   const VOICE_MODE_HOLD_MS = 450;
@@ -5808,9 +5752,15 @@ export function SessionScreen({
     voiceHandoffRef.current = handoff;
     if (voiceAcquisitionRef.current) voiceAcquisitionRef.current.cancelled = true;
     setComposerNotice('Finishing microphone setup…');
+    liveVoicePanel.warm();
+    speechOutput.stop();
+    if (recordingRef.current) {
+      trackDictationAudio(recordingRef.current.cancel());
+      recordingRef.current = null;
+      setVoicePhase('idle');
+    }
     try {
-      await leaveVoiceConversation();
-      await dictationAudioWork;
+      await dictationAudioSettled();
       if (
         !voiceMountedRef.current ||
         voiceVisitRef.current !== visit ||
@@ -5820,7 +5770,7 @@ export function SessionScreen({
       setLiveVoiceRequest((previous) => ({ sid, count: previous.count + 1 }));
     } catch {
       if (voiceMountedRef.current && voiceVisitRef.current === visit) {
-        setComposerNotice('Microphone cleanup failed. Reload before starting voice.');
+        setComposerNotice('Microphone cleanup failed. Try again.');
       }
     } finally {
       if (voiceHandoffRef.current === handoff) voiceHandoffRef.current = null;
@@ -5830,14 +5780,9 @@ export function SessionScreen({
   // Preserve a recording when a mode gesture finishes it.
   const switchVoiceMode = async () => {
     // Words already spoken belong to the user. A switch gesture during a recording
-    // only finishes it, so the words reach the box (or the turn) and the mode stays.
+    // only finishes it, so the words reach the box and the mode stays.
     if (recordingRef.current) {
       await toggleVoice();
-      return;
-    }
-    if (voiceConversationRef.current) {
-      await leaveVoiceConversation();
-      setComposerNotice('Dictation · tap the microphone to write into the box');
       return;
     }
     await requestHandsFreeVoice();
@@ -5852,7 +5797,6 @@ export function SessionScreen({
   useEffect(() => {
     if (!talk || !voiceSupported || handledTalkRef.current === talk) return;
     handledTalkRef.current = talk;
-    if (voiceConversationRef.current) return;
     void requestHandsFreeVoiceRef.current();
   }, [talk, voiceSupported]);
 
@@ -5888,28 +5832,10 @@ export function SessionScreen({
     setVoiceModeHolding(false);
   };
 
-  // A tap while the conversation is armed: stop the answer being read aloud, or
-  // start / finish the utterance.
-  const speakVoiceTurn = async () => {
-    if (voiceSpeaking) {
-      speechOutput.stop();
-      setVoiceSpeaking(false);
-      return;
-    }
-    await toggleVoice();
-  };
-
-  const renderVoiceControl = (surface: 'strip' | 'overlay' = 'strip') =>
+  const renderVoiceControl = () =>
     voiceSupported ? (
       <ComposerButton
-        tone={
-          voicePhase === 'recording' || voiceSpeaking
-            ? 'recording'
-            : voiceConversation
-              ? 'voice'
-              : 'quiet'
-        }
-        surface={surface}
+        tone={voicePhase === 'recording' ? 'recording' : 'quiet'}
         isHolding={voiceModeHolding}
         onMouseDown={keepKeyboard}
         onPointerDown={beginVoiceModeHold}
@@ -5934,39 +5860,28 @@ export function SessionScreen({
         }}
         onClick={() => {
           // iOS still delivers the click that ended a long press, and acting on it
-          // would speak the moment the mode changed.
+          // would start dictation the moment hands-free voice was requested.
           if (voiceModeSwitchedRef.current) {
             voiceModeSwitchedRef.current = false;
             return;
           }
-          void (voiceConversation ? speakVoiceTurn() : toggleVoice());
+          void toggleVoice();
         }}
         disabled={
           liveVoiceActive ||
           voicePhase === 'transcribing' ||
-          voiceModel?.status === 'downloading' ||
-          (voiceConversation && running && !voiceSpeaking)
+          voiceModel?.status === 'downloading'
         }
         label={
           voiceStarting
             ? 'Starting microphone — hold for hands-free voice'
-            : voiceSpeaking
-              ? 'Stop speaking — hold to switch to dictation'
-              : voicePhase === 'recording'
-                ? voiceConversation
-                  ? 'Finish voice utterance'
-                  : 'Finish dictation'
-                : voiceConversation
-                  ? 'Start voice utterance — hold to switch to dictation'
-                  : 'Dictate message — hold for hands-free voice'
+            : voicePhase === 'recording'
+              ? 'Finish dictation'
+              : 'Dictate message — hold for hands-free voice'
         }
-        title={
-          voiceConversation
-            ? 'Voice conversation — hold to switch to dictation'
-            : 'Dictate message — hold for hands-free voice'
-        }
+        title="Dictate message — hold for hands-free voice"
       >
-        {voiceConversation ? <VoiceLoopIcon /> : <MicIcon />}
+        <MicIcon />
       </ComposerButton>
     ) : null;
 
@@ -6134,7 +6049,7 @@ export function SessionScreen({
                 voiceControl={
                   liveVoiceRequest.sid === sid && liveVoiceRequest.count > 0
                     ? <div ref={setVoiceControlsTarget} />
-                    : voiceConversation ? renderVoiceControl('overlay') : undefined
+                    : undefined
                 }
                 onClose={closeArtifacts}
               />
@@ -6310,19 +6225,18 @@ export function SessionScreen({
                 onSelect={completeSlash}
               />
 
-              <LiveVoicePanel
-                key={`${client.base}:${sid}`}
-                client={client}
-                sid={sid}
-                startRequest={liveVoiceRequest.sid === sid ? liveVoiceRequest.count : 0}
-                controlsTarget={voiceControlsTarget}
-                disabled={voiceStarting || voicePhase !== 'idle' || voiceConversation}
-                onActive={setLiveVoiceActive}
-                onBegin={() => {
-                  speechOutput.stop();
-                  setVoiceSpeaking(false);
-                }}
-              />
+              {liveVoiceRequest.sid === sid && liveVoiceRequest.count > 0 && (
+                <LiveVoicePanel
+                  key={`${client.base}:${sid}`}
+                  client={client}
+                  sid={sid}
+                  startRequest={liveVoiceRequest.count}
+                  controlsTarget={voiceControlsTarget}
+                  disabled={voiceStarting || voicePhase !== 'idle'}
+                  onActive={setLiveVoiceActive}
+                  onBegin={() => speechOutput.stop()}
+                />
+              )}
 
               <QueuedTurnsTray
                 key={sid}
@@ -6352,7 +6266,6 @@ export function SessionScreen({
 
                 {(composerNotice ||
                   voiceStarting ||
-                  voiceConversation ||
                   voicePhase !== 'idle' ||
                   voiceModel?.status === 'downloading' ||
                   (voiceRequested && voiceModel?.status !== 'ready')) && (
@@ -6360,24 +6273,15 @@ export function SessionScreen({
                     {voicePhase === 'recording' ? (
                       <>
                         <span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" />{' '}
-                        {voiceConversation
-                          ? 'Voice conversation · Listening · tap the microphone again to finish'
-                          : 'Listening · tap the microphone again to finish'}
+                        Listening · tap the microphone again to finish
                       </>
                     ) : voicePhase === 'transcribing' ? (
                       <>
                         <span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" />{' '}
-                        {voiceConversation && 'Voice conversation · '}
                         {voiceProgressLabel(voiceProgress)}
                       </>
                     ) : composerNotice ? (
                       composerNotice
-                    ) : voiceSpeaking ? (
-                      <>Voice conversation · Speaking · tap the microphone to stop</>
-                    ) : voiceConversation && running ? (
-                      <>Voice conversation · {session?.agent_name ?? 'Vis'} is working</>
-                    ) : voiceConversation ? (
-                      <>Voice conversation · Ready · tap the microphone to speak</>
                     ) : voiceStarting ? (
                       <>Starting microphone…</>
                     ) : voiceModel?.status === 'downloading' ? (
@@ -6412,13 +6316,11 @@ export function SessionScreen({
                     commands={attachmentCommands}
                   />
 
-                  {/* ONE microphone, the way a messenger does it: TAP acts in the mode
-                    you are in, PRESS AND HOLD switches the mode. The mode was always a
-                    single boolean — the disclosure beside this button was a menu built
-                    around it, and the border welding the two read as a divider in the
-                    strip. A gesture nobody can see needs the name to say it, so the
-                    accessible label carries the act AND the switch, and a pointer that
-                    cannot hold gets the same switch from a right-click or Shift+Enter. */}
+                  {/* ONE microphone, the way a messenger does it: TAP dictates, PRESS
+                    AND HOLD starts hands-free voice. A gesture nobody can see needs the
+                    name to say it, so the accessible label carries the act AND the hold,
+                    and a pointer that cannot hold gets the same start from a right-click
+                    or Shift+Enter. */}
                   {renderVoiceControl()}
 
                   <textarea

@@ -9,7 +9,8 @@
             [lazytest.core :refer [defdescribe describe expect it]]
             [ring.websocket :as ws])
   (:import [java.nio ByteBuffer]
-           [java.util UUID]))
+           [java.util UUID]
+           [java.util.concurrent ArrayBlockingQueue]))
 
 (set! *warn-on-reflection* true)
 
@@ -286,7 +287,49 @@
                                     #'voice/close! (fn [runtime reason]
                                                      (reset! closed [runtime reason]))}
                      #(try (on-error nil (ex-info "Media failed" {})) (catch Exception _ nil)))
-                   (expect (= [:runtime "connection_failed"] @closed)))))
+                   (expect (= [:runtime "connection_failed"] @closed))))
+             (it "tells a departed peer from a media defect"
+                 (let [gone (java.io.IOException. "Broken pipe")]
+                   (expect (#'media/peer-left? gone))
+                   (expect (#'media/peer-left? (ex-info "Send failed" {} gone)))
+                   (expect (not (#'media/peer-left? (ex-info "Missing method" {})))))))
+
+(defdescribe event-overflow-test
+             (it "closes an overflowed subscription off the session event thread"
+                 (let [sink
+                       (atom nil)
+
+                       release
+                       (promise)
+
+                       closed
+                       (promise)
+
+                       coordinator
+                       {:state (atom {:closed false})}
+
+                       runtime
+                       {:events (ArrayBlockingQueue. 1)
+                        :sid (str session-id)
+                        :id "subscriber"
+                        :coordinator coordinator
+                        :threads (atom [])}]
+
+                   (with-redefs-fn {#'state/subscribe! (fn [_ _ f _]
+                                                         (reset! sink f))
+                                    #'state/unsubscribe! (fn [& _] nil)
+                                    #'voice/task-event! (fn [& _] @release)
+                                    #'voice/close! (fn [_ reason]
+                                                     (swap! (:state coordinator) assoc :closed true)
+                                                     (deliver closed [reason (Thread/currentThread)]))}
+                     #(do (#'voice/subscribe! runtime)
+                          (dotimes [_ 4] (@sink {"type" "turn.started"}))
+                          (deliver release true)
+                          (let [[reason thread] (deref closed 3000 nil)]
+                            (expect (= "event_overflow" reason))
+                            (expect (some? thread))
+                            (expect (not= (Thread/currentThread) thread)))
+                          (.join ^Thread (first @(:threads runtime)) 3000))))))
 
 (defdescribe mobile-capability-gate-test
              (it "lists native mobile test clients without claiming device qualification"

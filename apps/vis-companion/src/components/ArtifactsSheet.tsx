@@ -1151,7 +1151,7 @@ export function ArtifactsSheet({
   artifacts: SessionArtifact[];
   /** Artifact requested by an inline answer link; the grid remains underneath it. */
   initialArtifact?: SessionArtifact | null;
-  /** The armed voice conversation stays actionable while this surface covers the composer. */
+  /** Hands-free voice stays actionable while this surface covers the composer. */
   voiceControl?: ReactNode;
   onClose: () => void;
 }) {

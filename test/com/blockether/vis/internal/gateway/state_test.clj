@@ -6697,7 +6697,12 @@
         (expect (= ["silence" "visual"]
                    (keep #(when (= "content.block.started" (get % "type"))
                             (get-in % ["block" "type"]))
-                         events))))))
+                         events)))))
+  (it "carries a presentation only on an iteration that has one"
+      (let [payload #(#'state/iteration-final-payload
+                      {:done? true :assistant-prose "Hello" :presentation-content %})]
+        (expect (not (contains? (payload nil) :presentation-content)))
+        (expect (= [] (:presentation-content (payload [])))))))
 
 (defdescribe
   late-terminal-chunk-test

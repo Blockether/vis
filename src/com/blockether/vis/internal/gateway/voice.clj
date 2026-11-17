@@ -429,7 +429,10 @@
         (UUID/fromString (:sid runtime))
 
         subscriber
-        (:id runtime)]
+        (:id runtime)
+
+        overflow
+        (atom false)]
 
     (state/subscribe! sid
                       subscriber
@@ -449,13 +452,17 @@
                                              "turn.cancelled" "turn.input" "speech.committed"
                                              "speech.invalidated" "view.open" "view.close"}
                                            type)
-                            (when-not (enqueue! queue event) (close! runtime "event_overflow")))))
+                            ;; This sink runs under the session event lock, and a close
+                            ;; takes the coordinator lock. Only record the overflow here.
+                            (when-not (enqueue! queue event) (reset! overflow true)))))
                       Long/MAX_VALUE)
     (worker! runtime
              (fn []
                (try (while (running? runtime)
-                      (when-let [event (.poll queue 200 TimeUnit/MILLISECONDS)]
-                        (task-event! runtime event)))
+                      (if @overflow
+                        (close! runtime "event_overflow")
+                        (when-let [event (.poll queue 200 TimeUnit/MILLISECONDS)]
+                          (task-event! runtime event))))
                     (finally (state/unsubscribe! sid subscriber)))))))
 
 (defn- make-runtime

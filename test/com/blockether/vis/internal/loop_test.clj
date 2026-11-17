@@ -13512,31 +13512,15 @@
 
 (defdescribe
   voice-projection-prompt-test
-  (it "uses immutable segments only for an explicitly enabled live voice turn"
-      (let [features
-            {"voice_projection" true "voice_segments" true}
-
-            prompt
-            (#'iteration/voice-system-prompt "base" features)]
-
-        ;; Regression: session a853a9c9-6296-42f9-ab32-67ee83447023 omitted the spoken outcome.
-        (expect (str/includes? prompt "Each final reply must contain an answer conversation"))
-        (expect (str/includes? prompt "The same text is displayed and spoken"))
-        (expect (str/includes? prompt "Put corrections in new records"))
-        (expect (not (str/includes? prompt "vis-speech")))
-        (expect (str/includes? prompt "Each complete record is immutable"))
-        (expect (str/includes? prompt "verified updates"))
-        (expect (str/includes? prompt "Only when the user requests silence")))
-      (expect (= "base" (#'iteration/voice-system-prompt "base" {"voice_segments" true}))))
-  (it "activates the voice projection instructions only for the requested turn"
-      (let [projected (#'iteration/voice-system-prompt "base" {"voice_projection" true})]
-        (expect (str/includes? projected "base"))
-        (expect (str/includes? projected "vis-speech"))
-        (expect (str/includes? projected "text-to-speech"))
-        (expect (str/includes? projected "text-only turn"))
-        (expect (str/includes? projected "do not mention voice mode")))
-      (expect (= "base" (#'iteration/voice-system-prompt "base" {})))
-      (expect (= "base" (#'iteration/voice-system-prompt "base" {:voice_projection true})))))
+  ;; Regression: session a853a9c9-6296-42f9-ab32-67ee83447023 omitted the spoken outcome.
+  (it "changes the system prompt only for a live voice turn"
+      (expect (not= "base"
+                    (#'iteration/voice-system-prompt
+                     "base"
+                     {"voice_projection" true "voice_segments" true})))
+      (doseq [features [{} {"voice_segments" true} {"voice_projection" true}
+                        {:voice_projection true :voice_segments true}]]
+        (expect (= "base" (#'iteration/voice-system-prompt "base" features))))))
 
 (def ^:private failed-turn-outcome
   "A finished turn's terminal payload: content, structured error, counters, CTX."

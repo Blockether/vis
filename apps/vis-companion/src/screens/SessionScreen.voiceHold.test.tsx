@@ -9,8 +9,6 @@ const voice = vi.hoisted(() => ({
 
 vi.mock('../lib/voice', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/voice')>()),
-  beginVoiceAudioSession: vi.fn(() => Promise.resolve()),
-  endVoiceAudioSession: vi.fn(() => Promise.resolve()),
   startWavRecording: vi.fn(() =>
     Promise.resolve({ stop: voice.stop, cancel: voice.cancel, isCapturing: () => true }),
   ),
@@ -240,7 +238,6 @@ describe('hands-free microphone gesture', () => {
     fireEvent.click(mic);
     await waitFor(() => expect(liveVoiceCapabilities).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('button', { name: 'Finish dictation' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Start voice utterance/ })).not.toBeInTheDocument();
   });
   it('does not start voice after a cancelled hold', async () => {
     const liveVoiceCapabilities = vi.fn();

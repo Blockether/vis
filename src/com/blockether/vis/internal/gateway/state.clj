@@ -2336,10 +2336,10 @@
 (defn- iteration-final-payload
   "The iteration's complete reasoning and assistant prose - the canonical,
    PERSISTED final text - plus descriptors of the artifacts it produced."
-  [{:keys [done? thinking assistant-prose presentation-content iteration-id attachment-count]
-    :as chunk}]
+  [{:keys [done? thinking assistant-prose presentation-content iteration-id attachment-count]}]
   (cond-> {:done (boolean done?) :thinking (util/settled-thinking-text thinking)}
-    (contains? chunk :presentation-content)
+    ;; An ordinary iteration has no presentation. Its event must not carry the key.
+    (some? presentation-content)
     (assoc :presentation-content presentation-content)
 
     (some-> assistant-prose

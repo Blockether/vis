@@ -479,12 +479,13 @@
                        :on-refusal-fallback
                        :refusal-fallbacks
                        :reasoning-effort)
+               ;; Keep the request options of the caller. Only cap the output.
+               (update :extra-body assoc "max_tokens" 4096)
                (assoc
                  :tools []
                  :tool-choice :none
                  :preferred-reasoning-effort "low"
                  :routing {:provider provider :model model}
-                 :extra-body {:max_tokens 4096}
                  :messages
                  (conj
                    (vec (:messages ask-opts))
@@ -2039,9 +2040,6 @@
                                                                                overflow)
                                                                              before-tokens)}))))))))
 
-(def ^:private voice-projection-prompt
-  "This is a text-only turn whose client may optionally read a separate projection aloud. Write the complete normal answer exactly as you would for any text client; do not mention voice mode, listening, playback, or ask the user to confirm that audio played. Then finish with exactly one fenced `vis-speech` block. Inside that block write only concise, natural plain text suitable for text-to-speech: no Markdown, code, tables, raw URLs, citation syntax, or tool narration. State the outcome, an important caveat, and any question that needs an answer. Do not repeat secrets. Aim for 15 to 45 seconds.")
-
 (def ^:private live-voice-projection-prompt
   (str
     "This turn is a hands-free conversation with a screen. Write assistant output as JSON lines, not ordinary prose. "
@@ -2062,11 +2060,10 @@
 
 (defn- voice-system-prompt
   [system-prompt turn-features]
-  (if (true? (get turn-features "voice_projection"))
+  (if (and (true? (get turn-features "voice_projection"))
+           (true? (get turn-features "voice_segments")))
     (str (when-not (str/blank? (str system-prompt)) (str system-prompt "\n\n"))
-         (if (true? (get turn-features "voice_segments"))
-           live-voice-projection-prompt
-           voice-projection-prompt))
+         live-voice-projection-prompt)
     system-prompt))
 
 (defn- with-council-execution

@@ -91,11 +91,23 @@
                                       :trace trace})
                              known-secrets)))
 
+(defn- peer-left?
+  "True when the connection ended: an I/O failure or a timeout, not a fault in the media."
+  [error]
+  (boolean (some #(or (instance? java.io.IOException %)
+                      (str/ends-with? (.getName (class %)) "TimeoutException"))
+                 (take-while some? (iterate ex-cause error)))))
+
 (defn- log-media-error!
   [error ticket]
-  (let [message (str "Live voice media failed: " (media-error-details error [ticket]))]
-    (tel/log! :error [message])
-    (.println System/err message)))
+  (if (peer-left? error)
+    ;; A lost connection is a usual end of a voice session, not an error.
+    (tel/log! :info
+              [(str "Live voice media closed: "
+                    (util/redact-secret-text (str (ex-message error)) [ticket]))])
+    (let [message (str "Live voice media failed: " (media-error-details error [ticket]))]
+      (tel/log! :error [message])
+      (.println System/err message))))
 
 (defn- media-handler
   [request]

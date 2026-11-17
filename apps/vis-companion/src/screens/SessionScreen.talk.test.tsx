@@ -19,7 +19,7 @@ const voiceCapabilities = {
 
 // The `Talk to Vis` App Intent (the Action Button) opens a session with a Talk nonce.
 describe('a session opened by a Talk link', () => {
-  it('requests hands-free voice instead of arming the old conversation mode', async () => {
+  it('requests hands-free voice', async () => {
     renderSessionScreen({
       client: {
         cachedCapabilities: () => voiceCapabilities,
@@ -30,18 +30,19 @@ describe('a session opened by a Talk link', () => {
     });
 
     expect(await screen.findByText('Hands-free voice is unavailable on this gateway.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /start voice utterance/i })).not.toBeInTheDocument();
   });
 
   it('stays in dictation without a Talk link', async () => {
+    const liveVoiceCapabilities = vi.fn(async () => ({ enabled: false, available: false }));
     renderSessionScreen({
       client: {
         cachedCapabilities: () => voiceCapabilities,
         capabilities: () => Promise.resolve(voiceCapabilities),
+        liveVoiceCapabilities,
       },
     });
 
     expect(await screen.findByRole('button', { name: /dictate message/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /start voice utterance/i })).not.toBeInTheDocument();
+    expect(liveVoiceCapabilities).not.toHaveBeenCalled();
   });
 });

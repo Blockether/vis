@@ -28,7 +28,7 @@
    :duration-ms 2})
 
 (defn- present
-  [raw repair]
+  [raw repair & [ask-opts]]
   (let [calls
         (atom [])
 
@@ -40,10 +40,11 @@
           (#'iteration/final-presentation
            environment
            model
-           {:messages [{:role "user" :content "Check it"}]
-            :tools [{:name "python_execution"}]
-            :on-chunk identity
-            :cancel-fn (constantly false)}
+           (merge {:messages [{:role "user" :content "Check it"}]
+                   :tools [{:name "python_execution"}]
+                   :on-chunk identity
+                   :cancel-fn (constantly false)}
+                  ask-opts)
            (response raw)))]
 
     {:result result :calls @calls}))
@@ -143,6 +144,11 @@
       (let [{:keys [result calls]} (present "done" (ex-info "offline" {}))]
         (expect (= 1 (count calls)))
         (expect (= :failed (:presentation-status result)))))
+  (it "keeps the provider options of the turn in the repair call"
+      (let [{:keys [calls]}
+            (present "done" (response answer) {:extra-body {"service_tier" "priority"}})]
+        (expect (= {"service_tier" "priority" "max_tokens" 4096}
+                   (:extra-body (:opts (first calls)))))))
   (it "propagates interruption rather than hiding cancellation"
       (expect
         (try (present "done" (InterruptedException.)) false (catch InterruptedException _ true))))
