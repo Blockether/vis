@@ -2485,7 +2485,10 @@
                            {:argv argv :env (assoc env "VIS_PYTHON_TLS_STRICT" (str tls-strict?))})
     ;; The source launcher changes OS cwd to resolve deps, preserving the caller
     ;; in user.dir. Python and relative script reads must use that caller too.
-    (try (pyrt/exec! python-context (str "import os\nos.chdir(" (env/py-json-literal cwd) ")\n"))
+    ;; #110: guest stderr stays the terminal's descriptor 2, not the block output.
+    (try (pyrt/exec! python-context
+                     (str "import os\nos.chdir(" (env/py-json-literal cwd) ")\n"
+                          "__vis_keep_stderr__ = True\n"))
          (pyrt/exec!
            python-context
            (str "import tls_policy\ntls_policy.configure(" (if tls-strict? "True" "False") ")\n"))

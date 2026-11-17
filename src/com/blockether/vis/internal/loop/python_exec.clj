@@ -690,7 +690,7 @@
         (let [retired-before?
               (some? (env/retired-context-error env))
 
-              landed?
+              _
               (interrupt-block! python-context exec-future env :await-unwind? true)
 
               retired?
@@ -705,8 +705,10 @@
               ;; through its own outcome and hands that capture buffer back, so the
               ;; envelope is never a bare `Timeout` and nothing else: that is
               ;; unactionable, and the model re-runs the whole block blind.
+              ;; A stop that lost the race to a block that just finished still finds
+              ;; that block's outcome in the future.
               out
-              (when (or landed? retired?) (unwound-stdout python-context exec-future))
+              (unwound-stdout python-context exec-future)
 
               ;; A block parked in native code did not respond to the stop, so its
               ;; worker was killed. The turn goes on in a fresh interpreter that the
