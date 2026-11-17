@@ -421,6 +421,35 @@ Verification at this phase:
 - Unknowns: The phone must load the updated app and gateway. Speaker echo, simultaneous speech and sustained processing remain unverified.
 - State: Changes remain local. Locked-screen behavior is unchanged. No service restart, deployment, physical playback, commit or push occurred.
 
+## 19. Voice behind a locked screen
+
+- Rationale: A hands-free session must continue when the phone locks. Before this phase, a lock ended the session.
+- Data: Two deliberate stops caused this. The iOS bridge failed on `willResignActive`. The web adapter failed when the page became hidden.
+- Data: The Android bridge failed on activity pause and stop. Android also stops the microphone of a background process without a foreground service.
+- Data: This phase replaces the phase 13 rule "Stop on backgrounding". Route loss, interruptions and unsupported echo cancellation still stop the session.
+- Data: The gateway changes the capture generation only on mute, unmute, overload and close. An unmuted session keeps one capture graph through a lock.
+- Data: iOS keeps the audio session active while the app is not in the foreground. iOS can refuse a new activation in the background.
+- Data: iOS starts a playback-only graph when the app leaves the foreground without running audio. A muted session thus continues behind the lock.
+- Data: Foreground transitions on iOS are unchanged. Mute in the foreground still releases the audio session.
+- Data: The voice session logic and the media socket run in the web view. From iOS 17, the bridge sets `inactiveSchedulingPolicy` to `none` at load.
+- Data: Android starts `LiveVoiceService`, a foreground service with the types `mediaPlayback` and `microphone`, a wake lock and an ongoing notice.
+- Data: Android adds the microphone type only after the permission is granted. The service stops when the session ends.
+- Data: A new session still needs the foreground on both platforms. Capture can restart behind the lock only in a live session.
+- Data: The web adapter no longer reads page visibility. A resumed iOS web view can continue to report a hidden document.
+- Data: New iOS projects get a microphone purpose text that names hands-free voice. An existing generated project keeps its text.
+- Decision: The session also continues when the user opens another app. The system shows its microphone indicator.
+- Decision: There is no lock-screen control. To mute or end voice, the user opens the app. Android shows an ongoing notice that opens the app.
+- Decision: Approvals stay on the screen. The gateway rules for spoken progress and approvals are unchanged.
+- Acceptance criteria: A lock and an unlock do not end a live session, with the microphone on or muted.
+- Acceptance criteria: Calls, alarms, route loss and a media service reset still end the session with a message.
+- Verification: The new adapter cases failed before the change. All 3,531 Companion unit cases pass, with 19 skipped. Type checking and compiler lint pass.
+- Verification: All 14 Swift state cases pass. The iOS bridge type-checks for a device against the built Capacitor framework. Swift format lint passes.
+- Verification: All 26 affected script cases pass. The Android debug sources compile, all seven state cases pass and lint reports zero errors.
+- Unknowns: No phone ran this phase. The web view schedule behind a lock, the audio session behind a lock and the Android service are unverified on devices.
+- Unknowns: A hidden web view can delay timers. A long silent lock can thus lose the 15 second lease. This is unverified.
+- Unknowns: Capture restart behind the lock after an overload is unverified. A locked phone uses its speaker, where echo remains unresolved.
+- State: Changes remain local in the draft. No iOS preparation, service restart, deployment, device use, commit or push occurred.
+
 ## Human testing handoff
 
 Use the rebuilt draft gateway at `target/vis` and TUI at `apps/vis-tui/target/vis-tui`.
@@ -443,6 +472,14 @@ No installed service was replaced or restarted.
 10. Check headset routing, speaker echo, double-talk, background noise and device changes separately.
 11. Use the phone speaker. Let one answer play without speaking. Check that playback creates no user request.
 12. Speak a quiet request during playback. Check that speech stops the old audio without cancelling work.
+13. Before the lock checks, run `node scripts/ios-prepare.mjs` in `apps/vis-companion` and build again. The installed build has no `LiveVoicePlugin` registration.
+14. Start voice, then lock the phone. Speak a request. Check that the answer plays behind the lock.
+15. Keep the phone locked and silent for ten minutes. Speak again. Check that the session continues.
+16. Mute, lock the phone for two minutes, then unlock. Check that the session is live and that unmute works.
+17. Unlock during playback. Check that the controls and the transcript are current.
+18. Take a call or let an alarm sound behind the lock. Check that voice ends with a message.
+19. Open another app during voice. Check the microphone indicator. Return to Vis and end voice.
+20. On Android, repeat checks 14 to 19. Check that the ongoing notice appears and disappears with the session.
 
 The latest phone test captured speaker playback as input. Speaker echo remains unresolved; broader device coverage and pronunciation remain unverified.
 This handoff is not a release or a claim that the latency targets pass.

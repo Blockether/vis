@@ -19,7 +19,7 @@ describe('Android live voice preparation', () => {
       mkdirSync(java, { recursive: true });
       const activity = join(java, 'MainActivity.java');
       writeFileSync(activity, initialActivity);
-      writeFileSync(join(main, 'AndroidManifest.xml'), '<manifest><application /></manifest>');
+      writeFileSync(join(main, 'AndroidManifest.xml'), '<manifest>\n    <application>\n    </application>\n</manifest>');
       prepareAndroidLiveVoice(fixture, 'com.blockether.viscompanion');
       const once = readFileSync(activity, 'utf8');
       prepareAndroidLiveVoice(fixture, 'com.blockether.viscompanion');
@@ -27,11 +27,16 @@ describe('Android live voice preparation', () => {
       if (initialActivity.includes('OAuthLoopback'))
         expect(once).toContain('registerPlugin(OAuthLoopbackPlugin.class);');
       expect(once.match(/registerPlugin\(LiveVoicePlugin.class\)/g)).toHaveLength(1);
-      for (const file of ['LiveVoicePlugin.java', 'LiveVoiceState.java'])
+      for (const file of ['LiveVoicePlugin.java', 'LiveVoiceService.java', 'LiveVoiceState.java'])
         expect(readFileSync(join(java, file), 'utf8')).toBe(readFileSync(join(root, 'native/android', file), 'utf8'));
       const manifest = readFileSync(join(main, 'AndroidManifest.xml'), 'utf8');
       expect(manifest.match(/android.permission.RECORD_AUDIO/g)).toHaveLength(1);
       expect(manifest.match(/android.permission.MODIFY_AUDIO_SETTINGS/g)).toHaveLength(1);
+      // Without the service entry, Android stops the microphone behind a locked screen.
+      for (const name of ['FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_MICROPHONE', 'FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'WAKE_LOCK'])
+        expect(manifest.match(new RegExp(`android.permission.${name}"`, 'g'))).toHaveLength(1);
+      expect(manifest.match(/<service android:name="\.LiveVoiceService"[^>]*android:foregroundServiceType="mediaPlayback\|microphone"/g)).toHaveLength(1);
+      expect(manifest.indexOf('<service')).toBeLessThan(manifest.indexOf('</application>'));
     } finally { rmSync(fixture, { recursive: true, force: true }); }
   });
 });

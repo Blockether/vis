@@ -26,7 +26,10 @@ import com.getcapacitor.annotation.PermissionCallback;
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 
-/** Foreground PCM transport. Physical echo performance still needs human verification. */
+/**
+ * PCM transport. A session starts in the foreground and continues behind a locked screen.
+ * Physical echo performance still needs human verification.
+ */
 @CapacitorPlugin(name = "LiveVoice", permissions = {
     @Permission(alias = "microphone", strings = {Manifest.permission.RECORD_AUDIO})
 })
@@ -47,6 +50,8 @@ public class LiveVoicePlugin extends Plugin {
     private LiveVoiceState.SpeakerRoute speakerRoute;
     private boolean ownsMode;
     private boolean foreground = true;
+    private boolean held;
+    private boolean heldMicrophone;
     private boolean permissionPending;
     private PluginCall permissionCall;
     private long rawHead;
@@ -117,6 +122,7 @@ public class LiveVoicePlugin extends Plugin {
                 call.resolve(capabilities(false));
                 return;
             }
+            holdProcess();
             sessionId = id;
             state = new LiveVoiceState();
             manager = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
@@ -124,8 +130,20 @@ public class LiveVoicePlugin extends Plugin {
         } catch (Exception error) { call.reject(error.getMessage()); }
     }
 
+    /**
+     * Android stops the microphone of a background process that has no foreground service.
+     * The microphone type needs the granted permission, so capture start calls this again.
+     */
+    private void holdProcess() {
+        boolean microphone = getContext().checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        if (held && heldMicrophone == microphone) return;
+        LiveVoiceService.start(getContext(), microphone);
+        held = true;
+        heldMicrophone = microphone;
+    }
+
     private void audioSession() {
-        if (!foreground) throw new IllegalStateException("Voice requires the foreground.");
         if (ownsMode) return;
         AudioAttributes attributes = attributes();
         LiveVoiceState ownedState = state;
@@ -244,6 +262,7 @@ public class LiveVoicePlugin extends Plugin {
             if (getContext().checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                     != android.content.pm.PackageManager.PERMISSION_GRANTED)
                 throw new SecurityException("Microphone permission was revoked.");
+            holdProcess();
             recorder = new AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                     LiveVoiceState.RATE, AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT, Math.max(minimum, 4 * LiveVoiceState.FRAME));
@@ -456,6 +475,8 @@ public class LiveVoicePlugin extends Plugin {
         }
         releaseCapture();
         releaseOutput();
+        if (held) LiveVoiceService.stop(getContext());
+        held = heldMicrophone = false;
         if (manager != null) {
             if (ownsMode && manager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
                 restoreRoute();
@@ -488,16 +509,10 @@ public class LiveVoicePlugin extends Plugin {
         call.resolve();
     }
 
-    @Override protected synchronized void handleOnPause() {
-        foreground = false;
-        // Permission UI can pause the activity before any capture starts.
-        if (!permissionPending) fail("Live voice stopped when the app left the foreground.");
-    }
+    // A locked screen is not a stop. Only a new session needs the foreground.
+    @Override protected synchronized void handleOnPause() { foreground = false; }
     @Override protected synchronized void handleOnResume() { foreground = true; }
-    @Override protected synchronized void handleOnStop() {
-        foreground = false;
-        fail("Live voice stopped when the app left the foreground.");
-    }
+    @Override protected synchronized void handleOnStop() { foreground = false; }
     @Override protected synchronized void handleOnDestroy() {
         getBridge().removeWebViewListener(navigationListener);
         watchesNavigation = false;

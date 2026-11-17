@@ -3,7 +3,8 @@ import Capacitor
 import UIKit
 import WebKit
 
-/// Foreground PCM transport. No recognition, synthesis or network requests occur here.
+/// PCM transport. No recognition, synthesis or network requests occur here.
+/// A session starts in the foreground and continues behind a locked screen.
 @objc(LiveVoicePlugin)
 public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
   public let identifier = "LiveVoicePlugin"
@@ -69,6 +70,16 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     #endif
   }
 
+  private var appActive: Bool { UIApplication.shared.applicationState == .active }
+
+  public override func load() {
+    // The voice session logic runs in the web view. From iOS 17, WebKit suspends
+    // web content that is not visible unless the policy says otherwise.
+    if #available(iOS 17.0, *) {
+      bridge?.webView?.configuration.preferences.inactiveSchedulingPolicy = .none
+    }
+  }
+
   deinit {
     for observer in observers { NotificationCenter.default.removeObserver(observer) }
     if hasTap { engine?.inputNode.removeTap(onBus: 0) }
@@ -115,8 +126,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     command(call) {
       guard self.sessionId == nil, let id = call.getString("sessionId"), !id.isEmpty,
         id.count <= 256, try self.integer(call, "sampleRate") == 24000,
-        self.capabilities["available"] as? Bool == true,
-        UIApplication.shared.applicationState == .active
+        self.capabilities["available"] as? Bool == true, self.appActive
       else {
         throw LiveVoiceState.Failure.invalid
       }
@@ -136,7 +146,6 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     let center = NotificationCenter.default
     let owner = state
     for name in [
-      UIApplication.willResignActiveNotification,
       AVAudioSession.interruptionNotification, AVAudioSession.mediaServicesWereResetNotification,
     ] {
       observers.append(
@@ -144,9 +153,17 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
           [weak self] _ in
           guard let self, self.state === owner else { return }
           self.diagnostic("lifecycle notification=\(name.rawValue)")
-          self.fail("Live audio stopped when the app or audio session changed.")
+          self.fail("Live audio stopped when the audio session changed.")
         })
     }
+    observers.append(
+      center.addObserver(
+        forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+      ) { [weak self] _ in
+        guard let self, self.state === owner else { return }
+        self.diagnostic("lifecycle notification=willResignActive")
+        self.holdAudio()
+      })
     observers.append(
       center.addObserver(
         forName: AVAudioSession.routeChangeNotification,
@@ -160,6 +177,16 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
           self.fail("Live audio stopped because the audio route changed.")
         }
       })
+  }
+
+  /// iOS suspends an app that has no running audio. Keep a playback graph while
+  /// the app is not in the foreground, so that the session continues.
+  private func holdAudio() {
+    guard sessionId != nil, let state, engine == nil, !state.capturing else { return }
+    do { try configure(capture: false) } catch {
+      diagnostic("background audio failed code=\((error as NSError).code)")
+      fail("Live audio could not continue in the background.")
+    }
   }
 
   @objc public func startCapture(_ call: CAPPluginCall) {
@@ -178,13 +205,23 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
           guard let self, self.sessionId == owner, self.state === state,
             state.captureId == id, state.capturing, self.permissionCall === call
           else { return }
+          let background = UIApplication.shared.applicationState == .background
           self.diagnostic(
-            "permission allowed=\(allowed) appActive=\(UIApplication.shared.applicationState == .active)"
+            "permission allowed=\(allowed) background=\(background) audioActive=\(self.audioActive)"
           )
-          guard allowed, UIApplication.shared.applicationState == .active else {
+          guard allowed else {
             self.permissionCall = nil
             call.reject("Microphone access is unavailable.")
             self.fail("Microphone access is unavailable.")
+            return
+          }
+          guard
+            LiveVoiceState.allowsCaptureStart(
+              background: background, audioActive: self.audioActive)
+          else {
+            self.permissionCall = nil
+            call.reject("Voice cannot start behind a locked screen. Start voice again.")
+            self.fail("Voice cannot start behind a locked screen. Start voice again.")
             return
           }
           do {
@@ -243,7 +280,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     }
   }
 
-  private func stopEngine() {
+  private func stopEngine(closing: Bool = false) {
     diagnosticRoute("engine stopping")
     pipeline = UUID()
     capturePipeline = UUID()
@@ -256,7 +293,9 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     engine?.reset()
     engine = nil
     player = nil
-    if audioActive {
+    if audioActive,
+      LiveVoiceState.releasesAudioSession(foreground: appActive, closing: closing)
+    {
       audioActive = false
       try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
@@ -468,7 +507,8 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         self.permissionCall?.reject("Microphone capture stopped.")
         self.permissionCall = nil
         self.stopEngine()
-        // Output starts lazily with a playback-only graph.
+        // In the foreground, output starts lazily with a playback-only graph.
+        if !self.appActive { self.holdAudio() }
       }
       call.resolve()
     }
@@ -562,6 +602,6 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     permissionCall = nil
     for observer in observers { NotificationCenter.default.removeObserver(observer) }
     observers.removeAll()
-    stopEngine()
+    stopEngine(closing: true)
   }
 }

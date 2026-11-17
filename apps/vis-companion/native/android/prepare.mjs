@@ -25,7 +25,7 @@ export function prepareAndroidLiveVoice(root, appId) {
     writeFileSync(activityPath, activity);
   }
   for (const [directory, target, files] of [
-    ['android', java, ['LiveVoicePlugin.java', 'LiveVoiceState.java']],
+    ['android', java, ['LiveVoicePlugin.java', 'LiveVoiceService.java', 'LiveVoiceState.java']],
     ['android-test', join(root, 'android/app/src/test/java', ...appId.split('.')), ['LiveVoiceStateTest.java']],
     ['android-test', join(root, 'android/app/src/androidTest/java', ...appId.split('.')), ['LiveVoiceSmokeTest.java']],
   ]) {
@@ -38,10 +38,20 @@ export function prepareAndroidLiveVoice(root, appId) {
   }
   const manifestPath = join(main, 'AndroidManifest.xml');
   let manifest = readFileSync(manifestPath, 'utf8');
-  for (const name of ['RECORD_AUDIO', 'MODIFY_AUDIO_SETTINGS']) {
+  for (const name of [
+    'RECORD_AUDIO', 'MODIFY_AUDIO_SETTINGS',
+    // The service keeps the microphone and the processor while the screen is locked.
+    'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_MICROPHONE', 'FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+    'WAKE_LOCK',
+  ]) {
     const permission = `android.permission.${name}`;
     if (!manifest.includes(`android:name="${permission}"`))
       manifest = manifest.replace('<application', `<uses-permission android:name="${permission}" />\n    <application`);
+  }
+  if (!manifest.includes('android:name=".LiveVoiceService"')) {
+    if (!manifest.includes('</application>')) throw new Error('Android manifest has no service seam');
+    manifest = manifest.replace('</application>', `    <service android:name=".LiveVoiceService" android:exported="false" android:foregroundServiceType="mediaPlayback|microphone" />
+    </application>`);
   }
   writeFileSync(manifestPath, manifest);
 }

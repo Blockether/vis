@@ -370,14 +370,42 @@ describe('native live voice bridge', () => {
     expect(h.plugin.close).toHaveBeenCalledTimes(2);
     expect(output.release).toHaveBeenCalledTimes(1);
   });
-  it('closes on backgrounding without accepting failures from another owner', async () => {
+  it('ignores failures from another owner', async () => {
     const h = harness();
     await h.audio.prepare(h.fail);
     h.emit('failure', { sessionId: 'other', message: 'Old session failed.' });
     expect(h.fail).not.toHaveBeenCalled();
+    h.emit('failure', { message: 'Live audio stopped.' });
+    expect(h.fail).toHaveBeenCalledWith('Live audio stopped.');
+    expect(h.plugin.close).toHaveBeenCalledTimes(1);
+  });
+  // A locked screen hides the page. Native audio continues, so the session must continue.
+  it('keeps capture and playback when the screen locks and unlocks', async () => {
+    const h = harness();
+    const frames = vi.fn();
+    const played = vi.fn();
+    await h.audio.prepare(h.fail);
+    await h.audio.capture(frames);
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
     document.dispatchEvent(new Event('visibilitychange'));
-    expect(h.fail).toHaveBeenCalledWith('Voice stopped because the app entered the background.');
-    expect(h.plugin.close).toHaveBeenCalledTimes(1);
+    h.emit('capture', { captureId: h.captureId(), sequence: 0, pcm: pcm(7) });
+    h.audio.play(new Int16Array(480), played);
+    h.emit('played', { outputId: 0, frameId: 0, playedSamples: 480 });
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+    h.emit('capture', { captureId: h.captureId(), sequence: 1, pcm: pcm(8) });
+    expect(frames).toHaveBeenCalledTimes(2);
+    expect(played).toHaveBeenCalledWith(480);
+    expect(h.fail).not.toHaveBeenCalled();
+    expect(h.plugin.close).not.toHaveBeenCalled();
+  });
+  // A resumed iOS web view can continue to report a hidden document.
+  it('starts when the document reports hidden and the native bridge accepts', async () => {
+    const h = harness();
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    await h.audio.prepare(h.fail);
+    await h.audio.capture(vi.fn());
+    expect(h.plugin.startCapture).toHaveBeenCalledTimes(1);
+    expect(h.fail).not.toHaveBeenCalled();
   });
 });

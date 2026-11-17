@@ -26,6 +26,19 @@ final class LiveVoiceState {
     // AVAudioSession categoryChange and routeConfigurationChange.
     reason == 3 || (starting && reason == 8)
   }
+
+  /// A locked screen is not a stop. iOS can refuse a new activation in the
+  /// background, so only the foreground and the end of a session release audio.
+  static func releasesAudioSession(foreground: Bool, closing: Bool) -> Bool {
+    closing || foreground
+  }
+
+  /// A live session can restart capture behind a locked screen. A session
+  /// without active audio cannot start capture in the background.
+  static func allowsCaptureStart(background: Bool, audioActive: Bool) -> Bool {
+    !background || audioActive
+  }
+
   let frameSamples: Int
   let inputBufferFrames: Int
   let outputBufferSamples: Int

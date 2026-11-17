@@ -302,7 +302,7 @@ const plistEntries = [
   [
     'NSMicrophoneUsageDescription',
     `\t<key>NSMicrophoneUsageDescription</key>
-\t<string>Dictate messages to Vis by voice.</string>`,
+\t<string>Dictate messages to Vis and talk to Vis hands-free.</string>`,
   ],
   [
     'NSPhotoLibraryUsageDescription',

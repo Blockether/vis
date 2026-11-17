@@ -45,7 +45,11 @@ type PendingFrame = {
   onPlayed: (count: number) => void;
 };
 
-/** Foreground mobile pilot. Enabled AEC is not proof of acoustic performance. */
+/**
+ * Mobile pilot. Enabled AEC is not proof of acoustic performance.
+ * The native bridge owns the foreground rule: it starts only in the foreground
+ * and continues behind a locked screen. Page visibility is not a stop signal.
+ */
 export class NativeLiveVoiceAudio implements LiveVoiceAudio {
   readonly captureRestartsOutput = true;
   private readonly sessionId = crypto.randomUUID();
@@ -66,7 +70,6 @@ export class NativeLiveVoiceAudio implements LiveVoiceAudio {
   private playing = new Map<number, PendingFrame>();
   private listeners: PluginListenerHandle[] = [];
   private releaseOutput: (() => void) | null = null;
-  private disposeVisibility: (() => void) | null = null;
 
   constructor(allowUnverifiedMobileAudio = false, bridge: NativeLiveVoicePlugin = nativeLiveVoice) {
     this.allowed = allowUnverifiedMobileAudio;
@@ -82,11 +85,6 @@ export class NativeLiveVoiceAudio implements LiveVoiceAudio {
       checkCapabilities(await this.bridge.getCapabilities());
       if (this.closed) throw new Error('Voice start was cancelled.');
       this.releaseOutput = speechOutput.reserveLiveOutput();
-      const hidden = () => {
-        if (document.hidden) this.fail('Voice stopped because the app entered the background.');
-      };
-      document.addEventListener('visibilitychange', hidden);
-      this.disposeVisibility = () => document.removeEventListener('visibilitychange', hidden);
       const listeners = [
         this.bridge.addListener('capture', (frame) => this.captured(frame)),
         this.bridge.addListener('played', (frame) => this.played(frame)),
@@ -114,7 +112,6 @@ export class NativeLiveVoiceAudio implements LiveVoiceAudio {
         throw new Error('Voice start was cancelled.');
       }
       checkCapabilities(capabilities);
-      if (document.hidden) throw new Error('Keep the app in the foreground to use voice.');
       this.ready = true;
     } catch (error) {
       this.close();
@@ -283,8 +280,6 @@ export class NativeLiveVoiceAudio implements LiveVoiceAudio {
     this.playing.clear();
     this.captureId++;
     this.outputId++;
-    this.disposeVisibility?.();
-    this.disposeVisibility = null;
     for (const listener of this.listeners) void listener.remove().catch(() => undefined);
     this.listeners = [];
     this.releaseOutput?.();

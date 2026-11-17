@@ -19,6 +19,18 @@ final class LiveVoiceStateTests: XCTestCase {
     XCTAssertFalse(LiveVoiceState.allowsRouteChange(nil, starting: true))
   }
 
+  // Regression: a locked screen ended the voice session.
+  func testLockedScreenKeepsTheAudioSession() {
+    // iOS can refuse a new activation in the background.
+    XCTAssertFalse(LiveVoiceState.releasesAudioSession(foreground: false, closing: false))
+    XCTAssertTrue(LiveVoiceState.releasesAudioSession(foreground: true, closing: false))
+    XCTAssertTrue(LiveVoiceState.releasesAudioSession(foreground: false, closing: true))
+    // A live session can restart capture. A new session cannot start behind the lock.
+    XCTAssertTrue(LiveVoiceState.allowsCaptureStart(background: true, audioActive: true))
+    XCTAssertFalse(LiveVoiceState.allowsCaptureStart(background: true, audioActive: false))
+    XCTAssertTrue(LiveVoiceState.allowsCaptureStart(background: false, audioActive: false))
+  }
+
   // Regression: capture must not trust voice processing before route setup completes.
   func testCaptureReadinessWaitsOnlyDuringStartup() {
     XCTAssertEqual(readiness(running: false), .waiting)
