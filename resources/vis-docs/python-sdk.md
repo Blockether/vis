@@ -23,6 +23,10 @@ follows `main`, so it can show APIs that the newest PyPI release does not have.
   [Let your program own a private agent](#let-your-program-own-a-private-agent) shows.
 - **The first `Agent()` takes a long time or raises `VisTimeout`.** Read
   [The first start of a private agent](#the-first-start-of-a-private-agent).
+- **Your scripts run many short tasks and each start of the engine takes time.**
+  [Share one local gateway](#share-one-local-gateway-between-your-programs).
+- **Your application must refuse some tool calls, such as `git push`.**
+  [Refuse a tool call from your application](#refuse-a-tool-call-from-your-application).
 - **Your program must find the session that it created or show events while Vis works.**
   [List sessions and follow events](#list-sessions-and-follow-events).
 - **Your program must work with sessions, Council, automations, or settings.** Read
@@ -74,9 +78,11 @@ context, `Agent()` does these steps:
    space. Each network read must continue within 120 seconds.
 2. It starts `vis-agent stdio` and waits up to `startup_timeout` for the engine to answer. The
    default is 120 seconds.
-3. It creates the session. For the first session of a new engine copy, the engine prepares each
-   installed Python extension: it installs the dependencies and compiles the code. This step can
-   take more than one minute. `Agent()` waits up to `startup_timeout` for it.
+3. It creates the session. The engine prepares each installed Python extension one time for each
+   version of its bundled Python: it installs the dependencies and compiles the code. This step can
+   take more than one minute. `Agent()` waits up to `startup_timeout` for it. A different engine
+   copy with the same bundled Python, for example a second virtual environment, uses the prepared
+   extensions again.
 
 A project with its own extensions can need this preparation one time too. When the engine does not
 answer in time, `Agent()` raises `VisTimeout` and stops the engine. To wait longer, give a
@@ -89,6 +95,9 @@ with LocalEngine(root=".", startup_timeout=300) as layer:
     with Agent(project=".", execution_layer=layer) as agent:
         print(agent.run("Summarize this project without changing files.")["status"])
 ```
+
+To start the engine one time for many runs of your programs, use
+[a shared local gateway](#share-one-local-gateway-between-your-programs).
 
 Before the first task, configure a [provider and model](configuration.md). A gateway client needs
 only the Python package, because the provider runs on the gateway machine.
@@ -293,6 +302,45 @@ With the default `executable="vis-agent"`, the SDK uses the installed command or
 [downloads it](#install-the-sdk). To use another Vis build, pass the absolute path of its
 `vis-agent` launcher, not the bare native binary. The launcher also loads the bundled Python
 runtime. A start or a stop of this process does not affect a running gateway.
+
+## Share one local gateway between your programs
+
+Each `Agent()` without an execution layer starts its own engine, which takes about 1.5 seconds.
+When your scripts run many short tasks, use `LocalService.ensure()`. It starts one local gateway
+the first time and connects to it in milliseconds after that:
+
+```python
+from blockether.vis.engine import Agent, LocalService
+
+with LocalService.ensure() as layer:
+    with Agent(project=".", execution_layer=layer) as agent:
+        print(agent.run("Summarize this project without changing files.")["status"])
+```
+
+`LocalService.ensure()` returns a connected `GatewayClient`. Programs and threads that call it at
+the same time get the same gateway, because a file lock lets only one of them start it.
+
+The gateway has these properties:
+
+- It keeps its database, token, runtime folder, logs, and push state in `home`. The default is
+  `$VIS_HOME/sdk/service`.
+- It uses the provider settings of `VIS_HOME`. It does not use the session database, the gateway,
+  or the paired devices of your own Vis. Its turns send no notifications to your phone or browser.
+- It listens only on 127.0.0.1, on a free port, and requires its token.
+- It stops when no client holds a lease and no turn runs. A client that you do not close keeps its
+  lease for 2 minutes after its process ends. A gateway that no client used stops after 30 seconds.
+- Its sessions stay in its database. The next `ensure()` starts the gateway again and finds them.
+
+Keep one client open while you work to keep the gateway ready. `LocalService.discover()` returns a
+client of the running gateway, or `None`, and never starts one. `LocalService.stop()` stops the
+gateway for all programs that use it, including their running turns, and returns `True` when a
+gateway ran. All three methods take `home`. `LocalService` works on Linux and macOS.
+
+`ensure()` takes the same `executable` as `LocalEngine`, a request `timeout` of 30 seconds, and a
+`startup_timeout` of 120 seconds. When the gateway does not answer in `startup_timeout`, it raises
+`VisTimeout`. When the engine cannot start, it raises `TransportError` with the end of the log.
+When a newer SDK uses another engine, `ensure()` replaces the old gateway only when no client
+uses it and no turn runs.
 
 ## Connect to a gateway and run a task
 
@@ -538,6 +586,39 @@ application restarts or new agent requests.
 An async function is awaited on the SDK calling thread. That thread must not already run an
 asyncio event loop.
 
+### Refuse a tool call from your application
+
+Add a `vis.OpHook` to a client extension when your application must refuse some tool calls. The
+function runs before the call and returns `None` to allow it or `vis.block(reason)` to refuse it.
+The model sees the reason as a tool failure. The function cannot change the arguments or the
+result.
+
+```python
+import blockether.vis.extension as vis
+
+
+def no_push(call):
+    command = call["args"][0] if call["args"] else ""
+    if "git push" in str(command):
+        return vis.block("This application does not allow git push.")
+    return None
+```
+
+To use it, add `op_hooks=[vis.OpHook(["shell"], no_push)]` to the `vis.Extension` that
+`make_delivery_extension` returns.
+
+The function receives `{"op", "args"}`, as [op hooks](extension-api.md#op-hooks) describe. It runs
+in your application process, on the SDK calling thread, while your program drives the SDK. Vis
+refuses the call in these cases:
+
+- The function raises an exception.
+- Your application detaches.
+- The function does not answer in 300 seconds.
+
+Name an operation, such as `"shell"`, or a pattern with a prefix, such as `"linear.*"`. The gateway
+refuses a pattern such as `"*"` with the status 400 and the code `client_gate_too_broad`. Only
+`phase="before"` is available. A client extension still needs at least one function in `symbols`.
+
 ### What a client extension can declare
 
 A client extension declares functions, bound methods, and object namespaces with `Symbol`. It
@@ -546,7 +627,7 @@ object namespace, use `Symbol(object, name="inventory")` and annotate its method
 `@vis.method(activity=...)`. The [extension API](extension-api.md) has the details.
 
 Vis rejects the host-only features: `activation`, `ctx`, `env`,
-providers, op hooks, network filters, slash commands, and callable prompts. For those features,
+providers, op hooks with `phase="after"`, network filters, slash commands, and callable prompts. For those features,
 write an [engine-side extension](extending.md). Its registration entry point is
 `vis.register_extension(...)`.
 
@@ -601,6 +682,7 @@ except TransportError:
 | `Agent(project=".")` | One local conversation, with no gateway and no HTTP listener | It stops its engine and discards the session history |
 | `Agent(project=..., execution_layer=layer)` | One conversation on a local engine or a gateway client that the caller owns | It detaches its application extensions. The layer and the saved conversation stay open |
 | `LocalEngine(executable=..., root=...)` | Several sessions in one stdio process that you own | It stops that process and discards its session database |
+| `LocalService.ensure()` | Many runs of your programs on one local gateway that starts one time | It releases its lease. The gateway stops after its last lease |
 | `GatewayClient(url, token=...)` | Persistent or shared sessions on a gateway that runs separately | It closes its streams and releases its client lease |
 
 Pass a `LocalEngine` or a `GatewayClient` when the default private engine does not fit. Each layer
