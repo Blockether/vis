@@ -55,9 +55,9 @@ for the desktop app.
 
 [Linux ARM64](https://github.com/Blockether/vis/releases/download/v0.5.21/vis-companion-0.5.21-linux-arm64.AppImage) · [All packages](https://github.com/Blockether/vis/releases/latest) · [Other installation options](resources/vis-docs/distributions.md) · [Pair a phone](resources/vis-docs/index.md#pair-a-phone)
 
-## Documentation
+## [Documentation](https://vis.blockether.com/)
 
-[Documentation](https://vis.blockether.com/) · [Curated Terminal Benchmark](https://blockether.github.io/curated-terminal-benchmark/)
+## [Benchmarks](https://blockether.github.io/curated-terminal-benchmark/)
 
 ## License
 
