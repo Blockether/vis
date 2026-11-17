@@ -317,6 +317,10 @@ works one time, for 5 minutes, and does not hold the gateway token. For an old o
 the web app shows an error and the connection screen. Run `vis-agent web` again to get a new
 address.
 
+When the gateway gives no launch code, the command prints the plain address and the cause. The
+gateway did not accept the token, or it is too old to give a code. Open the address and connect
+on the connection screen. If the app asks for a token, type the token of that gateway.
+
 With `--no-open`, open the printed address yourself, or give it to a script. A script can replace
 the host with `localhost` and keep the rest of the address.
 
@@ -344,8 +348,9 @@ browser that opens the address of Vis in WSL cannot record. To allow such an add
   uses, and one that you started with `vis-agent gateway start`. For those, the command tells you
   where the gateway runs and how to open the web app there.
 - If the host is a different machine, or a different gateway answers at that address,
-  `vis-agent web` opens the web app of that gateway. Set `VIS_GATEWAY_TOKEN` when that gateway
-  requires a token.
+  `vis-agent web` opens the web app of that gateway. For a gateway on this computer, the command
+  uses the token of this Vis home. For a different machine, set `VIS_GATEWAY_TOKEN` when the
+  gateway requires a token.
 
 A gateway that binds to `0.0.0.0` or to a network address always requires its token, also in your
 own browser. The address that `vis-agent web` prints gives the token to that browser. On other
