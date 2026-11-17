@@ -7336,12 +7336,14 @@
 
 (defn- create-session-cold!
   [{:keys [channel title external-id workspace-id root group-id sources extensions tools origin]}]
-  ;; The store cannot make a workspace in a folder that does not exist. Without this
-  ;; refusal the create failed later and the caller read 500 engine-error (#484).
-  (when (and (not (str/blank? (str root)))
-             (not (.isDirectory (java.io.File. ^String (workspace/normalize-root root)))))
-    (throw (ex-info (str "root must be an existing directory: " root)
-                    {:status 400 :type :not-a-directory :root root})))
+  ;; The store cannot make a workspace in a folder that does not exist, and a blank
+  ;; root names no folder. Without this refusal the create failed later and the
+  ;; caller read 500 engine-error (#484). Only a nil root asks for the default folder.
+  (when (some? root)
+    (let [canon (workspace/normalize-root root)]
+      (when-not (and canon (.isDirectory (java.io.File. ^String canon)))
+        (throw (ex-info (str "root must be an existing directory: " root)
+                        {:status 400 :type :not-a-directory :root root})))))
   (let [channel
         (or channel :api)
 
@@ -7415,8 +7417,9 @@
 
    `:group-id` starts the session INSIDE that session group (BLO-167).
 
-   A `:root` that is not an existing directory throws `ex-info` with `:status 400`
-   and `:type :not-a-directory`, before the store changes.
+   A `:root` that is blank or is not an existing directory throws `ex-info` with
+   `:status 400` and `:type :not-a-directory`, before the store changes. A nil
+   `:root` uses the default folder.
 
    `:idempotency-key` makes a retry safe. For SESSION_CREATE_KEY_TTL_MS, the
    same key answers with the session that the first create made, also while that

@@ -9137,7 +9137,7 @@
                                (swap! writes inc)
                                (throw (ex-info "the store must not change" {})))]
 
-                 (doseq [root [missing (.getPath file)]]
+                 (doseq [root [missing (.getPath file) "" "   "]]
                    (let [response (handler (request {"root" root}))]
                      (expect (= 400 (:status response)) root)
                      (expect (= {"type" "not-a-directory"
