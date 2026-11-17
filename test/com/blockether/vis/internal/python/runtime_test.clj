@@ -13,7 +13,7 @@
             [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
-            [lazytest.core :refer [defdescribe expect it]])
+            [lazytest.core :refer [around defdescribe expect it set-ns-context!]])
   (:import [com.blockether.vispython Interpreter]
            [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.net InetSocketAddress]
@@ -23,6 +23,17 @@
 (defn- temp-dir
   ^java.io.File [prefix]
   (.toFile (Files/createTempDirectory prefix (make-array FileAttribute 0))))
+
+(set-ns-context!
+  [(around [f]
+           ;; Preparation copies the interpreter to a stable store. Keep it out of `~/.vis`.
+           (let [store (temp-dir "vis-interpreter-store")]
+             (try (with-redefs-fn {#'python-runtime/interpreter-store (constantly
+                                                                        (io/file store
+                                                                                 "interpreters"))
+                                   #'python-runtime/base-pythons (atom {})}
+                    f)
+                  (finally (#'python-runtime/delete-tree! store)))))])
 
 (defn- sample-archive
   "A tar.gz shaped like a platform release: a library, an executable under
@@ -461,7 +472,7 @@
                  (doseq [args @calls]
                    (expect (.isAbsolute (io/file (first args))))
                    (expect (= ["sync" "--check" "--offline" "--python"
-                               (com.blockether.vispython.Interpreter/pythonExecutable)
+                               (#'python-runtime/base-python)
                                "--no-python-downloads"]
                               (vec (rest args)))))
                  (expect (= "cached"
@@ -492,10 +503,10 @@
                (fn []
                  (expect (= project (python-runtime/ensure-project! project)))
                  (expect (= [["sync" "--check" "--offline" "--python"
-                              (com.blockether.vispython.Interpreter/pythonExecutable)
+                              (#'python-runtime/base-python)
                               "--no-python-downloads"]
                              ["sync" "--python"
-                              (com.blockether.vispython.Interpreter/pythonExecutable)
+                              (#'python-runtime/base-python)
                               "--no-python-downloads"]]
                             @calls))
                  (expect (= "ready"
@@ -681,6 +692,141 @@
                         (expect (nil? (#'python-runtime/own-venv project)))
                         (finally (#'python-runtime/delete-tree! project))))))
 
+;; Verifier report on #486: eight first callers in a fresh JVM copied the interpreter at once
+;; through one staging path. They got mixed bases, a failed copy and a nested `python/` tree.
+(defdescribe
+  interpreter-copy-under-parallel-callers-test
+  (it "gives every parallel first caller the same complete copy"
+      (python-runtime/ensure-library!)
+      (let [root
+            (temp-dir "vis-interpreter-race")
+
+            store
+            (io/file root "interpreters")
+
+            python
+            (Interpreter/pythonExecutable)
+
+            home
+            (#'python-runtime/interpreter-home (.getCanonicalFile (io/file python)))
+
+            files
+            (fn [^java.io.File dir]
+              (count (filter #(and (.isFile ^java.io.File %)
+                                   (not (str/starts-with? (.getName ^java.io.File %) ".vis-")))
+                             (file-seq dir))))
+
+            start
+            (java.util.concurrent.CountDownLatch. 1)]
+
+        (try (with-redefs-fn {#'python-runtime/interpreter-store (constantly store)
+                              #'python-runtime/base-pythons (atom {})}
+               (fn []
+                 (let [callers
+                       (doall (repeatedly 8
+                                          #(future (.await start)
+                                                   (#'python-runtime/base-python))))
+
+                       _
+                       (.countDown start)
+
+                       bases
+                       (set (map deref callers))
+
+                       copy
+                       (io/file store (subs (#'python-runtime/interpreter-identity python) 0 12))]
+
+                   (expect (= 1 (count bases)) (str "different bases: " bases))
+                   (expect (str/starts-with? (first bases) (.getPath store))
+                           "a caller did not get the stable copy")
+                   (expect (= (files home) (files copy)) "the copy is not the interpreter tree")
+                   (expect (= [(.getName copy)]
+                              (vec (remove #(str/starts-with? % ".") (.list store))))
+                           "staging directories stay in the store"))))
+             (finally (#'python-runtime/delete-tree! root))))))
+
+;; Issue #486: each install of one interpreter build named its own `.venv-<hash>`, so the
+;; first session of each new engine copy prepared every installed extension again (41-53 s).
+(defdescribe
+  automatic-environment-per-interpreter-build-test
+  (it "shares one environment between installs of one build and runs uv only for the first"
+      (let [root
+            (temp-dir "vis-interpreter-builds")
+
+            install!
+            (fn [dir build]
+              (let [bin (io/file root dir "python" "bin")]
+                (.mkdirs bin)
+                (spit (io/file bin "python3") build)
+                (spit (io/file bin "uv") "uv 1")
+                (.getPath (io/file bin "python3"))))
+
+            first-install
+            (install! "release-a" "build 1")
+
+            second-install
+            (install! "release-b" "build 1")
+
+            other-build
+            (install! "release-c" "build 2")
+
+            store
+            (io/file root "state" "interpreters")
+
+            project
+            (io/file root "extension")
+
+            python
+            (atom first-install)
+
+            syncs
+            (atom [])
+
+            environment
+            #(io/file project (#'python-runtime/automatic-environment))
+
+            site
+            #(io/file (environment) "lib" "site-packages")]
+
+        (try
+          (expect (= (#'python-runtime/environment-name first-install)
+                     (#'python-runtime/environment-name second-install)))
+          (expect (not= (#'python-runtime/environment-name first-install)
+                        (#'python-runtime/environment-name other-build)))
+          (.mkdirs project)
+          (spit (io/file project "pyproject.toml") "[project]\nname = \"shared\"\n")
+          (with-redefs-fn
+            {#'python-runtime/embedded-executable (fn [] @python)
+             #'python-runtime/interpreter-store (constantly store)
+             #'python-runtime/shared-project? (constantly false)
+             #'python-runtime/compile-bytecode! (fn [_ _])
+             #'python-runtime/project-packages (fn [_] (.getCanonicalFile ^java.io.File (site)))
+             #'python-runtime/run-uv!
+             (fn [_ args]
+               (let [base (second (drop-while #(not= "--python" %) args))]
+                 (cond
+                   (some #{"workspace"} args)
+                   (.getCanonicalPath project)
+
+                   (some #{"--check"} args)
+                   (when-not (.isFile (io/file (environment) "pyvenv.cfg"))
+                     (throw (ex-info "not ready" {})))
+                   :else
+                   (do (swap! syncs conj base)
+                       (.mkdirs ^java.io.File (site))
+                       (spit (io/file (environment) "pyvenv.cfg")
+                             (str "home = " (.getParent (io/file base)) "\n"))))))}
+            (fn []
+              (python-runtime/ensure-project! project)
+              (reset! python second-install)
+              (python-runtime/ensure-project! project)))
+          (expect (= 1 (count @syncs)) (str "uv sync runs: " (pr-str @syncs)))
+          (expect (str/starts-with? (first @syncs) (.getPath store))
+                  "the environment does not use the stable copy of the interpreter")
+          (expect (not (str/includes? (first @syncs) "release-a"))
+                  "the environment depends on the first install")
+          (finally (#'python-runtime/delete-tree! root))))))
+
 ;; kate140, 2026-11-05: each native release has its own interpreter path, so each release
 ;; prepared a new `.venv-<hash>` in every extension and none was removed: 21 GB of venvs.
 (defdescribe
@@ -774,7 +920,7 @@
                (fn []
                  (expect (= project (python-runtime/ensure-project! project)))
                  (expect (= [["sync" "--python"
-                              (com.blockether.vispython.Interpreter/pythonExecutable)
+                              (#'python-runtime/base-python)
                               "--no-python-downloads"]]
                             @calls))
                  (expect (= "ready"

@@ -32,8 +32,10 @@
   (:import [com.blockether.vispython Interpreter Locations]
            [java.io File]
            [java.lang ProcessBuilder$Redirect ProcessHandle]
-           [java.nio.file CopyOption FileVisitResult Files LinkOption Path SimpleFileVisitor
-            StandardCopyOption]
+           [java.nio.channels FileChannel]
+           [java.nio.file CopyOption FileVisitResult Files LinkOption OpenOption Path
+            SimpleFileVisitor StandardCopyOption StandardOpenOption]
+           [java.nio.file.attribute FileAttribute]
            [java.security MessageDigest]
            [java.util.concurrent TimeUnit]))
 
@@ -389,12 +391,224 @@
   "Nil, or an atom of uv workspace directories by project path for one preparation."
   nil)
 
+(def ^:private ^"[Ljava.nio.file.LinkOption;" no-follow
+  (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+
+(defn- delete-environment!
+  "Delete `root` depth-first. A link is removed as a link, never followed."
+  [^File root]
+  (Files/walkFileTree
+    (.toPath root)
+    (proxy [SimpleFileVisitor] []
+      (visitFile [^Path p _attrs] (Files/deleteIfExists p) FileVisitResult/CONTINUE)
+      (postVisitDirectory [^Path p _e] (Files/deleteIfExists p) FileVisitResult/CONTINUE))))
+
+(defn- embedded-executable
+  "The executable of this process's embedded Python, inside the install that loaded it."
+  ^String []
+  (Interpreter/pythonExecutable))
+
+(defn- build-digest
+  "Lowercase-hex SHA-256 of the content of the executable `file` and of the uv beside it."
+  ^String [^File file]
+  (let [digest (util/sha256-digest)]
+    (doseq [^File part [file (io/file (.getParentFile file) "uv")]
+            :when (.isFile part)]
+      (.update digest (util/utf8 (str (.getName part) ":" (.length part) ":")))
+      (with-open [in (io/input-stream part)]
+        (let [buffer (byte-array 65536)]
+          (loop []
+            (let [n (.read in buffer)]
+              (when (pos? n) (.update digest buffer 0 n) (recur)))))))
+    (util/bytes->hex (.digest digest))))
+
+(defonce ^:private interpreter-identities
+  ;; Canonical executable path -> identity. Each install reads its files one time.
+  (atom {}))
+
+(defn- interpreter-identity
+  "Lowercase-hex SHA-256 of the interpreter build of `python`: the content of the executable
+   and of the bundled uv beside it. Two installs of one build give the same value. Without
+   an executable file, the canonical path is the identity."
+  ^String [python]
+  (let [file (.getCanonicalFile (io/file (str python)))
+        path (.getPath file)]
+    (or (get @interpreter-identities path)
+        (let [identity (if (.isFile file) (build-digest file) (util/sha256-hex path))]
+          (swap! interpreter-identities assoc path identity)
+          identity))))
+
 (defn- environment-name
   "The directory of the environment that automatic preparation owns for `python`.
-   The JVM and the native image embed different interpreters. With one shared `.venv`, each
-   rebuilt the other's environment under a running gateway, and a removed interpreter broke both."
+   The name follows the interpreter build, not the install path: each native release, each
+   pip install of `vis-agent` and each checkout has its own copy of the interpreter, and a
+   name per path prepared every extension again for each copy (#486). A different build,
+   such as the JVM's and an older native release's, gets its own environment."
   ^String [python]
-  (str ".venv-" (subs (util/sha256-hex (.getCanonicalPath (io/file (str python)))) 0 12)))
+  (str ".venv-" (subs (interpreter-identity python) 0 12)))
+
+(defn- interpreter-store
+  "The directory of the stable interpreter copies, or nil without a Vis state directory."
+  ^File []
+  (some-> (Locations/stateRoot)
+          (io/file "interpreters")))
+
+(defn- interpreter-home
+  "The tree of the interpreter that `python` names: the parent of `bin/`, else its directory."
+  ^File [^File python]
+  (let [dir (.getParentFile python)]
+    (if (= "bin" (.getName dir)) (.getParentFile dir) dir)))
+
+(defonce ^:private copy-lock
+  ;; One monitor for the interpreter copies of this process. See `with-copy-lock`.
+  (Object.))
+
+(defn- with-copy-lock
+  "Call `f` while no other thread or process copies an interpreter into `store`.
+   The monitor keeps the threads of this process apart; the OS lock keeps processes apart."
+  [^File store f]
+  (locking copy-lock
+    (.mkdirs store)
+    (with-open [channel (FileChannel/open (.toPath (io/file store ".vis-copy.lock"))
+                                          (into-array OpenOption
+                                                      [StandardOpenOption/CREATE
+                                                       StandardOpenOption/WRITE]))
+                _lock (.lock channel)]
+      (f))))
+
+(defn- copy-valid?
+  "True when `copy` is an executable of the interpreter build `identity`."
+  [^File copy ^String identity]
+  (and (.isFile copy) (= identity (build-digest (.getCanonicalFile copy)))))
+
+(defn- copy-interpreter!
+  "Copy the interpreter tree `home` to `target` for the build `identity`, unless `target`
+   already holds it. The SDK packages of a native release stay out: they belong to one
+   Vis version, not to the build. Each attempt copies into its own staging directory,
+   checks the copied executable at `relative` and renames the tree into place. The copy
+   lock holds while a staging directory exists, so a staging directory that the lock finds
+   is from a stopped process. Answer true when `target` holds the build after the call."
+  [^File store ^File home ^File target ^String relative ^String identity]
+  (with-copy-lock
+    store
+    (fn []
+      (or (copy-valid? (io/file target relative) identity)
+          (do (doseq [^File stale (or (.listFiles store) (make-array File 0))
+                      :when (str/includes? (.getName stale) ".tmp.")]
+                (delete-environment! stale))
+              (let [staging (.toFile (Files/createTempDirectory (.toPath store)
+                                                                (str (.getName target) ".tmp.")
+                                                                (make-array FileAttribute 0)))
+                    tree (io/file staging "python")]
+                (try (let [^java.util.List command
+                           ["cp" "-Rp" (.getPath home) (.getPath tree)]
+
+                           process
+                           (.start (doto (ProcessBuilder. command)
+                                     (.redirectErrorStream true)
+                                     (.redirectOutput ProcessBuilder$Redirect/DISCARD)))]
+
+                       (when (and (zero? (.waitFor process))
+                                  (copy-valid? (io/file tree relative) identity))
+                         (let [packages (io/file tree "lib" "vis-sdk-packages")]
+                           (when (.isDirectory packages) (delete-environment! packages)))
+                         ;; A broken copy cannot serve an environment, so it is replaced.
+                         (when (Files/exists (.toPath target) no-follow)
+                           (delete-environment! target))
+                         (Files/move (.toPath tree)
+                                     (.toPath target)
+                                     (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
+                         (copy-valid? (io/file target relative) identity)))
+                     (catch Exception e
+                       (tel/log! {:level :warn
+                                  :id ::interpreter-copy-failed
+                                  :data {:target (.getPath target)}
+                                  :error e})
+                       false)
+                     (finally (when (.exists staging) (delete-environment! staging))))))))))
+
+(def ^:private installs-file
+  "The file in a stable interpreter copy that lists the install executables of its build."
+  ".vis-installs")
+
+(defn- record-install!
+  "Add the install executable `python` to the install list of the copy `target`."
+  [^File store ^File target ^String python]
+  (paths/with-claim-lock
+    store
+    (fn []
+      (let [file (io/file target installs-file)
+            known (if (.isFile file) (set (str/split-lines (slurp file))) #{})]
+        (when-not (contains? known python)
+          (spit file (str python "\n") :append true))))))
+
+(defn- copy-in-use?
+  "True when the stable copy `home` still serves an install: an install in its list exists,
+   or a process holds its claim. A copy without a list is not one of ours, so it stays."
+  [^File store ^File home]
+  (let [target (paths/nearest-ancestor #(= store (.getParentFile ^File %)) home)
+        file (some-> target (io/file installs-file))]
+    (or (nil? file)
+        (not (.isFile file))
+        (= :held (paths/claim-state target))
+        (boolean (some #(and (seq %) (.exists (io/file %))) (str/split-lines (slurp file)))))))
+
+(defn- base-in-use?
+  "True when the base interpreter directory `home` of an environment can still serve it:
+   it exists and, for a stable copy, an install of its build still exists."
+  [^File home]
+  (let [store (some-> (interpreter-store) .getCanonicalFile)]
+    (and (.exists home)
+         (or (nil? store)
+             (not (.startsWith (.toPath (.getCanonicalFile home)) (.toPath store)))
+             (copy-in-use? store (.getCanonicalFile home))))))
+
+(defn- remove-unused-copies!
+  "Delete the stable interpreter copies, other than `own`, that no install uses any more.
+   Their environments are then orphans, and preparation removes them."
+  [^File store ^File own]
+  (doseq [^File copy (or (.listFiles store) (make-array File 0))
+          :when (and (re-matches #"[0-9a-f]{12}" (.getName copy))
+                     (not= (.getName own) (.getName copy))
+                     (Files/isDirectory (.toPath copy) no-follow))]
+    (try (paths/with-claim-lock store
+                                #(when-not (copy-in-use? store copy) (delete-environment! copy)))
+         (catch Exception e
+           (tel/log! {:level :warn :id ::interpreter-copy-not-removed :data {:copy (.getPath copy)}
+                      :error e})))))
+
+(defonce ^:private base-pythons
+  ;; Install executable path -> the executable that automatic environments use as base.
+  (atom {}))
+
+(defn- base-python
+  "The interpreter that automatic environments use as base: a copy of this build in the
+   Vis state, so an environment outlives the install that made it and every install of the
+   build shares it. uv keeps the base path in each environment and replaces an environment
+   of another path. The JVM uses the copy too: with its own path, the JVM and a native release
+   of one build replaced each other's environment. Without a state directory or when the copy
+   fails, the install's own."
+  ^String []
+  (let [python (embedded-executable)]
+    (or (get @base-pythons python)
+        (let [base
+              (or (when-let [store (when python (interpreter-store))]
+                    (let [file (.getCanonicalFile (io/file python))
+                          home (interpreter-home file)
+                          identity (interpreter-identity python)
+                          target (io/file store (subs identity 0 12))
+                          relative (str (.relativize (.toPath home) (.toPath file)))
+                          copy (io/file target relative)]
+                      (when (and (.isFile file)
+                                 (or (copy-valid? copy identity)
+                                     (copy-interpreter! store home target relative identity)))
+                        (record-install! store target (.getPath file))
+                        (paths/claim-dir! target)
+                        (remove-unused-copies! store target)
+                        (.getPath copy))))
+                  python)]
+          (swap! base-pythons assoc python base)
+          base))))
 
 (def ^:dynamic ^:private *environment*
   "Nil, or the project's own `.venv` while this interpreter made it and prepares the project."
@@ -404,7 +618,7 @@
   "The environment that automatic preparation uses: the bound `.venv` of this interpreter,
    else the automatic environment of this process's embedded Python."
   ^String []
-  (or *environment* (environment-name (Interpreter/pythonExecutable))))
+  (or *environment* (environment-name (embedded-executable))))
 
 (defn- automatic-environment!
   "Point uv at the automatic environment during preparation, never at the caller's
@@ -508,14 +722,21 @@
     (when (.isFile config)
       (some #(second (re-matches #"\s*home\s*=\s*(.+?)\s*" %)) (str/split-lines (slurp config))))))
 
+(defn- selected-python
+  "The base interpreter of uv commands: the stable copy during automatic preparation into
+   an automatic environment. A project `.venv` of this install and manual preparation
+   keep the install's own embedded Python."
+  ^String []
+  (if (and *extension-preparation?* (nil? *environment*)) (base-python) (embedded-executable)))
+
 (defn- own-environment?
-  "True when the PEP 405 pyvenv.cfg of `environment` names the directory of this
-   process's embedded Python as home. Reads one file and starts no uv."
+  "True when the PEP 405 pyvenv.cfg of `environment` names the directory of the selected
+   embedded Python as home. Reads one file and starts no uv."
   [^File environment]
   (let [home (environment-home environment)]
     (boolean (and home
                   (= (.getCanonicalFile (io/file home))
-                     (-> (io/file (Interpreter/pythonExecutable))
+                     (-> (io/file (selected-python))
                          .getCanonicalFile
                          .getParentFile))))))
 
@@ -546,23 +767,12 @@
                          (file-seq environment)))
       (delete-tree! environment))))
 
-(def ^:private ^"[Ljava.nio.file.LinkOption;" no-follow
-  (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
-
-(defn- delete-environment!
-  "Delete `root` depth-first. A link is removed as a link, never followed."
-  [^File root]
-  (Files/walkFileTree
-    (.toPath root)
-    (proxy [SimpleFileVisitor] []
-      (visitFile [^Path p _attrs] (Files/deleteIfExists p) FileVisitResult/CONTINUE)
-      (postVisitDirectory [^Path p _e] (Files/deleteIfExists p) FileVisitResult/CONTINUE))))
-
 (defn- remove-orphan-environments!
   "Remove the automatic environments in `project` whose base interpreter is gone.
    A native release keeps its interpreter in its own directory, so each release
    prepares a new environment. When the release is removed, no process can use
    that environment again. The bytecode cache of a removed tree is swept at startup.
+   An environment on a stable copy stays while an install of that build exists.
    A link, a project `.venv` and an environment of an existing interpreter stay."
   [^File project]
   (let [own (automatic-environment)]
@@ -572,7 +782,7 @@
                        (not= own name)
                        (Files/isDirectory (.toPath environment) no-follow))
             :let [home (environment-home environment)]
-            :when (and home (.isAbsolute (io/file home)) (not (.exists (io/file home))))]
+            :when (and home (.isAbsolute (io/file home)) (not (base-in-use? (io/file home))))]
 
       (try (delete-environment! environment)
            (tel/log! {:level :info
@@ -587,7 +797,7 @@
 (defn- embedded-python
   "uv options that select the worker's embedded Python and never download another."
   []
-  ["--python" (Interpreter/pythonExecutable) "--no-python-downloads"])
+  ["--python" (selected-python) "--no-python-downloads"])
 
 (defn- shared-project?
   "Use shared packages when uv selects no project installation or dependencies beyond the bundled Vis SDK.
@@ -751,8 +961,7 @@
     (when (and (.isFile config) (.isDirectory packages))
       (digest-parts [(.getCanonicalPath project) (text "pyproject.toml") lock
                      (path-sources project lock) (slurp config) (quot (.lastModified packages) 1000)
-                     (str (Interpreter/pythonExecutable)) (str (runtime/uv-executable))
-                     (pycache-prefix)]))))
+                     (interpreter-identity (embedded-executable)) (pycache-prefix)]))))
 
 (defn- stamped-packages
   "The site-packages of the project's last verified preparation, while its inputs are unchanged."
