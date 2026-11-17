@@ -1825,6 +1825,24 @@
 ;; propagate to the operation caller.
 (defonce ^:private op-hooks (atom {}))   ; op-keyword -> [{:phase :owner :fn}]
 
+(defn- op-text
+  "The name of operation `op` as text: `:clj/repl-start` is `clj/repl-start`."
+  [op]
+  (if (keyword? op) (subs (str op) 1) (str op)))
+
+(defn- hook-op
+  "The operation keyword that the hook operation `op` names: its gate op, else its
+   name. A dotted name is a name that `python_execution` calls, so each character
+   that a Python identifier cannot have means `_`: a block calls the tool
+   `get-issue` of the MCP server `figma-dev` as `figma_dev.get_issue`, and a hook
+   can give either name."
+  [op]
+  (or (gate-op op)
+      (let [text (op-text op)]
+        (if (and (str/includes? text ".") (not (str/includes? text "/")))
+          (keyword (str/replace text #"[^A-Za-z0-9_*.]" "_"))
+          (keyword op)))))
+
 (defn register-op-hook!
   "Register a cross-cutting hook on operation `:op` (its op-keyword, e.g.
    :patch). `:phase` is :after (default — sees & may rewrite the result
@@ -1847,7 +1865,7 @@
         (gate-op op)
 
         op-kw
-        (or gate-kw (keyword op))
+        (hook-op op)
 
         phase
         (if gate-kw :gate phase)]
@@ -1914,11 +1932,6 @@
                        (with-context {:ext ext :env environment} (f request)))
             {:owner (ext-op-hook-owner ext)}))))
 
-(defn- op-text
-  "The name of operation `op` as text: `:clj/repl-start` is `clj/repl-start`."
-  [op]
-  (if (keyword? op) (subs (str op) 1) (str op)))
-
 (def ^:private op-pattern
   "The regex of hook operation `op` when it is a pattern, else nil. A pattern has
    `*`, which matches any characters, as in a tool list: `linear.*`."
@@ -1934,7 +1947,7 @@
     (for [ext @extensions
           hook (:ext/op-hooks ext)
           :let [gate-kw (gate-op (:op hook))]
-          :when (and (match? (or gate-kw (keyword (:op hook))))
+          :when (and (match? (hook-op (:op hook)))
                      (not= "off" (scoped/engine-mode env ext live)))]
 
       (assoc hook
@@ -3343,14 +3356,15 @@
           (:ext/op-hooks ext)
 
           :let [op-kw
-                (or (gate-op op) (keyword op))
+                (hook-op op)
 
                 text
                 (op-text op-kw)]
           :when (not (known? op-kw))]
 
       {:extension (:ext/name ext)
-       :op text
+       ;; The name as the author wrote it.
+       :op (op-text op)
        :kind (cond (contains? doors text) :door
                    (scoped? text) :scoped)
        :suggestion (some (fn [[_ python-name]]

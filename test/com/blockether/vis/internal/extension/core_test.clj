@@ -704,6 +704,53 @@
           (expect (= [["door/call" :door] ["door_call" :door] ["__door__" :door]
                       ["srvx.read" :scoped] ["other.*" :scoped] ["door_lok" nil] ["door.look" nil]]
                      (mapv (juxt :op :kind) (extension/unmatched-op-hooks [ext]))))))
+    (it "runs a hook that names a handle with the hyphens of its server"
+        ;; A block calls the tool `get-issue` of the MCP server `figma-dev` as
+        ;; `figma_dev.get_issue`. A hook author writes the name of the configuration.
+        (let [seen
+              (atom [])
+
+              ext
+              {:ext/name "test.hyphen" :ext/engine {:ext.engine/alias 'door}}
+
+              entry
+              {:ext.symbol/symbol 'call
+               :ext.symbol/tag :observation
+               :ext.symbol/binding '__door__
+               :ext.symbol/handles {:names (fn []
+                                             ["figma_dev"])
+                                    :argv (fn [_]
+                                            nil)
+                                    :call (fn [_ [server tool arguments]]
+                                            {:name (str server "." tool)
+                                             :args [arguments]
+                                             :argv (fn [[arguments]]
+                                                     [server tool arguments])})}
+               :ext.symbol/fn (fn [_ _ _]
+                                (extension/success {:result :done}))}
+
+              hook
+              (fn [op]
+                {:op op
+                 :owner :hyphen
+                 :phase :before
+                 :fn (fn [_ call args]
+                       (swap! seen conj [op call])
+                       args)})
+
+              ops
+              ["figma-dev.get-issue" "figma-dev.*"]]
+
+          (run! (comp extension/register-op-hook! hook) ops)
+          (try (extension/invoke-symbol-wrapper ext entry ["figma_dev" "get_issue" {"id" 1}] {})
+               (finally (extension/unregister-op-hooks-for-owner! :hyphen)))
+          (expect (= [["figma-dev.get-issue" :figma_dev.get_issue]
+                      ["figma-dev.*" :figma_dev.get_issue]]
+                     @seen))
+          (expect (= []
+                     (vec (extension/unmatched-op-hooks
+                            [(assoc-in ext [:ext/engine :ext.engine/symbols] [entry])
+                             {:ext/name "test.hyphen-hooks" :ext/op-hooks (map hook ops)}]))))))
     (it
       "asks the tool lists about the handle of a door, and never about the door"
       (let [asked

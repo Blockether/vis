@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: a tab that opens reads the body of each app one time. Before, the list of live views gave each body a second time.
 - MCP: `inspect.signature` of a tool gives each argument the Python type of its schema: `str | None` for a value that can be null, `Literal[...]` for an enum, `list[str]` for an array with a member type, `int | float` for a number, and the type of a `$ref`. Before, an argument with a type list or `anyOf` had no type, an enum was `str`, an array was `list` and a number was `float`.
 - MCP: an optional field of a form that a server asks stays empty when you clear its default. Before, the client put the default back into the answer.
+- Hooks: an op hook can name an MCP tool with the hyphens of its server or of its tool. `figma-dev.*` and `figma-dev.get-issue` name the calls `figma_dev.*` and `figma_dev.get_issue`. Before, such a hook did not run.
 
 ## [v0.5.20] - 2026-11-17
 
