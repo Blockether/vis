@@ -136,6 +136,8 @@ MARGIN = int(ENV.get("VIS_HANDOFF_MARGIN_S", "90"))
 LIFETIME = int(ENV.get("VIS_LIFETIME_S", "900")) - MARGIN
 # A worker without work stops after IDLE_S.
 IDLE_S = int(ENV.get("VIS_IDLE_S", "60"))
+# A session without a turn is in no list. The schedule removes its shard after BLANK_S without a call.
+BLANK_S = int(ENV.get("VIS_BLANK_S", "86400"))
 # The reads that a tab of Vis web makes when a person opens a session. At its end a worker records their answers
 # for each of its sessions (see `shards.py`), so a look at a session starts no worker.
 OPENED = (

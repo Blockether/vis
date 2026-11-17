@@ -24,7 +24,7 @@ from durable.dashboard.web import Request
 
 LIST, GROUPS, SEARCH = "/v1/sessions", "/v1/session-groups", "/v1/sessions/actions/search"
 # The fields of a list call and of a search call whose answer gets the rows of the other shards.
-HEAD = {"order", "root", "limit", "grouped", "archived", "ids", "group_id", "after", "dirty"}
+HEAD = {"order", "root", "limit", "grouped", "archived", "ids", "group_id", "after", "dirty", "group_limit", "group_offset"}
 ASKED = {"q", "limit", "archived", "channel", "root", "after", "dirty", "project_id", "group_ids"}
 # The start of a cursor of the front. Each other cursor is a cursor of the gateway.
 MARK = "front."
@@ -96,7 +96,7 @@ def joined(request: Request, raw: bytes, ask: Callable[[str, str], bytes | None]
         return raw
     active, archived = filed(rows)
     if path == GROUPS:
-        return json.dumps(counted(fields["root"], answer, active)).encode()
+        return json.dumps(counted(fields, answer, active + archived)).encode()
     # The view of the archive: the active sessions, the archived sessions or both.
     view = (fields.get("archived") or "exclude").lower()
     seen = active + archived if view == "include" else active if view == "exclude" else archived
@@ -143,13 +143,22 @@ def placed(row: dict[str, Any], home: dict[str, Any]) -> dict[str, Any]:
     return {**{name: value for name, value in row.items() if name != "project_root"}, "project_id": home["project_id"], "project_name": home["name"]}
 
 
-def counted(root: str, answer: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Add the sessions of the other shards to the counts of the groups of a project."""
+def counted(fields: dict[str, str], answer: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Add the sessions of the other shards to the counts of the groups of a project.
+
+    As in the gateway, a group counts each of its sessions, the total has each group of the
+    view and not only the groups of a page, and the group that moved last comes first.
+    """
+    rows = [row for row in rows if row.get("project_root") == fields["root"]]
     for one in answer.get("groups") or []:
-        inside = [row for row in rows if row.get("project_root") == root and row.get("group_id") == one["id"]]
+        inside = [row for row in rows if row.get("group_id") == one["id"]]
         one["session_count"] = one.get("session_count", 0) + len(inside)
         one["active_at"] = max([one.get("active_at") or 0, *(row.get("modified_at") or 0 for row in inside)])
-        answer["session_total"] = answer.get("session_total", 0) + len(inside)
+    view, groups = (fields.get("archived") or "exclude").lower(), shards.shared().get("groups") or {}
+    wall = {known for known, group in groups.items() if view == "include" or group["is_archived"] == (view == "only")}
+    answer["session_total"] = answer.get("session_total", 0) + sum(row.get("group_id") in wall for row in rows)
+    if answer.get("groups"):
+        answer["groups"].sort(key=lambda one: -one["active_at"])
     return answer
 
 
@@ -217,6 +226,19 @@ def window(fields: dict[str, str], answer: dict[str, Any], more: list[dict[str, 
     answer["next_cursor"] = cursor if answer["has_more"] else None
 
 
+def painted(fields: dict[str, str], ask: Callable[[str, str], bytes | None]) -> set[str] | None:
+    """Return the groups of the page of groups that a list call names, or None for a call that names no page.
+
+    `main` cuts the page, as it does for the list of the groups, so the two reads of a client agree.
+    Only the first page of a list has the sessions of the groups.
+    """
+    if fields.get("grouped") != "aside" or "after" in fields or not {"group_limit", "root"} <= set(fields):
+        return None
+    names = {"root": "root", "archived": "archived", "group_limit": "limit", "group_offset": "offset"}
+    raw = ask(GROUPS, urllib.parse.urlencode({names[name]: fields[name] for name in names if name in fields}))
+    return {row["id"] for row in (json.loads(raw).get("groups") or [])} if raw else set()
+
+
 def listed(fields: dict[str, str], answer: dict[str, Any], active: list[dict[str, Any]], seen: list[dict[str, Any]], ask: Callable[[str, str], bytes | None]) -> dict[str, Any]:
     """Add the sessions of the other shards to a page of the list and to its counts.
 
@@ -234,6 +256,7 @@ def listed(fields: dict[str, str], answer: dict[str, Any], active: list[dict[str
                 counts[count] = counts.get(count, 0) + bool(row.get(field))
         home["last_activity_ms"] = max(home.get("last_activity_ms") or 0, row.get("modified_at") or 0)
     ids = set(filter(None, fields["ids"].split(","))) if "ids" in fields else None
+    bands = painted(fields, ask)
     filed, loose = [], []
     rank = order(fields)
     for row in seen:
@@ -244,7 +267,10 @@ def listed(fields: dict[str, str], answer: dict[str, Any], active: list[dict[str
         own = placed(row, home)
         if fields.get("group_id") not in (None, own["group_id"]):
             continue
-        (filed if fields.get("grouped") == "aside" and own["group_id"] else loose).append(own)
+        if fields.get("grouped") != "aside" or not own["group_id"]:
+            loose.append(own)
+        elif bands is None or own["group_id"] in bands:
+            filed.append(own)
     if filed and "after" not in fields:
         filed.sort(key=rank)
         answer["grouped"] = mixed(answer.get("grouped") or [], filed, rank)[0]

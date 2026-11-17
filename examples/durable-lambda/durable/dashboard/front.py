@@ -20,7 +20,7 @@ from durable.dashboard.relay import relay
 from durable.dashboard.web import PAGE_POLICY, WEB_POLICY, Request, answer, error
 from durable.helpers import log
 from durable.lambda_runtime import Context, HttpStream
-from durable.settings import DUE_S, MAIN, PAGES_WEB, REPO_FUNCTION, START_S, VENDOR, VIS_WEB, WEBHOOK_PARAMETER, WORKER_FUNCTION
+from durable.settings import BLANK_S, DUE_S, MAIN, PAGES_WEB, REPO_FUNCTION, START_S, VENDOR, VIS_WEB, WEBHOOK_PARAMETER, WORKER_FUNCTION
 
 # The pages of Software factory, by path.
 PAGES = {"/dashboard": "workflows.html", "/dashboard/factory": "factory.html"}
@@ -105,6 +105,11 @@ def tick() -> dict[str, Any]:
             shards.unmark(shard)
     for shard in started:
         aws.start(WORKER_FUNCTION, kind="tick", shard=shard)
+    for shard, at in shards.marked("blank/"):
+        # The worker removes the shard at its end when no call came (see `worker.py`).
+        if time.time() - at > BLANK_S and not aws.alive(shards.lease(shard)[0]):
+            aws.start(WORKER_FUNCTION, kind="sweep", shard=shard)
+            started.append(shard)
     return {"tick": "worker started", "shards": started} if started else {"tick": "nothing to do"}
 
 

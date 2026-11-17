@@ -8,6 +8,7 @@ lease.json                the lease of `main`
 shards/<shard>/lease.json the lease of another shard
 routes/<id>               the shard of a session or of a run. Without it, the shard is `main`
 pending/<shard>           a shard that can have work: the schedule starts its worker again
+blank/<shard>             a shard where no session has a turn: the schedule removes it after BLANK_S without a call
 calls/<shard>/<id>        a call for the worker of a shard
 bells/<shard>             the id of the last call of a shard
 lists/<shard>             the list rows of the sessions of a shard: the front shows them and starts no worker
@@ -95,10 +96,15 @@ def unmark(shard: str) -> None:
     aws.delete(f"pending/{shard}")
 
 
-def marked() -> list[tuple[str, float]]:
-    """Return each shard that can have work, with the time of its mark."""
-    found = [(item["Key"].partition("/")[2], item["LastModified"].timestamp()) for item in aws.keys("pending/")]
+def marked(prefix: str = "pending/") -> list[tuple[str, float]]:
+    """Return each shard that can have work, with the time of its mark. The prefix `blank/` gives each shard without a turn."""
+    found = [(item["Key"].partition("/")[2], item["LastModified"].timestamp()) for item in aws.keys(prefix)]
     return [(shard, at) for shard, at in found if SHARD.fullmatch(shard)]
+
+
+def blank(shard: str, is_blank: bool) -> None:
+    """Record that no session of a shard has a turn, or that one has. The time of the record is the last stop of its worker."""
+    aws.put(f"blank/{shard}", b"") if is_blank else aws.delete(f"blank/{shard}")
 
 
 # -- the shard of a session or of a run ----------------------------------------------
@@ -144,7 +150,7 @@ def drop(shard: str, sessions: set[str], lease_key: str, state: str | None) -> N
     The lease goes last: until then no other worker of the shard starts.
     """
     keys = [f"routes/{session}" for session in sessions] + [item["Key"] for prefix in (f"calls/{shard}/", f"seen/{shard}") for item in aws.keys(prefix)]
-    for key in [*keys, f"lists/{shard}", f"texts/{shard}", f"bells/{shard}", f"pending/{shard}", *([state] if state else []), lease_key]:
+    for key in [*keys, f"lists/{shard}", f"texts/{shard}", f"bells/{shard}", f"pending/{shard}", f"blank/{shard}", *([state] if state else []), lease_key]:
         aws.delete(key)
 
 

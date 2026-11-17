@@ -296,10 +296,18 @@ class Gateway:
         except FileNotFoundError:
             return set()
 
-    def vacant(self) -> bool:
-        """Return True when the gateway says that it has no session: its list is empty and each recorded session is gone."""
+    def blank(self) -> bool:
+        """Return True when the gateway says that no session of this home has a turn: its list is empty."""
         try:
-            return not self.sessions() and all(self.is_gone(session) for session in self.mine())
+            return not self.sessions()
+        except (GatewayError, OSError) as failure:
+            log("no look at the sessions", repr(failure))
+            return False
+
+    def vacant(self) -> bool:
+        """Return True when the gateway says that each recorded session of a blank home is gone."""
+        try:
+            return all(self.is_gone(session) for session in self.mine())
         except (GatewayError, OSError) as failure:
             log("no look at the sessions", repr(failure))
             return False

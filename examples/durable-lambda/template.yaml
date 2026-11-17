@@ -296,7 +296,7 @@ Resources:
               - Effect: Allow
                 Action: s3:ListBucket
                 Resource: !GetAtt Bucket.Arn
-                Condition: {StringLike: {s3:prefix: [lease.json, machine, relay/*, shards/*, routes/*, lists/*, texts/*, seen/*, pending/*]}}
+                Condition: {StringLike: {s3:prefix: [lease.json, machine, relay/*, shards/*, routes/*, lists/*, texts/*, seen/*, pending/*, blank/*]}}
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:
@@ -400,6 +400,7 @@ Resources:
                   - !Sub "${Bucket.Arn}/shards/*"
                   - !Sub "${Bucket.Arn}/routes/*"
                   - !Sub "${Bucket.Arn}/pending/*"
+                  - !Sub "${Bucket.Arn}/blank/*"
                   - !Sub "${Bucket.Arn}/calls/*"
                   - !Sub "${Bucket.Arn}/bells/*"
                   - !Sub "${Bucket.Arn}/lists/*"
@@ -420,6 +421,7 @@ Resources:
                   - !Sub "${Bucket.Arn}/work/*"
                   - !Sub "${Bucket.Arn}/routes/*"
                   - !Sub "${Bucket.Arn}/pending/*"
+                  - !Sub "${Bucket.Arn}/blank/*"
                   - !Sub "${Bucket.Arn}/calls/*"
                   # A shard whose last session is deleted removes each of its objects.
                   - !Sub "${Bucket.Arn}/shards/*"

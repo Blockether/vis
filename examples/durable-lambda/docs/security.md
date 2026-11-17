@@ -20,7 +20,7 @@ What a session of [Software factory](../README.md) can and cannot get.
 | A person decides at a gate of another person | Nothing stops this person: a gate has no sign-in. A gate is a step of a workflow, not a security control. |
 | A false webhook | `front` checks the `X-Hub-Signature-256` of GitHub. |
 | The credentials of the worker role leave the function | Each S3 and Lambda permission of the worker role has the condition `aws:SourceVpc`. Outside the network of the stack, the credentials permit only a write to the log group of the worker. |
-| A session deletes or overwrites data | The bucket keeps each old version of an object for 7 days. The worker can delete only `state/`, `relay/`, `tmp/`, `work/`, `routes/`, `pending/`, `calls/`, `shards/`, `bells/`, `lists/`, `texts/` and `seen/`. |
+| A session deletes or overwrites data | The bucket keeps each old version of an object for 7 days. The worker can delete only `state/`, `relay/`, `tmp/`, `work/`, `routes/`, `pending/`, `blank/`, `calls/`, `shards/`, `bells/`, `lists/`, `texts/` and `seen/`. |
 | A stored answer or a stored file runs script in the browser | Each relayed answer has a `sandbox` content security policy, and `front` passes only a fixed list of answer headers. The API sends each attached file and each temporary file as plain text and as a download. |
 | A flood of requests makes a large bill | `front` has a concurrency limit of 50, and `repo` and `sync` have 1. `worker` and `llm` have no limit of their own, so each session can have its worker: the Lambda quota of the account is their limit. To set a lower limit, give the two functions a `ReservedConcurrentExecutions` in the template. A call cannot ask for more output tokens than the limit of the model. |
 

@@ -18,6 +18,7 @@ from typing import Any
 
 from durable import aws, core, shards
 from durable.app import Api
+from durable.domain import OPEN
 from durable.helpers import log
 from durable.lambda_runtime import Context
 from durable.settings import CALLS, DRAIN_S, DUE_S, IDLE_S, LAST_SAVE_S, LIFETIME, MAIN, MARGIN, RENEW_S, RESTARTS, ROUTE_S, SAVE_S, SETTLE_S, WORKER_FUNCTION
@@ -27,8 +28,10 @@ from durable.vis.machine import Machine
 from durable.vis.relay import Relay
 
 
-def work(held: core.Lease, context: Context) -> dict[str, Any]:
+def work(held: core.Lease, context: Context, is_sweep: bool = False) -> dict[str, Any]:
     """Run the gateway and answer the calls until the worker is idle or near its time limit.
+
+    `is_sweep` is True when the schedule started the worker for a shard that had no turn and no call for BLANK_S.
 
     The steps: restore the state, start the broker and the gateway, loop over the
     calls, then park the turns, save the state and release the lease.
@@ -119,7 +122,10 @@ def work(held: core.Lease, context: Context) -> dict[str, Any]:
     if shard != MAIN:
         # The list of the front shows the last state of each session while no worker runs.
         engine.publish(shard)
-    is_vacant = shard != MAIN and not (parked or runs or due or relay.open()) and engine.vacant()
+    is_blank = shard != MAIN and not (parked or runs or due or relay.open()) and engine.blank()
+    # Nobody comes back to a session without a turn: it is in no list. A run that waits at a gate keeps its shard.
+    is_stale = is_sweep and relay.last < ready and not any(line["status"] in OPEN for line in api.runs.mine())
+    is_vacant = is_blank and (is_stale or engine.vacant())
     if not (parked or relay.open() or is_vacant):
         # Nothing changes the sessions after this point, so the front can answer the reads of an open tab.
         relay.record()
@@ -130,11 +136,13 @@ def work(held: core.Lease, context: Context) -> dict[str, Any]:
     # The gateway and the runs stopped, so each work directory has its last files.
     api.workspaces.save(is_last=True)
     if is_vacant:
-        # Each session of the shard is gone, so nothing of the shard stays in the bucket. No thread writes after this point.
+        # No session of the shard stays, so nothing of the shard stays in the bucket. No thread writes after this point.
         wait([publishing, copying], timeout=SETTLE_S)
         shards.drop(shard, engine.mine(), held.key, held.data.get("state"))
         log("worker of", shard, "stops: the shard has no session and is gone")
         return {"worker": "gone"}
+    if shard != MAIN:
+        shards.blank(shard, is_blank)
     core.save(held)
     held.release(running=0, parked=parked, runs=runs, next_due=due)
     log("worker of", shard, "stops:", reason, "parked", parked, "runs", runs)
@@ -158,7 +166,7 @@ def handler(event: dict[str, Any], context: Context) -> dict[str, Any]:
         if shard != MAIN:
             # The schedule starts a worker again when this one stops without a release.
             shards.mark(shard)
-        return work(held, context)
+        return work(held, context, event.get("kind") == "sweep")
     except Exception:
         # Give the lease up, so the next call starts a worker at once. Work can wait, so the first failures start the next worker here.
         failures = int(event.get("failures") or 0)

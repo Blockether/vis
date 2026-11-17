@@ -24,6 +24,7 @@ the standard library. It supports plain answers and streamed answers.
 | `machine` | The machine of `main`: its settings, the project and the groups with their settings and MCP servers. Each other worker copies it | permanent |
 | `routes/<id>` | The shard of a session or of a run. An id without this object is in `main` | permanent for a run; for a session, until a person deletes it |
 | `pending/<shard>` | A shard that can have work. The schedule starts its worker again | until the work ends |
+| `blank/<shard>` | A shard where no session has a turn | until the first turn, or 1 day without a call |
 | `calls/<shard>/<id>` | A call for the worker of a shard | 1 day |
 | `bells/<shard>` | The id of the last call of a shard | until the last session of the shard is deleted |
 | `lists/<shard>` | The list rows of the sessions of a shard, for the session list of Vis web | the same |
@@ -68,9 +69,9 @@ project, the groups, the automations and the devices. It also has the sessions t
 an earlier version of the stack made.
 
 - `front` reads `routes/<id>` for the session or the run of a call and sends the call to the worker of that shard, as an object in `calls/`. A call that makes a session goes to a new shard. A repeated call with the same `idempotency_key` goes to the same shard.
-- Only `main` changes the machine. After each change, it writes the settings of the machine, the project and the groups, with the settings and the MCP servers of each group, to the object `machine`. Each other worker copies this object before it answers a call, so a setting of the machine or of a group applies to each session. The settings of a project are a file in the project directory on EFS, which all the workers read. A group has another id in each home directory: the worker changes the ids at its border, so each client sees the ids of `main`.
+- Only `main` changes the machine. After each change, it writes the settings of the machine, the project and the groups, with the settings, the MCP servers and the MCP server switches of each group, to the object `machine`. Each other worker copies this object before it answers a call, so a setting of the machine or of a group applies to each session. The settings of a project are a file in the project directory on EFS, which all the workers read. A group has another id in each home directory: the worker changes the ids at its border, so each client sees the ids of `main`.
 - A call for the settings or the MCP servers of a session, or for a reload of its extensions, goes to the worker of that session. `main` answers for the machine, a project and a group.
-- `front` makes each page of the session list and of a search from the rows of `lists/` and the rows of `main`, so the list starts no worker. It counts the sessions of each group, and it shows the sessions of an archived group as archived. The rows are in the order of the gateway, and the cursor of a page names the place in `main` and in the other shards.
+- `front` makes each page of the session list and of a search from the rows of `lists/` and the rows of `main`, so the list starts no worker. It counts the sessions of each group, and it shows the sessions of an archived group as archived. For a list call that names a page of the groups, `main` gives the groups of the page and `front` gives the sessions of those groups. The rows are in the order of the gateway, and the cursor of a page names the place in `main` and in the other shards.
 - A search finds a session by its title, and by each request, each reply and the thinking of each turn. Each worker records these texts in `texts/`, and `front` searches them with the rules of the gateway.
 - The archive of all the sessions of a project or of a search, and the delete of a group with its sessions, go to each shard that has one of the sessions, 16 shards at a time, and then to `main`. `front` joins the answers.
 - `front` joins the event streams of the shards whose sessions a browser follows, and the fleet feed of each shard that has a worker. An event stream does not start and does not keep a worker: `front` holds the stream while a shard has no worker, and joins the worker when a call starts one. When a worker stops, the stream ends and Vis web connects again.
@@ -78,17 +79,16 @@ an earlier version of the stack made.
 - A worker stops after 60 s without work. A call to its session, a decision at a gate or the schedule starts a new worker from the checkpoint.
 - A worker that fails saves its home directory, releases its lease and starts the next worker at once, two times at most. When the platform stops a worker, its lease ends after 30 s, and the next call or the schedule starts a new worker.
 - When the last session of a shard is deleted, its worker deletes the lease, the checkpoint, the list, the texts and the record of the shard.
+- A session without a turn is in no list. When its shard gets no call for 1 day, the schedule starts its worker one time, and the worker deletes the shard. A turn or another call in that day keeps the session. A run that waits at a gate keeps its shard.
 
 The limits:
 
 - All workers use the one `worker` function with 4096 MB. The function has no reserved concurrency: the Lambda quota of the account is the largest number of workers at the same time. `front` has 50 instances, and each call and each open event stream uses one.
 - Council and the read of another session work only in one shard: a session, its forks and its subagents. A session cannot send a message to the session of another shard.
 - The first time that a person opens a session with a new answer, Vis web marks the answer as seen. This is a write: the worker of that session runs for about 60 s. A read that no tab made before, for example an older page of a long transcript, also starts the worker one time.
-- A session without a turn is in no list, and its shard stays in the bucket until a person deletes the session.
 - A change of the status of a session is in the fleet feed only after `front` joined the worker, 10 s at most after its start. The list read of Vis web, each 30 s, shows the status then.
 - When the platform stops a worker, the work after its last checkpoint is lost: 15 s at most. Without a call, the schedule starts the new worker in about 90 s.
-- In a group, the switch of an MCP server that the group does not define applies only to the sessions of `main`.
-- A session that a client makes with a `workspace_id` is in `main`. A list call with `group_limit` or `group_offset` has only the sessions of `main`.
+- A session that a client makes with a `workspace_id` is in `main`. `main` puts the groups in pages by the time of its own sessions.
 - `front` holds the search texts of all the shards in memory. Its 512 MB are the limit of the search.
 
 ## A commit becomes the project of the next worker

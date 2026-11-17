@@ -58,7 +58,7 @@ class Machine:
         return answer
 
     def own(self, group: str) -> dict[str, Any]:
-        """Return what a group sets itself: the value of each setting, and each MCP server with its switch."""
+        """Return what a group sets itself: the value of each setting, each MCP server with its switch, and its switch of each other server."""
         query = urlencode({"channel": "all", "scope": "group", "target_id": group})
         rows = [row for part in self.ask("GET", f"/v1/settings?{query}")["groups"] for row in part["toggles"]]
         values: dict[str, Any] = {}
@@ -68,7 +68,9 @@ class Machine:
             if row.get("is_override"):
                 values[row["id"]] = row.get("own_value")
         servers = self.ask("GET", f"/v1/mcp/servers?{query}")["servers"]
-        return {"settings": values, "servers": {row["name"]: [{name: value for name, value in row.items() if name not in STATUS}, row.get("enabled", True)] for row in servers if row.get("source") == "group"}}
+        defined = {row["name"]: [{name: value for name, value in row.items() if name not in STATUS}, row.get("enabled", True)] for row in servers if row.get("source") == "group"}
+        # The machine and the project define the other servers, and each home has those definitions.
+        return {"settings": values, "servers": defined, "switches": {row["name"]: row.get("enabled", True) for row in servers if row["name"] not in defined}}
 
     def groups(self) -> dict[str, Any]:
         """Return the list of the groups of the project in this home, the archived groups also."""
@@ -154,4 +156,7 @@ class Machine:
         for name, (server, is_on) in group["servers"].items():
             if have["servers"].get(name) != [server, is_on]:
                 self.ask("PUT", f"/v1/mcp/servers/{name}", {"server": server, **target})
+                self.ask("POST", f"/v1/mcp/servers/{name}/actions/enable", {"enabled": is_on, **target})
+        for name, is_on in group["switches"].items():
+            if have["switches"].get(name) != is_on:
                 self.ask("POST", f"/v1/mcp/servers/{name}/actions/enable", {"enabled": is_on, **target})
