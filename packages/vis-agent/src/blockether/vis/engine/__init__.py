@@ -38,6 +38,7 @@ from ._groups import SessionGroup
 from ._install import InstallError, ensure_installed, install
 from ._local import LocalEngine
 from ._models import Model, SessionModel
+from ._service import LocalService
 from ._sounds import SoundPreset, Sounds, SoundSettings
 from ._speech import Speech, SpeechAudio, Transcript, Voice
 
@@ -63,6 +64,7 @@ __all__ = [
     "JobEvents",
     "JSONValue",
     "LocalEngine",
+    "LocalService",
     "Model",
     "ProtocolError",
     "Query",
