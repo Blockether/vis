@@ -4136,9 +4136,6 @@ class Session:
         can cost money and change project files. Submission failures propagate,
         and the SDK never automatically retries this mutation.
         """
-        extensions = self.client._client_extensions.get(self.id)
-        if extensions is not None:
-            extensions.started = True
         cursor = _field(self._call("GET", "/seq"), "seq", int)
         data = self._call(
             "POST",

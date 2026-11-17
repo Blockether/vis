@@ -31,6 +31,7 @@ def gateway():
         "pending": {},
         "results": {},
         "reject": False,
+        "busy": 0,
     }
 
     def respond(method, path, body):
@@ -45,6 +46,11 @@ def gateway():
         suffix = parts[4:]
         if suffix == ["client-extensions"]:
             if method == "PUT":
+                if state["busy"]:
+                    state["busy"] -= 1
+                    return 409, {
+                        "error": {"type": "client_extension_busy", "message": "Busy"}
+                    }
                 if state["reject"]:
                     return 409, {
                         "error": {"type": "collision", "message": "Rejected append"}
@@ -120,14 +126,16 @@ def test_constructor_extensions_pump_on_calling_thread_and_use_lease(gateway, pu
 
 
 @pytest.mark.parametrize("inside_context", [False, True])
-def test_register_extension_before_send_and_refuse_session_send_bypass(
-    gateway, inside_context
-):
-    client, state, calls = gateway
+def test_register_extension_before_and_after_the_first_request(gateway, inside_context):
+    client, state, _ = gateway
 
     def remember(value: str) -> str:
         """Return a supplied value."""
         return value
+
+    def another(value: str) -> str:
+        """Return a supplied value in upper case."""
+        return value.upper()
 
     agent = Agent("/work", execution_layer=client)
     try:
@@ -136,13 +144,78 @@ def test_register_extension_before_send_and_refuse_session_send_bypass(
         agent.register_extension(declaration(remember))
         sid = agent.session.id
         assert len(state["manifests"][sid]) == 1
-        agent.session.send("Start directly")
-        count = len(calls)
-        with pytest.raises(RuntimeError, match="first request"):
-            agent.register_extension(declaration(remember, "another"))
-        assert len(calls) == count
+        agent.send("Start")
+        # #488: an idle session takes a new extension after its first request.
+        agent.register_extension(declaration(another, "another"))
+        assert [item["name"] for item in state["manifests"][sid]] == [
+            "application",
+            "another",
+        ]
+        queue(state, sid, name="another")
+        agent.session.read()
+        assert state["results"][sid] == [{"status": "success", "result": "ADA"}]
     finally:
         agent.close()
+
+
+def test_registration_retries_once_when_the_session_is_busy(gateway):
+    client, state, calls = gateway
+
+    def remember(value: str) -> str:
+        """Return a supplied value."""
+        return value
+
+    def another(value: str) -> str:
+        """Return another supplied value."""
+        return value
+
+    with Agent("/work", execution_layer=client) as agent:
+        sid = agent.session.id
+        state["busy"] = 1
+        agent.register_extension(declaration(remember))
+        assert len(state["manifests"][sid]) == 1
+        state["busy"] = 2
+        with pytest.raises(GatewayError) as busy:
+            agent.register_extension(declaration(another, "another"))
+        assert (busy.value.status, busy.value.code) == (409, "client_extension_busy")
+        assert len(state["manifests"][sid]) == 1
+        puts = [call for call in calls if call[0] == "PUT"]
+        assert len(puts) == 4
+
+
+def test_update_extension_prompt_keeps_symbols_and_callbacks(gateway):
+    client, state, _ = gateway
+
+    def remember(value: str) -> str:
+        """Return a supplied value."""
+        return value
+
+    with Agent(
+        "/work", execution_layer=client, extensions=[declaration(remember)]
+    ) as agent:
+        sid = agent.session.id
+        before = state["manifests"][sid][0]
+        agent.send("Start")
+        agent.update_extension_prompt("application", "Use fresh data.")
+        after = state["manifests"][sid][0]
+        assert after == {**before, "prompt": "Use fresh data."}
+        agent.update_extension_prompt("application", None)
+        assert state["manifests"][sid][0] == before
+        with pytest.raises(ValueError, match="no client extension"):
+            agent.update_extension_prompt("missing", "Text")
+        queue(state, sid)
+        agent.session.read()
+        assert state["results"][sid] == [{"status": "success", "result": "Ada"}]
+
+
+def test_agent_model_pins_the_conversation(gateway):
+    client, _, calls = gateway
+    with Agent("/work", execution_layer=client, provider="local", model="m1") as agent:
+        _ = agent.session
+    body = next(json.loads(c[3]) for c in calls if c[:2] == ("POST", "/v1/sessions"))
+    assert (body["provider"], body["model"]) == ("local", "m1")
+    with pytest.raises(ValueError, match="together"):
+        Agent("/work", execution_layer=client, model="m1")
 
 
 def test_shared_layer_agents_isolate_callbacks_and_close_releases_references(gateway):

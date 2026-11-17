@@ -172,8 +172,11 @@
   [a b]
   (or (= a b) (str/starts-with? a (str b ".")) (str/starts-with? b (str a "."))))
 
+(defn- same-except-prompt? [a b] (= (dissoc a "prompt") (dissoc b "prompt")))
+
 (defn register!
   "Validate an append-only declaration set against an idle session's loaded tools.
+   An existing declaration can change only its static prompt.
    The caller holds its turn lock through installation. live? checks the actual lease."
   [sid owner payload live? environment]
   (validate! "client_extensions" payload)
@@ -199,9 +202,12 @@
         (refuse! 403 :client_extension_owner "Another client owns these session extensions"))
       (when (or (not= (count specs) (count by-name))
                 (not-every? (fn [[k v]]
-                              (= v (get by-name k)))
+                              (some->> (get by-name k)
+                                       (same-except-prompt? v)))
                             previous))
-        (refuse! 409 :client_extension_conflict "Existing declarations cannot be replaced"))
+        (refuse! 409
+                 :client_extension_conflict
+                 "Existing declarations can change only their prompt"))
       (let [generation
             (or (:generation before) (str (UUID/randomUUID)))
 
@@ -212,8 +218,9 @@
             (into {} (map (juxt :ext/name identity) (:extensions before)))
 
             declarations
-            (mapv #(or (get previous-extensions (get % "name"))
-                       (extension-declaration sid owner generation %))
+            (mapv #(if (= % (get previous (get % "name")))
+                     (get previous-extensions (get % "name"))
+                     (extension-declaration sid owner generation %))
                   specs)
 
             names

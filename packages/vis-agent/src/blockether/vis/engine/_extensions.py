@@ -10,7 +10,7 @@ import math
 import re
 import threading
 from collections.abc import Mapping
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
 
 import blockether.vis.extension as vis
 from blockether.vis import _contracts
@@ -81,7 +81,6 @@ class ClientExtensions:
         self._receipt_bytes = 0
         self._thread = threading.get_ident()
         self._draining = False
-        self.started = False
         names, aliases = set(), set()
         for extension in self.declarations:
             if not isinstance(extension, vis.Extension):
@@ -170,6 +169,28 @@ class ClientExtensions:
                 f"client extensions are limited to {most} extensions and 256 symbols"
             )
         _json_text({"extensions": self.manifest})
+
+    def _successor(self, declarations):
+        """Validate a new declaration set that keeps the receipts of executed calls."""
+        successor = ClientExtensions(declarations)
+        successor._completed = self._completed
+        successor._receipt_bytes = self._receipt_bytes
+        return successor
+
+    def with_extension(self, extension):
+        """Return these declarations with one more extension added."""
+        return self._successor((*self.declarations, extension))
+
+    def with_prompt(self, name, prompt):
+        """Return these declarations with a new static prompt for one extension."""
+        if prompt is not None and not isinstance(prompt, str):
+            raise TypeError("an extension prompt update must be text or None")
+        if not any(extension.name == name for extension in self.declarations):
+            raise ValueError(f"no client extension is named {name!r}")
+        return self._successor(
+            replace(extension, prompt=prompt) if extension.name == name else extension
+            for extension in self.declarations
+        )
 
     def _check_thread(self):
         if threading.get_ident() != self._thread:

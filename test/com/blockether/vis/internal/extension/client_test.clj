@@ -246,6 +246,24 @@
             (client/complete! sid "owner" id {"status" "success" "result" []})
             (expect (= [] (:result (deref f 2000 ::timeout)))))))))
 
+(defdescribe
+  idle-owner-replaces-only-the-static-prompt
+  (it "idle owner replaces only the static prompt"
+      (with-registration
+        (fn [sid env _]
+          (let [changed
+                (assoc-in (payload "lookup") ["extensions" 0 "prompt"] "Use fresh data.")
+
+                [entry]
+                (client/register! sid "owner" changed (constantly true) env)]
+
+            (expect (= "Use fresh data." ((:ext/prompt-fn entry) env)))
+            (expect (= [entry] (client/extensions-for sid)))
+            (expect (= :client_extension_conflict
+                       (failure-code
+                         #(client/register! sid "owner" (payload "other") (constantly true) env))))
+            (expect (= [entry] (client/extensions-for sid))))))))
+
 (defdescribe detached-adapters-stay-inactive-after-owner-registers-again
              (it "detached adapters stay inactive after owner registers again"
                  (with-registration

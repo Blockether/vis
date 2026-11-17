@@ -17,7 +17,14 @@ from pydantic_core import ValidationError as PydanticValidationError
 from referencing import Registry
 from referencing.exceptions import Unresolvable
 
-from ._client import ExecutionLayer, Session, TransportError, Turn, _duration
+from ._client import (
+    ExecutionLayer,
+    GatewayError,
+    Session,
+    TransportError,
+    Turn,
+    _duration,
+)
 from ._local import LocalEngine
 
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
@@ -446,6 +453,9 @@ class Agent:
             Names such as `"py.lint_code"` or `"py.repl_*"` keep only those tools of
             the extensions they name. Names such as `"-py.repl_stop"` turn tools off.
             Do not mix the two forms. The gateway refuses an unknown name.
+        provider: Optional provider ID from `models`. Give it with `model`.
+        model: Optional model name. The pair pins the model of the conversation.
+            A `send` or `run` option `provider` and `model` changes it for one turn.
 
     Construction does not start a process or connect. Session access, context
     entry, `send` or `run` starts the conversation. Closing the default agent stops
@@ -457,7 +467,8 @@ class Agent:
         TypeError: The supplied layer does not implement
             `blockether.vis.engine.ExecutionLayer`, an extension is unsupported, or
             `tools` is not an iterable of strings.
-        ValueError: A project or extension declaration is invalid.
+        ValueError: A project or extension declaration is invalid, or only one of
+            `provider` and `model` is given.
         FileNotFoundError: The local project does not exist.
         NotADirectoryError: The local project is not a directory.
     """
@@ -469,9 +480,13 @@ class Agent:
         execution_layer: ExecutionLayer | None = None,
         extensions=(),
         tools=None,
+        provider: str | None = None,
+        model: str | None = None,
     ):
         from ._extensions import ClientExtensions
 
+        if (provider is None) != (model is None):
+            raise ValueError("provider and model must be given together")
         self._extensions = ClientExtensions(extensions)
         if tools is not None:
             if isinstance(tools, str):
@@ -492,6 +507,8 @@ class Agent:
         )
         if tools is not None:
             self._session_options["tools"] = tools
+        if provider is not None:
+            self._session_options.update(provider=provider, model=model)
         self.project = self._session_options["root"]
         self._session = None
         self._closed = False
@@ -523,23 +540,43 @@ class Agent:
             )
         self.execution_layer._client_extensions[session.id] = extensions
 
+    def _replace_extensions(self, candidate):
+        if self._closed:
+            raise TransportError("agent is closed")
+        if self._session is not None:
+            try:
+                self._mount_extensions(self._session, candidate)
+            except GatewayError as error:
+                if error.status != 409 or error.code != "client_extension_busy":
+                    raise
+                # A recycled session environment refuses once; a running turn twice.
+                self._mount_extensions(self._session, candidate)
+        self._extensions = candidate
+
     def register_extension(self, extension):
-        """Add an application-owned Extension before this Agent's first request.
+        """Add an application-owned Extension to this conversation.
 
         Callables keep their Python objects and execute on the SDK calling thread
         while you read, wait or iterate events. No code or closures are uploaded.
-        Host-only extension fields are refused before connecting.
+        Host-only extension fields are refused before connecting. After the first
+        request, register only while no turn runs: the gateway refuses a change
+        during a turn with `GatewayError` 409 `client_extension_busy`. The new
+        tools are available from the next turn.
         """
-        from ._extensions import ClientExtensions
+        self._replace_extensions(self._extensions.with_extension(extension))
 
-        if self._closed:
-            raise TransportError("agent is closed")
-        if self._extensions.started:
-            raise RuntimeError("register extensions before the Agent's first request")
-        candidate = ClientExtensions((*self._extensions.declarations, extension))
-        if self._session is not None:
-            self._mount_extensions(self._session, candidate)
-        self._extensions = candidate
+    def update_extension_prompt(self, name: str, prompt: str | None):
+        """Replace the static prompt of a registered extension, or remove it with None.
+
+        The symbols of the extension stay the same. The new text is in the system
+        context from the next turn. Like `register_extension`, this is refused with
+        `GatewayError` 409 `client_extension_busy` while a turn runs.
+
+        Raises:
+            ValueError: No registered extension has this `name`.
+            TypeError: `prompt` is not text or None.
+        """
+        self._replace_extensions(self._extensions.with_prompt(name, prompt))
 
     def send(self, request: str, **options) -> Turn:
         """Submit a request without waiting for the model to finish.
@@ -558,9 +595,7 @@ class Agent:
         No mutation is automatically retried. If you retry an uncertain submission,
         reuse an explicit idempotency key rather than accidentally starting it twice.
         """
-        conversation = self.session
-        self._extensions.started = True
-        return conversation.send(request, **options)
+        return self.session.send(request, **options)
 
     @overload
     def run(
@@ -625,13 +660,8 @@ class Agent:
         an owned local agent stops unfinished work.
         """
 
-        def connect() -> Session:
-            conversation = self.session
-            self._extensions.started = True
-            return conversation
-
         return _run(
-            connect,
+            lambda: self.session,
             request,
             timeout=timeout,
             response_model=response_model,
