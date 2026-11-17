@@ -476,10 +476,25 @@
                 _lock (.lock channel)]
       (f))))
 
+(defn- interpreter-starts?
+  "True when the interpreter `python` starts and imports its standard library. A copy with
+   an intact executable but a damaged library tree cannot serve an environment."
+  [^File python]
+  (try (let [^java.util.List command [(.getPath python) "-I" "-c" "import encodings, os, site"]
+             process (.start (doto (ProcessBuilder. command)
+                               (.redirectErrorStream true)
+                               (.redirectOutput ProcessBuilder$Redirect/DISCARD)))]
+         (if (.waitFor process 30 TimeUnit/SECONDS)
+           (zero? (.exitValue process))
+           (do (.destroyForcibly process) false)))
+       (catch java.io.IOException _ false)))
+
 (defn- copy-valid?
-  "True when `copy` is an executable of the interpreter build `identity`."
+  "True when `copy` is an executable of the interpreter build `identity` that starts."
   [^File copy ^String identity]
-  (and (.isFile copy) (= identity (build-digest (.getCanonicalFile copy)))))
+  (and (.isFile copy)
+       (= identity (build-digest (.getCanonicalFile copy)))
+       (interpreter-starts? copy)))
 
 (defn- copy-interpreter!
   "Copy the interpreter tree `home` to `target` for the build `identity`, unless `target`

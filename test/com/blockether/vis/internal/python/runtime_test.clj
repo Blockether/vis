@@ -745,6 +745,31 @@
                            "staging directories stay in the store"))))
              (finally (#'python-runtime/delete-tree! root))))))
 
+;; Verifier report on #486: a copy with an intact executable and a deleted `os.py` passed the
+;; digest check, so environments used an interpreter that could not start.
+(defdescribe
+  interpreter-copy-with-damaged-library-test
+  (it "replaces a copy whose standard library is damaged"
+      (python-runtime/ensure-library!)
+      (let [root (temp-dir "vis-interpreter-damage")
+            store (io/file root "interpreters")
+            python (Interpreter/pythonExecutable)]
+        (try (with-redefs-fn {#'python-runtime/interpreter-store (constantly store)
+                              #'python-runtime/base-pythons (atom {})}
+               (fn []
+                 (let [base (#'python-runtime/base-python)
+                       copy (io/file store (subs (#'python-runtime/interpreter-identity python) 0 12))
+                       os-py (first (filter #(and (= "os.py" (.getName ^java.io.File %))
+                                                  (re-find #"/lib/python3\.\d+/os\.py$" (.getPath ^java.io.File %)))
+                                            (file-seq copy)))]
+                   (expect (some? os-py) "the copy has no standard library os.py")
+                   (io/delete-file os-py)
+                   (reset! @#'python-runtime/base-pythons {})
+                   (expect (= base (#'python-runtime/base-python)))
+                   (expect (.isFile ^java.io.File os-py) "the damaged copy was not replaced")
+                   (expect (#'python-runtime/interpreter-starts? (io/file base))))))
+             (finally (#'python-runtime/delete-tree! root))))))
+
 ;; Issue #486: each install of one interpreter build named its own `.venv-<hash>`, so the
 ;; first session of each new engine copy prepared every installed extension again (41-53 s).
 (defdescribe
@@ -798,6 +823,8 @@
           (with-redefs-fn
             {#'python-runtime/embedded-executable (fn [] @python)
              #'python-runtime/interpreter-store (constantly store)
+             ;; The fake builds are text files, not programs.
+             #'python-runtime/interpreter-starts? (constantly true)
              #'python-runtime/shared-project? (constantly false)
              #'python-runtime/compile-bytecode! (fn [_ _])
              #'python-runtime/project-packages (fn [_] (.getCanonicalFile ^java.io.File (site)))
