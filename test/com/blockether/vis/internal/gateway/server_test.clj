@@ -7293,6 +7293,197 @@
                      (.firstValue "Accept-Encoding")
                      (.orElse nil)))))))
 
+(defn- gzip-of
+  "The gzip stream of `data`."
+  ^bytes [^bytes data]
+  (let [bytes (java.io.ByteArrayOutputStream.)]
+    (with-open [out (java.util.zip.GZIPOutputStream. bytes)]
+      (.write out data))
+    (.toByteArray bytes)))
+
+(defn- codings-exchange
+  "The answers of a real Jetty with the gateway's gzip handler and codings middleware,
+   one for each `[method path headers body]` of `calls`. `/count` answers the number
+   of body bytes that its handler read; `/type/<status>/<media type>` answers 4000
+   bytes of that type, with the query string as its parameter. `seen` collects the path of each request that reached a handler."
+  [seen calls]
+  (let [server
+        (jetty/run-jetty ((rv 'wrap-request-codings)
+                           (fn [{:keys [uri body query-string]}]
+                             (swap! seen conj uri)
+                             (if-let [[_ status media-type] (re-matches #"/type/(\d+)/(.+)" uri)]
+                               {:status (parse-long status)
+                                :headers (cond-> {"Content-Type" (cond-> media-type
+                                                                   query-string
+                                                                   (str "; " query-string))
+                                                  "Content-Length" "4000"}
+                                           (= "206" status)
+                                           (assoc "Content-Range" "bytes 0-3999/9000"))
+                                :body (java.io.ByteArrayInputStream. (byte-array 4000 (byte 65)))}
+                               {:status 200
+                                :headers {"Content-Type" "application/json"}
+                                :body (str (let [buffer (byte-array 65536)]
+                                             (loop [total 0]
+                                               (let [n (.read ^java.io.InputStream body buffer)]
+                                                 (if (neg? n) total (recur (+ total n)))))))})))
+                         {:port 0
+                          :host "127.0.0.1"
+                          :join? false
+                          :configurator (fn [^org.eclipse.jetty.server.Server server]
+                                          (.insertHandler server ((rv 'gzip-handler))))})
+
+        client
+        (java.net.http.HttpClient/newHttpClient)]
+
+    (try (mapv (fn [[method path headers ^bytes body]]
+                 (let [builder
+                       (-> (java.net.http.HttpRequest/newBuilder
+                             (java.net.URI. (str "http://127.0.0.1:" (bound-port server) path)))
+                           (.method method
+                                    (if body
+                                      (java.net.http.HttpRequest$BodyPublishers/ofByteArray body)
+                                      (java.net.http.HttpRequest$BodyPublishers/noBody))))
+
+                       ^java.net.http.HttpResponse answer
+                       (.send client
+                              (.build ^java.net.http.HttpRequest$Builder
+                                      (reduce-kv (fn [^java.net.http.HttpRequest$Builder b k v]
+                                                   (.header b k v))
+                                                 builder
+                                                 headers))
+                              (java.net.http.HttpResponse$BodyHandlers/ofByteArray))
+
+                       header
+                       (fn [k]
+                         (-> (.headers answer)
+                             (.firstValue k)
+                             (.orElse nil)))]
+
+                   {:status (.statusCode answer)
+                    :coding (header "Content-Encoding")
+                    :length (header "Content-Length")
+                    :announce (header "Accept-Encoding")
+                    :bytes (alength ^bytes (.body answer))
+                    :text (String. ^bytes (.body answer) "UTF-8")}))
+               calls)
+         (finally (.stop ^org.eclipse.jetty.server.Server server)))))
+
+(defdescribe
+  request-codings-refuse-a-body-that-the-gateway-cannot-read
+  ;; Probe of a real gateway: a body that was not gzip gave a 500, half of a gzip
+  ;; stream was read as a whole body, a `br` body made a session and an attachment
+  ;; from the compressed bytes, and a 2 MB body inflated to 2 GB in the heap.
+  (it "answers 400 for a body that is not gzip and for a gzip stream that stops early"
+      (let [packed
+            (gzip-of (.getBytes (apply str (repeat 400 "{\"owner\": \"rig\"} ")) "UTF-8"))
+
+            gzip
+            {"Content-Encoding" "gzip"}
+
+            [whole upper not-gzip half empty]
+            (codings-exchange
+              (atom [])
+              [["POST" "/count" gzip packed] ["PUT" "/count" {"Content-Encoding" "GZIP"} packed]
+               ["POST" "/count" gzip (.getBytes "{\"plain\": true}" "UTF-8")]
+               ["POST" "/count" gzip
+                (java.util.Arrays/copyOf ^bytes packed (quot (alength ^bytes packed) 2))]
+               ["POST" "/count" gzip nil]])]
+
+        (expect (= [200 "6800"] [(:status whole) (:text whole)]))
+        (expect (= [200 "6800"] [(:status upper) (:text upper)]))
+        (expect (= 400 (:status not-gzip)))
+        (expect (str/includes? (:text not-gzip) "invalid-request"))
+        (expect (= 400 (:status half)) "half of a stream is not a shorter body")
+        (expect (= "gzip" (:announce half)) "a refusal still says what the gateway reads")
+        (expect (= [200 "0"] [(:status empty) (:text empty)]))))
+  (it "answers 415 for a coding that it does not read, before a handler sees the body"
+      (let [seen
+            (atom [])
+
+            answers
+            (codings-exchange seen
+                              (for [coding ["br" "deflate" "x-gzip" "gzip, gzip"]]
+                                ["POST" "/count" {"Content-Encoding" coding}
+                                 (.getBytes "abc" "UTF-8")]))]
+
+        (expect (= [415 415 415 415] (mapv :status answers)))
+        (expect (str/includes? (:text (first answers)) "unsupported-content-encoding"))
+        (expect (= [] @seen))
+        (expect (= [200 "3"]
+                   ((juxt :status :text)
+                     (first (codings-exchange (atom [])
+                                              [["POST" "/count" {"Content-Encoding" "identity"}
+                                                (.getBytes "abc" "UTF-8")]])))))))
+  (it "answers 413 for a body that inflates above the limit"
+      (let [limit
+            (long @(rv 'INFLATED_BODY_MAX_BYTES))
+
+            [at-limit above]
+            (codings-exchange (atom [])
+                              [["POST" "/count" {"Content-Encoding" "gzip"}
+                                (gzip-of (byte-array limit (byte 32)))]
+                               ["POST" "/count" {"Content-Encoding" "gzip"}
+                                (gzip-of (byte-array (inc limit) (byte 32)))]])]
+
+        (expect (= [200 (str limit)] [(:status at-limit) (:text at-limit)]))
+        (expect (= 413 (:status above)))
+        (expect (str/includes? (:text above) "payload-too-large")))))
+
+(defdescribe
+  gzip-answers-cover-each-method-and-only-text
+  ;; Probe of a real gateway: the answer of a PUT, a PATCH or a DELETE went out plain
+  ;; at any size, and a 206 answer of `audio/wav` went out as gzip without a length.
+  (it "compresses the answer of each method"
+      (let [answers (codings-exchange (atom [])
+                                      (for [method ["GET" "POST" "PUT" "PATCH" "DELETE"]]
+                                        [method "/type/200/application/json"
+                                         {"Accept-Encoding" "gzip"} nil]))]
+        (expect (= (repeat 5 "gzip") (map :coding answers)))
+        (expect (every? #(< (long (:bytes %)) 4000) answers))))
+  (it "sends media, a byte range and a compressed file as they are"
+      (let [answers (codings-exchange (atom [])
+                                      (for [path ["/type/206/audio/wav" "/type/200/audio/wav"
+                                                  "/type/200/audio/mp4" "/type/206/video/webm"
+                                                  "/type/200/image/heic"
+                                                  "/type/200/application/octet-stream"]]
+                                        ["GET" path {"Accept-Encoding" "gzip"} nil]))]
+        (expect (= (repeat 6 [nil "4000" 4000]) (map (juxt :coding :length :bytes) answers)))))
+  (it "still compresses text that has a parameter"
+      (let [[metrics] (codings-exchange (atom [])
+                                        [["GET" "/type/200/text/plain?version=0.0.4"
+                                          {"Accept-Encoding" "gzip"} nil]])]
+        (expect (= "gzip" (:coding metrics))))))
+
+(defdescribe a-compressed-file-type-has-no-byte-ranges
+             ;; A reference to a text file went out as 206 with `Content-Range` and gzip: the
+             ;; range named bytes of the file, the body was bytes of the gzip stream.
+             (it "gives a text file whole and a media file by range"
+                 (let [file
+                       (java.io.File/createTempFile "vis-range" ".bin")
+
+                       answer
+                       (fn [media-type]
+                         (fs-api/file-content-response {:headers {"range" "bytes=0-9"}}
+                                                       file
+                                                       {"Content-Type" media-type}))]
+
+                   (try (spit file (apply str (repeat 500 "0123456789")))
+                        (let [text
+                              (answer "text/markdown; charset=utf-8")
+
+                              media
+                              (answer "audio/mpeg")]
+
+                          (expect (= [200 "5000" nil nil]
+                                     [(:status text) (get-in text [:headers "Content-Length"])
+                                      (get-in text [:headers "Content-Range"])
+                                      (get-in text [:headers "Accept-Ranges"])]))
+                          (expect (= [206 "10" "bytes 0-9/5000" "bytes"]
+                                     [(:status media) (get-in media [:headers "Content-Length"])
+                                      (get-in media [:headers "Content-Range"])
+                                      (get-in media [:headers "Accept-Ranges"])])))
+                        (finally (.delete file))))))
+
 (defdescribe
   gzip-handler-never-compresses-the-live-stream-test
   (it "gzip handler never compresses the live stream"

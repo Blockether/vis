@@ -549,16 +549,22 @@
 (defn file-content-response
   "The streamed answer for `file` with `headers`: 206 for the one byte range that the
    `Range` header of `request` asks, 416 for a range past the end, else 200 with the
-   whole file. The file is read in chunks while the socket takes them."
+   whole file. The file is read in chunks while the socket takes them.
+
+   A file of a type that the gateway compresses is always whole, without
+   `Accept-Ranges`: a byte range of a compressed answer names other bytes."
   [request ^java.io.File file headers]
   (let [size
         (.length file)
 
+        ranges?
+        (not (http/compressed-media-type? (get headers "Content-Type")))
+
         wanted
-        (byte-range (get-in request [:headers "range"]) size)
+        (when ranges? (byte-range (get-in request [:headers "range"]) size))
 
         headers
-        (assoc headers "Accept-Ranges" "bytes")]
+        (if ranges? (assoc headers "Accept-Ranges" "bytes") (dissoc headers "Accept-Ranges"))]
 
     (cond (= :unsatisfiable wanted)
           {:status 416 :headers (assoc headers "Content-Range" (str "bytes */" size)) :body ""}

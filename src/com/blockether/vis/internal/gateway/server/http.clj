@@ -18,6 +18,28 @@
   [body]
   {:status 200 :headers {"Content-Type" "application/json"} :body (wire/canonical-json-str body)})
 
+(def compressed-media-types
+  "The media types whose answers the gateway compresses: text. Jetty's own default
+   compresses each type that it does not know as compressed, and that set had
+   `audio/wav`, `audio/mp4`, `video/webm`, `image/heic` and
+   `application/octet-stream`: a 206 answer to a `Range` request went out as gzip
+   without a length, and a snapshot, which is zstd, was deflated again. A type that
+   this set does not name stays plain, which is always correct."
+  #{"application/json" "application/manifest+json" "application/vnd.vis.live+ndjson"
+    "application/wasm" "application/x-ndjson" "application/xhtml+xml" "application/xml"
+    "image/svg+xml" "text/css" "text/csv" "text/html" "text/javascript" "text/markdown" "text/plain"
+    "text/tab-separated-values" "text/xml"})
+
+(defn compressed-media-type?
+  "True when the gateway compresses an answer of `content-type`. Parameters do not count."
+  [content-type]
+  (contains? compressed-media-types
+             (-> (str content-type)
+                 (str/split #";" 2)
+                 first
+                 str/trim
+                 str/lower-case)))
+
 (defn error-response
   [status type message & {:as extra}]
   (json-response status (gateway-contract/error-body type message extra)))

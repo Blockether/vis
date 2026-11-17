@@ -583,3 +583,14 @@
         (expect (= (set (map :slug api-pages))
                    (set (map :slug (filter (comp seq :variants) pages))))
                 "only Feature API pages give paired variants"))))
+
+(defdescribe page-answer-has-no-content-coding-test
+             ;; Probe of a real gateway: `/docs` with `Accept-Encoding: gzip;q=0` got gzip, and
+             ;; each compressed page had `Vary: Accept-Encoding` two times. The gateway is the
+             ;; one writer of the content coding.
+             (it "gives a page as text to a client that refuses gzip"
+                 (let [{:keys [status headers body]}
+                       (docs/handle {:uri "/docs" :headers {"accept-encoding" "gzip;q=0"}})]
+                   (expect (= 200 status))
+                   (expect (nil? (get headers "content-encoding")))
+                   (expect (string? body)))))

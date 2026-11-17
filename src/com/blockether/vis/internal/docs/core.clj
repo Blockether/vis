@@ -75,11 +75,8 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.docs.corpus :as doc-corpus]
-            [com.blockether.vis.internal.util :as util])
-  (:import [java.io ByteArrayOutputStream]
-           [java.util.zip GZIPOutputStream]
-           [org.commonmark.parser Parser]
+            [com.blockether.vis.internal.docs.corpus :as doc-corpus])
+  (:import [org.commonmark.parser Parser]
            [org.commonmark.renderer.html HtmlRenderer]
            [org.commonmark.ext.gfm.tables TablesExtension]
            [org.commonmark.ext.gfm.strikethrough StrikethroughExtension]))
@@ -670,27 +667,12 @@
 ;; edit under `resources/vis-docs` shows on the next refresh and an unchanged
 ;; tree costs no re-render.
 
-(defn- gzip-bytes
-  ^bytes [^String s]
-  (let [baos (ByteArrayOutputStream.)]
-    (with-open [gz (GZIPOutputStream. baos)]
-      (.write gz (util/utf8 s)))
-    (.toByteArray baos)))
-
 (defn- ok-html
-  "HTML response, gzipped when the client advertises support (the inline CSS
-   makes the doc ~12 KB; gzip ~4×). Assets are already immutable-cached; the
-   doc is intentionally NOT cache-tagged so a docs edit shows on refresh."
-  ([body] (ok-html body nil))
-  ([body accept-encoding]
-   (let [gz? (and accept-encoding (str/includes? (str/lower-case accept-encoding) "gzip"))]
-     {:status 200
-      :headers (cond-> {"content-type" "text/html; charset=utf-8"}
-                 gz?
-                 (assoc "content-encoding"
-                   "gzip" "vary"
-                   "Accept-Encoding"))
-      :body (if gz? (gzip-bytes body) body)})))
+  "HTML response. The gateway compresses it for a client that asks: this handler
+   sets no content coding. Assets are already immutable-cached; the doc is
+   intentionally NOT cache-tagged so a docs edit shows on refresh."
+  [body]
+  {:status 200 :headers {"content-type" "text/html; charset=utf-8"} :body body})
 
 (defn- asset-response
   [^String rel]
@@ -729,7 +711,7 @@
 (defn handle
   "Ring handler for the docs site. Returns nil for paths it does not own (so the
    gateway can fall through). Owns `/docs`, `/docs/<slug>`, `/docs/assets/**`."
-  [{:keys [uri headers] :or {uri ""}}]
+  [{:keys [uri] :or {uri ""}}]
   (let [{:keys [pages] :as site-data}
         (collect)
 
@@ -739,10 +721,7 @@
             (str/replace #"/$" ""))
 
         moved
-        (moved-pages (str/replace path #"\.(?:md|html)$" ""))
-
-        accept-encoding
-        (get headers "accept-encoding")]
+        (moved-pages (str/replace path #"\.(?:md|html)$" ""))]
 
     (cond (= path "assets/search.json") {:status 200
                                          :headers {"content-type" "application/json; charset=utf-8"
@@ -753,10 +732,9 @@
           (or (= path "") (= path "index"))
           (ok-html (page-html site-data
                               (or (first (filter #(= "index" (:slug %)) pages)) (first pages))
-                              :live)
-                   accept-encoding)
+                              :live))
           :else (or (when-let [page (first (filter #(= path (:slug %)) pages))]
-                      (ok-html (page-html site-data page :live) accept-encoding))
+                      (ok-html (page-html site-data page :live)))
                     ;; Tolerate literal `<slug>.md` deep links (old bookmarks, raw
                     ;; markdown cross-links) — permanent-redirect to the slug route.
                     (when (str/ends-with? path ".md")

@@ -80,13 +80,13 @@
     [ring.middleware.multipart-params :as ring-multipart]
     [ring.middleware.multipart-params.byte-array :as multipart-ba]
     [taoensso.telemere :as tel])
-  (:import [java.io OutputStream]
+  (:import [java.io EOFException IOException InputStream OutputStream PushbackInputStream]
            [java.net BindException InetSocketAddress]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption OpenOption Path]
            [java.nio.file.attribute FileAttribute PosixFilePermissions]
            [java.util.concurrent ArrayBlockingQueue TimeUnit]
-           [java.util.zip GZIPOutputStream]
+           [java.util.zip GZIPInputStream GZIPOutputStream ZipException]
            [org.eclipse.jetty.io Connection Connection$Listener EndPoint]
            [org.eclipse.jetty.server ConnectionFactory HttpConfiguration HttpConnectionFactory
             Server ServerConnector]
@@ -1680,14 +1680,109 @@
       (not origin)
       (assoc "Access-Control-Allow-Origin" "*"))))
 
+(def ^:private GZIP_INFLATE_BUFFER_BYTES
+  "The buffer that inflates a gzip request body (8 KiB)."
+  8192)
+
+(def ^:private INFLATED_BODY_MAX_BYTES
+  "The most bytes that a gzip request body can inflate to (64 MiB). A plain body costs
+   its sender each byte; a gzip body of 2 MB can inflate to 2 GB. A larger body must
+   come without a coding."
+  (* 64 1024 1024))
+
+(defn- inflating-body
+  "A stream of the plain bytes of the gzip body `in`. It inflates while the handler
+   reads, so a request that a gate refuses inflates nothing. An empty body stays
+   empty. For a body that is not complete, valid gzip, or that inflates above `limit`
+   bytes, it puts `[status type message]` into `refusal` and throws: the handler
+   stops and [[wrap-request-codings]] answers."
+  ^InputStream [^InputStream in ^long limit refusal]
+  (let [wire
+        (PushbackInputStream. in 1)
+
+        source
+        (delay (let [first-byte (.read wire)]
+                 (when-not (neg? first-byte)
+                   (.unread wire (int first-byte))
+                   (GZIPInputStream. wire (int GZIP_INFLATE_BUFFER_BYTES)))))
+
+        total
+        (volatile! 0)
+
+        refuse!
+        (fn [answer ^Throwable cause]
+          (reset! refusal answer)
+          (throw (IOException. ^String (peek answer) cause)))
+
+        read-some
+        (fn [^bytes buffer ^long off ^long len]
+          (let [n (try (if-let [^InputStream plain @source]
+                         (.read plain buffer (int off) (int len))
+                         -1)
+                       (catch ZipException e
+                         (refuse! [400 :invalid-request "The request body is not valid gzip."] e))
+                       (catch EOFException e
+                         (refuse! [400 :invalid-request "The gzip request body is not complete."]
+                                  e)))]
+            (when (and (pos? (long n)) (> (long (vswap! total + (long n))) limit))
+              (refuse! [413 :payload-too-large
+                        (str "The gzip request body inflates above "
+                             limit
+                             " bytes. Send it without Content-Encoding.")]
+                       nil))
+            n))]
+
+    (proxy [InputStream] []
+      (read
+        ([]
+         (let [one (byte-array 1)]
+           (if (neg? (long (read-some one 0 1))) -1 (bit-and (long (aget one 0)) 0xff))))
+        ([buffer] (read-some buffer 0 (alength ^bytes buffer)))
+        ([buffer off len] (read-some buffer off len)))
+      (close [] (.close wire)))))
+
 (defn- wrap-request-codings
-  "Tell each client that a request body can come with `Content-Encoding: gzip`:
-   [[gzip-handler]] inflates it. A client that does not see this header sends plain
+  "The one reader of the `Content-Encoding` of a request. A gzip body reaches the
+   handler as plain bytes ([[inflating-body]]), without a length, because the length
+   on the wire is not the length of the body. Any other coding is a 415, so a handler
+   never stores or parses bytes that it cannot read. Each answer says
+   `Accept-Encoding: gzip`: a client that does not see this header sends plain
    bodies, so it also works with a gateway that cannot inflate."
   [handler]
   (fn [request]
-    (some-> (handler request)
-            (assoc-in [:headers "Accept-Encoding"] "gzip"))))
+    (let [coding
+          (some-> (get-in request [:headers "content-encoding"])
+                  str/trim
+                  str/lower-case)
+
+          response
+          (cond (or (str/blank? coding) (= "identity" coding)) (handler request)
+                (= "gzip" coding)
+                (let [refusal
+                      (atom nil)
+
+                      response
+                      (try (handler (-> request
+                                        (update :headers dissoc "content-encoding" "content-length")
+                                        (update :body
+                                                #(some-> %
+                                                         (inflating-body INFLATED_BODY_MAX_BYTES
+                                                                         refusal)))))
+                           ;; a handler that does not catch the refusal still gets its answer
+                           (catch Throwable t (when-not @refusal (throw t))))]
+
+                  (if-let [[status type message] @refusal]
+                    (http/error-response status type message)
+                    response))
+                :else (http/error-response
+                        415
+                        :unsupported-content-encoding
+                        (str "The gateway reads a request body as gzip or without a coding, not as "
+                             coding
+                             ".")))]
+
+      (some-> response
+              (assoc-in [:headers "Accept-Encoding"] "gzip")))))
 
 (defn- wrap-cors
   "Outermost middleware. A cross-origin browser client (the Companion web/mobile
@@ -2076,9 +2171,10 @@
    header it adds."
   1024)
 
-(def ^:private GZIP_INFLATE_BUFFER_BYTES
-  "The buffer that inflates a gzip request body (8 KiB)."
-  8192)
+(def ^:private GZIP_METHODS
+  "The request methods whose answers are compressed. Jetty's own default is GET and
+   POST, so the answer of a PUT, a PATCH or a DELETE went out plain at any size."
+  ["GET" "POST" "PUT" "PATCH" "DELETE"])
 
 (defn- gzip-handler
   "A `GzipHandler` wrapping the gateway's handler, so JSON bodies cross the wire
@@ -2103,13 +2199,13 @@
    client advertises `gzip` ([[sse-gzip?]], [[sse-stream]]), because that stream
    SYNC-flushes every frame and this handler cannot.
 
-   The handler also inflates a request body that has `Content-Encoding: gzip`. Jetty
-   does this only with an inflate buffer size above zero; its default is no inflation.
-   [[wrap-request-codings]] tells the clients."
+   The handler does not inflate request bodies: [[wrap-request-codings]] does, with a
+   limit and a check of the whole stream."
   []
   (doto (GzipHandler.)
     (.setMinGzipSize (int GZIP_MIN_BYTES))
-    (.setInflateBufferSize (int GZIP_INFLATE_BUFFER_BYTES))
+    (.setIncludedMethods (into-array String GZIP_METHODS))
+    (.setIncludedMimeTypes (into-array String http/compressed-media-types))
     (.addExcludedMimeTypes (into-array String ["text/event-stream"]))))
 
 (defn- jailed-peer-guard
