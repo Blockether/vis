@@ -7,13 +7,16 @@ means that a submitted mutation was rolled back.
 
 from __future__ import annotations
 
+import gzip
 import inspect
+import ipaddress
 import json
 import math
 import re
 import threading
 import time
 import uuid
+import zlib
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -170,6 +173,51 @@ def _gateway_error(
     except (ValueError, AttributeError):
         pass
     return GatewayError(status, code, **counts)
+
+
+# A smaller JSON body costs more to compress than it saves.
+_GZIP_MIN_BYTES = 1024
+
+
+def _is_loopback(host: str) -> bool:
+    """Tell if a gateway host is this machine, where compression saves nothing."""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _inflated(content: bytes, limit: int) -> bytes:
+    """Give at most `limit` plain bytes of a gzip body that can be cut short."""
+    try:
+        return zlib.decompressobj(31).decompress(content, limit)
+    except zlib.error:
+        return b""
+
+
+class _Inflated:
+    """One whole gzip answer, read as its plain bytes."""
+
+    def __init__(self, raw):
+        self._raw = raw
+        self.status = raw.status
+        self.headers = raw.headers
+        del self.headers["Content-Encoding"]
+        del self.headers["Content-Length"]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self._raw.close()
+
+    def read(self) -> bytes:
+        try:
+            return gzip.decompress(self._raw.read())
+        except (EOFError, zlib.error):
+            raise OSError("gzip answer cut short") from None
 
 
 def _duration(value: float) -> float:
@@ -389,6 +437,10 @@ class ExecutionLayer(ABC):
     ) -> Any:
         """Run one transport exchange. Do not retry mutations."""
 
+    def _open_whole(self, method, route, **options) -> Any:
+        """Run one exchange whose answer the caller reads whole, not as a stream."""
+        return self._open(method, route, **options)
+
     def _ensure_client_lease(self, *, pid: int | None = None) -> str:
         if self._closed:
             raise TransportError("client is closed")
@@ -472,7 +524,7 @@ class ExecutionLayer(ABC):
             _segment(path[s[1:]]) if s.startswith(":") else s for s in route.split("/")
         )
         try:
-            with self._open(
+            with self._open_whole(
                 method.upper(),
                 resolved,
                 query=query,
@@ -3563,10 +3615,11 @@ class GatewayClient(ExecutionLayer):
 
     The project path is absolute and belongs to the gateway machine, not this
     Python process. TLS certificate verification is enabled. Redirects are
-    refused, so credentials cannot follow them to another origin. Each instance
-    and its session handles use one calling thread. HTTP failures raise
-    `GatewayError`. Connection, deadline and protocol failures use the
-    `TransportError` exception family.
+    refused, so credentials cannot follow them to another origin. With a gateway
+    on another machine, whole answers and large JSON bodies travel compressed
+    with gzip. Event streams stay plain. Each instance and its session handles
+    use one calling thread. HTTP failures raise `GatewayError`. Connection,
+    deadline and protocol failures use the `TransportError` exception family.
     """
 
     def __init__(self, url: str, *, token: str | None = None, timeout: float = 30):
@@ -3595,6 +3648,10 @@ class GatewayClient(ExecutionLayer):
         # The lease that an answer named as unknown, until a new lease replaces it.
         self._lease_lost: str | None = None
         self._lease_seen = 0.0
+        # Compression pays only over a network. A loopback exchange stays plain.
+        self._is_remote = not _is_loopback(parts.hostname)
+        # True after an answer says that this gateway inflates gzip request bodies.
+        self._inflates = False
         self._opener = build_opener(_NoRedirect())
 
     def _open(
@@ -3608,6 +3665,7 @@ class GatewayClient(ExecutionLayer):
         timeout=None,
         upload_sha256=None,
         upload_length=None,
+        is_whole=False,
     ):
         if self._closed:
             raise TransportError("client is closed")
@@ -3629,6 +3687,12 @@ class GatewayClient(ExecutionLayer):
                 raise ValueError("body and content are mutually exclusive")
             content = json.dumps(body, allow_nan=False).encode()
             headers["Content-Type"] = "application/json"
+            if self._is_remote and self._inflates and len(content) >= _GZIP_MIN_BYTES:
+                content = gzip.compress(content, 6, mtime=0)
+                headers["Content-Encoding"] = "gzip"
+        # A stream stays plain: each event must arrive when the gateway writes it.
+        if is_whole and self._is_remote:
+            headers["Accept-Encoding"] = "gzip"
         if upload_sha256 is not None:
             headers["Content-Type"] = "application/zip"
             headers["Transfer-Encoding"] = "chunked"
@@ -3646,7 +3710,11 @@ class GatewayClient(ExecutionLayer):
         except HTTPError as exc:
             with exc:
                 self._note_lease(lease, exc, is_answered=False)
-                raise _gateway_error(exc.code, exc.read(65536), self._token) from None
+                self._note_codings(exc)
+                detail = exc.read(65536)
+                if exc.headers.get("Content-Encoding") == "gzip":
+                    detail = _inflated(detail, 65536)
+                raise _gateway_error(exc.code, detail, self._token) from None
         except TimeoutError:
             raise VisTimeout("gateway request timed out") from None
         except (URLError, OSError) as exc:
@@ -3654,7 +3722,18 @@ class GatewayClient(ExecutionLayer):
                 raise VisTimeout("gateway request timed out") from None
             raise TransportError("gateway connection failed") from None
         self._note_lease(lease, raw, is_answered=True)
+        self._note_codings(raw)
+        if is_whole and raw.headers.get("Content-Encoding") == "gzip":
+            return _Inflated(raw)
         return raw
+
+    def _open_whole(self, method, route, **options):
+        return self._open(method, route, is_whole=True, **options)
+
+    def _note_codings(self, answer):
+        """Record that an answer says the gateway inflates gzip request bodies."""
+        if "gzip" in (answer.headers.get("Accept-Encoding") or "").lower():
+            self._inflates = True
 
     def _note_lease(self, sent, answer, *, is_answered):
         """Record what one gateway answer says about the lease that it carried."""

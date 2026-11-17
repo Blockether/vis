@@ -1,5 +1,6 @@
 """Public remote SDK, exercised through real loopback HTTP (never a user gateway)."""
 
+import gzip
 import hashlib
 import io
 import json
@@ -249,6 +250,80 @@ def test_contract_call_encodes_identifiers_and_binary_payloads():
         with pytest.raises(ValueError):
             client._request("GET", "/not-a-contract-route")
         assert len(calls) == count
+
+
+def remote(url):
+    """A client that takes its loopback test gateway for one across a network."""
+    client = GatewayClient(url)
+    client._is_remote = True
+    return client
+
+
+@pytest.mark.parametrize(
+    "is_remote,announces", [(True, True), (True, False), (False, True)]
+)
+def test_only_a_remote_gateway_that_inflates_gets_compressed_bodies(
+    is_remote, announces
+):
+    reply = {"text": "é✓𝛑 line\n" * 2000}
+    sent = {"text": "✓ 𝛑 changed\n" * 2000}
+    extra = {"Accept-Encoding": "gzip"} if announces else {}
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return (*result, "application/json", extra)
+        if path == "/v1/events?sids=s%3A0&replay=full":
+            event = {"type": "turn.delta", "session_id": "s", "seq": 1}
+            return 200, frame(event), "text/event-stream"
+        asked = calls[-1][2].get("Accept-Encoding", "")
+        data = json.dumps(reply).encode()
+        if "gzip" in asked:
+            return (
+                200,
+                gzip.compress(data),
+                "application/json",
+                {
+                    **extra,
+                    "Content-Encoding": "gzip",
+                },
+            )
+        return 200, data, "application/json", extra
+
+    with endpoint(respond) as (url, calls):
+        with remote(url) if is_remote else GatewayClient(url) as client:
+            assert client.patch_settings(body=sent) == reply
+            with client.session("s").events(reconnects=0) as events:
+                assert next(events).seq == 1
+        patch = next(call for call in calls if call[0] == "PATCH")
+        plain = json.dumps(sent).encode()
+        if is_remote and announces:
+            assert patch[2]["Content-Encoding"] == "gzip"
+            assert len(patch[3]) < len(plain) // 10
+            assert json.loads(gzip.decompress(patch[3])) == sent
+        else:
+            assert "Content-Encoding" not in patch[2]
+            assert json.loads(patch[3]) == sent
+        assert ("gzip" in patch[2].get("Accept-Encoding", "")) == is_remote
+        # An event must arrive when the gateway writes it, so a stream stays plain.
+        stream = next(call for call in calls if call[1].startswith("/v1/events"))
+        assert "gzip" not in stream[2].get("Accept-Encoding", "")
+
+
+def test_a_compressed_error_answer_keeps_its_type():
+    error = {"error": {"type": "session-not-found", "message": "x" * 4000}}
+
+    def respond(method, path, body):
+        return compatible(method, path, body) or (
+            404,
+            gzip.compress(json.dumps(error).encode()),
+            "application/json",
+            {"Content-Encoding": "gzip"},
+        )
+
+    with endpoint(respond) as (url, _), remote(url) as client:
+        with pytest.raises(GatewayError) as failure:
+            client.session("s").read()
+        assert failure.value.code == "session-not-found"
 
 
 def test_form_and_live_actions_use_one_route():
