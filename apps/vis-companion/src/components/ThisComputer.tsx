@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { isNewerVersion, type EngineTask, type LocalEngine } from '../lib/local-engine';
 import { Button, Spinner, Text } from './ui';
-import { CircleCheckIcon, CircleDashedIcon, CircleXIcon } from './icons';
+import { CircleXIcon } from './icons';
 
 const DOING: Record<EngineTask, string> = {
   install: 'Installing Vis…',
@@ -16,7 +16,7 @@ const STOPPED: Record<EngineTask, string> = {
 /** How many of the newest log lines a failed task shows. */
 const LOG_TAIL = 6;
 
-/** One state: its mark, its name, one line about it, and its verbs. */
+/** One state: its name, one line about it, and its verbs. Only a task has a mark. */
 function Row({
   mark,
   ink = '',
@@ -24,7 +24,7 @@ function Row({
   note,
   children,
 }: {
-  mark: ReactNode;
+  mark?: ReactNode;
   ink?: string;
   title: string;
   note: string;
@@ -32,7 +32,7 @@ function Row({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <span className={`flex w-4 shrink-0 justify-center ${ink}`}>{mark}</span>
+      {mark && <span className={`flex w-4 shrink-0 justify-center ${ink}`}>{mark}</span>}
       <span className="min-w-0 flex-1">
         <Text variant="label" className="block truncate">
           {title}
@@ -83,8 +83,6 @@ export function ThisComputer({
   if (engine.kind === 'absent') {
     return (
       <Row
-        mark={<CircleDashedIcon />}
-        ink="text-dialog-hint"
         title="Vis is not installed on this computer"
         note="Install it to run sessions here."
       >
@@ -141,26 +139,25 @@ export function ThisComputer({
   const isRunning = engine.kind === 'running';
   const isRelease = engine.track === 'release';
   const hasUpdate = engine.latest !== undefined && isNewerVersion(engine.latest, engine.version);
-  const note = !isRunning
-    ? 'The gateway does not run.'
+  // A gateway that runs needs no words. Only a state that asks for an act has them.
+  const state = !isRunning
+    ? 'the gateway does not run'
     : !isUpdateShown
       ? onConnect
-        ? 'The gateway runs.'
-        : 'The gateway asks for a pairing link.'
+        ? undefined
+        : 'the gateway asks for a pairing link'
       : hasUpdate
-        ? `Vis ${engine.latest} is available.`
+        ? `${engine.latest} is available`
         : isCheckFailed
-          ? 'The check for updates got no answer.'
+          ? 'the check for updates got no answer'
           : engine.latest
-            ? 'This is the newest release.'
-            : 'The gateway runs.';
+            ? 'the newest release'
+            : undefined;
+  const version = [`Vis ${engine.version}`, isRelease ? undefined : engine.track, state]
+    .filter(Boolean)
+    .join(' · ');
   return (
-    <Row
-      mark={isRunning ? <CircleCheckIcon /> : <CircleDashedIcon />}
-      ink={isRunning ? 'text-ok' : 'text-dialog-hint'}
-      title={`Vis ${engine.version}${isRelease ? '' : ` · ${engine.track}`}`}
-      note={note}
-    >
+    <Row title="Version" note={version}>
       {!isRunning && (
         <Button variant="primary" onClick={onStart}>
           Start
