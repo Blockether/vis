@@ -7,9 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.20] - 2026-11-17
+
 ### Added
 - Companion: the theme **Auto** in Settings follows the color scheme of the system and changes with it. It uses the web standard `prefers-color-scheme`, so it works in a browser, in the desktop app on macOS, Windows and Linux, and on iOS and Android. **Auto** is the default. A theme that you chose stays. A stored theme that no longer exists follows the system. The desktop app no longer sets its window appearance from the theme, because that stopped **Auto** from following the system: the title bar follows the system for each theme. The launch screens of the iOS and Android apps follow the system: dark on a dark system. After an update on iOS, the launch screen can stay light until the device restarts one time. A theme choice in one browser tab applies in the other open tabs of that browser, with no reload.
 - TUI: the theme `auto` in Settings follows the color scheme of the terminal. The TUI asks the terminal for its color scheme (`CSI ? 996 n`) and for its background color (`OSC 11`). A terminal with mode 2031 also reports each change, and the TUI changes with it. A terminal without mode 2031 is asked again every 3 seconds. When the terminal reports nothing, the TUI reads `COLORFGBG`, then the appearance of macOS, the desktop portal of Linux or the application mode of Windows through WSL, and reads the system again every 3 seconds. In an SSH session (`SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY`), the TUI does not read the system of the remote computer. `auto` is the default. A theme that you chose stays. A stored theme that no longer exists follows the system. An open dialog or `C-x` band paints again when the system changes. The TUI uses Lanterna 3.1.5-vis.64.
+- MCP: the client works with revision 2026-07-28 of the MCP specification and with the three released revisions (2025-03-26, 2025-06-18, 2025-11-25). It asks `server/discover` first on stdio and on Streamable HTTP. A server that does not know the method gets the `initialize` handshake. CI runs the client scenarios of the official MCP conformance suite with `bin/mcp-conformance`.
+- MCP: a server can ask you for input in the middle of a tool call. The TUI and the Companion app show the question as a form, and the tool call waits for the answer.
+- MCP: `transport: sse` selects the older HTTP+SSE transport. A server with a URL that refuses the Streamable HTTP request gets HTTP+SSE on the same URL.
+- MCP: a sign-in that needs no person. `auth.grant` selects `client_credentials`, `jwt_bearer` or `enterprise_managed`. The client can sign a client assertion (`private_key_jwt`, with ES256 or RS256) and send DPoP proofs (RFC 9449). A secret is an environment reference only.
+- MCP: the client answers the `roots` and `sampling` requests of a server when the server entry permits them. `roots` is on by default for a stdio server and off for a URL server. `sampling` is off by default, and the model runs only after you permit the request.
+- MCP: the sign-in sends the URL of a Client ID Metadata Document as the client identifier when the authorization server reads such documents. `auth.client_metadata_url` sets another document, and `false` selects registration. The Vis document is at `/oauth/mcp-client.json` of the Vis site.
+- MCP: `auth.client_name` sets the name that the OAuth registration sends for one server. The default name is `Claude Code`.
+- MCP: a block calls a tool of a server by the name of the server, for example `await linear.get_issue(id="ENG-1")`. `inspect.signature(linear.get_issue)` gives the parameters of the tool, and `apropos` and `doc` find each server, tool and prompt. A server whose name Python or Vis has gets the prefix `mcp_`: the server `time` is `mcp_time`.
+- MCP: the resources of each connected server are attachments with the id `mcp:<server>:<uri>`. `list_attachments`, `get_attachment`, `read_attachment` and `show_attachment` take that id, the URI or the name.
+- Extensions: `vis.tools.linear.get_issue(id="ENG-1")` runs an MCP tool from an extension, with keyword arguments or one dict. `vis.tools.linear()` lists the tools of the server.
+- Hooks: an op hook can name a pattern. `*` matches any characters, so `gh.*` matches each tool of `gh`. A hook names an MCP tool by its server, such as `linear.get_issue` or `linear.*`.
+- Gateway: `summary=true` on the live view lists and on `GET /v1/apps` gives each app without its body. On an event stream, `app_patches=elided` sends a large patch of an app without the patch, and `app_opens=summary` sends the `view.open` of a large app without its body. A read of one app takes `since` and answers `patches`: the changes after that seq, with a long string as edits of the string that the client holds. A client that sends none of these options gets the same data as before.
+- Gateway: a request can have a gzip body (`Content-Encoding: gzip`). Each answer has the header `Accept-Encoding: gzip`, so a client knows that it can compress a body.
+- Python SDK: `GatewayClient` asks a gateway on another machine for gzip answers, and compresses a JSON body of 1024 bytes or more when the gateway announces gzip. Event streams stay plain, and a gateway on the same machine gets no compression.
+- Companion: on a phone, a second tap on a box of a one-time code opens the paste menu of the system at that box. The app reads no pasteboard, so iOS asks for no permission.
+- Export: the HTML export has the conversation of each subagent. A click on a subagent row opens it, and a Back button returns to the parent session.
+- Examples: in `examples/durable-lambda/`, each session that a person starts and each workflow run that makes its own session gets its own worker. A run does not wait for another run and does not slow the sessions of people.
+
+### Changed
+- MCP: the sandbox names `mcp` and `mcp_call` are removed, and `vis.tools.mcp_call` is not a tool. Call a tool by the name of its server. The session context has one row for each server, with `python_name`, `scope`, `transport` and `status`, and no tool names.
+- Tools: a tool list (`--tools`, the allow list and the deny list) names an MCP tool by its server, as an op hook does. `-linear.*` turns off the tools of one server. A list refuses `mcp_call` and tells the right name. A saved list that denies `mcp_call` still turns off each MCP tool.
+- Hooks: `mcp/call` and `mcp_call` are not hook names. A hook that names one of them runs for no call, and `vis doctor` tells you.
+- Gateway: the answers of `PUT`, `PATCH` and `DELETE` are compressed on request, as the answers of `GET` and `POST` are. Only text is compressed. Audio, video, images, a snapshot and an answer to a byte range go as they are, with their length. A text file has no byte ranges.
+- TUI, Companion: an app body travels only when the app shows, and a change of a large app travels as edits. With a 898 kB diff in an app, 40 changes on one stream of the TUI took 8 kB, not 37 MB.
+- Review: **This session** shows only your own files that differ from the base branch. The switch **Include merged changes** shows the full list. The header shows the base as the branch and a short commit, for example `main@ed2ab45f`.
+- Companion: a long transcript scrolls without stops, and a large diff opens with fewer lines on a phone.
 
 ### Fixed
 - Council: after a provider rate limit (429) fails a turn of your session, Council holds the notifications for that session for 60 seconds. Then one turn gets all of them. Each rate limit in a row doubles that time, to 15 minutes at most. A turn that you start gets the held notifications at once. Before, each subagent result started one more turn immediately, so the same provider error showed one time for each subagent. A subagent still takes a follow-up task from its parent during that time.
@@ -21,6 +49,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: a dialog or a `C-x` band that opens right after the input changes opens over the newest frame. Before, rows of the slash menu could stay around the Settings dialog that `/settings` opened, until the dialog closed.
 - TUI: when `SIGTERM` stops the TUI, the terminal gets its default background color again. Before, the background color of the theme stayed in the terminal.
 - Examples: in `examples/durable-lambda/`, a change of a workflow file on `main` of the repository comes to the stack. Before, only Save in the editor wrote a workflow, so the stack did not get an edit made in GitHub. Save refuses a source that is older than the file of the repository.
+- Gateway: a gzip body can inflate to 64 MiB at most; a larger body gets status 413. Before, a 2 MB body could make the gateway allocate 2 GB. A body that is not gzip, or a gzip body that ends early, gets status 400. Before, the first got status 500 and the second was read as a shorter body. A body with a coding that the gateway does not read (`br`, `deflate`) gets status 415. Before, the handler got the compressed bytes: an attachment was stored as those bytes.
+- Gateway: `/docs` obeys `Accept-Encoding: gzip;q=0` and sends `Vary: Accept-Encoding` one time.
+- Gateway: a frame keeps a `set` of a node after the group of the node is dropped and added again in the same frame. Before, a client that applied the frame showed the older value until the next change.
+- Gateway: a read with `since` answers the whole app after a new owner changes the icon of the app. Before, it answered no change, and the client kept the old icon.
+- Python SDK: `view.batch()` keeps a `set` of a node after the group of the node is dropped and added again in the batch. Before, the app kept the value of the added group.
+- Python SDK: `view.node(id)` finds a diff that has a toolbar. Before, it raised `KeyError`.
+- TUI: a global app that changed and closed while the connection was away leaves the app list. Before, it stayed in the list as a live app.
+- MCP: a stdio server that exits on a request before `initialize` connects. A Streamable HTTP server that refuses the first request with status 406, 415 or 422 connects.
+- MCP: a question of a server on a shared connection goes only to the session that waits for it. Before, it could show in another session.
+- MCP: a deny entry such as `linear.get-issue` turns off the tool `linear.get_issue`.
+- MCP: a saved token with no expiry time counts as valid. Before, the client read it as expired.
+- MCP: the client sends the registered client secret at the token exchange and at each refresh. Before, the sign-in to such a server failed after the approval. When a server asks for one more scope, the client asks for the earlier scope and the new scope together.
+- Review: **This session** keeps your own new file when another session works in the same folder at the same time. A new diff stays above the notice.
+- Council: a subagent turn that its leader stops names the leader. Before, the turn said `Cancelled by user.`
+- Markdown: one `~` is text. Before, the text between two `~/` paths showed struck through. Only `~~text~~` is strikethrough.
+- CLI: `--debug`, `--verbose` and `-v` work before or after each command, also with `tui` and `desktop`. Before, `vis-agent tui --debug` stopped with exit 2, and `vis-agent --debug tui` ran an agent with the prompt `tui`.
+- TUI, Companion: the team table has a rule under the row of the leader.
+- Companion: a tap on a session while a share arrives keeps that session open.
+- Companion: a bare URL in an answer ends before a quote. Before, the link in `{"url": "https://a.example/x"}` took the quote and the brace.
+- Companion: the **Add comment** control of a diff does not cover the line number or the code. The icon of an app is in the middle of a dialog band.
+- Examples: in `examples/durable-lambda/`, the settings of a run session open, an archived run session is not in the list of active sessions, an open tab of Vis web keeps no worker, and a session that got no turn is removed after 1 day.
 
 ## [v0.5.19] - 2026-11-16
 

@@ -48,14 +48,14 @@ Then run `vis-agent tui` (terminal), `vis-agent web` (browser) or `vis-agent des
 All clients show the same sessions.
 
 <p>
-<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-windows-x64.msi"><img src="resources/vis-docs/assets/install-windows.png" alt="Download Vis for Windows x64" height="40"></a>
-<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-macos-universal.dmg"><img src="resources/vis-docs/assets/install-macos.png" alt="Download Vis for macOS" height="40"></a>
-<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-linux-x64.AppImage"><img src="resources/vis-docs/assets/install-linux.png" alt="Download Vis for Linux x64" height="40"></a>
+<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.20/vis-companion-0.5.20-windows-x64.msi"><img src="resources/vis-docs/assets/install-windows.png" alt="Download Vis for Windows x64" height="40"></a>
+<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.20/vis-companion-0.5.20-macos-universal.dmg"><img src="resources/vis-docs/assets/install-macos.png" alt="Download Vis for macOS" height="40"></a>
+<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.20/vis-companion-0.5.20-linux-x64.AppImage"><img src="resources/vis-docs/assets/install-linux.png" alt="Download Vis for Linux x64" height="40"></a>
 <a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="resources/vis-docs/assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" height="40"></a>
 <a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" height="40"></a>
 </p>
 
-[Linux ARM64](https://github.com/Blockether/vis/releases/download/v0.5.19/vis-companion-0.5.19-linux-arm64.AppImage) · [All packages](https://github.com/Blockether/vis/releases/latest) · [Other installation options](resources/vis-docs/distributions.md) · [Pair a phone](resources/vis-docs/index.md#pair-a-phone)
+[Linux ARM64](https://github.com/Blockether/vis/releases/download/v0.5.20/vis-companion-0.5.20-linux-arm64.AppImage) · [All packages](https://github.com/Blockether/vis/releases/latest) · [Other installation options](resources/vis-docs/distributions.md) · [Pair a phone](resources/vis-docs/index.md#pair-a-phone)
 
 ## Documentation
 
