@@ -4242,6 +4242,11 @@
     (p/set-colors! g t/text-fg t/terminal-bg)
     (p/put-str! g 0 row (p/center-text label (long cols)))))
 
+(def ^:private tab-session-keys
+  "The keys of a resumed session that its tab keeps. A launch with `--session-id` and an opened
+   tab keep the same keys, so a subagent session opened at launch also knows its parent."
+  [:id :status :current-turn-id :history-cursor :archived-at :group-id :agent])
+
 (defn- paint-agent-wait!
   "Paint why the subagent session of `db` did not start, such as `Waiting for a7`, on the last
    transcript row. Its leader gives it work, so its empty transcript has nothing else to say.
@@ -11647,9 +11652,7 @@
                  (fn [{:keys [id history] :as session-result} _ & [background?]]
                    (when (and id session-result)
                      (state/dispatch [:open-session-tab
-                                      (select-keys session-result
-                                                   [:id :status :current-turn-id :history-cursor
-                                                    :archived-at :group-id :agent]) history
+                                      (select-keys session-result tab-session-keys) history
                                       (session-workspace id) background?])
                      ;; `:open-session-tab` already reset `:title nil`. Only
                      ;; push a title when the DB actually has one — mirror
@@ -12067,9 +12070,8 @@
                            session
                            (let [{:keys [id history] :as startup-session} session]
                              (state/dispatch [:bind-built-session startup-build-id
-                                              (select-keys startup-session
-                                                           [:id :status :current-turn-id
-                                                            :history-cursor]) history workspace])
+                                              (select-keys startup-session tab-session-keys)
+                                              history workspace])
                              (when title (state/dispatch [:set-title title id]))
                              (ensure-session-live! id)
                              (state/dispatch [:attach-running-turn
