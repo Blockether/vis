@@ -14,12 +14,27 @@
     "covariant method from the synthetic BRIDGE beside it (`next()Ljava/lang/Object;` on",
     "LinkedEntryIterator), so a class carrying one is registered whole with `allDeclaredMethods`.",
     "",
-    "Two names are not sherpa's: `GenerationCallback` is ours (a deftype - a reify's class name is",
-    "invented anew by every build), and the JDK entries are what sherpa's C++ walks in",
+    "Vis owns GenerationCallback and LiveGenerationCallback. These named types keep stable class names across builds.",
+    "The JDK entries support the C++ traversal of",
     "`GenerationConfig.extra` (a LinkedHashMap: one stable class, where a Clojure map changes class with",
     "its size)."
   ],
   "reflection": [
+    {
+      "type": "com.blockether.vis.internal.speech.tts.LiveGenerationCallback",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "invoke",
+          "parameterTypes": [
+            "float[]"
+          ]
+        }
+      ]
+    },
     {
       "type": "com.blockether.vis.internal.speech.tts.GenerationCallback",
       "allDeclaredConstructors": true,

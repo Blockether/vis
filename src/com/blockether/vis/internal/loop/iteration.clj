@@ -396,6 +396,152 @@
                        (or (:ext/hooks ext) [])))
                (answer-validation-extensions environment active-extensions))))))
 
+(defn- handsfree?
+  [environment]
+  (and (true? (get (:turn/features environment) "voice_projection"))
+       (true? (get (:turn/features environment) "voice_segments"))))
+
+(defn- presentation-prefix
+  "Keep only complete valid records before the first invalid line. Never revise a committed record."
+  [raw]
+  (loop [lines
+         (seq (str/split (str raw) #"\n" -1))
+
+         prefix
+         ""]
+
+    (if (next lines)
+      (let [candidate
+            (str prefix (first lines) "\n")
+
+            valid?
+            (try (content/presentation-records candidate false)
+                 true
+                 (catch clojure.lang.ExceptionInfo _ false))]
+
+        (if valid? (recur (next lines) candidate) prefix))
+      prefix)))
+
+(defn- sum-presentation-usage
+  "Add numeric usage fields without adding provider labels."
+  [a b]
+  (merge-with (fn [x y]
+                (cond (and (map? x) (map? y)) (sum-presentation-usage x y)
+                      (and (number? x) (number? y)) (+ (long x) (long y))
+                      :else y))
+              a
+              b))
+
+(defn- final-presentation
+  "Validate hands-free output. Repair formatting once without tools or live output."
+  [environment resolved-model ask-opts result]
+  (if-not (handsfree? environment)
+    result
+    (if-not (and (= :end (:stop-reason result)) (empty? (:tool-calls result)))
+      (assoc result
+        :presentation-content (mapv :block
+                                    (content/presentation-records (presentation-prefix
+                                                                    (str (:content result) "\n"))
+                                                                  false)))
+      (let [raw
+            (str (:content result))
+
+            accepted
+            (try (content/presentation-content raw) (catch clojure.lang.ExceptionInfo _ nil))]
+
+        (if accepted
+          (assoc result :presentation-content accepted)
+          (let
+            [prefix
+             (presentation-prefix raw)
+
+             committed
+             (mapv :block (content/presentation-records prefix false))
+
+             failure
+             (conj
+               committed
+               (content/notice
+                 "presentation_unavailable"
+                 "The final reply could not be presented. Completed actions were not repeated."))
+
+             provider
+             (transcript/actual-llm-provider resolved-model result)
+
+             model
+             (transcript/actual-llm-model resolved-model result)
+
+             repair-opts
+             (->
+               ask-opts
+               (dissoc :on-chunk
+                       :on-empty-reply-resend
+                       :on-refusal-fallback
+                       :refusal-fallbacks
+                       :reasoning-effort)
+               (assoc
+                 :tools []
+                 :tool-choice :none
+                 :preferred-reasoning-effort "low"
+                 :routing {:provider provider :model model}
+                 :extra-body {:max_tokens 4096}
+                 :messages
+                 (conj
+                   (vec (:messages ask-opts))
+                   {:role "assistant" :content [{:type "text" :text raw}]}
+                   {:role "user"
+                    :content
+                    [{:type "text"
+                      :text
+                      (str
+                        "Repair only the final presentation. Do not execute or repeat any task. "
+                        "Use the existing facts. Return only JSON lines, without fences. "
+                        "Each line must be a conversation with type, text and phase answer, "
+                        "or a visual with type and markdown. Use plain speech of at most 400 characters per conversation. "
+                        "Include a final outcome or question. Do not invent success. "
+                        "Use silence with reason user_requested only if the user explicitly requested silence. "
+                        "Do not repeat these immutable records; they will be kept:\n" prefix)}]})))
+
+             repair
+             (try (transcript/ask-code-with-session! (dissoc environment :llm-session-atom)
+                                                     (assoc resolved-model
+                                                       :provider provider
+                                                       :name model)
+                                                     repair-opts)
+                  (catch Exception e
+                    (if (or (cancellation/cancellation? e)
+                            (some-> (:cancel-atom environment)
+                                    deref))
+                      (throw e)
+                      {:presentation-exception true :api-usage (:api-usage (ex-data e))})))
+
+             repaired
+             (when (and (= :end (:stop-reason repair)) (empty? (:tool-calls repair)))
+               (try
+                 ;; The repair must itself contain an outcome, not only progress.
+                 (let [suffix
+                       (content/presentation-content (:content repair))
+
+                       spoken
+                       (set (keep #(when (= "conversation" (get % "type")) (get % "text"))
+                                  committed))]
+
+                   (when-not (some #(and (= "conversation" (get % "type"))
+                                         (contains? spoken (get % "text")))
+                                   suffix)
+                     (content/presentation-content (str prefix (:content repair)))))
+                 (catch clojure.lang.ExceptionInfo _ nil)))]
+
+            (-> result
+                (assoc :presentation-content (or repaired failure)
+                       :presentation-status (if repaired :repaired :failed)
+                       :presentation-original-usage (:api-usage result)
+                       :presentation-repair
+                       (select-keys repair [:api-usage :duration-ms :assistant-message])
+                       :api-usage (sum-presentation-usage (:api-usage result) (:api-usage repair))
+                       :duration-ms (+ (long (or (:duration-ms result) 0))
+                                       (long (or (:duration-ms repair) 0)))))))))))
+
 (defn- finalize-answer!
   "Finalize the turn from an accepted terminal ANSWER reply (`s` = the markdown). Classifies
    the value, runs `ctx-loop/finalize-turn!` (the real turn/context finalization),
@@ -409,6 +555,7 @@
         value
         (cond (transcript/needs-input-answer? s) s
               (transcript/markdown-answer? s) s
+              (vector? s) (content/answer-content s)
               (string? s) {:answer s}
               (nil? s) {:answer ""}
               :else {:answer (pr-str s) :vis/coerced? true})
@@ -417,6 +564,7 @@
         (cond (and (map? value) (string? (:answer value))) (:answer value)
               (and (map? value) (string? (:answer/text value))) (:answer/text value)
               (string? value) value
+              (vector? value) (content/text-projection value)
               :else nil)
 
         turn-summary
@@ -765,7 +913,9 @@
                                 (transcript/context-overflow-token-data (ex-data e))))))
                    (throw e))))
           refusal-fallback-event (server-refusal-fallback-event (:refusal-recovered ask-result-raw))
-          ask-result (prepend-routing-trace ask-result-raw
+          presentation-result
+          (final-presentation environment resolved-model ask-opts ask-result-raw)
+          ask-result (prepend-routing-trace presentation-result
                                             (cond-> (vec @empty-reply-resend-events)
                                               refusal-fallback-event
                                               (conj refusal-fallback-event)))
@@ -804,13 +954,15 @@
           api-usage (cond-> (:api-usage ask-result)
                       (and (:api-usage ask-result) (:response-model ask-result))
                       (assoc :llm-model (:response-model ask-result)))
+          request-api-usage (or (:presentation-original-usage ask-result) api-usage)
           _ (goals/account! environment goal-at-request-start api-usage)
           actual-provider (transcript/actual-llm-provider resolved-model ask-result)
           actual-model (transcript/actual-llm-model resolved-model ask-result)
           ;; Blockether/vis#174: publish measured input before Python can fold this request.
           _ (when on-response
-              (on-response
-                {:api-usage api-usage :llm-provider actual-provider :llm-model actual-model}))
+              (on-response {:api-usage request-api-usage
+                            :llm-provider actual-provider
+                            :llm-model actual-model}))
           ;; The warm replays this request on the route that served it, so the cache
           ;; of a long tool run survives; `request-started!` above cancels a stale warm.
           ;; Warms always run while a turn runs; no setting controls them.
@@ -819,7 +971,7 @@
                 (:prompt-cache-warmer environment)
                 {:mode (constantly "running")
                  :ttl-ms (transcript/prompt-cache-warm-ttl-ms actual-provider)
-                 :prompt-tokens (:input-tokens api-usage)
+                 :prompt-tokens (:input-tokens request-api-usage)
                  :pricing turn-pricing
                  :provider actual-provider
                  :model actual-model
@@ -848,7 +1000,7 @@
                                                   {:outcome :succeeded
                                                    :route-source :response
                                                    :provider-input-tokens (:input-tokens
-                                                                            api-usage)})
+                                                                            request-api-usage)})
           _agent-checkpoint (agents/checkpoint! environment messages)
           prompt-cache-sample (transcript/note-prompt-cache-request!
                                 (:prompt-cache-history-atom environment)
@@ -856,8 +1008,8 @@
                                 actual-model
                                 (:prompt-cache-context ask-result)
                                 messages
-                                (:input-tokens api-usage)
-                                (get-in api-usage [:input-tokens-details :cache-read])
+                                (:input-tokens request-api-usage)
+                                (get-in request-api-usage [:input-tokens-details :cache-read])
                                 provider-started-at-ms)
           prompt-cache-reusable-tokens (:reusable-tokens prompt-cache-sample)
           prompt-cache-continuity (:continuity prompt-cache-sample)
@@ -871,6 +1023,7 @@
           ;; code. A tool-call reply becomes the executable blocks: one
           ;; `python_execution` call → one block, carrying the tool_use `:id` so the
           ;; driver can pair its result into a `tool_result` message.
+          presentation-content (:presentation-content ask-result)
           tool-calls (transcript/normalize-tool-calls (:tool-calls ask-result))
           ;; The model can return PROSE (`:content`) ALONGSIDE a tool call — its
           ;; commentary while it acts. Capture it ALWAYS: with no tool calls it IS
@@ -880,7 +1033,8 @@
                            str
                            str/trim
                            not-empty)
-          answer-md (when (and (empty? tool-calls) (= :end (:stop-reason ask-result))) prose-md)
+          answer-md (when (and (empty? tool-calls) (= :end (:stop-reason ask-result)))
+                      (or prose-md (when (:presentation-content ask-result) "")))
           ;; Show the prose ONLY when it adds something the code doesn't already
           ;; say — otherwise it's a dim duplicate of the python_execution block.
           ;; #216: persist and stream why a reasoning-only/empty response did no work.
@@ -895,7 +1049,10 @@
           _ (when answer-md
               (swap! turn-state-atom assoc
                 :best-answer
-                {:value {:answer answer-md} :answer-markdown answer-md}))
+                {:value (or (:presentation-content ask-result) {:answer answer-md})
+                 :answer-markdown (if-let [presentation (:presentation-content ask-result)]
+                                    (content/text-projection presentation)
+                                    answer-md)}))
           _ (when (and assistant-prose on-chunk)
               (on-chunk
                 {:phase :assistant-prose :iteration iteration-position :text assistant-prose}))
@@ -1178,7 +1335,7 @@
       (if answer-md
         ;; Answer validation and goal continuation are separate: accepted progress is not
         ;; an error and must not finalize the turn/context while the goal remains active.
-        (let [value {:answer answer-md}
+        (let [value (or (:presentation-content ask-result) {:answer answer-md})
               validation-error (final-answer-gate-error environment
                                                         iteration-position
                                                         blocks
@@ -1220,7 +1377,10 @@
              :assistant-message (:assistant-message ask-result)}
             {:thinking thinking
              :assistant-prose (when goal-continuation answer-md)
+             :presentation-content presentation-content
              :goal-continuation goal-continuation
+             :presentation-status (:presentation-status ask-result)
+             :presentation-repair (:presentation-repair ask-result)
              :blocks blocks
              :final-result (when-not goal-continuation
                              {:final? true
@@ -1256,6 +1416,7 @@
         ;; Normal path (tool-call iteration)
         {:thinking thinking
          :assistant-prose assistant-prose
+         :presentation-content presentation-content
          :blocks blocks
          :tool-calls tool-calls
          :final-result nil
@@ -1881,11 +2042,31 @@
 (def ^:private voice-projection-prompt
   "This is a text-only turn whose client may optionally read a separate projection aloud. Write the complete normal answer exactly as you would for any text client; do not mention voice mode, listening, playback, or ask the user to confirm that audio played. Then finish with exactly one fenced `vis-speech` block. Inside that block write only concise, natural plain text suitable for text-to-speech: no Markdown, code, tables, raw URLs, citation syntax, or tool narration. State the outcome, an important caveat, and any question that needs an answer. Do not repeat secrets. Aim for 15 to 45 seconds.")
 
+(def ^:private live-voice-projection-prompt
+  (str
+    "This turn is a hands-free conversation with a screen. Write assistant output as JSON lines, not ordinary prose. "
+    "Use one complete JSON object per line. End each record with a newline. Omit record IDs. "
+    "For conversation, use {\"type\":\"conversation\",\"text\":\"Your words\",\"phase\":\"answer\"}. "
+    "The same text is displayed and spoken. Use phase progress for verified updates before tool calls. "
+    "Each final reply must contain an answer conversation, even after earlier progress. State the outcome, caveats, or a question. "
+    "Use at most 400 characters per conversation. Split longer conversation into separate records. "
+    "Keep conversation plain: no Markdown, code, URLs, citations, hidden reasoning, secrets, or tool narration. "
+    "For screen-only content, use {\"type\":\"visual\",\"markdown\":\"Screen content\"}. "
+    "Keep diagrams, code, documents, and attachment links in visual records. Escape newlines inside JSON strings. "
+    "Use at most 65536 characters and 256 records in each reply. Never wrap records in a code fence. "
+    "Only when the user requests silence, use {\"type\":\"silence\",\"reason\":\"user_requested\"} instead of conversation. "
+    "Never combine silence and conversation. Visual records alone do not complete a reply. "
+    "Each complete record is immutable. Put corrections in new records. Do not repeat earlier conversation at completion. "
+    "Before claiming success, check the actual result. Do not describe generated speech as heard. "
+    "Keep ordinary permissions, tools, and approvals unchanged."))
+
 (defn- voice-system-prompt
   [system-prompt turn-features]
   (if (true? (get turn-features "voice_projection"))
     (str (when-not (str/blank? (str system-prompt)) (str system-prompt "\n\n"))
-         voice-projection-prompt)
+         (if (true? (get turn-features "voice_segments"))
+           live-voice-projection-prompt
+           voice-projection-prompt))
     system-prompt))
 
 (defn- with-council-execution
@@ -3276,6 +3457,10 @@
             err-data (:data iteration-error-data)
             err-reasoning (:reasoning err-data)
             err-partial-content (or (:content err-data) (:partial-content err-data))
+            err-presentation
+            (when (handsfree? environment)
+              (mapv :block
+                    (content/presentation-records (presentation-prefix err-partial-content) false)))
             err-api-usage (or (:api-usage iteration-result) (:api-usage err-data))
             tc (accounting/response-cost turn-pricing
                                          err-api-usage
@@ -3286,6 +3471,7 @@
             _ (swap! accounting-atom accounting/add-usage err-api-usage nil)
             trace-entry {:iteration iteration
                          :error iteration-error-data
+                         :presentation-content err-presentation
                          :final? false
                          :usage (some-> tc
                                         (select-keys [:tokens :cost-usd]))}
@@ -3297,7 +3483,8 @@
                        :user-input (transcript/persisted-user-input user-input)
                        :council-publications (:council-publications iteration-result)
                        :vars []
-                       :code (or err-partial-content "")
+                       :code (if (handsfree? environment) "" (or err-partial-content ""))
+                       :presentation-content err-presentation
                        :thinking err-reasoning
                        :duration-ms 0
                        :llm-full-duration-ms 0
@@ -3414,7 +3601,12 @@
             pick-move
             (update :llm-routing-trace (fnil conj []) (loop-router/pick-move-event pick-move)))
           iteration-result (linked-reports/deliver-iteration environment iteration-result)
-          {:keys [thinking assistant-prose goal-continuation blocks final-result]} iteration-result
+          iteration-result (cond-> iteration-result
+                             (handsfree? environment)
+                             (update :presentation-content #(or % [])))
+          {:keys [thinking assistant-prose presentation-content goal-continuation blocks
+                  final-result]}
+          iteration-result
           python-error (env/retired-context-error environment)
           block (first blocks)
           ;; Phase 7: merge per-iteration `:lru` stamps
@@ -3500,6 +3692,8 @@
                        :council-input council-input
                        :user-input (transcript/persisted-user-input user-input)
                        :council-publications (:council-publications iteration-result)
+                       :presentation-status (:presentation-status iteration-result)
+                       :presentation-repair (:presentation-repair iteration-result)
                        :request-health (cond-> (assoc (:request-health iteration-result)
                                                  :budget-tokens budget
                                                  :reminder-tokens
@@ -3514,6 +3708,7 @@
                        :llm-full-duration-ms (long (or (:duration-ms iteration-result) 0))
                        :thinking thinking
                        :assistant-prose assistant-prose
+                       :presentation-content presentation-content
                        :answer (when final-result
                                  (transcript/answer-markdown (:answer final-result)))
                        :llm-provider (or (:llm-provider iteration-result)
@@ -3557,6 +3752,7 @@
           trace-entry {:iteration iteration
                        :thinking thinking
                        :assistant-prose assistant-prose
+                       :presentation-content presentation-content
                        :blocks blocks
                        :reasoning-effort (when reasoning-effort
                                            (transcript/reasoning-effort-iteration-evidence
@@ -3566,7 +3762,9 @@
                                              iteration-result))
                        :usage (some-> tc
                                       (select-keys [:tokens :cost-usd]))
-                       :final? (boolean final-result)}]
+                       :final? (boolean final-result)
+                       :presentation-status (:presentation-status iteration-result)
+                       :presentation-repair (:presentation-repair iteration-result)}]
 
       (cond
         (and python-error (not (and cancel-atom @cancel-atom)))
@@ -3600,6 +3798,7 @@
                          :iteration (inc (long iteration))
                          :thinking thinking
                          :assistant-prose assistant-prose
+                         :presentation-content presentation-content
                          :iteration-id iteration-id
                          :attachment-count (count iteration-attachments)
                          :final {:answer (:answer final-result)
@@ -3655,6 +3854,7 @@
                              :iteration (inc (long iteration))
                              :thinking thinking
                              :assistant-prose assistant-prose
+                             :presentation-content presentation-content
                              :iteration-id iteration-id
                              :attachment-count (count iteration-attachments)
                              :final
@@ -3774,6 +3974,7 @@
                            :iteration (inc (long iteration))
                            :thinking thinking
                            :assistant-prose assistant-prose
+                           :presentation-content presentation-content
                            :iteration-id iteration-id
                            :attachment-count (count iteration-attachments)
                            :final nil

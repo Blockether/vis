@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AssistantMessage,
+  ContentBlockView,
   ErrorBlockCard,
   ProviderSettingsContext,
   AttachmentRail,
@@ -2217,4 +2218,80 @@ it('keeps independently paged Activity sources addressable in a combined executi
   });
   expect(view.getAllByRole('list', { name: 'Operation groups' })).toHaveLength(1);
   view.unmount();
+});
+
+// Regression: hands-free records must not expose their JSON or repeat spoken text.
+describe('typed hands-free content', () => {
+  it('renders conversation once as plain text and keeps visuals rich', async () => {
+    const spoken = 'The diagram is ready.';
+    const view = render(<AssistantMessage turn={{
+      turn_id: 'presentation', status: 'completed',
+      content: [
+        { id: 'conversation', type: 'conversation', phase: 'answer', text: spoken },
+        { id: 'visual', type: 'visual', markdown: '**Details**\n\n[Guide](https://example.com)\n\n```mermaid\ngraph TD; A-->B;\n```' },
+      ],
+      iterations: [{ position: 0, assistant_prose: spoken }],
+    }} />);
+    expect(view.getAllByText(spoken)).toHaveLength(1);
+    expect(view.getByText('Details').tagName).toBe('STRONG');
+    expect(view.getByRole('link', { name: 'Guide' })).toHaveAttribute('href', 'https://example.com');
+    expect(view.container.querySelector('[data-speech-block]')).toBeNull();
+    expect(await view.findByRole('img', { name: 'Diagram' })).toBeInTheDocument();
+    expect(view.container.textContent).not.toContain('"type":"conversation"');
+  });
+
+  it('does not parse conversation text as Markdown', () => {
+    const view = render(<ContentBlockView block={{ id: 'plain', type: 'conversation', phase: 'answer', text: '_literal_' }} />);
+    expect(view.getByText('_literal_')).toBeInTheDocument();
+    expect(view.container.querySelector('em')).toBeNull();
+  });
+
+  it('hides explicit silence without falling back to the raw answer', () => {
+    const html = renderToStaticMarkup(<AssistantMessage turn={{
+      turn_id: 'silent', status: 'completed', answer: 'raw record must stay hidden',
+      content: [{ id: 'silence', type: 'silence', reason: 'user_requested' }],
+    }} />);
+    expect(html).not.toContain('user_requested');
+    expect(html).not.toContain('raw record must stay hidden');
+  });
+});
+
+// Regression: durable hands-free history must retain progress without exposing raw records.
+describe('durable presentation history', () => {
+  const progress = { id: 'progress', type: 'conversation' as const, phase: 'progress' as const, text: 'I am checking the result.' };
+  const visual = { id: 'visual-history', type: 'visual' as const, markdown: '**Earlier diagram notes**' };
+  const answer = { id: 'answer', type: 'conversation' as const, phase: 'answer' as const, text: 'The result is complete.' };
+
+  it('restores progress and visuals and deduplicates final canonical ids', () => {
+    const turn = JSON.parse(JSON.stringify({
+      turn_id: 'history', status: 'completed', content: [answer],
+      iterations: [
+        { position: 0, presentation_content: [progress, visual], assistant_prose: 'RAW JSON MUST NOT DISPLAY' },
+        { position: 1, presentation_content: [progress, answer], answer: 'RAW FINAL MUST NOT DISPLAY' },
+      ],
+    }));
+    const view = render(<AssistantMessage turn={turn} whole />);
+    expect(view.getAllByText(progress.text)).toHaveLength(1);
+    expect(view.getAllByText(answer.text)).toHaveLength(1);
+    expect(view.getByText('Earlier diagram notes').tagName).toBe('STRONG');
+    expect(view.container.textContent).not.toContain('RAW');
+  });
+
+  it('renders recovered iteration records without a final answer block', () => {
+    const view = render(<AssistantMessage turn={{
+      turn_id: 'recovered', status: 'running', content: [],
+      iterations: [{ position: 0, presentation_content: [progress, visual], answer: 'RAW FINAL MUST NOT DISPLAY' }],
+    }} whole />);
+    expect(view.getByText(progress.text)).toBeInTheDocument();
+    expect(view.getByText('Earlier diagram notes')).toBeInTheDocument();
+    expect(view.container.textContent).not.toContain('RAW');
+  });
+
+  it('does not repeat a final block after the answer arrives', () => {
+    const iteration = { position: 0, presentation_content: [answer] };
+    const view = render(<AssistantMessage turn={{ turn_id: 'live-history', status: 'running', iterations: [iteration] }} whole />);
+    expect(view.getAllByText(answer.text)).toHaveLength(1);
+    view.rerender(<AssistantMessage turn={{ turn_id: 'live-history', status: 'completed', iterations: [iteration], content: [answer] }} whole />);
+    expect(view.getAllByText(answer.text)).toHaveLength(1);
+  });
 });

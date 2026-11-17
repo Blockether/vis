@@ -156,16 +156,31 @@
           :else (throw (ex-info "Final answer must be canonical content or Markdown prose"
                                 {:answer-type (type answer)})))))
 
+(defn presentation-markdown
+  "Project typed presentation blocks for the screen. Keep conversation text literal."
+  [blocks]
+  (->> blocks
+       (keep (fn [block]
+               (case (get block "type")
+                 "conversation"
+                 (str/replace (get block "text") #"[\p{Punct}]" #(str "\\" %))
+
+                 "visual"
+                 (get block "markdown")
+
+                 nil)))
+       (str/join "\n\n")))
+
 (defn text-projection
   "Disposable plain-text projection for search, clipboard, and error fallback."
   [blocks]
   (->> blocks
        (keep (fn [block]
                (case (get block "type")
-                 "prose"
+                 ("prose" "visual")
                  (get block "markdown")
 
-                 ("speech" "code" "reasoning")
+                 ("speech" "conversation" "code" "reasoning")
                  (get block "text")
 
                  ("error" "notice")

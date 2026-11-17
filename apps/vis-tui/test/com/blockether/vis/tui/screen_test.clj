@@ -27,6 +27,7 @@
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.selection :as selection]
             [com.blockether.vis.tui.state :as state]
+            [com.blockether.vis.tui.voice-live :as voice-live]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.terminals :as term]
             [com.blockether.vis.tui.virtual :as virtual]
@@ -1633,6 +1634,24 @@
 
 (defdescribe
   submit-input-test
+  (it "handles hands-free controls locally while a task runs"
+      (let [events
+            (atom [])
+
+            commands
+            (atom [])]
+
+        (with-redefs [state/dispatch
+                      #(swap! events conj %)
+
+                      voice-live/command!
+                      (fn [_ text]
+                        (swap! commands conj text))]
+
+          (submit-input! {:session {:id "c1"} :loading? true :active-tab-id :tab-a}
+                         (input/paste-text (input/empty-input) "/hands-free mute"))
+          (expect (= ["/hands-free mute"] @commands))
+          (expect (= [[:reset-input]] @events)))))
   (it "dispatches one send that clears the editor after it reads the pastes"
       (let [events
             (atom [])

@@ -20,6 +20,26 @@
         (expect (not (document/valid? "content" (assoc message "content" [{"type" "unknown"}])))))))
 
 (defdescribe
+  handsfree-presentation-blocks
+  ;; Regression: session a853a9c9-6296-42f9-ab32-67ee83447023 lacked an explicit spoken outcome.
+  (it "accepts one shared conversation and a separate screen-only visual"
+      (expect (content/block-valid?
+                {"id" "c1" "type" "conversation" "phase" "answer" "text" "The diagram is ready."}))
+      (expect (content/block-valid?
+                {"id" "v1" "type" "visual" "markdown" "```mermaid\ngraph LR; A-->B\n```"}))
+      (expect (content/block-valid? {"id" "s1" "type" "silence" "reason" "user_requested"})))
+  (it
+    "rejects invalid phases, implicit silence and speech markup"
+    (doseq [block
+            [{"id" "c1" "type" "conversation" "phase" "other" "text" "Done."}
+             {"id" "c1" "type" "conversation" "phase" "answer" "text" "**Done.**"}
+             {"id" "c1" "type" "conversation" "phase" "answer" "text" " "}
+             {"id" "c1" "type" "conversation" "phase" "answer" "text" (apply str (repeat 401 "a"))}
+             {"id" "s1" "type" "silence" "reason" "no_answer"} {"id" "s1" "type" "silence"}
+             {"id" "v1" "type" "visual" "markdown" "Diagram" "text" "Speak this"}]]
+      (expect (not (content/block-valid? block))))))
+
+(defdescribe
   payload-definitions-own-the-content-vocabulary
   (it "payload definitions own the content vocabulary"
       (expect (content/block-valid? {"id" "tool1" "type" "tool" "tool" "shell" "status" "running"}))

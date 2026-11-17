@@ -9,7 +9,7 @@
             [com.blockether.vis.test-network-guard :as network-guard]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [ai.onnxruntime OrtEnvironment]
-           [com.blockether.vis.internal.speech.tts GenerationCallback]
+           [com.blockether.vis.internal.speech.tts GenerationCallback LiveGenerationCallback]
            [com.k2fsa.sherpa.onnx VersionInfo]
            [java.io File OutputStream]
            [java.nio.charset StandardCharsets]
@@ -328,17 +328,13 @@
       ;; progress callback. sherpa asks for that method with GetMethodID on OUR
       ;; class, so the class needs a name a build cannot change and metadata of
       ;; its own - a `reify` had neither.
-      (let [known
-            (registered)
-
-            callback
-            (.getName GenerationCallback)]
-
-        (expect (get known callback) (str callback " is not registered for JNI"))
-        (expect (:jniAccessible (get known callback)))
-        (expect (:allDeclaredMethods (get known callback)))
-        (expect (some #(= "invoke" (:name %)) (:methods (get known callback)))
-                "the method sherpa asks for by name has to be named here too")))
+      (let [known (registered)]
+        (doseq [callback (map #(.getName ^Class %) [GenerationCallback LiveGenerationCallback])]
+          (expect (get known callback) (str callback " is not registered for JNI"))
+          (expect (:jniAccessible (get known callback)))
+          (expect (:allDeclaredMethods (get known callback)))
+          (expect (some #(and (= "invoke" (:name %)) (= ["float[]"] (:parameterTypes %)))
+                        (:methods (get known callback)))))))
   (it "asks for the members the JNI looks up, not merely for the class"
       ;; A type registered without its MEMBERS is the failure the user hit: the
       ;; class is in the image and `GetFieldID` still finds nothing, so the model

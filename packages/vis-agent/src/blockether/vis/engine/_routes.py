@@ -2548,6 +2548,88 @@ class Routes:
         )
         return response.json()
 
+    def get_voice_live_capabilities(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/voice/live/capabilities — json response."""
+        response = self._client._request(
+            "GET", "/v1/voice/live/capabilities", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
+    def post_session_voice_live(
+        self,
+        sid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/sessions/:sid/voice/live — json response."""
+        response = self._client._request(
+            "POST",
+            "/v1/sessions/:sid/voice/live",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def get_session_voice_live(
+        self,
+        sid: str,
+        vid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """GET /v1/sessions/:sid/voice/live/:vid — json response."""
+        response = self._client._request(
+            "GET",
+            "/v1/sessions/:sid/voice/live/:vid",
+            path={"sid": sid, "vid": vid},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def delete_session_voice_live(
+        self,
+        sid: str,
+        vid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """DELETE /v1/sessions/:sid/voice/live/:vid — json response."""
+        response = self._client._request(
+            "DELETE",
+            "/v1/sessions/:sid/voice/live/:vid",
+            path={"sid": sid, "vid": vid},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def get_session_voice_live_media(
+        self,
+        sid: str,
+        vid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """GET /v1/sessions/:sid/voice/live/:vid/media — WebSocket media is not supported by this SDK."""
+        response = self._client._request(
+            "GET",
+            "/v1/sessions/:sid/voice/live/:vid/media",
+            path={"sid": sid, "vid": vid},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
     def get_voice_job(
         self, job_id: str, *, query: Query | None = None, timeout: float | None = None
     ) -> _types.VoiceJob:

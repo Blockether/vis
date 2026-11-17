@@ -60,11 +60,11 @@ def test_gateway_routes_and_lease_policy_are_shared():
     lease = gateway["x-vis-client-lease"]
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
     assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
-    assert len(routes) == 172
-    assert len(operations) == 210
+    assert len(routes) == 176
+    assert len(operations) == 215
     assert Counter(operation["request"] for operation in operations) == {
-        "none": 126,
-        "json": 78,
+        "none": 130,
+        "json": 79,
         "binary": 6,
     }
     assert by_path["/v1/decisions/models"]["operations"]["get"] == {
@@ -127,6 +127,10 @@ def test_gateway_routes_and_lease_policy_are_shared():
         "response_schema": "extension_reload",
     }
     assert by_path["/v1/events"]["operations"]["get"]["response"] == "sse"
+    assert by_path["/v1/sessions/:sid/voice/live/:vid/media"]["operations"]["get"] == {
+        "request": "none",
+        "response": "websocket",
+    }
 
 
 def test_gateway_envelopes_validate_real_payloads():
@@ -227,6 +231,41 @@ def test_extension_declarations_use_the_canonical_config_contract():
     ):
         with pytest.raises(ValueError):
             _contracts.validate("config", "config", {"extensions": {"vis-tools": spec}})
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {
+            "id": "c",
+            "type": "conversation",
+            "text": "The work is ready.",
+            "phase": "answer",
+        },
+        {
+            "id": "p",
+            "type": "conversation",
+            "text": "I will check.",
+            "phase": "progress",
+        },
+        {"id": "v", "type": "visual", "markdown": "```mermaid\ngraph TD; A-->B\n```"},
+        {"id": "s", "type": "silence", "reason": "user_requested"},
+    ],
+)
+def test_handsfree_content_resolves_the_registered_voice_schema(block):
+    assert _contracts.validate("content", "block", block) == block
+
+
+@pytest.mark.parametrize(
+    "text", ["", " ", "x" * 401, "**Markup**", "https://example.com"]
+)
+def test_handsfree_conversation_rejects_invalid_speech(text):
+    with pytest.raises(ValueError, match="invalid content.block contract"):
+        _contracts.validate(
+            "content",
+            "block",
+            {"id": "c", "type": "conversation", "text": text, "phase": "answer"},
+        )
 
 
 # Generated SDK response types (#487).

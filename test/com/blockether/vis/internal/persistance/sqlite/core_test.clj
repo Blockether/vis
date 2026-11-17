@@ -1544,7 +1544,8 @@
                        ["ALTER TABLE session_state DROP COLUMN prompt_cache_state"])
         (doseq [table ["council_ping" "council_entry"]]
           (jdbc/execute! (:datasource s1) [(str "DROP TABLE " table)]))
-        (doseq [column ["council_input" "council_publications" "user_input"]]
+        (doseq [column ["council_input" "council_publications" "user_input" "llm_assistant_raw"
+                        "presentation_content" "presentation_status" "presentation_repair"]]
           (jdbc/execute! (:datasource s1)
                          [(str "ALTER TABLE session_turn_iteration DROP COLUMN " column)]))
         (jdbc/execute! (:datasource s1) ["CREATE TABLE topup_probe (id INTEGER)"])
@@ -1567,7 +1568,8 @@
               (expect (not (contains? cols "media_type"))))
             (expect (contains? (table-columns s2 "session_state") "prompt_cache_state"))
             (expect (every? (table-columns s2 "session_turn_iteration")
-                            ["council_input" "council_publications" "user_input"]))
+                            ["council_input" "council_publications" "user_input" "llm_assistant_raw"
+                             "presentation_content" "presentation_status" "presentation_repair"]))
             (expect (contains? (table-columns s2 "council_entry") "thread_id"))
             (expect (contains? (table-columns s2 "council_ping") "activation_id"))
             (expect
@@ -3690,6 +3692,70 @@
         (expect (= 1 (count (persistance/db-list-session-turn-iterations s qid)))))))
 
 ;; Iteration + stateless blocks
+
+(defdescribe
+  presentation-storage-test
+  (it
+    "keeps typed output and repair accounting without changing task status"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :tui})
+
+          tid
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "q" :status :done})
+
+          blocks
+          [{"id" "answer-1"
+            "type" "conversation"
+            "phase" "answer"
+            "text" "The search boundary works."}
+           {"id" "visual-1" "type" "visual" "markdown" "## Screen details"}]
+
+          raw
+          "rawtransportonly"
+
+          repair
+          {:api-usage {:input-tokens 12 :output-tokens 3} :duration-ms 42}]
+
+      (h/store-iteration! s
+                          {:session-turn-id tid
+                           :code ""
+                           :assistant-prose raw
+                           :presentation-content blocks
+                           :presentation-status :repaired
+                           :presentation-repair (assoc repair :assistant-message "private repair")})
+      (let [iteration (first (persistance/db-list-session-turn-iterations s tid))]
+        (expect (= blocks (:presentation-content iteration)))
+        (expect (= :repaired (:presentation-status iteration)))
+        (expect (= repair (:presentation-repair iteration)))
+        (expect (= :done (:status iteration)))
+        (expect (= raw (:assistant-prose iteration))))
+      (expect (= [cid] (persistance/db-search-session-ids s :all "boundary")))
+      (expect (= [cid] (persistance/db-search-session-ids s :all "details")))
+      (expect (= [] (persistance/db-search-session-ids s :all "rawtransportonly")))))
+  (it "keeps an empty typed marker distinct from ordinary prose"
+      (doseq [typed? [true false]]
+        (let [s (h/store)
+              cid (h/store-session! s {:channel :tui})
+              tid (persistance/db-store-session-turn!
+                    s
+                    {:parent-session-id cid :user-request "q" :status :done})]
+
+          (h/store-iteration!
+            s
+            (cond-> {:session-turn-id tid :code "" :assistant-prose "unparsedprovidertext"}
+              typed?
+              (assoc :presentation-content [])))
+          (let [iteration (first (persistance/db-list-session-turn-iterations s tid))]
+            (expect (= typed? (contains? iteration :presentation-content)))
+            (when typed? (expect (= [] (:presentation-content iteration))))
+            (expect (= "unparsedprovidertext" (:assistant-prose iteration))))
+          (expect (= (if typed? [] [cid])
+                     (persistance/db-search-session-ids s :all "unparsedprovidertext")))))))
 
 (defdescribe
   iteration-block-test

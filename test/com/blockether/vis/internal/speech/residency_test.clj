@@ -93,3 +93,68 @@
                (expect (= 2 (vv/call-loaded spec :n)))
                (expect (= 2 @opened))
                (finally (sweep) (.delete ^File dir)))))))
+
+(defdescribe live-asr-leases
+             ;; Rebase regression: #448 idle eviction must not close a live decoder.
+             (it
+               "keeps a live decoder through eviction and closes its lease on another thread"
+               (binding [residency/*registry* (atom {})]
+                 (let [dir (.toFile (Files/createTempDirectory "vis-live-lease"
+                                                               (make-array FileAttribute 0)))
+                       tensors (atom 0)
+                       closed (atom 0)
+                       meta {"sample_rate" 24000
+                             "layers" 1
+                             "kv_heads" 1
+                             "head_dim" 1
+                             "hidden" 1
+                             "samples_per_frame" 480
+                             "chunk_frames" 1
+                             "lookahead_frames" 0
+                             "acoustic_noise_std" 0.0
+                             "ids" {"text_chunk_end" 1 "eos" 2}}
+                       sweep #(residency/sweep! {:limit nil :idle-ms 0})]
+
+                   (try (with-redefs-fn {#'vv/open-asr (fn [_ _]
+                                                         {:meta meta})
+                                         #'vv/float-tensor (fn [& _]
+                                                             (swap! tensors inc)
+                                                             (reify
+                                                               java.lang.AutoCloseable
+                                                                 (close [_] (swap! closed inc))))}
+                          (fn []
+                            (let [decoder (vv/open-live-asr! dir)]
+                              (try (expect (true? (get-in (residency/status) [:models 0 :in_use])))
+                                   (expect (false? ((get-in @residency/*registry*
+                                                            ["vibevoice-asr" :release!]))))
+                                   (expect (= [] (sweep)))
+                                   (let [finished (future ((:close! decoder)) true)]
+                                     (expect (= true (deref finished 3000 :timeout))))
+                                   ((:close! decoder))
+                                   (expect (= @tensors @closed))
+                                   (expect (= ["vibevoice-asr"] (sweep)))
+                                   (finally ((:close! decoder)))))))
+                        (finally (sweep) (.delete ^File dir))))))
+             (it "releases the model lease when decoder setup fails"
+                 (binding [residency/*registry* (atom {})]
+                   (let [dir (.toFile (Files/createTempDirectory "vis-live-lease-fail"
+                                                                 (make-array FileAttribute 0)))
+                         sweep #(residency/sweep! {:limit nil :idle-ms 0})]
+
+                     (try (with-redefs-fn {#'vv/open-asr (fn [_ _]
+                                                           {:meta {"sample_rate" 16000
+                                                                   "layers" 1
+                                                                   "kv_heads" 1
+                                                                   "head_dim" 1
+                                                                   "hidden" 1
+                                                                   "samples_per_frame" 480
+                                                                   "chunk_frames" 1
+                                                                   "lookahead_frames" 0}})}
+                            (fn []
+                              (expect (try (vv/open-live-asr! dir)
+                                           false
+                                           (catch clojure.lang.ExceptionInfo e
+                                             (= :speech-live/model-contract (:type (ex-data e))))))
+                              (expect (false? (get-in (residency/status) [:models 0 :in_use])))
+                              (expect (= ["vibevoice-asr"] (sweep)))))
+                          (finally (sweep) (.delete ^File dir)))))))

@@ -49,6 +49,7 @@ import { fileURLToPath } from 'node:url';
 import { syncPackageVersion } from './version.mjs';
 import { configureAndroidPushPlugin } from './android-push-plugin.mjs';
 import { prepareAndroidOAuth } from './oauth-native.mjs';
+import { prepareAndroidLiveVoice } from '../native/android/prepare.mjs';
 import { brandLaunchTheme, prepareAndroidSplash } from './android-splash.mjs';
 import { secret } from './keychain.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -1097,6 +1098,7 @@ if (!existsSync(rangeBodyStreamPath) || readFileSync(rangeBodyStreamPath, 'utf8'
   writeFileSync(rangeBodyStreamPath, rangeBodyStream);
 }
 prepareAndroidOAuth(root, appId);
+prepareAndroidLiveVoice(root, appId);
 const pasteMenuPluginPath = join(javaPackageDir, 'PasteMenuPlugin.java');
 const pasteMenuPlugin = readFileSync(
   join(root, 'native/android/PasteMenuPlugin.java'),

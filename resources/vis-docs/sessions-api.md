@@ -20,6 +20,7 @@ requests, select **HTTP** at the top of the page.
 
 ## When to use
 
+- **Your client needs a live voice lease or admission receipts.** Use [live voice sessions](#live-voice-sessions).
 - **Your program must start work and wait for the answer.** [Create a session](#create-a-session).
   Then [send a message and wait](#send-a-message-and-wait).
 - **Your program must show progress while Vis works.** [Follow progress](#follow-progress).
@@ -81,6 +82,135 @@ Define the `vis_api` function from [Authenticate requests](http-api.md#authentic
 examples also use `SESSION_ID`, the ID of a session that you created or found.
 
 </div>
+
+## Live voice sessions
+
+For desktop, native mobile testing and TUI workflows, read [Use hands-free voice](sessions.md#use-hands-free-voice).
+Enable the experimental global `hands_free_voice` setting before starting. The gateway permits one English-only local voice session.
+
+### Check readiness and start
+
+Readiness describes the gateway engines, not the client microphone or echo performance.
+The profile lists `companion_ios_test` and `companion_android_test` for native mobile testing. Its `mobile_qualified` field remains false.
+Native clients require explicit test consent and platform echo cancellation. They stop on backgrounding or audio route changes.
+
+The SDK supports HTTP lifecycle calls, not WebSocket media. Starting a session does not acquire a microphone.
+A media client must connect before the one-use ticket expires after 15 seconds.
+Do not print or persist that ticket.
+
+<div data-variant="python">
+
+```python
+from uuid import uuid4
+
+capabilities = client.get_voice_live_capabilities()
+if capabilities["available"]:
+    voice = client.post_session_voice_live(session.id, body={
+        "schema": 1,
+        "client_id": str(uuid4()),
+        "language": "en",
+        "privacy": "local_speech",
+        "muted": True,
+    })
+    voice_id = voice["voice_session_id"]
+```
+
+</div>
+
+<div data-variant="http">
+
+Use `GET /v1/voice/live/capabilities` to check readiness.
+Use `POST /v1/sessions/:sid/voice/live` to create a lease.
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/voice/live/capabilities"
+VOICE_RESPONSE=$(vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/voice/live" \
+  -H 'Content-Type: application/json' \
+  --data '{"schema":1,"client_id":"a1a12d69-c2e0-427a-a0f3-3d1679fde775","language":"en","privacy":"local_speech","muted":true}')
+```
+
+Set `VOICE_ID` to the `voice_session_id` from `VOICE_RESPONSE`.
+The start response also contains a secret ticket. Keep the response out of shared logs.
+
+</div>
+
+### Read receipts and end the lease
+
+After a connection failure, read the snapshot to reconcile uncertain admission.
+Use its receipts and ordinary turn state. Do not submit the same speech again automatically.
+
+Older confirmed receipts can coexist with an unknown latest admission.
+A missing receipt does not prove failure. Check ordinary session history before repeating the request.
+Ending the lease stops capture and speech. It does not cancel admitted tasks.
+
+The gateway retains live snapshots for five minutes after close. Confirmed admission receipts also remain in session storage.
+After live state is lost, the snapshot restores those receipts in a closed state.
+Reading it never restores audio, replays speech or admits a request.
+
+<div data-variant="python">
+
+```python
+snapshot = client.get_session_voice_live(session.id, voice_id)
+receipts = snapshot["receipts"]
+client.delete_session_voice_live(session.id, voice_id)
+```
+
+</div>
+
+<div data-variant="http">
+
+Use `GET /v1/sessions/:sid/voice/live/:vid` to read state and receipts.
+Use `DELETE /v1/sessions/:sid/voice/live/:vid` to end the lease.
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/voice/live/$VOICE_ID"
+vis_api -X DELETE "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/voice/live/$VOICE_ID"
+```
+
+</div>
+
+### Media reference
+
+The shared `voice.json` contract defines binary frames, controls, epochs and playback positions.
+Use 24 kHz mono PCM16 frames of at most 20 milliseconds.
+Keep media outside durable session events. Never submit a client transcript as a voice control.
+
+<div data-variant="python">
+
+`client.get_session_voice_live_media(session.id, voice_id)` raises `ValueError` before network I/O.
+The SDK has no WebSocket transport. Use a dedicated media client for this experimental protocol.
+
+</div>
+
+<div data-variant="http">
+
+Upgrade `GET /v1/sessions/:sid/voice/live/:vid/media` with the `vis-voice.v1` and `vis-ticket.<ticket>` subprotocols.
+The ticket is bound to the session and origin. It can be used once within 15 seconds.
+The media upgrade authenticates with this ticket, not inherited bearer authentication.
+Never place a ticket or gateway token in the URL.
+
+</div>
+
+Capture generations reject stale input. Output epochs reject stale speech after interruption.
+Playback receipts distinguish received, decoded, scheduled and played positions. Played positions are conservative render estimates, not proof of hearing.
+Only committed conversation records are eligible for synthesis. Provisional text, hidden reasoning and tool logs are not speech sources.
+
+A `conversation` block shares its `text` between display and speech. Its `phase` distinguishes `progress` from the final `answer`.
+A `visual` block holds screen-only Markdown, including diagrams and code. A `silence` block requires the reason `user_requested`.
+Each conversation record contains at most 400 characters. The final reply requires an answer record or explicit silence.
+
+Complete records arrive in `content.block.started`, followed by `content.block.completed`.
+Durable iterations expose `presentation_content`, including an empty array when no valid records exist.
+Stable block identities prevent duplicate display and speech when streamed records also occur in the final reply.
+
+An `output.interrupted` event has `abort` set to `requested` or `acknowledged`. Acknowledgement follows native completion or confirms that no synthesis call was active.
+It does not confirm when a device played its last sample.
+
+Native cancellation is cooperative. Before its first audio callback, Pocket can complete latent generation for the current text chunk.
+
+The agent state `waiting_for_input` covers approvals and ordinary questions. Answer them through the authenticated interface, not voice.
+A `task.cancellation` event reports `requested`, `ambiguous` or `none`, with a message and an optional `turn_id`.
+Only `requested` means cancellation was requested. Neither cancellation nor this event undoes completed actions.
 
 ## Operations
 

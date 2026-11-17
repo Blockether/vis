@@ -7,6 +7,74 @@
       "oneOf": [
         {
           "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "conversation"
+            },
+            "phase": {
+              "enum": [
+                "progress",
+                "answer"
+              ]
+            },
+            "text": {
+              "$ref": "voice.json#/$defs/speech_text"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "phase",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "visual"
+            },
+            "markdown": {
+              "type": "string",
+              "maxLength": 65536
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "markdown"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "silence"
+            },
+            "reason": {
+              "const": "user_requested"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
           "additionalProperties": true,
           "properties": {
             "id": {

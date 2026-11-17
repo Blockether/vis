@@ -19,6 +19,7 @@
     [com.blockether.vis.internal.config.toggles :as toggles]
     [com.blockether.vis.internal.config.scoped :as scoped]
     [com.blockether.vis.contract.gateway :as gateway-contract]
+    [com.blockether.vis.contract.voice :as voice-contract]
     [com.blockether.vis.internal.attachment.storage :as attachment-storage]
     [com.blockether.vis.internal.attachment.core :as attachments]
     [com.blockether.vis.internal.session.cancellation :as cancellation]
@@ -992,6 +993,47 @@
            (tel/log!
              {:level :debug :id ::event-tap-failed :data {:tap k :error (ex-message t)}})))))
 
+(defn- voice-receipt-scope
+  [sid voice-id]
+  {:extension-id 'com.blockether.vis.internal.gateway.voice
+   :kind :admission
+   :session-soul-id sid
+   :index-data {"voice_session_id" voice-id}})
+
+(defn voice-receipts
+  "Read bounded admission receipts from session history, without restoring native state."
+  [sid voice-id]
+  (if (and sid (parse-uuid (str voice-id)))
+    (->> (persistance/db-list-extension-aggregates (lp/db-info)
+                                                   (assoc (voice-receipt-scope sid voice-id)
+                                                     :limit (:max-admissions
+                                                              voice-contract/limits)))
+         (map :content)
+         (sort-by #(get % "utterance_id"))
+         vec)
+    []))
+
+(defn- persist-voice-receipt!
+  [sid payload]
+  (let [receipt
+        (select-keys payload
+                     ["voice_session_id" "utterance_id" "idempotency_key" "text" "revision"
+                      "turn_id" "status" "error"])
+
+        voice-id
+        (get receipt "voice_session_id")
+
+        stored
+        (persistance/db-put-extension-aggregate! (lp/db-info)
+                                                 (assoc (voice-receipt-scope sid voice-id)
+                                                   :aggregate-key [voice-id
+                                                                   (get receipt "utterance_id")]
+                                                   :content receipt))]
+
+    (when-not stored
+      (throw (ex-info "The voice admission receipt could not be stored"
+                      {:type ::voice-receipt-unavailable})))))
+
 (defn append-event!
   "Append one event for `sid`, fan it out to LOCAL subscribers, and publish
    it on the cross-process bus so watchers in OTHER processes stream it too.
@@ -1040,6 +1082,7 @@
 
                  descriptor
                  (when (or store? (materialized-transient? event))
+                   (when (= type "voice.admission") (persist-voice-receipt! sid canonical-payload))
                    (event-store/write-event! event))]
 
              (update-session! sid
@@ -2293,8 +2336,12 @@
 (defn- iteration-final-payload
   "The iteration's complete reasoning and assistant prose - the canonical,
    PERSISTED final text - plus descriptors of the artifacts it produced."
-  [{:keys [done? thinking assistant-prose iteration-id attachment-count]}]
+  [{:keys [done? thinking assistant-prose presentation-content iteration-id attachment-count]
+    :as chunk}]
   (cond-> {:done (boolean done?) :thinking (util/settled-thinking-text thinking)}
+    (contains? chunk :presentation-content)
+    (assoc :presentation-content presentation-content)
+
     (some-> assistant-prose
             str
             str/trim
@@ -2774,6 +2821,9 @@
   (cond-> (-> iteration
               (dissoc :request-health)
               (update :thinking util/settled-thinking-text))
+    (contains? iteration :presentation-content)
+    (dissoc :assistant-prose)
+
     (seq (:forms iteration))
     (update :forms #(mapv form/with-display %))
 
@@ -4053,7 +4103,7 @@
          content
          (not-empty (if (= "failed" status)
                       (vec (:content turn))
-                      (filterv #(or (contains? #{"prose" "speech"} (get % "type"))
+                      (filterv #(or (contains? #{"prose" "speech" "conversation" "visual" "silence" "notice"} (get % "type"))
                                     (content/leader-cancel-notice? %))
                         (:content turn))))
 
@@ -5189,6 +5239,44 @@
          (catch Throwable t
            (tel/log! :warn ["gateway: resume row of a turn not deleted" tid (ex-message t)])))))
 
+(defn- speech-commit-update
+  "Commit complete presentation records. Stop speech if a provider changes a committed prefix."
+  [previous text final?]
+  (let [text
+        (str text)
+
+        prefix
+        (:prefix previous "")
+
+        seen
+        (long (:seen previous 0))]
+
+    (if (or (> (count text) (long (:max-projection-chars voice-contract/limits)))
+            (not (str/starts-with? text prefix)))
+      {:invalidated? true :records [] :segments []}
+      (try (let [records
+                 (content/presentation-records text final?)
+
+                 fresh
+                 (subvec records seen)
+
+                 kinds
+                 (set (map #(get-in % [:block "type"]) records))]
+
+             (if (and (contains? kinds "silence") (contains? kinds "conversation"))
+               {:invalidated? true :records [] :segments []}
+               {:prefix (if-let [record (last records)]
+                          (subs text 0 (:end record))
+                          prefix)
+                :seen (count records)
+                :records fresh
+                :segments (filterv #(= "conversation" (get-in % [:block "type"])) fresh)}))
+           ;; An invalid record is not speech. The engine can repair final presentation once.
+           (catch clojure.lang.ExceptionInfo _
+             (assoc previous
+               :records []
+               :segments []))))))
+
 (defn- run-turn!
   "Worker body for one submitted turn. Streams phased chunks into the
   event log, runs the blocking `lp/send!`, then lands the terminal turn
@@ -5249,6 +5337,69 @@
           (let [suffix (str ":" (long (or iteration 0)))]
             (close-blocks! (filter #(str/ends-with? (str %) suffix) @open-blocks))))
 
+        speech-streams
+        (volatile! {})
+
+        speech-disabled?
+        (volatile! false)
+
+        commit-speech!
+        (fn [chunk]
+          (when (and (true? (get turn-features "voice_segments")) (not @speech-disabled?))
+            (let [phase
+                  (:phase chunk)
+
+                  iteration
+                  (long (or (:iteration chunk) 0))
+
+                  projection?
+                  (contains? #{:content :assistant-prose :iteration-final} phase)
+
+                  text
+                  (if (= phase :iteration-final) (:assistant-prose chunk) (delta-text chunk))
+
+                  update
+                  (cond (= phase :provider-retry-reset) {:invalidated? true}
+                        (and projection? (string? text)) (speech-commit-update
+                                                           (get @speech-streams iteration {})
+                                                           text
+                                                           (= phase :iteration-final)))]
+
+              (when update
+                (if (:invalidated? update)
+                  (do (vreset! speech-disabled? true)
+                      (append-event! sid
+                                     "speech.invalidated"
+                                     {:turn-id tid :reason "projection_changed"}))
+                  (do (vswap! speech-streams assoc iteration (dissoc update :records :segments))
+                      (doseq [{:keys [block index start end]}
+                              (:records update)
+
+                              :let [block-id
+                                    (get block "id")]
+                              :when (and (turn-watchdog-live? sid tid cancel-token)
+                                         (not (contains? @started-blocks block-id)))]
+
+                        (vswap! started-blocks conj block-id)
+                        (append-event! sid
+                                       "content.block.started"
+                                       {:turn_id tid :iteration iteration :block block})
+                        (append-event! sid
+                                       "content.block.completed"
+                                       {:turn_id tid :iteration iteration :block_id block-id})
+                        (when (= "conversation" (get block "type"))
+                          (append-event! sid
+                                         "speech.committed"
+                                         {:turn-id tid
+                                          :iteration iteration
+                                          :segment-index index
+                                          :source (str "presentation:" block-id)
+                                          :block-id block-id
+                                          :phase (get block "phase")
+                                          :text (get block "text")
+                                          :source-start start
+                                          :source-end end})))))))))
+
         on-chunk
         (fn [chunk]
           ;; A terminal path owns the canonical state. A worker that thaws after a
@@ -5263,6 +5414,7 @@
                 (try (caller-on-chunk chunk)
                      (catch Throwable t
                        (tel/log! :warn ["gateway: caller chunk hook failed" (ex-message t)]))))
+              (commit-speech! chunk)
               (let [phase
                     (:phase chunk)
 
@@ -5296,6 +5448,19 @@
 
                         chunk
                         (cond-> chunk
+                          (and (true? (get turn-features "voice_segments"))
+                               (= :iteration-final phase))
+                          (assoc :presentation-content
+                            (if (contains? chunk :presentation-content)
+                              (:presentation-content chunk)
+                              (try (mapv :block
+                                         (content/presentation-records (:assistant-prose chunk)
+                                                                       true))
+                                   (catch clojure.lang.ExceptionInfo _ []))))
+
+                          (true? (get turn-features "voice_segments"))
+                          (dissoc :assistant-prose)
+
                           streaming?
                           (assoc :stream-block-id
                             block-id :stream-delta
@@ -5328,6 +5493,8 @@
                     ;; `:tool-input` and `:provider-thinking` are signs of life for the turn
                     ;; watchdog only.
                     (when-not (or nothing-said?
+                                  (and (true? (get turn-features "voice_segments"))
+                                       (contains? #{:content :assistant-prose} phase))
                                   unchanged?
                                   (contains? #{:tool-input :provider-thinking} phase))
                       (when streaming?

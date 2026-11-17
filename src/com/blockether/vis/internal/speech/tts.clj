@@ -265,9 +265,42 @@
   [needed]
   (combined-state (mapv start-asset-download! needed)))
 
+(defonce ^:private native-download* (atom nil))
+
+(defn- native-state
+  []
+  (let [tracked
+        @native-download*
+
+        installed?
+        (some sherpa/installed?
+              [(sherpa/native-dir) (System/getProperty sherpa/native-path-property)
+               (:dir tracked)])]
+
+    (cond installed? {:state :ready}
+          (and (= :embedded (:source tracked)) (nil? (:dir tracked)) (sherpa/embedded?)) {:state
+                                                                                          :ready}
+          (#{:downloading :failed} (:state tracked)) (select-keys tracked
+                                                                  [:state :phase :progress :error])
+          :else {:state :absent})))
+
+(defn- start-native-download!
+  []
+  (locking native-download*
+    (when (and (not= :ready (:state (native-state))) (not= :downloading (:state @native-download*)))
+      (reset! native-download* {:state :downloading :phase :preparing :progress 0})
+      (future (try (reset! native-download* (sherpa/ensure-native!))
+                   (catch Throwable t
+                     (reset! native-download* {:state :failed
+                                               :error (or
+                                                        (ex-message t)
+                                                        "Native runtime preparation failed")}))))))
+  (native-state))
+
 (defn model-state
   ([family] (model-state family nil))
-  ([family voice-id] (model-state-of (required-assets family voice-id))))
+  ([family voice-id]
+   (combined-state (conj (mapv asset-state (required-assets family voice-id)) (native-state)))))
 
 (defn start-download!
   "Begin every required download without blocking. An opt-in voice starts only when
@@ -282,7 +315,7 @@
                                     needed))]
        {:state :failed
         :error (str "Accept " (:license opt-in) " before downloading " (:id opt-in) ".")}
-       (start-downloads! needed)))))
+       (do (start-native-download!) (start-downloads! needed) (model-state family voice-id))))))
 
 (defn install-model!
   "Blocking install of everything `family` needs before it can speak, for the
@@ -298,6 +331,11 @@
 ;; Synthesis
 
 (defn- num-threads ^long [] (max 1 (long (.availableProcessors (Runtime/getRuntime)))))
+
+(defn- pocket-num-threads
+  "Leave compute capacity for concurrent recognition."
+  ^long []
+  (min 2 (num-threads)))
 
 (defn- model-path
   "`/`-separated on every OS, so a model address is identical across platforms."
@@ -340,7 +378,7 @@
         model
         (.. (OfflineTtsModelConfig/builder)
             (setPocket pocket)
-            (setNumThreads (num-threads))
+            (setNumThreads (pocket-num-threads))
             (setDebug false)
             build)]
 
@@ -505,6 +543,114 @@
     ;; the JNI trampoline. One JDK class is the whole fix.
     (.setExtra gen (doto (LinkedHashMap.) (.put "temperature" "0.7") (.put "chunk_size" "15")))
     gen))
+
+(def live-max-characters "Bound native accumulated audio to a short immutable segment." 600)
+
+(defonce ^:private live-model (atom nil))
+
+(defonce ^{:private true :tag java.util.concurrent.Semaphore} live-permit
+  (java.util.concurrent.Semaphore. 1))
+
+(defn- live-voice
+  []
+  (let [entry
+        (pocket-clips-asset)
+
+        voice
+        (first (:voices entry))]
+
+    (assoc voice :clip (str (io/file (assets/install-dir entry) (str (:clip voice)))))))
+
+(defn live-ready?
+  "Report bundled Pocket readiness. Never select an imported or device voice."
+  []
+  (boolean (and (assets/installed? (assets/entry pocket-asset-id))
+                (assets/installed? (pocket-clips-asset))
+                (.isFile (io/file (:clip (live-voice))))
+                (sherpa/installed? (sherpa/native-dir)))))
+
+(deftype LiveGenerationCallback [on-pcm cancelled? failure ^long sample-rate]
+  OfflineTtsCallback
+    (invoke [_ samples]
+      ;; Never let a callback exception cross JNI. Rethrow after native exit instead.
+      (Integer/valueOf (int (try (if (or @failure (cancelled?))
+                                   0
+                                   (if (or (false? (on-pcm samples sample-rate)) (cancelled?)) 0 1))
+                                 (catch Throwable e (reset! failure e) 0))))))
+
+(defn release-live!
+  "Release the idle live model. Never free a model during a native callback."
+  []
+  (when-not (.tryAcquire ^java.util.concurrent.Semaphore live-permit)
+    (throw (ex-info "Live synthesis is busy" {:type :speech-live/busy})))
+  (try (when-let [^OfflineTts model @live-model]
+         (.release model)
+         (reset! live-model nil))
+       (finally (.release ^java.util.concurrent.Semaphore live-permit))))
+
+(defn- loaded-live!
+  ^OfflineTts []
+  (when-not (live-ready?)
+    (throw (ex-info "Local Pocket assets are missing" {:type :speech-live/unavailable})))
+  (sherpa/ensure-native!)
+  (let [^OfflineTts model (or @live-model
+                              (let [m (OfflineTts. (pocket-config (assets/install-dir
+                                                                    (assets/entry
+                                                                      pocket-asset-id))))]
+                                (reset! live-model m)
+                                m))]
+    (when-not (= 24000 (.getSampleRate model))
+      (throw (ex-info "Pocket sample rate does not match live PCM"
+                      {:type :speech-live/sample-rate})))
+    model))
+
+(defn prepare-live!
+  "Load the installed Pocket model without speaking or downloading."
+  []
+  (when-not (.tryAcquire ^java.util.concurrent.Semaphore live-permit)
+    (throw (ex-info "Live synthesis is busy" {:type :speech-live/busy})))
+  (try (loaded-live!)
+       {:ready true}
+       (finally (.release ^java.util.concurrent.Semaphore live-permit))))
+
+(defn synthesize-live!
+  "Deliver native Pocket chunks. Abort is cooperative at the next native callback."
+  [{:keys [text on-pcm cancelled? register-abort!]
+    :or {cancelled? (constantly false)
+         register-abort! (fn [_])}}]
+  (let [spoken (str/trim (str text))]
+    (when-not (and (seq spoken) (<= (count spoken) live-max-characters) (ifn? on-pcm))
+      (throw (ex-info "Invalid live speech segment" {:type :speech-live/segment-limit})))
+    (when-not (live-ready?)
+      (throw (ex-info "Local Pocket assets are missing" {:type :speech-live/unavailable})))
+    (when-not (.tryAcquire ^java.util.concurrent.Semaphore live-permit)
+      (throw (ex-info "Live synthesis is busy" {:type :speech-live/busy})))
+    (let [aborted? (atom false)
+          failure (atom nil)
+          cancel? #(or @aborted? (cancelled?))
+          abort! #(reset! aborted? true)
+          consume (fn [samples rate]
+                    (let [result (on-pcm samples rate)]
+                      (when (false? result) (abort!))
+                      result))]
+
+      (try (register-abort! abort!)
+           (if (cancel?)
+             {:state :aborted}
+             (let [^OfflineTts model (loaded-live!)
+                   rate (long (.getSampleRate model))
+                   voice (live-voice)]
+
+               (when-not (cancel?)
+                 (.generateWithConfigAndCallback
+                   model
+                   spoken
+                   (pocket-generation-config (:clip voice) (:clip-text voice))
+                   (LiveGenerationCallback. consume cancel? failure rate)))
+               (when-let [error @failure]
+                 (throw error))
+               {:state (if (cancel?) :aborted :finished) :sample-rate rate}))
+           (finally (.release ^java.util.concurrent.Semaphore live-permit))))))
 
 (defn- ensure-assets!
   [family voice-id report]

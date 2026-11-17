@@ -247,3 +247,17 @@ describe('readingTurnId', () => {
     expect(readingTurnId(scroller(2200), column(turn('t1', 100, 600), turn('t2', 600, 900)))).toBe('t2');
   });
 });
+
+// Regression: typed hands-free replies remain searchable in the transcript outline.
+describe('typed presentation outline', () => {
+  it('includes conversation and visual text but not silence metadata', () => {
+    const entry = outlineEntry({ turn_id: 'typed', content: [
+      { id: 'c', type: 'conversation', phase: 'answer', text: 'The result is ready.' },
+      { id: 'v', type: 'visual', markdown: '**Verification passed.**' },
+      { id: 's', type: 'silence', reason: 'user_requested' },
+    ] });
+    expect(entry.answer).toContain('The result is ready.');
+    expect(entry.answer).toContain('Verification passed.');
+    expect(entry.answer).not.toContain('user_requested');
+  });
+});

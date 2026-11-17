@@ -691,3 +691,23 @@ def test_structured_result_needs_time_left_for_a_correction(local, tmp_path):
             agent.run("Quote", response_model=Delivery, timeout=0.05)
         agent.session.send.assert_called_once()
     assert failure.value.errors[0]["path"] == "$.express"
+
+
+def test_final_answer_uses_typed_answer_conversation_only():
+    blocks = [
+        {"type": "conversation", "phase": "progress", "text": "I will check."},
+        {"type": "conversation", "phase": "answer", "text": "The work is ready."},
+        {"type": "visual", "markdown": "```mermaid\ngraph TD; A-->B\n```"},
+        {"type": "conversation", "phase": "answer", "text": "Please test it."},
+    ]
+    assert (
+        engine.final_answer({"content": blocks})
+        == "The work is ready.\n\nPlease test it."
+    )
+    assert engine.final_answer({"content": [blocks[0], blocks[2]]}) is None
+    assert (
+        engine.final_answer(
+            {"content": [{"type": "silence", "reason": "user_requested"}, blocks[2]]}
+        )
+        is None
+    )

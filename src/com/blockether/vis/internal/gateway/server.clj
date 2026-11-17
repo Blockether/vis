@@ -19,6 +19,7 @@
     [clojure.string :as str]
     [com.blockether.vis.contract.activity :as activity-contract]
     [com.blockether.vis.contract.gateway :as gateway-contract]
+    [com.blockether.vis.contract.voice :as voice-contract]
     [com.blockether.vis.contract.openapi :as openapi-contract]
     [com.blockether.vis.internal.config.core :as config]
     [com.blockether.vis.internal.gateway.wiring :as wiring]
@@ -51,6 +52,7 @@
     [com.blockether.vis.internal.gateway.server.sessions :as sessions-api]
     [com.blockether.vis.internal.gateway.server.settings :as settings-api]
     [com.blockether.vis.internal.gateway.server.speech :as speech-api]
+    [com.blockether.vis.internal.gateway.server.voice :as voice-api]
     [com.blockether.vis.internal.gateway.server.transcripts :as transcripts-api]
     [com.blockether.vis.internal.gateway.server.turns :as turns-api]
     [com.blockether.vis.internal.gateway.server.views :as views-api]
@@ -1510,7 +1512,9 @@
   [handler ^String token contribs]
   (let [expected (str "Bearer " token)]
     (fn [request]
-      (if (or (not (auth-required?)) (:vis.host/exchange request))
+      (if (or (not (auth-required?))
+              (:vis.host/exchange request)
+              (voice-api/authenticated? request))
         (handler request)
         (let [uri (str (:uri request))
               open? (or (= "/healthz" uri)
@@ -1577,6 +1581,7 @@
           (some #(contains? (or (:protocol-open-uris %) #{}) uri) contribs)]
 
       (if (or (contains? protocol-open-uris uri)
+              (voice-api/media-upgrade? request)
               (str/starts-with? uri "/docs")
               (str/starts-with? uri "/v1/hooks/")
               ;; A media element cannot send the protocol headers either.
@@ -1840,7 +1845,8 @@
   [server-handlers council-api/handlers automations-api/handlers evals-api/handlers
    decisions-api/handlers devices-api/handlers fs-api/handlers mcp-api/handlers
    projects-api/handlers providers-api/handlers sessions-api/handlers settings-api/handlers
-   speech-api/handlers transcripts-api/handlers turns-api/handlers views-api/handlers web/handlers])
+   speech-api/handlers voice-api/handlers transcripts-api/handlers turns-api/handlers
+   views-api/handlers web/handlers])
 
 (defn- route-precedence
   "Sort key for a route path. At the first segment where two paths differ, a fixed
@@ -2037,6 +2043,7 @@
                (http/error-response 405 :method-not-allowed "method not allowed"))})))
       (wrap-client-lease)
       (wrap-auth token contribs)
+      (voice-api/wrap-media-auth)
       ;; Runs BEFORE the token gate: an out-of-date client deserves the version
       ;; verdict, not a 401 that hides it.
       (wrap-protocol contribs)
@@ -2445,6 +2452,14 @@
                           :host host
                           :join? false
                           :virtual-threads? true
+                          :ws-max-idle-time (:lease-ms voice-contract/limits)
+                          :ws-max-frame-size (max (:max-control-bytes voice-contract/limits)
+                                                  (+ (:header-bytes voice-contract/limits)
+                                                     (* 2 (:frame-samples voice-contract/limits))))
+                          :ws-max-binary-message-size (+ (:header-bytes voice-contract/limits)
+                                                         (* 2
+                                                            (:frame-samples voice-contract/limits)))
+                          :ws-max-text-message-size (:max-control-bytes voice-contract/limits)
                           :send-server-version? false
                           :configurator (gateway-configurator (when mirror-loopback? port))}
                          (+ (util/now-ms) 6000))
@@ -2545,6 +2560,7 @@
   ([] (stop! {}))
   ([{:keys [park-turns?] :or {park-turns? true}}]
    (when-let [{:keys [^Server server db stop-automations!]} @instance/server-state]
+     (voice-api/shutdown!)
      (lp/set-project-root-listener! nil)
      (when stop-automations! (stop-automations!))
      ;; Release the listening socket FIRST so a successor daemon racing this

@@ -137,7 +137,7 @@
                        [(str "vis_engine/blockether/vis/_data/schema/" schema ".json")
                         (str "vis-contract/schema/" schema ".json")])
                      ["activity" "agents" "automations" "common" "config" "content" "council" "diff"
-                      "evals" "gateway" "keymap" "provider" "symbol" "toggle" "view"]))))
+                      "evals" "gateway" "keymap" "provider" "symbol" "toggle" "view" "voice"]))))
 
 (defonce ^:private guest-sources
   (delay (into {}

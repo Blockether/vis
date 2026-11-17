@@ -3,9 +3,11 @@
 
    `com.blockether.vis.contract.content` owns the persisted and transported shapes.
    This namespace constructs those JSON-ready, snake_case values and converts final
-   engine answers into them; Markdown exists only as the payload of a prose block."
-  (:require [clojure.string :as str]
+   engine answers into them. Conversation is shared text; visual blocks contain screen-only Markdown."
+  (:require [charred.api :as json]
+            [clojure.string :as str]
             [com.blockether.vis.contract.content :as content-contract]
+            [com.blockether.vis.contract.voice :as voice-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]))
 
@@ -155,34 +157,145 @@
                      author
                      (assoc "author" (str author)))))
 
-(def ^:private speech-fence-pattern
-  #"(?s)(?:^|\n)[ \t]*```vis-speech[ \t]*\n(.*?)(?:\n[ \t]*```)(?=\n|$)")
+(defn closed-speech-projections
+  "Read closed top-level speech fences. Live commits require a newline after the closing fence.
+   Return text and source spans. Ignore speech fences inside code or quoted examples."
+  [markdown final?]
+  (let [text (str markdown)]
+    (loop [lines (seq (str/split text #"\n" -1))
+           offset 0
+           fence nil
+           projections []]
+
+      (if-let [line (first lines)]
+        (let [complete? (< (+ offset (count line)) (count text))
+              end (+ offset (count line) (if complete? 1 0))
+              line (str/replace line #"\r$" "")
+              [_ closing] (re-matches #" {0,3}(`{3,}|~{3,})[ \t]*" line)
+              [_ opening info] (re-matches #" {0,3}(`{3,}|~{3,})([^`~]*)" line)]
+
+          (if fence
+            (if (and closing
+                     (= (first closing) (first (:marker fence)))
+                     (>= (count closing) (count (:marker fence)))
+                     (or complete? final?))
+              (recur (next lines)
+                     end
+                     nil
+                     (if (:speech? fence)
+                       (conj projections
+                             {:text (str/trim (str/join "\n" (:lines fence)))
+                              :start (:start fence)
+                              :end end})
+                       projections))
+              (recur (next lines) end (update fence :lines conj line) projections))
+            (recur
+              (next lines)
+              end
+              (when (and opening complete?)
+                {:marker opening :speech? (= "vis-speech" (str/trim info)) :start offset :lines []})
+              projections)))
+        projections))))
+
+(defn- presentation-error
+  [reason index]
+  (ex-info "Invalid hands-free presentation"
+           {:type :content/invalid-presentation :reason reason :index index}))
+
+(defn- presentation-record
+  [line index]
+  (try (with-open [^java.lang.AutoCloseable reader
+                   (json/read-json-supplier line {:eof-error? false :eof-value ::eof})]
+         (let [record (.get ^java.util.function.Supplier reader)
+               tail (.get ^java.util.function.Supplier reader)]
+
+           (when-not (and (map? record)
+                          (= ::eof tail)
+                          (not (contains? record "id"))
+                          (contains? #{"conversation" "visual" "silence"} (get record "type")))
+             (throw (presentation-error :invalid-record index)))
+           (let [identity-text (str index ":" (wire/json-str (into (sorted-map) record)))
+                 id (str "presentation_" index
+                         "_" (java.util.UUID/nameUUIDFromBytes
+                               (.getBytes ^String identity-text
+                                          java.nio.charset.StandardCharsets/UTF_8)))
+                 block (assoc record "id" id)]
+
+             (when-not (content-contract/block-valid? block)
+               (throw (presentation-error :invalid-record index)))
+             block)))
+       (catch Exception _ (throw (presentation-error :invalid-record index)))))
+
+(defn presentation-records
+  "Read complete JSON lines into canonical blocks with source spans. Ignore only an incomplete last line."
+  [raw final?]
+  (let [text (str raw)]
+    (when (> (count text) (:max-projection-chars voice-contract/limits))
+      (throw (presentation-error :too-large 0)))
+    (loop [lines (seq (str/split text #"\n" -1))
+           offset 0
+           records []]
+
+      (if-let [line (first lines)]
+        (let [complete? (< (+ offset (count line)) (count text))
+              end (+ offset (count line) (if complete? 1 0))]
+
+          (if (and (or complete? final?) (not (str/blank? line)))
+            (do (when (>= (count records) (:max-speech-segments voice-contract/limits))
+                  (throw (presentation-error :too-many-records (count records))))
+                (recur (next lines)
+                       end
+                       (conj records
+                             {:block (presentation-record line (count records))
+                              :start offset
+                              :end end
+                              :index (count records)})))
+            (recur (next lines) end records)))
+        records))))
+
+(defn presentation-content
+  "Validate a final presentation. Require a conversational answer or explicit silence, never progress alone."
+  [raw]
+  (let [blocks
+        (mapv :block (presentation-records raw true))
+
+        conversation?
+        (some #(= "conversation" (get % "type")) blocks)
+
+        answer?
+        (some #(and (= "conversation" (get % "type")) (= "answer" (get % "phase"))) blocks)
+
+        silent?
+        (some #(= "silence" (get % "type")) blocks)]
+
+    (when (and silent? conversation?) (throw (presentation-error :conflicting-silence 0)))
+    (when-not (or answer? silent?) (throw (presentation-error :missing-outcome 0)))
+    blocks))
 
 (defn- markdown-content
-  "Turn the reserved `vis-speech` fence into a semantic speech block. The fence is
-   removed from ordinary prose so visual clients never render a duplicate code
-   block. Text outside the fence remains the canonical full answer."
+  "Keep the full answer as prose. Convert each reserved speech fence into a separate speech block."
   [markdown]
   (let [markdown
         (str markdown)
 
-        [_ speech-text]
-        (re-find speech-fence-pattern markdown)
+        projections
+        (closed-speech-projections markdown true)
+
+        [parts offset]
+        (reduce (fn [[parts offset] {:keys [start end]}]
+                  [(conj parts (subs markdown offset start)) end])
+                [[] 0]
+                projections)
 
         prose-text
-        (str/trim (str/replace-first markdown speech-fence-pattern "\n"))
+        (str/trim (str/join "\n" (conj parts (subs markdown offset))))]
 
-        spoken
-        (some-> speech-text
-                str/trim
-                not-empty)]
-
-    (cond-> []
-      (not (str/blank? prose-text))
-      (conj (prose prose-text))
-
-      spoken
-      (conj (speech spoken)))))
+    (into (cond-> []
+            (not (str/blank? prose-text))
+            (conj (prose prose-text)))
+          (keep (fn [{:keys [text]}]
+                  (when-not (str/blank? text) (speech text))))
+          projections)))
 
 (defn answer-content
   "Convert the engine's final answer value into canonical blocks.
@@ -210,10 +323,10 @@
   (->> blocks
        (keep (fn [block]
                (case (get block "type")
-                 "prose"
+                 ("prose" "visual")
                  (get block "markdown")
 
-                 ("speech" "code" "reasoning")
+                 ("conversation" "speech" "code" "reasoning")
                  (get block "text")
 
                  ("error" "notice")

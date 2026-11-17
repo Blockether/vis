@@ -6,6 +6,7 @@ sessions.
 
 ## When to use
 
+- **You want to talk without pressing a button for each request.** Try [hands-free voice](#use-hands-free-voice).
 - **You think of a follow-up while Vis is still working.** Send it now. It
   [waits in the queue](#queue-a-message).
 - **Vis must read your correction before the turn ends.**
@@ -32,6 +33,156 @@ sessions.
 - **A bug report needs the conversation that shows the problem.** Export it, then remove private
   details as [Reporting a bug](reporting-bugs.md#sharing-a-transcript) describes.
 - **You want another session to help or to review the work.** Read [Council](council.md).
+
+## Use hands-free voice
+
+Hands-free voice is an experimental, English-only mode. It listens while answers play and submits each finished utterance automatically.
+While a voice task runs, a spoken follow-up reaches that task at its next step.
+Other requests use the normal session queue. Partial transcripts never start work.
+Vis waits for 1,100 milliseconds of silence before it ends an utterance.
+
+### Start a conversation
+
+1. In gateway settings, enable **Hands-free voice** (`hands_free_voice`). The global setting is off by default.
+2. Use the Companion in a desktop browser, or connect a headset for the TUI.
+3. In the Companion session, choose **Start hands-free voice** and allow microphone access.
+4. In the TUI, enter `/hands-free start headset` instead.
+5. Wait for **Listening**, then speak your request.
+
+The desktop browser requires the microphone track to report echo cancellation as enabled.
+If that setting is false or unknown, capture stops. Use dictation or text instead.
+This check does not establish acoustic quality. The TUI still requires a headset because its audio path has no echo cancellation.
+
+Only one live voice session can run on the gateway. The gateway needs the local VibeVoice streaming ASR and Pocket speech models.
+If local speech is unavailable, use text or dictation. This mode does not switch to cloud speech or operating-system speech.
+
+### Test voice on a phone
+
+The native iOS app and Android 12 or newer include an unverified mobile mode. Mobile browsers do not support this mode.
+Each start requires explicit consent to test. Simulator checks do not establish physical microphone, speaker or echo performance.
+
+1. Enable **Hands-free voice** in gateway settings.
+2. Keep the native Companion app open and set a low speaker volume.
+3. Select **Enable mobile audio testing**, then choose **Start mobile voice test**.
+4. Allow microphone access and wait for **Listening**.
+
+The iOS app uses system voice processing. Android uses its communication audio path and an enabled acoustic echo canceller.
+If the device cannot enable echo cancellation, voice stops. It does not switch to an unprocessed microphone.
+Recognition and synthesis still run on the gateway, not through phone speech services.
+
+Before regular use, check these behaviors on each device and audio route:
+
+- Check that speaker playback does not submit another request through the microphone.
+- Speak during playback and check that interruption works without losing your request.
+- Mute the microphone and check that its system indicator clears while new answers can still play.
+- Change the audio route or leave the app and check that voice stops.
+
+Changing microphone state can interrupt current speech because the app rebuilds its audio path.
+Voice stops on backgrounding, screen lock, audio interruption or route changes. Return to the app and start another test explicitly.
+Bluetooth and speakerphone behavior still require human verification. Enabling testing does not mark a device as qualified.
+
+### Prepare local models
+
+Review the model and voice terms before downloading. These commands prepare assets on your configured gateway, not necessarily the client computer.
+The downloads need about 2.84 GB, plus runtime files and working space.
+
+```bash
+vis-agent speech models licenses
+vis-agent speech models download --vibevoice-asr --pocket-tts
+vis-agent speech models status
+```
+
+The Pocket download includes its reference clips. Live readiness checks require both models, those clips and the native speech runtime.
+Starting hands-free voice does not download missing assets. The general status command does not prove live readiness or acoustic quality.
+
+### Model and voice terms
+
+Code, weights and voice recordings have separate terms. Keep attribution when redistributing modified weights or clips.
+
+| Component | Terms and source |
+|---|---|
+| VibeVoice ASR weights | [Pinned model card](https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-1.5B/blob/4262d23d8a539a6530cf64fbd0b1751ef9a30853/README.md): MIT. |
+| Pocket weights | [Kyutai Pocket TTS](https://huggingface.co/kyutai/pocket-tts): CC BY 4.0. Vis exports checkpoint `b6369a24` itself. |
+| Reference clips | [Pinned voice catalogue](https://huggingface.co/kyutai/tts-voices/blob/323332d33f997de8394f24a193e1a76df720e01a/README.md): Alba and VCTK clips are CC BY 4.0. Marius and Javert are CC0. |
+| Model and runtime code | Pocket, VibeVoice and ONNX Runtime use MIT. sherpa-onnx uses Apache 2.0. These code licenses do not replace weight or voice terms. |
+
+The [VibeVoice guide](https://github.com/microsoft/VibeVoice#-risks-and-limitations) recommends further testing before commercial or real-world use.
+Its research-use warning is separate from the model card's MIT label. This pilot is not production qualification.
+
+Pocket's upstream access notice prohibits unlawful or deceptive use and voice cloning without explicit lawful consent.
+Its raw model card requires authenticated access. The published Vis asset pack needs no Hugging Face login, but does not remove upstream notices.
+The shipped clips exclude the noncommercial EARS and Expresso voices. Imported recordings need their own rights review.
+
+### Read and hear the answer
+
+Conversation appears on screen and is spoken from the same text. Diagrams, code, links and documents remain visible without being read aloud.
+You can ask for a visual explanation while continuing the conversation.
+
+Each completed reply needs a conversational result or question. Earlier progress does not replace that outcome.
+If you explicitly request a silent reply, Vis can show the result without speech.
+
+### Control capture, speech and tasks
+
+| Action | Companion | TUI | Effect |
+|---|---|---|---|
+| Mute input | **Mute microphone** | `/hands-free mute` | Release capture and discard retained input. |
+| Resume input | **Unmute microphone** | `/hands-free unmute` | Start capture again. |
+| Stop output | **Stop speech** | `/hands-free stop-speech` | Stop old speech, not the agent task. |
+| End conversation | **End voice mode** | `/hands-free end` | Close voice devices, not agent tasks. |
+
+A muted microphone cannot hear an unmute command. Use the interface to resume.
+In the Companion, **Mute speech** controls output separately. **Cancel voice task** uses normal task cancellation.
+
+Say “Stop speaking” to stop output, or “End voice mode” to close voice mode without cancelling tasks.
+Say exactly “Cancel that task” to request cancellation of one active task owned by this voice session.
+If the target is ambiguous, nothing is cancelled. Use the normal task controls to select the task.
+Cancellation does not undo completed actions.
+
+**Send now** delivers queued messages into the running task at its next step. It does not start a separate task.
+When a voice follow-up reaches that task, new replies can speak again. Interrupted speech does not replay.
+Tasks started outside voice mode can still answer as text.
+
+A misrecognized control can become an ordinary request.
+If speech recognition changes a command, use the interface controls.
+Synthetic tests missed some “End voice mode” commands.
+
+Existing approvals still control consequential actions. An interruption does not grant approval or cancel tools.
+When Vis needs approval or an answer, use the authenticated form in the interface. Voice does not answer these forms.
+
+### Recover from a voice failure
+
+If speech is unavailable, check that the gateway has both local models and Pocket voice assets.
+If another voice session is active, end it before starting a new one.
+If the connection or audio device fails, return to text and check the task history before repeating a request.
+A request can continue after its voice connection ends. Do not assume that silence means the task failed.
+
+If the response format is invalid, Vis tries one formatting repair without repeating completed tools.
+If that repair fails, a visible notice and a short spoken notice report the presentation failure.
+Completed work keeps its task status. Check the visible results before repeating the request.
+
+If speech input falls behind, capture becomes muted. Unfinished utterances receive a rejection receipt and do not start tasks.
+Already admitted tasks continue. When you are ready, unmute and repeat only the rejected request.
+The session keeps queue counts and processing times for diagnosis, without recording audio.
+
+Confirmed admission receipts survive loss of the gateway's live voice state. Recovery does not restore audio or repeat requests.
+Older receipts can exist while the latest admission remains unknown.
+A missing receipt does not prove failure. Check ordinary session history before repeating a request.
+
+### Privacy and experimental limits
+
+Speech recognition and synthesis stay on the gateway. A hosted agent can still receive admitted text.
+Raw PCM is transient. Admitted text, speech metadata and playback receipts remain in session history.
+Playback positions estimate rendered audio conservatively. They do not prove that you heard it.
+
+Keep the client visible and active. Native mobile audio remains test-only. Background and locked-screen capture are not supported.
+Stopping speech clears queued output. The model can continue work on the current text chunk before it stops. This can delay the next spoken answer.
+
+Speaker echo, simultaneous speech, headsets and Bluetooth still need physical testing. Automated tests do not establish acoustic quality or latency percentiles.
+The current ASR needs an initial 3.467-second window, then advances in 2.933-second steps.
+There is no two-second response or 200-millisecond interruption guarantee.
+
+To opt out, end voice mode and turn off **Hands-free voice**. Existing dictation, manual replay and text remain available.
+For lifecycle calls and admission recovery, read [Live voice sessions](sessions-api.md#live-voice-sessions).
 
 ## Start a new session
 

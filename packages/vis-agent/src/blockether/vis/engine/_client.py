@@ -542,6 +542,8 @@ class EngineClient(ABC):
         operation = entry["operations"][method.lower()]
         if operation["response"] == "sse":
             raise ValueError("SSE requires a streaming API")
+        if operation["response"] == "websocket":
+            raise ValueError("WebSocket media is not supported by this SDK")
         request_kind = operation["request"]
         if body is not None and request_kind != "json":
             raise ValueError("this operation does not accept a JSON body")

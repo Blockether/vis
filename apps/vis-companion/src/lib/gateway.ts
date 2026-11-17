@@ -12,6 +12,11 @@ import {
   type ActivityProjection,
 } from './activity';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
+import type {
+  LiveVoiceCapabilities,
+  LiveVoiceSnapshot,
+  LiveVoiceStart,
+} from './live-voice-protocol';
 import { unreadTurnCount } from './unread';
 import type { PushGateway } from './relay';
 import {
@@ -2039,6 +2044,50 @@ export class GatewayClient {
     urgent = false,
   ): Promise<T> {
     return (await this.requestFull<T>(method, path, body, signal, undefined, urgent)).data as T;
+  }
+
+  liveVoiceCapabilities(signal?: AbortSignal): Promise<LiveVoiceCapabilities> {
+    return this.request('GET', '/v1/voice/live/capabilities', undefined, signal);
+  }
+
+  startLiveVoice(sid: string, clientId: string, muted: boolean): Promise<LiveVoiceStart> {
+    return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/voice/live`, {
+      schema: 1,
+      client_id: clientId,
+      language: 'en',
+      privacy: 'local_speech',
+      muted,
+    });
+  }
+
+  liveVoiceSnapshot(sid: string, vid: string): Promise<LiveVoiceSnapshot> {
+    return this.request(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/voice/live/${encodeURIComponent(vid)}`,
+    );
+  }
+
+  endLiveVoice(sid: string, vid: string): Promise<unknown> {
+    return this.request(
+      'DELETE',
+      `/v1/sessions/${encodeURIComponent(sid)}/voice/live/${encodeURIComponent(vid)}`,
+    );
+  }
+
+  liveVoiceMediaUrl(path: string): string {
+    const base = new URL(this.base, window.location.href);
+    if (!path.startsWith('/v1/sessions/')) throw new Error('Invalid voice media address.');
+    const url = new URL(`${this.base}${path}`, window.location.href);
+    if (
+      url.origin !== base.origin ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      throw new Error('Invalid voice media address.');
+    url.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+    return url.href;
   }
 
   // ── Health / status ─────────────────────────────────────────────

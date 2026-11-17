@@ -96,6 +96,7 @@
    from this single flat layout. One layout path is enough."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.form :as form]
+            [com.blockether.vis.tui.content :as content]
             [com.blockether.vis.tui.iteration :as iteration]
             [com.blockether.vis.tui.util :as util]))
 
@@ -393,6 +394,22 @@
     ;; where a replayed iteration row's `user_input` puts them.
     (assoc entry :user-input (not-empty (vec (:messages chunk))))
 
+    :presentation
+    (let [block
+          (:block chunk)
+
+          blocks
+          (vec (or (:presentation-content entry) []))
+
+          blocks
+          (if (some #(= (get block "id") (get % "id")) blocks) blocks (conj blocks block))]
+
+      (assoc entry
+        :presentation-content blocks
+        :assistant-prose (not-empty (content/presentation-markdown blocks))
+        :content-stream nil
+        :activity nil))
+
     :assistant-prose
     ;; Full end-of-iteration commentary (the "prose beyond the code"). The loop
     ;; emits this AFTER the parse (content-stream already cleared) and BEFORE the
@@ -477,15 +494,21 @@
     (let [duplicate-final?
           (and (:done? entry) (:final entry) (:final chunk))
 
+          presentation
+          (or (:presentation-content chunk) (:presentation-content entry))
+
           base
           (assoc entry
             :thinking (or (util/settled-thinking-text (:thinking chunk))
                           (util/settled-thinking-text (:thinking entry)))
-            :assistant-prose (or (some-> (:assistant-prose chunk)
-                                         str
-                                         str/trim
-                                         not-empty)
-                                 (:assistant-prose entry))
+            :presentation-content presentation
+            :assistant-prose (if (vector? presentation)
+                               (not-empty (content/presentation-markdown presentation))
+                               (or (some-> (:assistant-prose chunk)
+                                           str
+                                           str/trim
+                                           not-empty)
+                                   (:assistant-prose entry)))
             :activity nil
             :final (:final chunk)
             :done? (boolean (:done? chunk)))

@@ -72,9 +72,21 @@
 
 (defn- responses
   [response]
-  (array-map (if (= :empty response) "204" "200")
-             (if (= :empty response)
+  (array-map (case response
+               :empty
+               "204"
+
+               :websocket
+               "101"
+
+               "200")
+             (case response
+               :empty
                (array-map "description" "Accepted; no body.")
+
+               :websocket
+               (array-map "description" "Authenticated live voice WebSocket upgrade.")
+
                (array-map "description" "Success." "content" (response-content response)))
              "4XX" (array-map "$ref" "#/components/responses/error")
              "5XX" (array-map "$ref" "#/components/responses/error")
@@ -98,7 +110,10 @@
       ;; The document's default security covers the gated audiences; a public
       ;; route is answered without a token even when the gateway requires one.
       (= :public audience)
-      (assoc "security" []))))
+      (assoc "security" [])
+
+      (= :websocket response)
+      (assoc "security" [{"voice_ticket" []}]))))
 
 (defn- path-item
   [{:keys [path operations] :as route}]
@@ -113,19 +128,30 @@
 (def ^:private components
   (array-map
     "securitySchemes"
-    (array-map "bearer"
-               (array-map
-                 "type" "http"
-                 "scheme" "bearer"
-                 "description"
-                 (str "The gateway secret. A gateway bound to loopback serves without it; "
-                      "any other bind requires it on every route outside the public audience."))
-               "gateway_secret"
-               (array-map "type" "apiKey"
-                          "in" "header"
-                          "name" "x-vis-gateway-secret"
-                          "description"
-                          "The same secret, as the header a same-machine client already sends."))
+    (array-map
+      "bearer"
+      (array-map
+        "type" "http"
+        "scheme" "bearer"
+        "description"
+        (str
+          "Loopback routes do not require a gateway secret. "
+          "Other binds require it outside the public audience. Live voice media requires its own ticket."))
+      "gateway_secret" (array-map
+                         "type" "apiKey"
+                         "in" "header"
+                         "name" "x-vis-gateway-secret"
+                         "description"
+                         "The same secret, as the header a same-machine client already sends.")
+      "voice_ticket"
+      (array-map
+        "type" "apiKey"
+        "in" "header"
+        "name" "Sec-WebSocket-Protocol"
+        "description"
+        (str
+          "Send vis-voice.v1 and vis-ticket.<ticket> as subprotocols. "
+          "Use the one-use ticket from the start response. Keep the Origin from the start request.")))
     "schemas" (walk/postwalk
                 (fn [value]
                   (if (and (map? value) (string? (get value "$ref")))

@@ -18,6 +18,8 @@
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.event-store :as event-store]
+            [com.blockether.vis.internal.gateway.voice :as voice]
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
@@ -50,6 +52,63 @@
             (keep #(some->> (get by-id (str %))
                             (vector (str %))))
             ids))))
+
+(defdescribe
+  voice-admission-recovery-test
+  (it
+    "recovers scoped admission receipts after the gateway registry is lost"
+    (let [store
+          (sqlite/db-open! :memory)
+
+          registry
+          (atom {})
+
+          sid
+          (h/store-session! store {:channel :api})
+
+          other
+          (h/store-session! store {:channel :api})
+
+          voice-id
+          (str (random-uuid))
+
+          receipt
+          {:voice-session-id voice-id
+           :utterance-id 7
+           :idempotency-key (str "voice/" voice-id "/7")
+           :text "Explain the result."
+           :revision 3
+           :turn-id (str (random-uuid))
+           :status "running"}
+
+          rejected
+          {:voice-session-id voice-id
+           :utterance-id 8
+           :idempotency-key (str "voice/" voice-id "/8")
+           :text ""
+           :revision 0
+           :error "input_overflow"}]
+
+      (try (with-redefs-fn {#'state/registry registry
+                            #'voice/sessions (atom {})
+                            #'lp/db-info (constantly store)
+                            #'bus/publish! (fn [& _]
+                                             nil)
+                            #'event-store/write-event! #(select-keys % ["seq" "type"])}
+             (fn []
+               (state/append-event! sid "voice.admission" receipt)
+               (state/append-event! sid "voice.admission" receipt)
+               (state/append-event! sid "voice.admission" rejected)
+               (reset! registry {})
+               (expect (empty? (state/events-since sid 0)))
+               (expect (= [receipt rejected] (:receipts (voice/snapshot-for sid voice-id))))
+               (expect (= "off" (get-in (voice/snapshot-for sid voice-id) [:state :capture])))
+               (expect (nil? (voice/runtime-for sid voice-id)))
+               (expect (nil? (voice/snapshot-for other voice-id)))
+               (expect (nil? (voice/snapshot-for nil voice-id)))
+               (expect (nil? (voice/snapshot-for sid (str (random-uuid)))))))
+           (finally (sqlite/db-close! store))))))
+
 
 (defdescribe
   create-session-in-project-group-test
@@ -5728,6 +5787,32 @@
                         (:content (#'state/turn-terminal-payload sid tid "completed"))))
              (finally (swap! registry dissoc sid))))))
 
+(defdescribe presentation-terminal-payload-test
+             ;; Regression: terminal filtering dropped hands-free records and triggered missing speech.
+             (it "keeps typed answers, silence and presentation failures in terminal events"
+                 (let [conversation
+                       {"id" "answer" "type" "conversation" "phase" "answer" "text" "Ready."}
+
+                       visual
+                       {"id" "visual" "type" "visual" "markdown" "## Result"}
+
+                       silence
+                       {"id" "silence" "type" "silence" "reason" "user_requested"}
+
+                       notice
+                       {"id" "notice"
+                        "type" "notice"
+                        "code" "presentation_unavailable"
+                        "message" "The work finished, but its presentation is unavailable."}]
+
+                   (doseq [blocks [[conversation visual] [silence visual] [visual notice]]]
+                     (expect (= blocks
+                                (:content (#'state/turn-terminal-payload
+                                           "presentation-terminal"
+                                           "turn-1"
+                                           "completed"
+                                           {:content blocks}))))))))
+
 (defdescribe
   queued-turn-attachment-preview-test
   "A queued message authored by dropping a screenshot must render as its image,
@@ -6472,6 +6557,147 @@
         ;; instead of waiting for the terminal flush.
         (expect (< (long (completed-idx 1)) (long (second started-idxs))))
         (expect (< (long (completed-idx 2)) (long terminal-idx)))))))
+
+(defn- run-speech-chunks!
+  [features chunks]
+  (let [sid
+        (str (random-uuid))
+
+        tid
+        (str (random-uuid))
+
+        before-terminal
+        (atom [])]
+
+    (swap! @#'state/registry assoc
+      sid
+      {:next-seq 0
+       :events []
+       :subscribers {}
+       :turns {tid {:turn_id tid :status "running"}}
+       :turn-order [tid]
+       :current-turn tid})
+    (try (with-redefs [lp/send! (fn [_ _ opts]
+                                  (doseq [chunk chunks]
+                                    ((get-in opts [:hooks :on-chunk]) chunk))
+                                  (reset! before-terminal (state/events-since sid 0))
+                                  {:status :ok :answer "The full text answer remains available."})]
+           (#'state/run-turn! sid tid "Explain the test." {:turn-features features}))
+         {:events (state/events-since sid 0) :before-terminal @before-terminal}
+         (finally (swap! @#'state/registry dissoc sid)))))
+
+(defdescribe
+  live-speech-commit-test
+  ;; Regression: session a853a9c9-6296-42f9-ab32-67ee83447023 had prose but no spoken outcome.
+  (it
+    "commits complete conversation once and keeps rich visuals on screen"
+    (let [record
+          (str (wire/json-str {"type" "conversation" "phase" "answer" "text" "A verified result."})
+               "\n")
+
+          visual
+          (wire/json-str {"type" "visual" "markdown" "```mermaid\ngraph LR; A-->B\n```"})
+
+          raw
+          (str record visual)
+
+          chunks
+          [{:phase :reasoning :iteration 1 :thinking "Private reasoning."}
+           {:phase :tool-preview :iteration 1 :position 0 :code "print(1)"}
+           {:phase :form-result :iteration 1 :position 0 :stdout "Tool output."}
+           {:phase :content :iteration 1 :content (subs record 0 20)}
+           {:phase :content :iteration 1 :content record}
+           {:phase :content :iteration 1 :content record}
+           {:phase :assistant-prose :iteration 1 :text raw}
+           {:phase :iteration-final :iteration 1 :assistant-prose raw :done? true}]
+
+          {:keys [events before-terminal]}
+          (run-speech-chunks! {"voice_projection" true "voice_segments" true} chunks)
+
+          committed
+          (filter #(= "speech.committed" (get % "type")) before-terminal)
+
+          blocks
+          (keep #(when (= "content.block.started" (get % "type")) (get % "block")) events)
+
+          typed
+          (filter #(contains? #{"conversation" "visual"} (get % "type")) blocks)
+
+          expected
+          (content/presentation-content raw)]
+
+      (expect (= 1 (count committed)))
+      (expect (= "A verified result." (get (first committed) "text")))
+      (expect (= (str "presentation:" (get-in expected [0 "id"])) (get (first committed) "source")))
+      (expect (= expected (vec typed)))
+      (expect (= ["answer"] (mapv #(get % "phase") committed)))
+      (expect (not-any? #(= "prose" (get % "type")) blocks))
+      (expect (not-any? #(get % "assistant_prose") events))
+      (expect (not-any? #(= "turn.completed" (get % "type")) before-terminal))
+      (expect (some #(= "turn.completed" (get % "type")) events))
+      (expect (not-any? #(= "speech.committed" (get % "type"))
+                        (:events (run-speech-chunks! {} chunks))))))
+  (it "suppresses further speech when a provider rewrites a committed record"
+      (let [first
+            (str (wire/json-str
+                   {"type" "conversation" "phase" "progress" "text" "The first result."})
+                 "\n")
+
+            revised
+            (str (wire/json-str {"type" "conversation" "phase" "answer" "text" "A revised claim."})
+                 "\n")
+
+            events
+            (:events (run-speech-chunks! {"voice_segments" true}
+                                         [{:phase :content :iteration 1 :content first}
+                                          {:phase :content :iteration 1 :content revised}
+                                          {:phase :content :iteration 2 :content revised}]))]
+
+        (expect (= 1 (count (filter #(= "speech.committed" (get % "type")) events))))
+        (expect (= 1 (count (filter #(= "speech.invalidated" (get % "type")) events))))))
+  (it "rejects raw prose, fences and invalid records without narrating them"
+      (let [update @#'state/speech-commit-update]
+        (doseq [text ["An ordinary answer.\n" "```vis-speech\nDo not narrate this.\n```\n"
+                      (str (wire/json-str {"type" "conversation"
+                                           "phase" "answer"
+                                           "text" "https://gateway.example.com"})
+                           "\n")
+                      (str (wire/json-str {"type" "conversation"
+                                           "phase" "answer"
+                                           "text" (apply str (repeat 401 "a"))})
+                           "\n")]]
+          (expect (empty? (:segments (update {} text false)))))
+        (expect (:invalidated? (update {} (apply str (repeat 65537 "a")) false)))))
+  (it "invalidates speech on a provider retry instead of replaying it"
+      (let [record
+            (str (wire/json-str
+                   {"type" "conversation" "phase" "progress" "text" "The first result."})
+                 "\n")
+
+            events
+            (:events (run-speech-chunks! {"voice_segments" true}
+                                         [{:phase :content :iteration 1 :content record}
+                                          {:phase :provider-retry-reset :iteration 1 :attempt 1}
+                                          {:phase :content :iteration 1 :content record}]))]
+
+        (expect (= 1 (count (filter #(= "speech.committed" (get % "type")) events))))
+        (expect (= 1 (count (filter #(= "speech.invalidated" (get % "type")) events))))))
+  (it "keeps explicit silence and visual-only records out of speech"
+      (let [raw
+            (str (wire/json-str {"type" "silence" "reason" "user_requested"})
+                 "\n"
+                 (wire/json-str {"type" "visual" "markdown" "## Visible only"}))
+
+            events
+            (:events (run-speech-chunks!
+                       {"voice_segments" true}
+                       [{:phase :iteration-final :iteration 1 :assistant-prose raw :done? true}]))]
+
+        (expect (not-any? #(= "speech.committed" (get % "type")) events))
+        (expect (= ["silence" "visual"]
+                   (keep #(when (= "content.block.started" (get % "type"))
+                            (get-in % ["block" "type"]))
+                         events))))))
 
 (defdescribe
   late-terminal-chunk-test
@@ -8602,20 +8828,35 @@
                    (expect (= :rate-limit (:kind info)))
                    (expect (some #{["HTTP" "429"]} (:facts info))))))
 
-(defdescribe transcript-iteration-wire-test
-             (it "leaves request health out of the iteration a channel downloads"
-                 (let [project
-                       (var-get (ns-resolve 'com.blockether.vis.internal.gateway.state
-                                            'with-display-iteration))
+(defdescribe
+  transcript-iteration-wire-test
+  (it "keeps typed history and removes provider prose, including an empty presentation"
+      (doseq [blocks [[]
+                      [{"id" "answer-1" "type" "conversation" "phase" "answer" "text" "Ready."}]]]
+        (let [projected (#'state/with-display-iteration
+                         {:id "iteration-1"
+                          :assistant-prose "provider JSON"
+                          :presentation-content blocks
+                          :presentation-status :repaired})]
+          (expect (= blocks (:presentation-content projected)))
+          (expect (= :repaired (:presentation-status projected)))
+          (expect (not (contains? projected :assistant-prose))))))
+  (it "keeps ordinary assistant prose when typed output is absent"
+      (expect (= "Ordinary reply."
+                 (:assistant-prose (#'state/with-display-iteration
+                                    {:assistant-prose "Ordinary reply."})))))
+  (it "leaves request health out of the iteration a channel downloads"
+      (let [project
+            (var-get (ns-resolve 'com.blockether.vis.internal.gateway.state
+                                 'with-display-iteration))
 
-                       projected
-                       (project {:id "iteration-1"
-                                 :thinking nil
-                                 :request-health {:parts [{:label "System instructions"
-                                                           :tokens 1200}]}})]
+            projected
+            (project {:id "iteration-1"
+                      :thinking nil
+                      :request-health {:parts [{:label "System instructions" :tokens 1200}]}})]
 
-                   (expect (= "iteration-1" (:id projected)))
-                   (expect (not (contains? projected :request-health))))))
+        (expect (= "iteration-1" (:id projected)))
+        (expect (not (contains? projected :request-health))))))
 
 ;; Regression, this Vis session (paraphrased: "the phone and the terminal
 ;; disagree about what is NEW"): each surface counted answers against a

@@ -28,6 +28,7 @@ _SCHEMA_NAMES = (
     "symbol",
     "toggle",
     "view",
+    "voice",
 )
 
 

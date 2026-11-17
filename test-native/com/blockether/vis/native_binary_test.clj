@@ -272,11 +272,9 @@
        "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}"))
 
 (defn- start-stub-provider!
-  "An OpenAI-dialect model server on 127.0.0.1 that always answers `reply` and
-   RECORDS what it was asked — route, body and request headers. The recording is
-   the point: an answer alone would also appear if the binary quietly fell back
-   to a credential this machine happens to hold, and the headers are how the
-   suite proves the keyless provider stayed keyless on the wire."
+  "Serve fixed text or call `reply` with each inference request.
+   Record each request path, body and headers. No credential is required.
+   The records prove that requests use the test provider without credentials."
   [reply]
   (let [asked
         (atom [])
@@ -310,11 +308,18 @@
                   stream?
                   (str/includes? (str/replace request " " "") "\"stream\":true")
 
+                  inference-reply
+                  (when-not catalog?
+                    (if (fn? reply)
+                      (reply
+                        {:path (.getPath (.getRequestURI exchange)) :body request :headers headers})
+                      reply))
+
                   payload
                   (.getBytes ^String
                              (cond catalog? "{\"data\":[]}"
-                                   stream? (stream-body reply)
-                                   :else (whole-body reply))
+                                   stream? (stream-body inference-reply)
+                                   :else (whole-body inference-reply))
                              StandardCharsets/UTF_8)]
 
               (when-not catalog?

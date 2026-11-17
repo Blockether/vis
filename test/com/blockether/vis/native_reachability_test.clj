@@ -332,3 +332,47 @@
               globs (set (map #(get % "glob") (get metadata "resources")))]
 
           (expect (= #{"vis-contract/schema/*.json"} globs))))))
+
+(defdescribe
+  native-live-websocket-listener-test
+  ;; Jetty discovers even interface listeners with reflection before it binds method handles.
+  ;; The native handshake succeeded without dispatching open or message callbacks.
+  (it "registers every callback on the pinned Ring listener class"
+      (let [listener
+            ((requiring-resolve 'ring.adapter.jetty9.websocket/proxy-ws-adapter) {})
+
+            listener-type
+            (class listener)
+
+            type-name
+            (.getName ^Class listener-type)
+
+            methods
+            (filter #(str/starts-with? (.getName ^java.lang.reflect.Method %) "onWebSocket")
+                    (.getDeclaredMethods ^Class listener-type))]
+
+        (expect (= "ring.adapter.jetty9.websocket$proxy_ws_adapter$reify__522" type-name))
+        (expect (= 7 (count methods)))
+        (doseq [^java.lang.reflect.Method method methods]
+          (expect (registered-method? (reflection-entries)
+                                      type-name
+                                      (.getName method)
+                                      (mapv #(.getName ^Class %) (.getParameterTypes method))))))))
+
+(defdescribe native-live-websocket-sinks-test
+             ;; Jetty creates both sinks with Lookup.findConstructor before it calls the open listener.
+             (it "registers the exact constructors used by the pinned Jetty message sinks"
+                 (let [parameters
+                       ["org.eclipse.jetty.websocket.core.CoreSession"
+                        "org.eclipse.jetty.websocket.core.util.MethodHolder" "boolean"]
+
+                       classes
+                       (into-array Class
+                                   [(Class/forName (first parameters))
+                                    (Class/forName (second parameters)) Boolean/TYPE])]
+
+                   (doseq [type
+                           ["org.eclipse.jetty.websocket.core.messages.StringMessageSink"
+                            "org.eclipse.jetty.websocket.common.internal.ByteBufferMessageSink"]]
+                     (expect (.getConstructor (Class/forName type) classes))
+                     (expect (registered-constructor? (reflection-entries) type parameters))))))

@@ -170,7 +170,11 @@ function answerMarkdown(content: readonly ContentBlock[]): string {
   for (const block of content) {
     if (length >= ANSWER_SOURCE_MAX) break;
     const text = (
-      block.type === 'prose' ? block.markdown : block.type === 'speech' ? block.text : ''
+      block.type === 'prose' || block.type === 'visual'
+        ? block.markdown
+        : block.type === 'speech' || block.type === 'conversation'
+          ? block.text
+          : ''
     )?.trim();
     if (!text) continue;
     parts.push(text);

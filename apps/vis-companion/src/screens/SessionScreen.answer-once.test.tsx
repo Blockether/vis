@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { act, screen } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 
 import { renderSessionScreen, sessionFixture, subscriptionHub } from './session-screen-harness';
 import type { SseEvent } from '../lib/types';
@@ -213,5 +213,58 @@ describe('an answer promoted out of a content-less row', () => {
     await linger(50);
     expect(painted(commentary)).toBe(1);
     expect(painted(ANSWER)).toBe(1);
+  });
+});
+
+// Regression: hands-free records must survive replay and terminal reconciliation once.
+describe('typed hands-free answer delivery', () => {
+  it('keeps conversation and visual records through replay, completion and persistence', async () => {
+    const events = subscriptionHub();
+    const content = [
+      { id: 'presentation-c', type: 'conversation' as const, phase: 'answer' as const, text: 'The typed result is ready.' },
+      { id: 'presentation-v', type: 'visual' as const, markdown: '**Visual verification**' },
+    ];
+    const row = { turn_id: 'typed-turn', request: 'show a typed result', status: 'completed', content };
+    let persisted: (typeof row)[] = [];
+    let persistedRead = false;
+    renderSessionScreen({
+      session: sessionFixture({ live: true, status: 'running', current_turn_id: 'typed-turn', running_request: row.request }),
+      client: {
+        cachedRunningTurn: () => ({ turn: {
+          id: row.turn_id, request: row.request, answer: '', iterations: [],
+          startedAt: Date.now(), status: 'running' as const,
+        }, seq: 5 }),
+        cachedTranscript: () => [],
+        transcript: () => {
+          persistedRead ||= persisted.length > 0;
+          return Promise.resolve(persisted);
+        },
+      },
+      subscriptions: { subscribeSession: events.subscribeSession },
+    });
+    await screen.findByText(row.request);
+    let seq = 6;
+    const emit = (frame: Record<string, unknown>) => act(() => events.emit({
+      turn_id: row.turn_id, seq: seq++, ...frame,
+    } as unknown as SseEvent));
+    for (const block of content) {
+      emit({ type: 'content.block.started', iteration: 0, block });
+      emit({ type: 'content.block.completed', block_id: block.id });
+    }
+    expect(await screen.findByText(content[0].text!)).toBeInTheDocument();
+    expect(await screen.findByText('Visual verification')).toBeInTheDocument();
+    for (const block of content) emit({ type: 'content.block.started', iteration: 0, block });
+    await linger(200);
+    expect(painted(content[0].text!)).toBe(1);
+    expect(painted('Visual verification')).toBe(1);
+    emit({ type: 'turn.completed', status: 'completed', content });
+    await linger(50);
+    expect(painted(content[0].text!)).toBe(1);
+    persisted = [row];
+    emit({ type: 'transcript.updated' });
+    await waitFor(() => expect(persistedRead).toBe(true));
+    expect(painted(content[0].text!)).toBe(1);
+    expect(painted('Visual verification')).toBe(1);
+    expect(document.body.textContent).not.toContain('presentation-c');
   });
 });

@@ -83,6 +83,25 @@ afterEach(() => {
 });
 
 describe('spoken reply routing', () => {
+  it('reserves live output without allowing replay, device fallback or overlapping leases', async () => {
+    const { speechOutput } = await import('./speech');
+    speechOutput.apply(prefs());
+    const release = speechOutput.reserveLiveOutput();
+    expect(() => speechOutput.reserveLiveOutput()).toThrow('already owns');
+    await expect(speechOutput.speak('Do not send this to device speech.')).rejects.toThrow(
+      'End hands-free voice',
+    );
+    await expect(speechOutput.playDeviceSample('Sample', null, 1)).rejects.toThrow(
+      'End hands-free voice',
+    );
+    await expect(speechOutput.playSample(new Blob())).rejects.toThrow('End hands-free voice');
+    expect(said).toEqual([]);
+    expect(played).toEqual([]);
+    release();
+    release();
+    await speechOutput.speak('Manual replay works again.');
+    expect(said).toEqual([{ text: 'Manual replay works again.', rate: 1 }]);
+  });
   it('plays what the machine sent, and does not also say it here', async () => {
     const { speechOutput } = await import('./speech');
     const speak = vi

@@ -1,0 +1,788 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vis.blockether.com/schema/voice.json",
+  "title": "Live voice",
+  "description": "Local speech with exclusive capture, bounded media and independent task control.",
+  "x-vis-voice-limits": {
+    "sample_rate": 24000,
+    "frame_ms": 20,
+    "frame_samples": 480,
+    "header_bytes": 32,
+    "input_buffer_ms": 2000,
+    "output_credit_ms": 1000,
+    "preroll_ms": 200,
+    "max_utterance_ms": 30000,
+    "endpoint_silence_ms": 1100,
+    "min_speech_ms": 120,
+    "lease_ms": 15000,
+    "heartbeat_ms": 5000,
+    "ticket_ms": 15000,
+    "max_control_bytes": 8192,
+    "max_sessions": 1,
+    "max_pending_utterances": 2,
+    "max_pending_segments": 8,
+    "max_projection_chars": 65536,
+    "max_speech_segment_chars": 400,
+    "max_speech_segments": 256,
+    "max_admissions": 1024,
+    "max_retained_sessions": 16,
+    "retention_ms": 300000,
+    "max_pending_inputs": 32
+  },
+  "x-vis-voice-frame": {
+    "magic": "VISV",
+    "version": 1,
+    "byte_order": "little_endian",
+    "encoding": "pcm_s16le",
+    "channels": 1,
+    "kinds": {
+      "input": 1,
+      "output": 2
+    },
+    "fields": [
+      "generation",
+      "stream_id",
+      "sequence",
+      "sample_offset",
+      "sample_rate",
+      "sample_count"
+    ]
+  },
+  "$defs": {
+    "uint32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "start": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": 1
+        },
+        "client_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "language": {
+          "const": "en"
+        },
+        "privacy": {
+          "const": "local_speech"
+        },
+        "muted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "client_id",
+        "language",
+        "privacy",
+        "muted"
+      ],
+      "additionalProperties": false
+    },
+    "frame_header": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "input",
+            "output"
+          ]
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "stream_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "sample_offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "sample_rate": {
+          "const": 24000
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 480
+        }
+      },
+      "required": [
+        "kind",
+        "generation",
+        "stream_id",
+        "sequence",
+        "sample_offset",
+        "sample_rate",
+        "sample_count"
+      ],
+      "additionalProperties": false
+    },
+    "utterance.start": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "utterance.start"
+        },
+        "capture_generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "utterance_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "type",
+        "capture_generation",
+        "utterance_id"
+      ],
+      "additionalProperties": false
+    },
+    "utterance.end": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "utterance.end"
+        },
+        "capture_generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "utterance_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "type",
+        "capture_generation",
+        "utterance_id"
+      ],
+      "additionalProperties": false
+    },
+    "output.interrupt": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "output.interrupt"
+        },
+        "output_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "reason": {
+          "enum": [
+            "barge_in",
+            "stop_speech",
+            "device_change"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "output_epoch",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "playback.receipt": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "playback.receipt"
+        },
+        "output_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "segment_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "received": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "decoded": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "scheduled": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "played": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "type",
+        "output_epoch",
+        "segment_id",
+        "received",
+        "decoded",
+        "scheduled",
+        "played"
+      ],
+      "additionalProperties": false
+    },
+    "capture.mute": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "capture.mute"
+        },
+        "muted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "muted"
+      ],
+      "additionalProperties": false
+    },
+    "output.mute": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "output.mute"
+        },
+        "muted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "muted"
+      ],
+      "additionalProperties": false
+    },
+    "task.cancel": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "task.cancel"
+        },
+        "turn_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "type",
+        "turn_id"
+      ],
+      "additionalProperties": false
+    },
+    "heartbeat": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "heartbeat"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "session.end": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "session.end"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "client_control": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/utterance.start"
+        },
+        {
+          "$ref": "#/$defs/utterance.end"
+        },
+        {
+          "$ref": "#/$defs/output.interrupt"
+        },
+        {
+          "$ref": "#/$defs/playback.receipt"
+        },
+        {
+          "$ref": "#/$defs/capture.mute"
+        },
+        {
+          "$ref": "#/$defs/output.mute"
+        },
+        {
+          "$ref": "#/$defs/task.cancel"
+        },
+        {
+          "$ref": "#/$defs/heartbeat"
+        },
+        {
+          "$ref": "#/$defs/session.end"
+        }
+      ]
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "voice_session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "capture_generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "output_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "capture": {
+          "enum": [
+            "off",
+            "muted",
+            "live",
+            "device_lost"
+          ]
+        },
+        "utterance": {
+          "enum": [
+            "idle",
+            "open",
+            "provisional",
+            "final",
+            "admitted",
+            "rejected"
+          ]
+        },
+        "agent": {
+          "enum": [
+            "idle",
+            "queued",
+            "running",
+            "waiting_for_input",
+            "cancelling",
+            "terminal"
+          ]
+        },
+        "output": {
+          "enum": [
+            "idle",
+            "committed",
+            "synthesizing",
+            "playing",
+            "interrupted",
+            "drained",
+            "muted"
+          ]
+        }
+      },
+      "required": [
+        "voice_session_id",
+        "capture_generation",
+        "output_epoch",
+        "capture",
+        "utterance",
+        "agent",
+        "output"
+      ],
+      "additionalProperties": false
+    },
+    "event.session.ready": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "session.ready"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "capabilities": {
+          "type": "object"
+        },
+        "limits": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "state",
+        "capabilities",
+        "limits"
+      ],
+      "additionalProperties": false
+    },
+    "event.session.state": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "session.state"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        }
+      },
+      "required": [
+        "type",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "event.transcript": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "transcript"
+        },
+        "utterance_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "final": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "utterance_id",
+        "revision",
+        "text",
+        "final"
+      ],
+      "additionalProperties": false
+    },
+    "event.utterance.admitted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "utterance.admitted"
+        },
+        "utterance_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "turn_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "utterance_id",
+        "turn_id",
+        "idempotency_key",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "event.utterance.rejected": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "utterance.rejected"
+        },
+        "utterance_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "const": "input_overflow"
+        }
+      },
+      "required": [
+        "type",
+        "utterance_id",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "event.speech.committed": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "speech.committed"
+        },
+        "output_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "segment_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "turn_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "type",
+        "output_epoch",
+        "segment_id",
+        "turn_id",
+        "text",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "event.output.interrupted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "output.interrupted"
+        },
+        "output_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "abort": {
+          "enum": [
+            "requested",
+            "acknowledged"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "output_epoch",
+        "abort"
+      ],
+      "additionalProperties": false
+    },
+    "event.output.finished": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "output.finished"
+        },
+        "output_epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "segment_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "type",
+        "output_epoch",
+        "segment_id",
+        "sample_count"
+      ],
+      "additionalProperties": false
+    },
+    "event.session.closed": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "session.closed"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "type",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "event.error": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "error"
+        },
+        "code": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "fatal": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "code",
+        "message",
+        "fatal"
+      ],
+      "additionalProperties": false
+    },
+    "server_event": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/event.session.ready"
+        },
+        {
+          "$ref": "#/$defs/event.session.state"
+        },
+        {
+          "$ref": "#/$defs/event.transcript"
+        },
+        {
+          "$ref": "#/$defs/event.utterance.admitted"
+        },
+        {
+          "$ref": "#/$defs/event.utterance.rejected"
+        },
+        {
+          "$ref": "#/$defs/event.speech.committed"
+        },
+        {
+          "$ref": "#/$defs/event.output.interrupted"
+        },
+        {
+          "$ref": "#/$defs/event.output.finished"
+        },
+        {
+          "$ref": "#/$defs/event.session.closed"
+        },
+        {
+          "$ref": "#/$defs/event.error"
+        },
+        {
+          "$ref": "#/$defs/event.task.cancellation"
+        }
+      ]
+    },
+    "speech_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400,
+      "allOf": [
+        {
+          "pattern": "\\S"
+        },
+        {
+          "not": {
+            "pattern": "[`<>\\[\\]{}|*#]"
+          }
+        },
+        {
+          "not": {
+            "pattern": "[hH][tT][tT][pP][sS]?://|[wW][wW][wW]\\."
+          }
+        },
+        {
+          "not": {
+            "pattern": "[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f]"
+          }
+        }
+      ]
+    },
+    "event.task.cancellation": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "task.cancellation"
+        },
+        "status": {
+          "enum": [
+            "requested",
+            "ambiguous",
+            "none"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "turn_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "type",
+        "status",
+        "message"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$ref": "#/$defs/client_control"
+}

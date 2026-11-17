@@ -4826,6 +4826,16 @@
         (if preflight-only? "" (str code))]
 
     (cond-> {:code code-out}
+      (some? (:presentation-content opts))
+      (assoc :presentation_content (->blob (content/answer-content (:presentation-content opts))))
+
+      (some? (:presentation-status opts))
+      (assoc :presentation_status (name (:presentation-status opts)))
+
+      (some? (:presentation-repair opts))
+      (assoc :presentation_repair
+        (->blob (select-keys (:presentation-repair opts) [:api-usage :duration-ms])))
+
       (seq forms)
       (assoc :tool_calls (->blob (freeze-safe (mapv form-without-activity-rows forms))))
 
@@ -5235,7 +5245,12 @@
                                                                       (:error iteration-cols) :error
                                                                       :else :done))
                                       :llm_thinking (str/trim (or thinking ""))
-                                      :llm_assistant_prose (str/trim (or assistant-prose ""))
+                                      :llm_assistant_prose (if (some? (:presentation-content opts))
+                                                             (content/text-projection
+                                                               (:presentation-content opts))
+                                                             (str/trim (or assistant-prose "")))
+                                      :llm_assistant_raw (when (some? (:presentation-content opts))
+                                                           (or assistant-prose ""))
                                       :llm_full_duration_ms (long (or llm-full-duration-ms 0))
                                       :is_llm_returned_empty_code (if llm-returned-empty-code? 1 0)
                                       :created_at now
@@ -6812,7 +6827,19 @@
       (some? (:llm_thinking row))
       (assoc :thinking (:llm_thinking row))
 
-      (not (str/blank? (str (:llm_assistant_prose row))))
+      (some? (:presentation_content row))
+      (assoc :presentation-content (<-blob (:presentation_content row)))
+
+      (some? (:presentation_status row))
+      (assoc :presentation-status (->kw-back (:presentation_status row)))
+
+      (some? (:presentation_repair row))
+      (assoc :presentation-repair (<-blob (:presentation_repair row)))
+
+      (some? (:llm_assistant_raw row))
+      (assoc :assistant-prose (:llm_assistant_raw row))
+
+      (and (nil? (:llm_assistant_raw row)) (not (str/blank? (str (:llm_assistant_prose row)))))
       (assoc :assistant-prose (:llm_assistant_prose row))
 
       (some? (:finished_at row))

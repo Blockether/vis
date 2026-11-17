@@ -1066,6 +1066,12 @@ const oauthSource =
   '\n' +
   readFileSync(join(root, 'native/ios/OAuthLoopbackPlugin.swift'), 'utf8');
 const oauthFileOk = fileOk(oauthSwift, oauthSource);
+const liveVoiceSwift = join(appDir, 'LiveVoice.swift');
+const liveVoiceSource =
+  readFileSync(join(root, 'native/live-voice/Sources/LiveVoice/LiveVoiceState.swift'), 'utf8') +
+  '\n' +
+  readFileSync(join(root, 'native/ios/LiveVoicePlugin.swift'), 'utf8');
+const liveVoiceFileOk = fileOk(liveVoiceSwift, liveVoiceSource);
 const pasteSwift = join(appDir, 'PasteMenu.swift');
 const pasteSource = readFileSync(join(root, 'native/ios/PasteMenuPlugin.swift'), 'utf8');
 const pasteFileOk = fileOk(pasteSwift, pasteSource);
@@ -1078,6 +1084,7 @@ const appPluginClasses = [
   'VisHostPlugin',
   'OAuthLoopbackPlugin',
   'PasteMenuPlugin',
+  'LiveVoicePlugin',
 ];
 const capConfigJson = existsSync(capConfig) ? JSON.parse(readFileSync(capConfig, 'utf8')) : null;
 const packageClassList = capConfigJson?.packageClassList ?? [];
@@ -1086,8 +1093,9 @@ const speechConfigOk = !capConfigJson || packageClassList.includes('NativeSpeech
 const hostConfigOk = !capConfigJson || packageClassList.includes('VisHostPlugin');
 const oauthConfigOk = !capConfigJson || packageClassList.includes('OAuthLoopbackPlugin');
 const pasteConfigOk = !capConfigJson || packageClassList.includes('PasteMenuPlugin');
+const liveVoiceConfigOk = !capConfigJson || packageClassList.includes('LiveVoicePlugin');
 const capConfigOk =
-  badgeConfigOk && speechConfigOk && hostConfigOk && oauthConfigOk && pasteConfigOk;
+  badgeConfigOk && speechConfigOk && hostConfigOk && oauthConfigOk && pasteConfigOk && liveVoiceConfigOk;
 
 let project = existsSync(pbxprojPath) ? readFileSync(pbxprojPath, 'utf8') : '';
 if (!project) die('no ios/App/App.xcodeproj/project.pbxproj — run `npm run add:ios` first');
@@ -1644,9 +1652,32 @@ if (!oauthProjectOk) {
     `\t\t${oauthIds.swiftRef} /* OAuthLoopback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthLoopback.swift; sourceTree = "<group>"; };\n`,
   );
 }
-// PasteMenu is the same kind of app plugin: one Swift file compiled into the app target.
+// Older voice builds used the IDs now assigned to PasteMenu. Remove only those
+// generated LiveVoice entries; keep signing settings and all other objects.
 const pasteIds = { swiftRef: objectId(42), swiftBuild: objectId(43) };
-const pasteProjectOk = project.includes(pasteIds.swiftRef) && project.includes(pasteIds.swiftBuild);
+const legacyVoiceLine = new RegExp(
+  `^\\t+(${pasteIds.swiftRef}|${pasteIds.swiftBuild}) /\\* LiveVoice[.]swift(?: in Sources)? \\*/[^\\n]*\\n`,
+  'gm',
+);
+const withoutLegacyVoice = project.replace(legacyVoiceLine, '');
+const legacyVoiceProject = withoutLegacyVoice !== project;
+if (!check) project = withoutLegacyVoice;
+const sourceProjectOk = (name, sourceIds) => {
+  const source = `${name}.swift`;
+  return (
+    !(check && legacyVoiceProject) &&
+    project.includes(
+      `${sourceIds.swiftRef} /* ${source} */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ${source}; sourceTree = "<group>"; };`,
+    ) &&
+    project.includes(
+      `${sourceIds.swiftBuild} /* ${source} in Sources */ = {isa = PBXBuildFile; fileRef = ${sourceIds.swiftRef} /* ${source} */; };`,
+    ) &&
+    project.includes(`${sourceIds.swiftRef} /* ${source} */,`) &&
+    project.includes(`${sourceIds.swiftBuild} /* ${source} in Sources */,`)
+  );
+};
+// PasteMenu is the same kind of app plugin: one Swift file compiled into the app target.
+const pasteProjectOk = sourceProjectOk('PasteMenu', pasteIds);
 if (!pasteProjectOk) {
   after(
     new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift in Sources [*]/,'),
@@ -1667,6 +1698,29 @@ if (!pasteProjectOk) {
     `\t\t${pasteIds.swiftRef} /* PasteMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteMenu.swift; sourceTree = "<group>"; };\n`,
   );
 }
+const liveVoiceIds = { swiftRef: objectId(44), swiftBuild: objectId(45) };
+const liveVoiceProjectOk = sourceProjectOk('LiveVoice', liveVoiceIds);
+if (!liveVoiceProjectOk) {
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift in Sources [*]/,'),
+    `\n\t\t\t\t${liveVoiceIds.swiftBuild} /* LiveVoice.swift in Sources */,`,
+    'App Sources phase',
+  );
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift [*]/,'),
+    `\n\t\t\t\t${liveVoiceIds.swiftRef} /* LiveVoice.swift */,`,
+    'App group',
+  );
+  before(
+    '/* End PBXBuildFile section */',
+    `\t\t${liveVoiceIds.swiftBuild} /* LiveVoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${liveVoiceIds.swiftRef} /* LiveVoice.swift */; };\n`,
+  );
+  before(
+    '/* End PBXFileReference section */',
+    `\t\t${liveVoiceIds.swiftRef} /* LiveVoice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoice.swift; sourceTree = "<group>"; };\n`,
+  );
+}
+const liveVoiceOk = liveVoiceFileOk && liveVoiceProjectOk && liveVoiceConfigOk;
 const oauthOk = oauthFileOk && oauthProjectOk && oauthConfigOk;
 const pasteOk = pasteFileOk && pasteProjectOk && pasteConfigOk;
 const shareOk = shareFilesOk && projectOk;
@@ -1686,6 +1740,7 @@ if (check) {
     hostOk &&
     oauthOk &&
     pasteOk &&
+    liveVoiceOk &&
     splashOk
   ) {
     console.log(
@@ -1713,9 +1768,11 @@ if (check) {
                     ? 'ios: no OAuth loopback browser — run `node scripts/ios-prepare.mjs`'
                     : !pasteOk
                       ? 'ios: no PasteMenu plugin — run `node scripts/ios-prepare.mjs`'
-                      : !splashOk
-                        ? "ios: launch screen still shows Capacitor's splash — run `node scripts/ios-prepare.mjs`"
-                        : `ios: Info.plist needs ${missing} — run \`node scripts/ios-prepare.mjs\``,
+                      : !liveVoiceOk
+                        ? 'ios: no live audio plugin — run `node scripts/ios-prepare.mjs`'
+                        : !splashOk
+                          ? "ios: launch screen still shows Capacitor's splash — run `node scripts/ios-prepare.mjs`"
+                          : `ios: Info.plist needs ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
 }
 
@@ -1765,6 +1822,7 @@ if (!speechFileOk) writeFileSync(speechSwift, speechSource);
 if (!hostFileOk) writeFileSync(hostSwift, hostSource);
 if (!oauthFileOk) writeFileSync(oauthSwift, oauthSource);
 if (!pasteFileOk) writeFileSync(pasteSwift, pasteSource);
+if (!liveVoiceFileOk) writeFileSync(liveVoiceSwift, liveVoiceSource);
 if (!capConfigOk && capConfigJson) {
   capConfigJson.packageClassList = Array.from(
     new Set([...(capConfigJson.packageClassList ?? []), ...appPluginClasses]),

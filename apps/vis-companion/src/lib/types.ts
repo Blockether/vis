@@ -1439,7 +1439,20 @@ export type JsonValue =
 
 export interface ContentBlock {
   id: string;
-  type: 'prose' | 'speech' | 'code' | 'tool' | 'reasoning' | 'error' | 'attachment' | 'notice';
+  type:
+    | 'prose'
+    | 'speech'
+    | 'conversation'
+    | 'visual'
+    | 'silence'
+    | 'code'
+    | 'tool'
+    | 'reasoning'
+    | 'error'
+    | 'attachment'
+    | 'notice';
+  phase?: 'progress' | 'answer';
+  reason?: 'user_requested';
   markdown?: string;
   text?: string;
   language?: string;
@@ -1527,6 +1540,7 @@ export interface TranscriptIteration {
   position?: number;
   thinking?: string;
   assistant_prose?: string;
+  presentation_content?: ContentBlock[];
   answer?: string;
   code?: string;
   forms?: TranscriptForm[];

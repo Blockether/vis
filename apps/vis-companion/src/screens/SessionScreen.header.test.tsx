@@ -42,10 +42,8 @@ describe('the composer under an open artifacts sheet', () => {
     expect(composer).not.toHaveClass('hidden');
   });
 
-  // Regression, user report: opening an artifact hid the whole composer, including
-  // the microphone that an armed voice conversation still needs while its document
-  // is being read. The only way to comment was to close the document first.
-  it('keeps the voice microphone on the artifact surface', async () => {
+  // Regression: opening an artifact hid the controls of the voice conversation.
+  it('keeps the hands-free controls on the artifact surface', async () => {
     const user = userEvent.setup();
     const capabilities = {
       version: 1,
@@ -75,10 +73,8 @@ describe('the composer under an open artifacts sheet', () => {
     });
 
     fireEvent.contextMenu(screen.getByRole('button', { name: /dictate message/i }));
-    const voiceMic = await screen.findByRole('button', {
-      name: /start voice utterance/i,
-    });
-    expect(voiceMic).toBeInTheDocument();
+    const voicePanel = await screen.findByRole('region', { name: 'Hands-free voice' });
+    expect(within(voicePanel).getByRole('button', { name: 'Retry voice' })).toBeVisible();
 
     await user.click(await screen.findByRole('button', { name: /^Session actions/ }));
     await user.click(screen.getByRole('button', { name: 'Open artifacts (1)' }));
@@ -87,10 +83,8 @@ describe('the composer under an open artifacts sheet', () => {
     });
     await user.click(within(surface).getByRole('button', { name: /^open notes\.md/i }));
     expect(await screen.findByRole('dialog', { name: 'notes.md' })).toBeVisible();
-    const overlayMic = within(surface).getByRole('button', {
-      name: /start voice utterance/i,
-    });
-    expect(overlayMic).toBeVisible();
+    const overlayVoice = within(surface).getByRole('region', { name: 'Hands-free voice' });
+    expect(within(overlayVoice).getByRole('button', { name: 'Retry voice' })).toBeVisible();
   });
 });
 

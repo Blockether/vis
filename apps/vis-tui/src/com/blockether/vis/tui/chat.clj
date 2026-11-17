@@ -8,6 +8,7 @@
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.tui.content :as content]
             [com.blockether.vis.tui.composer-attachment-rail :as attachment-rail]
             [com.blockether.vis.tui.composer-attachments :as composer-attachments]
             [com.blockether.vis.tui.terminal-image :as timg]
@@ -304,10 +305,14 @@
        ;; persists the same text, so a settled or reopened bubble paints
        ;; the prose block the reader watched land between THINKING and
        ;; the code band instead of dropping it.
-       :assistant-prose (some-> (get it "assistant_prose")
-                                str
-                                str/trim
-                                not-empty)
+       :presentation-content (get it "presentation_content")
+       :assistant-prose (if (vector? (get it "presentation_content"))
+                          (not-empty (content/presentation-markdown (get it
+                                                                         "presentation_content")))
+                          (some-> (get it "assistant_prose")
+                                  str
+                                  str/trim
+                                  not-empty))
        :provider-fallbacks (get it "llm_routing_trace")
        :iteration-id (get it "id")
        :attachments (vec (or (get it "attachments") []))
@@ -353,8 +358,10 @@
   [answer]
   (into #{}
         (keep (fn [block]
-                (when (and (map? block) (= "prose" (str (get block "type"))))
-                  (some-> (get block "markdown")
+                (when (and (map? block) (#{"prose" "visual" "conversation"} (get block "type")))
+                  (some-> (if (= "conversation" (get block "type"))
+                            (get block "text")
+                            (get block "markdown"))
                           str
                           str/trim
                           not-empty))))
@@ -378,11 +385,26 @@
    streaming never reaches here. The match is exact on the trimmed text, so
    commentary that merely resembles the answer survives."
   [trace answer]
-  (let [answered (settled-prose-markdown answer)]
+  (let [answer-ids
+        (into #{} (map #(get % "id")) answer)
+
+        trace
+        (mapv (fn [entry]
+                (if-let [blocks (:presentation-content entry)]
+                  (let [remaining (filterv #(not (contains? answer-ids (get % "id"))) blocks)]
+                    (assoc entry
+                      :presentation-content remaining
+                      :assistant-prose (not-empty (content/presentation-markdown remaining))))
+                  entry))
+              trace)
+
+        answered
+        (settled-prose-markdown answer)]
+
     (if (empty? answered)
       trace
       (mapv (fn [entry]
-              (if-not (map? entry)
+              (if (or (not (map? entry)) (vector? (:presentation-content entry)))
                 entry
                 (reduce (fn [e k]
                           (if (contains? answered
@@ -514,8 +536,11 @@
        (keep
          (fn [block]
            (case (get block "type")
-             "prose"
+             ("prose" "visual")
              (get block "markdown")
+
+             "conversation"
+             (content/presentation-markdown [block])
 
              "code"
              (str "```" (or (get block "language") "") "\n" (get block "text" "") "\n```")
@@ -1588,7 +1613,9 @@
               :else {:phase :content :iteration iteration :content full}))
 
       "content.block.started"
-      nil
+      (let [block (event-get event :block)]
+        (when (#{"conversation" "visual" "silence"} (get block "type"))
+          {:phase :presentation :iteration iteration :block block}))
 
       ;; The settled text arrives on `iteration.completed`; the live span is done.
       "content.block.completed"
@@ -1624,11 +1651,13 @@
              (vis/form<-wire event))
 
       "iteration.completed"
-      {:phase :iteration-final
-       :iteration iteration
-       :thinking thinking
-       :assistant-prose (event-get event :assistant-prose)
-       :done? (boolean done)}
+      (cond-> {:phase :iteration-final
+               :iteration iteration
+               :thinking thinking
+               :assistant-prose (event-get event :assistant-prose)
+               :done? (boolean done)}
+        (vector? (event-get event :presentation-content))
+        (assoc :presentation-content (event-get event :presentation-content)))
 
       "iteration.error"
       {:phase :iteration-error

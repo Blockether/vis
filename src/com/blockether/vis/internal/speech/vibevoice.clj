@@ -31,8 +31,9 @@
   (:import [ai.djl.huggingface.tokenizers HuggingFaceTokenizer]
            [ai.djl.huggingface.tokenizers.jni TokenizersLibrary]
            [ai.onnxruntime OnnxTensor OrtEnvironment OrtSession OrtSession$Result
-            OrtSession$SessionOptions TensorInfo]
+            OrtSession$SessionOptions OrtSession$RunOptions TensorInfo]
            [java.io File FileOutputStream RandomAccessFile]
+           [java.lang AutoCloseable]
            [java.nio ByteBuffer ByteOrder FloatBuffer LongBuffer]
            [java.nio.file Files]
            [java.util HashMap Map Optional]
@@ -127,7 +128,13 @@
     (.get b a)
     a))
 
-(defn run-session ^OrtSession$Result [^OrtSession session ^Map inputs] (.run session inputs))
+(def ^:dynamic *run-options* nil)
+
+(defn run-session
+  ^OrtSession$Result [^OrtSession session ^Map inputs]
+  (if *run-options*
+    (.run session inputs ^OrtSession$RunOptions *run-options*)
+    (.run session inputs)))
 
 (defn- kv-names
   "`past_key_0 past_value_0 …` (or `present_…`) for `layers` layers, in feed order."
@@ -216,9 +223,9 @@
   (doseq [v
           (vals bundle)
 
-          :when (instance? OrtSession v)]
+          :when (or (instance? OrtSession v) (instance? HuggingFaceTokenizer v))]
 
-    (.close ^OrtSession v)))
+    (.close ^AutoCloseable v)))
 
 (defn- drop-entry!
   "Remove `entry` from the loaded bundles and close its sessions. The caller holds
@@ -232,9 +239,12 @@
 
 (defn- release-idle!
   "Close the bundle of `entry` when no request uses it. False when one does."
-  [k {:keys [^ReentrantReadWriteLock lock] :as entry}]
+  [k {:keys [^ReentrantReadWriteLock lock pins] :as entry}]
   (let [^Lock write (.writeLock lock)]
-    (if (.tryLock write) (try (drop-entry! k entry) true (finally (.unlock write))) false)))
+    (if (.tryLock write)
+      (try (if (zero? (long @pins)) (do (drop-entry! k entry) true) false)
+           (finally (.unlock write)))
+      false)))
 
 (defn- entry
   "The loaded entry of `kind` in `dir`. The first call opens the bundle with `open`
@@ -248,13 +258,15 @@
                     bundle (binding [*opened-bytes* bytes]
                              (open (environment) dir))
                     lock (ReentrantReadWriteLock.)
-                    e {:bundle bundle :lock lock}]
+                    pins (atom 0)
+                    e {:bundle bundle :lock lock :pins pins}]
 
                 (swap! loaded* assoc k e)
                 (residency/loaded! (model-id kind)
                                    {:token bundle
                                     :bytes @bytes
-                                    :in-use? #(pos? (.getReadLockCount lock))
+                                    :in-use? #(or (pos? (.getReadLockCount lock))
+                                                  (pos? (long @pins)))
                                     :release! #(release-idle! k e)})
                 e))))))
 
@@ -288,14 +300,37 @@
           (try (residency/used! id) (f bundle) (finally (residency/used! id) (.unlock read)))
           (do (.unlock read) (recur)))))))
 
+(defn- lease-loaded
+  "Pin a cache entry until close. Unlike a read lock, the lease can close on another thread."
+  [[kind ^File dir _ :as spec]]
+  (call-loaded spec
+               (fn [bundle]
+                 (let [pins
+                       (:pins (get @loaded* [kind (.getAbsolutePath dir)]))
+
+                       closed?
+                       (atom false)]
+
+                   (swap! pins inc)
+                   {:bundle bundle
+                    :close! (fn []
+                              (when (compare-and-set! closed? false true)
+                                (residency/used! (model-id kind))
+                                (swap! pins dec)))}))))
+
+(defonce ^:private live-pins (atom 0))
+
 (defn release!
   "Close every loaded bundle. Waits for the requests that use one. The next request
    loads its bundle again."
   []
-  (doseq [[k {:keys [^ReentrantReadWriteLock lock] :as e}] @loaded*]
+  (doseq [[k {:keys [^ReentrantReadWriteLock lock pins] :as e}] @loaded*]
     (let [^Lock write (.writeLock lock)]
       (.lock write)
-      (try (drop-entry! k e) (finally (.unlock write))))))
+      (try (when (pos? (long @pins))
+             (throw (ex-info "Live ASR still owns a model lease" {:type :speech-live/busy})))
+           (drop-entry! k e)
+           (finally (.unlock write))))))
 
 (defn token-ids
   "Token ids of `text` without special tokens. DJL `Encoding` requests character
@@ -807,14 +842,39 @@
 
 (defn asr-asset [] (assets/entry asr-asset-id))
 
+(defn- close-owned!
+  [resources]
+  (let [failure (atom nil)]
+    (doseq [^AutoCloseable resource (reverse resources)]
+      (try (.close resource)
+           (catch Throwable e
+             (if-let [^Throwable prior @failure]
+               (.addSuppressed prior e)
+               (reset! failure e)))))
+    (when-let [error @failure]
+      (throw error))))
+
 (defn- open-asr
   [^OrtEnvironment env ^File dir]
-  (let [f #(io/file dir %)]
-    {:env env
-     :meta (read-json (f "vibevoice_asr.json"))
-     :tokenizer (open-tokenizer (f "tokenizer.json"))
-     :encoder (open-session env (f "speech_encoder.onnx"))
-     :decoder (open-session env (f "decoder.onnx"))}))
+  (let [f
+        #(io/file dir %)
+
+        owned
+        (atom [])
+
+        own!
+        (fn [resource]
+          (swap! owned conj resource)
+          resource)]
+
+    (try {:env env
+          :meta (read-json (f "vibevoice_asr.json"))
+          :tokenizer (own! (open-tokenizer (f "tokenizer.json")))
+          :encoder (own! (open-session env (f "speech_encoder.onnx")))
+          :decoder (own! (open-session env (f "decoder.onnx")))}
+         (catch Throwable e
+           (try (close-owned! @owned) (catch Throwable close-error (.addSuppressed e close-error)))
+           (throw e)))))
 
 (defn- asr-step
   ^OrtSession$Result [{:keys [^OrtEnvironment env decoder]} ids ^OnnxTensor speech kv]
@@ -828,6 +888,171 @@
   (reduce #(str/replace %1 (str %2) "")
           (.decode tokenizer (long-array tokens) true)
           (get meta "strip_tokens")))
+
+(defn open-live-asr!
+  "Open a pinned ASR decoder. Each step consumes one complete, padded model window."
+  [dir]
+  (let [lease
+        (lease-loaded [:asr (io/file dir) open-asr])
+
+        bundle
+        (:bundle lease)
+
+        _
+        (swap! live-pins inc)
+
+        owned
+        (atom [])
+
+        own!
+        (fn [resource]
+          (swap! owned conj resource)
+          resource)
+
+        closed?
+        (atom false)
+
+        gate
+        (Object.)
+
+        close!
+        (fn []
+          (locking gate
+            (when (compare-and-set! closed? false true)
+              (try (close-owned! @owned) (finally ((:close! lease)) (swap! live-pins dec))))))]
+
+    (try
+      (let [{:keys [^OrtEnvironment env meta encoder tokenizer]}
+            bundle
+
+            options
+            (own! (OrtSession$RunOptions.))
+
+            ids
+            (get meta "ids")
+
+            id
+            #(long (get ids %))
+
+            layers
+            (long (get meta "layers"))
+
+            heads
+            (long (get meta "kv_heads"))
+
+            head-dim
+            (long (get meta "head_dim"))
+
+            hidden
+            (long (get meta "hidden"))
+
+            frame
+            (long (get meta "samples_per_frame"))
+
+            frames
+            (+ (long (get meta "chunk_frames")) (long (get meta "lookahead_frames")))
+
+            chunk
+            (* frame (long (get meta "chunk_frames")))
+
+            window
+            (* frame frames)
+
+            _
+            (when-not (and (= 24000 (get meta "sample_rate"))
+                           (<= 1 chunk window 240000)
+                           (<= 1 layers 128)
+                           (<= 1 heads 128)
+                           (<= 1 head-dim 512)
+                           (<= 1 hidden 16384))
+              (throw (ex-info "Unsupported live ASR metadata" {:type :speech-live/model-contract})))
+
+            std
+            (double (get meta "acoustic_noise_std"))
+
+            noise
+            (noise-state default-seed)
+
+            stop
+            #{(id "text_chunk_end") (id "eos")}
+
+            slots
+            (holder)
+
+            empty-kv
+            (vec (repeatedly (* 2 layers)
+                             #(own! (float-tensor env (float-array 0) [1 heads 0 head-dim]))))
+
+            no-speech
+            (own! (float-tensor env (float-array hidden) [1 1 hidden]))
+
+            _
+            (own! (reify
+                    AutoCloseable
+                      (close [_] (close-all! slots))))
+
+            kv*
+            (atom nil)
+
+            positions
+            (atom 0)
+
+            step
+            (fn [tokens speech kv]
+              (when (> (swap! positions + (count tokens)) 4096)
+                (throw (ex-info "ASR context limit reached" {:type :speech-live/context-limit})))
+              (asr-step bundle tokens speech kv))]
+
+        {:sample-rate 24000
+         :window window
+         :chunk chunk
+         :close! close!
+         :abort! (fn []
+                   (locking gate
+                     (when-not @closed? (.setTerminate ^OrtSession$RunOptions options true))))
+         :step!
+         (fn [^floats seg]
+           (when-not (= window (alength seg))
+             (throw (ex-info "ASR requires one model window" {:type :speech-live/model-contract})))
+           (binding [*run-options* options]
+             (let [kv (or @kv*
+                          (presents (hold! slots
+                                           0
+                                           (step (token-ids
+                                                   tokenizer
+                                                   (str/replace (get meta "prompt") "{extra}" ""))
+                                                 no-speech
+                                                 empty-kv))
+                                    layers))
+                   scale (* std (double (aget ^floats (gaussian noise 1) 0)))
+                   eps (gaussian noise (* frames 64))
+                   r (with-open [a (float-tensor env seg [1 window])
+                                 e (float-tensor env eps [1 frames 64])
+                                 s (float-tensor env (float-array [scale]) [1])
+                                 enc (run-session encoder
+                                                  (feed {"audio" a "noise" e "noise_scale" s} []))]
+
+                       (hold! slots
+                              0
+                              (step (concat [(id "speech_start")]
+                                            (repeat frames (id "speech_pad"))
+                                            [(id "speech_end")])
+                                    (output enc "features")
+                                    kv)))
+                   [tokens kv] (loop [r r
+                                      tokens []]
+
+                                 (let [tok (token-of r)]
+                                   (if (or (stop tok) (>= (count tokens) max-chunk-tokens))
+                                     [tokens (presents r layers)]
+                                     (recur
+                                       (hold! slots 0 (step [tok] no-speech (presents r layers)))
+                                       (conj tokens tok)))))
+                   kv (presents (hold! slots 0 (step [(id "text_chunk_end")] no-speech kv)) layers)]
+
+               (reset! kv* kv)
+               (chunk-text bundle tokens))))})
+      (catch Throwable e (close!) (throw e)))))
 
 (defn transcribe-samples
   "The text of each audio chunk of 24 kHz `samples`, as `{:start :end :text}` in

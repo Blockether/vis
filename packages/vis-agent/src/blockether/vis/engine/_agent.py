@@ -250,13 +250,28 @@ def _syntax_message(answer: str, error: json.JSONDecodeError) -> str:
 def final_answer(turn: Mapping[str, object]) -> str | None:
     """Return the final answer text of the turn record `turn`, or None.
 
-    A turn record has no `answer` field. The answer is the Markdown of the last
-    `prose` block in `turn["content"]`. A turn without that block, or with only
-    blank text in it, gives None.
+    Typed conversation answers join their answer-phase text in order. Visual
+    blocks and progress are not answers. Otherwise, use the last prose block.
+    A turn without an answer, or with only blank answer text, gives None.
     """
     content = turn.get("content")
     if not isinstance(content, list):
         return None
+    if any(
+        isinstance(block, dict)
+        and block.get("type") in ("conversation", "visual", "silence")
+        for block in content
+    ):
+        answers = [
+            block["text"]
+            for block in content
+            if isinstance(block, dict)
+            and block.get("type") == "conversation"
+            and block.get("phase") == "answer"
+            and isinstance(block.get("text"), str)
+            and block["text"].strip()
+        ]
+        return "\n\n".join(answers) or None
     for block in reversed(content):
         if isinstance(block, dict) and block.get("type") == "prose":
             answer = block.get("markdown")

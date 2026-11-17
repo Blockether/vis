@@ -114,6 +114,12 @@
                                      "com/blockether/vis/contract/oas-3.1-schema.json"))))]
         (expect (nil? (skjema/explain meta-schema @encoded))
                 (pr-str (skjema/explain meta-schema @encoded)))))
+  (it "requires a one-use ticket for media instead of inherited bearer authentication"
+      (let [operation (get-in @encoded ["paths" "/v1/sessions/{sid}/voice/live/{vid}/media" "get"])]
+        (expect (= [{"voice_ticket" []}] (get operation "security")))
+        (expect (= #{"101" "default"} (set (keys (get operation "responses")))))
+        (expect (= "Sec-WebSocket-Protocol"
+                   (get-in @encoded ["components" "securitySchemes" "voice_ticket" "name"])))))
   (it "gates every audience but the public one"
       (expect (= [{"bearer" []} {"gateway_secret" []}] (get @encoded "security")))
       (expect (= [] (get-in @encoded ["paths" "/healthz" "get" "security"])))

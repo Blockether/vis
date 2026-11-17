@@ -13463,14 +13463,80 @@
         (finally (doseq [file [trigger entered dir]]
                    (clojure.java.io/delete-file file true)))))))
 
-(defdescribe voice-projection-prompt-test
-             (it "activates the voice projection instructions only for the requested turn"
-                 (let [projected (#'iteration/voice-system-prompt "base" {"voice_projection" true})]
-                   (expect (str/starts-with? projected "base"))
-                   (expect (not= "base" projected)))
-                 (expect (= "base" (#'iteration/voice-system-prompt "base" {})))
-                 (expect (= "base"
-                            (#'iteration/voice-system-prompt "base" {:voice_projection true})))))
+(defdescribe
+  live-voice-provider-prompt-test
+  (it
+    "changes provider instructions when live voice starts and ends between turns"
+    (let [router
+          (svar/make-router [{:id :lmstudio
+                              :base-url "http://127.0.0.1:1234/v1"
+                              :api-key "test"
+                              :models [{:name "model" :input-limit 1000000}]}])
+
+          environment
+          (loop-env/create-environment router {:db :memory})
+
+          observed
+          (atom [])]
+
+      (try (with-redefs [svar/ask-code!
+                         (fn [_ opts]
+                           (let [request (str/join "\n"
+                                                   (filter string?
+                                                           (tree-seq coll? seq (:messages opts))))
+                                 live? (str/includes? request "Each final reply must contain an answer conversation")]
+                             (swap! observed conj
+                               [live? (str/includes? request "Each complete record is immutable")])
+                             {:stop-reason :end
+                              :tool-calls []
+                              :content (if live?
+                                         "{\"type\":\"conversation\",\"text\":\"I am here.\",\"phase\":\"answer\"}\n"
+                                         "I am here.")
+                              :routed/provider-id :lmstudio
+                              :routed/model "model"
+                              :api-usage {:input-tokens 100 :output-tokens 4}
+                              :tokens {}}))]
+             (doseq [enabled? [false true true false]]
+               (let [request "Testing one two three."
+                     tid (persistance/db-store-session-turn!
+                           (:db-info environment)
+                           {:parent-session-id (:session-id environment) :user-request request})]
+
+                 (iteration/iteration-loop environment
+                                           request
+                                           {:session-turn-id tid
+                                            :turn-features {"voice_projection" enabled?
+                                                            "voice_segments" enabled?}}))))
+           (expect (= [[false false] [true true] [true true] [false false]] @observed))
+           (finally (loop-env/dispose-environment! environment))))))
+
+(defdescribe
+  voice-projection-prompt-test
+  (it "uses immutable segments only for an explicitly enabled live voice turn"
+      (let [features
+            {"voice_projection" true "voice_segments" true}
+
+            prompt
+            (#'iteration/voice-system-prompt "base" features)]
+
+        ;; Regression: session a853a9c9-6296-42f9-ab32-67ee83447023 omitted the spoken outcome.
+        (expect (str/includes? prompt "Each final reply must contain an answer conversation"))
+        (expect (str/includes? prompt "The same text is displayed and spoken"))
+        (expect (str/includes? prompt "Put corrections in new records"))
+        (expect (not (str/includes? prompt "vis-speech")))
+        (expect (str/includes? prompt "Each complete record is immutable"))
+        (expect (str/includes? prompt "verified updates"))
+        (expect (str/includes? prompt "Only when the user requests silence")))
+      (expect (= "base" (#'iteration/voice-system-prompt "base" {"voice_segments" true}))))
+  (it "activates the voice projection instructions only for the requested turn"
+      (let [projected (#'iteration/voice-system-prompt "base" {"voice_projection" true})]
+        (expect (str/includes? projected "base"))
+        (expect (str/includes? projected "vis-speech"))
+        (expect (str/includes? projected "text-to-speech"))
+        (expect (str/includes? projected "text-only turn"))
+        (expect (str/includes? projected "do not mention voice mode")))
+      (expect (= "base" (#'iteration/voice-system-prompt "base" {})))
+      (expect (= "base" (#'iteration/voice-system-prompt "base" {:voice_projection true})))))
 
 (def ^:private failed-turn-outcome
   "A finished turn's terminal payload: content, structured error, counters, CTX."

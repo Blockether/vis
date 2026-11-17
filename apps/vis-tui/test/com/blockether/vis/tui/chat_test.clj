@@ -5,6 +5,7 @@
             [com.blockether.vis.contract.activity :as activity]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.chat :as chat]
+            [com.blockether.vis.tui.content :as content]
             [com.blockether.vis.tui.progress :as progress]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -1383,3 +1384,111 @@
         (chat/set-launch-session-options! {:open-tools ["py.lnt"]})
         (let [e (try (#'chat/apply-open-tools! "sid") nil (catch clojure.lang.ExceptionInfo e e))]
           (expect (:vis/user-error (ex-data e)))))))
+
+(defdescribe
+  handsfree-presentation-test
+  (let [progress-block
+        {"id" "p" "type" "conversation" "phase" "progress" "text" "Checking now"}
+
+        answer
+        {"id" "a" "type" "conversation" "phase" "answer" "text" "The work is ready"}
+
+        visual
+        {"id" "v" "type" "visual" "markdown" "```mermaid\ngraph TD; A-->B\n```"}
+
+        silence
+        {"id" "s" "type" "silence" "reason" "user_requested"}
+
+        g->c
+        @#'chat/gateway-event->chunk]
+
+    (it "keeps conversation and visual content on screen and hides silence and old speech"
+        (expect (= "The work is ready\n\n```mermaid\ngraph TD; A-->B\n```"
+                   (chat/content->markdown [answer visual silence
+                                            (content/speech "Spoken only")]))))
+    (it "keeps literal conversation punctuation and the exact clipboard text"
+        (let [block (assoc answer "text" "Use snake_case and a-b.")]
+          (expect (= "Use snake\\_case and a\\-b\\." (chat/content->markdown [block])))
+          (expect (= "Use snake_case and a-b." (content/text-projection [block silence])))))
+    (it "accepts canonical typed answers and leaves their identities unchanged"
+        (expect (= [answer visual] (content/answer-content [answer visual]))))
+    (it "deduplicates streamed records and moves final blocks out of the trace"
+        (let [{:keys [on-chunk get-timeline]}
+              (progress/make-progress-tracker)
+
+              feed
+              (fn [block]
+                (on-chunk (g->c {"type" "content.block.started"
+                                 "iteration" 1
+                                 "block_id" (get block "id")
+                                 "block" block}))
+                (g->c {"type" "content.block.completed" "block_id" (get block "id")}))]
+
+          (doseq [block [progress-block answer visual silence answer]]
+            (feed block))
+          (let [timeline
+                (get-timeline)
+
+                settled
+                (chat/drop-answered-trace-prose timeline [answer visual silence])]
+
+            (expect (= 4 (count (:presentation-content (first timeline)))))
+            (expect (= "Checking now\n\nThe work is ready\n\n```mermaid\ngraph TD; A-->B\n```"
+                       (:assistant-prose (first timeline))))
+            (expect (nil? (:thinking (first timeline))))
+            (expect (= [progress-block] (:presentation-content (first settled))))
+            (expect (= "Checking now" (:assistant-prose (first settled)))))))
+    (it "keeps earlier typed records with different identities and equal text"
+        (let [earlier
+              (assoc answer
+                "id" "earlier"
+                "phase" "progress")
+
+              entry
+              {:presentation-content [earlier answer]
+               :assistant-prose (content/presentation-markdown [earlier answer])}
+
+              [settled]
+              (chat/drop-answered-trace-prose [entry] [answer])]
+
+          (expect (= [earlier] (:presentation-content settled)))
+          (expect (= (content/presentation-markdown [earlier]) (:assistant-prose settled)))))
+    (it "restores typed progress and visuals without raw provider records"
+        (let [blocks
+              [progress-block visual]
+
+              [entry]
+              (chat/iteration-rows->trace [{"id" "typed-iteration"
+                                            "position" 1
+                                            "forms" []
+                                            "presentation_content" blocks
+                                            "assistant_prose" "raw provider JSON"}]
+                                          false)]
+
+          (expect (= blocks (:presentation-content entry)))
+          (expect (= (content/presentation-markdown blocks) (:assistant-prose entry)))
+          (expect (nil? (:assistant-prose (first (chat/drop-answered-trace-prose [entry]
+                                                                                 blocks)))))))
+    (it "recovers missed stream frames from the completed iteration"
+        (let [{:keys [on-chunk get-timeline]}
+              (progress/make-progress-tracker)
+
+              blocks
+              [answer visual]]
+
+          (on-chunk (g->c {"type" "iteration.completed"
+                           "iteration" 1
+                           "presentation_content" blocks
+                           "assistant_prose" "raw provider JSON"}))
+          (expect (= blocks (:presentation-content (first (get-timeline)))))
+          (expect (= (content/presentation-markdown blocks)
+                     (:assistant-prose (first (get-timeline)))))
+          (on-chunk (g->c {"type" "iteration.completed"
+                           "iteration" 1
+                           "presentation_content" []
+                           "assistant_prose" "raw provider JSON"}))
+          (expect (nil? (:assistant-prose (first (get-timeline)))))))
+    (it "does not show silence as prose"
+        (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
+          (on-chunk (g->c {"type" "content.block.started" "iteration" 2 "block" silence}))
+          (expect (nil? (:assistant-prose (first (get-timeline)))))))))

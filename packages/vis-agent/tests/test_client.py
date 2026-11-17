@@ -644,6 +644,35 @@ def test_session_binary_and_history_helpers():
         assert len(calls) == count
 
 
+def test_live_voice_media_is_rejected_before_io():
+    with endpoint(lambda *_: (200, {})) as (url, calls):
+        client = GatewayClient(url)
+        with pytest.raises(ValueError, match="WebSocket media is not supported"):
+            client._request(
+                "GET",
+                "/v1/sessions/:sid/voice/live/:vid/media",
+                path={"sid": "session-one", "vid": "voice-one"},
+            )
+        with pytest.raises(ValueError, match="WebSocket media is not supported"):
+            client.routes.get_session_voice_live_media("session-one", "voice-one")
+        assert calls == []
+
+
+def test_live_voice_http_lifecycle_methods():
+    with endpoint(lambda *_: (200, {"ok": True})) as (url, calls):
+        client = GatewayClient(url)
+        assert client.routes.get_voice_live_capabilities() == {"ok": True}
+        assert client.routes.post_session_voice_live("s", body={"muted": True}) == {"ok": True}
+        assert client.routes.get_session_voice_live("s", "v") == {"ok": True}
+        assert client.routes.delete_session_voice_live("s", "v") == {"ok": True}
+        assert [(method, path) for method, path, _, _ in calls] == [
+            ("GET", "/v1/voice/live/capabilities"),
+            ("POST", "/v1/sessions/s/voice/live"),
+            ("GET", "/v1/sessions/s/voice/live/v"),
+            ("DELETE", "/v1/sessions/s/voice/live/v"),
+        ]
+
+
 def test_every_non_streaming_sdk_operation_uses_the_canonical_contract():
     # This proves dispatch coverage, not the behavior of the real gateway handlers.
     with endpoint(lambda *_: (200, b"result", "application/octet-stream")) as (
@@ -659,7 +688,7 @@ def test_every_non_streaming_sdk_operation_uses_the_canonical_contract():
                 s[1:]: "example" for s in route["path"].split("/") if s.startswith(":")
             }
             for method, operation in route["operations"].items():
-                if operation["response"] == "sse":
+                if operation["response"] in {"sse", "websocket"}:
                     continue
                 kwargs = {}
                 if operation["request"] == "json":
@@ -954,7 +983,7 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         for route in _ROUTES
         if route["audience"] == "sdk" and not route["path"].startswith("/v1/clients")
         for method, op in route["operations"].items()
-        if op["response"] != "sse"
+        if op["response"] not in {"sse", "websocket"}
     }
     seen = set()
     with endpoint(lambda *_: (200, {"ok": True})) as (url, calls):

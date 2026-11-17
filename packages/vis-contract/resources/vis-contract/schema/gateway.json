@@ -1567,6 +1567,40 @@
     {
       "audience": "sdk",
       "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/voice/live"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        },
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/voice/live/:vid"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "websocket"
+        }
+      },
+      "path": "/v1/sessions/:sid/voice/live/:vid/media"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "get": {
           "request": "none",
           "response": "json",
@@ -1914,6 +1948,16 @@
         }
       },
       "path": "/v1/voice/jobs/:job-id/events"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/voice/live/capabilities"
     },
     {
       "audience": "sdk",
@@ -3803,6 +3847,12 @@
           "x-vis-payload": "settings_changed_payload"
         },
         {
+          "const": "speech.committed"
+        },
+        {
+          "const": "speech.invalidated"
+        },
+        {
           "const": "subscription.ready",
           "x-vis-payload": "subscription_ready_payload"
         },
@@ -3871,6 +3921,18 @@
         {
           "const": "view.patch",
           "x-vis-payload": "view_patch_payload"
+        },
+        {
+          "const": "voice.admission"
+        },
+        {
+          "const": "voice.playback"
+        },
+        {
+          "const": "voice.speech"
+        },
+        {
+          "const": "voice.utterance"
         }
       ],
       "description": "The closed vocabulary of session events. x-vis-payload names the $defs schema of the fields that an event of that type has after its envelope (schema, seq, ts, session_id and type)."

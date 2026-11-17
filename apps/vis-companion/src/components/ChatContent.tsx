@@ -2750,8 +2750,8 @@ export function answeredProse(
 ): ReadonlySet<string> {
   const answered = new Set<string>();
   for (const block of blocks ?? []) {
-    if (block.type !== 'prose') continue;
-    const markdown = block.markdown?.trim();
+    if (!['prose', 'visual', 'conversation'].includes(block.type)) continue;
+    const markdown = (block.type === 'conversation' ? block.text : block.markdown)?.trim();
     if (markdown) answered.add(markdown);
   }
   const promotedAnswer = promoted.trim();
@@ -2774,16 +2774,28 @@ const NOTHING_ANSWERED: ReadonlySet<string> = new Set<string>();
  * trimmed text, so commentary that merely resembles the answer survives.
  */
 function traceProse(iteration: TranscriptIteration, answered: ReadonlySet<string>): string {
+  if (iteration.presentation_content) return '';
   const prose = iteration.assistant_prose?.trim() ?? '';
   return answered.has(prose) ? '' : prose;
 }
 
-function traceEntry(iteration: TranscriptIteration, index: number, answered: ReadonlySet<string>) {
+function traceEntry(
+  iteration: TranscriptIteration,
+  index: number,
+  answered: ReadonlySet<string>,
+  seenPresentation: Set<string>,
+) {
+  const presentation = (iteration.presentation_content ?? []).filter((block) => {
+    if (seenPresentation.has(block.id)) return false;
+    seenPresentation.add(block.id);
+    return block.type !== 'silence';
+  });
   return {
     iteration,
     index,
     thinking: iteration.thinking?.trim() ?? '',
     prose: traceProse(iteration, answered),
+    presentation,
     forms: iteration.forms ?? [],
     attachments: iteration.attachments ?? [],
     userInput: iteration.user_input ?? [],
@@ -2822,13 +2834,16 @@ function buildSegments(
   iterations: TranscriptIteration[],
   answered: ReadonlySet<string> = NOTHING_ANSWERED,
   summarize = true,
+  answeredIds: ReadonlySet<string> = NOTHING_ANSWERED,
 ): TraceSegmentData[] {
+  const seenPresentation = new Set(answeredIds);
   const visible = iterations
-    .map((iteration, index) => traceEntry(iteration, index, answered))
+    .map((iteration, index) => traceEntry(iteration, index, answered, seenPresentation))
     .filter(
-      ({ thinking, prose, forms, attachments, userInput }) =>
+      ({ thinking, prose, presentation, forms, attachments, userInput }) =>
         thinking ||
         prose ||
+        presentation.length ||
         attachments.length ||
         userInput.length ||
         forms.some((form) => showFormCode(form, formCode(form)) || toolCards(form).length),
@@ -2837,7 +2852,11 @@ function buildSegments(
   const segments: TraceSegmentData[] = [];
   visible.forEach((entry) => {
     const open = segments.at(-1);
-    const narrated = entry.prose || entry.userInput.length > 0 || (!summarize && entry.thinking);
+    const narrated =
+      entry.prose ||
+      entry.presentation.length > 0 ||
+      entry.userInput.length > 0 ||
+      (!summarize && entry.thinking);
     // Regression: an artifact split its run into two Activities between the same notes.
     const closing = !summarize && entry.attachments.length > 0;
     if (open && !open.closed && !narrated && !closing) open.items.push(entry);
@@ -2882,7 +2901,9 @@ function sameTraceEntry(a: TraceEntry, b: TraceEntry): boolean {
     a.iteration === b.iteration &&
     a.index === b.index &&
     a.thinking === b.thinking &&
-    a.prose === b.prose
+    a.prose === b.prose &&
+    a.presentation.length === b.presentation.length &&
+    a.presentation.every((block, index) => block === b.presentation[index])
   );
 }
 
@@ -3373,6 +3394,11 @@ const TraceSegment = memo(function TraceSegment({
         />
       )}
       {!digest && thinking && <ThinkingBand railed>{thinking}</ThinkingBand>}
+      {segment.head.presentation.map((block) => (
+        <div key={block.id} className="py-2.5 text-ui text-vis-message first:pt-0 last:pb-0 mouse:text-title">
+          <ContentBlockView block={block} />
+        </div>
+      ))}
       {segment.head.prose && (
         // The trace owns outer gaps; prose only separates bands within this segment.
         <div className="py-2.5 text-ui text-vis-message first:pt-0 last:pb-0 mouse:text-title [&+*]:mt-0">
@@ -3474,6 +3500,7 @@ function iterationAttachment(
 export const IterationTrace = memo(function IterationTrace({
   iterations,
   answered = NOTHING_ANSWERED,
+  answeredIds = NOTHING_ANSWERED,
   live = false,
   whole = false,
   client,
@@ -3485,6 +3512,8 @@ export const IterationTrace = memo(function IterationTrace({
   iterations: TranscriptIteration[];
   /** Prose the ANSWER band already paints — see `answeredProse`. */
   answered?: ReadonlySet<string>;
+  /** Canonical blocks already displayed in the answer. */
+  answeredIds?: ReadonlySet<string>;
   live?: boolean;
   /** Preserve all segments when a settled trace replaces the live rendering. */
   whole?: boolean;
@@ -3510,8 +3539,8 @@ export const IterationTrace = memo(function IterationTrace({
   const stepRef = useRef({ size: SEGMENT_RAMP_START, startedAt: 0 });
 
   const segments = useMemo(
-    () => buildSegments(iterations, answered, summarize),
-    [iterations, answered, summarize],
+    () => buildSegments(iterations, answered, summarize, answeredIds),
+    [iterations, answered, summarize, answeredIds],
   );
 
   // The newest step when the trace mounts. A session switch mounts a running turn again,
@@ -4089,9 +4118,14 @@ export const ContentBlockView = memo(function ContentBlockView({
 }) {
   switch (block.type) {
     case 'prose':
+    case 'visual':
       return block.markdown ? (
         <Markdown onOpenAttachment={onOpenAttachment}>{block.markdown}</Markdown>
       ) : null;
+    case 'conversation':
+      return block.text ? <p className="whitespace-pre-wrap break-words">{block.text}</p> : null;
+    case 'silence':
+      return null;
     case 'speech':
       return block.text ? <SpeechBlock text={block.text} /> : null;
     case 'code':
@@ -4137,6 +4171,7 @@ export const ContentBlockView = memo(function ContentBlockView({
 function fallbackAnswer(turn: TranscriptTurn): string {
   const iterations = turn.iterations ?? [];
   for (let index = iterations.length - 1; index >= 0; index -= 1) {
+    if (iterations[index].presentation_content) continue;
     const answer = iterations[index].answer?.trim();
     if (answer) return answer;
   }
@@ -4696,6 +4731,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   // already paints — including the answer PROMOTED out of the last iteration when
   // the row carries no content blocks (issue #145).
   const answered = useMemo(() => answeredProse(turn.content, fallback), [turn.content, fallback]);
+  const answeredIds = useMemo(() => new Set(turn.content?.map((block) => block.id)), [turn.content]);
   const cancelled = turn.status === 'cancelled' || turn.prior_outcome === 'cancelled';
   // A fork settles the copy of a turn that still ran in the source with a notice, and a
   // leader stop settles a subagent turn with one (`content/fork-notice` and
@@ -4771,6 +4807,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           key={turn.turn_id}
           turn={turn}
           answered={answered}
+          answeredIds={answeredIds}
           live={streaming}
           whole={whole}
           client={client}

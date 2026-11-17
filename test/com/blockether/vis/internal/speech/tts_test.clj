@@ -157,7 +157,8 @@
         (let [refused (tts/start-download! :piper "ryan")]
           (expect (= :failed (:state refused)))))
       (let [started (atom [])]
-        (with-redefs [assets/installed? (fn [entry]
+        (with-redefs [sherpa/installed? (constantly true)
+                      assets/installed? (fn [entry]
                                           (contains? (set @started) (:id entry)))
                       assets/install! (fn [entry & _]
                                         (swap! started conj (:id entry))
@@ -170,7 +171,8 @@
           (expect (= #{"piper-en_US-ryan-high"} (set @started))))))
   (it "starts the download of every family Vis fetches by itself"
       (let [started (atom [])]
-        (with-redefs [assets/installed? (fn [entry]
+        (with-redefs [sherpa/installed? (constantly true)
+                      assets/installed? (fn [entry]
                                           (boolean (some #{(:id entry)} @started)))
                       assets/install! (fn [entry & _]
                                         (swap! started conj (:id entry))
@@ -185,10 +187,139 @@
           (expect (= #{"piper-en_US-kristin-medium" "pocket-tts-int8" "pocket-voice-clips"}
                      (set @started)))))))
 
+(defn- await-native-download!
+  []
+  (loop [n 0]
+    (let [state @(var-get #'tts/native-download*)]
+      (if (or (not= :downloading (:state state)) (>= n 1000))
+        state
+        (do (Thread/sleep 5) (recur (inc n)))))))
+
+(defdescribe
+  explicit-runtime-download-test
+  (it "prepares the missing runtime even when model files already exist"
+      (let [runtime-ready
+            (atom false)
+
+            calls
+            (atom 0)]
+
+        (with-redefs [tts/native-download*
+                      (atom nil)
+
+                      assets/installed?
+                      (constantly true)
+
+                      sherpa/installed?
+                      (fn [_]
+                        @runtime-ready)
+
+                      sherpa/ensure-native!
+                      (fn []
+                        (swap! calls inc)
+                        (reset! runtime-ready true)
+                        {:source :downloaded :dir "/test/native"})]
+
+          (tts/start-download! :pocket-tts)
+          (await-native-download!)
+          (expect (= 1 @calls))
+          (expect @runtime-ready)
+          (expect (= :ready (:state (tts/model-state :pocket-tts)))))))
+  (it
+    "keeps reads passive and runtime preparation single-flight across families"
+    (let [runtime-ready
+          (atom false)
+
+          calls
+          (atom 0)
+
+          entered
+          (promise)
+
+          release
+          (promise)]
+
+      (with-redefs [tts/native-download*
+                    (atom nil)
+
+                    assets/installed?
+                    (constantly true)
+
+                    sherpa/installed?
+                    (fn [_]
+                      @runtime-ready)
+
+                    sherpa/ensure-native!
+                    (fn []
+                      (swap! calls inc)
+                      (deliver entered true)
+                      (when-not (= true (deref release 5000 :timeout))
+                        (throw (ex-info "Test runtime release timed out" {})))
+                      (reset! runtime-ready true)
+                      {:source :downloaded :dir "/test/native"})]
+
+        (try (expect (= :absent (:state (tts/model-state :pocket-tts))))
+             (expect (zero? @calls))
+             (tts/start-download! :pocket-tts)
+             (expect (= true (deref entered 5000 :timeout)))
+             (dotimes [_ 10]
+               (tts/start-download! :piper)
+               (tts/start-download! :pocket-tts))
+             (expect (= 1 @calls))
+             (expect (= {:state :downloading :phase :preparing :progress 66}
+                        (tts/model-state :pocket-tts)))
+             (deliver release true)
+             (await-native-download!)
+             (expect (= :ready (:state (tts/model-state :pocket-tts))))
+             (finally (deliver release true) (await-native-download!))))))
+  (it "reports interruption and retries only after another explicit request"
+      (let [calls
+            (atom 0)
+
+            runtime-ready
+            (atom false)]
+
+        (with-redefs [tts/native-download*
+                      (atom nil)
+
+                      assets/installed?
+                      (constantly true)
+
+                      sherpa/installed?
+                      (fn [_]
+                        @runtime-ready)
+
+                      sherpa/ensure-native!
+                      (fn []
+                        (if (= 1 (swap! calls inc))
+                          (throw (InterruptedException. "Runtime preparation interrupted"))
+                          (do (reset! runtime-ready true)
+                              {:source :downloaded :dir "/test/native"})))]
+
+          (tts/start-download! :pocket-tts)
+          (await-native-download!)
+          (expect (= :failed (:state (tts/model-state :pocket-tts))))
+          (expect (= 1 @calls))
+          (tts/start-download! :pocket-tts)
+          (await-native-download!)
+          (expect (= 2 @calls))
+          (expect (= :ready (:state (tts/model-state :pocket-tts)))))))
+  (it "does not prepare the runtime when a voice license has not been accepted"
+      (let [calls (atom 0)]
+        (with-redefs [tts/native-download* (atom nil)
+                      assets/installed? (constantly false)
+                      sherpa/installed? (constantly false)
+                      sherpa/ensure-native! (fn []
+                                              (swap! calls inc))]
+
+          (expect (= :failed (:state (tts/start-download! :piper "ryan"))))
+          (expect (zero? @calls))
+          (expect (nil? @(var-get #'tts/native-download*)))))))
+
 (defdescribe install-model-test
              (it "installs everything the named family needs, in one blocking call"
-                 ;; The CLI download path is the blocking one: it installs what the family
-                 ;; needs and reports the directory it wrote for each asset.
+                 ;; The blocking installer prepares the selected family.
+                 ;; It reports the directory that it wrote for each asset.
                  (let [installed (atom [])]
                    (with-redefs [sherpa/ensure-native! (constantly nil)
                                  assets/installed? (constantly false)
@@ -283,6 +414,22 @@
                  ;; pocket-tts does not phonemize, so espeak has nothing to do with it.
                  (with-redefs [tts/espeak-data-dir (constantly nil)]
                    (expect (not= :failed (:state (tts/model-state :pocket-tts)))))))
+
+(defdescribe pocket-thread-budget-test
+             (it "limits Pocket threads without changing Piper"
+                 ;; Regression: concurrent Pocket synthesis delayed paced ASR beyond its input budget.
+                 (sherpa/ensure-native!)
+                 (doseq [processors [1 2 10]]
+                   (with-redefs [tts/num-threads (fn ^long []
+                                                   (long processors))]
+                     (let [pocket (#'tts/pocket-config "/models/pocket")
+                           piper (#'tts/piper-config "/models/piper" "/models/espeak" "model.onnx")
+                           field (.getDeclaredField com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
+                                                    "numThreads")]
+
+                       (.setAccessible field true)
+                       (expect (= (min 2 processors) (.getInt field (.getModel pocket))))
+                       (expect (= processors (.getInt field (.getModel piper)))))))))
 
 ;; Regression, user report: the SHIPPED BINARY died on the first pocket-tts word
 ;; while the same code spoke from a JVM. sherpa reads `GenerationConfig.extra`

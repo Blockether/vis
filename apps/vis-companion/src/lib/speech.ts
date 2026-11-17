@@ -130,6 +130,23 @@ class SpeechOutput {
     interrupt: () => void;
   } | null = null;
   private activeRun: { owner: object | null } | null = null;
+  private liveOwner: object | null = null;
+
+  /** Reserve the speakers for local live media. Manual replay resumes after release. */
+  reserveLiveOutput(): () => void {
+    if (this.liveOwner) throw new Error('Hands-free voice already owns the speakers.');
+    this.stop();
+    const owner = {};
+    this.liveOwner = owner;
+    return () => {
+      if (this.liveOwner === owner) this.liveOwner = null;
+    };
+  }
+
+  private requireReplayAvailable(): void {
+    if (this.liveOwner)
+      throw new Error('End hands-free voice before playing a speech sample or replay.');
+  }
 
   /** The screen with a live session hands the machine's voice in, and takes it back. */
   setGateway(speaker: GatewaySpeaker | null, onNotice?: ((message: string) => void) | null): void {
@@ -149,6 +166,7 @@ class SpeechOutput {
   }
 
   async speak(text: string, listener?: SpeechListener, owner?: object): Promise<void> {
+    this.requireReplayAvailable();
     // Starting a line is an explicit global handoff. Its owner only scopes later
     // cleanup: a transcript block disappearing may stop its own replay, never a
     // voice-mode line that happened to start on the same singleton afterward.
@@ -180,6 +198,7 @@ class SpeechOutput {
 
   /** Audition one exact system voice without changing the saved reply route. */
   async playDeviceSample(text: string, voiceId: string | null, rate: number): Promise<void> {
+    this.requireReplayAvailable();
     this.stop();
     await this.device.speak(text, voiceId, rate);
   }
@@ -191,6 +210,7 @@ class SpeechOutput {
    * an ordinary completion for its caller, never an audio failure.
    */
   async playSample(audio: Blob, listener?: SpeechListener): Promise<void> {
+    this.requireReplayAvailable();
     this.stop();
     await this.play(audio, listener);
   }

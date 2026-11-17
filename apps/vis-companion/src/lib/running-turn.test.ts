@@ -481,3 +481,45 @@ describe('live block text', () => {
     expect(thought(replayed)).toBe('Read the file. Then edit.');
   });
 });
+
+// Regression: typed speech text must not enter the reasoning stream.
+describe('typed hands-free records', () => {
+  const blocks = [
+    { id: 'conversation', type: 'conversation', phase: 'answer', text: 'The diagram is ready.' },
+    { id: 'visual', type: 'visual', markdown: '```mermaid\ngraph TD; A-->B;\n```' },
+    { id: 'silence', type: 'silence', reason: 'user_requested' },
+  ];
+
+  it.each(blocks)('retains and deduplicates a complete $type record on replay', (block) => {
+    const frame = event({ type: 'content.block.started', block });
+    const first = reduceRunningTurnEvent(runningTurn, frame);
+    expect(first?.content).toEqual([block]);
+    expect(reduceRunningTurnEvent(first, frame)).toBe(first);
+    const restored = JSON.parse(JSON.stringify(first)) as RunningTurn;
+    expect(reduceRunningTurnEvent(restored, frame)?.content).toEqual([block]);
+    expect(reduceRunningTurnEvent(first, event({
+      type: 'content.block.delta', block_id: block.id, field: 'text', text: 'changed', offset: 0,
+    }))).toBe(first);
+    expect(first?.iterations).toEqual([]);
+  });
+
+  it('leaves legacy prose and reasoning starts on their existing delta paths', () => {
+    expect(reduceRunningTurnEvent(runningTurn, event({
+      type: 'content.block.started', block: { id: 'legacy', type: 'prose', markdown: '' },
+    }))).toBe(runningTurn);
+  });
+});
+
+// Regression: replay may start at iteration completion without content block starts.
+describe('presentation iteration replay', () => {
+  it('restores canonical history and discards raw assistant prose', () => {
+    const content = [{ id: 'replay-progress', type: 'conversation', phase: 'progress', text: 'I am checking.' }];
+    const frame = event({ type: 'iteration.completed', iteration: 0, presentation_content: content, assistant_prose: 'RAW JSON' });
+    const first = reduceRunningTurnEvent(runningTurn, frame);
+    expect(first?.iterations[0].presentation_content).toEqual(content);
+    expect(first?.iterations[0].assistant_prose).toBeUndefined();
+    const replayed = reduceRunningTurnEvent(first, frame);
+    expect(replayed?.iterations).toHaveLength(1);
+    expect(replayed?.iterations[0].presentation_content).toEqual(content);
+  });
+});

@@ -502,8 +502,13 @@ CREATE TABLE session_turn_iteration (
   -- attachment metadata only, never image bytes.
   user_input                     BLOB,
   llm_thinking                    TEXT,
-  -- Model markdown PROSE returned ALONGSIDE a tool call. NULL = no prose.
+  -- Human-readable text for transcript search.
   llm_assistant_prose             TEXT,
+  -- Keep provider records separate from their display projection.
+  llm_assistant_raw               TEXT,
+  presentation_content           BLOB,
+  presentation_status            TEXT CHECK (presentation_status IN ('repaired', 'failed')),
+  presentation_repair            BLOB,
   is_llm_returned_empty_code         INTEGER NOT NULL DEFAULT 0
                                   CHECK (is_llm_returned_empty_code IN (0, 1)),
 

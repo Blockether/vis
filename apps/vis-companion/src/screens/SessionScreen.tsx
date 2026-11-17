@@ -27,6 +27,7 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
+import { LiveVoicePanel } from '../components/LiveVoicePanel';
 import { TurnAgents, agentsByTurn, dockTeams, leaderLane, storedAgents, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
@@ -204,7 +205,6 @@ import type {
   CouncilRequest,
 } from '../lib/types';
 import {
-  beginVoiceAudioSession,
   endVoiceAudioSession,
   startWavRecording,
   voiceProgressLabel,
@@ -333,6 +333,14 @@ const EARLIER_STEPS_WAIT_MS = 1200;
 // unconditionally after this: a transcript that is still loading paints when it
 // lands, and an unreachable gateway shows its error instead of a spinner.
 const LOADING_VEIL_MAX_MS = 12_000;
+
+// WebKit acquisition and cleanup can outlive the screen that started them.
+let dictationAudioWork: Promise<void> = Promise.resolve();
+function trackDictationAudio(work: Promise<void>): void {
+  dictationAudioWork = Promise.all([dictationAudioWork, work]).then(() => undefined);
+  // Keep a failed release closed to native handoff without an unhandled rejection.
+  void dictationAudioWork.catch(() => undefined);
+}
 
 // How long a following reader is carried across a HANDOVER. The running-turn bubble
 // leaving and its persisted row arriving is ONE transaction spread over frames: the
@@ -673,7 +681,8 @@ function LoadingSession({ ready, total }: { ready: number; total: number }) {
 /** The work one iteration record can SHOW: prose, thinking, steps, delivered input or an error. */
 function iterationCarriesOutput(iteration: TranscriptIteration): boolean {
   return Boolean(
-    iteration.assistant_prose?.trim() ||
+    iteration.presentation_content?.some((block) => block.type !== 'silence') ||
+      (!iteration.presentation_content && iteration.assistant_prose?.trim()) ||
       iteration.thinking?.trim() ||
       iteration.forms?.length ||
       iteration.user_input?.length ||
@@ -1255,6 +1264,14 @@ export function SessionScreen({
     () => client.cachedCapabilities()?.features.voice.model ?? null,
   );
   const [voicePhase, setVoicePhase] = useState<'idle' | 'recording' | 'transcribing'>('idle');
+  const [liveVoiceActive, setLiveVoiceActive] = useState(false);
+  const [voiceControlsTarget, setVoiceControlsTarget] = useState<HTMLDivElement | null>(null);
+  const [voiceStarting, setVoiceStarting] = useState(false);
+  const voiceAcquisitionRef = useRef<{ cancelled: boolean } | null>(null);
+  const voiceHandoffRef = useRef<object | null>(null);
+  const voiceVisitRef = useRef(0);
+  const voiceMountedRef = useRef(true);
+  const [liveVoiceRequest, setLiveVoiceRequest] = useState({ sid, count: 0 });
   // Where the transcription IS, straight from the gateway job. Null means the
   // engine has not reported yet (the bytes are still leaving this phone).
   const [voiceProgress, setVoiceProgress] = useState<VoiceProgress | null>(null);
@@ -1504,7 +1521,10 @@ export function SessionScreen({
     // turn settles. Changing session is not that: nothing here may re-open.
     dropOverlayHandovers();
     const cachedTranscript = client.cachedTranscript(sid);
-    void recordingRef.current?.cancel();
+    voiceVisitRef.current++;
+    if (voiceAcquisitionRef.current) voiceAcquisitionRef.current.cancelled = true;
+    voiceHandoffRef.current = null;
+    if (recordingRef.current) trackDictationAudio(recordingRef.current.cancel());
     recordingRef.current = null;
     void endVoiceAudioSession();
     pendingVoiceRef.current = null;
@@ -2935,18 +2955,22 @@ export function SessionScreen({
     void retryPendingVoice();
   }, [retryPendingVoice]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    voiceMountedRef.current = true;
+    return () => {
+      voiceMountedRef.current = false;
+      voiceVisitRef.current++;
+      if (voiceAcquisitionRef.current) voiceAcquisitionRef.current.cancelled = true;
+      voiceHandoffRef.current = null;
       voiceConversationRef.current = false;
       voiceLeaseRef.current = null;
       voiceOwnershipRef.current.leave();
-      void recordingRef.current?.cancel();
+      if (recordingRef.current) trackDictationAudio(recordingRef.current.cancel());
       recordingRef.current = null;
       void endVoiceAudioSession();
       speechOutput.stop();
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -4169,6 +4193,7 @@ export function SessionScreen({
   }
 
   async function toggleVoice() {
+    if (liveVoiceActive || voiceAcquisitionRef.current || voiceHandoffRef.current) return;
     setVoiceRequested(true);
     setComposerNotice(null);
 
@@ -4189,51 +4214,77 @@ export function SessionScreen({
     // was silence, and the empty transcript looked like a dead button. That
     // round trip is slowest exactly while a turn streams, which is when this
     // was reported.
-    let recording: WavRecording | null = null;
-    try {
-      recording = await startWavRecording({
-        // The mic can die without ending the turn: suspension, a call, another
-        // app. Close the sentence on the spot instead of leaving a recorder
-        // nobody will ever stop.
-        onInterrupted: (reason) => void finishVoiceRef.current({ notice: reason }),
-      });
-      // A gateway we cannot REACH is not a reason to refuse dictation: capture,
-      // resampling and WAV encoding are entirely local, and the result queues in
-      // the voice outbox until the link is back. Only a gateway that ANSWERS
-      // "not ready" can stop a recording.
-      let model = voiceModel;
-      if (model?.status !== 'ready') {
-        let reachable = true;
-        try {
-          const engine = await chosenAsrEngine(capabilities);
-          model = await client.voiceModel({ start: true, engine });
-          setVoiceModel(model);
-        } catch {
-          reachable = false;
+    const operation = { cancelled: false };
+    voiceAcquisitionRef.current = operation;
+    setVoiceStarting(true);
+    const acquisition = (async () => {
+      let recording: WavRecording | null = null;
+      try {
+        recording = await startWavRecording({
+          // The mic can die without ending the turn: suspension, a call, another
+          // app. Close the sentence on the spot instead of leaving a recorder
+          // nobody will ever stop.
+          onInterrupted: (reason) => {
+            if (!operation.cancelled) void finishVoiceRef.current({ notice: reason });
+          },
+        });
+        if (operation.cancelled) return;
+        // A gateway we cannot REACH is not a reason to refuse dictation: capture,
+        // resampling and WAV encoding are entirely local, and the result queues in
+        // the voice outbox until the link is back. Only a gateway that ANSWERS
+        // "not ready" can stop a recording.
+        let model = voiceModel;
+        if (model?.status !== 'ready') {
+          let reachable = true;
+          try {
+            const engine = await chosenAsrEngine(capabilities);
+            if (operation.cancelled) return;
+            model = await client.voiceModel({ start: true, engine });
+            if (operation.cancelled) return;
+            setVoiceModel(model);
+          } catch {
+            reachable = false;
+          }
+          if (operation.cancelled) return;
+          if (!reachable) {
+            setComposerNotice(
+              'Gateway unreachable — recording anyway; it transcribes once it answers.',
+            );
+          } else if (model && model.status !== 'ready') {
+            setComposerNotice(
+              model.status === 'downloading'
+                ? 'Downloading the voice model — dictation starts when it lands.'
+                : model.status === 'failed'
+                  ? `Voice model failed${model.error ? ` · ${model.error}` : ''}`
+                  : 'Voice model is not ready yet.',
+            );
+            return;
+          }
         }
-        if (!reachable) {
-          setComposerNotice(
-            'Gateway unreachable — recording anyway; it transcribes once it answers.',
-          );
-        } else if (model && model.status !== 'ready') {
-          await recording.cancel();
-          setComposerNotice(
-            model.status === 'downloading'
-              ? 'Downloading the voice model — dictation starts when it lands.'
-              : model.status === 'failed'
-                ? `Voice model failed${model.error ? ` · ${model.error}` : ''}`
-                : 'Voice model is not ready yet.',
-          );
-          return;
+        if (operation.cancelled) return;
+        recordingRef.current = recording;
+        recording = null;
+        setVoicePhase('recording');
+      } catch (cause) {
+        if (!operation.cancelled) {
+          setVoicePhase('idle');
+          setComposerNotice((cause as Error).message);
+        }
+      } finally {
+        try {
+          await recording?.cancel();
+        } finally {
+          if (voiceAcquisitionRef.current === operation) voiceAcquisitionRef.current = null;
+          if (voiceMountedRef.current) setVoiceStarting(false);
         }
       }
-      recordingRef.current = recording;
-      setVoicePhase('recording');
-    } catch (cause) {
-      await recording?.cancel().catch(() => {});
-      setVoicePhase('idle');
-      setComposerNotice((cause as Error).message);
-    }
+    })();
+    trackDictationAudio(acquisition);
+    await acquisition.catch(() => {
+      if (!operation.cancelled) {
+        setComposerNotice('Microphone cleanup failed. Reload before starting voice.');
+      }
+    });
   }
 
   async function send(voiceRequest?: string, voiceProjection = false) {
@@ -5744,26 +5795,39 @@ export function SessionScreen({
   // is never a switch, short enough that the switch is not a wait.
   const VOICE_MODE_HOLD_MS = 450;
 
-  // Entering the conversation only ARMS it: the audio route opens and the lease
-  // is taken, but nothing records until the next TAP. The menu item this
-  // replaced started recording in the same gesture, which is right for a menu
-  // and wrong for a hold — holding is how you change modes, not how you talk.
-  const enterVoiceConversation = async () => {
+  // A hold starts hands-free voice. A tap keeps dictation.
+  const requestHandsFreeVoice = async () => {
+    if (liveVoiceActive) return;
     if (Boolean(composerRef.current?.value.trim()) || attachments.length > 0 || pastes.size > 0) {
-      setComposerNotice('Send or clear the current message before starting voice conversation.');
+      setComposerNotice('Send or clear the current message before starting hands-free voice.');
       return;
     }
-    voiceConversationRef.current = true;
-    voiceLeaseRef.current = voiceOwnershipRef.current.enter();
-    setVoiceConversation(true);
-    setComposerNotice(null);
-    await beginVoiceAudioSession();
+    if (voiceHandoffRef.current) return;
+    const handoff = {};
+    const visit = voiceVisitRef.current;
+    voiceHandoffRef.current = handoff;
+    if (voiceAcquisitionRef.current) voiceAcquisitionRef.current.cancelled = true;
+    setComposerNotice('Finishing microphone setup…');
+    try {
+      await leaveVoiceConversation();
+      await dictationAudioWork;
+      if (
+        !voiceMountedRef.current ||
+        voiceVisitRef.current !== visit ||
+        voiceHandoffRef.current !== handoff
+      ) return;
+      setComposerNotice(null);
+      setLiveVoiceRequest((previous) => ({ sid, count: previous.count + 1 }));
+    } catch {
+      if (voiceMountedRef.current && voiceVisitRef.current === visit) {
+        setComposerNotice('Microphone cleanup failed. Reload before starting voice.');
+      }
+    } finally {
+      if (voiceHandoffRef.current === handoff) voiceHandoffRef.current = null;
+    }
   };
 
-  // The one exit, and the one entrance. Leaving is the FULL teardown — lease,
-  // ownership, queued utterance, speech, an in-flight recording and the audio
-  // route — which is exactly what the separate leave button used to do, so the
-  // hold replaces it rather than leaving the route open behind a flag.
+  // Preserve a recording when a mode gesture finishes it.
   const switchVoiceMode = async () => {
     // Words already spoken belong to the user. A switch gesture during a recording
     // only finishes it, so the words reach the box (or the turn) and the mode stays.
@@ -5776,23 +5840,20 @@ export function SessionScreen({
       setComposerNotice('Dictation · tap the microphone to write into the box');
       return;
     }
-    await enterVoiceConversation();
+    await requestHandsFreeVoice();
   };
 
-  // A Talk link arms voice conversation once, after voice support is known. The
-  // web view needs a tap before it can record, so the notice asks for that tap.
-  const enterVoiceConversationRef = useRef(enterVoiceConversation);
+  // A Talk link requests the same voice mode once, after voice support is known.
+  const requestHandsFreeVoiceRef = useRef(requestHandsFreeVoice);
   useEffect(() => {
-    enterVoiceConversationRef.current = enterVoiceConversation;
+    requestHandsFreeVoiceRef.current = requestHandsFreeVoice;
   });
   const handledTalkRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!talk || !voiceSupported || handledTalkRef.current === talk) return;
     handledTalkRef.current = talk;
     if (voiceConversationRef.current) return;
-    void enterVoiceConversationRef.current().then(() => {
-      if (voiceConversationRef.current) setComposerNotice('Voice conversation · tap the microphone to talk');
-    });
+    void requestHandsFreeVoiceRef.current();
   }, [talk, voiceSupported]);
 
   const beginVoiceModeHold = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -5857,10 +5918,10 @@ export function SessionScreen({
         onPointerCancel={cancelVoiceModeHold}
         onContextMenu={(event) => {
           event.preventDefault();
+          if (voiceModeSwitchedRef.current) return;
           cancelVoiceModeHold();
-          // A touch long press can also end in a click. When this press finishes a
-          // recording, that click must not start the next one.
-          if (recordingRef.current) voiceModeSwitchedRef.current = true;
+          // A touch long press can end in a click. Do not start dictation after the handoff.
+          voiceModeSwitchedRef.current = true;
           void switchVoiceMode();
         }}
         onKeyDown={(event) => {
@@ -5881,25 +5942,28 @@ export function SessionScreen({
           void (voiceConversation ? speakVoiceTurn() : toggleVoice());
         }}
         disabled={
+          liveVoiceActive ||
           voicePhase === 'transcribing' ||
           voiceModel?.status === 'downloading' ||
           (voiceConversation && running && !voiceSpeaking)
         }
         label={
-          voiceSpeaking
-            ? 'Stop speaking — hold to switch to dictation'
-            : voicePhase === 'recording'
-              ? voiceConversation
-                ? 'Finish voice utterance'
-                : 'Finish dictation'
-              : voiceConversation
-                ? 'Start voice utterance — hold to switch to dictation'
-                : 'Dictate message — hold to switch to voice conversation'
+          voiceStarting
+            ? 'Starting microphone — hold for hands-free voice'
+            : voiceSpeaking
+              ? 'Stop speaking — hold to switch to dictation'
+              : voicePhase === 'recording'
+                ? voiceConversation
+                  ? 'Finish voice utterance'
+                  : 'Finish dictation'
+                : voiceConversation
+                  ? 'Start voice utterance — hold to switch to dictation'
+                  : 'Dictate message — hold for hands-free voice'
         }
         title={
           voiceConversation
             ? 'Voice conversation — hold to switch to dictation'
-            : 'Dictate message — hold to switch to voice conversation'
+            : 'Dictate message — hold for hands-free voice'
         }
       >
         {voiceConversation ? <VoiceLoopIcon /> : <MicIcon />}
@@ -6067,7 +6131,11 @@ export function SessionScreen({
                 sid={sid}
                 artifacts={artifacts}
                 initialArtifact={linkedArtifact}
-                voiceControl={voiceConversation ? renderVoiceControl('overlay') : undefined}
+                voiceControl={
+                  liveVoiceRequest.sid === sid && liveVoiceRequest.count > 0
+                    ? <div ref={setVoiceControlsTarget} />
+                    : voiceConversation ? renderVoiceControl('overlay') : undefined
+                }
                 onClose={closeArtifacts}
               />
             )}
@@ -6242,6 +6310,20 @@ export function SessionScreen({
                 onSelect={completeSlash}
               />
 
+              <LiveVoicePanel
+                key={`${client.base}:${sid}`}
+                client={client}
+                sid={sid}
+                startRequest={liveVoiceRequest.sid === sid ? liveVoiceRequest.count : 0}
+                controlsTarget={voiceControlsTarget}
+                disabled={voiceStarting || voicePhase !== 'idle' || voiceConversation}
+                onActive={setLiveVoiceActive}
+                onBegin={() => {
+                  speechOutput.stop();
+                  setVoiceSpeaking(false);
+                }}
+              />
+
               <QueuedTurnsTray
                 key={sid}
                 client={client}
@@ -6269,6 +6351,7 @@ export function SessionScreen({
                 />
 
                 {(composerNotice ||
+                  voiceStarting ||
                   voiceConversation ||
                   voicePhase !== 'idle' ||
                   voiceModel?.status === 'downloading' ||
@@ -6295,6 +6378,8 @@ export function SessionScreen({
                       <>Voice conversation · {session?.agent_name ?? 'Vis'} is working</>
                     ) : voiceConversation ? (
                       <>Voice conversation · Ready · tap the microphone to speak</>
+                    ) : voiceStarting ? (
+                      <>Starting microphone…</>
                     ) : voiceModel?.status === 'downloading' ? (
                       <>
                         {voiceModel.phase === 'extracting'

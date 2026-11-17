@@ -85,7 +85,7 @@ export interface RunningTurn {
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   /** Bytes sent by this device; the running-turn wire carries descriptors only. */
   attachments?: GatewayAttachment[];
-  /** Terminal-frame content retained until the persisted transcript takes over. */
+  /** Typed streamed content, replaced by terminal content until the transcript takes over. */
   content?: ContentBlock[];
   /** Start offset of each live block's known text; absent means offset 0. */
   streamBases?: Record<string, number>;
@@ -361,7 +361,21 @@ export function reduceRunningTurnEvent(
     }));
   }
 
+  if (type === 'content.block.started') {
+    const block = event.block as ContentBlock | undefined;
+    if (
+      !block ||
+      typeof block.id !== 'string' ||
+      !['conversation', 'visual', 'silence'].includes(block.type)
+    ) return turn;
+    // Complete presentation records are immutable. Replay keeps their first copy.
+    if (turn.content?.some((current) => current.id === block.id)) return turn;
+    return { ...turn, content: [...(turn.content ?? []), block], progress: undefined };
+  }
+
   if (type === 'content.block.delta') {
+    // Presentation records arrive complete, never as reasoning or prose fragments.
+    if (turn.content?.some((block) => block.id === eventBlockKey(event))) return turn;
     const field = eventString(event, 'field');
     const blockId = eventBlockKey(event);
     const position = eventIterationPosition(event);
@@ -409,7 +423,12 @@ export function reduceRunningTurnEvent(
       thinking: Object.prototype.hasOwnProperty.call(event, 'thinking')
         ? eventString(event, 'thinking')
         : iteration.thinking,
-      assistant_prose: eventString(event, 'assistant_prose') || iteration.assistant_prose,
+      presentation_content: Array.isArray(event.presentation_content)
+        ? (event.presentation_content as ContentBlock[])
+        : iteration.presentation_content,
+      assistant_prose: Array.isArray(event.presentation_content)
+        ? undefined
+        : eventString(event, 'assistant_prose') || iteration.assistant_prose,
       attachments: attached?.length ? attached : iteration.attachments,
       error: undefined,
     }));
