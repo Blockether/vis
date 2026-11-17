@@ -1124,7 +1124,7 @@ function PairChoice({ title, children }: { title: string; children: ReactNode })
  * chip beside a mono line, never a code block a finger has to select: the reader is
  * on the phone or at this screen, and the terminal is on the other machine.
  */
-function PairCommand({ value, isInline = false }: { value: string; isInline?: boolean }) {
+export function PairCommand({ value, isInline = false }: { value: string; isInline?: boolean }) {
   if (isInline) {
     return <code className="font-mono text-accent-ink">{value}</code>;
   }
