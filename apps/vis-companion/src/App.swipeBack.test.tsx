@@ -2,7 +2,7 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderApp } from './app-harness';
+import { renderApp, sessionArrived } from './app-harness';
 import { listSession } from './screens/sessions-screen-harness';
 import { drag } from './lib/pull-to-search.fixture';
 
@@ -49,6 +49,7 @@ describe('swiping in from the edge of a transcript', () => {
     await screen.findByText('Alpha one');
     fireEvent.click(screen.getByText('Alpha one'));
     await screen.findByLabelText('Message Vis');
+    await sessionArrived();
     const pane = (view.baseElement.querySelector('main') as HTMLElement)
       .lastElementChild as HTMLElement;
 
@@ -93,6 +94,7 @@ describe('swiping in from the edge of a transcript', () => {
     await screen.findByText('Alpha one');
     fireEvent.click(screen.getByText('Alpha one'));
     await screen.findByLabelText('Message Vis');
+    await sessionArrived();
     const main = view.baseElement.querySelector('main') as HTMLElement;
     const list = main.firstElementChild as HTMLElement;
     const pane = main.lastElementChild as HTMLElement;

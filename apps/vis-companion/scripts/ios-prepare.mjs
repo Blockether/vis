@@ -265,6 +265,13 @@ const plistEntries = [
     `\t<key>UIViewControllerBasedStatusBarAppearance</key>
 \t<false/>`,
   ],
+  // Without this key an iPhone with a 120 Hz screen draws the animations of the page at
+  // 60 Hz. The slide of the session pane is such an animation.
+  [
+    'CADisableMinimumFrameDurationOnPhone',
+    `\t<key>CADisableMinimumFrameDurationOnPhone</key>
+\t<true/>`,
+  ],
   [
     'UIBackgroundModes',
     `\t<key>UIBackgroundModes</key>

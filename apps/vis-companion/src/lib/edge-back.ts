@@ -22,9 +22,14 @@
  * 0, 1)` and at most 540ms for the rest of the way. A page let go before the middle
  * goes home unless it was thrown, and it does not scroll while it is dragged. A
  * reader who asked for less motion keeps the plain step, with no slide at all.
+ *
+ * THE ARROW AND THE PHONE'S OWN BACK TAKE THE SAME SLIDE, and a session that opens
+ * from the list comes in the way it goes out. A page that slides under the finger and
+ * jumps under the arrow reads as two different apps. Android reads its back gesture
+ * itself and reports each step (`lib/back-gesture`), so that stroke drags this page too.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { isAppForeground, isKeyboardInputElement } from './viewport';
 
 /** A finger, in client coordinates. */
@@ -384,6 +389,18 @@ function edgeSettle(stage: EdgeStage, completes: boolean, ms: number): void {
   edgePaint(stage, completes ? stage.width : 0);
 }
 
+/** Stop a slide where it is on the glass, and say how far across the pane stands. */
+function edgeHalt(stage: EdgeStage): number {
+  // A browser gives the place of a moving pane as a matrix: `matrix(1, 0, 0, 1, x, 0)`.
+  const matrix = /^matrix\(([^)]+)\)$/.exec(getComputedStyle(stage.pane).transform);
+  const across = Number(matrix?.[1].split(',')[4]) || 0;
+  stage.pane.style.transition = '';
+  if (stage.under) stage.under.style.transition = '';
+  if (stage.veil) stage.veil.style.transition = '';
+  edgePaint(stage, across);
+  return Math.max(0, Math.min(across, stage.width));
+}
+
 /** Give both panes back exactly the inline styles they arrived with. */
 function edgeClose(stage: EdgeStage): void {
   for (const [scroller, overflowY] of stage.held) scroller.style.overflowY = overflowY;
@@ -418,6 +435,18 @@ export interface EdgeBackPanes {
    * must be on the glass.
    */
   readonly isSwiping: boolean;
+  /**
+   * Take the way back with no finger on the pane: the header's arrow and the phone's
+   * own back. The page slides out, then the step is taken. A stroke in flight is
+   * carried the rest of the way from where it stands.
+   */
+  readonly leave: () => void;
+  /**
+   * A stroke that the phone reads itself, such as Android's back gesture. `step` is how
+   * much of the way the page has come, from 0 to 1. `null` takes the stroke back, and
+   * {@link leave} completes it.
+   */
+  readonly drag: (step: number | null) => void;
 }
 
 export interface EdgeBackOptions {
@@ -427,6 +456,12 @@ export interface EdgeBackOptions {
    * uncovers is already on screen behind it, so `under` goes unused.
    */
   readonly isLayer?: boolean;
+  /**
+   * Which of the two the phone shows now: the page in this hook's pane, or the one
+   * under it. When `under` gives way to `pane`, the page slides in over it. Each other
+   * change is a plain step: a cold start into a session has nothing to slide over.
+   */
+  readonly page?: 'pane' | 'under' | null;
 }
 
 /**
@@ -518,7 +553,7 @@ export function isLayerUp(doc: Document = document): boolean {
  */
 export function useEdgeBack(
   onBack: (() => void) | null,
-  { isLayer = false }: EdgeBackOptions = {},
+  { isLayer = false, page = null }: EdgeBackOptions = {},
 ): EdgeBackPanes {
   // Read only from an event, so it is kept in a ref instead of resubscribing the
   // listeners every time the shell re-renders.
@@ -540,6 +575,53 @@ export function useEdgeBack(
   // The same layer answers the phone's own back button, which arrives as one event
   // for the shell rather than as a finger on this pane.
   useBackLayer(isLayer ? onBack : null);
+  // The ways back that no finger on the pane draws, while the pane is watched.
+  const hands = useRef<{ leave: () => void; drag: (step: number | null) => void } | null>(null);
+
+  // THE PAGE COMES IN THE WAY IT GOES OUT. The render that shows it also keeps the list
+  // and the app bar on the glass, so the shell never drops them and builds them again.
+  const [shown, setShown] = useState(page);
+  const [isEntering, setEntering] = useState(false);
+  if (shown !== page) {
+    setShown(page);
+    setEntering(
+      !isLayer &&
+        shown === 'under' &&
+        page === 'pane' &&
+        wantsMotion(typeof window === 'undefined' ? null : window),
+    );
+  }
+  // A page on its way in takes no stroke: it is not there yet.
+  const entering = useRef(false);
+  useLayoutEffect(() => {
+    // The pane arrives one render after the page: wait for it.
+    if (!isEntering || !pane) return;
+    const view = pane.ownerDocument.defaultView;
+    const stage = edgeOpen(pane, under.current, false);
+    entering.current = true;
+    // Off the glass first, with no transition: the frame after starts the slide.
+    edgePaint(stage, stage.width);
+    let timer: number | null = null;
+    let frame: number | null = null;
+    const arrive = () => setEntering(false);
+    const slide = () => {
+      frame = null;
+      // The veil is new and the pane has just moved: the slide starts from where the
+      // browser has seen them, so it must see them first.
+      void pane.offsetWidth;
+      const ms = edgeSettleMs(stage.width, 0);
+      edgeSettle(stage, false, ms);
+      timer = view?.setTimeout(arrive, edgeArrivalMs(stage.width, ms)) ?? null;
+    };
+    if (view?.requestAnimationFrame) frame = view.requestAnimationFrame(slide);
+    else slide();
+    return () => {
+      if (frame !== null) view?.cancelAnimationFrame(frame);
+      if (timer !== null) view?.clearTimeout(timer);
+      edgeClose(stage);
+      entering.current = false;
+    };
+  }, [isEntering, pane]);
 
   useEffect(() => {
     if (!pane || !hasDoor) return;
@@ -558,6 +640,14 @@ export function useEdgeBack(
     // What the finger landed on, and whether this stroke already holds its scrollers.
     let from: EventTarget | null = null;
     let isScrollHeld = false;
+    // The lift, the arrow or the phone's back has sent the page out, and the step waits.
+    let isLeaving = false;
+    // How far the phone's own stroke has carried the page, while it holds the stage.
+    let driven: number | null = null;
+    // Where a touch had put the page when the phone took its stroke.
+    let floor = 0;
+    // The frame in which a way back with no finger starts its slide.
+    let frame: number | null = null;
 
     const pointOf = (event: TouchEvent): EdgePoint | null => {
       const touch = event.touches[0];
@@ -596,6 +686,7 @@ export function useEdgeBack(
     const release = () => {
       const closing = landing;
       landing = null;
+      isLeaving = false;
       if (timer !== null) view?.clearTimeout(timer);
       timer = null;
       setSwiping(false);
@@ -632,6 +723,7 @@ export function useEdgeBack(
      */
     const finish = (completes: boolean, across: number) => {
       gesture = null;
+      driven = null;
       const closing = stage;
       stage = null;
       if (!closing) {
@@ -639,6 +731,7 @@ export function useEdgeBack(
         return;
       }
       landing = closing;
+      isLeaving = completes;
       const travelled = Math.max(0, Math.min(across, closing.width));
       const remaining = completes ? closing.width - travelled : travelled;
       const ms = edgeSettleMs(remaining, velocity);
@@ -656,13 +749,93 @@ export function useEdgeBack(
       else timer = view?.setTimeout(land, edgeArrivalMs(remaining, ms)) ?? null;
     };
 
+    /**
+     * Set the stage for a way back that no finger on this pane draws. Null for a pane
+     * that takes the plain step: a layer, or a reader who asked for less motion.
+     */
+    const stand = (): EdgeStage | null => {
+      if (isLayer || !wantsMotion(view)) return null;
+      edgeDropKeyboard(pane);
+      velocity = 0;
+      const opened = open();
+      edgePaint(opened, 0);
+      return opened;
+    };
+
+    const leave = () => {
+      if (isLeaving) return;
+      // A page that is still on its way, in or home, takes the plain step.
+      if (entering.current || landing) {
+        latest.current?.();
+        return;
+      }
+      if (stage) {
+        finish(true, driven ?? gesture?.across ?? 0);
+        return;
+      }
+      const opened = stand();
+      if (!opened) {
+        latest.current?.();
+        return;
+      }
+      stage = opened;
+      // The slide starts one frame later: by then the shell has put the list and the
+      // app bar on the glass, and the browser has seen where the panes start.
+      const go = () => {
+        frame = null;
+        if (stage !== opened) return;
+        void pane.offsetWidth;
+        finish(true, 0);
+      };
+      if (view?.requestAnimationFrame) frame = view.requestAnimationFrame(go);
+      else go();
+    };
+
+    const drag = (step: number | null) => {
+      if (step === null) {
+        if (driven !== null && stage) finish(false, driven);
+        return;
+      }
+      if (driven === null) {
+        if (isLeaving || entering.current) return;
+        // THE PHONE TOOK THE TOUCH THAT BEGAN THIS STROKE. The page saw the start of the
+        // touch and moved with it. The cancel of that touch comes before this first step
+        // or after it. The page stays where the touch put it and goes on from there.
+        // Sent home first, it jumped back at the start of each stroke.
+        if (stage && gesture) {
+          floor = Math.min(gesture.across, stage.width);
+          edgeDropKeyboard(pane);
+        } else if (stage) {
+          // The arrow set this stage, and its slide starts in the next frame.
+          return;
+        } else if (landing) {
+          if (timer !== null) view?.clearTimeout(timer);
+          timer = null;
+          stage = landing;
+          landing = null;
+          floor = edgeHalt(stage);
+        } else {
+          const opened = stand();
+          if (!opened) return;
+          stage = opened;
+          floor = 0;
+        }
+        gesture = null;
+        velocity = 0;
+      }
+      if (!stage) return;
+      driven = floor + Math.max(0, Math.min(step, 1)) * (stage.width - floor);
+      edgePaint(stage, driven);
+    };
+    hands.current = { leave, drag };
+
     const onStart = (event: Event) => {
-      if (landing) return;
+      if (landing || entering.current) return;
       // A STROKE STILL ON THE STAGE NEVER ENDED HERE. A second finger refused its
       // gesture, or its lift went to a node that left the tree. Send it home first.
       // A new stage over it would keep its shifted list as the list's own style.
       if (stage) {
-        finish(false, gesture?.across ?? 0);
+        finish(false, driven ?? gesture?.across ?? 0);
         return;
       }
       const touchEvent = event as TouchEvent;
@@ -736,6 +909,8 @@ export function useEdgeBack(
     // A cancel is not a lift. WebKit sends one when it hands the drag to a native
     // scroller, and a stroke the browser took away was never released here.
     const onCancel = () => {
+      // The phone's own stroke holds the stage: its cancel is not this touch's.
+      if (driven !== null) return;
       if (gesture || stage) finish(false, gesture?.across ?? 0);
     };
 
@@ -748,6 +923,8 @@ export function useEdgeBack(
       pane.removeEventListener('touchmove', onMove, true);
       pane.removeEventListener('touchend', onEnd, true);
       pane.removeEventListener('touchcancel', onCancel, true);
+      hands.current = null;
+      if (frame !== null) view?.cancelAnimationFrame(frame);
       if (stage) {
         edgeClose(stage);
         setSwiping(false);
@@ -757,5 +934,11 @@ export function useEdgeBack(
     };
   }, [hasDoor, isLayer, pane]);
 
-  return { pane: setPane, under: setUnder, isSwiping: swiping };
+  const leave = useCallback(() => {
+    if (hands.current) hands.current.leave();
+    else latest.current?.();
+  }, []);
+  const drag = useCallback((step: number | null) => hands.current?.drag(step), []);
+
+  return { pane: setPane, under: setUnder, isSwiping: swiping || isEntering, leave, drag };
 }

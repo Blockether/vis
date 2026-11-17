@@ -16,7 +16,7 @@ vi.mock('./lib/fleet', async (importOriginal) => {
   };
 });
 
-import { renderApp } from './app-harness';
+import { renderApp, sessionArrived } from './app-harness';
 import { flushDraftMessages } from './lib/draft-messages';
 import { listSession } from './screens/sessions-screen-harness';
 
@@ -49,6 +49,7 @@ const openFirstSession = async () => {
   restore = view.restore;
   fireEvent.click(await screen.findByText('Untitled session'));
   const composer = (await screen.findByLabelText('Message Vis')) as HTMLTextAreaElement;
+  await sessionArrived();
   // The stored draft message is read asynchronously and nothing is recorded
   // until it lands, so let it land before a keystroke is measured.
   await settle(50);

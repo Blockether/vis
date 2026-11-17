@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, render } from '@testing-library/react';
+import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // jsdom cannot build a `Touch`, so the same dispatch helpers the pull gesture
@@ -131,21 +132,31 @@ function OpenSession({
   onBack,
   open = true,
   enabled = true,
+  page,
+  stroke,
 }: {
   onBack: () => void;
   open?: boolean;
   enabled?: boolean;
+  /** Which page the phone shows, when the test follows a session on its way in. */
+  page?: 'pane' | 'under' | null;
+  /** Receives the way the phone's own back stroke drags the pane. */
+  stroke?: (drag: (step: number | null) => void) => void;
 }) {
-  const { pane, under } = useEdgeBack(enabled ? onBack : null);
+  const { pane, under, isSwiping, leave, drag } = useEdgeBack(enabled ? onBack : null, { page });
+  useEffect(() => stroke?.(drag), [stroke, drag]);
   // The same two panes `App` mounts inside the shell: the list is up behind the
   // transcript the whole time it is open, which is what the stroke uncovers.
   return (
-    <div data-viewport-shell>
+    <div data-viewport-shell data-testid="shell" data-chrome={isSwiping ? 'up' : undefined}>
       <div ref={under} data-testid="list">
         sessions
       </div>
       {open && (
         <div ref={pane} data-testid="pane">
+          <button type="button" data-testid="arrow" onClick={leave}>
+            back
+          </button>
           <p data-testid="line">transcript</p>
         </div>
       )}
@@ -606,6 +617,194 @@ describe('the pop the stroke draws', () => {
       const { getByTestId } = render(<OpenSession onBack={onBack} />);
 
       act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+
+      expect(getByTestId('pane').style.transform).toBe('');
+      expect(onBack).toHaveBeenCalledTimes(1);
+    } finally {
+      window.matchMedia = asked;
+    }
+  });
+});
+
+// Reported by the user (paraphrased: only the swipe slides; the back arrow and opening a
+// session jump, and on Android the system's own back gesture jumps too). The same page
+// must move the same way whichever hand asks.
+describe('the ways back and in that no finger on the pane draws', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** The phone's own back stroke, handed the way to drag the pane. */
+  const systemStroke = () => {
+    const stroke = {
+      drag: (_step: number | null) => {},
+      take: (drag: (step: number | null) => void) => {
+        stroke.drag = drag;
+      },
+    };
+    return stroke;
+  };
+
+  /** Let one frame pass: a slide with no finger starts in the frame after it is asked for. */
+  const frame = () =>
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+
+  it('slides the transcript out under the arrow, and only then takes the step', () => {
+    const onBack = vi.fn();
+    const { getByTestId } = render(<OpenSession onBack={onBack} />);
+    const pane = getByTestId('pane');
+
+    act(() => getByTestId('arrow').click());
+    // The list and the app bar are on the glass before the page moves.
+    expect(getByTestId('shell').dataset.chrome).toBe('up');
+    expect(xOf(pane)).toBe(0);
+
+    frame();
+    expect(pane.style.transition).toContain(EDGE_EASING);
+    expect(xOf(pane)).toBe(window.innerWidth);
+    expect(onBack).not.toHaveBeenCalled();
+
+    settle();
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes one step when the arrow is pressed again on a page that is leaving', () => {
+    const onBack = vi.fn();
+    const { getByTestId } = render(<OpenSession onBack={onBack} />);
+
+    act(() => getByTestId('arrow').click());
+    frame();
+    act(() => getByTestId('arrow').click());
+    settle();
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('slides a session in over the list that opened it', () => {
+    const { getByTestId, rerender } = render(
+      <OpenSession onBack={vi.fn()} open={false} page="under" />,
+    );
+    const list = getByTestId('list');
+
+    rerender(<OpenSession onBack={vi.fn()} page="pane" />);
+    const pane = getByTestId('pane');
+    // Off the glass first, with the list and the app bar still up behind it.
+    expect(xOf(pane)).toBe(window.innerWidth);
+    expect(pane.style.transition).toBe('');
+    expect(getByTestId('shell').dataset.chrome).toBe('up');
+    expect(xOf(list)).toBe(0);
+
+    frame();
+    expect(pane.style.transition).toContain(EDGE_EASING);
+    expect(xOf(pane)).toBe(0);
+    expect(xOf(list)).toBe(-window.innerWidth * EDGE_PARALLAX);
+    expect(veilOf(pane).style.opacity).toBe(`${EDGE_DIM}`);
+
+    settle();
+    expect(pane.style.cssText).toBe('');
+    expect(list.style.cssText).toBe('');
+    expect(document.querySelector('[data-edge-veil]')).toBe(null);
+    expect(getByTestId('shell').dataset.chrome).toBeUndefined();
+  });
+
+  it('opens a session with a plain step when no list stood under it', () => {
+    const { getByTestId, rerender } = render(
+      <OpenSession onBack={vi.fn()} open={false} page={null} />,
+    );
+
+    rerender(<OpenSession onBack={vi.fn()} page="pane" />);
+
+    expect(getByTestId('pane').style.transform).toBe('');
+    expect(getByTestId('shell').dataset.chrome).toBeUndefined();
+  });
+
+  it("follows the phone's own back stroke, and goes home when it is taken back", () => {
+    const onBack = vi.fn();
+    const stroke = systemStroke();
+    const { getByTestId } = render(<OpenSession onBack={onBack} stroke={stroke.take} />);
+    const pane = getByTestId('pane');
+    const list = getByTestId('list');
+
+    act(() => stroke.drag(0));
+    expect(xOf(pane)).toBe(0);
+    act(() => stroke.drag(0.25));
+    expect(xOf(pane)).toBe(window.innerWidth * 0.25);
+    expect(xOf(list)).toBeCloseTo(-0.75 * window.innerWidth * EDGE_PARALLAX);
+
+    act(() => stroke.drag(null));
+    expect(xOf(pane)).toBe(0);
+    settle();
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(pane.style.cssText).toBe('');
+    expect(list.style.cssText).toBe('');
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("carries the phone's own stroke the rest of the way when the phone says back", () => {
+    const onBack = vi.fn();
+    const stroke = systemStroke();
+    const { getByTestId } = render(<OpenSession onBack={onBack} stroke={stroke.take} />);
+    const pane = getByTestId('pane');
+
+    act(() => stroke.drag(0.3));
+    // The phone's back arrives as the same call the arrow makes.
+    act(() => getByTestId('arrow').click());
+
+    expect(pane.style.transition).toContain(EDGE_EASING);
+    expect(xOf(pane)).toBe(window.innerWidth);
+    expect(onBack).not.toHaveBeenCalled();
+    settle();
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the page where the touch put it when the phone takes the touch's stroke", () => {
+    const onBack = vi.fn();
+    const stroke = systemStroke();
+    const { getByTestId } = render(<OpenSession onBack={onBack} stroke={stroke.take} />);
+    const pane = getByTestId('pane');
+    const line = getByTestId('line');
+
+    // The page sees the start of each stroke. Then the phone takes the touch away.
+    act(() => {
+      fireTouch(line, 'touchstart', [AT]);
+      fireTouch(line, 'touchmove', [across(20)]);
+    });
+    expect(xOf(pane)).toBe(20);
+    act(() => stroke.drag(0));
+    expect(xOf(pane)).toBe(20);
+    act(() => {
+      fireTouch(line, 'touchcancel', []);
+    });
+    expect(xOf(pane)).toBe(20);
+    expect(pane.style.transition).toBe('');
+    act(() => stroke.drag(0.5));
+    expect(xOf(pane)).toBe(20 + 0.5 * (window.innerWidth - 20));
+
+    act(() => getByTestId('arrow').click());
+    settle();
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the plain step under the arrow for a reader who asked for less motion', () => {
+    const onBack = vi.fn();
+    const asked = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      ...asked(query),
+      matches: query.includes('prefers-reduced-motion'),
+    })) as typeof window.matchMedia;
+
+    try {
+      const { getByTestId } = render(<OpenSession onBack={onBack} />);
+
+      act(() => getByTestId('arrow').click());
 
       expect(getByTestId('pane').style.transform).toBe('');
       expect(onBack).toHaveBeenCalledTimes(1);

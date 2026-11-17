@@ -107,7 +107,8 @@ import {
 } from './lib/router';
 import { parseTalkLink, talkConnection, type TalkLink } from './lib/talk';
 import { reclaimViewportForExternalNavigation, useVisualViewportShell } from './lib/viewport';
-import { dismissTopLayer, useEdgeBack } from './lib/edge-back';
+import { watchBackGesture } from './lib/back-gesture';
+import { dismissTopLayer, isLayerUp, useEdgeBack } from './lib/edge-back';
 import { App as CapacitorApp } from '@capacitor/app';
 import {
   acquirePushToken,
@@ -800,32 +801,6 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   // listener is registered once instead of re-crossing the bridge per render.
   const backRef = useRef<() => void>(() => {});
   useEffect(() => {
-    backRef.current = () => {
-      // WHAT STANDS ON TOP GOES FIRST. An opened run, a document, the artifact sheet,
-      // any dialog — that is the place the reader is IN, so back takes it down rather
-      // than the session underneath it, exactly as a finger drawn in from its left
-      // edge does. A layer says it is up while it is up (`lib/edge-back`).
-      if (dismissTopLayer()) return;
-      if (settingsDestination) {
-        setSettingsDestination(null);
-        return;
-      }
-      if (openTarget) {
-        leaveSession();
-        return;
-      }
-      if (tab !== 'sessions' && conns.length > 0 && active) {
-        setTab('sessions');
-        return;
-      }
-      try {
-        void CapacitorApp.exitApp().catch(() => undefined);
-      } catch {
-        /* web build: nothing to exit */
-      }
-    };
-  });
-  useEffect(() => {
     let removed = false;
     let sub: { remove: () => void } | null = null;
     try {
@@ -1433,22 +1408,6 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   // A media query is a runtime fact, read here so every render asks it once.
   const isDesk = useDeskRail();
 
-  // THE WAY BACK IS ALSO A STROKE. On a phone the transcript IS the screen, so a
-  // finger drawn in from its leading edge takes the same step the header's arrow
-  // takes and Android's back gesture takes: out of the session, back to the list.
-  // On a desk the list is already standing beside the transcript, so there is
-  // nowhere to come back to and the gesture stands down. Where the system owns
-  // that edge itself — Android's own back gesture — the web view is sent a
-  // cancel rather than a lift, and a stroke taken away was never released here.
-  //
-  // The stroke DRAGS the transcript off the glass, so whatever it uncovers has to
-  // be standing there already: while one is in flight the list and the app bar it
-  // comes back to are put on the shell, behind the pane that is still covering
-  // them, and the gesture slides the two past each other the way iOS does.
-  const edgeBack = useEdgeBack(!isDesk && openTarget ? leaveSession : null);
-
-  if (!ready) return <Splash />;
-
   // A session already open keeps its own screen; the offline gate is about the
   // list, not about the transcript you are reading.
   const blocked = !!offline && !openTarget;
@@ -1467,6 +1426,69 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
     hasConn,
     tab,
   });
+
+  // THE WAY BACK IS ALSO A STROKE. On a phone the transcript IS the screen, so a
+  // finger drawn in from its leading edge takes the same step the header's arrow
+  // takes and Android's back gesture takes: out of the session, back to the list.
+  // On a desk the list is already standing beside the transcript, so there is
+  // nowhere to come back to and the gesture stands down. Where the system owns
+  // that edge itself — Android's own back gesture — the web view is sent a
+  // cancel rather than a lift, and a stroke taken away was never released here.
+  //
+  // The stroke DRAGS the transcript off the glass, so whatever it uncovers has to
+  // be standing there already: while one is in flight the list and the app bar it
+  // comes back to are put on the shell, behind the pane that is still covering
+  // them, and the gesture slides the two past each other the way iOS does.
+  //
+  // THE ARROW, THE PHONE'S BACK AND THE WAY IN SLIDE TOO. A session that opens from
+  // the list comes in over it, and each way back that no finger draws carries the
+  // transcript off the same way (`edgeBack.leave`). Only the phone's two pages slide:
+  // a session that opens from a cold start or from Machines has no list to slide over.
+  const edgeBack = useEdgeBack(!isDesk && openTarget ? leaveSession : null, {
+    page: isDesk ? null : shellView === 'session' ? 'pane' : shellView === 'sessions' ? 'under' : null,
+  });
+
+  useEffect(() => {
+    backRef.current = () => {
+      // WHAT STANDS ON TOP GOES FIRST. An opened run, a document, the artifact sheet,
+      // any dialog — that is the place the reader is IN, so back takes it down rather
+      // than the session underneath it, exactly as a finger drawn in from its left
+      // edge does. A layer says it is up while it is up (`lib/edge-back`).
+      if (dismissTopLayer()) return;
+      if (settingsDestination) {
+        setSettingsDestination(null);
+        return;
+      }
+      if (openTarget) {
+        if (isDesk) leaveSession();
+        else edgeBack.leave();
+        return;
+      }
+      if (tab !== 'sessions' && conns.length > 0 && active) {
+        setTab('sessions');
+        return;
+      }
+      try {
+        void CapacitorApp.exitApp().catch(() => undefined);
+      } catch {
+        /* web build: nothing to exit */
+      }
+    };
+  });
+  // THE PHONE'S OWN BACK GESTURE DRAGS THE TRANSCRIPT. Android reads that stroke itself
+  // and reports each step of it. Back takes down what stands on top first, so a stroke
+  // that begins under a layer or under Settings drags nothing.
+  const dragRef = useRef<(step: number | null) => void>(() => {});
+  useEffect(() => {
+    dragRef.current = (step) => {
+      if (step !== null && (isLayerUp() || settingsDestination)) return;
+      edgeBack.drag(step);
+    };
+  });
+  useEffect(() => watchBackGesture((step) => dragRef.current(step)), []);
+
+  if (!ready) return <Splash />;
+
   // THE DESK SPLITS THE SHELL: the list is a sidebar and the transcript, or the
   // empty pane that waits for one, fills the rest. The decision is `lib/shell`'s;
   // the width is read here because a media query is a runtime fact. The sidebar
@@ -1593,7 +1615,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
                     sid={openTarget.sid}
                     fresh={openTarget.fresh}
                     talk={openTarget.talk}
-                    onBack={leaveSession}
+                    onBack={isDesk ? leaveSession : edgeBack.leave}
                     sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
                     onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
                     onManageProviders={openProviderSettings}

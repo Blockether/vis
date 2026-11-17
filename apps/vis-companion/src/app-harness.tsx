@@ -8,7 +8,7 @@
 // paint the next test's first frame — so a test that is ABOUT addresses (the
 // durability order lives in `lib/endpoints`, which reads the HOST) names its
 // own `url`/`alts` and owns the reuse it takes on.
-import { render } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 
 // Resolve the lazy graph before measuring shell interactions, not Vite transforms.
 // The prefetch regression deliberately rejects this chunk; keep that rejection
@@ -34,6 +34,22 @@ export interface AppMachine {
 }
 
 let origins = 0;
+
+/**
+ * Wait until the session that just opened on a phone has slid in. Until then the
+ * list is still on the glass behind it, and the transcript takes no stroke.
+ */
+export async function sessionArrived(): Promise<void> {
+  await waitFor(
+    () => {
+      const pane = document.querySelector('main')?.lastElementChild;
+      if (!(pane instanceof HTMLElement) || pane.style.transform) throw new Error('still sliding in');
+    },
+    { timeout: 2000 },
+  );
+  // The list learns that it is hidden in a background render, after that frame.
+  await act(() => new Promise<void>((done) => setTimeout(done, 20)));
+}
 
 export function renderApp({
   machines = [{}] as AppMachine[],

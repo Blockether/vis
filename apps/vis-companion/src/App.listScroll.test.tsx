@@ -2,7 +2,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { renderApp } from './app-harness';
+import { renderApp, sessionArrived } from './app-harness';
 import { listSession } from './screens/sessions-screen-harness';
 
 // Regression, user report: returning from a session on a phone put the list back at
@@ -35,6 +35,7 @@ describe('the sessions list after visiting a session on a phone', () => {
 
       fireEvent.click(screen.getByText('Second session'));
       await screen.findByLabelText('Message Vis');
+      await sessionArrived();
       expect(pane).toHaveAttribute('aria-hidden', 'true');
       // Model a webview dropping the scroll offset while the session covers the list.
       list.scrollTop = 0;

@@ -387,6 +387,14 @@ if (!manifest.includes('android:networkSecurityConfig')) {
     '<application\n        android:networkSecurityConfig="@xml/network_security_config"',
   );
 }
+// Android 14 and 15 report the steps of the back stroke only to an app that asks for
+// them. Android 16 does so for each app. See native/android/BackGesturePlugin.java.
+if (!manifest.includes('android:enableOnBackInvokedCallback')) {
+  manifest = manifest.replace(
+    /<application\b/,
+    '<application\n        android:enableOnBackInvokedCallback="true"',
+  );
+}
 
 // Firebase draws the tray notification itself, and `CommonNotificationBuilder`
 // REFUSES an adaptive icon — "Adaptive icons cannot be used in notifications" —
@@ -504,6 +512,7 @@ public class MainActivity extends BridgeActivity {
         // and a cold-start share must already look like a vis:// link by then.
         setIntent(asShareLink(getIntent()));
         registerPlugin(AudioRoutePlugin.class);
+        registerPlugin(BackGesturePlugin.class);
         registerPlugin(NativeSpeechPlugin.class);
         registerPlugin(OAuthLoopbackPlugin.class);
         registerPlugin(PasteMenuPlugin.class);
@@ -1098,6 +1107,17 @@ if (
   readFileSync(pasteMenuPluginPath, 'utf8') !== pasteMenuPlugin
 ) {
   writeFileSync(pasteMenuPluginPath, pasteMenuPlugin);
+}
+const backGesturePluginPath = join(javaPackageDir, 'BackGesturePlugin.java');
+const backGesturePlugin = readFileSync(
+  join(root, 'native/android/BackGesturePlugin.java'),
+  'utf8',
+).replace('package com.blockether.viscompanion;', `package ${appId};`);
+if (
+  !existsSync(backGesturePluginPath) ||
+  readFileSync(backGesturePluginPath, 'utf8') !== backGesturePlugin
+) {
+  writeFileSync(backGesturePluginPath, backGesturePlugin);
 }
 const audioRoutePluginPath = join(javaPackageDir, 'AudioRoutePlugin.java');
 const audioRoutePlugin = `package ${appId};
