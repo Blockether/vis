@@ -816,6 +816,25 @@
                "last_seq" (get-in event ["patch" "seq"])))
     event))
 
+(def ^:private summary-omitted-wire-keys
+  "The wire names of the keys that the summary of an app leaves out."
+  (mapv wire/wire-key view-spec/live-summary-omitted-keys))
+
+(defn summarized-app-open
+  "Wire event `event` as a stream that asked for app summaries gets it. The
+   `view.open` of an app whose body holds more characters than
+   [[view-spec/patch-elide-above-chars]] carries the summary of the app, as a list
+   with `summary?` does. A client that has the view at that seq keeps its body;
+   another client reads the app when it shows it. Every other event stays as it is."
+  [event]
+  (let [view (get event "view")]
+    (if (and (= gateway-contract/view-open-event (get event "type"))
+             (= (name app/placement) (get view "placement"))
+             (chars-above? (select-keys view summary-omitted-wire-keys)
+                           view-spec/patch-elide-above-chars))
+      (assoc event "view" (assoc (apply dissoc view summary-omitted-wire-keys) "is_summary" true))
+      event)))
+
 (defn global-apps
   "The global apps, oldest first. A closed app stays listed until it is archived;
    with `archived?`, only the archived apps. With `summary?`, each app comes without

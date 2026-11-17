@@ -724,6 +724,15 @@ large `view.patch` event of an app without its `patch`. The event has `"is_elide
 `last_seq`, the sequence number of the patch that it left out. Read the app again when you show it.
 Small patches arrive in full.
 
+Add `app_opens=summary` to get a large app in a `view.open` event without its body. The `view` of
+the event then has `"is_summary": true` and no `nodes`, `log`, `submissions` or `agent_note`. If you
+hold the app at the same `seq`, keep its body and take the other fields from the event. If you do
+not, read the app when you show it. A small app arrives in full.
+
+The stream does not keep the `view.patch` events of an app, so a reconnect does not send them again.
+After each reconnect, list the apps with `summary=true` and compare each `seq` with the app that you
+hold.
+
 A client that cannot keep a stream open can read pages instead:
 
 ```bash

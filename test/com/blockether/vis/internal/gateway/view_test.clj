@@ -1389,16 +1389,18 @@
   (wire/parse-json (hi/live-json! (wire/json-str envelope) nil)))
 
 (defn- open-app!
-  "Open an app with a diff and a thread in session `sid`, and answer its view id."
-  [sid]
-  (get (app-op! {"op" "open"
-                 "view" {"title" "Review"
-                         "session_id" sid
-                         "placement" "attachment"
-                         "nodes"
-                         [{"id" "change" "type" "diff" "patch" app-patch "new_revision" "def5678"}
-                          {"id" "general" "type" "thread" "messages" []}]}})
-       "view_id"))
+  "Open an app with a diff and a thread in session `sid`, and answer its view id.
+   The diff shows `patch`."
+  ([sid] (open-app! sid app-patch))
+  ([sid patch]
+   (get (app-op! {"op" "open"
+                  "view" {"title" "Review"
+                          "session_id" sid
+                          "placement" "attachment"
+                          "nodes"
+                          [{"id" "change" "type" "diff" "patch" patch "new_revision" "def5678"}
+                           {"id" "general" "type" "thread" "messages" []}]}})
+        "view_id")))
 
 (defn- app-view
   "The response of the one-view route for app `view-id` of session `sid`."
@@ -1664,6 +1666,112 @@
                      (expect (not (str/includes? (text plain) "is_elided")))
                      (finally (run! #(future-cancel (:pump %)) [asked plain])
                               (bus/forget! sid)))))))))))
+
+;; Report: a gateway restart sent the whole view of a large app to each stream two
+;; times, only to say that its owner left and came back: 932,000 bytes each time.
+(defdescribe
+  large-app-open-summary-test
+  (it "sends a large app without its body in view.open, and keeps a small app whole"
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (with-events
+            (fn [seen]
+              (let [sid
+                    (str (random-uuid))
+
+                    opened
+                    #(second (first (live-events-of seen gateway-contract/view-open-event %)))
+
+                    small
+                    (opened (open-app! sid))
+
+                    large
+                    (opened (open-app! sid large-app-patch))
+
+                    summary
+                    (gw-hi/summarized-app-open large)]
+
+                (expect (= small (gw-hi/summarized-app-open small)))
+                (expect (seq (get-in large ["view" "nodes"])))
+                (expect (= (dissoc (get large "view") "nodes" "log" "submissions" "agent_note")
+                           (dissoc (get summary "view") "is_summary")))
+                (expect (= (dissoc large "view") (dissoc summary "view")))
+                (expect (document/valid-json? "view" "live_view_summary" (get summary "view")))
+                (doseq [event [large summary]]
+                  (expect (document/valid-json? "view"
+                                                "open_event"
+                                                (select-keys event ["kind" "view_id" "view"]))))
+                (bus/forget! sid)))))))
+  (it "keeps a large live view that is no app"
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (with-events
+            (fn [seen]
+              (let [sid
+                    (str (random-uuid))
+
+                    view-id
+                    (:id (hi/open-live! {:title "CI"
+                                         :session-id sid
+                                         :nodes [{:id "note"
+                                                  :type "text"
+                                                  :text (apply str (repeat 30000 "x"))}]}))]
+
+                (try (let [frame (second (first (live-events-of seen
+                                                                gateway-contract/view-open-event
+                                                                view-id)))]
+                       (expect (some? frame))
+                       (expect (= frame (gw-hi/summarized-app-open frame))))
+                     (finally (hi/close-live! view-id)))))))))
+  (it "summarizes only on a stream that asked with app_opens=summary"
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                handler
+                (requiring-resolve 'com.blockether.vis.internal.gateway.server/multi-events-handler)
+
+                stream
+                (fn [query]
+                  (let [out (java.io.ByteArrayOutputStream.)]
+                    {:out out
+                     :pump (future (try (ring-protocols/write-body-to-stream
+                                          (:body (handler {:query-params (assoc query "sids" sid)
+                                                           :headers {}}))
+                                          {}
+                                          out)
+                                        (catch Throwable _ nil)))}))
+
+                text
+                #(String. (.toByteArray ^java.io.ByteArrayOutputStream (:out %)) "UTF-8")]
+
+            (with-redefs-fn {#'state/soul (constantly {"id" sid})
+                             #'state/session-exists? (constantly true)}
+              (fn []
+                (let [asked
+                      (stream {"app_opens" "summary"})
+
+                      plain
+                      (stream {})]
+
+                  (try (expect (await-true #(every? (fn [one]
+                                                      (str/includes? (text one)
+                                                                     "subscription.ready"))
+                                                    [asked plain])))
+                       (open-app! sid large-app-patch)
+                       (expect (await-true #(every? (fn [one]
+                                                      (str/includes? (text one) "view.open"))
+                                                    [asked plain])))
+                       (expect (str/includes? (text asked) "\"is_summary\":true"))
+                       (expect (not (str/includes? (text asked) "a line of the change")))
+                       (expect (str/includes? (text plain) "a line of the change"))
+                       (expect (not (str/includes? (text plain) "is_summary")))
+                       (finally (run! #(future-cancel (:pump %)) [asked plain])
+                                (bus/forget! sid)))))))))))
 
 ;; Report: a phone that showed a long review read the whole view again after each
 ;; change of one file: 955,000 characters a step.

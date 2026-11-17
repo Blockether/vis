@@ -627,27 +627,30 @@
     (update event "result" dissoc "view")
     event))
 
-(defn- elides-app-patches?
-  "True when the client asked for `app_patches=elided`: it reads an app again
-   after a large patch, and only while it shows that app."
+(defn- app-frames
+  "The transform of the app frames of one event stream, as `request` asked. With
+   `app_patches=elided`, a large patch of an app goes out without its patch. With
+   `app_opens=summary`, the `view.open` of a large app carries its summary. Such a
+   client reads an app again, and only while it shows that app."
   [request]
-  (= "elided"
-     (some-> (get-in request [:query-params "app_patches"])
-             str/trim)))
+  (let [asked? (fn [option value]
+                 (= value
+                    (some-> (get-in request [:query-params option])
+                            str/trim)))]
+    (comp (if (asked? "app_opens" "summary") gw-view/summarized-app-open identity)
+          (if (asked? "app_patches" "elided") gw-view/elided-app-patch identity))))
 
 (defn- stream-outbound
   "Outbound transform for ONE event stream. A form's later Activity receipts carry
    only the rows that changed since this stream's previous receipt of that form
-   (`activity-contract/encode-stream-event`). With `elide?`, a large app patch
-   goes out without its patch. Call it once per written frame."
-  [elide?]
+   (`activity-contract/encode-stream-event`). `app-frames` changes the app frames
+   as the client asked (see [[app-frames]]). Call it once per written frame."
+  [app-frames]
   (let [forms (volatile! {})]
     (fn [event]
       (let [[next-forms event] (activity-contract/encode-stream-event
                                  @forms
-                                 (cond-> (without-settled-picture event)
-                                   elide?
-                                   gw-view/elided-app-patch)
+                                 (app-frames (without-settled-picture event))
                                  gateway-contract/turn-terminal-event-types)]
         (vreset! forms next-forms)
         event))))
@@ -960,16 +963,20 @@
    `scope=fleet` so its independent sequence cannot advance a session cursor.
    Replays each session past its cursor in `replay` mode (see [[sse-replay]];
    default `:settled`), then drains live and heartbeats; a
-   dead client unsubscribes every feed."
-  [sid+cursors proxied? owner-pid & [include-fleet? replay gzip? elide?]]
+   dead client unsubscribes every feed. `app-frames` changes the app frames as the
+   client asked (see [[app-frames]])."
+  [sid+cursors proxied? owner-pid & [include-fleet? replay gzip? app-frames]]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
         (let [^OutputStream out
               (sse-stream output-stream gzip?)
 
+              app-frames
+              (or app-frames identity)
+
               outbound
-              (stream-outbound elide?)
+              (stream-outbound app-frames)
 
               sub-id
               (str (java.util.UUID/randomUUID))
@@ -999,10 +1006,7 @@
               (fn [event]
                 (if (= "fleet" (get event "scope"))
                   (do (.write out
-                              (.getBytes (sse/sse-frame (cond-> event
-                                                          elide?
-                                                          gw-view/elided-app-patch))
-                                         StandardCharsets/UTF_8))
+                              (.getBytes (sse/sse-frame (app-frames event)) StandardCharsets/UTF_8))
                       (.flush out))
                   (let [esid (str (get event "session_id"))]
                     (when (> (long (get event "seq")) (long (get @last-seqs esid Long/MIN_VALUE)))
@@ -1065,9 +1069,9 @@
    real change costs about a hundred bytes and arrives at once. The windowed read
    stays as the COLD read — first paint, reconnect, foreground — and is also the
    only resync: this stream has no replay and no cursor, so a gap heals with one
-   ordinary read instead of a rewind. With `elide?`, a large patch of a global
-   app goes out without its patch."
-  [proxied? owner-pid gzip? & [elide?]]
+   ordinary read instead of a rewind. `app-frames` changes the frames of the
+   global apps as the client asked (see [[app-frames]])."
+  [proxied? owner-pid gzip? & [app-frames]]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
@@ -1096,9 +1100,7 @@
               write!
               (fn [event]
                 (.write out
-                        (.getBytes (sse/sse-frame (cond-> event
-                                                    elide?
-                                                    gw-view/elided-app-patch))
+                        (.getBytes (sse/sse-frame ((or app-frames identity) event))
                                    StandardCharsets/UTF_8))
                 (.flush out))]
 
@@ -1127,7 +1129,8 @@
    connection. Add scope=both to carry whole-machine status changes on that
    connection too. scope=fleet remains the fleet-only feed. With
    app_patches=elided, a large patch of an app comes without its patch (view.json
-   `patch_event`)."
+   `patch_event`). With app_opens=summary, the `view.open` of a large app carries
+   its summary (view.json `open_event`)."
   [request]
   (let [proxied?
         (boolean (some #(get-in request [:headers %])
@@ -1151,10 +1154,8 @@
 
     (cond fleet? {:status 200
                   :headers (sse-encoding-headers gzip?)
-                  :body (fleet-sse-body proxied?
-                                        (request-client-pid request)
-                                        gzip?
-                                        (elides-app-patches? request))}
+                  :body
+                  (fleet-sse-body proxied? (request-client-pid request) gzip? (app-frames request))}
           (seq sid+cursors) {:status 200
                              :headers (sse-encoding-headers gzip?)
                              :body (multi-sse-body sid+cursors
@@ -1163,7 +1164,7 @@
                                                    combined?
                                                    (sse-replay request)
                                                    gzip?
-                                                   (elides-app-patches? request))}
+                                                   (app-frames request))}
           :else (http/error-response 400 :bad-request "no valid sids"))))
 
 ;; /metrics (§6.5)

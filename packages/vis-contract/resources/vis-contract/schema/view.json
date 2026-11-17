@@ -303,7 +303,15 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "view": {
-              "$ref": "#/$defs/live_view"
+              "description": "The view. A stream that asked for `app_opens=summary` gets the summary of an app whose body holds more characters than `x-vis-elide-above-chars` of `patch_event`. A client that has the view at that `seq` keeps its body. Another client reads the app when it shows it.",
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/live_view"
+                },
+                {
+                  "$ref": "#/$defs/live_view_summary"
+                }
+              ]
             }
           },
           "required": [
@@ -3175,7 +3183,7 @@
       "x-vis-max-picture-bytes": 8388608
     },
     "live_view_summary": {
-      "description": "An app in a list that asked for `summary=true`: the live view of the app without its body. The properties with the schema `false` are the keys that a summary leaves out. Read the view to get them.",
+      "description": "An app in a list that asked for `summary=true`, or in a `view.open` event of a stream that asked for `app_opens=summary`: the live view of the app without its body. The properties with the schema `false` are the keys that a summary leaves out. Read the view to get them.",
       "type": "object",
       "properties": {
         "is_summary": {
