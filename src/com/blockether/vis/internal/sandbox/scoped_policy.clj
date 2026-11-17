@@ -31,6 +31,7 @@
     :section ["jail"]
     :key "filesystem"
     :label "Filesystem access"
+    :parent "jail_enabled"
     :default {}
     :type "object"
     :editor "filesystem"}
@@ -38,6 +39,7 @@
     :section ["jail"]
     :key "network"
     :label "Network access"
+    :parent "jail_enabled"
     :default {}
     :type "object"
     :editor "network"}
@@ -45,6 +47,7 @@
     :section ["jail"]
     :key "deny_exec"
     :label "Denied executables"
+    :parent "jail_enabled"
     :default []
     :type "array"
     :editor "list"}

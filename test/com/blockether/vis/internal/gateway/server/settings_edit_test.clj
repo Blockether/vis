@@ -94,7 +94,7 @@
                       (expect (boolean (re-matches #"[a-f0-9]{64}" (get body "revision"))))
                       (expect (contains? (first (get-in body ["groups" 0 "toggles"]))
                                          "inherited_value"))))))
-            (it "puts keychain access under the process jail that it depends on"
+            (it "puts each jail setting under the process jail that it depends on"
                 (with-empty-config
                   (with-redefs [lp/db-info h/store]
                     (let [response ((get api/handlers [:get "/v1/settings"]) {:query-params {}})
@@ -104,8 +104,11 @@
                                     (#(get % "toggles")))
                           jail (first (filter #(= "jail_enabled" (get % "id")) rows))]
 
-                      (expect (not-any? #(= "jail_keychain" (get % "id")) rows))
-                      (expect (= ["jail_keychain"] (mapv #(get % "id") (get jail "children"))))))))
+                      (expect (= ["workspace_filesystem" "jail_enabled" "tools_allow" "tools_deny"]
+                                 (filterv #(re-find #"^(workspace|jail|tools)_" %)
+                                   (map #(get % "id") rows))))
+                      (expect (= ["jail_filesystem" "jail_network" "jail_deny_exec" "jail_keychain"]
+                                 (mapv #(get % "id") (get jail "children"))))))))
             (it "persists booleans, arrays and objects as JSON values at only the selected owner"
                 (with-empty-config
                   (let [{:keys [db target sid other id]}
