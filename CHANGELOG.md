@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.21] - 2026-11-17
+
 ### Fixed
 - Gateway: a JSON request body has a limit of 64 Mi characters, the same limit as an inflated gzip body. A larger body gets the answer 413. Before, only a gzip body had a limit.
 - Gateway: `PATCH /v1/sessions/:sid/workspace/root` answers 400 for no path, a blank path and a path that is no directory, and 409 for a session without a workspace. Before, it answered 500.
@@ -18,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - MCP: `inspect.signature` of a tool gives each argument the Python type of its schema: `str | None` for a value that can be null, `Literal[...]` for an enum, `list[str]` for an array with a member type, `int | float` for a number, and the type of a `$ref`. Before, an argument with a type list or `anyOf` had no type, an enum was `str`, an array was `list` and a number was `float`.
 - MCP: an optional field of a form that a server asks stays empty when you clear its default. Before, the client put the default back into the answer.
 - Hooks: an op hook can name an MCP tool with the hyphens of its server or of its tool. `figma-dev.*` and `figma-dev.get-issue` name the calls `figma_dev.*` and `figma_dev.get_issue`. Before, such a hook did not run.
+- Settings: Keychain access, Filesystem access, Network access and Denied executables are under Process jail in Permissions, one step in. They are hidden while the jail is off. Before, each row was at the top level, next to Process jail.
 
 ## [v0.5.20] - 2026-11-17
 
