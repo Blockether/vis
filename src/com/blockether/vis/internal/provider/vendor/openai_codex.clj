@@ -1002,10 +1002,8 @@
        :ext/license "Apache-2.0"
        :ext/providers [{:provider/id :openai-codex
                         :provider/label "OpenAI Codex (ChatGPT OAuth)"
-                        :provider/preset {:default-models (distinct (concat
-                                                                      (svar/provider-default-models
-                                                                        :openai-codex)
-                                                                      ["gpt-5.6-terra"]))}
+                        :provider/preset {:default-models (svar/provider-default-models
+                                                            :openai-codex)}
                         :provider/policy {:preset-rank 3
                                           :title-rank 2
                                           ;; Fast mode is Priority processing; Svar declares its tier and price.
