@@ -174,7 +174,7 @@
     (boolean landed?)))
 
 (defn- unwound-stdout
-  "What an INTERRUPTED block printed before it was killed, or nil.
+  "What an INTERRUPTED or FAILED block printed before it ended, or nil.
 
    A block that unwinds in Python returns its normal captured stdout. Code parked
    inside C cannot return before its worker is retired, so the runtime also mirrors
@@ -745,13 +745,11 @@
               ;; finds nothing to sweep and says nothing.
               ;;
               ;; Cancellation may interrupt the host wait before the guest has returned
-              ;; its outcome. Wait for that unwind exactly as the timeout path does, or
-              ;; output printed before Cancel disappears from the transcript.
-              interrupted?
-              (= :vis/interrupted (get-in execution-result [:error :type]))
-
+              ;; its outcome, and a host failure (a lost worker, an unreadable outcome)
+              ;; never reads it. Recover the output exactly as the timeout path does, or
+              ;; what the block printed before the failure disappears from the transcript.
               out
-              (when (and interrupted? (str/blank? (str (:stdout execution-result))))
+              (when (and (:error execution-result) (str/blank? (str (:stdout execution-result))))
                 (unwound-stdout python-context exec-future))
 
               recovered-result

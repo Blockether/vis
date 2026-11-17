@@ -4007,6 +4007,20 @@
                         (finally (try (env/dispose-python-context! pc) (catch Throwable _ nil)))))))
 
 (defdescribe
+  host-failure-keeps-partial-stdout-test
+  ;; A host failure after the guest printed (a lost worker, an unreadable
+  ;; outcome) returned the error alone, so the model reran the whole block.
+  (it "surfaces what the block printed before the host failed"
+      (tpc/with-own
+        [pc {}]
+        (try (let [result (with-redefs-fn {#'env/read-json (fn [_]
+                                                             (throw (ex-info "outcome lost" {})))}
+                            #((deref #'python-exec/run-python-code) pc "print('fetched 1')"))]
+               (expect (some? (:error result)))
+               (expect (some? (re-find #"fetched 1" (str (:stdout result))))))
+             (finally (try (env/dispose-python-context! pc) (catch Throwable _ nil)))))))
+
+(defdescribe
   python-block-human-stop-notice-test
   ;; Regression: a person stopped a live view with a note, but the block printed only
   ;; its own fields, so the model never read the note.
