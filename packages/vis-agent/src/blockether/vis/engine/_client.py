@@ -3723,12 +3723,13 @@ class GatewayClient(ExecutionLayer):
             raise TransportError("gateway connection failed") from None
         self._note_lease(lease, raw, is_answered=True)
         self._note_codings(raw)
-        if is_whole and raw.headers.get("Content-Encoding") == "gzip":
-            return _Inflated(raw)
         return raw
 
     def _open_whole(self, method, route, **options):
-        return self._open(method, route, is_whole=True, **options)
+        raw = self._open(method, route, is_whole=True, **options)
+        if raw.headers.get("Content-Encoding") == "gzip":
+            return _Inflated(raw)
+        return raw
 
     def _note_codings(self, answer):
         """Record that an answer says the gateway inflates gzip request bodies."""
