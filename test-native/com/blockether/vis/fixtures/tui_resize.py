@@ -400,7 +400,9 @@ def check_resize(binary, home, gateway, mode=None):
             await_bottom(8, text=b"Settings")
             os.write(master, b"Theme\r")
             await_bottom(8, text=b"Themes")
-            # At 80x24 the picker has one theme per page; Vis Dark is second.
+            # At 80x24 the picker has one theme per page: Auto, Vis Light, Vis Dark.
+            os.write(master, b"n")
+            await_bottom(8, text=b"Vis Light")
             os.write(master, b"n")
             await_bottom(8, text=b"Vis Dark")
             output = b""
