@@ -275,6 +275,22 @@ describe('agent rows', () => {
     expect(screen.queryByText('Keep the old API?')).not.toBeInTheDocument();
   });
 
+  // User report 2026-11-17: the row of a task that waited for an earlier task opened an empty
+  // session with the new-session cue, and its note did not name the task it waited for.
+  it('opens no session for a task that did not start, and names the tasks it waits for', () => {
+    const onOpen = vi.fn();
+    const first = { ...child, session_id: 'first', id: 'a1', status: 'completed' as const };
+    const second = { ...child, session_id: 'second', id: 'a2', title: 'Implement' };
+    const third = { ...child, session_id: 'third', id: 'a3', title: 'Verify', status: 'waiting' as const, after: ['a1', 'a2'] };
+    render(<TurnAgents {...props} onOpen={onOpen} agents={[first, second, third]} />);
+    const row = screen.getByRole('button', { name: /^agentVerify/ });
+    expect(row).toBeDisabled();
+    fireEvent.click(row);
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(within(row).getByText('waiting for a2')).toBeInTheDocument();
+    expect(agentUpdate({ ...third, status: 'blocked' }, [first, { ...second, status: 'failed' }, third])).toBe('a2 did not complete');
+  });
+
   // User report 2026-11-03: a row opened a sheet with an Open button before the agent session.
   it('opens the session of an agent from its row, with no sheet between', () => {
     const onOpen = vi.fn();

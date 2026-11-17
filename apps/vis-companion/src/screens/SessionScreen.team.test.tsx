@@ -58,3 +58,19 @@ describe('the team of a stored turn', () => {
     expect(within(team).queryByText(/running/i)).not.toBeInTheDocument();
   });
 });
+
+// User report 2026-11-17: a subagent that waited for an earlier task showed the new-session cue
+// ("What would you like to work on?") and did not say which task it waited for.
+describe('a subagent that did not start', () => {
+  it('names the task it waits for at the foot of its transcript', async () => {
+    const session = sessionFixture({ agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } });
+    const self = child('lead', { session_id: session.id, id: 'a8', status: 'waiting', after: ['a7'], finished_at: undefined });
+    const earlier = child('lead', { session_id: 'implementer', id: 'a7', status: 'running', finished_at: undefined });
+    renderSessionScreen({
+      session,
+      client: { transcript: () => Promise.resolve([]), cachedAgents: () => [earlier, self] },
+    });
+    expect(await screen.findByText('waiting for a7')).toBeInTheDocument();
+    expect(screen.queryByText('What would you like to work on?')).not.toBeInTheDocument();
+  });
+});

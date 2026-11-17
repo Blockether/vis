@@ -42,6 +42,27 @@ export function agentRole(agent: Subagent): { text: string; ink: string } {
 
 export const isLive = (agent: Subagent) => ['queued', 'running'].includes(agent.status);
 
+/** A `waiting` or `blocked` task did not start: it has no session to open yet. */
+export const hasStarted = (agent: Subagent) => agent.status !== 'waiting' && agent.status !== 'blocked';
+
+/**
+ * The tasks in the `after` of a task that did not start, which did not complete: a task id such
+ * as `a2`. An id without a row of its parent stays, because nothing shows that it completed.
+ */
+export function waitsFor(agent: Subagent, agents: readonly Subagent[]): string[] {
+  return (agent.after ?? []).filter(
+    (id) => !agents.some((other) => other.parent_id === agent.parent_id && other.id === id && other.status === 'completed'),
+  );
+}
+
+/** Why a task did not start, like `waiting for a2`, or undefined for a task that started. */
+export function waitLine(agent: Subagent, agents: readonly Subagent[]): string | undefined {
+  if (hasStarted(agent)) return undefined;
+  const ids = waitsFor(agent, agents).join(', ');
+  if (!ids) return END_REASON[agent.status];
+  return agent.status === 'waiting' ? `waiting for ${ids}` : `${ids} did not complete`;
+}
+
 /** The agents of one team in spawn order: by `created_at`, then in the order of the gateway. */
 export function spawnOrder(agents: readonly Subagent[]): Subagent[] {
   return agents
@@ -114,7 +135,8 @@ export function agentTime(agent: Subagent, now: number): number | undefined {
  * its task: its result, else the reason of its end. A note, a result and a task are Markdown,
  * so the row shows them without their markers.
  */
-export function agentUpdate(agent: Subagent): string | undefined {
+export function agentUpdate(agent: Subagent, agents: readonly Subagent[] = []): string | undefined {
+  if (!hasStarted(agent)) return waitLine(agent, agents);
   if (!isLive(agent)) return agent.result == null ? END_REASON[agent.status] : councilLine(agent.result);
   if (agent.note != null) return councilLine(agent.note);
   return agent.activity ?? (councilLine(agent.task.trim().split('\n', 1)[0]) || undefined);
@@ -516,7 +538,8 @@ interface TableProps {
   leader?: LeaderLane;
 }
 
-// The table of one team. A row opens the sheet of its agent. A wide screen shows the note of
+// The table of one team. A row opens the session of its agent; a task that did not start has no
+// session yet, so its row is disabled. A wide screen shows the note of
 // each agent beside its title. The time bars of the team on one axis show on every screen.
 function AgentTable(props: TableProps) {
   const isWide = useWide();
@@ -558,14 +581,20 @@ function PhoneAgentTable({ rows, now, onSelect, leader }: TableProps) {
       {rows.map((agent) => {
         const role = agentRole(agent);
         const status = agentStatus(agent);
-        const update = agentUpdate(agent);
+        const update = agentUpdate(agent, rows);
         const time = agentTime(agent, now);
         return (
           <li key={agent.session_id}>
-            <button type="button" data-agent-row={agent.session_id} onClick={() => onSelect(agent.session_id)} className={`group ${FOCUS} ${PHONE_ROW}`}>
+            <button
+              type="button"
+              data-agent-row={agent.session_id}
+              disabled={!hasStarted(agent)}
+              onClick={() => onSelect(agent.session_id)}
+              className={`group ${FOCUS} ${PHONE_ROW}`}
+            >
               <span className={`order-1 uppercase ${role.ink}`}>{role.text}</span>
               <HoverNote className="order-4 col-span-2 min-w-0" note={taskNote(agent.task)}>
-                <span className="font-bold [overflow-wrap:anywhere] group-hover:underline">{agentLabel(agent, rows)}</span>
+                <span className="font-bold [overflow-wrap:anywhere] group-enabled:group-hover:underline">{agentLabel(agent, rows)}</span>
               </HoverNote>
               {update && (
                 <HoverNote className="order-5 col-span-2 min-w-0" note={update}>
@@ -590,19 +619,20 @@ function WideAgentTable(props: TableProps) {
         {rows.map((agent) => {
           const role = agentRole(agent);
           const status = agentStatus(agent);
-          const update = agentUpdate(agent);
+          const update = agentUpdate(agent, rows);
           const time = agentTime(agent, now);
           return (
             <li key={agent.session_id}>
               <button
                 type="button"
                 data-agent-row={agent.session_id}
+                disabled={!hasStarted(agent)}
                 onClick={() => onSelect(agent.session_id)}
-                className={`group py-1 text-left hover:bg-white/5 ${FOCUS} ${WIDE_ROW}`}
+                className={`group py-1 text-left enabled:hover:bg-white/5 ${FOCUS} ${WIDE_ROW}`}
               >
                 <span className={`uppercase ${CELL_RULE} ${role.ink}`}>{role.text}</span>
                 <HoverNote className={`min-w-0 ${CELL_RULE}`} note={taskNote(agent.task)}>
-                  <span className="font-bold [overflow-wrap:anywhere] group-hover:underline">{agentLabel(agent, rows)}</span>
+                  <span className="font-bold [overflow-wrap:anywhere] group-enabled:group-hover:underline">{agentLabel(agent, rows)}</span>
                 </HoverNote>
                 <HoverNote className={`min-w-0 ${CELL_RULE}`} note={update}>
                   <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{update ?? ''}</span>
@@ -687,10 +717,11 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
                 <button
                   type="button"
                   data-agent-row={agent.session_id}
+                  disabled={!hasStarted(agent)}
                   onClick={() => onSelect(agent.session_id)}
-                  className={`group py-1 text-left hover:bg-white/5 ${FOCUS} ${CHART_ROW}`}
+                  className={`group py-1 text-left enabled:hover:bg-white/5 ${FOCUS} ${CHART_ROW}`}
                 >
-                  <span className={`group-hover:underline ${CELL_RULE} ${role.ink}`}>
+                  <span className={`group-enabled:group-hover:underline ${CELL_RULE} ${role.ink}`}>
                     {keys[index]}
                     <span className="sr-only"> {agentLabel(agent, rows)}</span>
                   </span>
@@ -720,7 +751,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
         )}
         {rows.map((agent, index) => {
           const role = agentRole(agent);
-          const update = agentUpdate(agent);
+          const update = agentUpdate(agent, rows);
           return (
             <li key={agent.session_id} className={LEGEND_ROW} data-hover-note-frame>
               <span className={`${CELL_RULE} ${role.ink}`}>{keys[index]}</span>

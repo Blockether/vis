@@ -27,7 +27,7 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { TurnAgents, agentsByTurn, dockTeams, leaderLane, storedAgents, storedLeaderLane, useAgentTeam, type LeaderLane } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, dockTeams, leaderLane, storedAgents, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
@@ -5868,6 +5868,9 @@ export function SessionScreen({
 
   // A subagent session takes no input. Its header names its path from the leader.
   const isSubagent = session?.agent?.role === 'subagent';
+  // A subagent task with `after` starts when those tasks complete. Until then, its screen says which.
+  const selfAgent = isSubagent ? team.agents.find((agent) => agent.session_id === sid) : undefined;
+  const waitNote = selfAgent ? waitLine(selfAgent, team.agents) : undefined;
   const headerModel: SessionHeaderModel = {
     title,
     sessionId: sid,
@@ -6060,7 +6063,15 @@ export function SessionScreen({
                 height, including when a software keyboard changes it. The mark is
                 intentionally unframed so the brand feels like part of the canvas,
                 not a small dialog inside it. */}
-                  {!turns.length && !runningTurn ? (
+                  {!turns.length && !runningTurn && isSubagent ? (
+                    // A subagent takes no input, so it has no new-session cue: the foot of its
+                    // transcript says why it did not start.
+                    waitNote ? (
+                      <p className="mt-auto text-body text-dialog-hint first-letter:uppercase" role="status" data-agent-wait="">
+                        {waitNote}
+                      </p>
+                    ) : null
+                  ) : !turns.length && !runningTurn ? (
                     <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-3 text-center transition-[opacity,transform,translate,scale,rotate] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
                       <BrandLogo className="w-14 max-w-full object-contain sm:w-16" />
                       <div className="mt-4 max-w-md">
