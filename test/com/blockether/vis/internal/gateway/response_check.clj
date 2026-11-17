@@ -4,8 +4,9 @@
    alias checks the answers of each gateway and contract test namespace: the answers
    of a router, and the answers of a handler that a test calls directly. After a run
    that has each gateway test namespace, it fails the run when a JSON operation has
-   no checked answer and no fixture answer, and is not in [[unchecked-operations]].
-   Use [[checked]] in `around-each` for a router outside this hook."
+   no checked answer and no fixture answer, and is not in [[unchecked-operations]]. It
+   also fails the run when an operation has only a fixture answer and is not in
+   [[fixture-only-operations]]. Use [[checked]] in `around-each` for a router outside this hook."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
@@ -127,6 +128,13 @@
    [:post "/v1/systemone"] "needs an installed decision model"
    [:put "/v1/mcp/servers/:name"] "needs a running MCP server process"})
 
+(def fixture-only-operations
+  "The JSON operations that have a fixture answer but no checked test answer, each
+   with its reason. A handler change on them is not found. Only an operation that needs
+   an outside service can be here. This map can only get smaller: the run fails when an
+   entry gets a checked answer."
+  {})
+
 (def ^:private gateway-test-prefix "com.blockether.vis.internal.gateway.")
 
 (def ^:private checked-prefixes
@@ -213,15 +221,25 @@
              :let [[method path] (str/split k #" " 2)]]
          [(keyword (str/lower-case method)) path])))
 
+(defn- json-operations
+  "The `[method path]` operations of the contract that answer JSON."
+  []
+  (set (for [{:keys [path operations]} gateway-contract/route-table
+             [method {:keys [response]}] operations
+             :when (= :json response)]
+         [method path])))
+
 (defn uncovered-operations
   "The JSON operations that have no checked answer in `checked` and no fixture answer."
   [checked]
   (let [fixtures (fixture-operations)]
-    (set (for [{:keys [path operations]} gateway-contract/route-table
-               [method {:keys [response]}] operations
-               :when (= :json response)
-               :when (not (or (contains? checked [method path]) (contains? fixtures [method path])))]
-           [method path]))))
+    (set (remove #(or (contains? checked %) (contains? fixtures %)) (json-operations)))))
+
+(defn fixture-only-operations-of
+  "The JSON operations that have a fixture answer and no checked answer in `checked`.
+   A handler change on these operations is not found by a test."
+  [checked]
+  (set (remove #(contains? checked %) (filter (fixture-operations) (json-operations)))))
 
 (defn- test-namespaces-on-disk
   "The names of the gateway test namespaces under `test/`."
@@ -243,21 +261,35 @@
                        str))
              (:children run))))
 
-(defn coverage-failure
-  "A message when the checked operations and the list [[unchecked-operations]] do not
+(defn- list-failure
+  "A message when the operation set `actual` and the keys of the list `listed` do not
    agree, or nil."
-  [checked]
-  (let [uncovered (uncovered-operations checked)
-        listed (set (keys unchecked-operations))
-        missing (sort (remove listed uncovered))
-        stale (sort (remove uncovered listed))]
+  [list-name actual listed missing-text]
+  (let [listed (set (keys listed))
+        missing (sort (remove listed actual))
+        stale (sort (remove actual listed))]
     (when (or (seq missing) (seq stale))
-      (str "Gateway answer coverage (#487) does not agree with `unchecked-operations`."
-           (when (seq missing)
-             (str " These JSON operations have no checked answer: " (pr-str (vec missing)) "."))
+      (str "Gateway answer coverage (#487) does not agree with `" list-name "`."
+           (when (seq missing) (str " " missing-text ": " (pr-str (vec missing)) "."))
            (when (seq stale)
              (str " These listed operations have a checked answer now; remove them: "
                   (pr-str (vec stale)) "."))))))
+
+(defn coverage-failure
+  "A message when the checked operations do not agree with the lists
+   [[unchecked-operations]] and [[fixture-only-operations]], or nil."
+  [checked]
+  (some->> [(list-failure "unchecked-operations"
+                          (uncovered-operations checked)
+                          unchecked-operations
+                          "These JSON operations have no checked answer")
+            (list-failure "fixture-only-operations"
+                          (fixture-only-operations-of checked)
+                          fixture-only-operations
+                          "These JSON operations have only a fixture answer")]
+           (remove nil?)
+           seq
+           (str/join " ")))
 
 (defn- checked-namespace?
   [suite]

@@ -88,7 +88,6 @@
    "models_catalog.models[]" "Each provider adds its own model fields."
    "openapi_document.info" "The OpenAPI Info object. The OpenAPI 3.1 schema defines it."
    "openapi_document.paths" "The OpenAPI Paths object. The OpenAPI 3.1 schema defines it."
-   "provider_models.models[]" "Each provider adds its own model fields."
    "provider_presets.presets[]" "Each provider preset adds its own fields."
    "router_fleet.providers[]" "Each provider adds its own fields to its router entry."
    "session.match" "The search match comes from the search index. It is not mapped yet."

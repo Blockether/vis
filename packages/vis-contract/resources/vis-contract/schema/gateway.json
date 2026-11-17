@@ -6672,7 +6672,7 @@
         "models": {
           "type": "array",
           "items": {
-            "type": "object"
+            "type": "string"
           }
         },
         "hidden_count": {

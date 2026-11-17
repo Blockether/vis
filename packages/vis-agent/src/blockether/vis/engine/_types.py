@@ -679,7 +679,7 @@ class ProviderLimits(TypedDict):
 
 
 class ProviderModels(TypedDict):
-    models: list[dict[str, JSONValue]]
+    models: list[str]
     hidden_count: NotRequired[int]
 
 
