@@ -43,7 +43,8 @@ describe('the export choice of a session', () => {
     render(<Screen client={client} />);
     fireEvent.click(screen.getByRole('button', { name: 'Export' }));
 
-    expect(formats().getAllByRole('button').map((row) => row.textContent)).toEqual([
+    expect(formats().getAllByRole('button').map((row) => row.getAttribute('aria-label') ?? row.textContent)).toEqual([
+      'Close Export Stalled stream',
       expect.stringContaining('HTML'),
       expect.stringContaining('Markdown'),
       expect.stringContaining('Snapshot (.vissnap)'),
@@ -56,6 +57,16 @@ describe('the export choice of a session', () => {
       'reveal_artifact',
       expect.objectContaining({ filename: 'stalled-stream-123e4567.md' }),
     );
+  });
+
+  it('closes on its ✕ without an export', () => {
+    const client = { transcriptMarkdown: vi.fn() } as unknown as GatewayClient;
+    render(<Screen client={client} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    fireEvent.click(formats().getByRole('button', { name: 'Close Export Stalled stream' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Export Stalled stream' })).toBeNull();
+    expect(client.transcriptMarkdown).not.toHaveBeenCalled();
   });
 
   // The desktop toast named the saved path as plain text. A press on the path shows the file.
@@ -116,7 +127,8 @@ describe('the export choice of a session', () => {
     fireEvent.click(formats().getByRole('button', { name: /^Markdown/ }));
 
     const ways = within(await screen.findByRole('dialog', { name: 'Keep the export' }));
-    expect(ways.getAllByRole('button').map((row) => row.textContent)).toEqual([
+    expect(ways.getAllByRole('button').map((row) => row.getAttribute('aria-label') ?? row.textContent)).toEqual([
+      'Close Keep the export',
       expect.stringContaining('Download'),
       expect.stringContaining('Share'),
     ]);

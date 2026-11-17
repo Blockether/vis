@@ -55,7 +55,9 @@ function ChoiceMenu({
   }, [onDismiss]);
   return (
     <Menu label={label} at={at} onDismiss={onDismiss}>
-      <MenuHeading>{heading}</MenuHeading>
+      <MenuHeading closeLabel={`Close ${label}`} onClose={onDismiss}>
+        {heading}
+      </MenuHeading>
       <div ref={choices} className="[&>*:last-child]:border-b-0">
         {children}
       </div>
@@ -78,7 +80,7 @@ export function SessionExportMenu({
 }) {
   const name = title.trim() || 'this session';
   return (
-    <ChoiceMenu label={`Export ${name}`} heading={`Export ${name} as…`} at={at} onDismiss={onDismiss}>
+    <ChoiceMenu label={`Export ${name}`} heading="Export as…" at={at} onDismiss={onDismiss}>
       {SESSION_EXPORT_FORMATS.map((format) => (
         <MenuItem
           key={format.id}
