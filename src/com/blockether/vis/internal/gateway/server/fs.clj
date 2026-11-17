@@ -661,7 +661,16 @@
   [request]
   (if-let [sid (http/path-sid request)]
     (let [{:strs [path]} (http/body-json request)]
-      (http/json-response {:workspace (state/change-root! sid path)}))
+      (try (http/json-response {:workspace (state/change-root! sid (when (string? path) path))})
+           (catch clojure.lang.ExceptionInfo e
+             (case (:type (ex-data e))
+               (:workspace/blank-path :workspace/not-a-directory)
+               (http/error-response 400 :invalid-request (ex-message e))
+
+               :workspace/no-root
+               (http/error-response 409 :workspace-unavailable "Session workspace is unavailable.")
+
+               (throw e)))))
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (def handlers

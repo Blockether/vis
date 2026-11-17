@@ -7368,6 +7368,27 @@
                calls)
          (finally (.stop ^org.eclipse.jetty.server.Server server)))))
 
+;; Probe of a real gateway: a root change without a path answered 500 `Path is blank`.
+(defdescribe change-root-refuses-a-path-that-is-no-directory
+             (it "answers 400 for no path, a blank path and a path that is no directory"
+                 (let [store
+                       (sqlite/db-open! :memory)
+
+                       change
+                       (get fs-api/handlers [:patch "/v1/sessions/:sid/workspace/root"])]
+
+                   (try (with-redefs [state/change-root!
+                                      (fn [_ path]
+                                        (workspace/change-root! store (str (random-uuid)) path))]
+                          (doseq [body [{} {:path "  "} {:path "/nowhere/vis-no-such-directory"}]]
+                            (let [response (change (assoc (json-body body)
+                                                     :path-params {:sid (str (random-uuid))}))]
+                              (expect (= [400 "invalid-request"]
+                                         [(:status response)
+                                          (get-in (wire/parse-json (:body response))
+                                                  ["error" "type"])])))))
+                        (finally (sqlite/db-close! store))))))
+
 (defdescribe
   request-codings-refuse-a-body-that-the-gateway-cannot-read
   ;; Probe of a real gateway: a body that was not gzip gave a 500, half of a gzip
@@ -7396,6 +7417,24 @@
         (expect (= 400 (:status half)) "half of a stream is not a shorter body")
         (expect (= "gzip" (:announce half)) "a refusal still says what the gateway reads")
         (expect (= [200 "0"] [(:status empty) (:text empty)]))))
+  (it "answers 413 for a JSON body above the limit, also when the handler hides the error"
+      (let [handler
+            ((rv 'wrap-request-codings)
+              (fn [request]
+                (gw-http/json-response {:read (some? (try (gw-http/body-json request)
+                                                          (catch Throwable _ nil)))})))
+
+            ask
+            (fn [headers ^bytes data]
+              (:status (handler {:headers headers :body (java.io.ByteArrayInputStream. data)})))
+
+            large
+            (.getBytes (str "{\"a\": \"" (apply str (repeat 3000 "x")) "\"}") "UTF-8")]
+
+        (with-redefs [gw-http/json-body-max-chars 1000]
+          (expect (= 200 (ask {} (.getBytes "{\"a\": 1}" "UTF-8"))))
+          (expect (= 413 (ask {} large)))
+          (expect (= 413 (ask {"content-encoding" "gzip"} (gzip-of large)))))))
   (it "answers 415 for a coding that it does not read, before a handler sees the body"
       (let [seen
             (atom [])

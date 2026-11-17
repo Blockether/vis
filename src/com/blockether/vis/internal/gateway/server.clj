@@ -1745,7 +1745,9 @@
   "The one reader of the `Content-Encoding` of a request. A gzip body reaches the
    handler as plain bytes ([[inflating-body]]), without a length, because the length
    on the wire is not the length of the body. Any other coding is a 415, so a handler
-   never stores or parses bytes that it cannot read. Each answer says
+   never stores or parses bytes that it cannot read. A reader of the body refuses it
+   through the one `::http/refusal` atom of the request: that answer wins, also when
+   the handler catches the error of the reader. Each answer says
    `Accept-Encoding: gzip`: a client that does not see this header sends plain
    bodies, so it also works with a gateway that cannot inflate."
   [handler]
@@ -1755,25 +1757,26 @@
                   str/trim
                   str/lower-case)
 
+          refusal
+          (atom nil)
+
+          answer
+          (fn [request]
+            (let [response (try (handler (assoc request ::http/refusal refusal))
+                                ;; a handler that does not catch the refusal still gets its answer
+                                (catch Throwable t (when-not @refusal (throw t))))]
+              (if-let [[status type message] @refusal]
+                (http/error-response status type message)
+                response)))
+
           response
-          (cond (or (str/blank? coding) (= "identity" coding)) (handler request)
+          (cond (or (str/blank? coding) (= "identity" coding)) (answer request)
                 (= "gzip" coding)
-                (let [refusal
-                      (atom nil)
-
-                      response
-                      (try (handler (-> request
-                                        (update :headers dissoc "content-encoding" "content-length")
-                                        (update :body
-                                                #(some-> %
-                                                         (inflating-body INFLATED_BODY_MAX_BYTES
-                                                                         refusal)))))
-                           ;; a handler that does not catch the refusal still gets its answer
-                           (catch Throwable t (when-not @refusal (throw t))))]
-
-                  (if-let [[status type message] @refusal]
-                    (http/error-response status type message)
-                    response))
+                (answer (-> request
+                            (update :headers dissoc "content-encoding" "content-length")
+                            (update :body
+                                    #(some-> %
+                                             (inflating-body INFLATED_BODY_MAX_BYTES refusal)))))
                 :else (http/error-response
                         415
                         :unsupported-content-encoding

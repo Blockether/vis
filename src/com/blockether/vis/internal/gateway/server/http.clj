@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.gateway.server.http
   "Request parsing and JSON responses shared by the gateway route handlers."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]))
@@ -52,11 +53,35 @@
   [gid-str]
   (error-response 404 :group-not-found "unknown session group" :group_id (str gid-str)))
 
+(def json-body-max-chars
+  "The most characters of a JSON request body (64 Mi), the same bound as an inflated
+   gzip body. Without it, one request could fill the heap of the gateway."
+  (* 64 1024 1024))
+
 (defn body-json
+  "The JSON body of `request` as data, or nil without a body. A body above
+   [[json-body-max-chars]] throws. It also puts `[status type message]` into the
+   `::refusal` atom of the request, so the gateway answers 413 when the handler
+   catches the error."
   [request]
-  (some-> (:body request)
-          slurp
-          wire/parse-json))
+  (when-let [body (:body request)]
+    (let [limit (long json-body-max-chars)
+          text (StringBuilder.)
+          chunk (char-array 8192)]
+
+      (with-open [^java.io.Reader reader (io/reader body)]
+        (loop []
+
+          (let [n (.read reader chunk)]
+            (when-not (neg? n)
+              (.append text chunk 0 n)
+              (when (> (.length text) limit)
+                (let [message (str "The request body is above " limit " characters.")]
+                  (some-> (::refusal request)
+                          (reset! [413 :payload-too-large message]))
+                  (throw (ex-info message {:type :payload-too-large :limit limit}))))
+              (recur)))))
+      (wire/parse-json (str text)))))
 
 (defn path-sid
   [request]
