@@ -48,6 +48,12 @@ import {
   reachOf,
 } from './lib/endpoints';
 import { desktopInvoke } from './lib/desktop';
+import {
+  LOCAL_GATEWAY_URL,
+  bootLocalEngine,
+  clearLocalPairing,
+  useLocalEngine,
+} from './lib/local-engine';
 import { isIosNativeApp } from './lib/host';
 import { identityPatch } from './lib/fleet';
 import { machineOutage } from './lib/fleet-outage';
@@ -517,6 +523,23 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
     setActive(makeActive ? conn : await getPrimaryConnection());
     if (makeActive) setTab('sessions');
   }, []);
+
+  // The desktop app alone: start the gateway of Vis on this computer, then pair with
+  // it. With other machines paired, pair only when the person asked for this one.
+  // One time for each page load, so a machine that the person removes stays removed.
+  const { isGatewayOpen, wantsPairing } = useLocalEngine();
+  const hasPairedLocal = useRef(false);
+  useEffect(() => {
+    void bootLocalEngine();
+  }, []);
+  useEffect(() => {
+    if (!isGatewayOpen) return;
+    if (!wantsPairing && (conns.length > 0 || hasPairedLocal.current)) return;
+    hasPairedLocal.current = true;
+    clearLocalPairing();
+    if (conns.some((conn) => reachOf(conn.url) === 'loopback')) return;
+    void addConnection({ url: LOCAL_GATEWAY_URL, label: hostOf(LOCAL_GATEWAY_URL) });
+  }, [isGatewayOpen, wantsPairing, conns, addConnection]);
 
   // The tap must paint the session on the frame it happens on. Remembering the
   // active gateway and the watch list are Capacitor Preferences writes — bridge

@@ -106,6 +106,23 @@ export const ARTIFACT_COMMANDS = [
   'open_remote_artifact',
 ];
 
+/** Vis's own commands in `native/desktop/engine.rs`. */
+export const ENGINE_COMMANDS = [
+  'engine_status',
+  'engine_run',
+  'engine_progress',
+  'engine_stop',
+  'engine_gateway_start',
+  'engine_gateway_log',
+  'engine_latest',
+];
+
+/** Each Vis module with commands, in the order of its registration. */
+const HOST_MODULES = [
+  ['artifact', ARTIFACT_COMMANDS],
+  ['engine', ENGINE_COMMANDS],
+];
+
 /** The Pake line that creates the main window. */
 export const WINDOW_SETUP =
   'let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;';
@@ -163,16 +180,22 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
   }
   if (!lib.includes(WINDOW_SETUP)) throw new Error('Pake window setup changed');
   // A kept tools directory holds the registration of an earlier build, so drop it first.
+  for (const [name] of HOST_MODULES) {
+    lib = lib.replace(new RegExp(`\\nmod ${name};\\nuse ${name}::\\{[^}]*\\};`), '');
+  }
+  const commands = HOST_MODULES.flatMap(([, names]) => names);
   lib = lib
-    .replace(/\nmod artifact;\nuse artifact::\{[^}]*\};/, '')
     .replace('\nmod web_content;', '')
     .replace(new RegExp(`\\n *${escapeRegExp(WEB_CONTENT_RELOAD)}`), '')
     .replace(
-      new RegExp(`(${escapeRegExp(handler)})(?:\\n {12}(?:${ARTIFACT_COMMANDS.join('|')}),)+`),
+      new RegExp(`(${escapeRegExp(handler)})(?:\\n {12}(?:${commands.join('|')}),)+`),
       '$1',
     );
-  lib = lib.replace(module, `${module}\nmod artifact;\nuse artifact::{${ARTIFACT_COMMANDS.join(', ')}};`);
-  lib = lib.replace(handler, `${handler}${ARTIFACT_COMMANDS.map((name) => `\n            ${name},`).join('')}`);
+  // Each insertion goes first, so the last module goes in first.
+  for (const [name, names] of [...HOST_MODULES].reverse()) {
+    lib = lib.replace(module, `${module}\nmod ${name};\nuse ${name}::{${names.join(', ')}};`);
+    lib = lib.replace(handler, `${handler}${names.map((command) => `\n            ${command},`).join('')}`);
+  }
   lib = lib.replace(module, `${module}\nmod web_content;`);
   lib = lib.replace(WINDOW_SETUP, `${WINDOW_SETUP}\n            ${WEB_CONTENT_RELOAD}`);
   writeFileSync(libPath, lib);
@@ -182,7 +205,7 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
     if (!cargo.includes('\n[dependencies]\n')) throw new Error('Pake Cargo.toml changed');
     writeFileSync(cargoPath, cargo.replace('\n[dependencies]\n', `\n[dependencies]\n${RFD_DEPENDENCY}\n`));
   }
-  for (const name of ['artifact.rs', 'web_content.rs']) {
+  for (const name of ['artifact.rs', 'engine.rs', 'web_content.rs']) {
     writeFileSync(
       join(sourceDir, name),
       readFileSync(new URL(`../native/desktop/${name}`, import.meta.url), 'utf8'),

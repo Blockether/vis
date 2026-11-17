@@ -25,6 +25,8 @@ import { ZenPictureChoice } from '../components/ZenPictures';
 import { AUTO_THEME_PREF, THEMES } from '../lib/themes.generated';
 import { Banner, ChoiceCell, DialogFrame, IconButton, Modal, Switch, Text } from '../components/ui';
 import { AddMachine, MachineRows, useFleetHealth } from '../components/Machines';
+import { ThisComputer } from '../components/ThisComputer';
+import { ENGINE_VERBS, useLocalEngine } from '../lib/local-engine';
 import { DiagnosticsPanel } from './settings/DiagnosticsPanel';
 import { MachineSettings } from './settings/MachineSettings';
 import { SettingsColumn, SettingsPanel } from './settings/SettingsLayout';
@@ -96,6 +98,7 @@ export function SettingsDialog({
   contextSession?: { url: string; sid: string };
 }) {
   const showPythonCode = usePythonCodeShown();
+  const local = useLocalEngine();
   const summarizeSteps = useStepsSummarized();
   const zen = useZenMode();
   const [pref, setPref] = useState<ThemePref>(AUTO_THEME_PREF);
@@ -338,6 +341,17 @@ export function SettingsDialog({
             )}
 
             <div className="min-w-0 divide-y divide-dialog-edge bg-panel">
+              {/* Only the desktop app has this state: Vis on this computer and its update. */}
+              {local.engine && (
+                <div className="px-3 py-3 sm:px-4">
+                  <ThisComputer
+                    engine={local.engine}
+                    isChecking={local.isChecking}
+                    isCheckFailed={local.isCheckFailed}
+                    {...ENGINE_VERBS}
+                  />
+                </div>
+              )}
               <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
                 <div className="min-w-0 space-y-1">
                   <Text as="p" variant="label">

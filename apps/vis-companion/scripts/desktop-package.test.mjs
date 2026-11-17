@@ -9,6 +9,7 @@ import {
   packageDesktop,
   prepareDesktopHost,
   ARTIFACT_COMMANDS,
+  ENGINE_COMMANDS,
   PAKE_VERSION,
   RFD_DEPENDENCY,
   WEB_CONTENT_RELOAD,
@@ -120,7 +121,7 @@ describe('desktop package', () => {
       'mod artifact;\nuse artifact::{open_xlsx, reveal_artifact, reveal_kept_artifact, save_artifact_as, open_remote_artifact};',
     );
     expect(lib).toContain(
-      '.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,\n            reveal_kept_artifact,\n            save_artifact_as,\n            open_remote_artifact,download_file,',
+      '.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,\n            reveal_kept_artifact,\n            save_artifact_as,\n            open_remote_artifact,\n            engine_status,',
     );
     const [, cargo] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('Cargo.toml'));
     expect(cargo).toContain(`[dependencies]\n${RFD_DEPENDENCY}\nserde = "1"`);
@@ -162,7 +163,8 @@ describe('desktop package', () => {
       expect(lib.match(/mod web_content;/g)).toHaveLength(1);
       expect(lib.split(WEB_CONTENT_RELOAD)).toHaveLength(2);
       expect(lib).toContain(`use artifact::{${ARTIFACT_COMMANDS.join(', ')}};`);
-      for (const name of ARTIFACT_COMMANDS) {
+      expect(lib).toContain(`use engine::{${ENGINE_COMMANDS.join(', ')}};`);
+      for (const name of [...ARTIFACT_COMMANDS, ...ENGINE_COMMANDS]) {
         expect(lib.match(new RegExp(`\\n {12}${name},`, 'g'))).toHaveLength(1);
       }
       expect(writeFileSync.mock.calls.some(([path]) => String(path).endsWith('Cargo.toml'))).toBe(

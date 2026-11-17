@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import type { GatewayConn } from '../lib/types';
 import { Banner, CloseButton } from '../components/ui';
 import { AddMachine, MachineRows, useFleetHealth } from '../components/Machines';
+import { ThisComputer } from '../components/ThisComputer';
+import { ENGINE_VERBS, useLocalEngine } from '../lib/local-engine';
 
 interface Props {
   conns: GatewayConn[];
@@ -68,6 +70,7 @@ export function ConnectScreen({
     url: active?.url ?? null,
     onRecovered: offlineError ? onRetry : undefined,
   });
+  const { engine } = useLocalEngine();
 
   return (
     <div className="mx-auto w-full max-w-[1400px] space-y-8 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,translate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-1.5 starting:opacity-0 motion-reduce:transition-none sm:space-y-8 sm:px-6 sm:py-6">
@@ -94,6 +97,16 @@ export function ConnectScreen({
               onRetry={retry}
               actionLabel="Settings"
             />
+          </div>
+        </section>
+      )}
+
+      {/* Only the desktop app has this state. A gateway that runs is a machine above. */}
+      {engine && engine.kind !== 'running' && (
+        <section>
+          <PageHeading title="This computer" />
+          <div className="border border-dialog-edge bg-panel p-4 sm:p-5">
+            <ThisComputer engine={engine} isUpdateShown={false} {...ENGINE_VERBS} />
           </div>
         </section>
       )}

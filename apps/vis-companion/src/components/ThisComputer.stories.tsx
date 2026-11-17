@@ -5,8 +5,7 @@ import { ThisComputer } from './ThisComputer';
 
 /**
  * Vis on this computer, as the desktop app shows it to a person who has only the app.
- * Each story is one state that the desktop host reports, inside the plane that the
- * pairing page and Settings give it.
+ * Each story is one state that the desktop host reports.
  */
 const meta = {
   title: 'Settings/Machines/This computer',
@@ -22,7 +21,7 @@ const meta = {
   },
   decorators: [
     (Story) => (
-      <div className="max-w-3xl border border-dialog-edge bg-panel p-5">
+      <div className="max-w-3xl border border-dialog-edge bg-panel px-4 py-3">
         <Story />
       </div>
     ),
@@ -33,36 +32,31 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 const INSTALL_LOG = [
-  'vis-agent install: verified the vis-agent command against SHA256SUMS',
   'vis-agent install: installed ~/.local/bin/vis-agent',
   'vis-agent: downloading vis-agent-macos-arm64.tar.gz (v0.5.21)',
 ];
 
-/** The first open of the app on a computer without Vis: the offer, and one verb. */
+/** The first open of the app on a computer without Vis. */
 export const NotInstalled: Story = {
   play: async ({ args, canvas }) => {
-    await userEvent.click(canvas.getByRole('button', { name: 'Install Vis' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Install' }));
     await expect(args.onInstall).toHaveBeenCalledOnce();
   },
 };
 
-/** The installation in progress: the step, the steps to come and the newest log lines. */
+/** A task in progress shows its newest log line. */
 export const Installing: Story = {
-  args: { engine: { kind: 'working', task: 'install', step: 1, log: INSTALL_LOG } },
+  args: { engine: { kind: 'working', task: 'install', log: INSTALL_LOG } },
 };
 
-/** A failed installation keeps its report, and gives the same step for a terminal. */
+/** A failed task keeps its newest log lines, and the same verb starts it again. */
 export const InstallFailed: Story = {
   args: {
     engine: {
       kind: 'failed',
       task: 'install',
-      step: 1,
-      reason: 'The download of vis-agent-macos-arm64.tar.gz stopped (HTTP 503).',
-      log: [
-        ...INSTALL_LOG,
-        'vis-agent: could not download vis-agent-macos-arm64.tar.gz (HTTP 503); nothing was installed',
-      ],
+      reason: 'The installation stopped with an error.',
+      log: [...INSTALL_LOG, 'vis-agent: could not download vis-agent-macos-arm64.tar.gz (HTTP 503)'],
     },
   },
   play: async ({ args, canvas }) => {
@@ -71,31 +65,19 @@ export const InstallFailed: Story = {
   },
 };
 
-/** Vis is installed and its gateway runs: the version, the address and the update check. */
 export const Running: Story = {
-  args: { engine: { kind: 'running', version: '0.5.20', address: '127.0.0.1:7890' } },
+  args: { engine: { kind: 'running', version: '0.5.20', track: 'release' } },
 };
 
 /** A check found a newer release: the update is the one primary verb. */
 export const UpdateAvailable: Story = {
-  args: {
-    engine: { kind: 'running', version: '0.5.20', address: '127.0.0.1:7890', latest: '0.5.21' },
+  args: { engine: { kind: 'running', version: '0.5.20', track: 'release', latest: '0.5.21' } },
+  play: async ({ args, canvas }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Update' }));
+    await expect(args.onUpdate).toHaveBeenCalledOnce();
   },
 };
 
-/** The update in progress. */
-export const Updating: Story = {
-  args: {
-    engine: {
-      kind: 'working',
-      task: 'update',
-      step: 0,
-      log: ['vis-agent: downloading vis-agent-macos-arm64.tar.gz (v0.5.21)'],
-    },
-  },
-};
-
-/** Vis is installed, and its gateway does not run. */
 export const GatewayStopped: Story = {
-  args: { engine: { kind: 'stopped', version: '0.5.21', latest: '0.5.21' } },
+  args: { engine: { kind: 'stopped', version: '0.5.21', track: 'release', latest: '0.5.21' } },
 };
