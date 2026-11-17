@@ -301,21 +301,6 @@ function rowInk(tone: LiveTone): string {
 }
 
 /**
- * The verdict of a SEALED record, as a word and a mark in sentence case. An open view
- * needs no `Live` badge: it is already changing on screen and is a live region.
- */
-function ViewState({ view, isSettled }: { view: LiveViewModel; isSettled: boolean }) {
-  if (!isSettled) return null;
-  const failed = view.nodes.some((node) => node.type === 'status' && node.tone === 'error');
-  return (
-    // The box is one line of the title beside it, so the word stands on the title's line.
-    <span className="flex h-[1lh] shrink-0 items-center font-mono text-title">
-      <ToneWord tone={failed ? 'error' : 'ok'} word={failed ? 'Failed' : 'Done'} />
-    </span>
-  );
-}
-
-/**
  * The HEADLINE: the run's one sentence at reading size. Its state stands over it as
  * a word, and its detail sits under it one size down, so the sentence owns the
  * whole column on a phone. An `action` stands under the sentence and its detail, so it
@@ -2530,8 +2515,6 @@ export function LiveViewPanel({
     inDialog &&
     canInterrupt &&
     (view.nodes[0]?.type === 'status' || view.nodes[0]?.type === 'progress');
-  // An app's own chrome names its lifecycle once (#430), so its panel adds no verdict.
-  const showsVerdict = isSettled && !app;
   const stopButton = (
     <Button
       variant="secondary"
@@ -2556,13 +2539,13 @@ export function LiveViewPanel({
         role={isSettled ? undefined : 'status'}
         aria-live={isSettled ? undefined : 'polite'}
       >
-        {(!inDialog || (canInterrupt && !headlineHoldsStop) || showsVerdict) && (
+        {(!inDialog || (canInterrupt && !headlineHoldsStop)) && (
         <header
           className={
             embedded
               ? 'flex min-h-9 min-w-0 items-center gap-2 mouse:min-h-7'
               : inDialog
-                ? `flex min-w-0 items-center gap-2 px-(--live-view-inset) pb-2 ${showsVerdict ? 'justify-end' : ''}`
+                ? 'flex min-w-0 items-center gap-2 px-(--live-view-inset) pb-2'
                 : 'flex items-start gap-2 border-b border-dialog-edge px-(--live-view-inset) py-2.5'
           }
         >
@@ -2634,7 +2617,6 @@ export function LiveViewPanel({
               </TextButton>
             </>
           )}
-          <ViewState view={view} isSettled={showsVerdict} />
         </header>
         )}
         {!isSettled && isArmed && onInterrupt && (
