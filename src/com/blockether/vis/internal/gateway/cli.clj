@@ -357,10 +357,13 @@
    `--no-open`: a wrapper opens the printed address, and its browser needs no
    pasted token. The address works once, so a later visit uses the saved machine.
 
+   Without a launch code the address opens the app unconnected, so the cause is
+   printed with the way to connect.
+
    A browser records voice only on a secure page: HTTPS or this computer's loopback.
    Another `http://` address, such as the WSL address that a Windows browser opens,
    needs the Chrome flag that lists it as secure."
-  [parsed {:keys [url launch? host port remote?]}]
+  [parsed {:keys [url launch? launch-problem host port remote?]}]
   (let [pair? (boolean (get parsed "pair"))]
     (commandline/stdout! (str "Vis web app: " url))
     (when launch?
@@ -368,6 +371,20 @@
         (str "This address connects one browser to this gateway. It works once, within "
              (quot (long web/LAUNCH_TTL_MS) 60000)
              " minutes.")))
+    (when launch-problem
+      (commandline/stdout!
+        (str "This address has no launch code: "
+             (case launch-problem
+               :unauthorized
+               (str "the gateway did not accept the token of this computer.\n"
+                    "Connect in the app with this address. If the app asks for a token, "
+                    "give it the token of that gateway. To get a launch address, set "
+                    "VIS_GATEWAY_TOKEN to that token.")
+
+               :unsupported
+               "the gateway is too old to give one.\nConnect in the app with this address."
+
+               "the gateway gave none.\nConnect in the app with this address."))))
     (when-not (or remote? (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
       (when-let [others (->> (pairing/candidate-hosts host)
                              (remove #{"127.0.0.1" "::1" "localhost"})

@@ -139,4 +139,18 @@
                      :token "secret"
                      :require-token? true
                      :advertise "gateway.example.com"}]
-                   @pairs)))))
+                   @pairs))))
+  (it "names the token variable when the gateway refused the token of this computer"
+      ;; `vis-agent web` printed the plain address and no reason.
+      (let [lines (atom [])]
+        (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)}
+          (fn []
+            (#'gateway-cli/web-ready!
+             {"no-open" true}
+             {:url "http://127.0.0.1:7890/"
+              :launch? false
+              :launch-problem :unauthorized
+              :host "127.0.0.1"
+              :port 7890
+              :remote? true})))
+        (expect (some #(str/includes? % "VIS_GATEWAY_TOKEN") @lines)))))

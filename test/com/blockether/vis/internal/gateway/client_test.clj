@@ -214,7 +214,28 @@
             (expect (= 1 (client/run-web! #(reset! ready %) {:interval-ms 0})))
             (expect
               (= {:url "http://127.0.0.1:7890/" :app-url "http://127.0.0.1:7890/" :launch? false}
-                 (select-keys @ready [:url :app-url :launch?]))))))))
+                 (select-keys @ready [:url :app-url :launch?])))))))
+  (it "says why no launch code came"
+      ;; The plain address came with no reason, also when the gateway refused the token.
+      (let [problem-for (fn [answer]
+                          (let [ready (atom nil)]
+                            (with-redefs-fn {(rv 'ensure-gateway-serving!) (constantly fake-entry)
+                                             (rv 'ensure-client!) (constantly nil)
+                                             (rv 'gw-send!) (fn [_ method _ _]
+                                                              (if (= "POST" method)
+                                                                (answer)
+                                                                (throw (java.net.ConnectException.
+                                                                         "refused"))))
+                                             (rv 'release-client!) (constantly nil)}
+                              (fn []
+                                (client/run-web! #(reset! ready %) {:interval-ms 0})
+                                (:launch-problem @ready)))))]
+        (expect (= :unauthorized (problem-for (constantly {:status 401 :body "{}"}))))
+        (expect (= :unsupported (problem-for (constantly {:status 404 :body "{}"}))))
+        (expect (= :failed (problem-for #(throw (java.net.ConnectException. "refused")))))
+        (expect (nil? (problem-for (constantly {:status 200
+                                                :body
+                                                "{\"code\":\"c\",\"gateway_id\":\"g\"}"})))))))
 
 (defdescribe
   web-app-uses-or-starts-the-gateway-at-its-address
@@ -225,13 +246,18 @@
           (merge {"status" "running" "managed" true "clients" 0 "running_turns" 0} m))
 
         decide
-        (fn [{:keys [registered fresh? local? port-free? status]} opts]
+        (fn [{:keys [registered fresh? late? local? port-free? status]} opts]
           (let [calls (atom [])]
             (with-redefs-fn {(rv 'db-target) (constantly {:backend :sqlite
                                                           :path "/tmp/vis-web-test.mdb"})
                              #'discovery/read-registry (constantly registered)
                              #'discovery/registry-fresh? (fn [entry _]
                                                            (boolean (and fresh? entry)))
+                             #'discovery/pid-alive? (constantly true)
+                             #'discovery/await-registry! (fn [& _]
+                                                           (swap! calls conj :await)
+                                                           (when late? registered))
+                             (rv 'local-gateway-secret) (constantly nil)
                              #'client/local-host? (constantly (not= false local?))
                              (rv 'port-free?) (fn [host port]
                                                 (swap! calls conj [:port-free? host port])
@@ -281,7 +307,50 @@
         (expect (= [[:attach "10.0.0.5:8080"] [:serve "/"]]
                    (decide {:local? false} {:host "10.0.0.5" :port 8080})))
         (expect (= [[:port-free? "127.0.0.1" 8080] [:attach "127.0.0.1:8080"] [:serve "/"]]
-                   (decide {:port-free? false} {:port 8080}))))))
+                   (decide {:port-free? false} {:port 8080}))))
+    (it "keeps the database's gateway when its first health answer comes late"
+        ;; One slow `/healthz` made `vis-agent web --port` attach to its own gateway as
+        ;; a foreign one, without the registry secret, so no launch code came.
+        (expect (= [:await [:serve "/"]]
+                   (decide {:registered {:host "127.0.0.1" :port 8080 :pid 4242 :secret "s"}
+                            :late? true
+                            :port-free? false}
+                           {:port 8080}))))))
+
+(defdescribe
+  web-app-finds-the-secret-of-a-local-gateway
+  (it "takes the secret that the gateway accepts: the registry secret or the token file"
+      ;; A gateway of this Vis home for another DB accepts the stable token file.
+      ;; `vis-agent web --port` attached to it without a token and got no launch code.
+      (let [token-file
+            (java.io.File/createTempFile "vis-gateway-token-" ".txt")
+
+            probed
+            (atom [])
+
+            accepts
+            (fn [accepted]
+              (fn [entry method path _]
+                (swap! probed conj [(:base-url entry) (:secret entry) method path])
+                {:status 200
+                 :body
+                 (str "{\"status\":\"ok\",\"secret_match\":" (= accepted (:secret entry)) "}")}))
+
+            secret-of
+            (fn [accepted entry]
+              (with-redefs-fn {#'discovery/default-token-file (constantly token-file)
+                               (rv 'gw-send!) (accepts accepted)}
+                #((rv 'local-gateway-secret) entry "127.0.0.1:8080")))]
+
+        (try (spit token-file "stable-secret\n")
+             (expect (= "stable-secret" (secret-of "stable-secret" {:secret "registry-secret"})))
+             (expect (= [["http://127.0.0.1:8080" "registry-secret" "GET" "/healthz"]
+                         ["http://127.0.0.1:8080" "stable-secret" "GET" "/healthz"]]
+                        @probed))
+             (expect (= "registry-secret"
+                        (secret-of "registry-secret" {:secret "registry-secret"})))
+             (expect (nil? (secret-of "another-home" nil)))
+             (finally (.delete token-file))))))
 
 (defdescribe web-app-addresses
              (it "opens a bind on every interface on loopback and keeps IPv6 and remote URLs valid"

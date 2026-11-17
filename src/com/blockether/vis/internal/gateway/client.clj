@@ -2221,6 +2221,40 @@
                   (and (.isLoopbackAddress bound) (.isLoopbackAddress wanted))))
             (catch Exception _ false))))
 
+(defn- local-gateway-secret
+  "The secret that the gateway at local address `url` accepts, or nil when this
+   computer holds none.
+
+   A gateway that the registry of the current DB does not name can still belong to
+   this Vis home: the gateway of another DB, or the DB's own gateway when its health
+   probe failed. It accepts the registry secret of `entry` or the stable token file,
+   and `/healthz` says which."
+  [entry url]
+  (let [file
+        (discovery/default-token-file)
+
+        stable
+        (when (.exists file) (try (slurp file) (catch Throwable _ nil)))
+
+        target
+        (remote-entry url nil)]
+
+    (->> [(:secret entry) stable]
+         (keep #(not-empty (str/trim (str %))))
+         distinct
+         (some (fn [secret]
+                 (try (let [response
+                            (gw-send! (assoc target :secret secret)
+                                      "GET"
+                                      "/healthz"
+                                      {:timeout-ms health-probe-timeout-ms})
+
+                            body
+                            (when (= 200 (:status response)) (parse-json-body (:body response)))]
+
+                        (when (true? (get body "secret_match")) secret))
+                      (catch Throwable _ nil)))))))
+
 (defn- web-gateway!
   "The gateway `vis-agent web` opens the app on, serving `/`.
 
@@ -2230,7 +2264,8 @@
    only when it is managed and idle; a busy or user-owned one stays where it is and
    the call throws `:gateway/elsewhere`. Any other gateway answering at the address,
    and every gateway on another machine, is attached to like `--gateway`, with
-   `VIS_GATEWAY_TOKEN` as its token."
+   `VIS_GATEWAY_TOKEN` as its token. For a gateway on this machine, the token defaults
+   to the one of [[local-gateway-secret]]."
   [{:keys [host port]}]
   (if-not (or host port)
     (ensure-gateway-serving! "/")
@@ -2240,25 +2275,51 @@
           port
           (long (or port DEFAULT_PORT))
 
+          url
+          (str (url-host host) ":" port)
+
+          token
+          (some-> (System/getenv REMOTE_TOKEN_ENV)
+                  str/trim
+                  not-empty)
+
           attach!
-          (fn []
-            (connect-remote! {:url (str (url-host host) ":" port)
-                              :token (System/getenv REMOTE_TOKEN_ENV)})
+          (fn [token]
+            (connect-remote! {:url url :token token})
             (ensure-gateway-serving! "/"))]
 
       (if-not (local-host? host)
-        (attach!)
+        (attach! token)
         (let [db
               (db-target)
 
-              entry
+              registered
               (discovery/read-registry db)
 
+              fresh?
+              (discovery/registry-fresh? registered probe-entry?)
+
+              here?
+              (answers-at? registered host port)
+
+              ;; The registry names a live process at this address. One late `/healthz`
+              ;; answer does not make the DB's own gateway a foreign one: wait for it.
+              late
+              (when (and (not fresh?) here? (discovery/pid-alive? (:pid registered)))
+                (discovery/await-registry! db
+                                           probe-entry?
+                                           {:timeout-ms occupied-port-registry-wait-ms
+                                            :poll-ms 100}))
+
+              entry
+              (or late registered)
+
               running?
-              (discovery/registry-fresh? entry probe-entry?)]
+              (or fresh? (some? late))]
 
           (cond (and running? (answers-at? entry host port)) (ensure-gateway-serving! "/")
-                (not (port-free? (dial-host host) port)) (attach!)
+                (not (port-free? (dial-host host) port))
+                (attach! (or token (local-gateway-secret (when here? registered) url)))
                 (not running?) (ensure-gateway-serving! "/" {:host host :port port})
                 :else (let [{:keys [idle? reason clients running-turns]} (daemon-idle? (status))]
                         (when-not idle?
@@ -2278,17 +2339,22 @@
                         (await-daemon-down! db (:host entry) (:port entry))
                         (ensure-gateway-serving! "/" {:host host :port port}))))))))
 
-(defn- web-launch-url
-  "The address that opens the web app of gateway `entry` and connects the browser
-   to it: the app address with a one-time launch code and the gateway id in the
-   fragment. A browser never sends the fragment to a server. Nil when the gateway
-   mints no code, such as an older gateway without the route."
+(defn- web-launch
+  "Ask gateway `entry` for a one-time launch code. With a code the result is
+   `{:url address}`: the address that opens the web app and connects the browser to
+   the gateway, with the code and the gateway id in the fragment. A browser never
+   sends the fragment to a server. Without a code the result is `{:problem reason}`:
+   `:unauthorized` when the gateway refused the secret of `entry`, `:unsupported` for
+   an older gateway without the route, else `:failed`."
   [entry]
   (try (let [response
              (gw-send! entry "POST" "/v1/web/launches" {:timeout-ms 10000})
 
+             status
+             (:status response)
+
              body
-             (when (= 200 (:status response)) (parse-json-body (:body response)))
+             (when (= 200 status) (parse-json-body (:body response)))
 
              code
              (some-> (get body "code")
@@ -2300,17 +2366,21 @@
                      str
                      not-empty)]
 
-         (when (and code id) (str (web-url entry) "#launch=" (enc code) "&gw=" (enc id))))
-       (catch Throwable _ nil)))
+         (cond (and code id) {:url (str (web-url entry) "#launch=" (enc code) "&gw=" (enc id))}
+               (contains? #{401 403} status) {:problem :unauthorized}
+               (contains? #{404 405} status) {:problem :unsupported}
+               :else {:problem :failed}))
+       (catch Throwable _ {:problem :failed})))
 
 (defn run-web!
   "Serve the Companion web app from a gateway while holding a client lease, as
    [[run-tui!]] does for the terminal client. `opts` may name the gateway address
    (`:host`, `:port`; see [[web-gateway!]]) and the milliseconds between health
-   checks (`:interval-ms`). `on-ready` receives `{:url :app-url :launch? :host :port
-   :remote?}` once the gateway serves the app. `:url` is the address to open: the
-   one-time launch address of [[web-launch-url]], or `:app-url` when the gateway
-   mints no code. `:host` and `:port` are the daemon's bind. Blocks while the
+   checks (`:interval-ms`). `on-ready` receives `{:url :app-url :launch?
+   :launch-problem :host :port :remote?}` once the gateway serves the app. `:url` is
+   the address to open: the one-time launch address of [[web-launch]], or `:app-url`
+   when the gateway mints no code; `:launch-problem` then names the cause. `:host`
+   and `:port` are the daemon's bind. Blocks while the
    gateway answers and returns exit code 1 after three failed checks in a row;
    Ctrl-C ends the process, and the shutdown hook releases the lease."
   ([on-ready] (run-web! on-ready nil))
@@ -2318,11 +2388,12 @@
    (try (let [entry (web-gateway! opts)]
           (ensure-client! entry)
           (let [app-url (web-url entry)
-                launch-url (web-launch-url entry)]
+                {launch-url :url :keys [problem]} (web-launch entry)]
 
             (on-ready {:url (or launch-url app-url)
                        :app-url app-url
                        :launch? (boolean launch-url)
+                       :launch-problem problem
                        :host (:host entry)
                        :port (:port entry)
                        :remote? (boolean (:remote? entry))}))
