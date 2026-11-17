@@ -52,6 +52,7 @@
     :section ["jail"]
     :key "keychain"
     :label "Keychain access"
+    :parent "jail_enabled"
     :default false
     :type "boolean"
     :editor "switch"}
@@ -288,40 +289,44 @@
                      [section (scoped/inherited-definitions db target section)]))
               sections)]
 
-    (mapv (fn [{:keys [id section key label default type editor choices applies description]}]
-            (let [{:keys [value source is-override] :or {value default source "default"}}
-                  (get-in layers [section key])
+    (mapv
+      (fn [{:keys [id section key label default type editor choices applies description]
+            under :parent}]
+        (let [{:keys [value source is-override] :or {value default source "default"}}
+              (get-in layers [section key])
 
-                  parent
-                  (get-in inherited [section key] {:value default :source "default"})]
+              parent
+              (get-in inherited [section key] {:value default :source "default"})]
 
-              (cond-> {:id id
-                       :label label
-                       :type type
-                       :editor editor
-                       :schema (str "config.json#/$defs/" (first section) "/properties/" key)
-                       :scopes ["global" "project" "group" "session"]
-                       :scope (:scope target)
-                       :source source
-                       :is-override (boolean is-override)
-                       :inherited-value (:value parent)
-                       :inherited-source (:source parent)
-                       :own-value (when is-override value)
-                       :applies (or applies "next_turn")}
-                ;; The contract has no null description. The band header names when changes apply.
-                (or description (= "project" (:scope target)))
-                (assoc :description
-                  (or description "Project access cannot exceed host permissions."))
+          (cond-> {:id id
+                   :label label
+                   :type type
+                   :editor editor
+                   :schema (str "config.json#/$defs/" (first section) "/properties/" key)
+                   :scopes ["global" "project" "group" "session"]
+                   :scope (:scope target)
+                   :source source
+                   :is-override (boolean is-override)
+                   :inherited-value (:value parent)
+                   :inherited-source (:source parent)
+                   :own-value (when is-override value)
+                   :applies (or applies "next_turn")}
+            ;; The contract has no null description. The band header names when changes apply.
+            (or description (= "project" (:scope target)))
+            (assoc :description (or description "Project access cannot exceed host permissions."))
 
-                (= type "boolean")
-                (assoc :enabled value)
+            under
+            (assoc :parent under)
 
-                (not= type "boolean")
-                (assoc :value value)
+            (= type "boolean")
+            (assoc :enabled value)
 
-                choices
-                (assoc :choices choices))))
-          fields)))
+            (not= type "boolean")
+            (assoc :value value)
+
+            choices
+            (assoc :choices choices))))
+      fields)))
 
 (defn validate-candidate!
   "Validate a complete staged access configuration before any owner is written."

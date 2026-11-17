@@ -94,6 +94,18 @@
                       (expect (boolean (re-matches #"[a-f0-9]{64}" (get body "revision"))))
                       (expect (contains? (first (get-in body ["groups" 0 "toggles"]))
                                          "inherited_value"))))))
+            (it "puts keychain access under the process jail that it depends on"
+                (with-empty-config
+                  (with-redefs [lp/db-info h/store]
+                    (let [response ((get api/handlers [:get "/v1/settings"]) {:query-params {}})
+                          rows (->> (get (json/read-json (:body response)) "groups")
+                                    (filter #(= "permissions" (get % "id")))
+                                    first
+                                    (#(get % "toggles")))
+                          jail (first (filter #(= "jail_enabled" (get % "id")) rows))]
+
+                      (expect (not-any? #(= "jail_keychain" (get % "id")) rows))
+                      (expect (= ["jail_keychain"] (mapv #(get % "id") (get jail "children"))))))))
             (it "persists booleans, arrays and objects as JSON values at only the selected owner"
                 (with-empty-config
                   (let [{:keys [db target sid other id]}
