@@ -476,10 +476,10 @@
                        ;; The agent name stands first. Experimental switches stand last.
                        ;; Below global, no provider accounts show, so the response rows of the
                        ;; providers section stand in General, before the experimental switches.
+                       ;; The machine name has no row: clients rename machines, and the SDK
+                       ;; reads and saves it by id.
                        :general
-                       (concat (when-not local?
-                                 [(assoc (agent-name-setting) :scopes ["global"])
-                                  (assoc (machine-name-setting) :scopes ["global"])])
+                       (concat (when-not local? [(assoc (agent-name-setting) :scopes ["global"])])
                                (mapcat rows
                                        (cond->> groups
                                          local?

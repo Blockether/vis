@@ -126,14 +126,14 @@ address, which can be long for a server. Give the gateway a name, and each clien
 machine_name: Studio Mac
 ```
 
-Put the key in your global `~/.vis/config.yml`. A project file does not change the name. You can
-also change it in **Settings → General → Machine name** in the TUI, or **Settings → your gateway →
-General** in Companion. Saving in Settings writes to the gateway's `~/.vis/state.yml`, and that
-value wins over `config.yml`. Save an empty name to remove it.
+Put the key in your global `~/.vis/config.yml`. A project file does not change the name. A program
+can also save the name, as [Name the machine](configuration-api.md#name-the-machine) shows. The saved
+name goes to the gateway's `~/.vis/state.yml`, and that value wins over `config.yml`. Settings do not
+show this name. To change only the name that one client shows, rename the machine in that client.
 
 For a gateway that a service or a container starts, set the environment variable
-`VIS_MACHINE_NAME`. The variable wins over the saved name. Settings then show the name from the
-variable. A name that you save there applies when the variable is not set.
+`VIS_MACHINE_NAME`. The variable wins over the saved name. A name that a program saves applies when
+the variable is not set.
 
 A name can have up to 64 characters. It cannot be blank or contain control characters. Vis removes
 spaces at the start and end. Vis ignores a `VIS_MACHINE_NAME` value that breaks these rules.

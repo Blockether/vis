@@ -83,10 +83,10 @@
                          (config/load-global-config-raw)))
               (expect (= "Studio" (get (setting) "value")))
               (expect (document/valid-json? "gateway" "setting" (setting)))
-              (expect (some #(= "machine_name" (get % "id"))
-                            (tree-seq coll?
-                                      #(if (map? %) (vals %) %)
-                                      (answer (#'settings-api/list-settings-handler {})))))
+              (expect (not-any? #(= "machine_name" (get % "id"))
+                                (tree-seq coll?
+                                          #(if (map? %) (vals %) %)
+                                          (answer (#'settings-api/list-settings-handler {})))))
               (doseq [value ["two\nlines" 42 (apply str (repeat 65 "a"))]]
                 (expect (= 400 (:status (write! {"action" "value" "value" value})))))
               (expect (= 400 (:status (write! {"action" "toggle"}))))
