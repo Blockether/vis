@@ -130,7 +130,22 @@
         (state/dispatch [:global-app-behind "g1" 7])
         (expect (true? (get-in @state/app-db [:global-apps "g1" :is-gap])))
         (state/dispatch [:global-apps-loaded []])
-        (expect (false? (keymap/verb-available? @state/app-db {:show-when :has-global-apps}))))))
+        (expect (false? (keymap/verb-available? @state/app-db {:show-when :has-global-apps}))))
+    ;; Review of the app summaries: an app that changed and closed while the stream
+    ;; was away stayed in the picker as a live app.
+    (it "take the state of a newer summary and keep the body for a read"
+        (reset! state/app-db
+          {:session {:id "s1"} :tabs [] :live-views [] :app-views {} :render-version 0})
+        (state/dispatch [:global-apps-loaded [(app "g1" "Clock" nil :seq 5)]])
+        (let [body (select-keys (get-in @state/app-db [:global-apps "g1" :view]) [:nodes :seq])]
+          (state/dispatch [:global-apps-loaded
+                           [(assoc (dissoc (app "g1" "Renamed" nil :seq 8 :is-closed true) :nodes)
+                              :is-summary true)]])
+          (let [{:keys [view is-gap]} (get-in @state/app-db [:global-apps "g1"])]
+            (expect (= [] (app-surfaces/global-apps (:global-apps @state/app-db))))
+            (expect (= "Renamed" (:title view)))
+            (expect (= body (select-keys view [:nodes :seq])))
+            (expect (true? is-gap)))))))
 
 (defn- painted-right
   "The last screen column that app `view` paints in `band` on a `cols`x`rows` terminal."

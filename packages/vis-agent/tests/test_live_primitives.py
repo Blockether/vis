@@ -272,6 +272,30 @@ def test_scene_changes_merge_onto_their_objects(monkeypatch, host_kind):
             view.flush()
 
 
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_a_batch_keeps_a_set_after_the_group_of_its_node_comes_again(
+    monkeypatch, host_kind
+):
+    # The last set moved before the drop of the group,
+    # so the app kept the text of the added group.
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+
+    def box(text):
+        return vis.ui.group("box", vis.ui.paragraph("note", text))
+
+    with vis.live("Notes", [box("zero")], flush_ms=10000) as view:
+        with view.batch():
+            view["note"].set("one")
+            view.drop("box")
+            view.add(box("two"))
+            view["note"].set("three")
+        (group,) = view.state()["nodes"]
+        assert group["children"][0]["text"] == "three"
+
+
 def test_table_builder_refuses_text_columns():
     # #428: text columns passed every SDK check and failed only when a real app opened.
     with pytest.raises(

@@ -2039,6 +2039,73 @@
       (expect (rebuilds? (apply str (map #(str "old " % "\n") (range 2000)))
                          (apply str (map #(str "new " % "\n") (range 2000))))))))
 
+;; Review of this release: a reader that folded a `since` answer got another view
+;; than a whole read gives.
+(defdescribe
+  app-view-delta-order-test
+  (it "keeps a set after the group of its node comes again"
+      (with-large-app
+        (fn [sid view-id _]
+          (let [box
+                (fn [text]
+                  {"id" "box"
+                   "type" "group"
+                   "children" [{"id" "note" "type" "paragraph" "text" text}]})
+
+                _
+                (app-patch! view-id [{"op" "add-node" "node_spec" (box "zero")}])
+
+                since
+                (get-in (json-body (app-answer sid view-id nil)) ["view" "seq"])
+
+                _
+                (app-patch! view-id
+                            [{"op" "set" "node_id" "note" "text" "one"}
+                             {"op" "remove-node" "node_id" "box"}
+                             {"op" "add-node" "node_spec" (box "two")}
+                             {"op" "set" "node_id" "note" "text" "three"}])
+
+                ops
+                (get-in (json-body (app-answer sid view-id since)) ["patches" 0 "patch" "ops"])]
+
+            (expect (= {"op" "set" "node_id" "note" "text" "three"} (last ops)))))))
+  (it "gives the whole app to a reader after a new owner changes its icon"
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                open!
+                (fn [icon]
+                  (get (app-op! {"op" "open"
+                                 "view" (cond-> {"title" "Review"
+                                                 "session_id" sid
+                                                 "placement" "attachment"
+                                                 "key" "review"
+                                                 "nodes" [{"id" "change"
+                                                           "type" "diff"
+                                                           "patch" app-patch
+                                                           "new_revision" "def5678"}]}
+                                          icon
+                                          (assoc "icon" icon))})
+                       "view_id"))
+
+                view-id
+                (open! nil)
+
+                _
+                (set-app-patch! view-id large-app-patch "fff0001")
+
+                held
+                (get-in (json-body (app-answer sid view-id nil)) ["view" "seq"])]
+
+            (try (expect (= view-id (open! "review")))
+                 (expect (= [(inc held) "review"]
+                            (mapv #(get-in (json-body (app-answer sid view-id held)) ["view" %])
+                                  ["seq" "icon"])))
+                 (finally (hi/close-live! view-id))))))))
+
 ;; A game's app froze in every surface after a few minutes while its record kept
 ;; growing: a flush that took the frame during a patch left the next frame without
 ;; a scheduled flush, and no later patch scheduled one.

@@ -4234,37 +4234,38 @@
    marks the app stale, and an adopting open makes it live again. A summary
    (`:is-summary`: the app without its body) never replaces a body. At the seq of
    the held copy it gives the state of the app and the copy keeps its body. A newer
+   summary gives the state too, and the copy keeps its body and its seq. A newer
    summary, or a summary with no held body, marks the app for a read."
   [workspace view]
-  (update-in workspace
-             [:app-views (:id view)]
-             (fn [held]
-               (let [held-seq
-                     (long (or (get-in held [:view :seq]) 0))
+  (update-in
+    workspace
+    [:app-views (:id view)]
+    (fn [held]
+      (let [held-seq
+            (long (or (get-in held [:view :seq]) 0))
 
-                     seq
-                     (long (or (:seq view) 0))
+            seq
+            (long (or (:seq view) 0))
 
-                     behind
-                     (long (or (:behind-seq held) 0))
+            behind
+            (long (or (:behind-seq held) 0))
 
-                     owner-state
-                     #(if (:is-stale view) (assoc % :is-stale true) (dissoc % :is-stale))]
+            owner-state
+            #(if (:is-stale view) (assoc % :is-stale true) (dissoc % :is-stale))
 
-                 (cond (and held (> held-seq seq)) (update held :view owner-state)
-                       ;; A frame that came during the read can be newer than the copy that was read.
-                       (not (:is-summary view)) {:view view :is-gap (< seq behind)}
-                       (or (nil? held) (get-in held [:view :is-summary]))
-                       {:view view :is-gap true :behind-seq (max seq behind)}
-                       (= held-seq seq) (assoc held
-                                          :view (merge (dissoc view :is-summary)
-                                                       (select-keys
-                                                         (:view held)
-                                                         view-spec/live-summary-omitted-keys)))
-                       :else (-> held
-                                 (update :view owner-state)
-                                 (assoc :is-gap true
-                                        :behind-seq (max seq behind))))))))
+            with-body
+            #(merge (dissoc view :is-summary) (select-keys (:view held) %))]
+
+        (cond (and held (> held-seq seq)) (update held :view owner-state)
+              ;; A frame that came during the read can be newer than the copy that was read.
+              (not (:is-summary view)) {:view view :is-gap (< seq behind)}
+              (or (nil? held) (get-in held [:view :is-summary]))
+              {:view view :is-gap true :behind-seq (max seq behind)}
+              (= held-seq seq) (assoc held :view (with-body view-spec/live-summary-omitted-keys))
+              :else (assoc held
+                      :view (with-body (conj (vec view-spec/live-summary-omitted-keys) :seq))
+                      :is-gap true
+                      :behind-seq (max seq behind)))))))
 
 (defn- behind-app-view
   "Mark held app `view-id` for a read when its copy is behind `seq`."

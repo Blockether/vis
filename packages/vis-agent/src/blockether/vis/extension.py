@@ -6226,9 +6226,13 @@ class LiveView:
         """Fold this op into the last one addressing the same node, if it folds.
 
         Only the LAST op for that node is a candidate, so nothing reorders past
-        a `clear` or a `remove` that stands between them.
+        a `clear` or a `remove` that stands between them. An `add-node` or a
+        `remove-node` ends the search: it can drop the node with its group and
+        add it again.
         """
         for earlier in reversed(self._buffer):
+            if earlier["op"] in ("add-node", "remove-node"):
+                break
             if earlier.get("node_id") != op.get("node_id"):
                 continue
             if earlier["op"] == op["op"] and op["op"] in ("set", "set-value"):

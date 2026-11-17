@@ -195,7 +195,9 @@
    structural — `add-node`, `remove-node`, `clear`, `remove` — is kept exactly as
    it stands: it decides what the node IS, and a surface that never saw it would
    paint a view the record does not have. Nothing is ever reordered: a node op
-   merges only into the last op on its OWN node."
+   merges only into the last op on its OWN node, and only when no `add-node` or
+   `remove-node` stands after that op. Such an op can drop the node with its group
+   and add it again, and the merged op would then come before the node it changes."
   [ops op]
   (let [node
         (op-node op)
@@ -207,7 +209,10 @@
                               ops)))
 
         prior
-        (when (some? at) (nth ops at))
+        (when (and (some? at)
+                   (not-any? #(contains? #{:add-node :remove-node} (:op %))
+                             (subvec ops (inc (long at)))))
+          (nth ops at))
 
         k
         (append-key op)]
@@ -645,7 +650,8 @@
   "The view deltas (view.json `view_delta`) that take app `view` from seq `since` to
    its newest published frame, oldest first. Nil when the reader must take the
    whole view: the gateway does not hold these frames, or their strings are not
-   shorter than the strings of the view."
+   shorter than the strings of the view. A reader at the newest frame is behind
+   when the app has a newer seq and no frame waits: a new owner changed the icon."
   [view since]
   (let [{:keys [frames seq]}
         (get @deltas (:id view))
@@ -654,7 +660,7 @@
         (drop-while #(not= (inc (long since)) (long (:first-seq (:delta %)))) frames)]
 
     (cond (nil? seq) nil
-          (= since seq) []
+          (= since seq) (when (or (= seq (:seq view)) (contains? @buffered (:id view))) [])
           (empty? missed) nil
           (chars-above? view (transduce (map :chars) + 0 missed)) (mapv :delta missed)
           :else nil)))
