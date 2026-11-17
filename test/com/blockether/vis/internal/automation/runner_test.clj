@@ -24,8 +24,20 @@
     (or (f) (when (< n 500) (Thread/sleep 10) (recur (inc n))))))
 
 (defn- settled
+  "Run `run-id` after its task ended. The runner saves the end state of a run before
+   it deletes the temporary session and sends the alert. Thus the end state alone
+   does not show that the task ended, and a test that goes on gets those calls late:
+   CI run 44012286610 saw the delete of one test in the calls of the next test."
   [db run-id]
-  (eventually #(let [run (ps/db-automation-run db run-id)] (when (terminal (:status run)) run))))
+  (let [ended #(let [run (ps/db-automation-run db run-id)] (when (terminal (:status run)) run))]
+    (when-let [run (eventually ended)]
+      (when (eventually #(not (runner/busy? (:automation_id run)))) run))))
+
+(defn- idle!
+  "Wait until the runner has no task. A task that runs after its test calls the
+   fake runtime of the next test."
+  []
+  (eventually #(empty? @@#'runner/queues)))
 
 (defn- utf8 ^bytes [^String text] (.getBytes text StandardCharsets/UTF_8))
 
@@ -61,7 +73,7 @@
         (atom [])]
 
     (install! calls submit!)
-    (try (f db calls) (finally (ps/db-dispose-connection! db)))))
+    (try (f db calls) (finally (idle!) (ps/db-dispose-connection! db)))))
 
 (def ^:private input
   {"name" "Nightly check"
@@ -659,7 +671,7 @@
                                                            :run (fn [_ _])}]}]
                                       (System/currentTimeMillis))
          (f db (get (first (automation/list-all db (System/currentTimeMillis))) "id") calls)
-         (finally (ps/db-dispose-connection! db)))))
+         (finally (idle!) (ps/db-dispose-connection! db)))))
 
 (defdescribe
   extension-run-test
