@@ -77,6 +77,31 @@ WRONG = final_answer("text")
 """
 
 
+_EVENTS_FIXTURE = """from typing import assert_type
+
+from blockether.vis.engine import Event, Events, Session
+
+
+def follow(session: Session) -> list[str]:
+    with session.events(cursor=0, idle_timeout=5.0) as events:
+        assert_type(events, Events)
+        return [event.type for event in events]
+
+
+async def follow_async(session: Session) -> list[Event]:
+    seen: list[Event] = []
+    async with session.events(reconnects=0) as events:
+        async for event in events:
+            assert_type(event, Event)
+            seen.append(event)
+    return seen
+
+
+def wrong(session: Session) -> None:
+    session.events(idle_timeout="5")
+"""
+
+
 # These evals modules import the optional `harbor` extra.
 _HARBOR_MODULES = ("agent.py", "check.py", "environment.py", "judge.py")
 
@@ -153,4 +178,19 @@ def test_session_calls_have_known_types_under_pyright_strict(tmp_path):
         for item in report["generalDiagnostics"]
     ]
     wrong = _SESSION_FIXTURE.splitlines().index('WRONG = final_answer("text")')
+    assert found == [(wrong, "reportArgumentType")], result.stdout
+
+
+def test_event_streams_have_known_types_under_pyright_strict(tmp_path):
+    # `for` and `async for` over `Session.events` yield `Event` (#485). Only
+    # the wrong argument of the last line is a finding.
+    fixture = tmp_path / "event_streams.py"
+    fixture.write_text(_EVENTS_FIXTURE)
+    result = _pyright(tmp_path, fixture, mode="strict")
+    report = json.loads(result.stdout)
+    found = [
+        (item["range"]["start"]["line"], item["rule"])
+        for item in report["generalDiagnostics"]
+    ]
+    wrong = _EVENTS_FIXTURE.splitlines().index('    session.events(idle_timeout="5")')
     assert found == [(wrong, "reportArgumentType")], result.stdout

@@ -1,5 +1,6 @@
 """Public remote SDK, exercised through real loopback HTTP (never a user gateway)."""
 
+import asyncio
 import gzip
 import hashlib
 import io
@@ -53,6 +54,18 @@ def endpoint(respond):
             status, value = result[:2]
             kind = result[2] if len(result) > 2 else "application/json"
             extra = result[3] if len(result) > 3 else {}
+            if callable(value):
+                # A live body: the writer keeps the stream open until it returns.
+                self.send_response(status)
+                self.send_header("Content-Type", kind)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                try:
+                    value(self.wfile)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                self.close_connection = True
+                return
             data = value if isinstance(value, bytes) else json.dumps(value).encode()
             self.send_response(status)
             self.send_header("Content-Type", kind)
@@ -1645,3 +1658,118 @@ def test_machine_name_reads_saves_and_removes_the_setting(environment):
         }
         with pytest.raises(TypeError, match="text or None"):
             client.set_machine_name(7)
+
+
+def _ready(sid="s"):
+    event = {"type": "subscription.ready", "session_id": sid, "cursor": 0}
+    return b"data: " + json.dumps(event).encode() + b"\n\n"
+
+
+def _idle_stream(opened, heartbeat=None):
+    """Answer an SSE route that sends `subscription.ready`, then stays quiet."""
+
+    def write(out):
+        out.write(_ready())
+        out.flush()
+        opened.set()
+        for _ in range(300):
+            time.sleep(0.05)
+            if heartbeat is not None:
+                out.write(heartbeat)
+                out.flush()
+
+    def respond(method, path, body):
+        return compatible(method, path, body) or (200, write, "text/event-stream")
+
+    return respond
+
+
+def test_close_from_another_thread_stops_an_idle_stream_at_once():
+    # #485: close from a timer thread returned only at the socket read timeout,
+    # and the stream connected again after the close.
+    opened = threading.Event()
+    with endpoint(_idle_stream(opened)) as (url, calls):
+        with GatewayClient(url, timeout=5) as client:
+            seen = []
+            with client.session("s").events(retry_delay=0) as events:
+                timer = threading.Timer(0.3, events.close)
+                timer.start()
+                started = time.monotonic()
+                seen.extend(event.type for event in events)
+                elapsed = time.monotonic() - started
+                timer.join()
+                events.close()
+            assert seen == ["subscription.ready"]
+            assert elapsed < 1.5
+            assert sum("/v1/events?" in row[1] for row in calls) == 1
+            assert not client._streams
+
+
+def test_idle_timeout_ends_the_iteration_without_an_exception():
+    # #485: a caller needs a documented way to stop a quiet stream.
+    opened = threading.Event()
+    respond = _idle_stream(opened, heartbeat=b": ping\n\n")
+    with endpoint(respond) as (url, _), GatewayClient(url, timeout=5) as client:
+        started = time.monotonic()
+        with client.session("s").events(idle_timeout=0.4) as events:
+            seen = [event.type for event in events]
+        elapsed = time.monotonic() - started
+        assert seen == ["subscription.ready"]
+        assert 0.4 <= elapsed < 2
+
+
+def test_async_iteration_and_task_cancellation_close_the_stream():
+    # #485: `async for` reads events, and a cancelled task closes its stream.
+    opened = threading.Event()
+    with (
+        endpoint(_idle_stream(opened)) as (url, _),
+        GatewayClient(url, timeout=5) as client,
+    ):
+        stream = client.session("s").events()
+
+        async def follow(seen):
+            async with stream:
+                async for event in stream:
+                    seen.append(event.type)
+
+        async def main():
+            seen = []
+            task = asyncio.create_task(follow(seen))
+            while not seen and not task.done():
+                await asyncio.sleep(0.01)
+            started = time.monotonic()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            return seen, time.monotonic() - started
+
+        seen, elapsed = asyncio.run(main())
+        assert seen == ["subscription.ready"]
+        assert elapsed < 1
+        assert not client._streams
+        with pytest.raises(StopIteration):
+            next(stream)
+
+
+def test_close_from_another_thread_stops_a_polling_stream_at_once(monkeypatch):
+    # #485: stdio and callback streams slept up to one second after close.
+    from blockether.vis.engine._client import _SessionPollingEvents
+
+    with endpoint(compatible) as (url, _), GatewayClient(url, timeout=30) as client:
+        monkeypatch.setattr(
+            client, "get_session_events_since", lambda *a, **k: {"events": []}
+        )
+        events = _SessionPollingEvents(client.session("s"))
+        closed = []
+
+        def close():
+            closed.append(time.monotonic())
+            events.close()
+
+        # The poll delay grows to its maximum of one second before this close.
+        timer = threading.Timer(2.0, close)
+        timer.start()
+        assert list(events) == []
+        ended = time.monotonic()
+        timer.join()
+        assert ended - closed[0] < 0.25

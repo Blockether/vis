@@ -7,27 +7,33 @@ means that a submitted mutation was rolled back.
 
 from __future__ import annotations
 
+import asyncio
 import gzip
-import inspect
+import http.client
 import ipaddress
 import json
 import math
 import re
+import socket
 import threading
 import time
 import uuid
 import zlib
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping
+from collections.abc import Generator, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import (
     TYPE_CHECKING,
     Any,
     BinaryIO,
+    Generic,
     NotRequired,
+    Self,
     TypeAlias,
     TypedDict,
+    TypeVar,
     overload,
 )
 from urllib.error import HTTPError, URLError
@@ -233,9 +239,14 @@ def _segment(value: Any) -> str:
     return quote(value, safe="")
 
 
+def _response_socket(raw) -> socket.socket | None:
+    """Answer the socket of an open HTTP response, when it has one."""
+    return getattr(getattr(getattr(raw, "fp", None), "raw", None), "_sock", None)
+
+
 def _set_read_timeout(raw, seconds: float) -> None:
     """Set the read timeout of an open HTTP response socket, when it has one."""
-    sock = getattr(getattr(getattr(raw, "fp", None), "raw", None), "_sock", None)
+    sock = _response_socket(raw)
     if sock is not None:
         sock.settimeout(seconds)
 
@@ -405,7 +416,9 @@ class ExecutionLayer(ABC):
         timeout: Positive finite transport timeout in seconds. Defaults to 30.
             This is independent of a turn's wait deadline.
 
-    Use each layer and its session handles on one calling thread. Context entry
+    Use each layer and its session handles on one calling thread. Two exceptions
+    apply to event streams: `close` is safe from any thread, and `async for`
+    reads a stream on one worker thread that the stream owns. Context entry
     calls `connect`, and context exit calls `close`. A custom transport
     implements `connect`, `close`, `session_options` and `_open`. `_open`
     returns a context-managed binary response with status and headers. Path and
@@ -999,7 +1012,12 @@ class ExecutionLayer(ABC):
         ).json()
 
     def list_sessions(self, **query):
-        """Return one page with next_cursor. It does not fetch every session."""
+        """Return one page with next_cursor. It does not fetch every session.
+
+        By default the list does not show a session that has no title, no turns
+        and no running turn. Give include_empty="true" to also show these
+        sessions, for example a session that you created and did not run yet.
+        """
         return self._request("GET", "/v1/sessions", query=query).json()
 
     def get_capabilities(
@@ -4335,19 +4353,47 @@ class Session:
         """
         return self.view_action(view_id, "submit", values=values)
 
-    def events(self, **options) -> Events:
+    def events(
+        self,
+        *,
+        cursor: int = 0,
+        reconnects: int = 3,
+        retry_delay: float = 0.2,
+        idle_timeout: float | None = None,
+    ) -> Events:
         """Follow this conversation's progress as an iterable of `Event` records.
 
-        Options are `cursor` (nonnegative replay position, default 0),
-        `reconnects` (default 3) and `retry_delay` (seconds, default 0.2). Use a
-        context manager to close the stream when you stop iterating. The stream
-        spans the conversation, not just one turn. To track a specific request,
-        filter on `turn_id`. Closing the stream does not cancel work.
+        Args:
+            cursor: Nonnegative replay position. Defaults to 0.
+            reconnects: Retries after a lost connection. Defaults to 3.
+            retry_delay: Seconds between retries. Defaults to 0.2.
+            idle_timeout: Positive seconds without a new event after which the
+                iteration ends normally, with no exception. The time starts when
+                you call this method and again after each event. Heartbeats do
+                not count as events. Defaults to None: the stream follows the
+                conversation until you close it.
+
+        Use a context manager to close the stream when you stop iterating. The
+        stream spans the conversation, not just one turn. To track a specific
+        request, filter on `turn_id`. Closing the stream does not cancel work.
+        `close` is safe from another thread and stops a waiting iteration at once.
+
+        Iterate with `for`, or with `async for` in a coroutine (`async with`
+        closes the stream). The async form reads on one worker thread that the
+        stream owns, one read at a time. Do not iterate one stream from two tasks.
+        Cancellation of the waiting task closes the stream.
 
         Gateway sessions normally use SSE. Local execution and application-owned
         callbacks use finite event-page polling so Python callbacks run on the
-        calling thread. Both expose the same event interface.
+        calling thread, or on the worker thread of `async for`. Both expose the
+        same event interface.
         """
+        options = {
+            "cursor": cursor,
+            "reconnects": reconnects,
+            "retry_delay": retry_delay,
+            "idle_timeout": idle_timeout,
+        }
         extensions = self.client._client_extensions.get(self.id)
         if extensions is not None and extensions.manifest:
             return _SessionPollingEvents(self, **options)
@@ -4577,10 +4623,19 @@ class _ActivityStreamDecoder:
         return event
 
 
-class _EventStream:
-    """One bounded SSE reader. Subclasses own event identity and replay policy."""
+_T = TypeVar("_T")
 
-    def __init__(self, client, *, reconnects=3, retry_delay=0.2):
+
+class _EventStream(Generic[_T]):
+    """One bounded SSE reader. Subclasses own event identity and replay policy.
+
+    The owner thread iterates. `close` is safe from any thread: it sets a flag,
+    shuts down the open response socket and wakes a retry or poll delay. The
+    generator steps under `_step`, so a close from another thread never resumes
+    a running generator. `async for` steps on one worker thread of the stream.
+    """
+
+    def __init__(self, client, *, reconnects=3, retry_delay=0.2, idle_timeout=None):
         if (
             type(reconnects) is not int
             or reconnects < 0
@@ -4590,71 +4645,167 @@ class _EventStream:
             raise ValueError("invalid replay options")
         self.client = client
         self.reconnects, self.retry_delay = reconnects, retry_delay
+        self._idle_timeout = None if idle_timeout is None else _duration(idle_timeout)
+        self._idle_end: float | None = None
         self._raw = None
-        self._closed = False
+        self._closing = threading.Event()
+        # Guards `_raw` and `_worker` against a close from another thread.
+        self._guard = threading.Lock()
+        self._step = threading.Lock()
+        self._worker: ThreadPoolExecutor | None = None
         # A monotonic end of an SDK wait. It replaces the idle timeout.
         self._deadline: float | None = None
+        self._touch()
         self._iterator = self._iterate()
         client._streams.add(self)
 
-    def __enter__(self):
+    @property
+    def _closed(self) -> bool:
+        return self._closing.is_set()
+
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args) -> None:
         self.close()
 
-    def __iter__(self):
+    def __iter__(self) -> Self:
         return self
 
-    def __next__(self):
-        if self._closed:
+    def __next__(self) -> _T:
+        with self._step:
+            if not self._closed:
+                event = next(self._iterator)
+                if not self._closed:
+                    return event
+            # A close from another thread cannot close a running generator.
+            self._iterator.close()
             raise StopIteration
-        return next(self._iterator)
 
-    def close(self):
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args) -> None:
+        self.close()
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> _T:
+        loop = asyncio.get_running_loop()
+        with self._guard:
+            if self._closed:
+                raise StopAsyncIteration
+            if self._worker is None:
+                self._worker = ThreadPoolExecutor(1, thread_name_prefix="vis-events")
+            future = loop.run_in_executor(self._worker, self._next_or_none)
+        try:
+            event = await future
+        except asyncio.CancelledError:
+            self.close()
+            raise
+        if event is None:
+            raise StopAsyncIteration
+        return event
+
+    def _next_or_none(self) -> _T | None:
+        """Step once on the worker thread. A future cannot carry StopIteration."""
+        try:
+            return self.__next__()
+        except StopIteration:
+            return None
+
+    def close(self) -> None:
         """Release this event subscription without cancelling conversation work.
 
         Close the active response and iterator, and detach the stream from its
         client. Repeated calls are safe, and further iteration stops. The client
         and session stay open. Context exit calls this method automatically.
+        A call from another thread stops a waiting iteration at once: the
+        iteration ends normally and does not connect again.
         """
-        self._closed = True
-        if self._raw is not None:
-            self._raw.close()
+        self._closing.set()
+        with self._guard:
+            sock = _response_socket(self._raw) if self._raw is not None else None
+            if sock is not None:
+                try:
+                    # A blocked readline returns end of stream.
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            worker = self._worker
+        if worker is not None:
+            worker.shutdown(wait=False)
         # A pipe failure can close its owning client from inside this generator.
-        if inspect.getgeneratorstate(self._iterator) != inspect.GEN_RUNNING:
-            self._iterator.close()
+        if self._step.acquire(blocking=False):
+            try:
+                self._iterator.close()
+            finally:
+                self._step.release()
         self.client._streams.discard(self)
+
+    def _touch(self) -> None:
+        """Start the idle time again, after the call or a new event."""
+        if self._idle_timeout is not None:
+            self._idle_end = time.monotonic() + self._idle_timeout
+
+    def _limit(self) -> float | None:
+        """Answer the earliest monotonic end of this iteration, or None."""
+        ends = [end for end in (self._deadline, self._idle_end) if end is not None]
+        return min(ends) if ends else None
+
+    def _should_stop(self) -> bool:
+        """Answer True when the iteration ends normally: a close or idle time."""
+        return self._closed or (
+            self._idle_end is not None and time.monotonic() >= self._idle_end
+        )
 
     def _read_timeout(self):
         """Answer the socket read timeout, shortened to the deadline of a wait."""
-        if self._deadline is None:
-            return self.client.timeout
-        remaining = self._deadline - time.monotonic()
-        if remaining <= 0:
+        if self._expired():
             raise VisTimeout("event wait timed out")
-        return min(self.client.timeout, remaining)
+        limit = self._limit()
+        if limit is None:
+            return self.client.timeout
+        return min(self.client.timeout, max(limit - time.monotonic(), 0.001))
 
     def _expired(self):
         return self._deadline is not None and time.monotonic() >= self._deadline
 
-    def _iterate(self):
+    def _attach(self, raw) -> bool:
+        """Publish the open response for `close`. Answer False after a close."""
+        with self._guard:
+            if self._closed:
+                return False
+            self._raw = raw
+            return True
+
+    def _detach(self) -> None:
+        with self._guard:
+            self._raw = None
+
+    def _iterate(self) -> Generator[_T, None, None]:
         try:
             for attempt in range(self.reconnects + 1):
-                if attempt:
-                    time.sleep(self.retry_delay)
+                if attempt and self._closing.wait(self.retry_delay):
+                    return
+                if self._should_stop():
+                    return
                 try:
                     route, query = self._endpoint()
                     with self.client._open(
                         "GET", route, query=query, timeout=self._read_timeout()
                     ) as raw:
-                        self._raw = raw
+                        if not self._attach(raw):
+                            return
                         decode = _ActivityStreamDecoder()
                         if raw.headers.get_content_type() != "text/event-stream":
                             raise ProtocolError("expected event stream")
                         data, size, event_name = [], 0, None
                         for line in iter(lambda: raw.readline(1048577), b""):
-                            if self._deadline is not None:
+                            if self._should_stop():
+                                return
+                            if self._limit() is not None:
                                 # Heartbeats keep the socket busy past a deadline.
                                 _set_read_timeout(raw, self._read_timeout())
                             size += len(line)
@@ -4671,6 +4822,7 @@ class _EventStream:
                                     event = self._accept(event_name, value)
                                     if event is not None:
                                         yield event
+                                        self._touch()
                                         if self._terminal(event):
                                             return
                                 data, size, event_name = [], 0, None
@@ -4683,13 +4835,16 @@ class _EventStream:
                                     raise ProtocolError("invalid event name") from None
                 except (ProtocolError, GatewayError):
                     raise
-                except (OSError, TransportError):
+                except (OSError, TransportError, http.client.IncompleteRead):
+                    # A cut chunked stream raises IncompleteRead, also after close.
                     if self._expired():
                         raise VisTimeout("event wait timed out") from None
+                    if self._should_stop():
+                        return
                     if reason := getattr(self.client, "_lease_error", None):
                         raise TransportError(reason) from None
                 finally:
-                    self._raw = None
+                    self._detach()
             raise TransportError("event reconnect budget exhausted")
         finally:
             self.client._streams.discard(self)
@@ -4701,35 +4856,39 @@ class _EventStream:
         """Return the route and query of this subscription."""
         raise NotImplementedError
 
-    def _accept(self, name, value):
+    def _accept(self, name, value) -> _T | None:
         """Return the event of one frame, or None to skip the frame."""
         raise NotImplementedError
 
 
-class _PollingEvents(_EventStream):
+class _PollingEvents(_EventStream[_T]):
     """Poll finite event pages so callback code runs on the SDK calling thread."""
 
-    def _iterate(self):
+    def _iterate(self) -> Generator[_T, None, None]:
         idle = time.monotonic() + self.client.timeout
         delay = _POLL_MIN_SECONDS
         try:
-            while not self._closed:
-                if self._deadline is not None:
-                    if time.monotonic() >= self._deadline:
-                        raise VisTimeout("event wait timed out")
-                elif time.monotonic() >= idle:
+            while True:
+                if self._expired():
+                    raise VisTimeout("event wait timed out")
+                if self._should_stop():
+                    return
+                if self._limit() is None and time.monotonic() >= idle:
                     raise VisTimeout("event stream idle timeout")
                 self._pump()
                 for name, value in self._page():
                     event = self._accept(name, value)
                     if event is not None:
                         yield event
+                        self._touch()
                         if self._terminal(event):
                             return
                         idle = time.monotonic() + self.client.timeout
                         delay = _POLL_MIN_SECONDS
-                limit = idle if self._deadline is None else self._deadline
-                time.sleep(min(delay, max(0, limit - time.monotonic())))
+                limit = self._limit()
+                limit = idle if limit is None else limit
+                # A close wakes the delay at once.
+                self._closing.wait(min(delay, max(0, limit - time.monotonic())))
                 # A quiet stream costs at most one page each second.
                 delay = min(delay * 2, _POLL_MAX_SECONDS)
         finally:
@@ -4743,7 +4902,7 @@ class _PollingEvents(_EventStream):
         raise NotImplementedError
 
 
-class Events(_EventStream):
+class Events(_EventStream[Event]):
     """Iterate typed session events, with replay and bounded reconnection.
 
     Get a stream from `Session.events`. It yields `Event` objects. Inspect
@@ -4756,7 +4915,9 @@ class Events(_EventStream):
         cursor: Nonnegative replay position, normally a saved cursor or the
             cursor from `Session.send`. Defaults to 0.
         **options: `reconnects` limits retries (default 3). `retry_delay` is a
-            nonnegative finite delay in seconds (default 0.2).
+            nonnegative finite delay in seconds (default 0.2). `idle_timeout`
+            ends the iteration normally after that many seconds without a new
+            event (default None).
 
     The stream replays every stored event after `cursor`, including the progress
     of turns that finished before you subscribed. Duplicate events are
@@ -4764,7 +4925,9 @@ class Events(_EventStream):
     restart. So save the stream's current `cursor`, and do not assume that it
     always increases.
 
-    The idle timeout is the client's timeout. Closing the stream never cancels a
+    Without `idle_timeout`, the socket read timeout is the client's timeout.
+    `close` is safe from another thread. The stream also supports `async for`
+    and `async with`; see `Session.events`. Closing the stream never cancels a
     turn. Invalid replay options raise `ValueError`. Malformed events raise
     `ProtocolError`.
     """
@@ -4795,7 +4958,7 @@ class Events(_EventStream):
         return None
 
 
-class _SessionPollingEvents(_PollingEvents, Events):
+class _SessionPollingEvents(_PollingEvents[Event], Events):
     """Use the session journal for stdio and application-owned gateway callbacks."""
 
     def _pump(self):
@@ -4821,7 +4984,7 @@ class JobEvent:
     data: dict[str, Any] = field(default_factory=dict)
 
 
-class JobEvents(_EventStream):
+class JobEvents(_EventStream[JobEvent]):
     """Snapshot-first job SSE.
 
     A reconnect reads the state again. A terminal is_done ends the stream.
