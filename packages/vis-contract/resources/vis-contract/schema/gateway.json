@@ -9,11 +9,13 @@
       "operations": {
         "put": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "empty_object"
         },
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "empty_object"
         }
       },
       "path": "/v1/sessions/:sid/client-extensions"
@@ -23,7 +25,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "client_calls"
         }
       },
       "path": "/v1/sessions/:sid/client-calls"
@@ -33,7 +36,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "empty_object"
         }
       },
       "path": "/v1/sessions/:sid/client-calls/:call_id/result"
@@ -43,7 +47,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "empty_object"
         }
       },
       "path": "/v1/sessions/:sid/client-calls/:call_id/activity"
@@ -94,7 +99,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "openapi_document"
         }
       },
       "path": "/openapi.json"
@@ -115,7 +121,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "gateway_status"
         }
       },
       "path": "/v1/admin/status"
@@ -125,7 +132,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "gateway_stop"
         }
       },
       "path": "/v1/admin/stop"
@@ -135,7 +143,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "gateway_drain"
         }
       },
       "path": "/v1/admin/drain"
@@ -145,11 +154,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "app_list"
         },
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "app_door_answer"
         }
       },
       "path": "/v1/apps"
@@ -159,7 +170,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "app_view"
         }
       },
       "path": "/v1/apps/:view-id"
@@ -169,7 +181,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "view_outcome"
         }
       },
       "path": "/v1/apps/:view-id/actions"
@@ -179,7 +192,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "capabilities"
         }
       },
       "path": "/v1/capabilities"
@@ -189,7 +203,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "client_lease"
         }
       },
       "path": "/v1/clients"
@@ -199,7 +214,8 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "client_release"
         }
       },
       "path": "/v1/clients/:cid"
@@ -209,11 +225,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "devices"
         },
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "device_registered"
         }
       },
       "path": "/v1/devices"
@@ -223,7 +241,8 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "removed"
         }
       },
       "path": "/v1/devices/:token"
@@ -233,7 +252,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "device_test"
         }
       },
       "path": "/v1/devices/actions/test"
@@ -253,7 +273,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "fs_listing"
         }
       },
       "path": "/v1/fs"
@@ -263,7 +284,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "fs_entry"
         }
       },
       "path": "/v1/fs/actions/mkdir"
@@ -273,7 +295,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "machine_order"
         }
       },
       "path": "/v1/machines/order"
@@ -283,11 +306,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_servers"
         },
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_server"
         }
       },
       "path": "/v1/mcp/servers"
@@ -297,11 +322,13 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_deleted"
         },
         "put": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_server"
         }
       },
       "path": "/v1/mcp/servers/:name"
@@ -311,7 +338,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_server"
         }
       },
       "path": "/v1/mcp/servers/:name/actions/enable"
@@ -321,7 +349,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_server"
         }
       },
       "path": "/v1/mcp/servers/:name/actions/kill"
@@ -331,7 +360,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_server"
         }
       },
       "path": "/v1/mcp/servers/:name/actions/start"
@@ -341,7 +371,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_auth_cancelled"
         }
       },
       "path": "/v1/mcp/servers/:name/auth/cancel"
@@ -351,7 +382,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_auth_flow"
         }
       },
       "path": "/v1/mcp/servers/:name/auth/complete"
@@ -361,7 +393,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_token_status"
         }
       },
       "path": "/v1/mcp/servers/:name/auth/logout"
@@ -371,7 +404,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_auth_flow"
         }
       },
       "path": "/v1/mcp/servers/:name/auth/poll"
@@ -381,7 +415,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_auth_flow"
         }
       },
       "path": "/v1/mcp/servers/:name/auth/start"
@@ -391,7 +426,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "mcp_test"
         }
       },
       "path": "/v1/mcp/servers/actions/test"
@@ -402,7 +438,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "models_catalog"
         }
       },
       "path": "/v1/models"
@@ -412,11 +449,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "project_list"
         },
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "project"
         }
       },
       "path": "/v1/projects"
@@ -430,11 +469,13 @@
         },
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "project"
         },
         "patch": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "project"
         }
       },
       "path": "/v1/projects/:pid"
@@ -444,7 +485,8 @@
       "operations": {
         "patch": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "project_sessions_moved"
         }
       },
       "path": "/v1/projects/:pid/sessions"
@@ -454,11 +496,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_group_page"
         },
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_group"
         }
       },
       "path": "/v1/session-groups"
@@ -468,11 +512,13 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_group_deleted"
         },
         "patch": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_group"
         }
       },
       "path": "/v1/session-groups/:gid"
@@ -482,7 +528,8 @@
       "operations": {
         "put": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session"
         }
       },
       "path": "/v1/sessions/:sid/group"
@@ -492,7 +539,8 @@
       "operations": {
         "put": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_read"
         }
       },
       "path": "/v1/sessions/:sid/read"
@@ -502,7 +550,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "project"
         }
       },
       "path": "/v1/projects/actions/ensure"
@@ -512,7 +561,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "project_overview"
         }
       },
       "path": "/v1/projects/overview"
@@ -522,7 +572,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "provider_presets"
         }
       },
       "path": "/v1/provider-presets"
@@ -532,7 +583,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "router_fleet"
         }
       },
       "path": "/v1/providers"
@@ -542,7 +594,8 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "router_fleet"
         }
       },
       "path": "/v1/providers/:provider-id"
@@ -552,7 +605,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "provider_auth"
         }
       },
       "path": "/v1/providers/:provider-id/auth/cancel"
@@ -562,7 +616,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "provider_auth"
         }
       },
       "path": "/v1/providers/:provider-id/auth/complete"
@@ -572,7 +627,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "provider_auth"
         }
       },
       "path": "/v1/providers/:provider-id/auth/poll"
@@ -582,7 +638,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "provider_auth"
         }
       },
       "path": "/v1/providers/:provider-id/auth/start"
@@ -592,7 +649,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "provider_limits"
         }
       },
       "path": "/v1/providers/:provider-id/limits"
@@ -602,7 +660,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "provider_auth"
         }
       },
       "path": "/v1/providers/:provider-id/logout"
@@ -612,7 +671,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "provider_models"
         }
       },
       "path": "/v1/providers/:provider-id/models"
@@ -622,7 +682,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "provider_reset_outcome"
         }
       },
       "path": "/v1/providers/:provider-id/reset-credits/consume"
@@ -632,7 +693,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "provider_status"
         }
       },
       "path": "/v1/providers/:provider-id/status"
@@ -642,11 +704,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "router_fleet"
         },
         "patch": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "router_fleet"
         }
       },
       "path": "/v1/router"
@@ -697,7 +761,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "activity_page"
         }
       },
       "path": "/v1/sessions/:sid/activity/:aid"
@@ -718,7 +783,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "session_artifacts"
         }
       },
       "path": "/v1/sessions/:sid/artifacts"
@@ -729,7 +795,8 @@
         "post": {
           "request": "binary",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "upload"
         }
       },
       "path": "/v1/sessions/:sid/attachments"
@@ -739,7 +806,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "turn_cancel"
         }
       },
       "path": "/v1/sessions/:sid/cancel-current"
@@ -750,7 +818,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "session_context"
         }
       },
       "path": "/v1/sessions/:sid/context"
@@ -761,7 +830,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "council_binding"
         }
       },
       "path": "/v1/sessions/:sid/council"
@@ -772,7 +842,8 @@
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "agent_spawned"
         }
       },
       "path": "/v1/sessions/:sid/agents"
@@ -783,7 +854,8 @@
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "agent_records"
         }
       },
       "path": "/v1/sessions/:sid/agents/answer"
@@ -794,7 +866,8 @@
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "agent_records"
         }
       },
       "path": "/v1/sessions/:sid/agents/cancel"
@@ -805,7 +878,8 @@
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "agent_records"
         }
       },
       "path": "/v1/sessions/:sid/agents/deny"
@@ -816,7 +890,8 @@
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "agent_records"
         }
       },
       "path": "/v1/sessions/:sid/agents/extend"
@@ -827,7 +902,8 @@
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "agent_records"
         }
       },
       "path": "/v1/sessions/:sid/agents/grant"
@@ -838,7 +914,8 @@
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "agents_route"
         }
       },
       "path": "/v1/sessions/:sid/agents/route"
@@ -849,7 +926,8 @@
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "agent_records"
         }
       },
       "path": "/v1/sessions/:sid/agents/run"
@@ -860,7 +938,8 @@
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "agent_records"
         }
       },
       "path": "/v1/sessions/:sid/agents/wait"
@@ -871,7 +950,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "agent_timeline"
         }
       },
       "path": "/v1/sessions/:sid/agents/:child-id/timeline"
@@ -881,7 +961,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_alert"
         }
       },
       "path": "/v1/sessions/:sid/alert"
@@ -892,12 +973,14 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "council_entry_page"
         },
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "council_entry"
         }
       },
       "path": "/v1/sessions/:sid/council/entries"
@@ -908,7 +991,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "council_entry"
         }
       },
       "path": "/v1/sessions/:sid/council/entries/:entry-id"
@@ -919,7 +1003,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "council_members"
         }
       },
       "path": "/v1/sessions/:sid/council/members"
@@ -930,7 +1015,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "council_thread_page"
         }
       },
       "path": "/v1/sessions/:sid/council/threads"
@@ -941,7 +1027,8 @@
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "council_entry"
         }
       },
       "path": "/v1/sessions/:sid/council/wake"
@@ -951,7 +1038,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "turn_queue_step"
         }
       },
       "path": "/v1/sessions/:sid/drain-queue"
@@ -962,7 +1050,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "session_events"
         }
       },
       "path": "/v1/sessions/:sid/events-since"
@@ -973,12 +1062,14 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "session_fork_turns"
         },
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "session_wrapped"
         }
       },
       "path": "/v1/sessions/:sid/forks"
@@ -988,7 +1079,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_fs_open"
         }
       },
       "path": "/v1/sessions/:sid/fs/actions/open"
@@ -1041,7 +1133,8 @@
       "operations": {
         "put": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "agent_note"
         }
       },
       "path": "/v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note"
@@ -1052,12 +1145,14 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "session_model"
         },
         "patch": {
           "request": "json",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "session_model"
         }
       },
       "path": "/v1/sessions/:sid/model"
@@ -1067,7 +1162,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "queue_send_now"
         }
       },
       "path": "/v1/sessions/:sid/queue/send-now"
@@ -1087,7 +1183,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_resources"
         }
       },
       "path": "/v1/sessions/:sid/resources"
@@ -1097,7 +1194,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_resource_logs"
         }
       },
       "path": "/v1/sessions/:sid/resources/logs"
@@ -1107,7 +1205,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_resource_stop"
         }
       },
       "path": "/v1/sessions/:sid/resources/stop"
@@ -1117,7 +1216,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "turn_queue_step"
         }
       },
       "path": "/v1/sessions/:sid/resume-queue"
@@ -1128,7 +1228,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "session_seq"
         }
       },
       "path": "/v1/sessions/:sid/seq"
@@ -1138,7 +1239,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_slashes"
         }
       },
       "path": "/v1/sessions/:sid/slashes"
@@ -1148,7 +1250,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "keybinding_list"
         }
       },
       "path": "/v1/sessions/:sid/keybindings"
@@ -1181,7 +1284,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "voice_job"
         }
       },
       "path": "/v1/sessions/:sid/speech"
@@ -1191,11 +1295,13 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "forgotten"
         },
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "voice_job"
         }
       },
       "path": "/v1/sessions/:sid/speech/jobs/:job-id"
@@ -1225,7 +1331,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_suggestions"
         }
       },
       "path": "/v1/sessions/:sid/suggest"
@@ -1236,7 +1343,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "transcript"
         }
       },
       "path": "/v1/sessions/:sid/transcript"
@@ -1269,12 +1377,14 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "turn_list"
         },
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "created"
+          "extension": "created",
+          "response_schema": "turn"
         }
       },
       "path": "/v1/sessions/:sid/turns"
@@ -1285,17 +1395,20 @@
         "delete": {
           "request": "none",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "turn_cancel"
         },
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "turn"
         },
         "patch": {
           "request": "json",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "turn"
         }
       },
       "path": "/v1/sessions/:sid/turns/:tid"
@@ -1306,7 +1419,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "turn_attachments"
         }
       },
       "path": "/v1/sessions/:sid/turns/:tid/attachments"
@@ -1317,7 +1431,8 @@
         "post": {
           "request": "none",
           "response": "json",
-          "extension": "created"
+          "extension": "created",
+          "response_schema": "turn_cancel"
         }
       },
       "path": "/v1/sessions/:sid/turns/:tid/cancel"
@@ -1328,7 +1443,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "turn_trace"
         }
       },
       "path": "/v1/sessions/:sid/turns/:tid/trace"
@@ -1339,7 +1455,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "session_usage"
         }
       },
       "path": "/v1/sessions/:sid/usage"
@@ -1349,7 +1466,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "view_outcome"
         }
       },
       "path": "/v1/sessions/:sid/views/:view-id/actions"
@@ -1359,7 +1477,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "view_requests"
         }
       },
       "path": "/v1/sessions/:sid/views/input"
@@ -1369,7 +1488,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "app_list"
         }
       },
       "path": "/v1/sessions/:sid/views/live"
@@ -1379,7 +1499,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "app_view"
         }
       },
       "path": "/v1/sessions/:sid/views/live/:view-id"
@@ -1389,7 +1510,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "view_log"
         }
       },
       "path": "/v1/sessions/:sid/views/live/:view-id/log"
@@ -1399,7 +1521,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "app_door_answer"
         }
       },
       "path": "/v1/sessions/:sid/apps"
@@ -1409,7 +1532,8 @@
       "operations": {
         "post": {
           "request": "binary",
-          "response": "json"
+          "response": "json",
+          "response_schema": "voice_job"
         }
       },
       "path": "/v1/sessions/:sid/voice"
@@ -1419,11 +1543,13 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "forgotten"
         },
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "voice_job"
         }
       },
       "path": "/v1/sessions/:sid/voice/jobs/:job-id"
@@ -1443,7 +1569,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_workspace"
         }
       },
       "path": "/v1/sessions/:sid/workspace"
@@ -1453,7 +1580,8 @@
       "operations": {
         "patch": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_workspace"
         }
       },
       "path": "/v1/sessions/:sid/workspace/root"
@@ -1463,7 +1591,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "session_archive"
         }
       },
       "path": "/v1/sessions/actions/archive"
@@ -1486,7 +1615,8 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "session_search"
         }
       },
       "path": "/v1/sessions/actions/search"
@@ -1554,7 +1684,8 @@
         "post": {
           "request": "json",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "voice_job"
         }
       },
       "path": "/v1/speech"
@@ -1565,12 +1696,14 @@
         "delete": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "forgotten"
         },
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "voice_job"
         }
       },
       "path": "/v1/speech/jobs/:job-id"
@@ -1602,12 +1735,14 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "voice_model"
         },
         "post": {
           "request": "none",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "voice_model"
         }
       },
       "path": "/v1/speech/model"
@@ -1618,12 +1753,14 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "speech_voices"
         },
         "post": {
           "request": "binary",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "speech_voice"
         }
       },
       "path": "/v1/speech/voices"
@@ -1634,12 +1771,14 @@
         "delete": {
           "request": "none",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "forgotten"
         },
         "patch": {
           "request": "json",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "speech_voice"
         }
       },
       "path": "/v1/speech/voices/:voice-id"
@@ -1660,11 +1799,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "decision_models"
         },
         "post": {
           "request": "binary",
-          "response": "json"
+          "response": "json",
+          "response_schema": "decision_model"
         }
       },
       "path": "/v1/decisions/models"
@@ -1674,7 +1815,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "decision_model"
         }
       },
       "path": "/v1/decisions/models/:model-ref"
@@ -1684,11 +1826,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "decision_alias"
         },
         "put": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "decision_alias"
         }
       },
       "path": "/v1/decisions/aliases/:alias"
@@ -1698,7 +1842,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "decision_job"
         }
       },
       "path": "/v1/decisions/training/jobs"
@@ -1708,11 +1853,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "decision_job"
         },
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "decision_job"
         }
       },
       "path": "/v1/decisions/training/jobs/:job-id"
@@ -1722,7 +1869,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "decision_answer"
         }
       },
       "path": "/v1/systemone"
@@ -1733,7 +1881,8 @@
         "post": {
           "request": "binary",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "voice_job"
         }
       },
       "path": "/v1/voice"
@@ -1744,12 +1893,14 @@
         "delete": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "forgotten"
         },
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "voice_job"
         }
       },
       "path": "/v1/voice/jobs/:job-id"
@@ -1770,12 +1921,14 @@
         "get": {
           "request": "none",
           "response": "json",
-          "extension": "background"
+          "extension": "background",
+          "response_schema": "voice_model"
         },
         "post": {
           "request": "none",
           "response": "json",
-          "extension": "callback"
+          "extension": "callback",
+          "response_schema": "voice_model"
         }
       },
       "path": "/v1/voice/model"
@@ -4750,6 +4903,1967 @@
           "type": "boolean"
         }
       }
+    },
+    "turn": {
+      "type": "object",
+      "description": "One turn of a session as the turn routes answer it. The engine can add fields.",
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "request": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string"
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "created_at": {
+          "type": "integer"
+        },
+        "position": {
+          "type": "integer"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "iteration_count": {
+          "type": "integer"
+        },
+        "council": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tokens": {
+          "type": "object"
+        },
+        "cost": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "turn_id",
+        "session_id",
+        "status",
+        "request_kind",
+        "created_at"
+      ]
+    },
+    "turn_list": {
+      "type": "object",
+      "properties": {
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/turn"
+          }
+        },
+        "queue_paused": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "turns"
+      ]
+    },
+    "turn_queue_step": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/turn"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "turn"
+      ]
+    },
+    "turn_cancel": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "cancelling",
+            "deleted"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "queue_send_now": {
+      "type": "object",
+      "properties": {
+        "marked": {
+          "type": "array",
+          "items": {}
+        },
+        "skipped": {
+          "type": "array",
+          "items": {}
+        }
+      },
+      "required": [
+        "marked",
+        "skipped"
+      ]
+    },
+    "transcript": {
+      "type": "object",
+      "properties": {
+        "turns": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "total": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "turns",
+        "total",
+        "offset",
+        "has_more"
+      ]
+    },
+    "turn_trace": {
+      "type": "object",
+      "properties": {
+        "iterations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "iterations"
+      ]
+    },
+    "turn_attachments": {
+      "type": "object",
+      "properties": {
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "attachments"
+      ]
+    },
+    "session_usage": {
+      "type": "object",
+      "properties": {
+        "usage": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "usage"
+      ]
+    },
+    "session_events": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/session_event"
+          }
+        }
+      },
+      "required": [
+        "events"
+      ]
+    },
+    "session_seq": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "seq"
+      ]
+    },
+    "session_alert": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "body"
+      ]
+    },
+    "session_artifacts": {
+      "type": "object",
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "artifacts"
+      ]
+    },
+    "session_fork_turns": {
+      "type": "object",
+      "properties": {
+        "turns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "turn_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "request": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "request_kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "council": {
+                "anyOf": [
+                  {
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string",
+                "minLength": 1
+              },
+              "created_at": {
+                "type": "integer"
+              },
+              "answer": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "is_forked": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "turn_id",
+              "status",
+              "created_at"
+            ]
+          }
+        }
+      },
+      "required": [
+        "turns"
+      ]
+    },
+    "session_wrapped": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/session"
+        }
+      },
+      "required": [
+        "session"
+      ]
+    },
+    "session_model": {
+      "type": "object",
+      "properties": {
+        "model": {},
+        "default": {}
+      },
+      "required": [
+        "model",
+        "default"
+      ]
+    },
+    "session_resources": {
+      "type": "object",
+      "properties": {
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "resources"
+      ]
+    },
+    "session_resource_logs": {
+      "type": "object",
+      "properties": {
+        "lines": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "lines"
+      ]
+    },
+    "session_resource_stop": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ]
+    },
+    "session_slashes": {
+      "type": "object",
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "doc": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "doc"
+            ]
+          }
+        }
+      },
+      "required": [
+        "commands"
+      ]
+    },
+    "session_suggestions": {
+      "type": "array",
+      "items": {}
+    },
+    "session_workspace": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "root": {
+              "type": "string",
+              "minLength": 1
+            },
+            "agent_name": {
+              "type": "string"
+            },
+            "label": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "git": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "root"
+          ]
+        }
+      },
+      "required": [
+        "workspace"
+      ]
+    },
+    "session_read": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reader": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seen_answers": {
+          "type": "integer"
+        },
+        "is_unread": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "session_id",
+        "reader",
+        "seen_answers",
+        "is_unread"
+      ]
+    },
+    "session_search": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/session"
+          }
+        },
+        "total": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "has_more": {
+          "type": "boolean"
+        },
+        "next_cursor": {}
+      },
+      "required": [
+        "sessions",
+        "has_more"
+      ]
+    },
+    "session_archive": {
+      "type": "object",
+      "properties": {
+        "archived": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "working": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "dry_run": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "archived",
+        "working"
+      ]
+    },
+    "session_fs_open": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "is_open": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "is_open"
+      ]
+    },
+    "upload": {
+      "type": "object",
+      "properties": {
+        "upload_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "upload_id",
+        "size"
+      ]
+    },
+    "empty_object": {
+      "type": "object",
+      "description": "An empty acknowledgement.",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "position": {
+          "type": "integer"
+        },
+        "session_count": {
+          "type": "integer"
+        },
+        "workspace_root": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "type": "integer"
+        },
+        "archived_at": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "created_at"
+      ]
+    },
+    "project_list": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/project"
+          }
+        }
+      },
+      "required": [
+        "projects"
+      ]
+    },
+    "project_overview": {
+      "type": "object",
+      "properties": {
+        "project_count": {
+          "type": "integer"
+        },
+        "session_count": {
+          "type": "integer"
+        },
+        "live_count": {
+          "type": "integer"
+        },
+        "awaiting_count": {
+          "type": "integer"
+        },
+        "unread_count": {
+          "type": "integer"
+        },
+        "stopped_count": {
+          "type": "integer"
+        },
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "server_time_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "projects"
+      ]
+    },
+    "project_sessions_moved": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "count": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id",
+        "count"
+      ]
+    },
+    "session_group": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "active_at": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session_count": {
+          "type": "integer"
+        },
+        "created_at": {
+          "type": "integer"
+        },
+        "archived_at": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ]
+    },
+    "session_group_page": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/session_group"
+          }
+        },
+        "total": {
+          "type": "integer"
+        },
+        "session_total": {
+          "type": "integer"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "groups"
+      ]
+    },
+    "session_group_deleted": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scattered_session_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "deleted_session_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "session_count": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "group_id",
+        "scattered_session_ids",
+        "deleted_session_ids",
+        "session_count"
+      ]
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer"
+        },
+        "protocol": {
+          "type": "object"
+        },
+        "addresses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "compatibility": {
+          "type": "object"
+        },
+        "features": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "version",
+        "protocol",
+        "features"
+      ]
+    },
+    "gateway_status": {
+      "type": "object",
+      "description": "The gateway status map. The engine adds fields.",
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pid": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocol": {
+          "type": "object"
+        },
+        "running_turns": {
+          "type": "integer"
+        },
+        "sse_clients": {
+          "type": "integer"
+        },
+        "managed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "protocol"
+      ]
+    },
+    "gateway_stop": {
+      "type": "object",
+      "properties": {
+        "stopping": {
+          "type": "boolean"
+        },
+        "status": {
+          "$ref": "#/$defs/gateway_status"
+        }
+      },
+      "required": [
+        "stopping",
+        "status"
+      ]
+    },
+    "gateway_drain": {
+      "type": "object",
+      "properties": {
+        "parked": {
+          "type": "integer"
+        },
+        "forced": {
+          "type": "integer"
+        },
+        "running": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "parked",
+        "forced",
+        "running"
+      ],
+      "additionalProperties": false,
+      "description": "Counts of the turns that a drain parked, forced and left running."
+    },
+    "client_lease": {
+      "type": "object",
+      "properties": {
+        "client_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/gateway_status"
+        },
+        "extensions": {}
+      },
+      "required": [
+        "client_id",
+        "status"
+      ]
+    },
+    "client_release": {
+      "type": "object",
+      "properties": {
+        "released": {
+          "type": "boolean"
+        },
+        "status": {
+          "$ref": "#/$defs/gateway_status"
+        }
+      },
+      "required": [
+        "released"
+      ]
+    },
+    "machine_order": {
+      "type": "object",
+      "properties": {
+        "machine_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "machine_ids"
+      ]
+    },
+    "devices": {
+      "type": "object",
+      "properties": {
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "push": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "devices",
+        "push"
+      ]
+    },
+    "device_registered": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "object"
+        },
+        "push": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "device"
+      ]
+    },
+    "removed": {
+      "type": "object",
+      "properties": {
+        "is_removed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "is_removed"
+      ]
+    },
+    "forgotten": {
+      "type": "object",
+      "properties": {
+        "is_forgotten": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "is_forgotten"
+      ]
+    },
+    "device_test": {
+      "type": "object",
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "results"
+      ]
+    },
+    "fs_entry": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entry_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_repo": {
+          "type": "boolean"
+        },
+        "branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "path"
+      ]
+    },
+    "fs_listing": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "home": {
+          "type": "string"
+        },
+        "is_truncated": {
+          "type": "boolean"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fs_entry"
+          }
+        }
+      },
+      "required": [
+        "path",
+        "entries"
+      ]
+    },
+    "mcp_servers": {
+      "type": "object",
+      "properties": {
+        "servers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mcp_server"
+          }
+        }
+      },
+      "required": [
+        "servers"
+      ]
+    },
+    "models_catalog": {
+      "type": "object",
+      "properties": {
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "doc": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "providers",
+        "models"
+      ]
+    },
+    "provider_presets": {
+      "type": "object",
+      "properties": {
+        "presets": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "presets"
+      ]
+    },
+    "provider_limits": {
+      "type": "object",
+      "properties": {
+        "report": {
+          "$ref": "provider.json#/$defs/report"
+        }
+      },
+      "required": [
+        "report"
+      ]
+    },
+    "provider_models": {
+      "type": "object",
+      "properties": {
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "hidden_count": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "models"
+      ]
+    },
+    "provider_status": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "router_fleet": {
+      "type": "object",
+      "description": "The provider fleet. A provider removal also gives is_removed. A selection change gives the default and fallback fields.",
+      "properties": {
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "providers"
+      ]
+    },
+    "provider_auth": {
+      "type": "object",
+      "description": "A provider sign-in step: start gives flow_id, kind and url; the other steps give status.",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "flow_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": []
+    },
+    "council_members": {
+      "type": "array",
+      "items": {
+        "$ref": "council.json#/$defs/member"
+      }
+    },
+    "agents_route": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "effective": {
+          "type": "string"
+        }
+      },
+      "required": []
+    },
+    "app_list": {
+      "type": "object",
+      "properties": {
+        "views": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "views"
+      ]
+    },
+    "app_view": {
+      "description": "One app: the whole view, or the view deltas after the seq in `since`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "view": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "view"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "patches": {
+              "type": "array",
+              "items": {
+                "$ref": "view.json#/$defs/view_delta"
+              }
+            }
+          },
+          "required": [
+            "patches"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "view_outcome": {
+      "type": "object",
+      "properties": {
+        "is_accepted": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "is_accepted"
+      ]
+    },
+    "view_requests": {
+      "type": "object",
+      "properties": {
+        "requests": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "requests"
+      ]
+    },
+    "view_log": {
+      "type": "object",
+      "description": "One bounded page of a log node."
+    },
+    "voice_model": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "engine": {
+          "type": "string",
+          "minLength": 1
+        },
+        "progress": {
+          "type": "number"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "engine"
+      ]
+    },
+    "voice_job": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string"
+        },
+        "engine": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "is_done": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "type": "integer"
+        },
+        "updated_at": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "is_done"
+      ]
+    },
+    "speech_voices": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ]
+        },
+        "voices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        }
+      },
+      "required": [
+        "engine",
+        "voices"
+      ]
+    },
+    "speech_voice": {
+      "type": "object",
+      "properties": {
+        "voice": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "voice"
+      ]
+    },
+    "decision_models": {
+      "type": "object",
+      "properties": {
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "model_ref": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "model_ref"
+            ]
+          }
+        }
+      },
+      "required": [
+        "models"
+      ]
+    },
+    "openapi_document": {
+      "type": "object",
+      "properties": {
+        "openapi": {
+          "type": "string",
+          "minLength": 1
+        },
+        "info": {
+          "type": "object"
+        },
+        "paths": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "openapi",
+        "paths"
+      ]
+    },
+    "session_context": {
+      "type": "object"
+    },
+    "activity_page": {
+      "type": "object"
+    },
+    "agent_note": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": []
+    },
+    "council_binding": {
+      "$ref": "council.json#/$defs/binding"
+    },
+    "council_entry_page": {
+      "$ref": "council.json#/$defs/entry_page"
+    },
+    "council_entry": {
+      "$ref": "council.json#/$defs/entry"
+    },
+    "council_thread_page": {
+      "$ref": "council.json#/$defs/thread_page"
+    },
+    "agent_spawned": {
+      "$ref": "agents.json#/$defs/agent"
+    },
+    "agent_timeline": {
+      "$ref": "agents.json#/$defs/timeline"
+    },
+    "agent_records": {
+      "$ref": "agents.json#/$defs/records"
+    },
+    "mcp_server": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "transport": {
+          "enum": [
+            "stdio",
+            "sse",
+            "streamable_http"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "is_connected": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "connected",
+            "disconnected",
+            "connecting",
+            "unhealthy",
+            "disabled",
+            "killed"
+          ]
+        },
+        "is_managed": {
+          "type": "boolean"
+        },
+        "is_killed": {
+          "type": "boolean"
+        },
+        "tools": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "transport",
+        "enabled",
+        "is_connected",
+        "status",
+        "is_managed"
+      ],
+      "additionalProperties": true,
+      "description": "One sanitized MCP inventory row. The row can also have command, args, cwd, url, timeout_ms, source and is_override."
+    },
+    "mcp_deleted": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "is_deleted": {
+          "const": true
+        }
+      },
+      "required": [
+        "name",
+        "is_deleted"
+      ],
+      "additionalProperties": false
+    },
+    "mcp_test": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "is_connected": {
+          "type": "boolean"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "name",
+        "is_connected",
+        "tools"
+      ],
+      "additionalProperties": false
+    },
+    "mcp_auth_flow": {
+      "type": "object",
+      "properties": {
+        "flow_id": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        },
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "redirect_uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "callback_mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expires_at_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flow_id",
+        "server",
+        "status"
+      ],
+      "additionalProperties": false,
+      "description": "The wire view of one MCP sign-in flow."
+    },
+    "mcp_auth_cancelled": {
+      "type": "object",
+      "properties": {
+        "flow_id": {
+          "type": "string"
+        },
+        "is_cancelled": {
+          "const": true
+        }
+      },
+      "required": [
+        "flow_id",
+        "is_cancelled"
+      ],
+      "additionalProperties": false
+    },
+    "mcp_token_status": {
+      "type": "object",
+      "properties": {
+        "server": {
+          "type": "string"
+        },
+        "is_authorized": {
+          "type": "boolean"
+        },
+        "is_expired": {
+          "type": "boolean"
+        },
+        "has_refresh_token": {
+          "type": "boolean"
+        },
+        "expires_at_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "server",
+        "is_authorized",
+        "is_expired",
+        "has_refresh_token",
+        "expires_at_ms",
+        "scope"
+      ],
+      "additionalProperties": false,
+      "description": "The non-secret view of the stored OAuth tokens of one MCP server."
+    },
+    "provider_reset_outcome": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "reset",
+            "nothing_to_reset",
+            "no_credit",
+            "already_redeemed"
+          ]
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "additionalProperties": true
+    },
+    "decision_model": {
+      "type": "object",
+      "properties": {
+        "model_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "model_ref"
+      ],
+      "additionalProperties": true
+    },
+    "decision_alias": {
+      "type": "object",
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "model_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "alias",
+        "model_ref"
+      ],
+      "additionalProperties": false
+    },
+    "decision_job": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "registering",
+            "cancelling",
+            "completed",
+            "failed",
+            "cancelled",
+            "deleted"
+          ]
+        },
+        "stage": {
+          "type": "string"
+        },
+        "model_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id",
+        "status"
+      ],
+      "additionalProperties": true
+    },
+    "decision_answer": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "routing": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "type": "string"
+            },
+            "model_ref": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "model",
+            "model_ref"
+          ],
+          "additionalProperties": true
+        },
+        "answers": {
+          "type": "object"
+        },
+        "usage": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "model",
+        "routing",
+        "answers"
+      ],
+      "additionalProperties": true
+    },
+    "app_door_answer": {
+      "type": "object",
+      "description": "The live seam answer of an app door call. Its shape depends on the live operation in the envelope."
     }
   }
 }

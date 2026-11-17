@@ -2,7 +2,11 @@
 
 import inspect
 import json
+import keyword
+import re
+import textwrap
 from collections import Counter
+from pathlib import Path
 
 import pytest
 from blockether.vis import _contracts, _outside
@@ -65,39 +69,48 @@ def test_gateway_routes_and_lease_policy_are_shared():
     assert by_path["/v1/decisions/models"]["operations"]["get"] == {
         "request": "none",
         "response": "json",
+        "response_schema": "decision_models",
     }
     assert by_path["/v1/decisions/models"]["operations"]["post"] == {
         "request": "binary",
         "response": "json",
+        "response_schema": "decision_model",
     }
     assert by_path["/v1/decisions/models/:model-ref"]["operations"]["get"] == {
         "request": "none",
         "response": "json",
+        "response_schema": "decision_model",
     }
     assert by_path["/v1/decisions/aliases/:alias"]["operations"]["put"] == {
         "request": "json",
         "response": "json",
+        "response_schema": "decision_alias",
     }
     assert by_path["/v1/decisions/training/jobs"]["operations"]["post"] == {
         "request": "json",
         "response": "json",
+        "response_schema": "decision_job",
     }
     assert by_path["/v1/decisions/training/jobs/:job-id"]["operations"]["delete"] == {
         "request": "none",
         "response": "json",
+        "response_schema": "decision_job",
     }
     assert by_path["/v1/systemone"]["operations"]["post"] == {
         "request": "json",
         "response": "json",
+        "response_schema": "decision_answer",
     }
     assert by_path["/v1/speech/voices"]["operations"]["post"] == {
         "request": "binary",
         "response": "json",
+        "response_schema": "speech_voice",
         "extension": "callback",
     }
     assert by_path["/v1/speech/voices/:voice-id"]["operations"]["patch"] == {
         "request": "json",
         "response": "json",
+        "response_schema": "speech_voice",
         "extension": "callback",
     }
     assert by_path["/v1/settings"]["operations"]["patch"] == {
@@ -213,3 +226,251 @@ def test_extension_declarations_use_the_canonical_config_contract():
     ):
         with pytest.raises(ValueError):
             _contracts.validate("config", "config", {"extensions": {"vis-tools": spec}})
+
+
+# Generated SDK response types (#487).
+
+_SCALARS = {
+    "string": "str",
+    "integer": "int",
+    "number": "float",
+    "boolean": "bool",
+    "null": "None",
+}
+
+
+def _camel(name):
+    return "".join(
+        part[:1].upper() + part[1:] for part in re.split(r"[^0-9A-Za-z]+", name) if part
+    )
+
+
+class _Renderer:
+    """Renders gateway response schemas as Python TypedDict source."""
+
+    def __init__(self, gateway, documents):
+        self.gateway = gateway
+        self.documents = documents
+        self.blocks = {}
+        self.order = []
+        self.document = None
+
+    def target(self, ref):
+        document, _, pointer = ref.partition("#")
+        document = document or self.document
+        node = self.documents[document] if document else self.gateway
+        for part in pointer.strip("/").split("/"):
+            node = node[part]
+        return node
+
+    def type_of(self, node, hint):
+        if node is True or not node:
+            return "JSONValue"
+        if "$ref" in node:
+            ref = node["$ref"]
+            document, _, pointer = ref.partition("#")
+            if pointer.startswith("/$defs/") and "/" not in pointer[7:]:
+                return self.named(pointer[7:], document or self.document)
+            return self.foreign(self.target(ref))
+        if isinstance(node.get("const"), str):
+            return f"Literal[{json.dumps(node['const'])}]"
+        if "const" in node:
+            return _SCALARS.get(
+                type(node["const"]).__name__.replace("int", "integer"), "JSONValue"
+            )
+        if "enum" in node:
+            if all(isinstance(value, str) for value in node["enum"]):
+                return (
+                    "Literal["
+                    + ", ".join(json.dumps(value) for value in node["enum"])
+                    + "]"
+                )
+            return "JSONValue"
+        for key in ("anyOf", "oneOf"):
+            if key in node:
+                return self.union(
+                    self.type_of(
+                        branch, hint + (str(index + 1) if len(node[key]) > 1 else "")
+                    )
+                    for index, branch in enumerate(node[key])
+                )
+        kind = node.get("type")
+        if isinstance(kind, list):
+            return self.union(self.type_of({**node, "type": one}, hint) for one in kind)
+        if kind == "array":
+            return f"list[{self.type_of(node.get('items', {}), hint + 'Item')}]"
+        if kind == "object":
+            if node.get("properties"):
+                return self.typed_dict(hint, node)
+            return "dict[str, JSONValue]"
+        return _SCALARS.get(kind, "JSONValue")
+
+    def foreign(self, node):
+        """A definition of another schema document, as its plain JSON shape."""
+        kind = node.get("type")
+        if kind == "array":
+            return "list[dict[str, JSONValue]]"
+        if kind == "object":
+            return "dict[str, JSONValue]"
+        return "JSONValue"
+
+    def union(self, members):
+        unique = []
+        for member in members:
+            for part in member.split(" | "):
+                if part not in unique:
+                    unique.append(part)
+        if "JSONValue" in unique:
+            return "JSONValue"
+        literals = [part[8:-1] for part in unique if part.startswith("Literal[")]
+        others = [part for part in unique if not part.startswith("Literal[")]
+        if len(literals) > 1:
+            others.insert(0, "Literal[" + ", ".join(literals) + "]")
+        else:
+            others = unique
+        return " | ".join(others)
+
+    def named(self, name, document=None):
+        """The type name of definition `name`; another document prefixes its name."""
+        prefix = document.removesuffix(".json") + "_" if document else ""
+        title = _camel(prefix + name)
+        source = self.documents[document] if document else self.gateway
+        node = source["$defs"][name]
+        target, _, pointer = node.get("$ref", "").partition("#")
+        if (
+            target
+            and set(node) == {"$ref"}
+            and _camel(target.removesuffix(".json") + "_" + pointer[7:]) == title
+        ):
+            # A wrapper of a definition with the same name is that definition.
+            return self.named(pointer[7:], target)
+        if title not in self.blocks:
+            self.blocks[title] = None
+            outer, self.document = self.document, document
+            try:
+                if node.get("type") == "object" and node.get("properties"):
+                    self.typed_dict(title, node)
+                else:
+                    rendered = self.type_of(node, title + "Variant")
+                    self.blocks[title] = _wrapped(
+                        f"{title}: TypeAlias = ", rendered, ""
+                    )
+                    self.order.append(title)
+            finally:
+                self.document = outer
+        return title
+
+    def typed_dict(self, title, node):
+        if self.blocks.get(title):
+            return title
+        self.blocks[title] = "pending"
+        required = set(node.get("required", []))
+        rows = []
+        for key, value in node["properties"].items():
+            kind = self.type_of(value, title + _camel(key))
+            rows.append((key, kind if key in required else f"NotRequired[{kind}]"))
+        doc = node.get("description", "").strip()
+        if any(not key.isidentifier() or keyword.iskeyword(key) for key, _ in rows):
+            fields = "".join(
+                f"        {json.dumps(key)}: {json.dumps(kind)},\n"
+                for key, kind in rows
+            )
+            text = f"{title} = TypedDict(\n    {json.dumps(title)},\n    {{\n{fields}    }},\n)\n"
+        else:
+            body = "".join(_wrapped(f"{key}: ", kind, "    ") for key, kind in rows)
+            text = f"class {title}(TypedDict):\n"
+            if doc:
+                lines = textwrap.wrap(doc, 80)
+                text += (
+                    '    """'
+                    + "\n    ".join(lines)
+                    + ("\n    " if len(lines) > 1 else "")
+                    + '"""\n\n'
+                )
+            text += body
+        self.blocks[title] = text
+        self.order.append(title)
+        return title
+
+
+def _wrapped(prefix, kind, indent):
+    """One annotated line, split in the ruff style when it is too long."""
+    line = f"{indent}{prefix}{kind}"
+    if len(line) <= 88:
+        return line + "\n"
+    if "Literal[" not in kind:
+        rows = f"\n{indent}    | ".join(kind.split(" | "))
+        return f"{indent}{prefix}(\n{indent}    {rows}\n{indent})\n"
+    head, _, rest = kind.partition("Literal[")
+    values, _, tail = rest.partition("]")
+    inner = indent + "    "
+    if head.startswith("NotRequired[") and tail == "]":
+        inner += "    "
+        rows = "".join(f"{inner}{value},\n" for value in values.split(", "))
+        return f"{indent}{prefix}NotRequired[\n{indent}    Literal[\n{rows}{indent}    ]\n{indent}]\n"
+    rows = "".join(f"{inner}{value},\n" for value in values.split(", "))
+    return f"{indent}{prefix}{head}Literal[\n{rows}{indent}]{tail}\n"
+
+
+def render_types(gateway, documents):
+    """The source of `engine/_types.py` for the gateway response schemas."""
+    renderer = _Renderer(gateway, documents)
+    routes = {}
+    for route in gateway["x-vis-routes"]:
+        for method, operation in route["operations"].items():
+            if "response_schema" in operation:
+                name = renderer.named(operation["response_schema"])
+                routes[f"{method.upper()} {route['path']}"] = name
+    head = (
+        '"""Generated gateway response types. Do not edit.\n\n'
+        "The `response_schema` of each route in `vis-contract/schema/gateway.json` gives\n"
+        "one type here. Run `python tests/test_contracts.py` in `packages/vis-agent` to\n"
+        'write this file again.\n"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from typing import Literal, NotRequired, TypeAlias, TypedDict\n\n"
+        "JSONValue: TypeAlias = (\n"
+        '    str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]\n'
+        ")\n"
+    )
+    blocks = "\n\n".join(renderer.blocks[title] for title in renderer.order)
+    table = "".join(
+        f"    {json.dumps(key)}: {json.dumps(value)},\n"
+        for key, value in sorted(routes.items())
+    )
+    return (
+        f"{head}\n\n{blocks}\n\n"
+        "RESPONSE_TYPES: dict[str, str] = {\n" + table + "}\n"
+        '"""The response type name of each `METHOD path`."""\n'
+    )
+
+
+_TYPES = Path(__file__).parents[1] / "src/blockether/vis/engine/_types.py"
+
+
+def _rendered_types():
+    """The `engine/_types.py` source for the shipped gateway schema."""
+    documents = {
+        f"{name}.json": _contracts.schema(name) for name in _contracts._SCHEMA_NAMES
+    }
+    return render_types(_contracts.schema("gateway"), documents)
+
+
+def test_response_types_are_current_with_the_gateway_schema():
+    # A route response schema that changes without this module gives the SDK stale types.
+    assert _TYPES.read_text(encoding="utf-8") == _rendered_types(), (
+        "Run `python tests/test_contracts.py` in packages/vis-agent."
+    )
+
+
+def test_each_json_route_has_a_response_type():
+    from blockether.vis.engine import _types
+
+    for route in _contracts.schema("gateway")["x-vis-routes"]:
+        for method, operation in route["operations"].items():
+            if operation["response"] == "json":
+                name = _types.RESPONSE_TYPES[f"{method.upper()} {route['path']}"]
+                assert hasattr(_types, name), name
+
+
+if __name__ == "__main__":
+    _TYPES.write_text(_rendered_types(), encoding="utf-8")

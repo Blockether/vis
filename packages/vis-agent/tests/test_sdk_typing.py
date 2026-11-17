@@ -1,7 +1,9 @@
 """Regression coverage for SDK types under Pyright standard checks."""
 
+import ast
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -55,7 +57,8 @@ def context(env):
 
 _SESSION_FIXTURE = """from typing import assert_type
 
-from blockether.vis.engine import GatewayClient, JSONValue, Session, final_answer
+from blockether.vis.engine import GatewayClient, Session, final_answer
+from blockether.vis.engine._types import Turn
 
 
 def start(client: GatewayClient, project: str, group: str) -> Session:
@@ -68,7 +71,9 @@ def start(client: GatewayClient, project: str, group: str) -> Session:
 
 def answer(session: Session) -> str | None:
     rows = session.turns(status="queued")
-    assert_type(rows, list[dict[str, JSONValue]])
+    assert_type(rows, list[Turn])
+    assert_type(rows[0]["turn_id"], str)
+    assert_type(rows[0]["created_at"], int)
     session.send("Hello", provider="p", model="m", attachments=["upload-1"])
     return final_answer(rows[0])
 
@@ -194,3 +199,29 @@ def test_event_streams_have_known_types_under_pyright_strict(tmp_path):
     ]
     wrong = _EVENTS_FIXTURE.splitlines().index('    session.events(idle_timeout="5")')
     assert found == [(wrong, "reportArgumentType")], result.stdout
+
+
+# A raw decoder and a local file manifest have no route schema to name.
+_UNTYPED_RETURNS = {
+    ("Response", "json"): "It decodes any JSON body; the route methods name its type.",
+    ("ExecutionLayer", "snapshot_info"): "It reads the manifest of a local file.",
+}
+
+
+def test_public_client_methods_return_known_types():
+    # A route method names its generated response type, never a bare JSON value
+    # (#487). Only the methods in `_UNTYPED_RETURNS` can return `Any`.
+    source = Path(vis.__file__).resolve().parent / "engine" / "_client.py"
+    untyped = set()
+    for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.ClassDef) or node.name.startswith("_"):
+            continue
+        for method in node.body:
+            if (
+                isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef)
+                and not method.name.startswith("_")
+                and method.returns is not None
+                and re.search(r"\b(?:JSONValue|Any)\b", ast.unparse(method.returns))
+            ):
+                untyped.add((node.name, method.name))
+    assert untyped == set(_UNTYPED_RETURNS)

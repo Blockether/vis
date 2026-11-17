@@ -34,6 +34,7 @@ from typing import (
     TypeAlias,
     TypedDict,
     TypeVar,
+    cast,
     overload,
 )
 from urllib.error import HTTPError, URLError
@@ -42,6 +43,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from blockether.vis._contracts import definition, schema, validate
 from blockether.vis.activity import ActivityProjection
+from blockether.vis.engine import _types
 from blockether.vis.engine._groups import SessionGroup
 from blockether.vis.engine._models import Model, SessionModel
 from blockether.vis.views import EVENT_DEFINITIONS, InputView, LiveView, ViewEvent
@@ -623,13 +625,13 @@ class ExecutionLayer(ABC):
         except ValueError:
             raise ProtocolError("invalid live View response") from None
 
-    def app_action(self, view_id: str, action: str, **values) -> JSONValue:
+    def app_action(self, view_id: str, action: str, **values) -> _types.ViewOutcome:
         """Send an operator action to a global app, as `Session.view_action` does."""
         body = {**values, "action": action}
         validate("view", "operator_action", body)
         return self.post_app_actions(view_id, body=body)
 
-    def web_brand(self) -> dict[str, JSONValue]:
+    def web_brand(self) -> _types.WebBrand:
         """Read the white label of the web app that this gateway serves.
 
         The answer has only the keys that are set: `name`, `logo`, `href`,
@@ -648,7 +650,7 @@ class ExecutionLayer(ABC):
         href: str | None = None,
         links: Iterable[Mapping[str, str]] | None = None,
         theme: Mapping[str, JSONValue] | None = None,
-    ) -> dict[str, JSONValue]:
+    ) -> _types.WebBrand:
         """Replace the white label of the web app that this gateway serves.
 
         `name` shows beside the logo and in the page title. `logo` is an
@@ -822,7 +824,7 @@ class ExecutionLayer(ABC):
 
     def delete_group(
         self, group: SessionGroup | str, *, delete_sessions: bool = False
-    ) -> JSONValue:
+    ) -> _types.SessionGroupDeleted:
         """Delete a group. Its sessions stay in the project without a group.
 
         With `delete_sessions=True`, the sessions of the group are deleted too.
@@ -962,7 +964,7 @@ class ExecutionLayer(ABC):
 
     def put_session_client_extensions(
         self, sid: str, *, body: JSONValue, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.EmptyObject:
         """PUT /v1/sessions/:sid/client-extensions — bind client-owned declarations."""
         return self._request(
             "PUT",
@@ -974,7 +976,7 @@ class ExecutionLayer(ABC):
 
     def delete_session_client_extensions(
         self, sid: str, *, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.EmptyObject:
         """DELETE /v1/sessions/:sid/client-extensions — detach owned callbacks."""
         return self._request(
             "DELETE",
@@ -985,7 +987,7 @@ class ExecutionLayer(ABC):
 
     def get_session_client_calls(
         self, sid: str, *, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.ClientCalls:
         """GET /v1/sessions/:sid/client-calls — retrieve pending owned calls."""
         return self._request(
             "GET",
@@ -996,7 +998,7 @@ class ExecutionLayer(ABC):
 
     def post_session_client_call_result(
         self, sid: str, call_id: str, *, body: JSONValue, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.EmptyObject:
         """POST /v1/sessions/:sid/client-calls/:call_id/result — acknowledge one call."""
         return self._request(
             "POST",
@@ -1008,7 +1010,7 @@ class ExecutionLayer(ABC):
 
     def post_session_client_call_activity(
         self, sid: str, call_id: str, *, body: JSONValue, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.EmptyObject:
         """POST /v1/sessions/:sid/client-calls/:call_id/activity — publish presentation."""
         return self._request(
             "POST",
@@ -1029,7 +1031,7 @@ class ExecutionLayer(ABC):
 
     def get_capabilities(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.Capabilities:
         """GET /v1/capabilities — json response."""
         response = self._request(
             "GET", "/v1/capabilities", path={}, query=query, timeout=timeout
@@ -1038,7 +1040,7 @@ class ExecutionLayer(ABC):
 
     def get_devices(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.Devices:
         """GET /v1/devices — json response."""
         response = self._request(
             "GET", "/v1/devices", path={}, query=query, timeout=timeout
@@ -1051,7 +1053,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.DeviceRegistered:
         """POST /v1/devices — json response."""
         response = self._request(
             "POST", "/v1/devices", path={}, query=query, timeout=timeout, body=body
@@ -1060,7 +1062,7 @@ class ExecutionLayer(ABC):
 
     def delete_device(
         self, token: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.Removed:
         """DELETE /v1/devices/:token — json response."""
         response = self._request(
             "DELETE",
@@ -1073,7 +1075,7 @@ class ExecutionLayer(ABC):
 
     def post_devices_test(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.DeviceTest:
         """POST /v1/devices/actions/test — json response."""
         response = self._request(
             "POST", "/v1/devices/actions/test", path={}, query=query, timeout=timeout
@@ -1082,7 +1084,7 @@ class ExecutionLayer(ABC):
 
     def get_fs(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.FsListing:
         """GET /v1/fs — json response."""
         response = self._request("GET", "/v1/fs", path={}, query=query, timeout=timeout)
         return response.json()
@@ -1093,7 +1095,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.FsEntry:
         """POST /v1/fs/actions/mkdir — json response."""
         response = self._request(
             "POST",
@@ -1107,7 +1109,7 @@ class ExecutionLayer(ABC):
 
     def get_mcp_servers(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.McpServers:
         """GET /v1/mcp/servers — json response."""
         response = self._request(
             "GET", "/v1/mcp/servers", path={}, query=query, timeout=timeout
@@ -1120,7 +1122,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.McpServer:
         """POST /v1/mcp/servers — json response."""
         response = self._request(
             "POST", "/v1/mcp/servers", path={}, query=query, timeout=timeout, body=body
@@ -1129,7 +1131,7 @@ class ExecutionLayer(ABC):
 
     def delete_mcp_server(
         self, name: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.McpDeleted:
         """DELETE /v1/mcp/servers/:name — json response."""
         response = self._request(
             "DELETE",
@@ -1147,7 +1149,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.McpServer:
         """PUT /v1/mcp/servers/:name — json response."""
         response = self._request(
             "PUT",
@@ -1166,7 +1168,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.McpServer:
         """POST /v1/mcp/servers/:name/actions/enable — json response."""
         response = self._request(
             "POST",
@@ -1180,7 +1182,7 @@ class ExecutionLayer(ABC):
 
     def post_mcp_server_kill(
         self, name: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.McpServer:
         """POST /v1/mcp/servers/:name/actions/kill — json response."""
         response = self._request(
             "POST",
@@ -1193,7 +1195,7 @@ class ExecutionLayer(ABC):
 
     def post_mcp_server_start(
         self, name: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.McpServer:
         """POST /v1/mcp/servers/:name/actions/start — json response."""
         response = self._request(
             "POST",
@@ -1211,7 +1213,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.McpAuthCancelled:
         """POST /v1/mcp/servers/:name/auth/cancel — json response."""
         response = self._request(
             "POST",
@@ -1230,7 +1232,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.McpAuthFlow:
         """POST /v1/mcp/servers/:name/auth/complete — json response."""
         response = self._request(
             "POST",
@@ -1244,7 +1246,7 @@ class ExecutionLayer(ABC):
 
     def post_mcp_server_auth_logout(
         self, name: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.McpTokenStatus:
         """POST /v1/mcp/servers/:name/auth/logout — json response."""
         response = self._request(
             "POST",
@@ -1262,7 +1264,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.McpAuthFlow:
         """POST /v1/mcp/servers/:name/auth/poll — json response."""
         response = self._request(
             "POST",
@@ -1276,7 +1278,7 @@ class ExecutionLayer(ABC):
 
     def post_mcp_server_auth_start(
         self, name: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.McpAuthFlow:
         """POST /v1/mcp/servers/:name/auth/start — json response."""
         response = self._request(
             "POST",
@@ -1293,7 +1295,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.McpTest:
         """POST /v1/mcp/servers/actions/test — json response."""
         response = self._request(
             "POST",
@@ -1307,7 +1309,7 @@ class ExecutionLayer(ABC):
 
     def get_models(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.ModelsCatalog:
         """GET /v1/models — json response."""
         response = self._request(
             "GET", "/v1/models", path={}, query=query, timeout=timeout
@@ -1343,7 +1345,7 @@ class ExecutionLayer(ABC):
 
     def model_limits(
         self, provider: str, *, timeout: float | None = None
-    ) -> dict[str, JSONValue]:
+    ) -> _types.ProviderReport | None:
         """Return the current limits report of one provider.
 
         Use it to refresh the `Model.limits` of that provider's models. The
@@ -1359,7 +1361,7 @@ class ExecutionLayer(ABC):
 
     def get_projects(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.ProjectList:
         """GET /v1/projects — json response."""
         response = self._request(
             "GET", "/v1/projects", path={}, query=query, timeout=timeout
@@ -1372,7 +1374,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.Project:
         """POST /v1/projects — json response."""
         response = self._request(
             "POST", "/v1/projects", path={}, query=query, timeout=timeout, body=body
@@ -1394,7 +1396,7 @@ class ExecutionLayer(ABC):
 
     def get_project(
         self, pid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.Project:
         """GET /v1/projects/:pid — json response."""
         response = self._request(
             "GET", "/v1/projects/:pid", path={"pid": pid}, query=query, timeout=timeout
@@ -1408,7 +1410,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.Project:
         """PATCH /v1/projects/:pid — json response."""
         response = self._request(
             "PATCH",
@@ -1427,7 +1429,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.ProjectSessionsMoved:
         """PATCH /v1/projects/:pid/sessions — json response."""
         response = self._request(
             "PATCH",
@@ -1445,7 +1447,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.Project:
         """POST /v1/projects/actions/ensure — json response."""
         response = self._request(
             "POST",
@@ -1459,7 +1461,7 @@ class ExecutionLayer(ABC):
 
     def get_projects_overview(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.ProjectOverview:
         """GET /v1/projects/overview — json response."""
         response = self._request(
             "GET", "/v1/projects/overview", path={}, query=query, timeout=timeout
@@ -1468,7 +1470,7 @@ class ExecutionLayer(ABC):
 
     def get_provider_presets(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.ProviderPresets:
         """GET /v1/provider-presets — json response."""
         response = self._request(
             "GET", "/v1/provider-presets", path={}, query=query, timeout=timeout
@@ -1481,7 +1483,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.RouterFleet:
         """POST /v1/providers — json response."""
         response = self._request(
             "POST", "/v1/providers", path={}, query=query, timeout=timeout, body=body
@@ -1494,7 +1496,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.RouterFleet:
         """DELETE /v1/providers/:provider-id — json response."""
         response = self._request(
             "DELETE",
@@ -1512,7 +1514,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.ProviderAuth:
         """POST /v1/providers/:provider-id/auth/cancel — json response."""
         response = self._request(
             "POST",
@@ -1531,7 +1533,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.ProviderAuth:
         """POST /v1/providers/:provider-id/auth/complete — json response."""
         response = self._request(
             "POST",
@@ -1550,7 +1552,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.ProviderAuth:
         """POST /v1/providers/:provider-id/auth/poll — json response."""
         response = self._request(
             "POST",
@@ -1568,7 +1570,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.ProviderAuth:
         """POST /v1/providers/:provider-id/auth/start — json response."""
         response = self._request(
             "POST",
@@ -1585,7 +1587,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.ProviderLimits:
         """GET /v1/providers/:provider-id/limits — json response."""
         response = self._request(
             "GET",
@@ -1603,7 +1605,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.ProviderResetOutcome:
         """POST /v1/providers/:provider-id/reset-credits/consume — json response."""
         response = self._request(
             "POST",
@@ -1621,7 +1623,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.ProviderAuth:
         """POST /v1/providers/:provider-id/logout — json response."""
         response = self._request(
             "POST",
@@ -1638,7 +1640,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.ProviderModels:
         """GET /v1/providers/:provider-id/models — json response."""
         response = self._request(
             "GET",
@@ -1655,7 +1657,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.ProviderStatus:
         """GET /v1/providers/:provider-id/status — json response."""
         response = self._request(
             "GET",
@@ -1668,7 +1670,7 @@ class ExecutionLayer(ABC):
 
     def get_router(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.RouterFleet:
         """GET /v1/router — json response."""
         response = self._request(
             "GET", "/v1/router", path={}, query=query, timeout=timeout
@@ -1681,7 +1683,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.RouterFleet:
         """PATCH /v1/router — json response."""
         response = self._request(
             "PATCH", "/v1/router", path={}, query=query, timeout=timeout, body=body
@@ -1690,7 +1692,7 @@ class ExecutionLayer(ABC):
 
     def get_session_groups(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionGroupPage:
         """GET /v1/session-groups — the groups of one project, in the human's order."""
         response = self._request(
             "GET", "/v1/session-groups", path={}, query=query, timeout=timeout
@@ -1703,7 +1705,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.SessionGroup:
         """POST /v1/session-groups — create one group inside a project."""
         response = self._request(
             "POST",
@@ -1717,7 +1719,7 @@ class ExecutionLayer(ABC):
 
     def delete_session_group(
         self, gid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionGroupDeleted:
         """DELETE /v1/session-groups/:gid — drop a group and say what becomes of it."""
         response = self._request(
             "DELETE",
@@ -1735,7 +1737,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.SessionGroup:
         """PATCH /v1/session-groups/:gid — rename, recolour or reorder a group."""
         response = self._request(
             "PATCH",
@@ -1749,7 +1751,7 @@ class ExecutionLayer(ABC):
 
     def get_sessions(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionList:
         """GET /v1/sessions — json response."""
         response = self._request(
             "GET", "/v1/sessions", path={}, query=query, timeout=timeout
@@ -1762,7 +1764,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.Session:
         """POST /v1/sessions — json response."""
         response = self._request(
             "POST", "/v1/sessions", path={}, query=query, timeout=timeout, body=body
@@ -1784,7 +1786,7 @@ class ExecutionLayer(ABC):
 
     def get_session(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.Session:
         """GET /v1/sessions/:sid — json response."""
         response = self._request(
             "GET", "/v1/sessions/:sid", path={"sid": sid}, query=query, timeout=timeout
@@ -1798,7 +1800,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.Session:
         """PATCH /v1/sessions/:sid — json response."""
         response = self._request(
             "PATCH",
@@ -1817,7 +1819,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.ActivityPage:
         """GET /v1/sessions/:sid/activity/:aid — a bounded page of complete Activity records.
 
         Query with after, limit and q. Follow history.next_after until it is
@@ -1860,7 +1862,9 @@ class ExecutionLayer(ABC):
             raise ProtocolError("Activity export is incomplete; reload and retry")
         return response
 
-    def get_session_alert(self, sid: str, *, timeout: float | None = None) -> JSONValue:
+    def get_session_alert(
+        self, sid: str, *, timeout: float | None = None
+    ) -> _types.SessionAlert:
         """GET /v1/sessions/:sid/alert — the banner text for the latest turn."""
         return self._request(
             "GET",
@@ -1871,7 +1875,7 @@ class ExecutionLayer(ABC):
 
     def get_session_artifacts(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionArtifacts:
         """GET /v1/sessions/:sid/artifacts — json response."""
         response = self._request(
             "GET",
@@ -1889,7 +1893,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         content: bytes | None,
-    ) -> JSONValue:
+    ) -> _types.Upload:
         """POST /v1/sessions/:sid/attachments — json response."""
         response = self._request(
             "POST",
@@ -1908,7 +1912,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.TurnCancel:
         """POST /v1/sessions/:sid/cancel-current — json response."""
         response = self._request(
             "POST",
@@ -1922,7 +1926,7 @@ class ExecutionLayer(ABC):
 
     def get_session_context(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionContext:
         """GET /v1/sessions/:sid/context — json response."""
         response = self._request(
             "GET",
@@ -1935,7 +1939,7 @@ class ExecutionLayer(ABC):
 
     def post_session_drain_queue(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.TurnQueueStep:
         """POST /v1/sessions/:sid/drain-queue — json response."""
         response = self._request(
             "POST",
@@ -1948,7 +1952,7 @@ class ExecutionLayer(ABC):
 
     def get_session_events_since(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionEvents:
         """GET /v1/sessions/:sid/events-since — json response."""
         response = self._request(
             "GET",
@@ -1961,7 +1965,7 @@ class ExecutionLayer(ABC):
 
     def get_session_forks(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionForkTurns:
         """GET /v1/sessions/:sid/forks — json response."""
         response = self._request(
             "GET",
@@ -1979,7 +1983,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.SessionWrapped:
         """POST /v1/sessions/:sid/forks — json response."""
         response = self._request(
             "POST",
@@ -1998,7 +2002,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.SessionFsOpen:
         """POST /v1/sessions/:sid/fs/actions/open — open one file in the editor."""
         response = self._request(
             "POST",
@@ -2012,7 +2016,7 @@ class ExecutionLayer(ABC):
 
     def get_session_fs_file(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.FilePreview:
         """GET /v1/sessions/:sid/fs/file — preview one workspace file by its kind."""
         response = self._request(
             "GET",
@@ -2047,7 +2051,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.Session:
         """PUT /v1/sessions/:sid/group — file this session under a group."""
         response = self._request(
             "PUT",
@@ -2086,7 +2090,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.AttachmentLink:
         """GET /v1/sessions/:sid/iterations/:iid/attachments/:idx/link — JSON response.
 
         Get a signed content_url for an attachment that keeps a reference to a
@@ -2111,7 +2115,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.AgentNote:
         """PUT /v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note — set the note of an HTML page for the model."""
         response = self._request(
             "PUT",
@@ -2125,7 +2129,7 @@ class ExecutionLayer(ABC):
 
     def get_session_model(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionModel:
         """GET /v1/sessions/:sid/model — json response."""
         response = self._request(
             "GET",
@@ -2143,7 +2147,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.SessionModel:
         """PATCH /v1/sessions/:sid/model — json response."""
         response = self._request(
             "PATCH",
@@ -2157,7 +2161,7 @@ class ExecutionLayer(ABC):
 
     def post_session_queue_send_now(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.QueueSendNow:
         """POST /v1/sessions/:sid/queue/send-now — json response."""
         response = self._request(
             "POST",
@@ -2175,7 +2179,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.SessionRead:
         """PUT /v1/sessions/:sid/read — how far this reader has read the session."""
         response = self._request(
             "PUT",
@@ -2202,7 +2206,7 @@ class ExecutionLayer(ABC):
 
     def get_session_resources(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionResources:
         """GET /v1/sessions/:sid/resources — json response."""
         response = self._request(
             "GET",
@@ -2215,7 +2219,7 @@ class ExecutionLayer(ABC):
 
     def get_session_resources_logs(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionResourceLogs:
         """GET /v1/sessions/:sid/resources/logs — json response."""
         response = self._request(
             "GET",
@@ -2228,7 +2232,7 @@ class ExecutionLayer(ABC):
 
     def post_session_resources_stop(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionResourceStop:
         """POST /v1/sessions/:sid/resources/stop — json response."""
         response = self._request(
             "POST",
@@ -2241,7 +2245,7 @@ class ExecutionLayer(ABC):
 
     def post_session_resume_queue(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.TurnQueueStep:
         """POST /v1/sessions/:sid/resume-queue — json response."""
         response = self._request(
             "POST",
@@ -2254,7 +2258,7 @@ class ExecutionLayer(ABC):
 
     def get_session_seq(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionSeq:
         """GET /v1/sessions/:sid/seq — json response."""
         response = self._request(
             "GET",
@@ -2267,7 +2271,7 @@ class ExecutionLayer(ABC):
 
     def get_session_slashes(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionSlashes:
         """GET /v1/sessions/:sid/slashes — json response."""
         response = self._request(
             "GET",
@@ -2280,7 +2284,7 @@ class ExecutionLayer(ABC):
 
     def get_session_keybindings(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.KeybindingList:
         """GET /v1/sessions/:sid/keybindings — json response."""
         response = self._request(
             "GET",
@@ -2298,7 +2302,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.KeybindingRunResult:
         """POST /v1/sessions/:sid/keybindings/run — json response."""
         response = self._request(
             "POST",
@@ -2330,7 +2334,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.VoiceJob:
         """POST /v1/sessions/:sid/speech — json response."""
         response = self._request(
             "POST",
@@ -2349,7 +2353,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.Forgotten:
         """DELETE /v1/sessions/:sid/speech/jobs/:job-id — json response."""
         response = self._request(
             "DELETE",
@@ -2367,7 +2371,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.VoiceJob:
         """GET /v1/sessions/:sid/speech/jobs/:job-id — json response."""
         response = self._request(
             "GET",
@@ -2398,7 +2402,7 @@ class ExecutionLayer(ABC):
 
     def get_session_suggest(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionSuggestions:
         """GET /v1/sessions/:sid/suggest — json response."""
         response = self._request(
             "GET",
@@ -2411,7 +2415,7 @@ class ExecutionLayer(ABC):
 
     def get_session_transcript(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.Transcript:
         """GET /v1/sessions/:sid/transcript — json response."""
         response = self._request(
             "GET",
@@ -2450,7 +2454,7 @@ class ExecutionLayer(ABC):
 
     def get_session_turns(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.TurnList:
         """GET /v1/sessions/:sid/turns — json response."""
         response = self._request(
             "GET",
@@ -2468,7 +2472,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.Turn:
         """POST /v1/sessions/:sid/turns — json response."""
         response = self._request(
             "POST",
@@ -2487,7 +2491,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.TurnCancel:
         """DELETE /v1/sessions/:sid/turns/:tid — json response."""
         response = self._request(
             "DELETE",
@@ -2505,7 +2509,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.Turn:
         """GET /v1/sessions/:sid/turns/:tid — json response."""
         response = self._request(
             "GET",
@@ -2524,7 +2528,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.Turn:
         """PATCH /v1/sessions/:sid/turns/:tid — json response."""
         response = self._request(
             "PATCH",
@@ -2543,7 +2547,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.TurnAttachments:
         """GET /v1/sessions/:sid/turns/:tid/attachments — json response."""
         response = self._request(
             "GET",
@@ -2561,7 +2565,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.TurnCancel:
         """POST /v1/sessions/:sid/turns/:tid/cancel — json response."""
         response = self._request(
             "POST",
@@ -2579,7 +2583,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.TurnTrace:
         """GET /v1/sessions/:sid/turns/:tid/trace — json response."""
         response = self._request(
             "GET",
@@ -2592,7 +2596,7 @@ class ExecutionLayer(ABC):
 
     def get_session_usage(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionUsage:
         """GET /v1/sessions/:sid/usage — json response."""
         response = self._request(
             "GET",
@@ -2611,7 +2615,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.ViewOutcome:
         """POST /v1/sessions/:sid/views/:view-id/actions — json response."""
         response = self._request(
             "POST",
@@ -2625,7 +2629,7 @@ class ExecutionLayer(ABC):
 
     def get_session_views_input(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.ViewRequests:
         """GET /v1/sessions/:sid/views/input — json response."""
         response = self._request(
             "GET",
@@ -2638,7 +2642,7 @@ class ExecutionLayer(ABC):
 
     def get_session_views_live(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.AppList:
         """GET /v1/sessions/:sid/views/live — json response."""
         response = self._request(
             "GET",
@@ -2656,7 +2660,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.AppView:
         """GET /v1/sessions/:sid/views/live/:view-id — json response."""
         response = self._request(
             "GET",
@@ -2675,7 +2679,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.ViewLog:
         """GET /v1/sessions/:sid/views/live/:view-id/log — json response.
 
         The node rides the query string: node ids are free text a surface chose
@@ -2697,7 +2701,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.AppDoorAnswer:
         """POST /v1/sessions/:sid/apps — json response."""
         response = self._request(
             "POST",
@@ -2711,7 +2715,7 @@ class ExecutionLayer(ABC):
 
     def get_apps(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.AppList:
         """GET /v1/apps — json response."""
         response = self._request(
             "GET", "/v1/apps", path={}, query=query, timeout=timeout
@@ -2724,7 +2728,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.AppDoorAnswer:
         """POST /v1/apps — json response."""
         response = self._request(
             "POST", "/v1/apps", path={}, query=query, timeout=timeout, body=body
@@ -2733,7 +2737,7 @@ class ExecutionLayer(ABC):
 
     def get_app(
         self, view_id: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.AppView:
         """GET /v1/apps/:view-id — json response."""
         response = self._request(
             "GET",
@@ -2751,7 +2755,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.ViewOutcome:
         """POST /v1/apps/:view-id/actions — json response."""
         response = self._request(
             "POST",
@@ -2765,7 +2769,7 @@ class ExecutionLayer(ABC):
 
     def get_web_brand(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.WebBrand:
         """GET /v1/web/brand — json response."""
         response = self._request(
             "GET", "/v1/web/brand", path={}, query=query, timeout=timeout
@@ -2778,7 +2782,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.WebBrand:
         """PUT /v1/web/brand — json response."""
         response = self._request(
             "PUT", "/v1/web/brand", path={}, query=query, timeout=timeout, body=body
@@ -2799,7 +2803,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         content: bytes | None,
-    ) -> JSONValue:
+    ) -> _types.VoiceJob:
         """POST /v1/sessions/:sid/voice — json response."""
         response = self._request(
             "POST",
@@ -2818,7 +2822,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.Forgotten:
         """DELETE /v1/sessions/:sid/voice/jobs/:job-id — json response."""
         response = self._request(
             "DELETE",
@@ -2836,7 +2840,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.VoiceJob:
         """GET /v1/sessions/:sid/voice/jobs/:job-id — json response."""
         response = self._request(
             "GET",
@@ -2849,7 +2853,7 @@ class ExecutionLayer(ABC):
 
     def get_session_workspace(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionWorkspace:
         """GET /v1/sessions/:sid/workspace — json response."""
         response = self._request(
             "GET",
@@ -2867,7 +2871,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.SessionWorkspace:
         """PATCH /v1/sessions/:sid/workspace/root — json response."""
         response = self._request(
             "PATCH",
@@ -2885,7 +2889,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.SessionArchive:
         """POST /v1/sessions/actions/archive — archive many sessions; skip working ones."""
         response = self._request(
             "POST",
@@ -2903,7 +2907,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         content: bytes | None,
-    ) -> JSONValue:
+    ) -> _types.Session:
         """POST /v1/sessions/actions/import — restore a session snapshot."""
         response = self._request(
             "POST",
@@ -2917,7 +2921,7 @@ class ExecutionLayer(ABC):
 
     def get_sessions_search(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SessionSearch:
         """GET /v1/sessions/actions/search — json response."""
         response = self._request(
             "GET", "/v1/sessions/actions/search", path={}, query=query, timeout=timeout
@@ -2930,7 +2934,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.MachineOrder:
         """POST /v1/machines/order — register gateway IDs and return their durable order."""
         response = self._request(
             "POST",
@@ -2944,7 +2948,7 @@ class ExecutionLayer(ABC):
 
     def get_automations(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.AutomationsList:
         """GET /v1/automations — json response."""
         response = self._request(
             "GET", "/v1/automations", path={}, query=query, timeout=timeout
@@ -2957,7 +2961,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.AutomationsAutomation:
         """POST /v1/automations — json response."""
         response = self._request(
             "POST", "/v1/automations", path={}, query=query, timeout=timeout, body=body
@@ -2966,7 +2970,7 @@ class ExecutionLayer(ABC):
 
     def get_automation_runs(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.AutomationsRunList:
         """GET /v1/automations/runs — json response."""
         response = self._request(
             "GET", "/v1/automations/runs", path={}, query=query, timeout=timeout
@@ -2975,7 +2979,7 @@ class ExecutionLayer(ABC):
 
     def get_automation_run(
         self, run_id: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.AutomationsRun:
         """GET /v1/automations/runs/:run-id — json response."""
         response = self._request(
             "GET",
@@ -2992,7 +2996,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.AutomationsAutomation:
         """GET /v1/automations/:automation-id — json response."""
         response = self._request(
             "GET",
@@ -3010,7 +3014,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.AutomationsAutomation:
         """PATCH /v1/automations/:automation-id — json response."""
         response = self._request(
             "PATCH",
@@ -3028,7 +3032,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.AutomationsDeleted:
         """DELETE /v1/automations/:automation-id — json response."""
         response = self._request(
             "DELETE",
@@ -3045,7 +3049,7 @@ class ExecutionLayer(ABC):
         *,
         query: Query | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.AutomationsRun:
         """POST /v1/automations/:automation-id/run — json response."""
         response = self._request(
             "POST",
@@ -3063,7 +3067,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.AutomationsSecretCreated:
         """POST /v1/automations/:automation-id/secrets — json response."""
         response = self._request(
             "POST",
@@ -3081,7 +3085,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.EvalsAgreement:
         """POST /v1/evals/agreement — json response."""
         response = self._request(
             "POST",
@@ -3099,7 +3103,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.EvalsCaseComparison:
         """POST /v1/evals/compare — json response."""
         response = self._request(
             "POST",
@@ -3117,7 +3121,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.EvalsDiagnosis:
         """POST /v1/evals/diagnose — json response."""
         response = self._request(
             "POST",
@@ -3135,7 +3139,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.EvalsAgreement:
         """POST /v1/evals/labels — json response."""
         response = self._request(
             "POST", "/v1/evals/labels", path={}, query=query, timeout=timeout, body=body
@@ -3148,7 +3152,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.EvalsLeaderboard:
         """POST /v1/evals/leaderboard — json response."""
         response = self._request(
             "POST",
@@ -3166,7 +3170,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.EvalsBenchReport:
         """POST /v1/evals/report — json response."""
         response = self._request(
             "POST", "/v1/evals/report", path={}, query=query, timeout=timeout, body=body
@@ -3175,7 +3179,7 @@ class ExecutionLayer(ABC):
 
     def get_settings(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.Settings:
         """GET /v1/settings — json response."""
         response = self._request(
             "GET", "/v1/settings", path={}, query=query, timeout=timeout
@@ -3188,7 +3192,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.Setting:
         """POST /v1/settings — json response."""
         response = self._request(
             "POST", "/v1/settings", path={}, query=query, timeout=timeout, body=body
@@ -3201,7 +3205,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.Settings:
         """PATCH /v1/settings — json response."""
         response = self._request(
             "PATCH", "/v1/settings", path={}, query=query, timeout=timeout, body=body
@@ -3210,7 +3214,7 @@ class ExecutionLayer(ABC):
 
     def get_setting(
         self, id: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.Setting:
         """GET /v1/settings/:id — json response."""
         response = self._request(
             "GET", "/v1/settings/:id", path={"id": id}, query=query, timeout=timeout
@@ -3224,7 +3228,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.SettingPreviewResult:
         """POST /v1/settings/:id/preview — json response."""
         response = self._request(
             "POST",
@@ -3242,7 +3246,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.ExtensionReload:
         """POST /v1/extensions/reload — json response."""
         response = self._request(
             "POST",
@@ -3260,7 +3264,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.VoiceJob:
         """POST /v1/speech — json response."""
         response = self._request(
             "POST", "/v1/speech", path={}, query=query, timeout=timeout, body=body
@@ -3269,7 +3273,7 @@ class ExecutionLayer(ABC):
 
     def delete_speech_job(
         self, job_id: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.Forgotten:
         """DELETE /v1/speech/jobs/:job-id — json response."""
         response = self._request(
             "DELETE",
@@ -3282,7 +3286,7 @@ class ExecutionLayer(ABC):
 
     def get_speech_job(
         self, job_id: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.VoiceJob:
         """GET /v1/speech/jobs/:job-id — json response."""
         response = self._request(
             "GET",
@@ -3308,7 +3312,7 @@ class ExecutionLayer(ABC):
 
     def get_speech_model(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.VoiceModel:
         """GET /v1/speech/model — json response."""
         response = self._request(
             "GET", "/v1/speech/model", path={}, query=query, timeout=timeout
@@ -3317,7 +3321,7 @@ class ExecutionLayer(ABC):
 
     def post_speech_model(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.VoiceModel:
         """POST /v1/speech/model — json response."""
         response = self._request(
             "POST", "/v1/speech/model", path={}, query=query, timeout=timeout
@@ -3326,7 +3330,7 @@ class ExecutionLayer(ABC):
 
     def get_speech_voices(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.SpeechVoices:
         """GET /v1/speech/voices — json response."""
         response = self._request(
             "GET", "/v1/speech/voices", path={}, query=query, timeout=timeout
@@ -3339,7 +3343,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         content: bytes | None,
-    ) -> JSONValue:
+    ) -> _types.SpeechVoice:
         """POST /v1/speech/voices — json response."""
         response = self._request(
             "POST",
@@ -3353,7 +3357,7 @@ class ExecutionLayer(ABC):
 
     def delete_speech_voice(
         self, voice_id: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.Forgotten:
         """DELETE /v1/speech/voices/:voice-id — json response."""
         response = self._request(
             "DELETE",
@@ -3371,7 +3375,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> JSONValue:
+    ) -> _types.SpeechVoice:
         """PATCH /v1/speech/voices/:voice-id — json response."""
         response = self._request(
             "PATCH",
@@ -3396,7 +3400,9 @@ class ExecutionLayer(ABC):
         )
         return response
 
-    def get_decision_models(self, *, timeout: float | None = None) -> JSONValue:
+    def get_decision_models(
+        self, *, timeout: float | None = None
+    ) -> _types.DecisionModels:
         """GET /v1/decisions/models — installed and resident decision versions."""
         response = self._request(
             "GET", "/v1/decisions/models", path={}, timeout=timeout
@@ -3405,7 +3411,7 @@ class ExecutionLayer(ABC):
 
     def get_decision_model(
         self, model_ref: str, *, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.DecisionModel:
         """GET /v1/decisions/models/:model-ref — immutable status after upload."""
         return self._request(
             "GET",
@@ -3416,7 +3422,7 @@ class ExecutionLayer(ABC):
 
     def get_decision_alias(
         self, alias: str, *, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.DecisionAlias:
         """GET /v1/decisions/aliases/:alias — current ref before a CAS update."""
         return self._request(
             "GET",
@@ -3432,7 +3438,7 @@ class ExecutionLayer(ABC):
         model_ref: str,
         expected_current: str | None = None,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.DecisionAlias:
         """PUT /v1/decisions/aliases/:alias — explicit compare-and-swap update."""
         return self._request(
             "PUT",
@@ -3444,7 +3450,7 @@ class ExecutionLayer(ABC):
 
     def post_decision_training_job(
         self, *, body: JSONValue, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.DecisionJob:
         """POST /v1/decisions/training/jobs — train on approved local data."""
         return self._request(
             "POST", "/v1/decisions/training/jobs", path={}, body=body, timeout=timeout
@@ -3452,7 +3458,7 @@ class ExecutionLayer(ABC):
 
     def get_decision_training_job(
         self, job_id: str, *, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.DecisionJob:
         """GET /v1/decisions/training/jobs/:job-id — durable progress."""
         return self._request(
             "GET",
@@ -3463,7 +3469,7 @@ class ExecutionLayer(ABC):
 
     def delete_decision_training_job(
         self, job_id: str, *, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.DecisionJob:
         """DELETE /v1/decisions/training/jobs/:job-id — cancel or discard."""
         return self._request(
             "DELETE",
@@ -3474,7 +3480,7 @@ class ExecutionLayer(ABC):
 
     def post_systemone(
         self, *, body: JSONValue, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.DecisionAnswer:
         """POST /v1/systemone — typed decisions from an explicitly named model."""
         response = self._request(
             "POST", "/v1/systemone", path={}, timeout=timeout, body=body
@@ -3487,7 +3493,7 @@ class ExecutionLayer(ABC):
         query: Query | None = None,
         timeout: float | None = None,
         content: bytes | None,
-    ) -> JSONValue:
+    ) -> _types.VoiceJob:
         """POST /v1/voice — json response."""
         response = self._request(
             "POST", "/v1/voice", path={}, query=query, timeout=timeout, content=content
@@ -3496,7 +3502,7 @@ class ExecutionLayer(ABC):
 
     def delete_voice_job(
         self, job_id: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.Forgotten:
         """DELETE /v1/voice/jobs/:job-id — json response."""
         response = self._request(
             "DELETE",
@@ -3509,7 +3515,7 @@ class ExecutionLayer(ABC):
 
     def get_voice_job(
         self, job_id: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.VoiceJob:
         """GET /v1/voice/jobs/:job-id — json response."""
         response = self._request(
             "GET",
@@ -3522,7 +3528,7 @@ class ExecutionLayer(ABC):
 
     def get_voice_model(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.VoiceModel:
         """GET /v1/voice/model — json response."""
         response = self._request(
             "GET", "/v1/voice/model", path={}, query=query, timeout=timeout
@@ -3531,7 +3537,7 @@ class ExecutionLayer(ABC):
 
     def post_voice_model(
         self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
+    ) -> _types.VoiceModel:
         """POST /v1/voice/model — json response."""
         response = self._request(
             "POST", "/v1/voice/model", path={}, query=query, timeout=timeout
@@ -3780,7 +3786,7 @@ class GatewayClient(ExecutionLayer):
         sha256: str,
         length: int,
         timeout: float | None = None,
-    ) -> JSONValue:
+    ) -> _types.DecisionModel:
         """POST /v1/decisions/models — stream a verified FP32 bundle once."""
         return self._request(
             "POST",
@@ -3972,7 +3978,7 @@ class Session:
         self.client._pump_client_extensions(self.id)
         return self._call("GET")
 
-    def update(self, **fields: object) -> JSONValue:
+    def update(self, **fields: object) -> _types.Session:
         """Patch session fields and return the engine's JSON response.
 
         Field names and validation follow the gateway session-update contract.
@@ -3998,9 +4004,7 @@ class Session:
         """
         return self._call("DELETE")
 
-    def turns(
-        self, **query: str | int | float | bool | None
-    ) -> list[dict[str, JSONValue]]:
+    def turns(self, **query: str | int | float | bool | None) -> list[_types.Turn]:
         """Read turn history, or the queued subset with status='queued'."""
         return _field(self._call("GET", "/turns", query=query), "turns", list)
 
@@ -4323,7 +4327,7 @@ class Session:
 
         return LiveAttachment._from(app, door=_AppDoor(self, owner), on_event=on_event)
 
-    def keybindings(self) -> list[dict[str, Any]]:
+    def keybindings(self) -> list[_types.Keybinding]:
         """Read the TUI key bindings that the extensions of this session declare.
 
         Each binding has `key`, `extension` and `command` with `label` and
@@ -4335,7 +4339,7 @@ class Session:
 
     def run_keybinding(
         self, extension: str, key: str, group: str | None = None
-    ) -> dict[str, Any]:
+    ) -> _types.KeybindingRunResult:
         """Run the function of one run binding, as if the person pressed its key.
 
         Give the `extension`, `key` and `group` that `keybindings()` lists. The
@@ -4348,7 +4352,7 @@ class Session:
         answer = self._call("POST", "/keybindings/run", body=body)
         if not isinstance(answer, dict):
             raise ProtocolError("invalid key binding run result")
-        return dict(answer)
+        return cast(_types.KeybindingRunResult, dict(answer))
 
     def answer(self, view_id, values):
         """Submit input values to a view, returning the engine's response.

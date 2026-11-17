@@ -65,8 +65,10 @@
 
         (expect (nil? (io/resource "vis-contract/gateway.json")))
         (expect (= "#/$defs/session" (get gateway "$ref")))
-        (expect (= {"request" "none" "response" "json"} (get-in devices ["operations" "get"])))
-        (expect (= {"request" "json" "response" "json"} (get-in devices ["operations" "post"])))
+        (expect (= {"request" "none" "response" "json" "response_schema" "devices"}
+                   (get-in devices ["operations" "get"])))
+        (expect (= {"request" "json" "response" "json" "response_schema" "device_registered"}
+                   (get-in devices ["operations" "post"])))
         (expect (= {"request" "json"
                     "response" "json"
                     "request_schema" "settings_batch"
@@ -86,18 +88,23 @@
       (let [operation contract/operation]
         (expect (= {:request :none :response :resource} (operation :get "/docs")))
         (expect (= {:request :none :response :negotiated} (operation :get "/metrics")))
-        (expect (= {:request :binary :response :json :extension :callback}
-                   (operation :post "/v1/speech/voices")))
-        (expect (= {:request :json :response :json :extension :callback}
-                   (operation :patch "/v1/speech/voices/:voice-id")))
-        (expect (= {:request :json :response :json :extension :background}
-                   (operation :post "/v1/speech")))
-        (expect (= {:request :binary :response :json :extension :background}
-                   (operation :post "/v1/voice")))
+        (expect
+          (= {:request :binary :response :json :extension :callback :response-schema :speech_voice}
+             (operation :post "/v1/speech/voices")))
+        (expect
+          (= {:request :json :response :json :extension :callback :response-schema :speech_voice}
+             (operation :patch "/v1/speech/voices/:voice-id")))
+        (expect
+          (= {:request :json :response :json :extension :background :response-schema :voice_job}
+             (operation :post "/v1/speech")))
+        (expect
+          (= {:request :binary :response :json :extension :background :response-schema :voice_job}
+             (operation :post "/v1/voice")))
         (expect (= {:request :none :response :empty :extension :callback}
                    (operation :delete "/v1/sessions/:sid")))
-        (expect (= {:request :json :response :json :extension :background}
-                   (operation :post "/v1/sessions/:sid/council/wake")))
+        (expect
+          (= {:request :json :response :json :extension :background :response-schema :council_entry}
+             (operation :post "/v1/sessions/:sid/council/wake")))
         (expect (= {:request :none :response :sse} (operation :get "/v1/events")))
         (expect (= {:request :none :response :binary}
                    (operation :get "/v1/sessions/:sid/speech/jobs/:job-id/audio")))))

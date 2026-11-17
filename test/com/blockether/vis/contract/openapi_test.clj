@@ -3,7 +3,9 @@
    reads, so what it may never do is disagree with the contract or carry a value a
    JSON reader cannot hold."
   (:require [charred.api :as charred]
+            [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.skjema.core :as skjema]
             [com.blockether.vis.contract.gateway :as contract]
             [com.blockether.vis.contract.openapi :as openapi]
             [com.blockether.vis.contract.wire :as wire]
@@ -78,13 +80,40 @@
                  (set (keys (get-in @encoded
                                     ["paths" "/metrics" "get" "responses" "200" "content"])))))
       ;; An empty response answers 204 and carries no content at all.
-      (expect (= #{"204" "default"}
+      (expect (= #{"204" "4XX" "5XX" "default"}
                  (set (keys (get-in @encoded
                                     ["paths" "/v1/sessions/{sid}/release" "post" "responses"])))))
       (expect (every? (fn [[_ _ operation]]
-                        (= {"$ref" "#/components/responses/error"}
-                           (get-in operation ["responses" "default"])))
+                        (every? #(= {"$ref" "#/components/responses/error"}
+                                    (get-in operation ["responses" %]))
+                                ["4XX" "5XX" "default"]))
                       (operations @encoded))))
+  (it "gives each JSON answer a schema that lists its fields"
+      ;; An empty schema tells a client generator nothing, so it makes an untyped call.
+      (doseq [[path method operation]
+              (operations @encoded)
+
+              :let [content
+                    (get-in operation ["responses" "200" "content"])
+
+                    schema
+                    (get-in content ["application/json" "schema"])]
+              ;; A negotiated answer such as /metrics is not a JSON route.
+              :when (and schema (= 1 (count content)))]
+
+        (expect (not= {} schema) (str method " " path))
+        (expect (some? (get-in @encoded
+                               ["components" "schemas"
+                                (str/replace (get schema "$ref" "") "#/components/schemas/" "")]))
+                (str method " " path))))
+  (it "is a valid OpenAPI 3.1 document"
+      ;; The official OpenAPI 3.1 schema (2022-10-07), kept next to this test.
+      (let [meta-schema (skjema/compile-schema
+                          (charred/read-json
+                            (slurp (io/resource
+                                     "com/blockether/vis/contract/oas-3.1-schema.json"))))]
+        (expect (nil? (skjema/explain meta-schema @encoded))
+                (pr-str (skjema/explain meta-schema @encoded)))))
   (it "gates every audience but the public one"
       (expect (= [{"bearer" []} {"gateway_secret" []}] (get @encoded "security")))
       (expect (= [] (get-in @encoded ["paths" "/healthz" "get" "security"])))

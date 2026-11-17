@@ -30,7 +30,8 @@ The gateway serves its OpenAPI 3.1 document without a token:
 curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
 ```
 
-The document has the routes, the request formats, and the answers.
+The document has the routes, the request formats, and the answers. Each JSON answer refers to its
+schema in `components/schemas`.
 
 ## Authenticate requests
 

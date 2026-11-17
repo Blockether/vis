@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.gateway.server-test
   (:require
-    [lazytest.core :refer [defdescribe expect it throws?]]
+    [lazytest.core :refer [around-each defdescribe expect it set-ns-context! throws?]]
     [babashka.http-client :as http]
     [clojure.java.io :as io]
     [clojure.string :as str]
@@ -22,6 +22,7 @@
     [com.blockether.vis.internal.gateway.client :as client]
     [com.blockether.vis.internal.gateway.discovery :as discovery]
     [com.blockether.vis.internal.gateway.server :as server]
+    [com.blockether.vis.internal.gateway.response-check :as response-check]
     [com.blockether.vis.internal.gateway.server.council :as council-api]
     [com.blockether.vis.internal.gateway.server.fs :as fs-api]
     [com.blockether.vis.internal.gateway.server.http :as gw-http]
@@ -72,6 +73,9 @@
     [ring.middleware.params :as ring-params]))
 
 (wiring/install!)
+
+;; Each JSON answer of a router-built handler must match its response schema.
+(set-ns-context! [(around-each [f] (response-check/checked f))])
 
 (defdescribe
   file-suggestions-use-the-session-workspace-and-requested-limit

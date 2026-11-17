@@ -76,8 +76,9 @@
              (if (= :empty response)
                (array-map "description" "Accepted; no body.")
                (array-map "description" "Success." "content" (response-content response)))
-             "default"
-             (array-map "$ref" "#/components/responses/error")))
+             "4XX" (array-map "$ref" "#/components/responses/error")
+             "5XX" (array-map "$ref" "#/components/responses/error")
+             "default" (array-map "$ref" "#/components/responses/error")))
 
 (defn- operation
   [method {:keys [path audience]} {:keys [request response response-schema]}]
@@ -156,8 +157,10 @@
            "serve the caller's protocol answers 426 with its own numbers instead of the "
            "route's result. The routes that report the gateway's own identity answer any "
            "protocol, so a client can always read that verdict.\n\n"
-           "Request and response bodies are JSON unless the media type says otherwise; a body "
-           "shown as an empty schema is one the contract does not constrain yet.")
+           "Request and response bodies are JSON unless the media type says otherwise. Each JSON "
+           "answer refers to its schema in `components/schemas`, and each 4XX and 5XX answer "
+           "refers to the shared error schema. A request body shown as an empty schema is one "
+           "the contract does not constrain yet.")
       "license" (array-map "name" "MIT"))
     "servers" [(array-map "url" "/" "description" "The gateway that served this document.")]
     "security" [(array-map "bearer" []) (array-map "gateway_secret" [])]

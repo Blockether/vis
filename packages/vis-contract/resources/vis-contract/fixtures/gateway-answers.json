@@ -1,0 +1,2165 @@
+{
+  "answers": {
+    "DELETE /v1/session-groups/:gid": {
+      "group_id": "e9428c64-2fef-4f76-a4bc-7a2d893f535e",
+      "scattered_session_ids": [
+        "ec50190a-1dfc-4bd3-a9a0-bcf71fafab1d"
+      ],
+      "deleted_session_ids": [],
+      "session_count": 1
+    },
+    "GET /v1/admin/status": {
+      "client_replacements_total": 0,
+      "extensions": {
+        "stage": "idle",
+        "packages": []
+      },
+      "managed": false,
+      "protocol": {
+        "protocol": 23,
+        "min_client": 23,
+        "min_gateway": 22,
+        "version": "dev",
+        "build": "736f0a723362"
+      },
+      "sse_clients": 0,
+      "running_turns": 0,
+      "host": null,
+      "client_releases_total": 0,
+      "id": "e7ac0786668e0ff0",
+      "require_token": false,
+      "pid": 55774,
+      "clients": 0,
+      "speech_models": {
+        "models": [],
+        "bytes": 0,
+        "limit_bytes": 4294967296,
+        "idle_unload_seconds": 300
+      },
+      "status": "stopped",
+      "client_leases": 0,
+      "client_leases_reaped_total": 0,
+      "port": null,
+      "db": null,
+      "client_registrations_total": 0
+    },
+    "GET /v1/apps": {
+      "views": []
+    },
+    "GET /v1/capabilities": {
+      "version": 1,
+      "protocol": {
+        "protocol": 23,
+        "min_client": 23,
+        "min_gateway": 22,
+        "version": "dev",
+        "build": "736f0a723362"
+      },
+      "addresses": [
+        "http://100.109.18.77:7890",
+        "http://192.168.0.171:7890",
+        "http://127.0.0.1:7890"
+      ],
+      "compatibility": {
+        "gateway_min_client": 23,
+        "client_name": "client",
+        "is_compatible": false,
+        "upgrade": "client",
+        "client_version": null,
+        "gateway_version": "dev",
+        "gateway_protocol": 23,
+        "client_protocol": null,
+        "reason": "unknown",
+        "behind": null,
+        "client_min_gateway": null
+      },
+      "features": {
+        "chat": {
+          "enabled": true
+        },
+        "attachments": {
+          "transport": "inline-base64",
+          "max_audio_bytes": 33554432,
+          "audio_media_types": [
+            "audio/aac",
+            "audio/aiff",
+            "audio/amr",
+            "audio/flac",
+            "audio/mp4",
+            "audio/mpeg",
+            "audio/ogg",
+            "audio/wav",
+            "audio/x-caf"
+          ],
+          "max_files": 8,
+          "enabled": true,
+          "max_file_bytes": 26214400,
+          "max_video_bytes": 33554432,
+          "video_media_types": [
+            "video/mp4",
+            "video/quicktime"
+          ],
+          "media_types": [
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "image/webp",
+            "image/bmp",
+            "image/heic",
+            "image/heif",
+            "image/avif",
+            "application/csv",
+            "application/gzip",
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/x-csv",
+            "application/x-gzip",
+            "application/x-ndjson",
+            "application/x-zip",
+            "application/x-zip-compressed",
+            "application/xhtml+xml",
+            "application/zip",
+            "text/comma-separated-values",
+            "text/csv",
+            "text/html",
+            "text/markdown",
+            "text/tab-separated-values",
+            "text/tsv",
+            "text/x-csv",
+            "text/x-markdown",
+            "text/x-tsv",
+            "video/mp4",
+            "video/quicktime",
+            "audio/aac",
+            "audio/aiff",
+            "audio/amr",
+            "audio/flac",
+            "audio/mp4",
+            "audio/mpeg",
+            "audio/ogg",
+            "audio/wav",
+            "audio/x-caf"
+          ]
+        },
+        "voice": {
+          "transport": "audio/wav",
+          "selected": "parakeet-local",
+          "engines": [
+            {
+              "id": "parakeet-local",
+              "label": "Parakeet (local)"
+            },
+            {
+              "id": "vibevoice-asr-local",
+              "label": "VibeVoice ASR (local)"
+            }
+          ],
+          "progress": "sse",
+          "is_async": true,
+          "model": {
+            "status": "absent"
+          },
+          "enabled": true,
+          "transcription": "gateway-local",
+          "progress_event": "voice.job",
+          "phases": [
+            "uploading",
+            "queued",
+            "preparing",
+            "transcribing",
+            "done",
+            "failed"
+          ]
+        },
+        "speech": {
+          "transport": "audio/wav",
+          "selected": "piper-local",
+          "engines": [
+            {
+              "id": "piper-local",
+              "label": "Piper (local)",
+              "voices": [
+                {
+                  "id": "kristin",
+                  "label": "Kristin (en-US)",
+                  "language": "en-US",
+                  "license": "LicenseRef-public-domain",
+                  "source_url": "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/kristin/medium",
+                  "model": {
+                    "status": "absent"
+                  },
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "cori",
+                  "label": "Cori (en-GB)",
+                  "language": "en-GB",
+                  "license": "LicenseRef-public-domain",
+                  "source_url": "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/cori/high",
+                  "model": {
+                    "status": "absent"
+                  },
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "john",
+                  "label": "John (en-US)",
+                  "language": "en-US",
+                  "license": "LicenseRef-public-domain",
+                  "source_url": "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/john/medium",
+                  "model": {
+                    "status": "absent"
+                  },
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "ljspeech",
+                  "label": "LJ (en-US)",
+                  "language": "en-US",
+                  "license": "LicenseRef-public-domain",
+                  "source_url": "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ljspeech/high",
+                  "model": {
+                    "status": "absent"
+                  },
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "ryan",
+                  "label": "Ryan (en-US, high)",
+                  "language": "en-US",
+                  "license": "CC-BY-NC-SA-4.0",
+                  "notice": "RyanSpeech is CC BY-NC-SA 4.0: non-commercial use only, with attribution, and anything derived from it carries the same licence. Vis never mirrors this voice and never installs it on its own.",
+                  "source_url": "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ryan/high",
+                  "is_opt_in": true,
+                  "model": {
+                    "status": "absent"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "pocket-tts-local",
+              "label": "Pocket TTS (local)",
+              "is_voice_import": true,
+              "voices": [
+                {
+                  "id": "alba",
+                  "label": "Alba (English)",
+                  "language": "en",
+                  "clip_text": "How am I doing? How's it going? How can I help? Need anything? Not right now. Sorry, I can't. Maybe later. I'm afraid not. I couldn't.",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "marius",
+                  "label": "Marius (English)",
+                  "language": "en",
+                  "clip_text": "know if it's the first ten seconds or the last ten seconds that you're going to use. It says it's the last ten seconds, and if that's the case and I'd showed up previously, there would just be ten seconds.",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "javert",
+                  "label": "Javert (English)",
+                  "language": "en",
+                  "clip_text": "I would like to buy an avocado. One that is green on the outside and green",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "fantine",
+                  "label": "Fantine (English)",
+                  "language": "en",
+                  "clip_text": "If the red of the second bow falls upon the green of the first, the result is to give a bow with an abnormally wide yellow band, since red and green light when mixed form yellow.",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "eponine",
+                  "label": "Eponine (English)",
+                  "language": "en",
+                  "clip_text": "If the red of the second bow falls upon the green of the first, the result is to give a bow with an abnormally wide yellow band, since red and green light when mixed form yellow.",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "azelma",
+                  "label": "Azelma (English)",
+                  "language": "en",
+                  "clip_text": "If the red of the second bow falls upon the green of the first, the result is to give a bow with an abnormally wide yellow band, since red and green light when mixed form yellow.",
+                  "is_sample_preparable": true
+                }
+              ]
+            },
+            {
+              "id": "vibevoice-local",
+              "label": "VibeVoice (local)",
+              "voices": [
+                {
+                  "id": "carter",
+                  "label": "Carter (English)",
+                  "language": "en",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "emma",
+                  "label": "Emma (English)",
+                  "language": "en",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "davis",
+                  "label": "Davis (English)",
+                  "language": "en",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "frank",
+                  "label": "Frank (English)",
+                  "language": "en",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "grace",
+                  "label": "Grace (English)",
+                  "language": "en",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "mike",
+                  "label": "Mike (English)",
+                  "language": "en",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "samuel",
+                  "label": "Samuel (Indian English)",
+                  "language": "en-IN",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "de-man",
+                  "label": "German man",
+                  "language": "de",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "de-woman",
+                  "label": "German woman",
+                  "language": "de",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "sp-man",
+                  "label": "Spanish man",
+                  "language": "es",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "sp-woman",
+                  "label": "Spanish woman",
+                  "language": "es",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "fr-man",
+                  "label": "French man",
+                  "language": "fr",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "fr-woman",
+                  "label": "French woman",
+                  "language": "fr",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "it-man",
+                  "label": "Italian man",
+                  "language": "it",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "it-woman",
+                  "label": "Italian woman",
+                  "language": "it",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "jp-man",
+                  "label": "Japanese man",
+                  "language": "ja",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "jp-woman",
+                  "label": "Japanese woman",
+                  "language": "ja",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "kr-man",
+                  "label": "Korean man",
+                  "language": "ko",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "kr-woman",
+                  "label": "Korean woman",
+                  "language": "ko",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "nl-man",
+                  "label": "Dutch man",
+                  "language": "nl",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "nl-woman",
+                  "label": "Dutch woman",
+                  "language": "nl",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "pl-man",
+                  "label": "Polish man",
+                  "language": "pl",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "pl-woman",
+                  "label": "Polish woman",
+                  "language": "pl",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "pt-man",
+                  "label": "Portuguese man",
+                  "language": "pt",
+                  "is_sample_preparable": true
+                },
+                {
+                  "id": "pt-woman",
+                  "label": "Portuguese woman",
+                  "language": "pt",
+                  "is_sample_preparable": true
+                }
+              ]
+            },
+            {
+              "id": "qwen3-tts-local",
+              "label": "Qwen3-TTS (local)",
+              "is_voice_import": true,
+              "voices": [
+                {
+                  "id": "ryan",
+                  "label": "Ryan (lively man, English)",
+                  "language": "en",
+                  "model": {
+                    "status": "absent"
+                  }
+                },
+                {
+                  "id": "aiden",
+                  "label": "Aiden (American man)",
+                  "language": "en",
+                  "model": {
+                    "status": "absent"
+                  }
+                },
+                {
+                  "id": "serena",
+                  "label": "Serena (warm woman, Chinese)",
+                  "language": "zh",
+                  "model": {
+                    "status": "absent"
+                  }
+                },
+                {
+                  "id": "vivian",
+                  "label": "Vivian (bright woman, Chinese)",
+                  "language": "zh",
+                  "model": {
+                    "status": "absent"
+                  }
+                },
+                {
+                  "id": "uncle_fu",
+                  "label": "Uncle Fu (deep man, Chinese)",
+                  "language": "zh",
+                  "model": {
+                    "status": "absent"
+                  }
+                },
+                {
+                  "id": "dylan",
+                  "label": "Dylan (Beijing man)",
+                  "language": "zh",
+                  "model": {
+                    "status": "absent"
+                  }
+                },
+                {
+                  "id": "eric",
+                  "label": "Eric (Sichuan man)",
+                  "language": "zh",
+                  "model": {
+                    "status": "absent"
+                  }
+                },
+                {
+                  "id": "ono_anna",
+                  "label": "Ono Anna (Japanese woman)",
+                  "language": "ja",
+                  "model": {
+                    "status": "absent"
+                  }
+                },
+                {
+                  "id": "sohee",
+                  "label": "Sohee (Korean woman)",
+                  "language": "ko",
+                  "model": {
+                    "status": "absent"
+                  }
+                }
+              ]
+            }
+          ],
+          "progress": "sse",
+          "is_async": true,
+          "model": {
+            "status": "absent"
+          },
+          "synthesis": "gateway-local",
+          "inline_max_chars": 280,
+          "max_chars": 20000,
+          "progress_event": "speech.job",
+          "is_enabled": true,
+          "phases": [
+            "uploading",
+            "queued",
+            "preparing",
+            "synthesizing",
+            "done",
+            "failed"
+          ]
+        },
+        "push": {
+          "devices": 0,
+          "apns": {
+            "is_available": true,
+            "environment": "production",
+            "topic": "com.blockether.viscompanion",
+            "key_source": "keychain",
+            "missing": []
+          },
+          "provider": "apns+fcm",
+          "relay": {
+            "is_available": true,
+            "url": "https://vis.relay.blockether.com",
+            "source": "default",
+            "is_insecure": false
+          },
+          "environment": "production",
+          "web_push": {
+            "is_available": true,
+            "application_server_key": "BCQms5eXyK3mRnUvc5w7KjXpymNy7kXpw3JKtZJzkIce59BXCQvBOopFu9AHPcTGSHlws7OOtqBsoD7kv60btlY",
+            "subject": "mailto:vis@localhost",
+            "source": "generated",
+            "missing": []
+          },
+          "missing": [],
+          "is_available": true,
+          "fcm": {
+            "is_available": true,
+            "project_id": "vis-play-release",
+            "source": "keychain",
+            "missing": []
+          },
+          "topic": "com.blockether.viscompanion"
+        }
+      }
+    },
+    "GET /v1/decisions/models": {
+      "models": [
+        {
+          "model_ref": "laya-typed-decisions",
+          "revision": "dd079950600224fb459af2a0cb1d74e1e57ee9cf",
+          "installed": false,
+          "residency": "cold"
+        },
+        {
+          "model_ref": "gliner2.5-base",
+          "revision": "7f1ae80f150e9d3e262ec1684d0d78208e2595d0",
+          "installed": false,
+          "residency": "cold"
+        },
+        {
+          "model_ref": "gliner2.5-small",
+          "revision": "7132dc4561c3f94563c6147e75ffa8ef34c4964a",
+          "installed": false,
+          "residency": "cold"
+        },
+        {
+          "model_ref": "gliner2.5-multi",
+          "revision": "2ca71aafb3446d9014e1c55c7ff51c9bc7209c47",
+          "installed": false,
+          "residency": "cold"
+        },
+        {
+          "model_ref": "gliner2.5-decide",
+          "revision": "bbe10ff77ebb238777c17d3a8ac9260e30929057",
+          "installed": false,
+          "residency": "cold"
+        },
+        {
+          "model_ref": "gliner2.5-decide-1b",
+          "revision": "688cd7ba8917a0855ad3ce929cba5a9998932e79",
+          "installed": false,
+          "residency": "cold"
+        },
+        {
+          "model_ref": "gliner2.5-multi-decide",
+          "revision": "a35a0cd3b7a0f00f2effc576f454cd48fa98aa5f",
+          "installed": false,
+          "residency": "cold"
+        },
+        {
+          "model_ref": "decision2.0-eos-0.8b",
+          "revision": "3594047d69f476f1d01cf84c593e213fc3a4dfe0",
+          "installed": false,
+          "residency": "cold"
+        },
+        {
+          "model_ref": "decision2.0-kai-0.6b",
+          "revision": "cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764",
+          "installed": false,
+          "residency": "cold"
+        },
+        {
+          "model_ref": "d3-edge",
+          "revision": "18d61df78684675463af9ae732872478845c5a79",
+          "installed": false,
+          "residency": "cold"
+        },
+        {
+          "model_ref": "d3-lite",
+          "revision": "a8d25a91ef75552803f7009d25b7bd435991abd9",
+          "installed": false,
+          "residency": "cold"
+        },
+        {
+          "model_ref": "openai/gpt-6-luna",
+          "provider": "openai",
+          "residency": "remote",
+          "available": false
+        }
+      ]
+    },
+    "GET /v1/devices": {
+      "devices": [],
+      "push": {
+        "devices": 0,
+        "apns": {
+          "is_available": true,
+          "environment": "production",
+          "topic": "com.blockether.viscompanion",
+          "key_source": "keychain",
+          "missing": []
+        },
+        "provider": "apns+fcm",
+        "relay": {
+          "is_available": true,
+          "url": "https://vis.relay.blockether.com",
+          "source": "default",
+          "is_insecure": false
+        },
+        "environment": "production",
+        "web_push": {
+          "is_available": true,
+          "application_server_key": "BCQms5eXyK3mRnUvc5w7KjXpymNy7kXpw3JKtZJzkIce59BXCQvBOopFu9AHPcTGSHlws7OOtqBsoD7kv60btlY",
+          "subject": "mailto:vis@localhost",
+          "source": "generated",
+          "missing": []
+        },
+        "missing": [],
+        "is_available": true,
+        "fcm": {
+          "is_available": true,
+          "project_id": "vis-play-release",
+          "source": "keychain",
+          "missing": []
+        },
+        "topic": "com.blockether.viscompanion"
+      }
+    },
+    "GET /v1/fs": {
+      "path": "/home/user",
+      "parent": "/Users",
+      "home": "/home/user",
+      "is_truncated": false,
+      "entries": [
+        {
+          "name": "actions-runner",
+          "path": "/home/user/actions-runner",
+          "entry_count": 29,
+          "is_repo": false
+        },
+        {
+          "name": "adalta_schema_therapists",
+          "path": "/home/user/adalta_schema_therapists",
+          "entry_count": 4,
+          "is_repo": false
+        },
+        {
+          "name": "anomaly",
+          "path": "/home/user/anomaly",
+          "entry_count": 13,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "Applications",
+          "path": "/home/user/Applications",
+          "entry_count": 8,
+          "is_repo": false
+        },
+        {
+          "name": "ashley-game",
+          "path": "/home/user/ashley-game",
+          "entry_count": 0,
+          "is_repo": false
+        },
+        {
+          "name": "AshleyGsme",
+          "path": "/home/user/AshleyGsme",
+          "entry_count": 0,
+          "is_repo": false
+        },
+        {
+          "name": "blockether.com",
+          "path": "/home/user/blockether.com",
+          "entry_count": 19,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "bridge",
+          "path": "/home/user/bridge",
+          "entry_count": 20,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "bridge-fork",
+          "path": "/home/user/bridge-fork",
+          "entry_count": 21,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "chrome-cdp-agent",
+          "path": "/home/user/chrome-cdp-agent",
+          "entry_count": 49,
+          "is_repo": false
+        },
+        {
+          "name": "chrome-debug",
+          "path": "/home/user/chrome-debug",
+          "entry_count": 38,
+          "is_repo": false
+        },
+        {
+          "name": "clawd",
+          "path": "/home/user/clawd",
+          "entry_count": 9,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "clj-fff",
+          "path": "/home/user/clj-fff",
+          "entry_count": 13,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "clj-imaging",
+          "path": "/home/user/clj-imaging",
+          "entry_count": 14,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "clj-nativeresolver",
+          "path": "/home/user/clj-nativeresolver",
+          "entry_count": 12,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "clj-parinferish",
+          "path": "/home/user/clj-parinferish",
+          "entry_count": 16,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "clj-ruff",
+          "path": "/home/user/clj-ruff",
+          "entry_count": 15,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "codestyle",
+          "path": "/home/user/codestyle",
+          "entry_count": 12,
+          "is_repo": true,
+          "branch": "chore/bump-formatters-and-adopt-vis-zprint"
+        },
+        {
+          "name": "CryptoSyf",
+          "path": "/home/user/CryptoSyf",
+          "entry_count": 15,
+          "is_repo": false
+        },
+        {
+          "name": "curated-terminal-benchmark",
+          "path": "/home/user/curated-terminal-benchmark",
+          "entry_count": 27,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "Desktop",
+          "path": "/home/user/Desktop",
+          "entry_count": 238,
+          "is_repo": false
+        },
+        {
+          "name": "Documents",
+          "path": "/home/user/Documents",
+          "entry_count": 17,
+          "is_repo": false
+        },
+        {
+          "name": "Downloads",
+          "path": "/home/user/Downloads",
+          "entry_count": 14,
+          "is_repo": false
+        },
+        {
+          "name": "fff",
+          "path": "/home/user/fff",
+          "entry_count": 36,
+          "is_repo": true,
+          "branch": "blockether/main"
+        },
+        {
+          "name": "fframes",
+          "path": "/home/user/fframes",
+          "entry_count": 46,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "fframes-python",
+          "path": "/home/user/fframes-python",
+          "entry_count": 21,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "fframes-python-3d",
+          "path": "/home/user/fframes-python-3d",
+          "entry_count": 17,
+          "is_repo": false
+        },
+        {
+          "name": "fframes-python-audio",
+          "path": "/home/user/fframes-python-audio",
+          "entry_count": 19,
+          "is_repo": false
+        },
+        {
+          "name": "fframes-python-misc",
+          "path": "/home/user/fframes-python-misc",
+          "entry_count": 17,
+          "is_repo": false
+        },
+        {
+          "name": "fframes-python-shaders",
+          "path": "/home/user/fframes-python-shaders",
+          "entry_count": 17,
+          "is_repo": false
+        },
+        {
+          "name": "foundation",
+          "path": "/home/user/foundation",
+          "entry_count": 2,
+          "is_repo": false
+        },
+        {
+          "name": "go",
+          "path": "/home/user/go",
+          "entry_count": 1,
+          "is_repo": false
+        },
+        {
+          "name": "graphify",
+          "path": "/home/user/graphify",
+          "entry_count": 35,
+          "is_repo": true,
+          "branch": "v8"
+        },
+        {
+          "name": "groq-api-keys",
+          "path": "/home/user/groq-api-keys",
+          "entry_count": 17,
+          "is_repo": false
+        },
+        {
+          "name": "infrastructure",
+          "path": "/home/user/infrastructure",
+          "entry_count": 21,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "instructions",
+          "path": "/home/user/instructions",
+          "entry_count": 20,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "jeffrey",
+          "path": "/home/user/jeffrey",
+          "entry_count": 16,
+          "is_repo": false
+        },
+        {
+          "name": "kau",
+          "path": "/home/user/kau",
+          "entry_count": 16,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "Kiln Projects",
+          "path": "/home/user/Kiln Projects",
+          "entry_count": 1,
+          "is_repo": false
+        },
+        {
+          "name": "lamb",
+          "path": "/home/user/lamb",
+          "entry_count": 20,
+          "is_repo": true,
+          "branch": "master"
+        },
+        {
+          "name": "lanterna",
+          "path": "/home/user/lanterna",
+          "entry_count": 18,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "learn-polish",
+          "path": "/home/user/learn-polish",
+          "entry_count": 19,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "lib",
+          "path": "/home/user/lib",
+          "entry_count": 0,
+          "is_repo": false
+        },
+        {
+          "name": "Library",
+          "path": "/home/user/Library",
+          "entry_count": 101,
+          "is_repo": false
+        },
+        {
+          "name": "markitdown",
+          "path": "/home/user/markitdown",
+          "entry_count": 14,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "mini.nvim",
+          "path": "/home/user/mini.nvim",
+          "entry_count": 20,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "Movies",
+          "path": "/home/user/Movies",
+          "entry_count": 3,
+          "is_repo": false
+        },
+        {
+          "name": "Music",
+          "path": "/home/user/Music",
+          "entry_count": 4,
+          "is_repo": false
+        },
+        {
+          "name": "new-new",
+          "path": "/home/user/new-new",
+          "entry_count": 12,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "nltk_data",
+          "path": "/home/user/nltk_data",
+          "entry_count": 2,
+          "is_repo": false
+        },
+        {
+          "name": "OrbStack",
+          "path": "/home/user/OrbStack",
+          "entry_count": 1,
+          "is_repo": false
+        },
+        {
+          "name": "Pictures",
+          "path": "/home/user/Pictures",
+          "entry_count": 2,
+          "is_repo": false
+        },
+        {
+          "name": "pikaraoke-songs",
+          "path": "/home/user/pikaraoke-songs",
+          "entry_count": 7,
+          "is_repo": false
+        },
+        {
+          "name": "playground",
+          "path": "/home/user/playground",
+          "entry_count": 4,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "playwright-clj",
+          "path": "/home/user/playwright-clj",
+          "entry_count": 35,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "plenary.nvim",
+          "path": "/home/user/plenary.nvim",
+          "entry_count": 19,
+          "is_repo": true,
+          "branch": "master"
+        },
+        {
+          "name": "Podcasts",
+          "path": "/home/user/Podcasts",
+          "entry_count": 2,
+          "is_repo": false
+        },
+        {
+          "name": "Projects",
+          "path": "/home/user/Projects",
+          "entry_count": 2,
+          "is_repo": false
+        },
+        {
+          "name": "Public",
+          "path": "/home/user/Public",
+          "entry_count": 2,
+          "is_repo": false
+        },
+        {
+          "name": "rift",
+          "path": "/home/user/rift",
+          "entry_count": 12,
+          "is_repo": true,
+          "branch": "perf/apfs-conditional-chmod"
+        },
+        {
+          "name": "rift-clojure",
+          "path": "/home/user/rift-clojure",
+          "entry_count": 13,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "skjema",
+          "path": "/home/user/skjema",
+          "entry_count": 17,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "spel",
+          "path": "/home/user/spel",
+          "entry_count": 38,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "spel-extension",
+          "path": "/home/user/spel-extension",
+          "entry_count": 9,
+          "is_repo": false
+        },
+        {
+          "name": "styrmann",
+          "path": "/home/user/styrmann",
+          "entry_count": 39,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "svar",
+          "path": "/home/user/svar",
+          "entry_count": 33,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "takt-factory",
+          "path": "/home/user/takt-factory",
+          "entry_count": 13,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "test",
+          "path": "/home/user/test",
+          "entry_count": 2,
+          "is_repo": false
+        },
+        {
+          "name": "test-e2e",
+          "path": "/home/user/test-e2e",
+          "entry_count": 2,
+          "is_repo": false
+        },
+        {
+          "name": "tmpprobe",
+          "path": "/home/user/tmpprobe",
+          "entry_count": 1,
+          "is_repo": false
+        },
+        {
+          "name": "tree-sitter-clojure",
+          "path": "/home/user/tree-sitter-clojure",
+          "entry_count": 22,
+          "is_repo": true,
+          "branch": "master"
+        },
+        {
+          "name": "tree-sitter-language-pack",
+          "path": "/home/user/tree-sitter-language-pack",
+          "entry_count": 70,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "unbound",
+          "path": "/home/user/unbound",
+          "entry_count": 38,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "unbound-original",
+          "path": "/home/user/unbound-original",
+          "entry_count": 1,
+          "is_repo": false
+        },
+        {
+          "name": "vis",
+          "path": "/home/user/vis",
+          "entry_count": 56,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "vis-decisions",
+          "path": "/home/user/vis-decisions",
+          "entry_count": 17,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "vis-graphify",
+          "path": "/home/user/vis-graphify",
+          "entry_count": 18,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "vis-lang-clojure",
+          "path": "/home/user/vis-lang-clojure",
+          "entry_count": 17,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "vis-lang-interface",
+          "path": "/home/user/vis-lang-interface",
+          "entry_count": 15,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "vis-lang-python",
+          "path": "/home/user/vis-lang-python",
+          "entry_count": 17,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "vis-optmem",
+          "path": "/home/user/vis-optmem",
+          "entry_count": 17,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "vis-podcaster",
+          "path": "/home/user/vis-podcaster",
+          "entry_count": 19,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "vis-prompt-review",
+          "path": "/home/user/vis-prompt-review",
+          "entry_count": 4,
+          "is_repo": false
+        },
+        {
+          "name": "vis-python-runtime",
+          "path": "/home/user/vis-python-runtime",
+          "entry_count": 27,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "vis-reel",
+          "path": "/home/user/vis-reel",
+          "entry_count": 13,
+          "is_repo": true,
+          "branch": "main"
+        },
+        {
+          "name": "vis-smoke-nogit",
+          "path": "/home/user/vis-smoke-nogit",
+          "entry_count": 2,
+          "is_repo": false
+        },
+        {
+          "name": "vis-wt-t12",
+          "path": "/home/user/vis-wt-t12",
+          "entry_count": 42,
+          "is_repo": false
+        },
+        {
+          "name": "vis2",
+          "path": "/home/user/vis2",
+          "entry_count": 14,
+          "is_repo": false
+        },
+        {
+          "name": "WildWestVoxel",
+          "path": "/home/user/WildWestVoxel",
+          "entry_count": 4,
+          "is_repo": false
+        },
+        {
+          "name": "Workspace",
+          "path": "/home/user/Workspace",
+          "entry_count": 26,
+          "is_repo": false
+        },
+        {
+          "name": "ZCodeProject",
+          "path": "/home/user/ZCodeProject",
+          "entry_count": 0,
+          "is_repo": false
+        }
+      ]
+    },
+    "GET /v1/mcp/servers": {
+      "servers": []
+    },
+    "GET /v1/models": {
+      "providers": [],
+      "models": []
+    },
+    "GET /v1/projects": {
+      "projects": []
+    },
+    "GET /v1/projects/:pid": {
+      "workspace_root": "/tmp/vis487/ws",
+      "session_count": 0,
+      "id": "3aeb63a5-c1c4-4ec8-b960-83ab009f3558",
+      "owner_id": "local",
+      "position": 0,
+      "name": "Probe",
+      "archived_at": null,
+      "created_at": 1794928591468,
+      "color": null
+    },
+    "GET /v1/projects/overview": {
+      "projects": [
+        {
+          "unread_count": 0,
+          "awaiting_count": 0,
+          "session_count": 1,
+          "live_count": 0,
+          "root": "/tmp/vis-test-ws8196025361195099359",
+          "name": "",
+          "project_id": null,
+          "stopped_count": 0,
+          "last_activity_ms": 1794928343851
+        }
+      ],
+      "project_count": 1,
+      "session_count": 1,
+      "live_count": 0,
+      "awaiting_count": 0,
+      "unread_count": 0,
+      "stopped_count": 0,
+      "server_time_ms": 1794928362696
+    },
+    "GET /v1/provider-presets": {
+      "presets": []
+    },
+    "GET /v1/providers/:provider-id/limits": {
+      "report": {
+        "provider_id": "x",
+        "status": "unknown-provider",
+        "fetched_at_ms": 1794928362700,
+        "static": {},
+        "dynamic": {
+          "limits": [],
+          "note": "Provider is not registered."
+        }
+      }
+    },
+    "GET /v1/providers/:provider-id/models": {
+      "models": [],
+      "hidden_count": 0
+    },
+    "GET /v1/providers/:provider-id/status": {
+      "status": {
+        "is_authenticated": false,
+        "auth_state": "unverified"
+      }
+    },
+    "GET /v1/router": {
+      "providers": []
+    },
+    "GET /v1/sessions/:sid/alert": {
+      "title": "Vis",
+      "body": "shipped"
+    },
+    "GET /v1/sessions/:sid/artifacts": {
+      "artifacts": []
+    },
+    "GET /v1/sessions/:sid/council": {
+      "default_group_id": "workspace:6f67cd9423b4007d490e43f65a1c3e647f9e31aa2b92656a791ef2e36e159340",
+      "activation_id": null
+    },
+    "GET /v1/sessions/:sid/council/entries": {
+      "entries": [],
+      "after": 0,
+      "has_more": false
+    },
+    "GET /v1/sessions/:sid/council/members": [],
+    "GET /v1/sessions/:sid/council/threads": {
+      "entries": [],
+      "after": 0,
+      "has_more": false
+    },
+    "GET /v1/sessions/:sid/events-since": {
+      "events": []
+    },
+    "GET /v1/sessions/:sid/forks": {
+      "turns": [
+        {
+          "turn_id": "9a5ed41d-822e-4a75-9c00-eb958b678304",
+          "request": "ship it",
+          "request_kind": "user",
+          "council": null,
+          "status": "completed",
+          "created_at": 1794928353539,
+          "answer": "shipped"
+        }
+      ]
+    },
+    "GET /v1/sessions/:sid/keybindings": {
+      "keybindings": []
+    },
+    "GET /v1/sessions/:sid/model": {
+      "model": null,
+      "default": null
+    },
+    "GET /v1/sessions/:sid/resources": {
+      "resources": []
+    },
+    "GET /v1/sessions/:sid/resources/logs": {
+      "lines": null
+    },
+    "GET /v1/sessions/:sid/seq": {
+      "seq": 0
+    },
+    "GET /v1/sessions/:sid/slashes": {
+      "commands": [
+        {
+          "name": "/help",
+          "doc": "Show the available slash commands."
+        },
+        {
+          "name": "/new-session",
+          "doc": "Create and open a new session. Optional text starts its first turn."
+        },
+        {
+          "name": "/sessions",
+          "doc": "Return to the session list."
+        },
+        {
+          "name": "/reload",
+          "doc": "Reload configuration and context, and the extensions that changed; --all loads every extension again."
+        },
+        {
+          "name": "/test",
+          "doc": "Run every Python extension test (test_*.py / *_test.py) in a trusted extension session."
+        },
+        {
+          "name": "/net-probe",
+          "doc": "Debug network filters: run the host allow/deny gate + every registered network_filter over a synthetic request, showing each verdict and any Python traceback."
+        }
+      ]
+    },
+    "GET /v1/sessions/:sid/suggest": [],
+    "GET /v1/sessions/:sid/transcript": {
+      "turns": [
+        {
+          "input_cache_write_tokens": 0,
+          "total_cost": 0.0,
+          "session_state_id": "cfb7a140-1b9c-4f8b-9541-4b471b4cc3af",
+          "input_cache_read_tokens": 0,
+          "iterations": [],
+          "output_reasoning_tokens": 0,
+          "position": 1,
+          "output_tokens": 0,
+          "iteration_count": 0,
+          "status": "done",
+          "request": "ship it",
+          "input_tokens": 0,
+          "request_kind": "user",
+          "content": [
+            {
+              "type": "prose",
+              "markdown": "shipped"
+            }
+          ],
+          "duration_ms": 0,
+          "type": "turn",
+          "created_at": 1794928353539,
+          "turn_id": "9a5ed41d-822e-4a75-9c00-eb958b678304",
+          "input_regular_tokens": 0
+        }
+      ],
+      "total": 1,
+      "offset": 0,
+      "has_more": false
+    },
+    "GET /v1/sessions/:sid/turns": {
+      "turns": [
+        {
+          "role": "assistant",
+          "position": 1,
+          "cost": {
+            "total_cost": 0.0
+          },
+          "council": null,
+          "iteration_count": 0,
+          "status": "completed",
+          "request": "ship it",
+          "request_kind": "user",
+          "content": [
+            {
+              "type": "prose",
+              "markdown": "shipped"
+            }
+          ],
+          "duration_ms": 0,
+          "created_at": 1794928353539,
+          "session_id": "ec50190a-1dfc-4bd3-a9a0-bcf71fafab1d",
+          "turn_id": "9a5ed41d-822e-4a75-9c00-eb958b678304",
+          "completed_at": 1794928353539,
+          "tokens": {
+            "input": 0,
+            "input_regular": 0,
+            "cache_created": 0,
+            "cached": 0,
+            "output": 0,
+            "reasoning": 0
+          }
+        }
+      ]
+    },
+    "GET /v1/sessions/:sid/turns/:tid": {
+      "role": "assistant",
+      "position": 1,
+      "cost": {
+        "total_cost": 0.0
+      },
+      "council": null,
+      "iteration_count": 0,
+      "status": "completed",
+      "request": "ship it",
+      "request_kind": "user",
+      "content": [
+        {
+          "type": "prose",
+          "markdown": "shipped"
+        }
+      ],
+      "duration_ms": 0,
+      "created_at": 1794928353539,
+      "session_id": "ec50190a-1dfc-4bd3-a9a0-bcf71fafab1d",
+      "turn_id": "9a5ed41d-822e-4a75-9c00-eb958b678304",
+      "completed_at": 1794928353539,
+      "tokens": {
+        "input": 0,
+        "input_regular": 0,
+        "cache_created": 0,
+        "cached": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    },
+    "GET /v1/sessions/:sid/turns/:tid/attachments": {
+      "attachments": []
+    },
+    "GET /v1/sessions/:sid/turns/:tid/trace": {
+      "iterations": []
+    },
+    "GET /v1/sessions/:sid/usage": {
+      "usage": {
+        "input_cache_write_tokens": 0,
+        "total_cost_usd": 0.0,
+        "first_turn_at": 1794928353539,
+        "cost_usd": 0.0,
+        "last_turn_at": 1794928353539,
+        "fold_count": 0,
+        "turn_count": 1,
+        "input_cache_read_tokens": 0,
+        "output_reasoning_tokens": 0,
+        "output_tokens": 0,
+        "prompt_cache_sample_count": 0,
+        "prompt_cache_expired_count": 0,
+        "iteration_count": 0,
+        "tool_failure_count": 0,
+        "input_tokens": 0,
+        "duration_ms": 0,
+        "tool_call_count": 0,
+        "reusable_prefix_estimated": false,
+        "prompt_cache_reusable_tokens": 0,
+        "prompt_cache_estimated_sample_count": 0,
+        "input_regular_tokens": 0,
+        "prompt_cache_reused_tokens": 0,
+        "prompt_cache_rebuild_count": 0
+      }
+    },
+    "GET /v1/sessions/:sid/views/input": {
+      "requests": []
+    },
+    "GET /v1/sessions/:sid/views/live": {
+      "views": []
+    },
+    "GET /v1/sessions/:sid/workspace": {
+      "workspace": {
+        "id": "335d4075-8512-4cb0-8062-fdce5a444441",
+        "root": "/tmp/vis-test-ws8196025361195099359",
+        "agent_name": "Vis",
+        "label": null,
+        "git": {
+          "is_workspace": false
+        }
+      }
+    },
+    "GET /v1/sessions/actions/search": {
+      "query": "",
+      "sessions": [
+        {
+          "origin": null,
+          "agent": {
+            "role": "leader",
+            "session_id": "ec50190a-1dfc-4bd3-a9a0-bcf71fafab1d",
+            "leader_id": "ec50190a-1dfc-4bd3-a9a0-bcf71fafab1d",
+            "interactive": true,
+            "routing_locked": false
+          },
+          "model": "",
+          "project_name": null,
+          "is_unread": false,
+          "unread_answers": 0,
+          "project_position": 0,
+          "group_id": null,
+          "turn_count": 1,
+          "id": "ec50190a-1dfc-4bd3-a9a0-bcf71fafab1d",
+          "was_interrupted": false,
+          "current_turn_id": null,
+          "workspace": {
+            "root": "/tmp/vis-test-ws8196025361195099359",
+            "label": null
+          },
+          "status": "idle",
+          "is_awaiting_input": false,
+          "archived_at": null,
+          "title": null,
+          "awaiting_input_count": 0,
+          "project_id": null,
+          "server_time_ms": 1794928362968,
+          "created_at": 1794928343851,
+          "agent_name": "Vis",
+          "favorite_rank": null,
+          "channel": "api",
+          "team": {
+            "active": 0,
+            "total": 0
+          },
+          "answer_count": 1,
+          "live": false,
+          "was_failed": false,
+          "goal": null
+        }
+      ],
+      "total": 1,
+      "limit": 50,
+      "next_cursor": null,
+      "has_more": false
+    },
+    "GET /v1/speech/model": {
+      "status": "absent",
+      "engine": "piper-local"
+    },
+    "GET /v1/speech/voices": {
+      "engine": {
+        "id": "piper-local",
+        "label": "Piper (local)"
+      },
+      "voices": [
+        {
+          "id": "kristin",
+          "label": "Kristin (en-US)",
+          "language": "en-US",
+          "license": "LicenseRef-public-domain",
+          "source_url": "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/kristin/medium",
+          "model": {
+            "status": "absent"
+          },
+          "is_sample_preparable": true
+        },
+        {
+          "id": "cori",
+          "label": "Cori (en-GB)",
+          "language": "en-GB",
+          "license": "LicenseRef-public-domain",
+          "source_url": "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/cori/high",
+          "model": {
+            "status": "absent"
+          },
+          "is_sample_preparable": true
+        },
+        {
+          "id": "john",
+          "label": "John (en-US)",
+          "language": "en-US",
+          "license": "LicenseRef-public-domain",
+          "source_url": "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/john/medium",
+          "model": {
+            "status": "absent"
+          },
+          "is_sample_preparable": true
+        },
+        {
+          "id": "ljspeech",
+          "label": "LJ (en-US)",
+          "language": "en-US",
+          "license": "LicenseRef-public-domain",
+          "source_url": "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ljspeech/high",
+          "model": {
+            "status": "absent"
+          },
+          "is_sample_preparable": true
+        },
+        {
+          "id": "ryan",
+          "label": "Ryan (en-US, high)",
+          "language": "en-US",
+          "license": "CC-BY-NC-SA-4.0",
+          "notice": "RyanSpeech is CC BY-NC-SA 4.0: non-commercial use only, with attribution, and anything derived from it carries the same licence. Vis never mirrors this voice and never installs it on its own.",
+          "source_url": "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ryan/high",
+          "is_opt_in": true,
+          "model": {
+            "status": "absent"
+          }
+        }
+      ]
+    },
+    "GET /v1/voice/model": {
+      "status": "absent",
+      "engine": "parakeet-local"
+    },
+    "PATCH /v1/projects/:pid": {
+      "workspace_root": "/tmp/vis487/ws",
+      "session_count": 0,
+      "id": "3aeb63a5-c1c4-4ec8-b960-83ab009f3558",
+      "owner_id": "local",
+      "position": 0,
+      "name": "Probe2",
+      "archived_at": null,
+      "created_at": 1794928591468,
+      "color": null
+    },
+    "PATCH /v1/projects/:pid/sessions": {
+      "project_id": "3aeb63a5-c1c4-4ec8-b960-83ab009f3558",
+      "count": 1
+    },
+    "PATCH /v1/session-groups/:gid": {
+      "id": "e9428c64-2fef-4f76-a4bc-7a2d893f535e",
+      "project_id": "3aeb63a5-c1c4-4ec8-b960-83ab009f3558",
+      "name": "G2",
+      "color": "slate",
+      "active_at": 1794928642295,
+      "session_count": 0,
+      "created_at": 1794928642295,
+      "archived_at": null
+    },
+    "PATCH /v1/sessions/:sid/model": {
+      "model": null,
+      "default": null
+    },
+    "PATCH /v1/sessions/:sid/workspace/root": {
+      "workspace": {
+        "id": "b2c02253-5aad-42a7-9058-c3720ae31610",
+        "root": "/tmp/vis487/ws",
+        "agent_name": "Vis",
+        "label": null,
+        "git": {
+          "is_workspace": false
+        }
+      }
+    },
+    "POST /v1/clients": {
+      "client_id": "8ff13433-9c1d-4074-b176-79bb8bca906f",
+      "status": {
+        "client_replacements_total": 0,
+        "managed": false,
+        "protocol": {
+          "protocol": 23,
+          "min_client": 23,
+          "min_gateway": 22,
+          "version": "dev",
+          "build": "736f0a723362"
+        },
+        "sse_clients": 0,
+        "running_turns": 0,
+        "host": null,
+        "client_releases_total": 0,
+        "id": "e7ac0786668e0ff0",
+        "require_token": false,
+        "pid": 55774,
+        "clients": 1,
+        "speech_models": {
+          "models": [],
+          "bytes": 0,
+          "limit_bytes": 4294967296,
+          "idle_unload_seconds": 300
+        },
+        "status": "running",
+        "client_leases": 1,
+        "client_leases_reaped_total": 0,
+        "port": null,
+        "db": null,
+        "client_registrations_total": 1
+      },
+      "extensions": {
+        "stage": "idle",
+        "packages": []
+      }
+    },
+    "POST /v1/machines/order": {
+      "machine_ids": [
+        "e7ac0786668e0ff0",
+        "a"
+      ]
+    },
+    "POST /v1/projects": {
+      "workspace_root": "/tmp/vis487/ws",
+      "session_count": 0,
+      "id": "3aeb63a5-c1c4-4ec8-b960-83ab009f3558",
+      "owner_id": "local",
+      "position": 0,
+      "name": "Probe",
+      "archived_at": null,
+      "created_at": 1794928591468,
+      "color": null
+    },
+    "POST /v1/projects/actions/ensure": {
+      "workspace_root": "/tmp/vis487/ws",
+      "session_count": 0,
+      "id": "3aeb63a5-c1c4-4ec8-b960-83ab009f3558",
+      "owner_id": "local",
+      "position": 0,
+      "name": "Probe2",
+      "archived_at": null,
+      "created_at": 1794928591468,
+      "color": null
+    },
+    "POST /v1/session-groups": {
+      "id": "e9428c64-2fef-4f76-a4bc-7a2d893f535e",
+      "project_id": "3aeb63a5-c1c4-4ec8-b960-83ab009f3558",
+      "name": "G",
+      "color": "slate",
+      "active_at": 1794928642295,
+      "session_count": 0,
+      "created_at": 1794928642295,
+      "archived_at": null
+    },
+    "POST /v1/sessions/:sid/agents/wait": [],
+    "POST /v1/sessions/:sid/drain-queue": {
+      "turn": null
+    },
+    "POST /v1/sessions/:sid/forks": {
+      "session": {
+        "origin": null,
+        "agent": {
+          "role": "leader",
+          "session_id": "910a4112-6617-43c5-8489-7febed0e69d2",
+          "leader_id": "910a4112-6617-43c5-8489-7febed0e69d2",
+          "interactive": true,
+          "routing_locked": false
+        },
+        "model": "",
+        "project_name": null,
+        "project_position": 0,
+        "group_id": null,
+        "turn_count": 1,
+        "id": "910a4112-6617-43c5-8489-7febed0e69d2",
+        "was_interrupted": false,
+        "current_turn_id": null,
+        "workspace": {
+          "root": "/tmp/vis-test-ws8196025361195099359",
+          "label": null
+        },
+        "status": "idle",
+        "is_awaiting_input": false,
+        "archived_at": null,
+        "title": " (fork)",
+        "awaiting_input_count": 0,
+        "project_id": null,
+        "server_time_ms": 1794928591663,
+        "created_at": 1794928591658,
+        "agent_name": "Vis",
+        "favorite_rank": null,
+        "channel": "api",
+        "team": {
+          "active": 0,
+          "total": 0
+        },
+        "answer_count": 1,
+        "live": false,
+        "was_failed": false,
+        "goal": null
+      }
+    },
+    "POST /v1/sessions/:sid/queue/send-now": {
+      "marked": [],
+      "skipped": []
+    },
+    "POST /v1/sessions/:sid/resume-queue": {
+      "turn": null
+    },
+    "POST /v1/sessions/actions/archive": {
+      "archived": [
+        "ec50190a-1dfc-4bd3-a9a0-bcf71fafab1d"
+      ],
+      "working": [],
+      "dry_run": true
+    },
+    "PUT /v1/sessions/:sid/group": {
+      "origin": null,
+      "agent": {
+        "role": "leader",
+        "session_id": "ec50190a-1dfc-4bd3-a9a0-bcf71fafab1d",
+        "leader_id": "ec50190a-1dfc-4bd3-a9a0-bcf71fafab1d",
+        "interactive": true,
+        "routing_locked": false
+      },
+      "model": "",
+      "project_name": "Probe2",
+      "project_position": 0,
+      "group_id": "e9428c64-2fef-4f76-a4bc-7a2d893f535e",
+      "turn_count": 1,
+      "id": "ec50190a-1dfc-4bd3-a9a0-bcf71fafab1d",
+      "was_interrupted": false,
+      "current_turn_id": null,
+      "workspace": {
+        "root": "/tmp/vis487/ws",
+        "label": null
+      },
+      "status": "idle",
+      "is_awaiting_input": false,
+      "archived_at": null,
+      "title": null,
+      "awaiting_input_count": 0,
+      "project_id": "3aeb63a5-c1c4-4ec8-b960-83ab009f3558",
+      "server_time_ms": 1794928642369,
+      "created_at": 1794928343851,
+      "agent_name": "Vis",
+      "favorite_rank": null,
+      "channel": "api",
+      "team": {
+        "active": 0,
+        "total": 0
+      },
+      "answer_count": 1,
+      "live": false,
+      "was_failed": false,
+      "goal": null
+    },
+    "PUT /v1/sessions/:sid/read": {
+      "session_id": "ec50190a-1dfc-4bd3-a9a0-bcf71fafab1d",
+      "reader": "local",
+      "seen_answers": 1,
+      "is_unread": false
+    }
+  },
+  "errors": {
+    "DELETE /v1/sessions/:sid/client-extensions": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "client_extension_owner",
+          "message": "A live client lease is required"
+        }
+      }
+    },
+    "GET /v1/apps/:view-id": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "view-not-found",
+          "message": "no such open View",
+          "view_id": "x"
+        }
+      }
+    },
+    "GET /v1/decisions/aliases/:alias": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "unknown-model",
+          "message": "Decision alias does not exist"
+        }
+      }
+    },
+    "GET /v1/decisions/models/:model-ref": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "unknown-model",
+          "message": "Decision model is not registered"
+        }
+      }
+    },
+    "GET /v1/decisions/training/jobs/:job-id": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "unknown-job",
+          "message": "Decision training job does not exist"
+        }
+      }
+    },
+    "GET /v1/projects/:pid": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "project-not-found",
+          "message": "unknown project",
+          "project_id": "x"
+        }
+      }
+    },
+    "GET /v1/session-groups": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid-request",
+          "message": "project or root is required"
+        }
+      }
+    },
+    "GET /v1/sessions/:sid/activity/:aid": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "activity_not_found",
+          "message": "Activity history not found in this session"
+        }
+      }
+    },
+    "GET /v1/sessions/:sid/agents/:child-id/timeline": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "session-not-found",
+          "message": "Unknown subagent of this session"
+        }
+      }
+    },
+    "GET /v1/sessions/:sid/client-calls": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "client_extension_owner",
+          "message": "A live client lease is required"
+        }
+      }
+    },
+    "GET /v1/sessions/:sid/council/entries/:entry-id": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "entry-not-found",
+          "message": "Council entry not found in this group"
+        }
+      }
+    },
+    "GET /v1/sessions/:sid/speech/jobs/:job-id": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "job-not-found",
+          "message": "unknown speech synthesis job",
+          "job_id": "x"
+        }
+      }
+    },
+    "GET /v1/sessions/:sid/views/live/:view-id": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "view-not-found",
+          "message": "no such open View",
+          "view_id": "x"
+        }
+      }
+    },
+    "GET /v1/sessions/:sid/views/live/:view-id/log": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "view-not-found",
+          "message": "no such open View",
+          "view_id": "x"
+        }
+      }
+    },
+    "GET /v1/sessions/:sid/voice/jobs/:job-id": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "job-not-found",
+          "message": "unknown speech transcription job",
+          "job_id": "x"
+        }
+      }
+    },
+    "GET /v1/speech/jobs/:job-id": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "job-not-found",
+          "message": "unknown speech synthesis job",
+          "job_id": "x"
+        }
+      }
+    },
+    "GET /v1/voice/jobs/:job-id": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "job-not-found",
+          "message": "unknown speech transcription job",
+          "job_id": "x"
+        }
+      }
+    },
+    "POST /v1/fs/actions/mkdir": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid-request",
+          "message": "name must be a non-blank string"
+        }
+      }
+    },
+    "POST /v1/sessions/:sid/cancel-current": {
+      "status": 409,
+      "body": {
+        "error": {
+          "type": "no-running-turn",
+          "message": "session has no running turn"
+        }
+      }
+    },
+    "POST /v1/sessions/:sid/council/entries": {
+      "status": 409,
+      "body": {
+        "error": {
+          "type": "inactive-session",
+          "message": "Council author is not in this active execution"
+        }
+      }
+    },
+    "POST /v1/sessions/:sid/council/wake": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid-request",
+          "message": "Invalid Council request fields: request required [\"content\"]"
+        }
+      }
+    },
+    "POST /v1/systemone": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "error",
+          "message": "Decision model is required",
+          "reason": "model-required"
+        }
+      }
+    },
+    "PUT /v1/sessions/:sid/client-extensions": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "client_extension_owner",
+          "message": "A live client lease is required"
+        }
+      }
+    }
+  }
+}
