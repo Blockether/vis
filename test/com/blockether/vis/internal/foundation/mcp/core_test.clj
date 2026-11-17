@@ -1375,6 +1375,53 @@
                               "(*, query: str, limit: int = ..., **arguments) -> dict\n"
                               "(*, who: str) -> dict\n")
                          (:stdout result)))))))))
+  ;; Request: `inspect.signature` gave no type for `["string", "null"]`, `anyOf` and
+  ;; `$ref`, and only `str` and `list` for an enum and for an array of strings.
+  (it
+    "gives each argument of a tool the Python type of its schema"
+    (let [typed
+          [{"name" "save-issue"
+            "inputSchema"
+            {"type" "object"
+             "$defs" {"User" {"type" "object" "additionalProperties" {"type" "string"}}}
+             "properties"
+             {"title" {"type" "string" "minLength" 1}
+              "assignee" {"type" ["string" "null"]}
+              "state" {"type" "string" "enum" ["open" "done"]}
+              "sla" {"anyOf" [{"type" "string" "enum" ["all" "business"]} {"type" "null"}]}
+              "labels" {"type" "array" "items" {"type" "string"}}
+              "estimate" {"type" ["number" "null"]}
+              "priority" {"type" "number" "maximum" 4}
+              "limit" {"type" "integer" "default" 10}
+              "done" {"type" "boolean"}
+              "anchor" {"type" "object" "additionalProperties" {}}
+              "owner" {"$ref" "#/$defs/User"}
+              "patch" {"type" "array" "items" {"oneOf" [{"type" "object"} {"type" "object"}]}}
+              "free" {}}
+             "required" ["title"]}}]]
+      (with-catalog
+        (atom [])
+        (fn [_call!]
+          (with-redefs [client/list-tools (constantly typed)]
+            (tpc/with-own
+              [ctx {}]
+              (bind-verb! ctx)
+              (ep/bind-ctx! ctx (servers-ctx "alpha"))
+              (let [result (ep/run-python-block
+                             ctx
+                             (str
+                               "import inspect\n" "sig = inspect.signature(alpha.save_issue)\n"
+                               "for p in sig.parameters.values():\n"
+                               "    print(str(p).replace(' = ...', '').replace('=...', ''))\n"
+                               "print(sig.return_annotation.__name__,"
+                               " sig.parameters['free'].annotation is inspect.Parameter.empty)\n"))]
+                (expect (nil? (:error result)))
+                (expect (= ["title: str" "anchor: dict" "assignee: str | None" "done: bool"
+                            "estimate: int | float | None" "free" "labels: list[str]" "limit: int"
+                            "owner: dict[str, str]" "patch: list[dict]" "priority: int | float"
+                            "sla: Literal['all', 'business'] | None"
+                            "state: Literal['open', 'done']" "dict True"]
+                           (str/split-lines (:stdout result)))))))))))
   (it "leaves a name to Python and to a value of the session, and gives a freed name to the server"
       (with-catalog
         (atom [])

@@ -1948,10 +1948,12 @@
 (defn- parameters
   "The parameters of the tool or the prompt that `parts` names, for
    `inspect.signature`: `[server tool]` or `[server \"prompts\" prompt]`, as a
-   block typed them. Each is `{name, type, required}`. `type` is the JSON type of
-   a tool argument when its schema gives one word; an argument of a prompt is a
-   string. It connects the server when that is necessary, and throws when the
-   server or the name is not there."
+   block typed them: `{parameters, defs}`. Each parameter is `{name, schema,
+   required}`. `schema` is the JSON schema of a tool argument; an argument of a
+   prompt is a string. `defs` has the definitions that a `$ref` of a schema names.
+   The sandbox shim is the one reader that makes a Python type of a schema. It
+   connects the server when that is necessary, and throws when the server or the
+   name is not there."
   [[server & names]]
   (let [sid
         (:session-id extension/*current-environment*)
@@ -1992,17 +1994,19 @@
           (cond (nil? row) (throw (ex-info
                                     (str "MCP server '" server "' has no " kind " '" wanted "'.")
                                     {:type :mcp/unknown-name}))
-                prompt? (mapv (fn [argument]
-                                {"name" (get argument "name")
-                                 "type" "string"
-                                 "required" (boolean (get argument "required"))})
-                              (get row "arguments"))
-                :else (mapv (fn [[nm property]]
-                              {"name" nm
-                               "type" (let [word (get property "type")]
-                                        (when (string? word) word))
-                               "required" (contains? required nm)})
-                            (get-in row ["inputSchema" "properties"]))))))))
+                prompt? {"parameters" (mapv (fn [argument]
+                                              {"name" (get argument "name")
+                                               "schema" {"type" "string"}
+                                               "required" (boolean (get argument "required"))})
+                                            (get row "arguments"))
+                         "defs" {}}
+                :else {"parameters" (mapv (fn [[nm property]]
+                                            {"name" nm
+                                             "schema" (if (map? property) property {})
+                                             "required" (contains? required nm)})
+                                          (get-in row ["inputSchema" "properties"]))
+                       "defs" (merge (get-in row ["inputSchema" "definitions"])
+                                     (get-in row ["inputSchema" "$defs"]))}))))))
 
 (defn- bridge-bindings
   "The host calls of the sandbox shim that cannot wait: `inspect.signature` is not
@@ -2010,7 +2014,7 @@
   []
   {"__vis_mcp_parameters__" (fn [parts-json]
                               (json/write-json-str
-                                (try {"parameters" (parameters (json/read-json (str parts-json)))}
+                                (try (parameters (json/read-json (str parts-json)))
                                      (catch Throwable failure
                                        {"error" (or (ex-message failure) (str failure))}))))})
 

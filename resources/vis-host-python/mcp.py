@@ -52,14 +52,55 @@ def __vis_install_mcp__():
             return "..."
 
     unset = _Unset()
-    annotations = {
-        "string": str,
-        "integer": int,
-        "number": float,
-        "boolean": bool,
-        "array": list,
-        "object": dict,
-    }
+    plain = {"string": str, "integer": int, "boolean": bool, "null": type(None)}
+
+    def _union(members, unknown):
+        # `A | B` of the members. A member without a type gives no type.
+        if unknown in members or not members:
+            return unknown
+        whole = members[0]
+        for member in members[1:]:
+            whole = whole | member
+        return whole
+
+    def _annotation(schema, defs, depth=0):
+        # The Python type of JSON schema `schema`, or `typing.Any` when it names none.
+        import typing
+
+        unknown = typing.Any
+        if not isinstance(schema, dict) or depth > 8:
+            return unknown
+
+        def inner(part):
+            return _annotation(part, defs, depth + 1)
+
+        ref = schema.get("$ref")
+        if isinstance(ref, str):
+            return inner(defs.get(ref.rsplit("/", 1)[-1]))
+        values = [schema["const"]] if "const" in schema else schema.get("enum")
+        if isinstance(values, list) and values:
+            # `Literal` takes no float and no container.
+            if all(v is None or isinstance(v, (str, bool, int)) for v in values):
+                return typing.Literal[tuple(values)]
+        for key in ("anyOf", "oneOf"):
+            parts = schema.get(key)
+            if isinstance(parts, list) and parts:
+                return _union([inner(part) for part in parts], unknown)
+        parts = schema.get("allOf")
+        if isinstance(parts, list) and len(parts) == 1:
+            return inner(parts[0])
+        word = schema.get("type")
+        if isinstance(word, list):
+            return _union([inner(dict(schema, type=one)) for one in word], unknown)
+        if word == "number":
+            return int | float
+        if word == "array":
+            items = inner(schema.get("items"))
+            return list if items is unknown else list[items]
+        if word == "object":
+            values = inner(schema.get("additionalProperties"))
+            return dict if values is unknown else dict[str, values]
+        return plain.get(word, unknown) if isinstance(word, str) else unknown
 
     def _signature(handle):
         # The host reads the list of the server: a handle holds no schema.
@@ -72,17 +113,21 @@ def __vis_install_mcp__():
         )
         if "error" in answer:
             raise ValueError(answer["error"])
+        import typing
+
         empty = inspect.Parameter.empty
+        defs = answer.get("defs") or {}
         named = []
         for row in answer["parameters"]:
             name = row["name"]
             if name.isidentifier() and not keyword.iskeyword(name):
+                annotation = _annotation(row.get("schema"), defs)
                 named.append(
                     inspect.Parameter(
                         name,
                         inspect.Parameter.KEYWORD_ONLY,
                         default=empty if row["required"] else unset,
-                        annotation=annotations.get(row["type"], empty),
+                        annotation=empty if annotation is typing.Any else annotation,
                     )
                 )
         if len(named) < len(answer["parameters"]):
