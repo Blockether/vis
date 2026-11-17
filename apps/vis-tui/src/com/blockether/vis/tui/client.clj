@@ -1457,9 +1457,10 @@
   "The live views session `sid` is SHOWING in the daemon right now, oldest first,
    in canonical wire shape. The `view.*` events with `kind=live` are the fast path; this
    is how a client that attached MID-RUN paints the whole picture at once instead
-   of waiting for the next patch to tell it a view exists."
+   of waiting for the next patch to tell it a view exists. An app comes without its
+   body (view.json `live_view_summary`): the read of the app gives the body one time."
   [sid]
-  (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/views/live")) "views")))
+  (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/views/live?summary=true")) "views")))
 
 (defn app-views
   "The app attachments of session `sid`, oldest first, in canonical wire shape.

@@ -7,6 +7,24 @@
             [taoensso.telemere :as tel]
             [lazytest.core :refer [defdescribe expect it]]))
 
+;; Review: a tab that opened read each app body two times: in the replay list of
+;; the session and in the read of the app.
+(defdescribe replay-list-has-no-app-body
+             (it "asks the gateway for each app without its body"
+                 (let [app
+                       {"id" "a1" "placement" "attachment" "seq" 3}
+
+                       gateway
+                       (fn [_method path]
+                         {"views" [(if (re-find #"summary=true" path)
+                                     (assoc app "is_summary" true)
+                                     (assoc app
+                                       "nodes" [{"id" "n" "type" "paragraph" "text" "body"}]))]})]
+
+                   (with-redefs-fn {#'client/send-json! gateway}
+                     (fn []
+                       (expect (= [(assoc app "is_summary" true)] (client/live-views "s1"))))))))
+
 (defdescribe
   search-scopes-cross-the-transport
   (it
