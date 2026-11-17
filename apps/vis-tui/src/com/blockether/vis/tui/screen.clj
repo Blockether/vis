@@ -3137,6 +3137,22 @@
                                            :msg "Session app views read failed"}))))))
   (read-global-apps!))
 
+(defn- read-app-states!
+  "Read the state of each app of session `sid` again, without the bodies. The gateway
+   stores no `view.patch` of an app, so a change that came while the event stream was
+   away shows only here. A newer seq marks the held app for a read."
+  [sid]
+  (vis/worker-future "vis-app-states"
+                     (fn []
+                       (try (doseq [view (keep hi/live-view<-wire (vis/gateway-app-summaries sid))]
+                              (state/dispatch [:app-view-loaded view]))
+                            (state/dispatch [:bump-render-version])
+                            (catch Throwable e
+                              (tel/log! {:level :debug
+                                         :id ::app-states-read-failed
+                                         :error e
+                                         :msg "Session app states read failed"}))))))
+
 (defn- live-panel-key!
   "Keys of the focused side panel. ↑ and ↓ select a view, ← folds it, → unfolds it,
    Enter lists its controls, Tab shows the next owner and Esc closes the panel.
@@ -7031,6 +7047,8 @@
                   (do (agent-team/stream-ready! session-id (:agents chunk))
                       ;; A reconnect can hide a model change; read the pref again.
                       (vis/refresh-session-model! session-id)
+                      ;; It can hide a change of an app too: no `view.patch` comes again.
+                      (read-app-states! session-id)
                       (state/dispatch [:sync-agent-name tab-id chunk])
                       (state/dispatch [:sync-gateway-ready tab-id chunk]))
 

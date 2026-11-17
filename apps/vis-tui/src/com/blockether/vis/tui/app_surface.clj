@@ -1914,7 +1914,8 @@
 
 (defn- newer
   "The newer copy of two copies of one app view. At the same seq, `b` wins
-   unless only `a` is closed: a later copy carries the newer owner state."
+   unless only `a` is closed: a later copy carries the newer owner state. A copy
+   with a body wins over a summary, which has none to show."
   [a b]
   (let [seq-a
         (long (or (:seq a) 0))
@@ -1924,6 +1925,7 @@
 
     (cond (nil? a) b
           (nil? b) a
+          (not= (boolean (:is-summary a)) (boolean (:is-summary b))) (if (:is-summary a) b a)
           (> seq-b seq-a) b
           (> seq-a seq-b) a
           (and (:is-closed a) (not (:is-closed b))) a
@@ -1937,7 +1939,8 @@
 (defn- read-app
   "The newest copy of the app from the gateway. With copy `held`, the read asks only
    for the frames after its seq and folds them into it. The whole view comes when
-   the gateway does not hold those frames or when a frame does not fit `held`."
+   `held` is a summary, when the gateway does not hold those frames or when a frame
+   does not fit `held`."
   [session-id view-id held]
   (let [whole
         #(view-model/live-view<-wire (get (vis/gateway-app-read session-id view-id nil) "view"))
@@ -1945,7 +1948,8 @@
         since
         (long (or (:seq held) 0))]
 
-    (if (pos? since)
+    ;; A summary has no body that the frames can change.
+    (if (and held (not (:is-summary held)))
       (let [answer (vis/gateway-app-read session-id view-id since)]
         (if (contains? answer "patches")
           (or (lv/caught-up held (get answer "patches")) (whole))

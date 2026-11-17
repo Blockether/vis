@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.contract.view :as view-spec]
             [com.blockether.vis.tui.projects :as projects]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.header-model :as vh]
@@ -212,7 +213,8 @@
    :live-viewer-id nil
    :live-viewer-search nil
    ;; App attachments by view id: `{:view v :is-gap bool}`, with `:behind-seq` (the
-   ;; newest seq that the stream named) while `:is-gap`. They never join the
+   ;; newest seq that the stream named) while `:is-gap`. `v` is a summary
+   ;; (`:is-summary`, no body) until the first read of the app. They never join the
    ;; live band; the app surface reads them from here.
    :app-views {}
    :live-panel nil
@@ -4229,16 +4231,40 @@
 (defn- mount-app-view
   "Keep app attachment `view` for the app surface, one copy for each view id. A
    newer copy wins. The owner state of the last `view.open` always wins: a restart
-   marks the app stale, and an adopting open makes it live again."
+   marks the app stale, and an adopting open makes it live again. A summary
+   (`:is-summary`: the app without its body) never replaces a body. At the seq of
+   the held copy it gives the state of the app and the copy keeps its body. A newer
+   summary, or a summary with no held body, marks the app for a read."
   [workspace view]
-  (update-in
-    workspace
-    [:app-views (:id view)]
-    (fn [held]
-      (if (and held (> (long (or (get-in held [:view :seq]) 0)) (long (or (:seq view) 0))))
-        (update held :view #(if (:is-stale view) (assoc % :is-stale true) (dissoc % :is-stale)))
-        ;; A frame that came during the read can be newer than the copy that was read.
-        {:view view :is-gap (< (long (or (:seq view) 0)) (long (or (:behind-seq held) 0)))}))))
+  (update-in workspace
+             [:app-views (:id view)]
+             (fn [held]
+               (let [held-seq
+                     (long (or (get-in held [:view :seq]) 0))
+
+                     seq
+                     (long (or (:seq view) 0))
+
+                     behind
+                     (long (or (:behind-seq held) 0))
+
+                     owner-state
+                     #(if (:is-stale view) (assoc % :is-stale true) (dissoc % :is-stale))]
+
+                 (cond (and held (> held-seq seq)) (update held :view owner-state)
+                       ;; A frame that came during the read can be newer than the copy that was read.
+                       (not (:is-summary view)) {:view view :is-gap (< seq behind)}
+                       (or (nil? held) (get-in held [:view :is-summary]))
+                       {:view view :is-gap true :behind-seq (max seq behind)}
+                       (= held-seq seq) (assoc held
+                                          :view (merge (dissoc view :is-summary)
+                                                       (select-keys
+                                                         (:view held)
+                                                         view-spec/live-summary-omitted-keys)))
+                       :else (-> held
+                                 (update :view owner-state)
+                                 (assoc :is-gap true
+                                        :behind-seq (max seq behind))))))))
 
 (defn- behind-app-view
   "Mark held app `view-id` for a read when its copy is behind `seq`."
@@ -4267,7 +4293,8 @@
           next-seq (long (or (:seq patch) 0))]
 
       (cond (<= next-seq current) workspace
-            (> (long (or first-seq next-seq)) (inc current))
+            ;; A summary has no body that the patch can change.
+            (or (get-in held [:view :is-summary]) (> (long (or first-seq next-seq)) (inc current)))
             (behind-app-view workspace (:view-id patch) next-seq)
             :else (assoc-in workspace
                     [:app-views (:view-id patch) :view]
@@ -4370,8 +4397,9 @@
   (assoc db :global-apps (:app-views (apply f {:app-views (:global-apps db)} args))))
 
 (reg-event-db :global-apps-loaded
-              ;; A full read of `GET /v1/apps`. The stream keeps no replay, so the read
-              ;; replaces the held list: an app that the list does not name is gone.
+              ;; A read of `GET /v1/apps`: each app without its body. The stream keeps no
+              ;; replay, so the read replaces the held list: an app that the list does
+              ;; not name is gone. A held body stays, as [[mount-app-view]] says.
               (fn [db [_ views]]
                 (let [ids (into #{} (map #(str (:id %))) views)]
                   (-> db

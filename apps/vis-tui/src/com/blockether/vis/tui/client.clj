@@ -1471,6 +1471,15 @@
                               "/views/live?placement=attachment" (when archived? "&archived=true")))
              "views"))))
 
+(defn app-summaries
+  "The app attachments of session `sid`, oldest first, in canonical wire shape, each
+   without its body (view.json `live_view_summary`): the state and the seq of an app."
+  [sid]
+  (vec (get (send-json!
+              "GET"
+              (str "/v1/sessions/" (enc sid) "/views/live?placement=attachment&summary=true"))
+            "views")))
+
 (defn app-read
   "A read of app `view-id` of `sid`, or of a global app without `sid`, also when it
    is closed, in canonical wire shape. Without `since`, the answer has the whole app
@@ -1485,10 +1494,12 @@
                    (when since (str "?since=" (long since))))))
 
 (defn global-apps
-  "The global apps, oldest first, in canonical wire shape. A closed app stays listed.
-   The list is empty while the person turns global apps off."
+  "The global apps, oldest first, in canonical wire shape, each without its body
+   (view.json `live_view_summary`): the picker shows only the name and the state of
+   an app, and the app surface reads the app that the person opens. A closed app
+   stays listed. The list is empty while the person turns global apps off."
   []
-  (vec (get (send-json! "GET" "/v1/apps") "views")))
+  (vec (get (send-json! "GET" "/v1/apps?summary=true") "views")))
 
 (defn- post-app-action!
   "POST app `action` to `path`. Never throws; see [[app-action!]]."
@@ -1862,11 +1873,12 @@
   [event fallback-turn-id]
   (gateway-contract/terminal-turn-result event fallback-turn-id get-turn))
 
-(def ^:private elided-app-patches
-  "The stream option that leaves out a large patch of an app (view.json `patch_event`
-   `is_elided`). The terminal then reads only the changed part of an app that it
-   shows. An older gateway ignores the option and sends every patch."
-  "&app_patches=elided")
+(def ^:private shown-apps-only
+  "The stream options that leave out the body of a large app: its patch (view.json
+   `patch_event` `is_elided`) and its view in `view.open` (view.json `open_event`,
+   a summary). The terminal then reads only the changed part of an app that it
+   shows. An older gateway ignores an option and sends the whole frame."
+  "&app_patches=elided&app_opens=summary")
 
 (defn- sse-response!
   "Open the gateway SSE stream for `sid` resuming at `cursor`. Returns the
@@ -1881,7 +1893,7 @@
   (let [entry (target!)]
     (gw-send! entry
               "GET"
-              (str "/v1/events?sids=" (enc sid) ":" (long (or cursor 0)) elided-app-patches)
+              (str "/v1/events?sids=" (enc sid) ":" (long (or cursor 0)) shown-apps-only)
               {:as :stream})))
 
 (def ^:private sse-idle-timeout-ms
@@ -2283,7 +2295,7 @@
         response
         (gw-send! entry
                   "GET"
-                  (str "/v1/events?sids=" (mux-sids-param (:subs @mux)) elided-app-patches)
+                  (str "/v1/events?sids=" (mux-sids-param (:subs @mux)) shown-apps-only)
                   {:as :stream})]
 
     (when-not (= 200 (:status response))
@@ -2435,8 +2447,7 @@
                                  _ (ensure-client! entry)
                                  response (gw-send! entry
                                                     "GET"
-                                                    (str "/v1/events?scope=fleet"
-                                                         elided-app-patches)
+                                                    (str "/v1/events?scope=fleet" shown-apps-only)
                                                     {:as :stream})]
 
                              (when-not (= 200 (:status response))
@@ -2695,6 +2706,8 @@
 (def gateway-live-views live-views)
 
 (def gateway-app-views app-views)
+
+(def gateway-app-summaries app-summaries)
 
 (def gateway-app-read app-read)
 

@@ -323,7 +323,57 @@
         (loaded 8)
         (expect (false? (gap?)))
         (state/dispatch [:app-view-behind "other" 3])
-        (expect (= ["app-1"] (keys (:app-views @state/app-db)))))))
+        (expect (= ["app-1"] (keys (:app-views @state/app-db))))))
+  ;; Report: a gateway restart sent the whole view of a large app two times, only to
+  ;; say that its owner left and came back. The stream now sends the summary of the app.
+  (it
+    "keeps the body of an app when its summary comes, and reads an app without a body"
+    (let [held
+          #(get-in @state/app-db [:app-views "app-1"])
+
+          whole
+          (assoc view :session-id "s1")
+
+          summary
+          (fn [seq & {:as more}]
+            (merge (assoc (dissoc whole :nodes :submissions)
+                     :seq seq
+                     :is-summary true)
+                   more))]
+
+      (reset! state/app-db
+        {:session {:id "s1"} :tabs [] :live-views [] :app-views {} :render-version 0})
+      ;; No copy: the summary is all that the terminal has, so it reads the app.
+      (state/dispatch [:live-view-open (summary 3)])
+      (expect (true? (:is-gap (held))))
+      ;; A patch has no body to change.
+      (state/dispatch [:live-view-patch
+                       {:view-id "app-1" :seq 4 :ops [{:op :clear :node-id "diff"}]}])
+      (expect (= (summary 3) (:view (held))))
+      (expect (true? (:is-gap (held))))
+      (state/dispatch [:app-view-loaded whole])
+      (expect (= {:view whole :is-gap false} (select-keys (held) [:view :is-gap])))
+      ;; The summary at the seq of the copy carries the newer state of the app.
+      (state/dispatch [:live-view-open (summary 4 :is-stale true :title "Renamed")])
+      (expect (= (assoc whole
+                   :is-stale true
+                   :title "Renamed")
+                 (:view (held))))
+      (expect (false? (:is-gap (held))))
+      (state/dispatch [:live-view-open (summary 4)])
+      (expect (= whole (:view (held))))
+      ;; A newer summary keeps the body as the base of the read.
+      (state/dispatch [:live-view-open (summary 6 :is-stale true)])
+      (expect (= (assoc whole :is-stale true) (:view (held))))
+      (expect (= [true 6] ((juxt :is-gap :behind-seq) (held))))
+      (state/dispatch [:app-view-loaded (assoc whole :seq 6)])
+      (expect (false? (:is-gap (held))))
+      ;; An older summary changes only the owner state.
+      (state/dispatch [:live-view-open (summary 4 :is-stale true :title "Old")])
+      (expect (= (assoc whole
+                   :seq 6
+                   :is-stale true)
+                 (:view (held)))))))
 
 ;; Report: an open review read its whole view again after each change of one file.
 (defdescribe
@@ -353,7 +403,10 @@
           (expect (= [["s1" "live-one" 1]] calls)))
         (let [[read calls] (asked {"patches" []} #(read-app nil "live-one" held))]
           (expect (= held read))
-          (expect (= [[nil "live-one" 1]] calls))))
+          (expect (= [[nil "live-one" 1]] calls)))
+        ;; An app that did not change after it opened has seq 0.
+        (let [[_ calls] (asked {"patches" []} #(read-app "s1" "live-one" (assoc held :seq 0)))]
+          (expect (= [["s1" "live-one" 0]] calls))))
     (it "takes the whole view when a frame does not fit, or when no copy is held"
         (let [other
               (assoc-in held [:nodes 0 :patch] "other")
@@ -372,7 +425,85 @@
           (expect (= [["s1" "live-one" 1]] calls)))
         (let [[read calls] (asked nil #(read-app "s1" "live-one" nil))]
           (expect (= 9 (:seq read)))
+          (expect (= [["s1" "live-one" nil]] calls)))
+        ;; A summary has no body that the frames can change.
+        (let [[read calls]
+              (asked {"patches" []}
+                     #(read-app "s1" "live-one" (assoc (dissoc held :nodes) :is-summary true)))]
+          (expect (seq (:nodes read)))
           (expect (= [["s1" "live-one" nil]] calls))))
+    ;; Network rig, run 3a: the gateway stores no `view.patch`. A change that came
+    ;; while the event stream was away showed only after the next change.
+    (it
+      "reads the states of the session apps again when the event stream is ready"
+      (let [sink
+            (atom nil)
+
+            dispatch
+            state/dispatch
+
+            newest
+            (get patch "seq")]
+
+        (reset! state/app-db
+          {:session {:id "s1"} :tabs [] :live-views [] :app-views {} :render-version 0})
+        (state/dispatch [:app-view-loaded held])
+        (with-redefs [vis/add-title-listener!
+                      (fn [& _])
+
+                      vis/add-title-pending-listener!
+                      (fn [& _])
+
+                      vis/remove-title-listener!
+                      (fn [& _])
+
+                      vis/remove-title-pending-listener!
+                      (fn [& _])
+
+                      vis/refresh-session-model!
+                      (fn [& _])
+
+                      vis/gateway-current-seq
+                      (constantly 0)
+
+                      vis/gateway-input-views
+                      (constantly [])
+
+                      vis/gateway-live-views
+                      (constantly [])
+
+                      vis/gateway-mux-subscribe!
+                      (fn [_ s _]
+                        (reset! sink s)
+                        (fn []))
+
+                      vis/gateway-app-summaries
+                      (fn [sid]
+                        (when (= "s1" sid)
+                          [(-> view
+                               (dissoc "nodes")
+                               (assoc "title" "Review"
+                                      "placement" "attachment"
+                                      "seq" newest
+                                      "is_summary" true))]))
+
+                      vis/worker-future
+                      (fn [_ f]
+                        (f))
+
+                      state/tab-id-for-session
+                      (constantly "tab")
+
+                      state/dispatch
+                      (fn [[id :as event]]
+                        (when (= :app-view-loaded id) (dispatch event)))]
+
+          (let [cleanup (#'screen/subscribe-session-live! "s1")]
+            (try (@sink {"type" "subscription.ready" "session_id" "s1" "cursor" 0})
+                 (finally (cleanup)))))
+        (expect (= [true newest held]
+                   ((juxt :is-gap :behind-seq :view)
+                     (get-in @state/app-db [:app-views "live-one"]))))))
     ;; Report: the transcript shows an app, but only an open surface read its gap.
     (it "reads an app of the tab that is behind, without an open surface and one time"
         (let [held-in-tab
