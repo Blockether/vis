@@ -204,6 +204,8 @@ class ReviewApp:
                 icon="review",
                 shortcuts=self._shortcuts(),
                 surfaces={"inline": False, "session": "sidebar"},
+                # Each root has its own key; the person sets up one Review app.
+                settings_name="review",
             )
             self.view = self._opener(declaration, self.on_event)
             self._painted = _picture(self.view, nodes)

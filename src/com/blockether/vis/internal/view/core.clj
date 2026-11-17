@@ -1709,6 +1709,12 @@
           (or (get app/icons (:icon view))
               (invalid-live-view! (str ":icon must be one of " (str/join ", " (sort app/icons))))))
 
+        settings-name
+        (when (contains? view :settings-name)
+          (when-not app?
+            (invalid-live-view! "only an app (placement attachment) takes :settings-name"))
+          (trimmed (:settings-name view)))
+
         agent-note
         (when (contains? view :agent-note)
           (some-> (app/agent-note-error {:placement placement} (:agent-note view))
@@ -1755,6 +1761,9 @@
 
           icon
           (assoc :icon icon)
+
+          settings-name
+          (assoc :settings-name settings-name)
 
           global?
           (assoc :scope "global")
@@ -2883,17 +2892,18 @@
           (live-entry (:view-id newest))))))
 
 (defn- adopt-app!
-  "Give the open app to its current owner. Keep its state and update a declared icon."
+  "Give the open app to its current owner. Keep its state and update a declared
+   icon and settings name."
   [record]
   (when-let [entry (adoptable-app record)]
     (let [cell (:view entry)]
       (locking cell
         (when (identical? cell (:view (get @pending (:id entry))))
-          (let [icon (:icon record)
-                changed? (and icon (not= icon (:icon @cell)))
+          (let [declared (select-keys record [:icon :settings-name])
+                changed? (not= declared (select-keys @cell (keys declared)))
                 _ (when changed?
                     (let [view (-> @cell
-                                   (assoc :icon icon)
+                                   (merge declared)
                                    (update :seq inc))
                           bytes (sink/compact! (:file entry) view @(:node-seqs entry))]
 

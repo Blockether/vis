@@ -2527,6 +2527,44 @@
                (expect (= {"inline" true "session" "sidebar"} (get (one) "surfaces")))
                (expect (= [{"inline" true "session" "sidebar"}] (listed)))
                (finally (swap! @#'toggles/state dissoc setting) (hi/close-live! view-id)))))))
+  (it
+    "gives the apps of one settings name one pair of settings"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              open!
+              (fn [view]
+                (get (app-op! {"op" "open"
+                               "view" (merge {"session_id" sid
+                                              "placement" "attachment"
+                                              "nodes" [{"id" "go" "type" "button" "label" "Go"}]}
+                                             view)})
+                     "view_id"))
+
+              named
+              (fn [k]
+                {"title" "Tally" "key" k "settings_name" "tally"})
+
+              ids
+              (mapv (comp open! named) ["tally-a" "tally-b"])
+
+              ;; An app that was open before its owner named its settings.
+              unnamed
+              (open! {"title" "Count" "key" "tally-c"})
+
+              settings-key
+              #(get-in (json-body (app-view sid %)) ["view" "settings_key"])]
+
+          (try (expect (= ["app_sandbox_tally" "app_sandbox_tally"] (mapv settings-key ids)))
+               (expect (= ["app_sandbox_tally_inline"]
+                          (keep #(when (= "Tally: in the chat" (:label %)) (:id %))
+                                (toggles/registered-toggles))))
+               (expect (= "app_sandbox_tally_c" (settings-key unnamed)))
+               (expect (= unnamed (open! (named "tally-c"))))
+               (expect (= "app_sandbox_tally" (settings-key unnamed)))
+               (finally (run! hi/close-live! (conj ids unnamed))))))))
   (it "refuses surfaces on a view that is no app"
       (recorded (fn []
                   (expect (str/includes? (try (hi/open-live!

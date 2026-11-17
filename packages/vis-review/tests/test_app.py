@@ -636,6 +636,19 @@ def test_each_key_presses_a_button_that_the_app_shows(tmp_path, recorder):
         assert ("session" in pressed) == scoped
 
 
+def test_the_apps_of_two_roots_share_one_pair_of_settings(tmp_path, recorder):
+    # User report: the settings listed "Review" one time for each root with a review.
+    declared = []
+    for name in ("one", "two"):
+        root = tmp_path / name
+        root.mkdir()
+        journal = Journal(root, "s1", tmp_path / name / "base", files=walked)
+        ReviewApp(journal, extension_opener, key="review-" + name).open()
+        view = recorder._open_view()
+        declared.append((view["key"], view["settings_name"]))
+    assert declared == [("review-one", "review"), ("review-two", "review")]
+
+
 def test_a_finding_on_no_line_shows_in_the_notice(tmp_path, recorder):
     # T18 user report: the findings table went away with the diff-only layout, so a finding
     # that no diff line holds must still reach the person.

@@ -8372,6 +8372,7 @@ def _ui_app(
     shortcuts=None,
     icon=None,
     surfaces=None,
+    settings_name=None,
     scope=None,
     is_persistent=None,
     **options,
@@ -8386,7 +8387,9 @@ def _ui_app(
     `{"inline": False, "session": "chat"}`. `inline` shows it in the chat turn
     that opened it. `session` is `sidebar`, `chat` or `off` for the session apps
     button. The person's settings can change both; an app with a `key` gets its
-    own settings.
+    own settings. `settings_name` names these settings. Give one name to the apps
+    that have different keys and are one app for the person: they then share one
+    pair of settings. The default is the `key`.
     `scope="global"` makes an app of no session, which people open from the
     global apps button. Only an SDK program opens one, with
     `client.attach_app(...)`, and it needs a `key`. `is_persistent=False` lets a
@@ -8409,6 +8412,8 @@ def _ui_app(
         request["icon"] = icon
     if surfaces is not None:
         request["surfaces"] = _app_surfaces(surfaces)
+    if settings_name is not None:
+        request["settings_name"] = str(settings_name)
     request.update(_app_scope(scope, is_persistent, key))
     return request
 

@@ -74,14 +74,21 @@
 
 (defn settings-key
   "The id prefix of the settings of app `view`, or nil for an app without a key.
-   It joins the owning extension (or `sandbox`) and the key. A long prefix keeps
-   its start and ends in a hash, so two apps never share one."
+   It joins the owning extension (or `sandbox`) and the settings name. Without a
+   settings name, the key is the name. So apps with different keys share their
+   settings only when they declare one name. A long prefix keeps its start and
+   ends in a hash, so two names never share one."
   [view]
   (when-let [k (some-> (:key view)
                        str
                        str/trim
                        not-empty)]
-    (let [base (str "app_" (slug (str (or (:extension view) "sandbox") "_" k)))
+    (let [settings-name (or (some-> (:settings-name view)
+                                    str
+                                    str/trim
+                                    not-empty)
+                            k)
+          base (str "app_" (slug (str (or (:extension view) "sandbox") "_" settings-name)))
           limit (long (get settings-key-rule "maxLength"))]
 
       (if (<= (count base) limit)

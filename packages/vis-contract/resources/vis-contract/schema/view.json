@@ -3078,6 +3078,10 @@
           "description": "The icon of this app. Absent means app. Only an app takes an icon.",
           "$ref": "#/$defs/app_icon"
         },
+        "settings_name": {
+          "description": "The name of the settings of this app. Apps of one owner with the same name share one pair of settings. Absent means the key. Only an app takes a settings name.",
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
         "settings_key": {
           "description": "The id prefix of the settings of this app: `<settings_key>_inline` and `<settings_key>_session`. Only an app with a key has them.",
           "type": "string",

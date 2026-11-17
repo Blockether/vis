@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Sandbox: `defs["name"]` does the same lookup as `defs("name")`. Before, the subscript failed with `TypeError: 'function' object is not subscriptable`. The Python runtime is now at commit d20f31f.
 
+### Fixed
+
+- Live apps: Settings listed one app several times when the app had more than one key. An app can now declare `settings_name` (`vis.ui.app(..., settings_name=...)`). Apps of one owner with the same settings name share one pair of settings. The Review app uses one name for all its roots, so Settings show it one time.
+
 ## [v0.5.21] - 2026-11-17
 
 ### Fixed
