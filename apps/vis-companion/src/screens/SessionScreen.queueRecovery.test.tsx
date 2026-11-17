@@ -283,3 +283,69 @@ describe('a queued turn sent into the running turn', () => {
     expect(screen.queryByText('Next request')).toBeNull();
   });
 });
+
+// `turn.queued.drained` is a live-only frame too. A phone that slept through it wakes
+// with the row still in its saved queue, and the first read after a wake often fails on
+// the dead socket. The turn itself is durable: its row in the transcript and its
+// `turn.started` frame both say that it left the queue.
+describe('a queued turn that started while the app was away', () => {
+  const failedRead = async (): Promise<Session> => {
+    throw new Error('network error: The network connection was lost.');
+  };
+
+  it('does not list a turn whose answer is in the transcript', async () => {
+    vi.useFakeTimers();
+    const answered = {
+      turn_id: 'waiting',
+      request: 'Next request',
+      status: 'completed',
+      created_at: Date.now(),
+      content: [{ id: 'b1', type: 'prose', markdown: 'The answer to the next request.' }],
+      iterations: [],
+    };
+    const forgetQueuedTurn = vi.fn();
+    await act(async () => {
+      renderSessionScreen({
+        client: {
+          session: failedRead,
+          cachedQueuedTurns: () => [waiting],
+          cachedQueuePaused: () => null,
+          cachedTranscript: () => [answered],
+          transcript: () => Promise.resolve([answered]),
+          forgetQueuedTurn,
+        },
+      });
+    });
+    await advance(150);
+    expect(screen.queryByRole('region', { name: 'Queued messages' })).toBeNull();
+    expect(forgetQueuedTurn).toHaveBeenCalledWith('s1', 'waiting');
+  });
+
+  it('drops the row when the stream replays the start of that turn', async () => {
+    vi.useFakeTimers();
+    const events = subscriptionHub();
+    await act(async () => {
+      renderSessionScreen({
+        client: {
+          session: failedRead,
+          cachedQueuedTurns: () => [waiting],
+          cachedQueuePaused: () => null,
+        },
+        subscriptions: events,
+      });
+    });
+    expect(screen.getByRole('region', { name: 'Queued messages' })).toBeInTheDocument();
+
+    act(() =>
+      events.emit({
+        type: 'turn.started',
+        seq: 1,
+        turn_id: 'waiting',
+        request: 'Next request',
+        is_queued: true,
+      } as unknown as SseEvent),
+    );
+    await advance(150);
+    expect(screen.queryByRole('region', { name: 'Queued messages' })).toBeNull();
+  });
+});

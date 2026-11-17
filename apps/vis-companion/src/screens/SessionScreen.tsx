@@ -365,6 +365,19 @@ function rowId(turn: TranscriptTurn): string {
   return turn.turn_id;
 }
 
+/** Whether the transcript or the live bubble shows this turn: it has left the queue. */
+function turnHasStarted(
+  turnId: string,
+  turns: readonly TranscriptTurn[],
+  liveTurnId: string | undefined,
+): boolean {
+  if (!turnId) return false;
+  return (
+    liveTurnId === turnId ||
+    turns.some((turn) => rowId(turn) === turnId && turn.status !== 'queued')
+  );
+}
+
 /** Ends when `work` ends or after `ms`, whichever comes first. `work` must not reject. */
 function settledWithin(work: Promise<unknown>, ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -1023,6 +1036,16 @@ export function SessionScreen({
     },
     [client, sid],
   );
+  // A turn that the transcript or the bubble shows has left the queue. The frame that
+  // says so, `turn.queued.drained`, is live-only, and the queue read after a wake can
+  // fail or wait. The durable row is the proof that a wake and a cold start always hold.
+  const liveTurnId = runningTurn?.id;
+  useLayoutEffect(() => {
+    const started = queued.filter((row) => turnHasStarted(row.turnId, turns, liveTurnId));
+    if (!started.length) return;
+    for (const row of started) noteQueueDelta(row.turnId, null);
+    setQueued((current) => current.filter((row) => !started.includes(row)));
+  }, [queued, turns, liveTurnId, noteQueueDelta]);
   const [queuePaused, setQueuePaused] = useState<QueuePausedInfo | null>(null);
   // In-flight snapshots must not undo a newer live pause or resume.
   const queuePausedRevisionRef = useRef(0);
@@ -3155,6 +3178,12 @@ export function SessionScreen({
               );
             }
             break;
+          // A turn that started or ended is not queued. These frames are stored, so a
+          // stream that missed the live-only `turn.queued.drained` still replays them.
+          case 'turn.started':
+          case 'turn.completed':
+          case 'turn.failed':
+          case 'turn.cancelled':
           case 'turn.queued.drained':
             noteQueueDelta(tid, null);
             setQueued((current) => current.filter((item) => item.turnId !== tid));
