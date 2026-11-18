@@ -60,7 +60,13 @@
     (java.nio.charset StandardCharsets)
     (java.nio.file CopyOption FileAlreadyExistsException Files LinkOption Path StandardCopyOption)
     (java.nio.file.attribute FileAttribute PosixFilePermissions)
-    (java.util.concurrent ExecutionException TimeUnit)
+    (java.util.concurrent Callable
+                          ExecutionException
+                          ExecutorService
+                          SynchronousQueue
+                          ThreadFactory
+                          ThreadPoolExecutor
+                          TimeUnit)
     (java.util.concurrent.locks ReentrantLock)))
 
 (set! *warn-on-reflection* true)
@@ -462,23 +468,43 @@
              (.clear (.selectedKeys selector))
              (recur)))))))
 
+(defonce
+  ^{:private true
+    :tag ExecutorService
+    :doc
+    "Threads that start worker processes. A thread here never ends: on Linux a
+     confined child gets a signal when the thread that started it ends
+     (`--die-with-parent`, `PR_SET_PDEATHSIG`), so the child would stop with it.
+     Each start gets a free thread or a new one, so one spawn that does not
+     return cannot delay another."}
+  spawn-threads
+  (ThreadPoolExecutor. 0
+                       Integer/MAX_VALUE
+                       Long/MAX_VALUE
+                       TimeUnit/NANOSECONDS
+                       (SynchronousQueue.)
+                       (reify
+                         ThreadFactory
+                           (newThread [_ task]
+                             (doto (Thread. task "vis-python-worker-spawn") (.setDaemon true))))))
+
 (defn- spawn-within!
   "Answer the process of `spawn`, a function of no arguments, or throw when it
    does not return before `deadline`. The spawn is native code that an interrupt
-   does not stop, so it runs on its own thread. A process that arrives after the
-   caller left is destroyed."
+   does not stop, so it runs on a thread of `spawn-threads`. A process that
+   arrives after the caller left is destroyed."
   [spawn deadline]
   (let [claim
         (atom ::waiting)
 
         task
-        (cancellation/worker-future "vis-python-worker-spawn"
-                                    (bound-fn []
-                                              (let [^Process process (spawn)]
-                                                (when-not (compare-and-set! claim ::waiting process)
-                                                  (.destroyForcibly process))
-                                                process))
-                                    {:platform? true})]
+        (.submit spawn-threads
+                 ^Callable
+                 (bound-fn []
+                           (let [^Process process (spawn)]
+                             (when-not (compare-and-set! claim ::waiting process)
+                               (.destroyForcibly process))
+                             process)))]
 
     (try (let [process (deref task (ms-until deadline) ::timed-out)]
            (when (= ::timed-out process)

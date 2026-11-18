@@ -1701,7 +1701,27 @@ print(worker_value)"))))
                                 (.countDown release)
                                 (expect (.waitFor process 3 java.util.concurrent.TimeUnit/SECONDS)))
                               (finally (future-cancel task))))))
-                   (finally (.countDown release) (.destroyForcibly process))))))
+                   (finally (.countDown release) (.destroyForcibly process)))))
+             ;; CI run 44248341950: on Linux a confined child dies with the thread that
+             ;; started it, and the thread of the spawn ended when the spawn returned.
+             (it "keeps the thread of a spawn alive after the spawn returns"
+                 (let [^java.util.List command
+                       ["sh" "-c" "sleep 30"]
+
+                       process
+                       (.start (ProcessBuilder. command))
+
+                       thread
+                       (promise)]
+
+                   (try (#'com.blockether.vis.internal.python.worker/spawn-within!
+                         (fn []
+                           (deliver thread (Thread/currentThread))
+                           process)
+                         (+ (System/nanoTime) 5000000000))
+                        (.join ^Thread @thread 500)
+                        (expect (.isAlive ^Thread @thread))
+                        (finally (.destroyForcibly process))))))
 
 ;; Report 2026-11-17: a caller takes the spare out of the registry before it waits
 ;; for it. A caller that left the wait kept that worker running with no owner.
