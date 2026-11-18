@@ -597,11 +597,4 @@
       :type :string
       :doc
       "Address the pairing link should carry instead of the detected one (HOST, HOST:PORT or a full URL). Defaults to VIS_GATEWAY_ADVERTISE, then to `gateway: advertise:` in the Vis config."}]
-    :cmd/run-fn cli-gateway-pair!}
-   {:cmd/name "mcp"
-    :cmd/parent ["gateway"]
-    :cmd/doc
-    "Manage gateway-owned MCP servers: add, list, test, enable/disable, kill/start, and OAuth sign-in."
-    :cmd/usage
-    "vis-agent gateway mcp <list|add|test|remove|enable|disable|kill|start|auth-start|auth-complete|auth-poll|auth-cancel|auth-logout>"
-    :cmd/subcommands #(registry/registered-under ["gateway" "mcp"])}])
+    :cmd/run-fn cli-gateway-pair!}])

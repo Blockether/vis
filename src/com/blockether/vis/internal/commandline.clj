@@ -602,7 +602,8 @@
   ([root args] (dispatch! root args {:print-fn println}))
   ([root args {:keys [print-fn]}]
    (if-let [{:keys [command path residual]} (find-leaf root args)]
-     (let [help? (some #{"--help" "-h"} residual)
+     (let [;; Words after `--` belong to the command, also a `--help` of a server command.
+           help? (some #{"--help" "-h"} (take-while #(not= "--" %) residual))
            children (registry/resolve-subcommands command)
            unresolved-before-help (take-while #(not (#{"--help" "-h"} %)) residual)]
 

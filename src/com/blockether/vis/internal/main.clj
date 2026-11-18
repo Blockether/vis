@@ -2897,7 +2897,7 @@
      :cmd/doc "Inspect or run an extension-contributed CLI command."
      :cmd/usage "vis-agent extension <list|install|sync|versions|update|rollback|...> [args...]"
      :cmd/subcommands #(registry/registered-under ["extension"])} gateway-cli/command
-    gateway-cli/web-command
+    gateway-cli/web-command mcp-cli/command
     {:cmd/name "python"
      :cmd/doc
      "Run embedded Python, or pass commands unchanged to bundled uv: vis-agent python uv [ARGS...]"

@@ -24,6 +24,7 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.config.mcp-json :as mcp-json]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.credential-command :as cred]
@@ -1491,13 +1492,23 @@
   "Load the visible project-root tier: the first existing of
    `<workspace>/vis.yml` / `vis.yaml`, or nil. Nil also when the session does not
    read the project tier. This file is COMMITTED, so `user-only-config-keys` are
-   dropped from it with one warning — see that Var."
+   dropped from it with one warning — see that Var. The MCP servers of the shared
+   Claude Code file `.mcp.json` join this tier; a `vis.yml` server of the same name
+   replaces the `.mcp.json` server."
   []
   (when (workspace/source-enabled? "project")
-    (some (fn [path]
-            (when-let [raw (read-yaml-config-map-lenient path)]
-              (without-user-only-keys! path raw)))
-          (project-root-yaml-paths))))
+    (let [root
+          (some (fn [path]
+                  (when-let [raw (read-yaml-config-map-lenient path)]
+                    (without-user-only-keys! path raw)))
+                (project-root-yaml-paths))
+
+          shared
+          (mcp-json/servers)]
+
+      (if (seq shared)
+        (update-in (or root {}) ["mcp" "servers"] #(merge shared %))
+        root))))
 
 (defn load-project-tiers-raw
   "Merge the workspace's project tiers, the hidden overlay over the committed root file:
@@ -1581,6 +1592,7 @@
       (into (global-config-yaml-paths))
       (conj (state-path))
       (into (project-root-yaml-paths))
+      (conj (mcp-json/path))
       (into (project-config-yaml-paths))))
 
 (def ^:private config-raw-cache

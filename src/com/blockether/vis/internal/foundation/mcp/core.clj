@@ -207,7 +207,7 @@
         (mcp-oauth/make-proof-fn server-name) :www-auth-atom
         www-auth))))
 
-(defn- canonical-name
+(defn canonical-name
   "The one spelling of an MCP server name, or nil when nothing is left: lower case,
    accents dropped, and each run of characters other than `a-z` and `0-9` (blanks,
    newlines, `_`, `.`) as one `-`. `Figma Dev` is `figma-dev`. The name keys the

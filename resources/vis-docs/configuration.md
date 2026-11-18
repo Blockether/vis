@@ -828,9 +828,49 @@ compatible dependencies.
 
 ## MCP servers
 
-Servers that you add from the UI, the API, or `vis-agent gateway mcp` go to `~/.vis/state.yml`. Vis
-also uses servers that you declare by hand in another file, but the UI cannot edit them. Change the
-file that declares them.
+Servers that you add from the UI, the API, or `vis-agent mcp add --scope user` go to
+`~/.vis/state.yml`. Vis also uses servers that you declare by hand in another file, but the UI
+cannot edit them. Change the file that declares them.
+
+### Add a server from the CLI
+
+`vis-agent mcp` has the commands and arguments of `claude mcp` in Claude Code: `add`, `add-json`,
+`add-from-claude-desktop`, `get`, `list`, and `remove`. Put `--` before the command of a local
+server and its arguments.
+
+```bash
+vis-agent mcp add --transport http notion https://mcp.notion.com/mcp
+vis-agent mcp add --transport sse asana https://mcp.asana.com/sse
+vis-agent mcp add --env AIRTABLE_API_KEY=<KEY> airtable -- npx -y airtable-mcp-server
+vis-agent mcp add-json weather '{"type":"stdio","command":"weather-mcp"}'
+vis-agent mcp list
+vis-agent mcp get notion
+vis-agent mcp remove notion
+```
+
+The `--scope` option, or `-s`, selects where Vis keeps the server:
+
+| Scope | File | Who uses the server |
+|---|---|---|
+| `local`, the default | `.vis/config.yml` in the current directory | You, in this project |
+| `project` | `.mcp.json` in the current directory | All persons who use the project |
+| `user` | `~/.vis/state.yml` | You, in all your projects |
+
+When two scopes have the same name, `local` wins over `project`, and `project` wins over `user`.
+In the project scope, a server in `vis.yml` wins over the same name in `.mcp.json`.
+
+Vis reads `.mcp.json` in the Claude Code format, so a project that has this file for Claude Code
+also works in Vis. Vis does not ask you to approve the servers of `.mcp.json`. It trusts this file
+as it trusts `vis.yml`.
+
+These items are different from Claude Code:
+
+- `add` refuses `--client-secret`. Put `auth.client_secret: ${ENV_NAME}` in the configuration
+  file. Vis does not keep the value of a secret.
+- `add` refuses `--callback-port`.
+- Vis has no `serve` command and no `reset-project-choices` command.
+- `--scope group` and `--scope session` with `--target-id` add a server to one group or one
+  session. Read [Scoped MCP servers](#scoped-mcp-servers).
 
 ### Connections and transports
 
@@ -900,18 +940,18 @@ The gateway starts an OAuth flow when an HTTP MCP server asks for it with status
 terminal, use **MCP Servers**. From the CLI, use these commands:
 
 ```bash
-vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp
-vis-agent gateway mcp auth-start linear
+vis-agent mcp add --scope user --transport http linear https://mcp.linear.app/mcp
+vis-agent mcp auth-start linear
 # open the printed URL, approve, then paste the redirect URL or code:
-vis-agent gateway mcp auth-complete linear --flow-id <FLOW_ID> --input "<URL_OR_CODE>"
-vis-agent gateway mcp list
+vis-agent mcp auth-complete linear --flow-id <FLOW_ID> --input "<URL_OR_CODE>"
+vis-agent mcp list
 ```
 
 A static token skips sign-in:
 
 ```bash
-vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp \
-  --headers "Authorization=Bearer <TOKEN>"
+vis-agent mcp add --transport http linear https://mcp.linear.app/mcp \
+  --header "Authorization: Bearer <TOKEN>"
 ```
 
 By default, Vis uses `Claude Code` as its OAuth registration name for all MCP servers. To send a
@@ -1004,8 +1044,9 @@ ask for such a token, or `auth.dpop: false` to never ask for one.
 Vis keeps server names in one form, with lowercase letters, digits, and hyphens. `Figma Dev`
 becomes `figma-dev`. Vis refuses a name without a letter or a digit.
 
-`vis-agent gateway mcp` has these other verbs: `test`, which connects and saves nothing, `remove`,
-`enable`, `disable`, `kill`, `start`, `auth-poll`, `auth-cancel`, and `auth-logout`. When you save
+`vis-agent mcp` has these other commands: `test`, which connects and saves nothing, `enable`,
+`disable`, `kill`, `start`, `auth-poll`, `auth-cancel`, and `auth-logout`. `test` takes the
+arguments of `add`. When you save
 a server without `env` or `headers`, Vis keeps the stored values.
 
 ## Feature toggles
@@ -1123,16 +1164,16 @@ availability.
 - When you turn off availability for one session, the shared connection does not stop.
 - When you turn on availability, a server that the global administrator turned off does not start.
 
-The CLI accepts the same scope and target for `list`, `add`, `remove`, `enable`, and `disable`:
+The CLI accepts a scope and a target for `list`, `add`, `remove`, `enable`, and `disable`:
 
 ```bash
-vis-agent gateway mcp list --scope session --target-id <session-id>
-vis-agent gateway mcp add docs --url https://gateway.example.com/mcp --scope group --target-id <group-id>
-vis-agent gateway mcp disable docs --scope session --target-id <session-id>
-vis-agent gateway mcp remove docs --scope group --target-id <group-id>
+vis-agent mcp list --scope session --target-id <session-id>
+vis-agent mcp add --transport http docs https://gateway.example.com/mcp --scope group --target-id <group-id>
+vis-agent mcp disable docs --scope session --target-id <session-id>
+vis-agent mcp remove docs --scope group --target-id <group-id>
 ```
 
-Omit both flags to manage global servers. A project target accepts the project ID or its canonical
+Without a target, `enable` and `disable` manage global servers. A project target accepts the project ID or its canonical
 root. Group and session targets use their IDs. Authentication and lifecycle commands are global
 only.
 

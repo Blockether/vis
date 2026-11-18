@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- MCP: `vis-agent mcp` has the commands, arguments and messages of `claude mcp` in Claude Code: `add`, `add-json`, `add-from-claude-desktop`, `get`, `list` and `remove`. `--scope local`, the default, writes the private `.vis/config.yml` of the current directory. `--scope project` writes `.mcp.json`. `--scope user` writes `~/.vis/state.yml`. A local server wins over a project server, and a project server wins over a user server.
+- MCP: Vis reads the servers of the `.mcp.json` of a project, in the Claude Code format. A server in `vis.yml` wins over the same name in `.mcp.json`.
+
 ### Changed
 
+- MCP: `vis-agent gateway mcp` is now `vis-agent mcp`. `add` takes the arguments of `claude mcp add`. In your scripts, change `vis-agent gateway mcp add docs --url <URL>` to `vis-agent mcp add --scope user --transport http docs <URL>`, and `--headers "Name=value"` to `--header "Name: value"`. `vis-agent gateway mcp` stops with `Unknown command`.
 - Hands-free voice: the `hands_free_voice` setting is removed. Live voice is on for each gateway, and it is available when the local speech models are ready. The capabilities answer keeps `enabled`, which is always `true`, for released clients. A start does not return `409 voice_disabled`.
 
 ## [v0.5.21] - 2026-11-18
