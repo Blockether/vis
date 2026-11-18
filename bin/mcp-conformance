@@ -30,7 +30,13 @@ results="${VIS_MCP_CONFORMANCE_RESULTS:-$work/results}"
 export VIS_MCP_CONFORMANCE_WORK="$work"
 
 cd "$root"
-clojure -Spath -A:test > "$work/classpath"
+# The suite starts the client about 70 times. A client that loads compiled classes
+# starts four times faster than one that compiles its namespaces again from source.
+classpath="$work/classes:$(clojure -Spath -A:test)"
+mkdir -p "$work/classes"
+java -cp "$classpath" clojure.main -e \
+  "(binding [*compile-path* \"$work/classes\"] (compile 'com.blockether.vis.mcp-conformance))" > /dev/null
+printf '%s\n' "$classpath" > "$work/classpath"
 
 status=0
 run_suite() {
