@@ -88,54 +88,54 @@ examples also use `SESSION_ID`, the ID of a session that you created or found.
 
 | Task | Typed call | Generated method |
 |---|---|---|
-| Create a session | `client.create_session(...)` | `post_sessions(body=...)` |
-| List models with prices and limits | `client.models(...)` | `get_models()` |
-| Read the limits of a provider | `client.model_limits(provider)` | `get_provider_limits(provider_id)` |
-| Read the model of a session | `session.model()` | `get_session_model(sid)` |
-| Pin or clear the model of a session | `session.set_model(provider, model)` | `patch_session_model(sid, body=...)` |
-| Read the directory of a session | No typed call | `get_session_workspace(sid)` |
-| Change the directory of a session | No typed call | `patch_session_workspace_root(sid, body=...)` |
-| Read a session | `session.read()` | `get_session(sid)` |
-| Send a message | `session.send(request)` | `get_session_seq(sid)`, then `post_session_turns(sid, body=...)` |
+| Create a session | `client.create_session(...)` | `client.routes.post_sessions(body=...)` |
+| List models with prices and limits | `client.models(...)` | `client.routes.get_models()` |
+| Read the limits of a provider | `client.model_limits(provider)` | `client.routes.get_provider_limits(provider_id)` |
+| Read the model of a session | `session.model()` | `client.routes.get_session_model(sid)` |
+| Pin or clear the model of a session | `session.set_model(provider, model)` | `client.routes.patch_session_model(sid, body=...)` |
+| Read the directory of a session | No typed call | `client.routes.get_session_workspace(sid)` |
+| Change the directory of a session | No typed call | `client.routes.patch_session_workspace_root(sid, body=...)` |
+| Read a session | `session.read()` | `client.routes.get_session(sid)` |
+| Send a message | `session.send(request)` | `client.routes.get_session_seq(sid)`, then `client.routes.post_session_turns(sid, body=...)` |
 | Send a message and wait for a checked answer | `session.run(request, ...)` | No generated method |
-| Read a turn | `turn.read()`, `turn.wait()` | `get_session_turn(sid, tid)` |
-| Follow events | `session.events(cursor=...)` | `get_session_events_since(sid, query=...)` |
-| List open forms | `session.input_views()` | `get_session_views_input(sid)` |
-| Answer a form or interrupt a view | `session.answer(...)`, `session.view_action(...)` | `post_session_view(sid, view_id, body=...)` |
-| List turns or queued messages | `session.turns(...)` | `get_session_turns(sid, query=...)` |
-| Change a queued message | No typed call | `patch_session_turn(sid, tid, body=...)` |
-| Remove a queued message | No typed call | `delete_session_turn(sid, tid)` |
-| List the files that the agent attached | `session.attachments(...)`, `turn.attachments()` | `get_session_artifacts(sid)` |
-| Download one file | `attachment.read()`, `session.download_attachment(iid, index)` | `get_session_iteration_attachments(sid, iid, idx)` |
-| Cancel a turn | `turn.cancel()` | `post_session_turn_cancel(sid, tid)` |
-| Cancel the running turn without its ID | No typed call | `post_session_cancel_current(sid, body=...)` |
-| Start the oldest queued message | No typed call | `post_session_drain_queue(sid)` |
-| Resume a paused queue | No typed call | `post_session_resume_queue(sid)` |
-| Search sessions | No typed call | `get_sessions_search(query=...)` |
-| List sessions | `client.list_sessions(...)` | `get_sessions(query=...)` |
-| List the turns that a fork can keep | No typed call | `get_session_forks(sid)` |
-| Fork a session | `session.fork(...)` | `post_session_forks(sid, body=...)` |
-| List groups | `client.groups(...)` | `get_session_groups(query=...)` |
-| Create a group | `client.group(...)`, `client.create_group(...)` | `post_session_groups(body=...)` |
-| Change or archive a group | `client.update_group(...)` | `patch_session_group(gid, body=...)` |
-| Delete a group | `client.delete_group(...)` | `delete_session_group(gid, query=...)` |
-| Move a session to a group | `session.set_group(...)`, `client.create_session(group=...)` | `put_session_group(sid, body=...)` |
-| Rename, star, or archive a session | `session.update(...)` | `patch_session(sid, body=...)` |
-| Archive many sessions | No typed call | `post_sessions_archive(body=...)` |
-| Delete a session | `session.delete()` | `delete_session(sid)` |
-| Export a transcript | `session.transcript(format=...)` | `get_session_transcript(sid)`, `get_session_transcript_md(sid)`, `get_session_transcript_html(sid)` |
-| Save a snapshot | `session.export()` | `get_session_snapshot(sid)` |
+| Read a turn | `turn.read()`, `turn.wait()` | `client.routes.get_session_turn(sid, tid)` |
+| Follow events | `session.events(cursor=...)` | `client.routes.get_session_events_since(sid, query=...)` |
+| List open forms | `session.input_views()` | `client.routes.get_session_views_input(sid)` |
+| Answer a form or interrupt a view | `session.answer(...)`, `session.view_action(...)` | `client.routes.post_session_view(sid, view_id, body=...)` |
+| List turns or queued messages | `session.turns(...)` | `client.routes.get_session_turns(sid, query=...)` |
+| Change a queued message | No typed call | `client.routes.patch_session_turn(sid, tid, body=...)` |
+| Remove a queued message | No typed call | `client.routes.delete_session_turn(sid, tid)` |
+| List the files that the agent attached | `session.attachments(...)`, `turn.attachments()` | `client.routes.get_session_artifacts(sid)` |
+| Download one file | `attachment.read()`, `session.download_attachment(iid, index)` | `client.routes.get_session_iteration_attachments(sid, iid, idx)` |
+| Cancel a turn | `turn.cancel()` | `client.routes.post_session_turn_cancel(sid, tid)` |
+| Cancel the running turn without its ID | No typed call | `client.routes.post_session_cancel_current(sid, body=...)` |
+| Start the oldest queued message | No typed call | `client.routes.post_session_drain_queue(sid)` |
+| Resume a paused queue | No typed call | `client.routes.post_session_resume_queue(sid)` |
+| Search sessions | No typed call | `client.routes.get_sessions_search(query=...)` |
+| List sessions | `client.list_sessions(...)` | `client.routes.get_sessions(query=...)` |
+| List the turns that a fork can keep | No typed call | `client.routes.get_session_forks(sid)` |
+| Fork a session | `session.fork(...)` | `client.routes.post_session_forks(sid, body=...)` |
+| List groups | `client.groups(...)` | `client.routes.get_session_groups(query=...)` |
+| Create a group | `client.group(...)`, `client.create_group(...)` | `client.routes.post_session_groups(body=...)` |
+| Change or archive a group | `client.update_group(...)` | `client.routes.patch_session_group(gid, body=...)` |
+| Delete a group | `client.delete_group(...)` | `client.routes.delete_session_group(gid, query=...)` |
+| Move a session to a group | `session.set_group(...)`, `client.create_session(group=...)` | `client.routes.put_session_group(sid, body=...)` |
+| Rename, star, or archive a session | `session.update(...)` | `client.routes.patch_session(sid, body=...)` |
+| Archive many sessions | No typed call | `client.routes.post_sessions_archive(body=...)` |
+| Delete a session | `session.delete()` | `client.routes.delete_session(sid)` |
+| Export a transcript | `session.transcript(format=...)` | `client.routes.get_session_transcript(sid)`, `client.routes.get_session_transcript_md(sid)`, `client.routes.get_session_transcript_html(sid)` |
+| Save a snapshot | `session.export()` | `client.routes.get_session_snapshot(sid)` |
 | Read the manifest of a snapshot | `client.snapshot_info(data)` | No generated method |
-| Restore a snapshot | `client.restore_session(data, ...)` | `post_sessions_import(query=..., content=...)` |
-| List live views | `session.live_views()` | `get_session_views_live(sid)` |
-| Read one live view or app | `session.live_view(view_id)` | `get_session_views_live_view(sid, view_id)` |
-| Read a page of a log node | No typed call | `get_session_views_live_log(sid, view_id, node_id, query=...)` |
-| Open or adopt a global app | `client.attach_app(app, owner=...)` | `post_apps(body=...)` |
-| List the global apps | `client.apps(...)` | `get_apps(query=...)` |
-| Read one global app | `client.app(view_id)` | `get_app(view_id)` |
-| Press a button in a global app | `client.app_action(view_id, action, ...)` | `post_app_actions(view_id, body=...)` |
-| Read one page of Activity history | No typed call | `get_session_activity(sid, aid, query=...)` |
-| Export the full Activity history | No typed call | `get_session_activity_export(sid, aid, query=...)` |
+| Restore a snapshot | `client.restore_session(data, ...)` | `client.routes.post_sessions_import(query=..., content=...)` |
+| List live views | `session.live_views()` | `client.routes.get_session_views_live(sid)` |
+| Read one live view or app | `session.live_view(view_id)` | `client.routes.get_session_views_live_view(sid, view_id)` |
+| Read a page of a log node | No typed call | `client.routes.get_session_views_live_log(sid, view_id, node_id, query=...)` |
+| Open or adopt a global app | `client.attach_app(app, owner=...)` | `client.routes.post_apps(body=...)` |
+| List the global apps | `client.apps(...)` | `client.routes.get_apps(query=...)` |
+| Read one global app | `client.app(view_id)` | `client.routes.get_app(view_id)` |
+| Press a button in a global app | `client.app_action(view_id, action, ...)` | `client.routes.post_app_actions(view_id, body=...)` |
+| Read one page of Activity history | No typed call | `client.routes.get_session_activity(sid, aid, query=...)` |
+| Export the full Activity history | No typed call | `client.routes.get_session_activity_export(sid, aid, query=...)` |
 
 </div>
 
@@ -204,7 +204,7 @@ print(session.id)
 ```
 
 `session_options()` checks the project path and selects the `app` channel, so the app shows the
-session. `post_sessions(body=...)` sends the same request and returns the new session as JSON. To
+session. `client.routes.post_sessions(body=...)` sends the same request and returns the new session as JSON. To
 continue a saved session, call `client.session(session_id)`. It returns a handle and creates no
 session.
 
@@ -334,7 +334,7 @@ for binding in client.session(session_id).keybindings():
     print(binding["key"], binding.get("command") or binding.get("action"), binding["extension"])
 ```
 
-`keybindings()` returns dicts, and `get_session_keybindings(session_id)` returns the same JSON.
+`keybindings()` returns dicts, and `client.routes.get_session_keybindings(session_id)` returns the same JSON.
 
 </div>
 
@@ -364,7 +364,7 @@ print(result["status"], result.get("title"))
 ```
 
 `run_keybinding(extension, key, group=None)` calls the function of the binding in the session and
-returns its result. `post_session_keybindings_run(session_id, body=...)` sends the same request.
+returns its result. `client.routes.post_session_keybindings_run(session_id, body=...)` sends the same request.
 
 </div>
 
@@ -450,9 +450,9 @@ with 400 and the code `unknown-provider`. An archived session refuses the change
 <div data-variant="python">
 
 ```python
-workspace = client.get_session_workspace(session.id)["workspace"]
+workspace = client.routes.get_session_workspace(session.id)["workspace"]
 print(workspace["root"])
-moved = client.patch_session_workspace_root(session.id, body={"path": "/Users/me/projects/api"})
+moved = client.routes.patch_session_workspace_root(session.id, body={"path": "/Users/me/projects/api"})
 print(moved["workspace"]["root"])
 ```
 
@@ -896,15 +896,15 @@ for queued in session.turns(status="queued")["turns"]:
 Without `status="queued"`, the answer contains every turn with its full content. These calls
 change the queue or stop work:
 
-- `patch_session_turn(sid, tid, body={"request": "New text"})` changes a queued message.
-- `delete_session_turn(sid, tid)` removes a queued message.
-- `turn.cancel()` or `post_session_turn_cancel(sid, tid)` cancels a turn.
-- `post_session_cancel_current(sid, body={"idempotency_key": key})` cancels the running turn when
+- `client.routes.patch_session_turn(sid, tid, body={"request": "New text"})` changes a queued message.
+- `client.routes.delete_session_turn(sid, tid)` removes a queued message.
+- `turn.cancel()` or `client.routes.post_session_turn_cancel(sid, tid)` cancels a turn.
+- `client.routes.post_session_cancel_current(sid, body={"idempotency_key": key})` cancels the running turn when
   your program lost its turn ID. The key must be the `idempotency_key` of the message that started
   the turn.
-- `post_session_resume_queue(sid)` resumes a queue that a failed turn paused. It starts the next
+- `client.routes.post_session_resume_queue(sid)` resumes a queue that a failed turn paused. It starts the next
   queued message.
-- `post_session_drain_queue(sid)` starts the oldest queued message when no turn runs.
+- `client.routes.post_session_drain_queue(sid)` starts the oldest queued message when no turn runs.
 
 </div>
 
@@ -941,7 +941,7 @@ while True:
     query = {"q": "release notes", "limit": 20}
     if after is not None:
         query["after"] = after
-    page = client.get_sessions_search(query=query)
+    page = client.routes.get_sessions_search(query=query)
     for row in page["sessions"]:
         print(row["id"], row["title"])
     if not page["has_more"]:
@@ -950,7 +950,7 @@ while True:
 ```
 
 The `query` dictionary takes the parameters of the table below. The rows have the same fields as
-the rows of `get_sessions()`. For one page of recent sessions without a search, call
+the rows of `client.routes.get_sessions()`. For one page of recent sessions without a search, call
 `client.list_sessions()`.
 
 </div>
@@ -995,7 +995,7 @@ for row in page["sessions"]:
     print(row["id"], row["title"])
 ```
 
-`get_sessions(query=...)` sends the same request.
+`client.routes.get_sessions(query=...)` sends the same request.
 
 </div>
 
@@ -1026,12 +1026,12 @@ not use yet is such a session. To find it, add `include_empty=true`.
 <div data-variant="python">
 
 ```python
-points = client.get_session_forks(session.id)["turns"]
+points = client.routes.get_session_forks(session.id)["turns"]
 fork = session.fork(through_turn_id=points[0]["turn_id"])
 print(fork.id)
 ```
 
-`get_session_forks()` lists the turns, and `fork()` returns the handle of the new session.
+`client.routes.get_session_forks()` lists the turns, and `fork()` returns the handle of the new session.
 
 </div>
 
@@ -1141,8 +1141,8 @@ delete is permanent.
 
 ```python
 scope = {"root": "/srv/projects/shop", "loose": True}
-preview = client.post_sessions_archive(body={**scope, "dry_run": True})
-result = client.post_sessions_archive(body=scope)
+preview = client.routes.post_sessions_archive(body={**scope, "dry_run": True})
+result = client.routes.post_sessions_archive(body=scope)
 print(len(result["archived"]), "archived,", len(result["working"]), "still working")
 ```
 
@@ -1282,7 +1282,7 @@ for view in client.session(session_id).live_views(placement="panel"):
     print(view.id, view.title, len(view.nodes))
 ```
 
-`live_views()` returns typed `LiveView` records. `get_session_views_live(session_id)` returns the
+`live_views()` returns typed `LiveView` records. `client.routes.get_session_views_live(session_id)` returns the
 same views as JSON in `views`. `session.live_view(view_id)` reads one view or app, also a closed
 app.
 
@@ -1401,7 +1401,7 @@ app.run(lambda event: print(event.type, event.node_id))
 `session.attach(app, *, owner, on_event=None)` returns a `LiveAttachment`. `owner` has 1 to 64
 characters of `a-z`, `0-9`, `.`, `_`, and `-`. With `key`, a second call returns the open app of
 the same owner and key. `on_event=callback` reads the events on a background thread until the app
-closes. `post_session_apps(session_id, body=...)` sends one raw envelope.
+closes. `client.routes.post_session_apps(session_id, body=...)` sends one raw envelope.
 
 </div>
 
@@ -1496,7 +1496,7 @@ vis_api "$VIS_GATEWAY_URL/v1/apps"
 <div data-variant="python">
 
 ```python
-page = client.get_session_views_live_log(
+page = client.routes.get_session_views_live_log(
     session_id, view_id, "build/log", query={"query": "error", "from": 0, "limit": 100}
 )
 for number, line in zip(page["line_numbers"], page["lines"]):
@@ -1529,7 +1529,7 @@ client.session(session_id).view_action(view_id, "interrupt", note="Stop monitori
 ```
 
 `view_action` checks the body before it sends the request.
-`post_session_view(session_id, view_id, body={"action": "interrupt", "note": "Stop monitoring"})`
+`client.routes.post_session_view(session_id, view_id, body={"action": "interrupt", "note": "Stop monitoring"})`
 sends the same request without the check.
 
 </div>
@@ -1553,7 +1553,7 @@ while after is not None:
     query = {"after": after, "limit": 32}
     if revision is not None:
         query["revision"] = revision
-    page = client.get_session_activity(session_id, activity_id, query=query)
+    page = client.routes.get_session_activity(session_id, activity_id, query=query)
     for row in page["rows"]:
         print(row)
     revision = page["history"]["revision"]
@@ -1583,7 +1583,7 @@ page.
 <div data-variant="python">
 
 ```python
-response = client.get_session_activity_export(session_id, activity_id, query={"revision": revision})
+response = client.routes.get_session_activity_export(session_id, activity_id, query={"revision": revision})
 print(response.content.decode())
 ```
 

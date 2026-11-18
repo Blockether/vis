@@ -49,11 +49,11 @@ one request.
 
 | Task | Typed call | Generated method |
 |---|---|---|
-| List slash commands | No typed call | `get_session_slashes(sid, query=...)` |
-| Run a prompt template or a skill | `session.send(request)` | `post_session_turns(sid, body=...)` |
-| Set a goal | `session.goal(objective, ...)` | `post_session_turns(sid, body=...)` |
-| Read the goal state | `session.read()` | `get_session(sid)` |
-| Pause, resume or cancel a goal | `session.send(request)` | `post_session_turns(sid, body=...)` |
+| List slash commands | No typed call | `client.routes.get_session_slashes(sid, query=...)` |
+| Run a prompt template or a skill | `session.send(request)` | `client.routes.post_session_turns(sid, body=...)` |
+| Set a goal | `session.goal(objective, ...)` | `client.routes.post_session_turns(sid, body=...)` |
+| Read the goal state | `session.read()` | `client.routes.get_session(sid)` |
+| Pause, resume or cancel a goal | `session.send(request)` | `client.routes.post_session_turns(sid, body=...)` |
 
 </div>
 
@@ -74,7 +74,7 @@ one request.
 <div data-variant="python">
 
 ```python
-commands = client.get_session_slashes(session.id, query={"channel": "tui"})["commands"]
+commands = client.routes.get_session_slashes(session.id, query={"channel": "tui"})["commands"]
 for command in commands:
     print(command["name"], command["doc"])
 ```

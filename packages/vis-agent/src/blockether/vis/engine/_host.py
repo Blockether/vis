@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import PurePosixPath
 
 from ._client import (
-    ExecutionLayer,
+    EngineClient,
     ProtocolError,
     SessionOptions,
     TransportError,
@@ -21,11 +21,11 @@ from ._client import (
 from ._local import _envelope, _LocalJobEvents, _LocalSession, _reply, _request_frame
 
 
-class HostLayer(ExecutionLayer):
-    """Execution layer that sends each SDK request through an extension host door.
+class HostLayer(EngineClient):
+    """Client that sends each SDK request through an extension host door.
 
     `call` takes one JSON request frame and returns one JSON reply envelope. The
-    extension module creates this layer; an extension does not construct it.
+    extension module creates this client; an extension does not construct it.
     Responses follow the gateway contract. Refusals raise `GatewayError`, and
     a host without a gateway raises `TransportError`. Events use polling.
     """

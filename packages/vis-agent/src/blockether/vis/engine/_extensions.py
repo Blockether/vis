@@ -310,7 +310,7 @@ class ClientExtensions:
             return
         self._draining = True
         try:
-            batch = client.get_session_client_calls(session_id)
+            batch = client.routes.get_session_client_calls(session_id)
             if (
                 not isinstance(batch, dict)
                 or set(batch) != {"calls"}
@@ -324,14 +324,14 @@ class ClientExtensions:
                     raise ProtocolError("invalid client extension call")
 
                 def publish(presentation, call_id=call["id"]):
-                    client.post_session_client_call_activity(
+                    client.routes.post_session_client_call_activity(
                         session_id, call_id, body=presentation
                     )
                     return True
 
                 result = self.dispatch(call, publish, client.session(session_id))
                 try:
-                    client.post_session_client_call_result(
+                    client.routes.post_session_client_call_result(
                         session_id, call["id"], body=result
                     )
                 except GatewayError as error:

@@ -1,6 +1,6 @@
 """Speech API: voices, synthesis and transcription through the gateway engines.
 
-Use `ExecutionLayer.speech` from the SDK, or `vis.speech` inside an extension.
+Use `EngineClient.speech` from the SDK, or `vis.speech` inside an extension.
 Both send the same canonical gateway requests.
 """
 
@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from ._client import GatewayError, ProtocolError, VisTimeout
 
 if TYPE_CHECKING:
-    from ._client import ExecutionLayer
+    from ._client import EngineClient
 
 CLONING_ENGINE = "pocket-tts-local"
 """The engine that learns a voice from a recording."""
@@ -109,13 +109,13 @@ class Speech:
     job; these methods wait for it and return the result.
     """
 
-    def __init__(self, layer: ExecutionLayer):
+    def __init__(self, layer: EngineClient):
         self._layer = layer
 
     def voices(self, engine: str | None = None) -> list[Voice]:
         """List the voices of `engine`, imported voices included."""
         reply = _object(
-            self._layer.get_speech_voices(query=_engine_query(engine)), "voices"
+            self._layer.routes.get_speech_voices(query=_engine_query(engine)), "voices"
         )
         name = str((reply.get("engine") or {}).get("id") or engine or "")
         return [_voice(entry, name) for entry in reply.get("voices") or []]
@@ -140,7 +140,7 @@ class Speech:
         if not name or not name.strip():
             raise ValueError("name must not be blank")
         reply = _object(
-            self._layer.post_speech_voices(
+            self._layer.routes.post_speech_voices(
                 content=_audio_bytes(recording),
                 query=_engine_query(engine, name=name, lang=language, text=transcript),
             ),
@@ -174,7 +174,7 @@ class Speech:
         if not body:
             raise ValueError("give name, language or transcript")
         reply = _object(
-            self._layer.patch_speech_voice(
+            self._layer.routes.patch_speech_voice(
                 voice_id, body=body, query=_engine_query(engine)
             ),
             "voice",
@@ -184,7 +184,9 @@ class Speech:
     def remove_voice(self, voice_id: str, *, engine: str = CLONING_ENGINE) -> bool:
         """Delete an imported voice. Return False when the engine has no such voice."""
         try:
-            self._layer.delete_speech_voice(voice_id, query=_engine_query(engine))
+            self._layer.routes.delete_speech_voice(
+                voice_id, query=_engine_query(engine)
+            )
         except GatewayError as error:
             if error.status == 404:
                 return False
@@ -193,7 +195,7 @@ class Speech:
 
     def voice_sample(self, voice_id: str, *, engine: str | None = None) -> bytes:
         """Return a short audio sample of a voice. Raises `GatewayError` 404 without one."""
-        return self._layer.get_speech_voice_sample(
+        return self._layer.routes.get_speech_voice_sample(
             voice_id, query=_engine_query(engine)
         ).content
 
@@ -201,8 +203,8 @@ class Speech:
         """Return the readiness of a speaking engine; `prepare=True` starts its download."""
         query = _engine_query(engine)
         if prepare:
-            return _object(self._layer.post_speech_model(query=query), "model")
-        return _object(self._layer.get_speech_model(query=query), "model")
+            return _object(self._layer.routes.post_speech_model(query=query), "model")
+        return _object(self._layer.routes.get_speech_model(query=query), "model")
 
     def speak(
         self,
@@ -237,7 +239,7 @@ class Speech:
                 response.content, _media_type(response.headers), engine, voice, seed
             )
         job = self._wait("speech", response.json(), timeout)
-        audio = self._layer.get_speech_job_audio(job["id"])
+        audio = self._layer.routes.get_speech_job_audio(job["id"])
         return SpeechAudio(
             audio.content,
             _media_type(audio.headers),
@@ -258,7 +260,7 @@ class Speech:
         Engines include `parakeet-local` and `vibevoice-asr-local`. Raises `GatewayError`
         400 for audio that is not WAV and `VisTimeout` after `timeout` seconds.
         """
-        job = self._layer.post_voice(
+        job = self._layer.routes.post_voice(
             content=_audio_bytes(audio), query=_engine_query(engine)
         )
         job = self._wait("voice", job, timeout)

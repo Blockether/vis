@@ -184,7 +184,7 @@ def test_application_extensions_identity_activity_and_session_lifetime(
             ), presentations
 
             # Recreating the engine environment must keep application objects alive.
-            client.post_session_release(session_id)
+            client.routes.post_session_release(session_id)
             # Waiting, not only event iteration, must service application calls.
             assert (
                 agent.run("Exercise the same callbacks again.", timeout=60)["status"]

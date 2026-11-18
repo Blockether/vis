@@ -101,12 +101,12 @@ test('inherited public methods link to one definition instead of repeating it', 
   try {
     const document = dom.window.document;
     const description = 'Create a conversation and return a Session handle.';
-    expect(document.getElementById('ExecutionLayer.create_session').textContent).toContain(
+    expect(document.getElementById('EngineClient.create_session').textContent).toContain(
       description,
     );
     for (const name of ['GatewayClient', 'StdioEngineClient', 'HttpLocalEngineClient']) {
       const member = document.getElementById(name + '.create_session');
-      expect(member.querySelector('a[href="#ExecutionLayer.create_session"]')).not.toBeNull();
+      expect(member.querySelector('a[href="#EngineClient.create_session"]')).not.toBeNull();
       expect(member.textContent).not.toContain(description);
       expect(member.querySelector('.attr')).toBeNull();
     }

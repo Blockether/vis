@@ -37,9 +37,9 @@ examples use it.
 
 | Task | Typed call | Generated method |
 |---|---|---|
-| Read the brand | `client.web_brand()` | `get_web_brand()` |
-| Set the brand | `client.set_web_brand(...)` | `put_web_brand(body=...)` |
-| Remove the brand | `client.clear_web_brand()` | `delete_web_brand()` |
+| Read the brand | `client.web_brand()` | `client.routes.get_web_brand()` |
+| Set the brand | `client.set_web_brand(...)` | `client.routes.put_web_brand(body=...)` |
+| Remove the brand | `client.clear_web_brand()` | `client.routes.delete_web_brand()` |
 
 </div>
 

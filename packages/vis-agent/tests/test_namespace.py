@@ -36,9 +36,9 @@ import sys
 import blockether.vis
 assert 'blockether.vis.extension' not in sys.modules
 assert 'blockether.vis._outside' not in sys.modules
-from blockether.vis.engine import ExecutionLayer, GatewayClient, HttpLocalEngineClient, StdioEngineClient
-assert issubclass(GatewayClient, ExecutionLayer)
-assert issubclass(StdioEngineClient, ExecutionLayer)
+from blockether.vis.engine import EngineClient, GatewayClient, HttpLocalEngineClient, StdioEngineClient
+assert issubclass(GatewayClient, EngineClient)
+assert issubclass(StdioEngineClient, EngineClient)
 assert issubclass(HttpLocalEngineClient, GatewayClient)
 assert GatewayClient.__name__ == 'GatewayClient'
 assert 'blockether.vis.extension' not in sys.modules

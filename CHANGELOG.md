@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Python SDK: `StdioEngineClient` replaces `LocalEngine`, and `HttpLocalEngineClient` replaces `LocalService`. `HttpLocalEngineClient()` is a client that starts or joins the shared local gateway when it connects, and `client.shutdown()` stops that gateway. `GatewayClient` stays. `Agent` takes the client as `client=`, not `execution_layer=`, and `agent.client` replaces `agent.execution_layer`. In your code, rename `LocalEngine` to `StdioEngineClient` and `execution_layer=` to `client=`.
+- Python SDK: the base class `ExecutionLayer` is now `EngineClient`. The generated methods of the gateway routes, such as `get_session_usage()` and `post_settings()`, moved from the client to `client.routes`, an object of the new class `Routes`. In your code, change `client.get_session_usage(sid)` to `client.routes.get_session_usage(sid)`. The typed calls, such as `client.create_session()`, `client.speech` and `client.sounds`, stay on the client.
+- Python SDK: a generated record type that had the name of an SDK class now ends in `Record`: `SessionRecord`, `TurnRecord`, `TranscriptRecord`, `SessionGroupRecord`, `SessionModelRecord`, `CouncilEntryRecord`, `CouncilMemberRecord` and `CouncilThreadRecord`. Before, `Session` and `Turn` were each a class and a `TypedDict`.
 
 ### Fixed
 

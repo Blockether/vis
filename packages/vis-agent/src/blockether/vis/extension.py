@@ -266,7 +266,7 @@ class Sessions:
         """Create an independent session and return its `Session`.
 
         Without `root`, the session starts in the root of the bound session. The other
-        options are the options of `ExecutionLayer.create_session`. Only an extension
+        options are the options of `EngineClient.create_session`. Only an extension
         callback can create a session.
         """
         return _host_layer().create_session(provider=provider, model=model, **options)
@@ -280,7 +280,7 @@ class Sessions:
     ) -> tuple[Any, ...]:
         """Return the `Model` records that the model pickers show, in picker order.
 
-        The filters are those of `ExecutionLayer.models`. A thread of your extension
+        The filters are those of `EngineClient.models`. A thread of your extension
         can also call it.
         """
         return _host_layer().models(provider=provider, is_available=is_available)
@@ -291,7 +291,7 @@ class Sessions:
         if search is None:
             page = layer.list_sessions()
         else:
-            page = layer.get_sessions_search(query={"q": search})
+            page = layer.routes.get_sessions_search(query={"q": search})
         return list(page.get("sessions") or [])
 
     def export(self, session_id: str | None = None) -> bytes:
@@ -316,7 +316,7 @@ class Sessions:
     ) -> Any:
         """Restore snapshot `data` as a new session and return its `Session`.
 
-        The arguments are those of `ExecutionLayer.restore_session`. Only an extension
+        The arguments are those of `EngineClient.restore_session`. Only an extension
         callback can restore a session.
         """
         return _host_layer().restore_session(
@@ -6651,7 +6651,7 @@ class _AppDoor:
     """Carry the app envelopes of one owner program over the SDK app door.
 
     `target` is a `blockether.vis.engine.Session`, whose door is
-    POST /v1/sessions/:sid/apps, or an execution layer, whose door is the global
+    POST /v1/sessions/:sid/apps, or an engine client, whose door is the global
     POST /v1/apps. `owner` names the program: the engine records the app owner as
     `sdk/<owner>`. A listener given at open starts a daemon thread that long-polls
     the events of that app.

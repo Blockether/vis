@@ -75,12 +75,12 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
       'HttpLocalEngineClient',
       'HttpLocalEngineClient.shutdown',
       'GatewayClient',
-      'ExecutionLayer',
+      'EngineClient',
     ])
       expect(document.getElementById(name), name).not.toBeNull();
     const agent = document.getElementById('Agent').textContent;
     expect(agent).toContain('client:');
-    expect(agent).toContain('ExecutionLayer');
+    expect(agent).toContain('EngineClient');
     expect(agent).toContain('extensions=()');
     expect(document.querySelector('.view-source-button')).toBeNull();
     expect(document.body.textContent).toContain('development API');

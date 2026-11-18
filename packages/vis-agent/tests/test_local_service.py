@@ -134,7 +134,7 @@ def test_second_ensure_reuses_the_running_gateway_fast(gateway):
     command, home = gateway
     with HttpLocalEngineClient(executable=command, home=home) as first:
         assert isinstance(first, GatewayClient)
-        assert first.get_capabilities()["protocol"]["protocol"] > 0
+        assert first.routes.get_capabilities()["protocol"]["protocol"] > 0
         started = time.monotonic()
         with HttpLocalEngineClient(executable=command, home=home) as second:
             assert time.monotonic() - started < 1

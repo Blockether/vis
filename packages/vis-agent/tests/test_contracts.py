@@ -1,5 +1,6 @@
 """Canonical JSON Schemas validate payloads, not parallel vocabulary catalogs."""
 
+import ast
 import inspect
 import json
 import keyword
@@ -245,6 +246,20 @@ def _camel(name):
     )
 
 
+_ENGINE = Path(__file__).parents[1] / "src/blockether/vis/engine"
+
+
+def _sdk_classes():
+    """The class names that the engine modules define, without the generated types."""
+    return {
+        node.name
+        for module in sorted(_ENGINE.glob("*.py"))
+        if module.name != "_types.py"
+        for node in ast.parse(module.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.ClassDef)
+    }
+
+
 class _Renderer:
     """Renders gateway response schemas as Python TypedDict source."""
 
@@ -254,6 +269,11 @@ class _Renderer:
         self.blocks = {}
         self.order = []
         self.document = None
+        self.classes = _sdk_classes()
+
+    def written(self, title):
+        """The name that the source gives `title`. An SDK class name gets `Record`."""
+        return title + "Record" if title in self.classes else title
 
     def target(self, ref):
         document, _, pointer = ref.partition("#")
@@ -353,16 +373,17 @@ class _Renderer:
                 else:
                     rendered = self.type_of(node, title + "Variant")
                     self.blocks[title] = _wrapped(
-                        f"{title}: TypeAlias = ", rendered, ""
+                        f"{self.written(title)}: TypeAlias = ", rendered, ""
                     )
                     self.order.append(title)
             finally:
                 self.document = outer
-        return title
+        return self.written(title)
 
     def typed_dict(self, title, node):
+        name = self.written(title)
         if self.blocks.get(title):
-            return title
+            return name
         self.blocks[title] = "pending"
         required = set(node.get("required", []))
         rows = []
@@ -375,10 +396,10 @@ class _Renderer:
                 f"        {json.dumps(key)}: {json.dumps(kind)},\n"
                 for key, kind in rows
             )
-            text = f"{title} = TypedDict(\n    {json.dumps(title)},\n    {{\n{fields}    }},\n)\n"
+            text = f"{name} = TypedDict(\n    {json.dumps(name)},\n    {{\n{fields}    }},\n)\n"
         else:
             body = "".join(_wrapped(f"{key}: ", kind, "    ") for key, kind in rows)
-            text = f"class {title}(TypedDict):\n"
+            text = f"class {name}(TypedDict):\n"
             if doc:
                 lines = textwrap.wrap(doc, 80)
                 text += (
@@ -390,7 +411,7 @@ class _Renderer:
             text += body
         self.blocks[title] = text
         self.order.append(title)
-        return title
+        return name
 
 
 def _wrapped(prefix, kind, indent):
@@ -495,7 +516,7 @@ class _EventRenderer:
         assert title not in self.renderer.blocks, title
         self.renderer.document, outer = document, self.renderer.document
         try:
-            self.renderer.typed_dict(
+            title = self.renderer.typed_dict(
                 title,
                 {
                     "description": f"The `data` of an event of type `{event_type}`.",

@@ -393,10 +393,13 @@ Neither object discovers a gateway or loads a local token. `GatewayClient` accep
 HTTPS origin with no path prefix, query, fragment, or URL credentials. TLS verification stays on,
 and the client refuses redirects. Transport options belong to the client, not to `Agent`.
 
-When the `with` block starts, `GatewayClient` calls `get_capabilities()` and checks the protocol.
-It then sends the token with each request. The client also has one generated method for each
-gateway route. The method name is the HTTP method and the words of the route path, for example
-`get_session_usage()`. Each generated method returns the parsed JSON answer.
+When the `with` block starts, `GatewayClient` reads the capabilities of the gateway and checks the
+protocol. It then sends the token with each request.
+
+Each client also has `client.routes`, with one generated method for each gateway route. The method
+name is the HTTP method and the words of the route path, for example
+`client.routes.get_session_usage(session_id)`. Each generated method returns the parsed JSON answer.
+Use a generated method only when no typed call does the task.
 
 The session uses the `app` channel, so the app on that gateway shows it. Each new `Agent` creates a
 new session. Keep the printed session ID. To resume the session
@@ -411,8 +414,8 @@ client of an `Agent`:
 
 ```python
 # session_events.py
-def recent_session_ids(layer):
-    page = layer.list_sessions(limit=20, include_empty="true")
+def recent_session_ids(client):
+    page = client.list_sessions(limit=20, include_empty="true")
     return [row["id"] for row in page["sessions"]]
 
 
@@ -648,7 +651,7 @@ identity of a live object stays in your application.
 
 A wait timeout is separate from the transport `timeout` of the client. A local pipe
 timeout stops its engine. The exit from a default local `Agent` context also stops unfinished work.
-An `Agent` with a borrowed layer leaves that layer running. A remote turn can outlive the client.
+An `Agent` with a borrowed client leaves that client running. A remote turn can outlive the client.
 
 When you retry a submission, send the same explicit `idempotency_key`. A new key means a new
 request.
@@ -662,7 +665,7 @@ from blockether.vis.engine import GatewayClient, GatewayError, ProtocolError, Tr
 
 try:
     with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as client:
-        client.get_capabilities()
+        client.routes.get_capabilities()
 except GatewayError as error:
     print("HTTP error:", error.status, error.code)
 except ProtocolError:

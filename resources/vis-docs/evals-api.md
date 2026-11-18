@@ -78,12 +78,12 @@ work, for example from a computer without the job folders.
 | Report a round | `round_report(jobs_dir, dataset_dir)` | None |
 | List the tasks of a dataset | `read_tasks(dataset)` | None |
 | Summarize a round | `round_summary(jobs_dir, dataset_dir, model=...)` | None |
-| Score a round | `bench_report(summary)` | `post_evals_report(body=...)` |
-| Find the failure causes | `diagnose(summary, labels, limits)` | `post_evals_diagnose(body=...)` |
-| Check the cause labels | `cause_check(summary, labels, limits)` | `post_evals_labels(body=...)` |
-| Check other labels | `agreement(items, ...)` | `post_evals_agreement(body=...)` |
-| Compare two runs | `compare_cases(baseline, candidate)` | `post_evals_compare(body=...)` |
-| Read the leaderboard position | `read_leaderboard(package, name, summary)` | `post_evals_leaderboard(body=...)` |
+| Score a round | `bench_report(summary)` | `client.routes.post_evals_report(body=...)` |
+| Find the failure causes | `diagnose(summary, labels, limits)` | `client.routes.post_evals_diagnose(body=...)` |
+| Check the cause labels | `cause_check(summary, labels, limits)` | `client.routes.post_evals_labels(body=...)` |
+| Check other labels | `agreement(items, ...)` | `client.routes.post_evals_agreement(body=...)` |
+| Compare two runs | `compare_cases(baseline, candidate)` | `client.routes.post_evals_compare(body=...)` |
+| Read the leaderboard position | `read_leaderboard(package, name, summary)` | `client.routes.post_evals_leaderboard(body=...)` |
 
 </div>
 

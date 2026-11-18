@@ -1,6 +1,6 @@
 """Sounds API: the sounds that the gateway machine plays for your turns.
 
-Use `ExecutionLayer.sounds` from the SDK, or `vis.sounds` inside an extension. Both
+Use `EngineClient.sounds` from the SDK, or `vis.sounds` inside an extension. Both
 change the same machine settings that Settings > Sounds shows in the Companion app and
 the TUI, so a change from one place shows in all of them.
 
@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from ._client import ProtocolError
 
 if TYPE_CHECKING:
-    from ._client import ExecutionLayer
+    from ._client import EngineClient
 
 SLOTS = ("finish", "input", "error")
 """The slots of a preset, in the order that settings show them."""
@@ -116,13 +116,15 @@ def _custom_wire(preset: SoundPreset) -> dict[str, Any]:
 class Sounds:
     """Read and change the sounds that the gateway machine plays."""
 
-    def __init__(self, layer: ExecutionLayer):
+    def __init__(self, layer: EngineClient):
         self._layer = layer
 
     def get(self) -> SoundSettings:
         """Return the current sound settings with every preset."""
-        enabled = _row(self._layer.get_setting(_ENABLED, query=_GLOBAL), _ENABLED)
-        row = _row(self._layer.get_setting(_PRESETS, query=_GLOBAL), _PRESETS)
+        enabled = _row(
+            self._layer.routes.get_setting(_ENABLED, query=_GLOBAL), _ENABLED
+        )
+        row = _row(self._layer.routes.get_setting(_PRESETS, query=_GLOBAL), _PRESETS)
         value = row.get("value")
         options = row.get("editor_options")
         if not isinstance(value, dict) or not isinstance(options, dict):
@@ -168,7 +170,7 @@ class Sounds:
             if chosen is None:
                 raise ValueError(f"no preset is called {preset.strip()}")
         if enabled is not _UNSET:
-            self._layer.post_settings(
+            self._layer.routes.post_settings(
                 body={**_GLOBAL, "id": _ENABLED, "action": "value", "value": enabled}
             )
         if current is not None and chosen is not None:
@@ -232,7 +234,7 @@ class Sounds:
         """
         if slot not in SLOTS:
             raise ValueError(f"slot must be one of {', '.join(SLOTS)}")
-        reply = self._layer.post_setting_preview(
+        reply = self._layer.routes.post_setting_preview(
             _PRESETS, body={"slot": slot, "value": _slot_value(slot, value)}
         )
         played = reply.get("is_played") if isinstance(reply, dict) else None
@@ -241,7 +243,7 @@ class Sounds:
         return played
 
     def _write(self, active: str, custom: tuple[SoundPreset, ...]) -> None:
-        self._layer.post_settings(
+        self._layer.routes.post_settings(
             body={
                 **_GLOBAL,
                 "id": _PRESETS,

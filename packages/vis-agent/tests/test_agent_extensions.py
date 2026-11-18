@@ -261,13 +261,18 @@ def test_failed_result_delivery_can_retry_without_reexecuting_callback():
     bindings = ClientExtensions([extension(record)])
     call = {"id": "one", "name": "record", "args": [], "kwargs": {}}
     client = Mock()
-    client.get_session_client_calls.return_value = {"calls": [call]}
-    client.post_session_client_call_result.side_effect = [OSError("disconnected"), {}]
+    client.routes.get_session_client_calls.return_value = {"calls": [call]}
+    client.routes.post_session_client_call_result.side_effect = [
+        OSError("disconnected"),
+        {},
+    ]
     with pytest.raises(OSError, match="disconnected"):
         bindings.drain(client, "session")
     bindings.drain(client, "session")
     assert calls == [True]
-    assert client.post_session_client_call_result.call_args_list[-1].kwargs["body"] == {
+    assert client.routes.post_session_client_call_result.call_args_list[-1].kwargs[
+        "body"
+    ] == {
         "status": "success",
         "result": 1,
     }

@@ -45,13 +45,13 @@ examples use it.
 
 | Task | Method |
 |---|---|
-| Read the settings of a target | `get_settings(query=...)` |
-| Read one setting | `get_setting(id, query=...)` |
-| Change one setting | `post_settings(body=...)` |
-| Change many settings at once | `patch_settings(body=...)` |
+| Read the settings of a target | `client.routes.get_settings(query=...)` |
+| Read one setting | `client.routes.get_setting(id, query=...)` |
+| Change one setting | `client.routes.post_settings(body=...)` |
+| Change many settings at once | `client.routes.patch_settings(body=...)` |
 | Read or save the machine name | `machine_name()`, `set_machine_name(name)` |
 | Read, save, or lock the agent name | `agent_name()`, `set_agent_name(name, locked=...)` |
-| Reload extensions | `post_extensions_reload(body=...)` |
+| Reload extensions | `client.routes.post_extensions_reload(body=...)` |
 
 </div>
 
@@ -114,7 +114,7 @@ never loaded has a group with no rows.
 <div data-variant="python">
 
 ```python
-catalog = client.get_settings(query={"scope": "session", "target_id": session_id})
+catalog = client.routes.get_settings(query={"scope": "session", "target_id": session_id})
 def show(rows, depth=0):
     for row in rows:
         value = row.get("enabled", row.get("value"))
@@ -124,10 +124,10 @@ def show(rows, depth=0):
 for group in catalog["groups"]:
     show(group["toggles"])
 
-print(client.get_setting("agent_name")["value"])
+print(client.routes.get_setting("agent_name")["value"])
 ```
 
-`get_session(session_id)` also returns the resolved `agent_name` of a session. A client that
+`client.routes.get_session(session_id)` also returns the resolved `agent_name` of a session. A client that
 connects again reads the current name there.
 
 </div>
@@ -149,8 +149,8 @@ connects again reads the current name there.
 <div data-variant="python">
 
 ```python
-client.post_settings(body={"id": "agent_name", "action": "value", "value": "Ada"})
-client.post_settings(
+client.routes.post_settings(body={"id": "agent_name", "action": "value", "value": "Ada"})
+client.routes.post_settings(
     body={"scope": "session", "target_id": session_id, "id": "refusal_fallback", "action": "toggle"}
 )
 ```
@@ -178,8 +178,8 @@ rules](configuration.md#coding-agent-name) gets status 400, and the saved name d
 <div data-variant="python">
 
 ```python
-catalog = client.get_settings(query={"scope": "session", "target_id": session_id})
-client.patch_settings(
+catalog = client.routes.get_settings(query={"scope": "session", "target_id": session_id})
+client.routes.patch_settings(
     body={
         "scope": "session",
         "target_id": session_id,
@@ -301,7 +301,7 @@ gateway refuses each change with 409. Read [One fixed name](configuration.md#one
 <div data-variant="python">
 
 ```python
-result = client.post_extensions_reload(body={"scope": "project", "target_id": project_id})
+result = client.routes.post_extensions_reload(body={"scope": "project", "target_id": project_id})
 for scope in result["scopes"]:
     print(scope["scope"], scope["dirs"], scope["loaded"], scope["failed"], scope["extensions"])
 ```

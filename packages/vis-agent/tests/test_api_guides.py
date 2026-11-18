@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 from blockether.vis._contracts import schema
-from blockether.vis.engine import GatewayClient
+from blockether.vis.engine import Routes
 
 _DOCS = Path(__file__).parents[3] / "resources/vis-docs"
 _ROUTES = schema("gateway")["x-vis-routes"]
 _ROUTE = re.compile(r"\b(GET|POST|PATCH|PUT|DELETE) (/v1/[^\s`?)]*)")
-# SDK routes that a typed handle serves, not a generated `GatewayClient` method.
+# SDK routes that a typed handle serves, not a generated `Routes` method.
 _TYPED = {
     ("GET", "/v1/events"): "events",
     ("GET", "/v1/sessions/:/council"): "council",
@@ -45,9 +45,9 @@ def _audiences():
 
 
 def _sdk_methods():
-    """The `GatewayClient` method of each route, read from the method docstring."""
+    """The `Routes` method of each route, read from the method docstring."""
     methods = {}
-    for name, member in inspect.getmembers(GatewayClient, inspect.isfunction):
+    for name, member in inspect.getmembers(Routes, inspect.isfunction):
         words = (member.__doc__ or "").split()
         if len(words) >= 2 and words[1].startswith("/v1/"):
             methods[(words[0], _shape(words[1]))] = name

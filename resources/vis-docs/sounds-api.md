@@ -42,11 +42,11 @@ examples use it.
 
 | Task | Typed call | Generated method |
 |---|---|---|
-| Read the presets | `client.sounds.get()` | `get_setting(id)` |
-| Turn on sounds or choose a preset | `client.sounds.set(...)` | `post_settings(body=...)` |
-| Save your own preset | `client.sounds.save_preset(...)` | `post_settings(body=...)` |
-| Delete your own preset | `client.sounds.delete_preset(name)` | `post_settings(body=...)` |
-| Preview a sound | `client.sounds.preview(slot, value)` | `post_setting_preview(id, body=...)` |
+| Read the presets | `client.sounds.get()` | `client.routes.get_setting(id)` |
+| Turn on sounds or choose a preset | `client.sounds.set(...)` | `client.routes.post_settings(body=...)` |
+| Save your own preset | `client.sounds.save_preset(...)` | `client.routes.post_settings(body=...)` |
+| Delete your own preset | `client.sounds.delete_preset(name)` | `client.routes.post_settings(body=...)` |
+| Preview a sound | `client.sounds.preview(slot, value)` | `client.routes.post_setting_preview(id, body=...)` |
 
 </div>
 

@@ -125,7 +125,7 @@ class Sessions:
     @vis.method(activity=_activity("Read settings", slow=False))
     def settings(self) -> dict:
         """Call a route that extensions cannot use."""
-        return _refusal(lambda: vis._host_layer().get_settings())
+        return _refusal(lambda: vis._host_layer().routes.get_settings())
 
     @vis.method(activity=_activity("Change another session", slow=False))
     def mutate(self, session_id: str) -> dict:

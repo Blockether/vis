@@ -348,7 +348,7 @@ class ProjectSessionsMoved(TypedDict):
     count: int
 
 
-class SessionGroup(TypedDict):
+class SessionGroupRecord(TypedDict):
     id: str
     project_id: NotRequired[str | None]
     name: str
@@ -361,7 +361,7 @@ class SessionGroup(TypedDict):
 
 class SessionGroupPage(TypedDict):
     project_id: NotRequired[str | None]
-    groups: list[SessionGroup]
+    groups: list[SessionGroupRecord]
     total: NotRequired[int]
     session_total: NotRequired[int]
     limit: NotRequired[int | None]
@@ -467,7 +467,7 @@ class TurnCost(TypedDict):
     total_cost: float
 
 
-class Turn(TypedDict):
+class TurnRecord(TypedDict):
     """One turn of a session as the turn routes answer it. The engine can add fields."""
 
     turn_id: str
@@ -496,7 +496,7 @@ class QueuePausedMarker(TypedDict):
     at: NotRequired[int]
 
 
-class Session(TypedDict):
+class SessionRecord(TypedDict):
     """The wire soul of one session: its stored record and its live gateway status.
     goal is null until an explicit /goal or SDK request creates it. List rows also
     carry unread_answers and is_unread. Search rows also carry match. GET with
@@ -538,7 +538,7 @@ class Session(TypedDict):
     running_started_at: NotRequired[int]
     running_position: NotRequired[int]
     running_created_at: NotRequired[int]
-    queued_turns: NotRequired[list[Turn]]
+    queued_turns: NotRequired[list[TurnRecord]]
     queue_paused: NotRequired[None | QueuePausedMarker]
     unread_answers: NotRequired[int]
     is_unread: NotRequired[bool]
@@ -709,7 +709,7 @@ RouterPatch: TypeAlias = RouterSelection | RouterFleet
 
 
 class SessionList(TypedDict):
-    sessions: list[Session]
+    sessions: list[SessionRecord]
 
 
 class SessionCreated(TypedDict):
@@ -955,7 +955,7 @@ class CouncilReplyState(TypedDict):
     reply_entry_id: NotRequired[CouncilEntryId]
 
 
-class CouncilEntry(TypedDict):
+class CouncilEntryRecord(TypedDict):
     thread_id: CouncilEntryId
     group_id: str | None
     content: str
@@ -975,21 +975,21 @@ CouncilCursor: TypeAlias = int
 
 
 class CouncilEntryPage(TypedDict):
-    entries: list[CouncilEntry]
+    entries: list[CouncilEntryRecord]
     after: CouncilCursor
     has_more: bool
 
 
-class CouncilMember(TypedDict):
+class CouncilMemberRecord(TypedDict):
     session_id: str
     title: str
     state: Literal["running", "queued", "held"]
 
 
-CouncilMembers: TypeAlias = list[CouncilMember]
+CouncilMembers: TypeAlias = list[CouncilMemberRecord]
 
 
-class CouncilThread(TypedDict):
+class CouncilThreadRecord(TypedDict):
     thread_id: CouncilEntryId
     title: str
     author_session_id: str
@@ -997,13 +997,13 @@ class CouncilThread(TypedDict):
 
 
 class CouncilThreadPage(TypedDict):
-    entries: list[CouncilThread]
+    entries: list[CouncilThreadRecord]
     after: CouncilCursor
     has_more: bool
 
 
 class TurnQueueStep(TypedDict):
-    turn: Turn | None
+    turn: TurnRecord | None
 
 
 SessionEventType: TypeAlias = Literal[
@@ -1078,7 +1078,7 @@ class SessionForkTurns(TypedDict):
 
 
 class SessionWrapped(TypedDict):
-    session: Session
+    session: SessionRecord
 
 
 class SessionFsOpen(TypedDict):
@@ -1174,7 +1174,7 @@ class SessionModelPairVariant2(TypedDict):
 SessionModelPair: TypeAlias = None | SessionModelPairVariant2
 
 
-class SessionModel(TypedDict):
+class SessionModelRecord(TypedDict):
     model: SessionModelPair
     default: SessionModelPair
 
@@ -1266,7 +1266,7 @@ class Forgotten(TypedDict):
 SessionSuggestions: TypeAlias = list[JSONValue]
 
 
-class Transcript(TypedDict):
+class TranscriptRecord(TypedDict):
     turns: list[dict[str, JSONValue]]
     total: int
     offset: int
@@ -1274,7 +1274,7 @@ class Transcript(TypedDict):
 
 
 class TurnList(TypedDict):
-    turns: list[Turn]
+    turns: list[TurnRecord]
     queue_paused: NotRequired[None | QueuePausedMarker]
 
 
@@ -1333,7 +1333,7 @@ class SessionArchive(TypedDict):
 
 class SessionSearch(TypedDict):
     query: NotRequired[str]
-    sessions: list[Session]
+    sessions: list[SessionRecord]
     total: NotRequired[int]
     limit: NotRequired[int]
     has_more: bool
@@ -2768,7 +2768,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/router": "RouterFleet",
     "GET /v1/session-groups": "SessionGroupPage",
     "GET /v1/sessions": "SessionList",
-    "GET /v1/sessions/:sid": "Session",
+    "GET /v1/sessions/:sid": "SessionRecord",
     "GET /v1/sessions/:sid/activity/:aid": "ActivityPage",
     "GET /v1/sessions/:sid/agents/:child-id/timeline": "AgentTimeline",
     "GET /v1/sessions/:sid/alert": "SessionAlert",
@@ -2777,7 +2777,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/sessions/:sid/context": "SessionContext",
     "GET /v1/sessions/:sid/council": "CouncilBinding",
     "GET /v1/sessions/:sid/council/entries": "CouncilEntryPage",
-    "GET /v1/sessions/:sid/council/entries/:entry-id": "CouncilEntry",
+    "GET /v1/sessions/:sid/council/entries/:entry-id": "CouncilEntryRecord",
     "GET /v1/sessions/:sid/council/members": "CouncilMembers",
     "GET /v1/sessions/:sid/council/threads": "CouncilThreadPage",
     "GET /v1/sessions/:sid/events-since": "SessionEvents",
@@ -2785,16 +2785,16 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/sessions/:sid/fs/file": "FilePreview",
     "GET /v1/sessions/:sid/iterations/:iid/attachments/:idx/link": "AttachmentLink",
     "GET /v1/sessions/:sid/keybindings": "KeybindingList",
-    "GET /v1/sessions/:sid/model": "SessionModel",
+    "GET /v1/sessions/:sid/model": "SessionModelRecord",
     "GET /v1/sessions/:sid/resources": "SessionResources",
     "GET /v1/sessions/:sid/resources/logs": "SessionResourceLogs",
     "GET /v1/sessions/:sid/seq": "SessionSeq",
     "GET /v1/sessions/:sid/slashes": "SessionSlashes",
     "GET /v1/sessions/:sid/speech/jobs/:job-id": "VoiceJob",
     "GET /v1/sessions/:sid/suggest": "SessionSuggestions",
-    "GET /v1/sessions/:sid/transcript": "Transcript",
+    "GET /v1/sessions/:sid/transcript": "TranscriptRecord",
     "GET /v1/sessions/:sid/turns": "TurnList",
-    "GET /v1/sessions/:sid/turns/:tid": "Turn",
+    "GET /v1/sessions/:sid/turns/:tid": "TurnRecord",
     "GET /v1/sessions/:sid/turns/:tid/attachments": "TurnAttachments",
     "GET /v1/sessions/:sid/turns/:tid/trace": "TurnTrace",
     "GET /v1/sessions/:sid/usage": "SessionUsage",
@@ -2817,10 +2817,10 @@ RESPONSE_TYPES: dict[str, str] = {
     "PATCH /v1/projects/:pid": "Project",
     "PATCH /v1/projects/:pid/sessions": "ProjectSessionsMoved",
     "PATCH /v1/router": "RouterPatch",
-    "PATCH /v1/session-groups/:gid": "SessionGroup",
-    "PATCH /v1/sessions/:sid": "Session",
-    "PATCH /v1/sessions/:sid/model": "SessionModel",
-    "PATCH /v1/sessions/:sid/turns/:tid": "Turn",
+    "PATCH /v1/session-groups/:gid": "SessionGroupRecord",
+    "PATCH /v1/sessions/:sid": "SessionRecord",
+    "PATCH /v1/sessions/:sid/model": "SessionModelRecord",
+    "PATCH /v1/sessions/:sid/turns/:tid": "TurnRecord",
     "PATCH /v1/sessions/:sid/workspace/root": "SessionWorkspace",
     "PATCH /v1/settings": "Settings",
     "PATCH /v1/speech/voices/:voice-id": "SpeechVoice",
@@ -2865,7 +2865,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "POST /v1/providers/:provider-id/auth/start": "ProviderAuth",
     "POST /v1/providers/:provider-id/logout": "ProviderAuth",
     "POST /v1/providers/:provider-id/reset-credits/consume": "ProviderResetOutcome",
-    "POST /v1/session-groups": "SessionGroup",
+    "POST /v1/session-groups": "SessionGroupRecord",
     "POST /v1/sessions": "SessionCreated",
     "POST /v1/sessions/:sid/agents": "AgentSpawned",
     "POST /v1/sessions/:sid/agents/answer": "AgentRecords",
@@ -2881,8 +2881,8 @@ RESPONSE_TYPES: dict[str, str] = {
     "POST /v1/sessions/:sid/cancel-current": "TurnCancel",
     "POST /v1/sessions/:sid/client-calls/:call_id/activity": "EmptyObject",
     "POST /v1/sessions/:sid/client-calls/:call_id/result": "EmptyObject",
-    "POST /v1/sessions/:sid/council/entries": "CouncilEntry",
-    "POST /v1/sessions/:sid/council/wake": "CouncilEntry",
+    "POST /v1/sessions/:sid/council/entries": "CouncilEntryRecord",
+    "POST /v1/sessions/:sid/council/wake": "CouncilEntryRecord",
     "POST /v1/sessions/:sid/drain-queue": "TurnQueueStep",
     "POST /v1/sessions/:sid/forks": "SessionWrapped",
     "POST /v1/sessions/:sid/fs/actions/open": "SessionFsOpen",
@@ -2891,12 +2891,12 @@ RESPONSE_TYPES: dict[str, str] = {
     "POST /v1/sessions/:sid/resources/stop": "SessionResourceStop",
     "POST /v1/sessions/:sid/resume-queue": "TurnQueueStep",
     "POST /v1/sessions/:sid/speech": "VoiceJob",
-    "POST /v1/sessions/:sid/turns": "Turn",
+    "POST /v1/sessions/:sid/turns": "TurnRecord",
     "POST /v1/sessions/:sid/turns/:tid/cancel": "TurnCancel",
     "POST /v1/sessions/:sid/views/:view-id/actions": "ViewOutcome",
     "POST /v1/sessions/:sid/voice": "VoiceJob",
     "POST /v1/sessions/actions/archive": "SessionArchive",
-    "POST /v1/sessions/actions/import": "Session",
+    "POST /v1/sessions/actions/import": "SessionRecord",
     "POST /v1/settings": "Setting",
     "POST /v1/settings/:id/preview": "SettingPreviewResult",
     "POST /v1/speech": "VoiceJob",
@@ -2910,7 +2910,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "PUT /v1/decisions/aliases/:alias": "DecisionAlias",
     "PUT /v1/mcp/servers/:name": "McpServer",
     "PUT /v1/sessions/:sid/client-extensions": "EmptyObject",
-    "PUT /v1/sessions/:sid/group": "Session",
+    "PUT /v1/sessions/:sid/group": "SessionRecord",
     "PUT /v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note": "AgentNote",
     "PUT /v1/sessions/:sid/read": "SessionRead",
     "PUT /v1/web/brand": "WebBrand",

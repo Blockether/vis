@@ -17,7 +17,7 @@ def test_engine_docstring_examples_use_public_api(document, monkeypatch, capsys)
     examples = re.findall(r"```python\n(.*?)\n```", inspect.getdoc(document), re.S)
     assert len(examples) == 1
 
-    layer = MagicMock(spec=engine.ExecutionLayer)
+    layer = MagicMock(spec=engine.EngineClient)
     layer._streams = set()
     layer._client_extensions = {}
     layer._closed = False

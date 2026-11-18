@@ -1,4 +1,4 @@
-"""Synchronous agent, session, execution-layer and Council APIs.
+"""Synchronous agent, session, client and Council APIs.
 
 For installation, workflows and lifecycle choices, use the
 [Python SDK guide](https://vis.blockether.com/python-sdk.html).
@@ -8,16 +8,15 @@ from ._agent import Agent, StructuredOutputError, final_answer
 from ._agents import Subagent, SubagentRecord
 from ._client import (
     Attachment,
+    EngineClient,
     Event,
     Events,
-    ExecutionLayer,
     GatewayClient,
     GatewayError,
     JobEvent,
     JobEvents,
     JSONValue,
     ProtocolError,
-    Query,
     Response,
     Session,
     SessionOptions,
@@ -38,6 +37,7 @@ from ._groups import SessionGroup
 from ._install import InstallError, ensure_installed, install
 from ._local import StdioEngineClient
 from ._models import Model, SessionModel
+from ._routes import Query, Routes
 from ._service import HttpLocalEngineClient
 from ._sounds import SoundPreset, Sounds, SoundSettings
 from ._speech import Speech, SpeechAudio, Transcript, Voice
@@ -56,7 +56,7 @@ __all__ = [
     "CouncilThread",
     "Event",
     "Events",
-    "ExecutionLayer",
+    "EngineClient",
     "GatewayClient",
     "GatewayError",
     "HttpLocalEngineClient",
@@ -68,6 +68,7 @@ __all__ = [
     "ProtocolError",
     "Query",
     "Response",
+    "Routes",
     "Session",
     "SessionGroup",
     "SessionModel",

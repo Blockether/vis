@@ -58,7 +58,7 @@ def context(env):
 _SESSION_FIXTURE = """from typing import assert_type
 
 from blockether.vis.engine import GatewayClient, Session, final_answer
-from blockether.vis.engine._types import Turn
+from blockether.vis.engine._types import TurnRecord
 
 
 def start(client: GatewayClient, project: str, group: str) -> Session:
@@ -71,7 +71,7 @@ def start(client: GatewayClient, project: str, group: str) -> Session:
 
 def answer(session: Session) -> str | None:
     rows = session.turns(status="queued")
-    assert_type(rows, list[Turn])
+    assert_type(rows, list[TurnRecord])
     assert_type(rows[0]["turn_id"], str)
     assert_type(rows[0]["created_at"], int)
     record = session.read()
@@ -231,7 +231,7 @@ def test_event_streams_have_known_types_under_pyright_strict(tmp_path):
 # A raw decoder and a local file manifest have no route schema to name.
 _UNTYPED_RETURNS = {
     ("Response", "json"): "It decodes any JSON body; the route methods name its type.",
-    ("ExecutionLayer", "snapshot_info"): "It reads the manifest of a local file.",
+    ("EngineClient", "snapshot_info"): "It reads the manifest of a local file.",
 }
 
 
@@ -239,11 +239,16 @@ def test_public_client_methods_return_known_types():
     # A public method names its return type, and a route method names its
     # generated response type, never a bare JSON value or no type (#487). Only
     # the methods in `_UNTYPED_RETURNS` can return `Any`.
-    source = Path(vis.__file__).resolve().parent / "engine" / "_client.py"
+    engine = Path(vis.__file__).resolve().parent / "engine"
+    classes = [
+        node
+        for name in ("_client.py", "_routes.py")
+        for node in ast.walk(ast.parse((engine / name).read_text(encoding="utf-8")))
+        if isinstance(node, ast.ClassDef) and not node.name.startswith("_")
+    ]
+    assert "Routes" in {node.name for node in classes}
     untyped = set()
-    for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
-        if not isinstance(node, ast.ClassDef) or node.name.startswith("_"):
-            continue
+    for node in classes:
         for method in node.body:
             if (
                 isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef)

@@ -307,7 +307,7 @@ def test_only_a_remote_gateway_that_inflates_gets_compressed_bodies(
 
     with endpoint(respond) as (url, calls):
         with remote(url) if is_remote else GatewayClient(url) as client:
-            assert client.patch_settings(body=sent) == reply
+            assert client.routes.patch_settings(body=sent) == reply
             with client.session("s").events(reconnects=0) as events:
                 assert next(events).seq == 1
         patch = next(call for call in calls if call[0] == "PATCH")
@@ -892,8 +892,8 @@ def test_dedicated_public_operations_replace_raw_call():
     with endpoint(lambda *_: (200, {"models": []})) as (url, calls):
         client = GatewayClient(url)
         assert not hasattr(client, "call")
-        assert client.get_models() == {"models": []}
-        assert client.get_provider_status("example") == {"models": []}
+        assert client.routes.get_models() == {"models": []}
+        assert client.routes.get_provider_status("example") == {"models": []}
         assert calls[-1][1] == "/v1/providers/example/status"
 
 
@@ -901,7 +901,7 @@ def test_machine_order_preserves_request_and_response():
     body = {"machine_ids": ["new", "primary"]}
     reply = {"machine_ids": ["primary", "new"]}
     with endpoint(lambda *_: (200, reply)) as (url, calls):
-        assert GatewayClient(url).post_machines_order(body=body) == reply
+        assert GatewayClient(url).routes.post_machines_order(body=body) == reply
         assert calls[-1][:2] == ("POST", "/v1/machines/order")
         assert json.loads(calls[-1][3]) == body
 
@@ -917,7 +917,7 @@ def test_settings_batch_preserves_request_and_response():
     }
     reply = {"revision": "b" * 64, "features": []}
     with endpoint(lambda *_: (200, reply)) as (url, calls):
-        assert GatewayClient(url).patch_settings(body=body) == reply
+        assert GatewayClient(url).routes.patch_settings(body=body) == reply
         assert calls[-1][:2] == ("PATCH", "/v1/settings")
         assert json.loads(calls[-1][3]) == body
 
@@ -926,7 +926,7 @@ def test_extensions_reload_preserves_request_and_response():
     body = {"scope": "project", "target_id": "example-project"}
     reply = {"loaded": 1, "failed": 0}
     with endpoint(lambda *_: (200, reply)) as (url, calls):
-        assert GatewayClient(url).post_extensions_reload(body=body) == reply
+        assert GatewayClient(url).routes.post_extensions_reload(body=body) == reply
         assert calls[-1][:2] == ("POST", "/v1/extensions/reload")
         assert json.loads(calls[-1][3]) == body
 
@@ -959,7 +959,11 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
     seen = set()
     with endpoint(lambda *_: (200, {"ok": True})) as (url, calls):
         client = GatewayClient(url)
-        for _, method in inspect.getmembers(client, inspect.ismethod):
+        # The streamed model upload stays on `GatewayClient`: only HTTP can stream.
+        for _, method in [
+            *inspect.getmembers(client.routes, inspect.ismethod),
+            *inspect.getmembers(client, inspect.ismethod),
+        ]:
             words = (method.__doc__ or "").split()
             if len(words) < 2 or (words[0], words[1]) not in expected:
                 continue
@@ -1113,7 +1117,7 @@ def test_automation_operations_preserve_path_query_and_payload(
         options = {"query": {"limit": 5}, "timeout": 7}
         if has_body:
             options["body"] = payload
-        result = getattr(GatewayClient(url), operation)(*args, **options)
+        result = getattr(GatewayClient(url).routes, operation)(*args, **options)
         assert result == {"id": "a1"}
         assert calls[-1][:2] == (method, route + "?limit=5")
         assert (json.loads(calls[-1][3]) if has_body else calls[-1][3]) == (
@@ -1201,7 +1205,7 @@ def test_a_short_outage_keeps_the_lease(monkeypatch):
         with GatewayClient(url) as client:
             assert _eventually(lambda: caps > 6), "the keepalive goes on"
             assert client._heartbeat.is_alive()
-            assert client.post_automation_run("a1") == {"id": "a1"}
+            assert client.routes.post_automation_run("a1") == {"id": "a1"}
             run = next(c for c in calls if c[1] == "/v1/automations/a1/run")
             assert _lease_of(run) == "sdk-lease"
         assert len([c for c in calls if c[:2] == ("POST", "/v1/clients")]) == 1
@@ -1229,7 +1233,7 @@ def test_a_lease_that_the_gateway_lost_is_taken_again(monkeypatch):
         try:
             restarted.set()
             assert _eventually(lambda: client._lease == "sdk-lease-2")
-            assert client.post_automation_run("a1") == {"id": "a1"}
+            assert client.routes.post_automation_run("a1") == {"id": "a1"}
             run = next(c for c in calls if c[1] == "/v1/automations/a1/run")
             assert _lease_of(run) == "sdk-lease-2"
             time.sleep(0.1)
@@ -1266,7 +1270,7 @@ def test_a_lease_past_its_ttl_is_taken_again_when_the_gateway_answers(monkeypatc
             outage.clear()
             assert _eventually(lambda: client._lease != first)
             assert client._lease == issued[-1]
-            assert client.post_automation_run("a1") == {"id": "a1"}
+            assert client.routes.post_automation_run("a1") == {"id": "a1"}
         finally:
             client.close()
 
@@ -1364,9 +1368,11 @@ def test_activity_export_rejects_marked_partial_response(incomplete):
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         if incomplete:
             with pytest.raises(ProtocolError, match="incomplete"):
-                client.get_session_activity_export("session-one", "history-one")
+                client.routes.get_session_activity_export("session-one", "history-one")
         else:
-            response = client.get_session_activity_export("session-one", "history-one")
+            response = client.routes.get_session_activity_export(
+                "session-one", "history-one"
+            )
             assert response.content == text
             assert len(response.content) > 65536
         assert len([c for c in calls if c[1] == route]) == 1
@@ -1790,7 +1796,7 @@ def test_close_from_another_thread_stops_a_polling_stream_at_once(monkeypatch):
 
     with endpoint(compatible) as (url, _), GatewayClient(url, timeout=30) as client:
         monkeypatch.setattr(
-            client, "get_session_events_since", lambda *a, **k: {"events": []}
+            client.routes, "get_session_events_since", lambda *a, **k: {"events": []}
         )
         events = _SessionPollingEvents(client.session("s"))
         closed = []

@@ -42,9 +42,9 @@ A generated method returns the JSON answer of one request.
 
 | Task | Typed call | Generated method |
 |---|---|---|
-| Read the context of a session | No typed call | `get_session_context(sid)` |
-| Read usage and cache health | No typed call | `get_session_usage(sid)` |
-| Fold settled work | `session.send(request)` | `post_session_turns(sid, body=...)` |
+| Read the context of a session | No typed call | `client.routes.get_session_context(sid)` |
+| Read usage and cache health | No typed call | `client.routes.get_session_usage(sid)` |
+| Fold settled work | `session.send(request)` | `client.routes.post_session_turns(sid, body=...)` |
 
 </div>
 
@@ -63,7 +63,7 @@ A generated method returns the JSON answer of one request.
 <div data-variant="python">
 
 ```python
-context = client.get_session_context(session.id)
+context = client.routes.get_session_context(session.id)
 budget = context["utilization"]
 print(budget["latest_measured_input_tokens"], budget["auto_compress_above"], budget["model_input_limit"])
 ```
@@ -91,7 +91,7 @@ The gateway reads every step of the session for this answer. Do not request it i
 <div data-variant="python">
 
 ```python
-usage = client.get_session_usage(session.id)["usage"]
+usage = client.routes.get_session_usage(session.id)["usage"]
 if usage:
     print(usage["input_tokens"], usage["output_tokens"], usage["cost_usd"])
     print(usage["cache_read_share_percent"], usage["health"]["budget_state"])
@@ -130,7 +130,7 @@ The answer has `usage`, and `usage` is `null` until the session has a turn.
 ```python
 turn = session.send("Fold the finished research before you start the implementation.")
 turn.wait(timeout=300)
-print(client.get_session_usage(session.id)["usage"]["fold_count"])
+print(client.routes.get_session_usage(session.id)["usage"]["fold_count"])
 ```
 
 </div>

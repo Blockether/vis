@@ -1,4 +1,4 @@
-"""One conversation using an injected execution layer or an owned local engine."""
+"""One conversation using an injected client or an owned local engine."""
 
 import json
 import math
@@ -19,7 +19,7 @@ from referencing import Registry
 from referencing.exceptions import Unresolvable
 
 from ._client import (
-    ExecutionLayer,
+    EngineClient,
     GatewayError,
     Session,
     TransportError,
@@ -382,7 +382,7 @@ def _run(
     response_model: type[ResponseModel] | None,
     max_corrections: int,
     options: dict[str, Any],
-) -> _types.Turn | ResponseModel:
+) -> _types.TurnRecord | ResponseModel:
     """Submit one turn and wait; with a response model, validate and correct it.
 
     `connect` gives the session only after the options are valid.
@@ -467,7 +467,7 @@ class Agent:
 
     Raises:
         TypeError: The supplied client does not implement
-            `blockether.vis.engine.ExecutionLayer`, an extension is unsupported, or
+            `blockether.vis.engine.EngineClient`, an extension is unsupported, or
             `tools` is not an iterable of strings.
         ValueError: A project or extension declaration is invalid, or only one of
             `provider` and `model` is given.
@@ -479,7 +479,7 @@ class Agent:
         self,
         project=".",
         *,
-        client: ExecutionLayer | None = None,
+        client: EngineClient | None = None,
         extensions=(),
         tools=None,
         provider: str | None = None,
@@ -496,8 +496,8 @@ class Agent:
             tools = list(tools)
             if not all(isinstance(name, str) for name in tools):
                 raise TypeError("tools must be an iterable of tool names")
-        if client is not None and not isinstance(client, ExecutionLayer):
-            raise TypeError("client must be an ExecutionLayer")
+        if client is not None and not isinstance(client, EngineClient):
+            raise TypeError("client must be an EngineClient")
         self._owns_client = client is None
         self.client = StdioEngineClient(root=project) if client is None else client
         self._session_options: dict[str, Any] = dict(
@@ -533,7 +533,7 @@ class Agent:
     def _mount_extensions(self, session: Session, extensions):
         if extensions.manifest:
             self.client._ensure_client_lease()
-            self.client.put_session_client_extensions(
+            self.client.routes.put_session_client_extensions(
                 session.id, body={"extensions": extensions.manifest}
             )
         self.client._client_extensions[session.id] = extensions
@@ -603,7 +603,7 @@ class Agent:
         timeout: float = 300,
         response_model: None = None,
         **options,
-    ) -> _types.Turn: ...
+    ) -> _types.TurnRecord: ...
 
     @overload
     def run(
@@ -624,7 +624,7 @@ class Agent:
         response_model: type[ResponseModel] | None = None,
         max_corrections: int = 2,
         **options,
-    ) -> _types.Turn | ResponseModel:
+    ) -> _types.TurnRecord | ResponseModel:
         """Submit a request and wait for its result in the same conversation.
 
         Without `response_model`, return the turn dictionary in contract form. Check its
@@ -650,7 +650,7 @@ class Agent:
         `attempts` say what went wrong.
 
         `timeout` is a positive finite wait deadline in seconds for the answer and any
-        corrections. It is separate from the layer's transport timeout. Submission
+        corrections. It is separate from the client's transport timeout. Submission
         options such as `provider`, `model` and `attachments` are passed unchanged to
         `send`. Corrections reuse them, except `attachments` and `idempotency_key`.
 
@@ -671,8 +671,8 @@ class Agent:
         """Detach callbacks and release only resources owned by this agent.
 
         Repeated calls are safe. The default local engine stops, and its temporary
-        session database is removed. Project file edits stay. A borrowed execution layer
-        and other agents that use it stay open. After closing, requests through this
+        session database is removed. Project file edits stay. A borrowed client and
+        other agents that use it stay open. After closing, requests through this
         agent raise `blockether.vis.engine.TransportError`.
         """
         if not self._closed:
@@ -683,7 +683,9 @@ class Agent:
                         if getattr(stream, "session", None) == self._session:
                             stream.close()
                     if self._extensions.manifest and not self.client._closed:
-                        self.client.delete_session_client_extensions(self._session.id)
+                        self.client.routes.delete_session_client_extensions(
+                            self._session.id
+                        )
             finally:
                 if self._session is not None:
                     self.client._client_extensions.pop(self._session.id, None)

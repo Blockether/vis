@@ -75,7 +75,7 @@ def test_real_local_engine(tmp_path, monkeypatch):
     with StdioEngineClient(
         executable=shlex.split(command), root=tmp_path, startup_timeout=180
     ) as engine:
-        assert engine.get_capabilities()["protocol"]["protocol"] > 0
+        assert engine.routes.get_capabilities()["protocol"]["protocol"] > 0
         session = engine.create_session(title="SDK local test", root=str(tmp_path))
         assert session.read()["id"] == session.id
         assert session.turns() == []
@@ -146,7 +146,7 @@ def test_engine_crash_reports_its_stderr(tmp_path):
         executable=[sys.executable, "-c", code], root=tmp_path
     ) as engine:
         with pytest.raises(TransportError) as failure:
-            engine.get_capabilities()
+            engine.routes.get_capabilities()
         message = str(failure.value)
         assert "the engine exited with status 5" in message
         assert message.endswith("fatal: worker pool exhausted")
@@ -169,7 +169,7 @@ def test_engine_that_died_while_idle_reports_why(tmp_path):
         engine._process.wait(timeout=5)
         # The next request writes into a closed pipe before any reply is read.
         with pytest.raises(ProtocolError) as failure:
-            engine.get_capabilities()
+            engine.routes.get_capabilities()
         message = str(failure.value)
         assert "the engine exited with status 9" in message
         assert message.endswith("fatal: idle crash")
@@ -190,7 +190,7 @@ def test_engine_stderr_never_blocks_and_errors_quote_only_its_end(tmp_path):
         executable=[sys.executable, "-c", code], root=tmp_path, startup_timeout=10
     ) as engine:
         with pytest.raises(TransportError) as failure:
-            engine.get_capabilities()
+            engine.routes.get_capabilities()
     message = str(failure.value)
     assert message.endswith(
         "the engine exited with status 7\nEngine stderr:\nlast words"
@@ -344,7 +344,7 @@ def test_request_timeout_preserves_error_and_closes_process(tmp_path):
         executable=[sys.executable, "-c", code], root=tmp_path, timeout=0.1
     ) as engine:
         with pytest.raises(VisTimeout):
-            engine.get_capabilities()
+            engine.routes.get_capabilities()
         assert engine._process.poll() is not None
 
 
@@ -356,7 +356,7 @@ def test_local_event_polling_uses_the_canonical_cursor_key(monkeypatch, tmp_path
         calls.append(query)
         return {"events": [{"type": "turn.completed", "session_id": sid, "seq": 8}]}
 
-    monkeypatch.setattr(engine, "get_session_events_since", page)
+    monkeypatch.setattr(engine.routes, "get_session_events_since", page)
     with engine.session("s").events(cursor=7) as events:
         assert next(events).seq == 8
     # The SDK follows every frame, including a turn that settled between polls.
@@ -381,8 +381,8 @@ def test_local_event_polling_has_a_bounded_idle_timeout(monkeypatch, tmp_path, k
             else {"id": "j", "phase": "running", "is_done": False}
         )
 
-    monkeypatch.setattr(engine, "get_session_events_since", page)
-    monkeypatch.setattr(engine, "get_speech_job", page)
+    monkeypatch.setattr(engine.routes, "get_session_events_since", page)
+    monkeypatch.setattr(engine.routes, "get_speech_job", page)
     with (
         engine.session("s").events()
         if kind == "session"
@@ -406,7 +406,7 @@ def test_quiet_local_event_polling_backs_off(monkeypatch, tmp_path):
         polls.append(1)
         return {"events": []}
 
-    monkeypatch.setattr(engine, "get_session_events_since", page)
+    monkeypatch.setattr(engine.routes, "get_session_events_since", page)
     with engine.session("s").events() as events:
         with pytest.raises(VisTimeout):
             next(events)
@@ -420,7 +420,7 @@ def test_invalid_local_event_does_not_advance_the_cursor(monkeypatch, tmp_path):
 
     engine = StdioEngineClient(executable="unused", root=tmp_path)
     monkeypatch.setattr(
-        engine,
+        engine.routes,
         "get_session_events_since",
         lambda *a, **k: {
             "events": [
@@ -450,7 +450,7 @@ def test_local_job_events_poll_the_canonical_resource(
         calls.append(received)
         return {"id": "j", "phase": "completed", "is_done": True}
 
-    monkeypatch.setattr(engine, f"get_{scope}{kind}_job", snapshot)
+    monkeypatch.setattr(engine.routes, f"get_{scope}{kind}_job", snapshot)
     with getattr(engine, f"{scope}{kind}_events")(*args) as events:
         result = list(events)
         assert result[0].id == "j"
@@ -497,16 +497,16 @@ def test_local_errors_preserve_the_canonical_gateway_code(tmp_path):
         executable=[sys.executable, "-c", code], root=tmp_path
     ) as engine:
         with pytest.raises(GatewayError) as failure:
-            engine.get_session("s")
+            engine.routes.get_session("s")
         assert failure.value.status == 404
         assert failure.value.code == "not_found"
 
 
 def test_clients_are_siblings_without_http_state(tmp_path):
-    from blockether.vis.engine import ExecutionLayer, GatewayClient
+    from blockether.vis.engine import EngineClient, GatewayClient
 
-    assert issubclass(StdioEngineClient, ExecutionLayer)
-    assert issubclass(GatewayClient, ExecutionLayer)
+    assert issubclass(StdioEngineClient, EngineClient)
+    assert issubclass(GatewayClient, EngineClient)
     assert not issubclass(StdioEngineClient, GatewayClient)
     engine = StdioEngineClient(root=tmp_path)
     assert engine.timeout == 30
@@ -540,7 +540,7 @@ for count, line in enumerate(sys.stdin, 1):
     ) as engine:
         assert engine._ensure_client_lease() == "local-owner"
         assert engine._ensure_client_lease() == "local-owner"
-        reply = engine.get_capabilities()
+        reply = engine.routes.get_capabilities()
         assert reply["count"] == 2
         assert reply["request"]["headers"] == {"x-vis-client-id": "local-owner"}
     with pytest.raises(TransportError, match="closed"):

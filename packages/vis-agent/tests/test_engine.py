@@ -763,14 +763,14 @@ def test_real_mcp_stdio_probe_reclaims_process(
             monkeypatch.setattr(_local, "_gateway_error", capture_error)
             if respond:
                 try:
-                    result = client.post_mcp_servers_test(body=candidate)
+                    result = client.routes.post_mcp_servers_test(body=candidate)
                 except GatewayError:
                     pytest.fail(f"MCP handshake failed: {errors}")
                 assert result["is_connected"] is True
                 assert [tool["name"] for tool in result["tools"]] == ["echo"]
             else:
                 with pytest.raises(GatewayError) as failure:
-                    client.post_mcp_servers_test(body=candidate)
+                    client.routes.post_mcp_servers_test(body=candidate)
                 assert failure.value.code == "timeout", errors
             assert marker.is_file(), "MCP fixture never started"
             pid = int(marker.read_text())
@@ -783,7 +783,7 @@ def test_real_mcp_stdio_probe_reclaims_process(
                 assert time.monotonic() < deadline, "MCP probe left its child alive"
                 time.sleep(0.01)
             assert not requests
-            assert not client.get_mcp_servers()["servers"], (
+            assert not client.routes.get_mcp_servers()["servers"], (
                 "Probe must not save a server"
             )
         finally:
@@ -999,7 +999,7 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport, engines):
         session = client.create_session(
             title="Council SDK", root=str(work), channel="app"
         )
-        project = client.post_projects(body={"name": "Council SDK"})
+        project = client.routes.post_projects(body={"name": "Council SDK"})
         session.update(project_id=project["id"])
         readonly = session.council()
         assert readonly.members() == ()
@@ -1132,7 +1132,7 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport, engines):
         )
         assert len(session.turns()) == 2
         session.delete()
-        client.delete_project(project["id"])
+        client.routes.delete_project(project["id"])
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])

@@ -10,7 +10,7 @@ from typing import Any
 class SessionGroup:
     """A named group of sessions in one project.
 
-    Get it from `ExecutionLayer.group`, `create_group` or `groups`. The record is
+    Get it from `EngineClient.group`, `create_group` or `groups`. The record is
     a snapshot of one read. ``color`` is a palette token, for example ``blue``.
     ``archived_at`` is None while the group is active.
     """

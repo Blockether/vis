@@ -48,13 +48,13 @@ request and returns its answer.
 
 | Task | Typed call | Generated method |
 |---|---|---|
-| List the voices | `client.speech.voices(engine)` | `get_speech_voices(query=...)` |
-| Add a voice | `client.speech.add_voice(recording, name, ...)` | `post_speech_voices(content=..., query=...)` |
-| Change a voice | `client.speech.update_voice(voice_id, ...)` | `patch_speech_voice(voice_id, body=...)` |
-| Remove a voice | `client.speech.remove_voice(voice_id)` | `delete_speech_voice(voice_id)` |
-| Speak text | `client.speech.speak(text, ...)` | `post_speech(body=...)`, `get_speech_job(job_id)`, `get_speech_job_audio(job_id)` |
-| Transcribe audio | `client.speech.transcribe(audio, ...)` | `post_voice(content=...)`, `get_voice_job(job_id)` |
-| Prepare an engine | `client.speech.model(engine, prepare=True)` | `post_speech_model(query=...)` |
+| List the voices | `client.speech.voices(engine)` | `client.routes.get_speech_voices(query=...)` |
+| Add a voice | `client.speech.add_voice(recording, name, ...)` | `client.routes.post_speech_voices(content=..., query=...)` |
+| Change a voice | `client.speech.update_voice(voice_id, ...)` | `client.routes.patch_speech_voice(voice_id, body=...)` |
+| Remove a voice | `client.speech.remove_voice(voice_id)` | `client.routes.delete_speech_voice(voice_id)` |
+| Speak text | `client.speech.speak(text, ...)` | `client.routes.post_speech(body=...)`, `client.routes.get_speech_job(job_id)`, `client.routes.get_speech_job_audio(job_id)` |
+| Transcribe audio | `client.speech.transcribe(audio, ...)` | `client.routes.post_voice(content=...)`, `client.routes.get_voice_job(job_id)` |
+| Prepare an engine | `client.speech.model(engine, prepare=True)` | `client.routes.post_speech_model(query=...)` |
 
 </div>
 

@@ -262,7 +262,7 @@ def test_local_layer_is_borrowed_too(tmp_path, monkeypatch):
 
 
 def test_agent_accepts_transport_independent_layer(local):
-    class InMemory(engine.ExecutionLayer):
+    class InMemory(engine.EngineClient):
         def session_options(self, project):
             return {"root": "memory:" + project, "channel": "test"}
 
@@ -287,7 +287,7 @@ def test_agent_accepts_transport_independent_layer(local):
 
 
 def test_invalid_client_is_rejected_before_default_engine(local):
-    with pytest.raises(TypeError, match="ExecutionLayer"):
+    with pytest.raises(TypeError, match="EngineClient"):
         engine.Agent(client=object())
     local.assert_not_called()
 

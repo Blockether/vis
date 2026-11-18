@@ -95,7 +95,7 @@ def read_session(target):
     """Refuse a session read without a bound Vis session and its database."""
     raise Refused(
         "vis.read_session needs a bound Vis session. Outside an extension, read the "
-        "session with the SDK client's get_session_transcript(session_id)."
+        "session with the SDK client's routes.get_session_transcript(session_id)."
     )
 
 

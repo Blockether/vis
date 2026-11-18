@@ -44,7 +44,7 @@ import os
 from blockether.vis.engine import GatewayClient
 
 with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as client:
-    listing = client.get_automations()
+    listing = client.routes.get_automations()
     print("Automations:", len(listing["automations"]))
 ```
 
@@ -68,15 +68,15 @@ or a query as a `dict`.
 
 | Task | Method |
 |---|---|
-| List automations | `get_automations()` |
-| Read one automation | `get_automation(automation_id)` |
-| Create an automation | `post_automations(body=...)` |
-| Change, pause or resume an automation | `patch_automation(automation_id, body=...)` |
-| Start a run now | `post_automation_run(automation_id)` |
-| Create a secret | `post_automation_secrets(automation_id, body=...)` |
-| List runs | `get_automation_runs(query=...)` |
-| Read one run | `get_automation_run(run_id)` |
-| Delete an automation | `delete_automation(automation_id)` |
+| List automations | `client.routes.get_automations()` |
+| Read one automation | `client.routes.get_automation(automation_id)` |
+| Create an automation | `client.routes.post_automations(body=...)` |
+| Change, pause or resume an automation | `client.routes.patch_automation(automation_id, body=...)` |
+| Start a run now | `client.routes.post_automation_run(automation_id)` |
+| Create a secret | `client.routes.post_automation_secrets(automation_id, body=...)` |
+| List runs | `client.routes.get_automation_runs(query=...)` |
+| Read one run | `client.routes.get_automation_run(run_id)` |
+| Delete an automation | `client.routes.delete_automation(automation_id)` |
 | Send a webhook | Any HTTP library, as in [Send a webhook](#send-a-webhook) |
 
 </div>
@@ -103,11 +103,11 @@ or a query as a `dict`.
 <div data-variant="python">
 
 ```python
-listing = client.get_automations()
+listing = client.routes.get_automations()
 for automation in listing["automations"]:
     print(automation["id"], automation["name"], automation["enabled"], automation["next_run_at"])
 
-automation = client.get_automation(automation_id)
+automation = client.routes.get_automation(automation_id)
 print(automation["webhook"], automation["secrets"], automation["last_run"])
 ```
 
@@ -142,7 +142,7 @@ that you set and these fields:
 <div data-variant="python">
 
 ```python
-automation = client.post_automations(
+automation = client.routes.post_automations(
     body={
         "name": "Morning review list",
         "triggers": [{"kind": "cron", "expression": "0 8 * * 1-5", "timezone": "Europe/Warsaw"}],
@@ -200,9 +200,9 @@ its `id`.
 <div data-variant="python">
 
 ```python
-client.patch_automation(automation_id, body={"enabled": False})  # pause
-client.patch_automation(automation_id, body={"enabled": True})  # resume
-client.patch_automation(
+client.routes.patch_automation(automation_id, body={"enabled": False})  # pause
+client.routes.patch_automation(automation_id, body={"enabled": True})  # resume
+client.routes.patch_automation(
     automation_id,
     body={"triggers": [{"kind": "cron", "expression": "30 7 * * 1-5", "timezone": "Europe/Warsaw"}]},
 )
@@ -234,7 +234,7 @@ with an `owner`, change the extension.
 <div data-variant="python">
 
 ```python
-run = client.post_automation_run(automation_id)
+run = client.routes.post_automation_run(automation_id)
 print(run["id"], run["status"])
 ```
 
@@ -256,7 +256,7 @@ webhook run.
 <div data-variant="python">
 
 ```python
-created = client.post_automation_secrets(automation_id, body={"kind": "webhook"})
+created = client.routes.post_automation_secrets(automation_id, body={"kind": "webhook"})
 webhook_secret = created["secret"]
 ```
 
@@ -281,11 +281,11 @@ once. A new secret replaces the old secret immediately.
 <div data-variant="python">
 
 ```python
-runs = client.get_automation_runs(query={"automation_id": automation_id, "status": "failed", "limit": 20})
+runs = client.routes.get_automation_runs(query={"automation_id": automation_id, "status": "failed", "limit": 20})
 for run in runs["runs"]:
     print(run["id"], run["trigger"], run["status"], run["error"])
 
-run = client.get_automation_run(run_id)
+run = client.routes.get_automation_run(run_id)
 print(run["answer"])
 ```
 
@@ -311,7 +311,7 @@ The list starts with the newest run. Filter it by `automation_id`, `status`, and
 <div data-variant="python">
 
 ```python
-deleted = client.delete_automation(automation_id)
+deleted = client.routes.delete_automation(automation_id)
 print(deleted["is_deleted"])
 ```
 
@@ -338,7 +338,7 @@ extension loads again. To stop its runs, pause it.
 from blockether.vis.engine import GatewayError
 
 try:
-    client.get_automation("0b8e5d7c-1f2a-4c3b-8d9e-5a6f7b8c9d0e")
+    client.routes.get_automation("0b8e5d7c-1f2a-4c3b-8d9e-5a6f7b8c9d0e")
 except GatewayError as error:
     print(error.status, error.code)  # 404 not-found
 ```
