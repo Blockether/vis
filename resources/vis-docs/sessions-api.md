@@ -103,9 +103,9 @@ Do not print or persist that ticket.
 ```python
 from uuid import uuid4
 
-capabilities = client.get_voice_live_capabilities()
+capabilities = client.routes.get_voice_live_capabilities()
 if capabilities["available"]:
-    voice = client.post_session_voice_live(session.id, body={
+    voice = client.routes.post_session_voice_live(session.id, body={
         "schema": 1,
         "client_id": str(uuid4()),
         "language": "en",
@@ -150,9 +150,9 @@ Reading it never restores audio, replays speech or admits a request.
 <div data-variant="python">
 
 ```python
-snapshot = client.get_session_voice_live(session.id, voice_id)
+snapshot = client.routes.get_session_voice_live(session.id, voice_id)
 receipts = snapshot["receipts"]
-client.delete_session_voice_live(session.id, voice_id)
+client.routes.delete_session_voice_live(session.id, voice_id)
 ```
 
 </div>
@@ -177,7 +177,7 @@ Keep media outside durable session events. Never submit a client transcript as a
 
 <div data-variant="python">
 
-`client.get_session_voice_live_media(session.id, voice_id)` raises `ValueError` before network I/O.
+`client.routes.get_session_voice_live_media(session.id, voice_id)` raises `ValueError` before network I/O.
 The SDK has no WebSocket transport. Use a dedicated media client for this experimental protocol.
 
 </div>
