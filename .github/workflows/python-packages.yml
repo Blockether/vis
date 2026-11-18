@@ -152,7 +152,7 @@ jobs:
           assert _install._sdk_tag() == (os.environ.get('EXPECTED_TAG') or f'v{expected}'), _install._sdk_tag()
           PY
           # One pytest worker for each CPU: the suite passes when its tests run at the same time.
-          VIS_TEST_INSTALLED=1 python -m pytest "$GITHUB_WORKSPACE/packages/vis-agent/tests" -q -n auto
+          VIS_TEST_INSTALLED=1 python -m pytest "$GITHUB_WORKSPACE/packages/vis-agent/tests" -q -n auto --durations=15
       - uses: actions/upload-artifact@v6
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         with:
@@ -219,7 +219,7 @@ jobs:
         run: |
           clojure -X:deps prep
           python - <<'PY'
-          import os, shlex, subprocess
+          import os, shlex, subprocess, sys
           from pathlib import Path
           root = Path.cwd()
           cp = subprocess.check_output(['clojure', '-Spath', '-A:vis'], text=True).strip()
@@ -227,8 +227,10 @@ jobs:
           env = {**os.environ, 'VIS_TEST_INSTALLED': '1', 'VIS_TEST_LOCAL_COMMAND': shlex.join([
               'java', '--enable-native-access=ALL-UNNAMED', '--enable-preview', '-Xmx2g',
               '-cp', cp, 'clojure.main', '-m', 'com.blockether.vis.core'])}
-          # Two workers: each test starts its own engine, and an engine start uses more than one CPU.
+          # Each test starts its own engine, and an engine start uses more than one CPU.
+          # Two workers are faster on the Linux runner and slower on the macOS runner.
+          workers = '2' if sys.platform == 'linux' else '0'
           subprocess.run(['python', '-m', 'pytest', str(root / 'packages/vis-agent/tests/test_engine.py'),
-                          str(root / 'packages/vis-agent/tests/test_local.py'), '-q', '-n', '2'],
+                          str(root / 'packages/vis-agent/tests/test_local.py'), '-q', '-n', workers],
                          cwd=os.environ['RUNNER_TEMP'], env=env, check=True)
           PY
