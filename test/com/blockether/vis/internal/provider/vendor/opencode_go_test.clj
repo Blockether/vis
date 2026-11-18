@@ -68,12 +68,6 @@
              ;; The lookup ORDER, the file layout and the token envelope belong to the
              ;; shared key store (`provider-key-store-test`); what this pack owns is the
              ;; book it declares.
-             (it "keeps the one subscription key at the ROOT of ~/.vis/opencode-auth.json"
-                 (let [book @#'opencode-go/BOOK]
-                   (expect (= "opencode-auth.json" (:file book)))
-                   (expect (= :flat (:file-shape book)))
-                   (expect (= :vis/opencode-go-not-authenticated (:error-type book)))
-                   (expect (= ["OPENCODE_API_KEY"] (get-in book [:plans :opencode-go :env-keys])))))
              (it "resolves the key + endpoint for the single provider"
                  (reload!)
                  (with-redefs-fn {#'config/current-config

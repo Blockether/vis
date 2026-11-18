@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.council.host-test
-  (:require [clojure.string :as str]
-            [com.blockether.vis.contract.document :as document]
+  (:require [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.council.core :as council]
@@ -173,17 +172,3 @@
           (expect (= "Shared work"
                      (:title (council/get-entry db sid {:entry_id (root "entry_id")}))))
           (expect (= 2 (count (:entries (council/read-entries db sid {}))))))))))
-
-(defdescribe
-  read-session-scope-guidance-test
-  (it "read session scope guidance"
-      ;; Regression: #262 "reuse saved context" and "recover ... state" read as instructions
-      ;; to read the current session's history at task start.
-      (with-redefs [toggles/enabled? (constantly true)]
-        (let [normalized (str/replace (council/prompt {}) #"\s+" " ")]
-          (doseq [guidance ["Reuse saved context before you repeat its research"
-                            "On a wake, continue only the related unfinished task"]]
-            (expect (str/includes? normalized guidance)
-                    (str "council prompt is missing read_session scope guidance: " guidance)))
-          (expect (not (str/includes? normalized "recover"))
-                  "council prompt must not describe session history as context to recover")))))

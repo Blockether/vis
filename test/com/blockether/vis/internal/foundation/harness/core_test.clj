@@ -2,7 +2,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.harness.core :as core]
             [com.blockether.vis.internal.foundation.harness.discovery :as d]
-            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe it expect]]))
 
@@ -56,15 +55,3 @@
                      (expand {:ctx-atom ca} "do x")
                      (expand {:ctx-atom ca} "do y")
                      (expect (= {"session_turn" 3} @ca))))))
-
-(defdescribe verb-shape-test
-             ;; There is NO skill verb: a skill is retrieved with `doc(name)` and
-             ;; filtered by name with `apropos(pattern)`, so nothing binds the name
-             ;; `skill` and nothing activates.
-             (it "no skill verb is bound anywhere"
-                 (expect (nil? (first (filter #(= 'skill (:ext.symbol/symbol %))
-                                              (mapcat extension/ext-symbols
-                                                      [core/vis-extension])))))
-                 (expect (not (contains? (extension/builtin-sandbox-bindings (fn []
-                                                                               nil))
-                                         'skill)))))

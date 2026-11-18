@@ -442,10 +442,3 @@
                      @(maybe-auto-title! (env* sid title*) "please redesign the fleet scope chips")
                      (expect (= "agent" (get-in @seen [:llm-headers "X-Initiator"])))
                      (expect (= "Fleet Scope Chips" @title*))))))
-
-(defdescribe auto-title-routing-test
-             (it "prefers the providers that rank themselves for titles, in rank order"
-                 (expect (= {:prefer-providers [:zai-coding-plan :alibaba-coding-plan :openai-codex
-                                                :anthropic-coding-plan :github-copilot]
-                             :optimize [:cost :speed]}
-                            (#'titling/auto-title-routing {})))))

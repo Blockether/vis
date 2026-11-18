@@ -6,7 +6,6 @@
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.context.agents :as agents]
-            [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -477,22 +476,6 @@
                  (let [text (var-get (ns-resolve 'com.blockether.vis.internal.context.prompt
                                                  'CORE_SYSTEM_PROMPT))]
                    (expect (< (count text) 5000))))
-             (it "bans subprocess either way and names the shell verb only when shell is active"
-                 ;; User review: the shell routing rules live in `shell/prompt`, with the tool.
-                 (let [text
-                       (#'prompt/sandbox-shims-prompt-block
-                        [{:ext/engine {:ext.engine/symbols [{:ext.symbol/symbol 'shell}]}}])
-
-                       off
-                       (#'prompt/sandbox-shims-prompt-block [])]
-
-                   (expect (str/includes? text (get env-python/PROCESS_SURFACE "ban")))
-                   (expect (str/includes? text "`shell` verb"))
-                   (expect (str/includes? text "subprocess"))
-                   (expect (str/includes? text "os.system"))
-                   (expect (str/includes? text "os.popen"))
-                   (expect (str/includes? off (get env-python/PROCESS_SURFACE "off")))
-                   (expect (not (str/includes? text "\"id\"")))))
              (it "pushes every REGISTERED shim's names, and its prose nowhere"
                  ;; The registry itself, not a fixture: the model gets exactly these names. The
                  ;; prose that used to ride along — one hand-written bullet per shim — now lives

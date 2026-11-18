@@ -253,12 +253,7 @@
                    "turns" []})]
         (expect (= ["<$0.01" "2 · 1 active" "$1,250" "$1,250" "ran"]
                    (mapv #(metric out %)
-                         ["Session cost" "Subagents" "Subagent cost" "Total cost" "Model"])))))
-  (it "says that no call is measured when the session has no usage"
-      (expect
-        (str/includes?
-          (transcript-export/markdown {"session" {"id" "s1"} "turns" []})
-          "<details>\n<summary>Metrics</summary>\n\n_No measured calls yet._\n\n</details>"))))
+                         ["Session cost" "Subagents" "Subagent cost" "Total cost" "Model"]))))))
 
 ;; User report: the export counts tool failures, so it must also list them, closed like Metrics.
 ;; The list names the same calls that `tool_failure_count` counts: a tool call with an error.

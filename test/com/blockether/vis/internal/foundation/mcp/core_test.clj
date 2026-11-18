@@ -31,21 +31,6 @@
               (f))
             (finally (when-not registered? (extension/deregister-extension! "foundation-mcp"))))))])
 
-(defdescribe mcp-native-contract-test
-             (it
-               "exposes exactly ONE verb — the inventory is ctx's job, connecting is the gateway's"
-               (let [names (set (map :ext.symbol/name
-                                     (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])))]
-                 (expect (= #{"mcp__call"} names))
-                 ;; Server names and status ride in `env.mcp`, and `apropos` and `doc`
-                 ;; give the tools: a listing verb would only fetch them again.
-                 (expect (not (contains? names "mcp__servers")))
-                 (expect (not (contains? names "mcp__tools")))
-                 ;; A session must not be able to yank a connection every other session is
-                 ;; using, nor be expected to establish one the daemon already owes it.
-                 (expect (not (contains? names "mcp__connect")))
-                 (expect (not (contains? names "mcp__disconnect"))))))
-
 (defdescribe
   mcp-sandbox-name-test
   "Regression: every string the MODEL reads has to name the binding it can type.

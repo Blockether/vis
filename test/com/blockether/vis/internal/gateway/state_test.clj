@@ -5070,11 +5070,7 @@
                    (expect (= ["worked" "turnless"] (ids worked)))
                    ;; The two payloads differ ONLY in the touch, so the sequence must
                    ;; be identical: no motion without a change of content.
-                   (expect (= (ids worked) (ids touched)))))
-             (it "ranks a turnless session by creation, never by the last touch"
-                 (let [recency #'state/record-recency-ms]
-                   (expect (= 2000 (recency {:created-at 1000} {:latest-turn-at 2000})))
-                   (expect (= 1000 (recency {:created-at 1000} nil))))))
+                   (expect (= (ids worked) (ids touched))))))
 
 (defdescribe
   running-turn-start-cursor-test

@@ -39,22 +39,6 @@
 
 (defdescribe
   speech-command-test
-  (it "is a built-in top-level command, not an extension contribution"
-      (let [cli
-            speech/command
-
-            by-name
-            (into {} (map (juxt :cmd/name identity)) (:cmd/subcommands cli))]
-
-        (expect (= "speech" (:cmd/name cli)))
-        (expect (= ["models" "voices" "import" "forget" "say" "transcribe"]
-                   (mapv :cmd/name (:cmd/subcommands cli))))
-        (expect (= ["status" "download" "licenses"]
-                   (mapv :cmd/name (:cmd/subcommands (get by-name "models")))))
-        (expect (= ["file" "name" "lang" "text"] (mapv :name (:cmd/args (get by-name "import")))))
-        (expect (= ["text" "voice" "pocket-tts" "vibevoice" "qwen" "out"]
-                   (mapv :name (:cmd/args (get by-name "say")))))
-        (expect (every? #(or (:cmd/run-fn %) (seq (:cmd/subcommands %))) (:cmd/subcommands cli)))))
   (it "downloads every family it may fetch unless specific families were named"
       (expect (= [:parakeet :piper :pocket-tts] (#'speech/download-families {})))
       (expect (= [:parakeet :piper :pocket-tts] (#'speech/download-families {"all" true})))

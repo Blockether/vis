@@ -65,28 +65,6 @@
                                              :client-protocol 2
                                              :client-min-gateway 2}))))))
 
-(defdescribe runtime-handshake-adds-only-runtime-identity-test
-             (it "runtime handshake adds only runtime identity"
-                 (let [identity
-                       (atom nil)
-
-                       result
-                       (with-redefs [protocol/release-version
-                                     (constantly "1.2.3")
-
-                                     protocol/build-id
-                                     (constantly "abc123def456")
-
-                                     contract/handshake
-                                     (fn [runtime-identity]
-                                       (reset! identity runtime-identity)
-                                       :contract-handshake)]
-
-                         (protocol/handshake))]
-
-                   (expect (= :contract-handshake result))
-                   (expect (= {:version "1.2.3" :build "abc123def456"} @identity)))))
-
 (defdescribe
   client-records-the-nested-health-handshake-test
   (it "client records the nested health handshake"

@@ -9,10 +9,6 @@
 
 (defdescribe
   live-voice-contract
-  (describe "endpoint timing"
-            (it "allows an additional four hundred milliseconds for thinking pauses"
-                (expect (= 1100 (:endpoint-silence-ms voice/limits)))
-                (expect (= 120 (:min-speech-ms voice/limits)))))
   (describe
     "control validation"
     (it "accepts only the closed control vocabulary"

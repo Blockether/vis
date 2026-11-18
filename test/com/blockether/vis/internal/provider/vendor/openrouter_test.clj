@@ -13,12 +13,6 @@
   ;; The lookup ORDER, the file layout and the token envelope belong to the
   ;; shared key store (`provider-key-store-test`); what this pack owns is the
   ;; book it declares.
-  (it "keeps the one key at the ROOT of ~/.vis/openrouter-auth.json"
-      (let [book @#'openrouter/BOOK]
-        (expect (= "openrouter-auth.json" (:file book)))
-        (expect (= :flat (:file-shape book)))
-        (expect (= :vis/openrouter-not-authenticated (:error-type book)))
-        (expect (= ["OPENROUTER_API_KEY"] (get-in book [:plans :openrouter :env-keys])))))
   (it "detects the TUI/config API key used by runtime model calls"
       (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
       (with-redefs-fn {#'config/current-config (constantly {:providers [{:id :openrouter

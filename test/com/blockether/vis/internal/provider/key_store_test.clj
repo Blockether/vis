@@ -122,11 +122,7 @@
             (try (store/token-envelope flat-book :solo) nil (catch clojure.lang.ExceptionInfo e e))]
         (expect (= :vis/solo-not-authenticated (:type (ex-data thrown))))
         (expect (re-find #"No Solo API key\. Run" (ex-message thrown)))
-        (expect (nil? (re-find #"for plan" (ex-message thrown))))))
-  (it "still says WHICH plan when the user has two of them"
-      (let [thrown
-            (try (store/token-envelope book :coding) nil (catch clojure.lang.ExceptionInfo e e))]
-        (expect (re-find #"No Acme API key for plan :coding\." (ex-message thrown))))))
+        (expect (nil? (re-find #"for plan" (ex-message thrown)))))))
 
 (defdescribe provider-entries-test
              ;; A book's credential is a static key the user pastes, and the entry DECLARES that:

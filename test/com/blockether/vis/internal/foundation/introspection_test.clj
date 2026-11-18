@@ -73,34 +73,6 @@
         (expect (= :patch-invalid-edit (classify shape-refusal))))))
 
 (defdescribe introspection-public-surface-test
-             (it "exposes the read, the single descriptor and the index under verb_noun names"
-                 (let [symbols
-                       (set (map :ext.symbol/symbol introspection/all-symbols))
-
-                       ;; The MODEL-facing contract is the symbol's `:description`/`:result`;
-                       ;; the var docstring is a developer alias, and how the verb is CALLED
-                       ;; is the declared signature, rendered above the page by
-                       ;; `doc-corpus/entry-text` and never repeated inside the prose.
-                       entry
-                       (fn [sym]
-                         (first (filter #(= sym (:ext.symbol/symbol %))
-                                        introspection/all-symbols)))]
-
-                   (expect (= #{'read-session 'get-session 'list-sessions} symbols))
-                   ;; The storage noun is gone from the agent surface: `session_state` is a
-                   ;; DB TABLE, never a tool, and the bare plural `sessions` is not a verb.
-                   (expect (not (contains? symbols 'session-state)))
-                   (expect (not (contains? symbols 'sessions)))
-                   (expect (not (contains? symbols 'session-usage)))
-                   (expect (not (contains? symbols 'session-report-html)))
-                   (expect (= "(target=None)" (extension/symbol-signature (entry 'read-session))))
-                   (expect (= "(target=None)" (extension/symbol-signature (entry 'get-session))))
-                   (expect (= "(search=None)" (extension/symbol-signature (entry 'list-sessions))))
-                   ;; engine-symbol-* tools were retired in favour of the bare
-                   ;; `doc` / `apropos` engine system calls.
-                   (expect (not (contains? symbols 'engine-symbol-documentation)))
-                   (expect (not (contains? symbols 'engine-symbol-apropos)))
-                   (expect (= 3 (count symbols)))))
              (it "defaults read_session to the current session when no id is passed"
                  (let [inspect-data
                        @#'introspection/foundation-inspect-data

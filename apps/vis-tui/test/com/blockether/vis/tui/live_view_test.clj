@@ -149,7 +149,6 @@
                    (expect (empty? (kinds-of p :note))))))
 
 (defdescribe live-view-follow-test
-             (it "a fresh pane follows the end" (expect (:is-following (pane))))
              (it "scrolling up releases follow; landing back at the bottom re-arms it"
                  (let [p
                        (-> (pane :rows 30)

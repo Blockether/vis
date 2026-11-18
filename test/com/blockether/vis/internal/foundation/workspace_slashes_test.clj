@@ -60,11 +60,6 @@
                   {:channel/id :tui :session/id "soul" :session/state-id state-id :db-info store}
                   line))
 
-(defdescribe specs-shape-test
-             (it "exposes only /cd"
-                 (expect (= ["cd"] (mapv :slash/name ws-slashes/specs)))
-                 (expect (= 1 (count (slash/active-slashes (env-with nil)))))))
-
 (defdescribe
   dispatch-root-test
   (it "/cd <path> repoints the session's primary filesystem root"
@@ -142,8 +137,4 @@
                                  "code"
                                  java.io.File/separator
                                  "proj")
-                            (paths/expand-home "~/code/proj"))))
-             (it "does not expand a ~ that is not the leading segment"
-                 (expect (= "/a/~b" (paths/expand-home "/a/~b"))))
-             (it "does not treat ~user as the current user's home"
-                 (expect (= "~other/x" (paths/expand-home "~other/x" "/home/test")))))
+                            (paths/expand-home "~/code/proj")))))

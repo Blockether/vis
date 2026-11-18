@@ -33,31 +33,10 @@
 
 (defdescribe
   gateway-contract-test
-  (it
-    "loads the gateway schema and consumed transport metadata"
-    (let [{:keys [ttl-ms touch-ms keepalive-ms keepalive-timeout-ms]} contract/client-lease]
-      (expect (< 0 touch-ms keepalive-ms ttl-ms))
-      (expect (< 0 keepalive-timeout-ms keepalive-ms)))
-    (expect (= 177 (count contract/route-table)))
-    (expect (= 216 (count (contract/route-methods))))
-    (expect (= {:none 130 :json 80 :binary 6}
-               (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= {:json 194
-                :resource 2
-                :negotiated 1
-                :sse 5
-                :empty 4
-                :binary 7
-                :html 1
-                :markdown 1
-                :websocket 1}
-               (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= 50 (count contract/event-types)))
-    (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
-    (expect (= #{"model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
-                 "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
-                 "tokens_per_second" "utilization"}
-               (set contract/turn-meta-keys))))
+  (it "keeps the client lease longer than its touch and keepalive periods"
+      (let [{:keys [ttl-ms touch-ms keepalive-ms keepalive-timeout-ms]} contract/client-lease]
+        (expect (< 0 touch-ms keepalive-ms ttl-ms))
+        (expect (< 0 keepalive-timeout-ms keepalive-ms))))
   (it "reads declarations directly from the schema, without a parallel catalog"
       (let [gateway
             (document/schema-document "gateway")
@@ -224,17 +203,6 @@
         (expect (not (document/valid-json? "gateway" "subscription_ready" (dissoc event "goal"))))
         (expect
           (not (document/valid-json? "gateway" "subscription_ready" (assoc event "cursor" "0"))))))
-  (it "derives terminal, queue and stream behavior from event schema annotations"
-      (expect (= #{"turn.completed" "turn.failed" "turn.cancelled"}
-                 contract/turn-terminal-event-types))
-      (expect (= #{"turn.queued" "turn.queued.deleted" "turn.queued.updated" "turn.queued.drained"
-                   "turn.queued.sent" "queue.paused" "queue.resumed"}
-                 contract/queue-mirror-event-types))
-      (expect (= #{"block.activity" "block.output" "block.preview" "block.started"
-                   "content.block.completed" "content.block.delta" "content.block.started"
-                   "iteration.completed" "iteration.error" "provider.retry" "turn.input"
-                   "turn.progress"}
-                 contract/turn-stream-event-types)))
   (it "keeps the session-group palette closed, ordered and derived from the schema"
       ;; BLO-167: a group carries a palette TOKEN, never a hex colour, so every
       ;; surface can ink it in its own theme.

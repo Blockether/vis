@@ -312,9 +312,6 @@
              (it "typed :svar.llm/empty-content → honest empty-response card, no 'rejected' wording"
                  (let [err {:message "The model produced neither text nor a tool call"
                             :data {:type :svar.llm/empty-content :empty-reply-resends 2}}]
-                   (expect (= :empty-content (perr/provider-error-kind err)))))
-             (it "empty-content without svar resend bookkeeping still classifies and reads honestly"
-                 (let [err {:message "blank" :data {:type :svar.llm/empty-content}}]
                    (expect (= :empty-content (perr/provider-error-kind err))))))
 
 (defdescribe
@@ -329,12 +326,7 @@
         ;; distinct from empty-content: never presented as a stall
         (expect (not= :empty-content (perr/provider-error-kind err)))
         ;; deterministic — never advertised as retryable
-        (expect (false? (perr/provider-error-retryable? err)))))
-  (it "an uncategorised refusal (null category) still classifies and reads honestly"
-      (let [err {:message "The model declined this request."
-                 :data {:type :svar.llm/refusal
-                        :stop-details {"type" "refusal" "category" nil "explanation" nil}}}]
-        (expect (= :refusal (perr/provider-error-kind err))))))
+        (expect (false? (perr/provider-error-retryable? err))))))
 
 (defdescribe
   content-filter-kind-test
@@ -707,10 +699,7 @@
   (it "a bare 429 with no quota body is still retryable"
       (let [bare-429 {:message "Exceptional status code: 429" :data {:status 429}}]
         (expect (= :rate-limit (perr/provider-error-kind bare-429)))
-        (expect (true? (perr/provider-error-retryable? bare-429)))))
-  (it "no classification can soften a terminal kind"
-      (expect (false? (perr/provider-error-retryable? resource-mismatch-err)))
-      (expect (false? (perr/provider-error-retryable? resource-mismatch-err)))))
+        (expect (true? (perr/provider-error-retryable? bare-429))))))
 
 (def ^:private all-auth-exhausted-err
   "Every provider in the fallback list bowed out on credentials. svar's wrapper

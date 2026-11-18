@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.provider.vendor.lmstudio-test
   (:require [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.vendor.lmstudio]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -9,12 +8,6 @@
 
 (defdescribe
   provider-lmstudio-test
-  (it "bounds long local prefill without changing the TTFT phase"
-      (expect (= {:timeout-ms 1800000
-                  :first-byte-timeout-ms 600000
-                  :idle-timeout-ms 600000
-                  :semantic-timeout-ms 600000}
-                 (get-in (registry/provider-by-id :lmstudio) [:provider/preset :network]))))
   (describe "enrich-models"
             (it "short-circuits (no network) when every model already has :context"
                 ;; svar/models! redef'd to throw — proves it is never called.

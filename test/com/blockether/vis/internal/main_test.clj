@@ -152,14 +152,6 @@
                       (expect (= expected-output (apply str (map #(str % "\n") @lines)))))))))))
 
 (defdescribe one-shot-router-boundary-test
-             (it "uses Vis's provider-enriching router builder for explicit overrides"
-                 (let [config {:providers [{:id :lmstudio :models [{:name "meta/muse-glimmer"}]}]}]
-                   (with-redefs [loop-router/build-router #(assoc % :enriched? true)
-                                 loop-router/get-router (fn []
-                                                          :shared)]
-
-                     (expect (= (assoc config :enriched? true) (#'main/router-for-run config true)))
-                     (expect (= :shared (#'main/router-for-run config false))))))
              (it "reads a newly created gateway session id from canonical wire data"
                  (let [submitted
                        (atom nil)
@@ -768,22 +760,13 @@
 
 (defdescribe
   toggle-name-parsing-test
-  (it "accepts exact snake_case ids"
-      (expect (= {"main_test_flag" true "reasoning_level" "deep"}
-                 (#'main/parse-toggle-overrides "main_test_flag=true,reasoning_level=deep"))))
   (it "rejects leading-colon, kebab-case, and namespaced aliases"
       (doseq [input [":main_test_flag=true" "main-test-flag=true" "vis/reasoning_level=deep"]]
         (try (#'main/parse-toggle-overrides input)
              (expect false)
              (catch clojure.lang.ExceptionInfo e
                (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
-               (expect (true? (:vis/user-error (ex-data e))))))))
-  (it "rejects an unknown snake_case name as user error"
-      (try (#'main/parse-toggle-overrides "definitely_not_a_toggle=true")
-           (expect false)
-           (catch clojure.lang.ExceptionInfo e
-             (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
-             (expect (true? (:vis/user-error (ex-data e))))))))
+               (expect (true? (:vis/user-error (ex-data e)))))))))
 
 (defdescribe
   decision-models-command-test

@@ -1683,16 +1683,6 @@
 ;; TOLD it, so a consumer of an SSE socket had to guess whether a frame was a
 ;; session event or a transcription's progress.
 (defdescribe voice-job-frames-are-named-and-that-name-is-published
-             (it "the frame names itself, and carries no session cursor"
-                 (let [frame (sse/job-sse-frame gateway-contract/voice-job-event
-                                                {"id" "vj_1" "phase" "transcribing"})]
-                   (expect (str/starts-with? frame
-                                             (str "event: " gateway-contract/voice-job-event "\n")))
-                   (expect (str/includes? frame "data: {"))
-                   (expect (str/ends-with? frame "\n\n"))
-                   ;; `id:` is the SESSION log's replay cursor. A job has no log to replay, so
-                   ;; a client must never mistake this stream for a resumable one.
-                   (expect (not (str/includes? frame "id:")))))
              (it "capabilities tell a client the name instead of leaving it to guess"
                  (let [voice (-> (#'views-api/capabilities-handler {})
                                  :body

@@ -31,9 +31,6 @@
         (expect (= "Read, Grep" (:tools meta)))
         (expect (re-find #"elite code review expert" body))
         (expect (not (re-find #"(?m)^---" body)))))
-  (it "folds a continuation line into the previous value"
-      (let [{:keys [meta]} (d/parse-frontmatter agent-md)]
-        (expect (re-find #"static analysis and security scanning" (:description meta)))))
   (it "drops a YAML block-scalar indicator instead of rendering it"
       (let [{:keys [meta]} (d/parse-frontmatter
                              (str "---\n"

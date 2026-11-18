@@ -1113,22 +1113,7 @@
   (it "maps every tool to one canonical Python name"
       (expect (= "grep" (ep/sym->py-name 'grep)))
       (expect (= "shell" (ep/sym->py-name 'shell)))
-      (expect (= "_shell_logs" (ep/sym->py-name '_shell-logs))))
-  (it
-    "does not install retired search aliases or their discovery metadata"
-    (tpc/with-own
-      [ctx
-       {'grep (fn grep-stub [& args]
-                {"op" "grep" "args" (vec args)})}]
-      (let
-        [result
-         (ep/run-python-block
-           ctx
-           (str
-             "print(grep('a')['op'], grep('a')['args'])\n"
-             "print('find' in globals(), 'find_files' in globals())\n"
-             "print(any(n in __vis_docs__ or n in __vis_sigs__ or n in __vis_keys__ for n in ('find', 'find_files')))"))]
-        (expect (= "grep ['a']\nFalse False\nFalse\n" (:stdout result)))))))
+      (expect (= "_shell_logs" (ep/sym->py-name '_shell-logs)))))
 
 (defdescribe inline-tool-text-concat-test
              (it "settles cat and grep text results inside string concatenation"

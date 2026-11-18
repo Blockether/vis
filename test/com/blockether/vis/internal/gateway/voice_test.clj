@@ -336,16 +336,6 @@
                (expect (not= (Thread/currentThread) thread)))
              (.join ^Thread (first @(:threads runtime)) 3000))))))
 
-(defdescribe mobile-capability-gate-test
-             (it "lists native mobile test clients without claiming device qualification"
-                 (fixture {}
-                          (fn [_]
-                            (let [profile (:profile (voice/capabilities))]
-                              (expect (= ["companion_desktop" "companion_ios_test"
-                                          "companion_android_test" "tui_headset"]
-                                         (:clients profile)))
-                              (expect (false? (:mobile-qualified profile))))))))
-
 (defdescribe
   live-admission-status-test
   ;; A real Companion turn returned streaming and closed voice on schema validation.

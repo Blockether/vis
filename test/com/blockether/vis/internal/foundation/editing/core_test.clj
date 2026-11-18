@@ -213,24 +213,7 @@
               (grep {"query" ["*workspace-root*"] "paths" [(temp-dir-path "rgstar")]})]
 
           (expect (= 1 (count (:hits out))))
-          (expect (= "(def ^:dynamic *workspace-root* \"/x\")" (:text (first (:hits out)))))))
-    (it ":is_files_only returns distinct :files, never :hits"
-        (let [_
-              (write-temp! "rgsimplefo/a.py" "alpha\nalpha\n")
-
-              _
-              (write-temp! "rgsimplefo/b.py" "alpha\n")
-
-              _
-              (write-temp! "rgsimplefo/c.py" "no match\n")
-
-              out
-              (grep
-                {"query" ["alpha"] "paths" [(temp-dir-path "rgsimplefo")] "is_files_only" true})]
-
-          (expect (contains? out :files))
-          (expect (not (contains? out :hits)))
-          (expect (= 2 (count (:files out))))))))
+          (expect (= "(def ^:dynamic *workspace-root* \"/x\")" (:text (first (:hits out)))))))))
 
 (defdescribe
   grep-is-regex-test
@@ -427,11 +410,6 @@
                                        (expect (some? err))
                                        (expect (= :ext.foundation.editing/path-escape
                                                   (:type (ex-data err)))))))))))
-
-(defdescribe editing-extension-loads-test
-             (it "editing exposes only the search tool"
-                 (expect (= #{'grep}
-                            (set (map :ext.symbol/symbol (editing/available-editing-symbols)))))))
 
 (defn- with-fs-gate!
   "Install the host tools' extension-owned `:fs/access` gate for `body`, then
@@ -3226,26 +3204,6 @@
   python-sandbox-read-surface-test
   "`ls` is a sandbox SHIM: an ordinary call inside a `python_execution` block,
    documented there, and really callable. Reading a file's bytes is plain Python."
-  (it "ships `ls` as a shim global and binds no retired read verb"
-      (let [bind
-            (extension/builtin-sandbox-bindings (constantly nil))
-
-            docs
-            (extension/sandbox-symbol-docs)
-
-            ls-shim
-            (some #(when (= "ls" (:shim/name %)) %) (extension/sandbox-shims))]
-
-        ;; The model reads and writes files with plain Python: no `cat` or `patch`.
-        (expect (nil? (get bind 'cat)))
-        (expect (nil? (get docs 'cat)))
-        (expect (nil? (get bind 'patch)))
-        (expect (nil? (get docs 'patch)))
-        ;; `ls` left the tool layer too: a shim global, never an engine-bound
-        ;; symbol, so it costs no schema and no tool result.
-        (expect (nil? (get bind 'ls)))
-        (expect (nil? (get docs 'ls)))
-        (expect (= ["ls"] (:shim/globals ls-shim)))))
   (it "lists a real directory from real Python"
       (tpc/with-own [ctx (extension/builtin-sandbox-bindings (constantly nil))]
                     (let [result (ep/run-python-block

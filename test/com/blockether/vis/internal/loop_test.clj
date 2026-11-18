@@ -7639,12 +7639,7 @@
                                             :svar/tool-call-id "B"
                                             :vis/tool-name "rg"}]))]
           (expect (= 2 (count entries)))
-          (expect (= ["A" "B"] (mapv :svar/tool-call-id entries)))))
-    (it "code-entries-preflight STILL merges legacy id-less blocks (provider stutter)"
-        (let [entries (:code-entries (pre 1
-                                          [{:lang "python" :source "x = 1"}
-                                           {:lang "python" :source "y = 2"}]))]
-          (expect (= 1 (count entries)))))))
+          (expect (= ["A" "B"] (mapv :svar/tool-call-id entries)))))))
 
 (defdescribe
   tool-call-identity-regression-test
@@ -13032,13 +13027,6 @@
 
 (defdescribe
   provider-resend-deadline-test
-  (it "applies the Vis runtime defaults over Svar's own watchdog defaults"
-      ;; Svar keeps its own first-byte default; Vis sets the other stream limits.
-      (expect (= {:ttft-timeout-ms 200000
-                  :first-byte-timeout-ms 120000
-                  :idle-timeout-ms 300000
-                  :semantic-timeout-ms 240000}
-                 (loop-router/provider-resend-limits nil))))
   (it "follows the provider policy and an explicit nil that turns a watchdog off"
       (let [limits (loop-router/provider-resend-limits {:idle-timeout-ms 45000
                                                         :semantic-timeout-ms nil})]

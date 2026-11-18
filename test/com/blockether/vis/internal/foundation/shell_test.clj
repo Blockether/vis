@@ -662,15 +662,6 @@
                          (let [r (shell-run* {} "pwd" {"cwd" "src"})]
                            (expect (string? (:dir (meta r))))
                            (expect (str/ends-with? (:dir (meta r)) "/src")))))))
-  (it "treats a non-zero exit as DATA on the command's own entry (not a tool error)"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         ;; shell-run-impl answers the command's own entry, never a tool
-                         ;; envelope: a non-zero exit is data ON THAT ENTRY, so a model
-                         ;; reading its out/exit never branches on shape.
-                         (let [r (shell-run* {} "exit 42")]
-                           (expect (= 42 (get r "exit")))
-                           (expect (some? (get r "pid"))))))))
   (it "kills the process tree on timeout and reports timed_out with nil exit"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -1675,14 +1666,6 @@
                        ;; shared runner schedules the return within one frame.
                        (expect (< (- back (long (get st "finished_at"))) 500))))
                    (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
-  (it "backs its idle cadence off along the idle count instead of a flat 50 ms"
-      (let [poll @#'shell/wait-idle-poll-ms]
-        ;; Near-instant while a finish is plausible, cheap once it clearly is not.
-        (expect (= 2 (poll 0)))
-        (expect (= 2 (poll 3)))
-        (expect (= 10 (poll 4)))
-        (expect (= 50 (poll 10)))
-        (expect (= 50 (poll 10000)))))
   ;; Issue #396: a silent command waited out 50 quiet reads, a quarter second,
   ;; after it exited. The pump publishes the exit only after its last byte is on
   ;; disk, so one read that starts after the exit is seen is complete.

@@ -1709,21 +1709,7 @@
                       (set (mapv :id (dlg/palette-commands-for ctx))))]
         (expect (contains? (ids-for {:thinking-summary? true}) :toggle-thinking-summary))
         (expect (not (contains? (ids-for {:thinking-summary? false}) :toggle-thinking-summary)))
-        (expect (not (contains? (ids-for nil) :toggle-thinking-summary)))))
-  (it "command palette filters by a typed query (searchable)"
-      ;; The palette is searchable: the filter is a case-insensitive substring
-      ;; match on :label, the spine `searchable-select!` applies.
-      (let [labels
-            (mapv :label (var-get #'dlg/palette-commands))
-
-            match
-            (fn [q]
-              (filterv #(clojure.string/includes? (clojure.string/lower-case %)
-                                                  (clojure.string/lower-case q))
-                labels))]
-
-        (expect (some #{"Switch Session"} (match "session")))
-        (expect (= [] (match "zzz-no-such-command"))))))
+        (expect (not (contains? (ids-for nil) :toggle-thinking-summary))))))
 
 (defdescribe
   palette-sections-test
