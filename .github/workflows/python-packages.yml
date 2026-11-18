@@ -137,7 +137,7 @@ jobs:
           import re
           from pathlib import Path
           import blockether.vis.extension as vis
-          from blockether.vis.engine import GatewayClient, LocalEngine
+          from blockether.vis.engine import GatewayClient, connect, start
           from blockether.vis import _contracts
           version = (Path(os.environ['GITHUB_WORKSPACE']) / 'VIS_VERSION').read_text().strip()
           expected = os.environ.get('EXPECTED_VERSION') or version
