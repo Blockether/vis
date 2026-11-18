@@ -45,7 +45,7 @@
 
 (defonce ^:private http-client
   (delay
-    ;; HTTP/1.1 + NO accept-encoding on purpose: the loopback daemon streams
+    ;; HTTP/1.1 + NO default accept-encoding on purpose: the loopback daemon streams
     ;; plain `text/event-stream`; gzip or HTTP/2 framing would buffer the SSE
     ;; body and defeat BOTH the line reader and the idle watchdog in
     ;; `open-sse-events!`. Same babashka.http-client stack svar and every
@@ -209,7 +209,9 @@
    (serialized to JSON unless `:raw-body?` is true) and `:as` ∈
    #{:string :bytes :stream} (default :string). `:throw false`, so 4xx/5xx come
    back as a response map. A stream request asks for `text/event-stream` with
-   compression disabled so the SSE body stays byte-live."
+   compression disabled so the SSE body stays byte-live. Any other request to a
+   gateway on another machine asks for gzip; the HTTP client inflates the answer.
+   A loopback exchange stays plain: compression pays only over a network."
   [{:keys [secret remote?] :as entry} method path
    {:keys [body as timeout-ms headers raw-body?] :or {as :string timeout-ms 30000}}]
   (let [oauth?
@@ -249,7 +251,10 @@
                             (str secret))
 
                           (= as :stream)
-                          (assoc "Accept-Encoding" "identity"))}
+                          (assoc "Accept-Encoding" "identity")
+
+                          (and remote? (not= as :stream))
+                          (assoc "Accept-Encoding" "gzip"))}
         (some? body)
         (assoc :body (if raw-body? body (wire/json-str body)))
 

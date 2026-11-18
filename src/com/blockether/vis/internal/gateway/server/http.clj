@@ -25,11 +25,14 @@
    `audio/wav`, `audio/mp4`, `video/webm`, `image/heic` and
    `application/octet-stream`: a 206 answer to a `Range` request went out as gzip
    without a length, and a snapshot, which is zstd, was deflated again. A type that
-   this set does not name stays plain, which is always correct."
-  #{"application/json" "application/manifest+json" "application/vnd.vis.live+ndjson"
-    "application/wasm" "application/x-ndjson" "application/xhtml+xml" "application/xml"
-    "image/svg+xml" "text/css" "text/csv" "text/html" "text/javascript" "text/markdown" "text/plain"
-    "text/tab-separated-values" "text/xml"})
+   this set does not name stays plain, which is always correct. The `vnd.vis` types
+   are the JSON attachments of the contract: a diff, an app and a live view record.
+   `application/vnd.vis.live+json` is the older record type, which a store still has."
+  #{"application/json" "application/manifest+json" "application/vnd.vis.app+json"
+    "application/vnd.vis.diff+json" "application/vnd.vis.live+json"
+    "application/vnd.vis.live+ndjson" "application/wasm" "application/x-ndjson"
+    "application/xhtml+xml" "application/xml" "image/svg+xml" "text/css" "text/csv" "text/html"
+    "text/javascript" "text/markdown" "text/plain" "text/tab-separated-values" "text/xml"})
 
 (defn compressed-media-type?
   "True when the gateway compresses an answer of `content-type`. Parameters do not count."

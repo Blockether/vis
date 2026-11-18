@@ -7525,7 +7525,36 @@
       (let [[metrics] (codings-exchange (atom [])
                                         [["GET" "/type/200/text/plain?version=0.0.4"
                                           {"Accept-Encoding" "gzip"} nil]])]
-        (expect (= "gzip" (:coding metrics))))))
+        (expect (= "gzip" (:coding metrics)))))
+  ;; The store of a real gateway held 1920 diff attachments and 481 live view records
+  ;; of these types, 98 MB: the attachment route sent each of them plain.
+  (it "compresses a diff, an app and a live view record"
+      (let [answers (codings-exchange
+                      (atom [])
+                      (for [media-type
+                            ["application/vnd.vis.diff+json" "application/vnd.vis.app+json"
+                             "application/vnd.vis.live+json" "application/vnd.vis.live+ndjson"]]
+                        ["GET" (str "/type/200/" media-type) {"Accept-Encoding" "gzip"} nil]))]
+        (expect (= (repeat 4 "gzip") (map :coding answers))))))
+
+(defdescribe
+  a-browser-client-reads-what-the-gateway-inflates
+  ;; The Companion sent each upload plain: CORS showed it `ETag` only, so it never
+  ;; saw the `Accept-Encoding: gzip` of an answer.
+  (it "shows a cross-origin client the Accept-Encoding of an answer"
+      (let [handler
+            ((rv 'wrap-cors)
+              ((rv 'wrap-request-codings)
+                (fn [_]
+                  {:status 200 :headers {} :body ""})))
+
+            headers
+            (:headers (handler
+                        {:request-method :get :uri "/x" :headers {"origin" "https://localhost"}}))]
+
+        (expect (= "gzip" (get headers "Accept-Encoding")))
+        (expect (contains? (set (str/split (get headers "Access-Control-Expose-Headers") #",\s*"))
+                           "Accept-Encoding")))))
 
 (defdescribe a-compressed-file-type-has-no-byte-ranges
              ;; A reference to a text file went out as 206 with `Content-Range` and gzip: the

@@ -12,11 +12,12 @@
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.paths :as paths])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
-           [java.io ByteArrayInputStream]
+           [java.io ByteArrayInputStream ByteArrayOutputStream]
            [java.lang ProcessHandle]
            [java.net InetSocketAddress]
            [java.nio.charset StandardCharsets]
-           [java.nio.file Files]))
+           [java.nio.file Files]
+           [java.util.zip GZIPOutputStream]))
 
 (defn- rv
   "Resolve a (possibly private) var in the client namespace for with-redefs-fn."
@@ -2268,6 +2269,64 @@
                        ;; the locally managed daemon still gets the pid its lease reaper needs
                        (expect (= (str (discovery/current-pid))
                                   (get-in @captured [:headers "X-Vis-Client-Pid"]))))))))
+
+(defdescribe
+  a-remote-request-reads-a-compressed-answer
+  (it
+    "asks a gateway on another machine for gzip and reads the plain answer"
+    (let [asked
+          (atom [])
+
+          body
+          (str "{\"text\":\"" (str/join (repeat 2000 "line ")) "\"}")
+
+          server
+          (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+
+      (.createContext
+        server
+        "/"
+        (reify
+          HttpHandler
+            (handle [_ exchange]
+              (let [^HttpExchange exchange
+                    exchange
+
+                    gzip?
+                    (str/includes? (str (.getFirst (.getRequestHeaders exchange) "Accept-Encoding"))
+                                   "gzip")
+
+                    plain
+                    (.getBytes ^String body StandardCharsets/UTF_8)
+
+                    ^bytes sent
+                    (if gzip?
+                      (let [packed (ByteArrayOutputStream.)]
+                        (with-open [out (GZIPOutputStream. packed)]
+                          (.write out plain))
+                        (.toByteArray packed))
+                      plain)]
+
+                (try (swap! asked conj gzip?)
+                     (when gzip? (.set (.getResponseHeaders exchange) "Content-Encoding" "gzip"))
+                     (.sendResponseHeaders exchange 200 (alength sent))
+                     (with-open [out (.getResponseBody exchange)]
+                       (.write out sent))
+                     (finally (.close exchange)))))))
+      (.start server)
+      (try (let [port
+                 (.getPort (.getAddress server))
+
+                 remote
+                 ((rv 'remote-entry) (str "127.0.0.1:" port) nil)]
+
+             (expect (= body (:body ((rv 'gw-send!) remote "GET" "/v1/settings" {}))))
+             ;; a loopback exchange stays plain: compression pays only over a network
+             (expect (= body
+                        (:body
+                          ((rv 'gw-send!) {:host "127.0.0.1" :port port} "GET" "/v1/settings" {}))))
+             (expect (= [true false] @asked)))
+           (finally (.stop server 0))))))
 
 (defdescribe tokenless-remote-probe-accepts-an-auth-free-gateway
              (it "tokenless remote probe accepts an auth free gateway"

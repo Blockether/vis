@@ -1625,7 +1625,9 @@
 
 (defn- wrap-timing
   "Log each request whose handler takes [[slow-request-ms]] or more. A streamed
-   body counts only until the handler returns it, so an open event stream is cheap."
+   body counts only until the handler returns it, so an open event stream is cheap.
+   The handler reads the request body, so `:request-bytes` tells a slow upload from a
+   slow handler. A gzip request body has no length."
   [handler]
   (fn [request]
     (let [start
@@ -1644,6 +1646,8 @@
                           :uri (:uri request)
                           :status (:status response)
                           :ms (Math/round ms)
+                          :request-bytes (some-> (get-in request [:headers "content-length"])
+                                                 parse-long)
                           :body-chars (response-chars (:body response))}}
                   "slow gateway request"))
       response)))
@@ -1668,8 +1672,9 @@
                                                 "Authorization, Content-Type, X-Vis-Gateway-Secret")
              ;; Without this a browser fetch can read the BODY but not the `ETag`
              ;; header, so the app could never send `If-None-Match` and every session
-             ;; list poll would re-download the whole fleet.
-             "Access-Control-Expose-Headers" "ETag"
+             ;; list poll would re-download the whole fleet. `Accept-Encoding` tells the
+             ;; app that the gateway inflates a gzip request body ([[wrap-request-codings]]).
+             "Access-Control-Expose-Headers" "ETag, Accept-Encoding"
              "Access-Control-Max-Age" "600"
              "Vary" "Origin"}
       origin

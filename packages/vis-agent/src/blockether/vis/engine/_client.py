@@ -232,6 +232,34 @@ class _Inflated:
             raise OSError("gzip answer cut short") from None
 
 
+class _InflatedLines:
+    """The lines of one gzip event stream, each given when the gateway flushes it."""
+
+    def __init__(self, raw):
+        self._raw = raw
+        self._inflate = zlib.decompressobj(31)
+        self._plain = bytearray()
+
+    def readline(self, limit: int) -> bytes:
+        while True:
+            end = self._plain.find(b"\n", 0, limit)
+            if end >= 0 or len(self._plain) >= limit:
+                size = end + 1 if end >= 0 else limit
+                line = bytes(self._plain[:size])
+                del self._plain[:size]
+                return line
+            # read1 returns the bytes that are there; it does not wait for more.
+            packed = self._inflate.unconsumed_tail or self._raw.read1(8192)
+            if not packed:
+                line = bytes(self._plain)
+                self._plain.clear()
+                return line
+            try:
+                self._plain += self._inflate.decompress(packed, limit)
+            except zlib.error:
+                raise OSError("gzip event stream is damaged") from None
+
+
 def _duration(value: float) -> float:
     if not math.isfinite(value) or value <= 0:
         raise ValueError("timeout must be positive and finite")
@@ -460,6 +488,10 @@ class ExecutionLayer(ABC):
     def _open_whole(self, method, route, **options) -> Any:
         """Run one exchange whose answer the caller reads whole, not as a stream."""
         return self._open(method, route, **options)
+
+    def _open_events(self, route, **options) -> Any:
+        """Open one event stream. The caller inflates a gzip answer line by line."""
+        return self._open("GET", route, **options)
 
     def _ensure_client_lease(self, *, pid: int | None = None) -> str:
         if self._closed:
@@ -3703,7 +3735,7 @@ class GatewayClient(ExecutionLayer):
         timeout=None,
         upload_sha256=None,
         upload_length=None,
-        is_whole=False,
+        is_inflated=False,
     ):
         if self._closed:
             raise TransportError("client is closed")
@@ -3728,8 +3760,9 @@ class GatewayClient(ExecutionLayer):
             if self._is_remote and self._inflates and len(content) >= _GZIP_MIN_BYTES:
                 content = gzip.compress(content, 6, mtime=0)
                 headers["Content-Encoding"] = "gzip"
-        # A stream stays plain: each event must arrive when the gateway writes it.
-        if is_whole and self._is_remote:
+        # Only a caller that inflates the answer asks for gzip: a whole answer, or
+        # an event stream, where the gateway flushes each event when it writes it.
+        if is_inflated and self._is_remote:
             headers["Accept-Encoding"] = "gzip"
         if upload_sha256 is not None:
             headers["Content-Type"] = "application/zip"
@@ -3764,10 +3797,13 @@ class GatewayClient(ExecutionLayer):
         return raw
 
     def _open_whole(self, method, route, **options):
-        raw = self._open(method, route, is_whole=True, **options)
+        raw = self._open(method, route, is_inflated=True, **options)
         if raw.headers.get("Content-Encoding") == "gzip":
             return _Inflated(raw)
         return raw
+
+    def _open_events(self, route, **options):
+        return self._open("GET", route, is_inflated=True, **options)
 
     def _note_codings(self, answer):
         """Record that an answer says the gateway inflates gzip request bodies."""
@@ -4854,8 +4890,8 @@ class _EventStream(Generic[_T]):
                     return
                 try:
                     route, query = self._endpoint()
-                    with self.client._open(
-                        "GET", route, query=query, timeout=self._read_timeout()
+                    with self.client._open_events(
+                        route, query=query, timeout=self._read_timeout()
                     ) as raw:
                         if not self._attach(raw):
                             return
@@ -4863,7 +4899,10 @@ class _EventStream(Generic[_T]):
                         if raw.headers.get_content_type() != "text/event-stream":
                             raise ProtocolError("expected event stream")
                         data, size, event_name = [], 0, None
-                        for line in iter(lambda: raw.readline(1048577), b""):
+                        lines = raw
+                        if raw.headers.get("Content-Encoding") == "gzip":
+                            lines = _InflatedLines(raw)
+                        while line := lines.readline(1048577):
                             if self._should_stop():
                                 return
                             if self._limit() is not None:

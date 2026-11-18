@@ -321,9 +321,67 @@ const PANEL_TTL_MS = 5 * 60 * 1000;
  *
  * The event stream has its own, longer watchdog (a live SSE body is *meant* to
  * stay open); every endpoint reached through `request` answers immediately —
- * `auth/poll` included, which the daemon documents as non-blocking.
+ * `auth/poll` included, which the daemon documents as non-blocking. The bytes of
+ * an attachment are the exception: see `TRANSFER_FLOOR_BYTES_PER_SECOND`.
  */
 const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * The slowest link on which a transfer of attachment bytes still completes:
+ * 128 KiB each second, about 1 Mbit/s.
+ *
+ * A 33 MB recording took 16.8 s to send at 2 MB each second. With the plain limit
+ * of 30 s, a link of 1 MB each second failed the same upload. A request that
+ * moves attachment bytes gets more time for each byte at this rate.
+ */
+const TRANSFER_FLOOR_BYTES_PER_SECOND = 128 * 1024;
+
+/** The deadline of one request that moves `transferBytes` bytes of an attachment. */
+function requestDeadlineMs(transferBytes: number): number {
+  return REQUEST_TIMEOUT_MS + Math.ceil((transferBytes / TRANSFER_FLOOR_BYTES_PER_SECOND) * 1000);
+}
+
+/**
+ * The gateways that said `Accept-Encoding: gzip` in an answer. Such a gateway
+ * inflates a gzip request body; an older one does not, and gets plain bytes.
+ */
+const inflatingGateways = new Set<string>();
+
+/** The floor and the ceiling of an upload that can go as gzip. The packed bytes are a second copy in memory. */
+const GZIP_UPLOAD_MIN_BYTES = 1024;
+const GZIP_UPLOAD_MAX_BYTES = 32 * 1024 * 1024;
+
+/** The part of an upload that shows if gzip makes it smaller. */
+const GZIP_SAMPLE_BYTES = 256 * 1024;
+
+/** Gzip must save this share of the bytes, or the upload goes plain. */
+const GZIP_WORTH_RATIO = 0.9;
+
+async function gzipBlob(blob: Blob): Promise<Blob> {
+  const packed = blob.stream().pipeThrough(new CompressionStream('gzip'));
+  return new Blob([await new Response(packed).arrayBuffer()], { type: blob.type });
+}
+
+/**
+ * The gzip form of an upload, or null when the plain bytes cost less.
+ *
+ * A sample from the MIDDLE decides, because a recording, a picture or an archive
+ * is compressed already: gzip took 2.3% off a 33 MB recording. The head of such
+ * a file misleads; the index tables at the start of an M4A file shrink to 37%.
+ */
+async function packedUpload(blob: Blob): Promise<Blob | null> {
+  if (typeof globalThis.CompressionStream !== 'function') return null;
+  if (blob.size < GZIP_UPLOAD_MIN_BYTES || blob.size > GZIP_UPLOAD_MAX_BYTES) return null;
+  try {
+    const from = Math.max(0, Math.floor((blob.size - GZIP_SAMPLE_BYTES) / 2));
+    const sample = blob.slice(from, from + GZIP_SAMPLE_BYTES);
+    if ((await gzipBlob(sample)).size > sample.size * GZIP_WORTH_RATIO) return null;
+    const packed = await gzipBlob(blob);
+    return packed.size <= blob.size * GZIP_WORTH_RATIO ? packed : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Bounds for ONE event-stream attempt.
@@ -1800,6 +1858,7 @@ export class GatewayClient {
     signal?: AbortSignal,
     extraHeaders?: Record<string, string>,
     urgent = false,
+    transferBytes = 0,
   ): Promise<{
     status: number;
     data: T | undefined;
@@ -1831,11 +1890,12 @@ export class GatewayClient {
     // Bound the whole exchange, not just the connect: a resumed request usually
     // parks on the BODY read, with its headers already delivered.
     const deadline = new AbortController();
-    const timer = window.setTimeout(() => deadline.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutMs = requestDeadlineMs(isRaw ? (body as Blob).size : transferBytes);
+    const timer = window.setTimeout(() => deadline.abort(), timeoutMs);
     // A caller that aborted (screen unmounted, session switched) is not a stall,
     // and must keep reporting itself as one.
     const stalled = () => deadline.signal.aborted && !signal?.aborted;
-    const seconds = Math.round(REQUEST_TIMEOUT_MS / 1000);
+    const seconds = Math.round(timeoutMs / 1000);
     const attempt = linkSignals(signal ? [signal, deadline.signal] : [deadline.signal]);
     const attemptSignal = attempt.signal;
     try {
@@ -1852,6 +1912,7 @@ export class GatewayClient {
           attemptSignal,
         );
         exchangeStatus = res.status;
+        if (/\bgzip\b/i.test(res.headers.get('Accept-Encoding') ?? '')) inflatingGateways.add(this.base);
       } catch (e) {
         throw stalled()
           ? new GatewayError(0, `gateway did not answer within ${seconds}s`)
@@ -4028,16 +4089,28 @@ export class GatewayClient {
    * that shows the attachment reads its bytes here. The copy that this device
    * sent is used first.
    */
-  async fetchAttachmentBytes(sid: string, tid: string, id: string, signal?: AbortSignal): Promise<string> {
+  async fetchAttachmentBytes(
+    sid: string,
+    tid: string,
+    id: string,
+    signal?: AbortSignal,
+    size = 0,
+  ): Promise<string> {
     const own = this.cachedSentAttachments(sid, tid)?.find((row) => row.id === id)?.base64;
     if (own) return own;
-    const res = await this.request<{ attachments?: TranscriptAttachment[] }>(
-      'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments?id=${encodeURIComponent(id)}`,
-      undefined,
-      signal,
-    );
-    const base64 = res.attachments?.find((row) => row.id === id)?.base64;
+    // The answer holds the bytes as base64: four characters for each three bytes.
+    const res = (
+      await this.requestFull<{ attachments?: TranscriptAttachment[] }>(
+        'GET',
+        `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments?id=${encodeURIComponent(id)}`,
+        undefined,
+        signal,
+        undefined,
+        false,
+        Math.ceil((size * 4) / 3),
+      )
+    ).data;
+    const base64 = res?.attachments?.find((row) => row.id === id)?.base64;
     if (!base64) throw new GatewayError(404, 'The gateway has no bytes for this attachment.');
     return base64;
   }
@@ -5715,11 +5788,17 @@ export class GatewayClient {
           filename: attachment.filename,
           media_type: attachment.media_type,
         });
-        const uploaded = await this.request<{ upload_id: string; size: number }>(
-          'POST',
-          `/v1/sessions/${encodeURIComponent(sid)}/attachments?${query.toString()}`,
-          attachmentPayloadBlob(attachment),
-        );
+        const plain = attachmentPayloadBlob(attachment);
+        const packed = inflatingGateways.has(this.base) ? await packedUpload(plain) : null;
+        const uploaded = (
+          await this.requestFull<{ upload_id: string; size: number }>(
+            'POST',
+            `/v1/sessions/${encodeURIComponent(sid)}/attachments?${query.toString()}`,
+            packed ?? plain,
+            undefined,
+            packed ? { 'Content-Encoding': 'gzip' } : undefined,
+          )
+        ).data as { upload_id: string; size: number };
         return {
           upload_id: uploaded.upload_id,
           filename: attachment.filename,

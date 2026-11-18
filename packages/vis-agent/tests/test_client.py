@@ -7,6 +7,7 @@ import io
 import json
 import threading
 import time
+import zlib
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
@@ -59,6 +60,8 @@ def endpoint(respond):
                 self.send_response(status)
                 self.send_header("Content-Type", kind)
                 self.send_header("Connection", "close")
+                for name, text in extra.items():
+                    self.send_header(name, text)
                 self.end_headers()
                 try:
                     value(self.wfile)
@@ -317,9 +320,39 @@ def test_only_a_remote_gateway_that_inflates_gets_compressed_bodies(
             assert "Content-Encoding" not in patch[2]
             assert json.loads(patch[3]) == sent
         assert ("gzip" in patch[2].get("Accept-Encoding", "")) == is_remote
-        # An event must arrive when the gateway writes it, so a stream stays plain.
         stream = next(call for call in calls if call[1].startswith("/v1/events"))
-        assert "gzip" not in stream[2].get("Accept-Encoding", "")
+        assert ("gzip" in stream[2].get("Accept-Encoding", "")) == is_remote
+
+
+def test_a_remote_event_stream_is_compressed_and_gives_each_event_when_written():
+    # The gateway sync-flushes each frame, so an event must not wait for the next.
+    release, late = threading.Event(), []
+
+    def write(out):
+        pack = zlib.compressobj(wbits=31)
+        for seq in (1, 2):
+            event = {"type": "turn.delta", "session_id": "s", "seq": seq}
+            out.write(pack.compress(frame(event)) + pack.flush(zlib.Z_SYNC_FLUSH))
+            out.flush()
+            if not release.wait(5):
+                late.append(seq)
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        asked = "gzip" in calls[-1][2].get("Accept-Encoding", "")
+        extra = {"Content-Encoding": "gzip"} if asked else {}
+        return 200, write, "text/event-stream", extra
+
+    with endpoint(respond) as (url, calls):
+        with remote(url) as client:
+            with client.session("s").events(reconnects=0) as events:
+                assert next(events).seq == 1
+                release.set()
+                assert next(events).seq == 2
+        assert not late
+        stream = next(call for call in calls if call[1].startswith("/v1/events"))
+        assert "gzip" in stream[2]["Accept-Encoding"]
 
 
 def test_a_compressed_error_answer_keeps_its_type():

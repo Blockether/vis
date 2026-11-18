@@ -1434,6 +1434,112 @@ describe('GatewayClient turn cancellation', () => {
     expect(bytes).toBe('AAAA');
   });
 
+  // Session 475b983a-62be-400c-aaf7-ff7bb4822c88: a 33 MB recording took 16.8 s to send
+  // at 2 MB each second. The limit of a request is 30 s with its body, so a link of
+  // 1 MB each second failed the same upload and the same read.
+  it('gives a large upload the time that its bytes need', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            setTimeout(
+              () => resolve(new Response(JSON.stringify({ upload_id: 'upload-1', size: 1 }))),
+              40_000,
+            );
+          }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ turn_id: 'turn-media' })));
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+
+    const outcome = new GatewayClient(conn)
+      .submitTurn('session-1', 'listen', {
+        attachments: [
+          { filename: 'talk.m4a', media_type: 'audio/mp4', base64: btoa('a'.repeat(4 * 1024 * 1024)) },
+        ],
+      })
+      .then(
+        (turn) => turn,
+        (error: Error) => error.message,
+      );
+    await vi.advanceTimersByTimeAsync(41_000);
+
+    expect(await outcome).toMatchObject({ turn_id: 'turn-media' });
+  });
+
+  it('gives the read of a large attachment the time that its bytes need', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          setTimeout(
+            () => resolve(new Response(JSON.stringify({ attachments: [{ id: 'a1', base64: 'AAAA' }] }))),
+            40_000,
+          );
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+
+    const outcome = new GatewayClient(conn)
+      .fetchAttachmentBytes('session-1', 'turn-1', 'a1', undefined, 33_208_749)
+      .then(
+        (bytes) => bytes,
+        (error: Error) => error.message,
+      );
+    await vi.advanceTimersByTimeAsync(41_000);
+
+    expect(await outcome).toBe('AAAA');
+  });
+
+  // The app sent each upload plain: it could not read that the gateway inflates gzip.
+  // A recording does not get smaller (measured: 33.21 MB to 32.44 MB), a text file does.
+  it('sends an upload as gzip only when gzip makes it smaller and the gateway inflates it', async () => {
+    const inflates = { headers: { 'Accept-Encoding': 'gzip' } };
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      String(url).includes('/attachments')
+        ? new Response(JSON.stringify({ upload_id: 'upload-1', size: 1 }), inflates)
+        : new Response(JSON.stringify({ turn_id: 'turn-1' }), inflates),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const text = 'one line of a log file\n'.repeat(20_000);
+    const noise = new Uint8Array(300 * 1024);
+    for (let at = 0; at < noise.length; at += 65_536) crypto.getRandomValues(noise.subarray(at, at + 65_536));
+    const attachments = [
+      { filename: 'notes.txt', media_type: 'text/plain', base64: btoa(text) },
+      {
+        filename: 'talk.m4a',
+        media_type: 'audio/mp4',
+        base64: btoa(Array.from(noise, (byte) => String.fromCharCode(byte)).join('')),
+      },
+    ];
+    const uploads = (filename: string) =>
+      fetchMock.mock.calls
+        .filter(([url]) => String(url).includes(`filename=${filename}`))
+        .map(([, init]) => ({
+          coding: new Headers(init?.headers).get('Content-Encoding'),
+          body: init?.body as Blob,
+        }));
+    const client = new GatewayClient(conn);
+
+    // The gateway has not answered yet: the app does not know that it inflates.
+    await client.submitTurn('session-1', 'first', { attachments });
+    await client.submitTurn('session-1', 'second', { attachments });
+
+    const [plainNotes, packedNotes] = uploads('notes.txt');
+    expect(plainNotes?.coding).toBeNull();
+    expect(packedNotes?.coding).toBe('gzip');
+    expect(packedNotes!.body.size).toBeLessThan(text.length / 10);
+    const inflated = packedNotes!.body.stream().pipeThrough(new DecompressionStream('gzip'));
+    expect(await new Response(inflated).text()).toBe(text);
+    const [, laterTalk] = uploads('talk.m4a');
+    expect(laterTalk?.coding).toBeNull();
+    expect(laterTalk?.body.size).toBe(noise.length);
+  });
+
   it('asks the gateway for a turn whose cached rows have no bytes', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

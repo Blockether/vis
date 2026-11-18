@@ -137,7 +137,7 @@ it('loads a picture whose bytes its transcript row left in the store', async () 
   await waitFor(() =>
     expect(view.container.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,iVBORw0KGgo='),
   );
-  expect(fetchAttachmentBytes).toHaveBeenCalledWith('s1', 't1', 'a1', expect.any(AbortSignal));
+  expect(fetchAttachmentBytes).toHaveBeenCalledWith('s1', 't1', 'a1', expect.any(AbortSignal), 900_000);
 });
 
 it('loads a large recording only when the reader asks for it', async () => {

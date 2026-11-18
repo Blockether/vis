@@ -4893,12 +4893,12 @@ function useStoredBytes(
   const isEager = (att: TranscriptAttachment) =>
     att.media_type.startsWith('image/') || (att.size ?? 0) <= AUTO_LOAD_ATTACHMENT_BYTES;
   const read = useCallback(
-    (id: string): Promise<string> => {
+    (id: string, size = 0): Promise<string> => {
       if (!client || !sid || !turnId) return Promise.reject(new Error('The attachment has no bytes to read.'));
       const reading = reads.current.get(id);
       if (reading) return reading;
       setStates((current) => ({ ...current, [id]: 'loading' }));
-      const next: Promise<string> = client.fetchAttachmentBytes(sid, turnId, id, abort.current?.signal).then(
+      const next: Promise<string> = client.fetchAttachmentBytes(sid, turnId, id, abort.current?.signal, size).then(
         (base64) => {
           setBytes((current) => ({ ...current, [id]: base64 }));
           return base64;
@@ -4920,17 +4920,20 @@ function useStoredBytes(
   const load = useCallback(
     (att: TranscriptAttachment): Promise<string> => {
       if (att.base64) return Promise.resolve(att.base64);
-      return att.id ? read(att.id) : Promise.reject(new Error('The attachment has no bytes to read.'));
+      return att.id ? read(att.id, att.size ?? 0) : Promise.reject(new Error('The attachment has no bytes to read.'));
     },
     [read],
   );
   const eager = attachments
     .filter((att) => canLoad(att) && isEager(att))
-    .map((att) => att.id)
+    .map((att) => `${att.id}:${att.size ?? 0}`)
     .join('|');
   useEffect(() => {
     if (!eager) return;
-    for (const id of eager.split('|')) void read(id).catch(() => {});
+    for (const row of eager.split('|')) {
+      const at = row.lastIndexOf(':');
+      void read(row.slice(0, at), Number(row.slice(at + 1))).catch(() => {});
+    }
   }, [eager, read]);
   return {
     withBytes: (att) => (!att.base64 && att.id && bytes[att.id] ? { ...att, base64: bytes[att.id] } : att),
