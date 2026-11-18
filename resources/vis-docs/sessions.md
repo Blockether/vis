@@ -44,14 +44,14 @@ Vis waits for 1,100 milliseconds of silence before it ends an utterance.
 ### Start a conversation
 
 1. In gateway settings, enable **Hands-free voice** (`hands_free_voice`). The global setting is off by default.
-2. Use the Companion in a desktop browser, or connect a headset for the TUI.
-3. In the Companion session, choose **Start hands-free voice** and allow microphone access.
-4. In the TUI, enter `/hands-free start headset` instead.
-5. Wait for **Listening**, then speak your request.
+2. Open the session in the Companion in a desktop browser.
+3. Choose **Start hands-free voice** and allow microphone access.
+4. Wait for **Listening**, then speak your request.
 
 The desktop browser requires the microphone track to report echo cancellation as enabled.
 If that setting is false or unknown, capture stops. Use dictation or text instead.
-This check does not establish acoustic quality. The TUI still requires a headset because its audio path has no echo cancellation.
+This check does not establish acoustic quality.
+The TUI has no hands-free voice. Use dictation or text there.
 
 Only one live voice session can run on the gateway. The gateway needs the local VibeVoice streaming ASR and Pocket speech models.
 If local speech is unavailable, use text or dictation. This mode does not switch to cloud speech or operating-system speech.
@@ -124,12 +124,12 @@ If you explicitly request a silent reply, Vis can show the result without speech
 
 ### Control capture, speech and tasks
 
-| Action | Companion | TUI | Effect |
-|---|---|---|---|
-| Mute input | **Mute microphone** | `/hands-free mute` | Stop capture. Speech from before the mute still becomes a request. |
-| Resume input | **Unmute microphone** | `/hands-free unmute` | Start capture again. |
-| Stop output | **Stop speech** | `/hands-free stop-speech` | Stop old speech, not the agent task. |
-| End conversation | **End voice mode** | `/hands-free end` | Close voice devices, not agent tasks. |
+| Action | Companion | Effect |
+|---|---|---|
+| Mute input | **Mute microphone** | Stop capture. Speech from before the mute still becomes a request. |
+| Resume input | **Unmute microphone** | Start capture again. |
+| Stop output | **Stop speech** | Stop old speech, not the agent task. |
+| End conversation | **End voice mode** | Close voice devices, not agent tasks. |
 
 A muted microphone cannot hear an unmute command. Use the interface to resume.
 In the Companion, **Mute speech** controls output separately. **Cancel voice task** uses normal task cancellation.

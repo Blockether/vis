@@ -441,14 +441,6 @@
                path
                opts))))
 
-(defn live-voice-uri
-  "Resolve a relative media path against the authenticated gateway target."
-  [path]
-  (when-not (and (string? path) (str/starts-with? path "/v1/") (not (re-find #"[?#]" path)))
-    (throw (ex-info "Invalid live voice media path" {})))
-  (let [base (base-url (target!))]
-    (URI. (str (str/replace-first base #"^http" "ws") path))))
-
 (defn session-usage
   "Read Companion's on-demand usage document. Empty usage is ready, not an error."
   [sid]

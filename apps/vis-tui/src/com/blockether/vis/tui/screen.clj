@@ -47,7 +47,6 @@
     [com.blockether.vis.tui.virtual :as virtual]
     [com.blockether.vis.tui.voice-input :as voice-input]
     [com.blockether.vis.tui.voice-output :as voice-output]
-    [com.blockether.vis.tui.voice-live :as voice-live]
     [com.blockether.vis.tui.dialogs :as dlg]
     [com.blockether.vis.tui.config :as vis-config]
     [com.blockether.vis.tui.external-opener :as opener]
@@ -526,8 +525,6 @@
                (or (:session db) building?)
                (not (keymap/subagent-session? db)))
       (cond
-        (voice-live/command? text) (do (voice-live/command! state/app-db text)
-                                     (state/dispatch [:reset-input]))
         ;; Cancel in flight: the user pressed Esc to STOP this turn, so a new
         ;; submission is a fresh intent — not queue fodder. Keep it in the editor
         ;; (NO :reset-input) for a resend once the cancel settles, rather than
@@ -10792,8 +10789,7 @@
                                      (interactions/assign-labels (.current interactions/hit-map))])
 
                     :toggle-voice-recording
-                    (try (voice-live/stop!)
-                         (voice-input/toggle-recording! {:app-db state/app-db})
+                    (try (voice-input/toggle-recording! {:app-db state/app-db})
                          (catch Throwable t
                            (vis/notify! (str "Voice toggle failed: " (or (ex-message t) (str t)))
                                         :level :error
@@ -10968,8 +10964,7 @@
         :toggle-voice-recording
         ;; Microphone capture belongs to this channel; the WAV is
         ;; transcribed by the one engine set in the gateway.
-        (do (try (voice-live/stop!)
-                 (voice-input/toggle-recording! {:app-db state/app-db})
+        (do (try (voice-input/toggle-recording! {:app-db state/app-db})
                  (catch Throwable t
                    (tel/log! {:level :error :id ::voice-toggle-failed :data {:ex t}})
                    (vis/notify! (str "Voice toggle failed: " (or (ex-message t) (str t)))
@@ -12311,7 +12306,6 @@
                (let [step (chat-input-step! chat-ctx)]
                  (if (identical? ::recur step) (recur) step))))
            (finally
-             (voice-live/stop!)
              ;; Restore process-level INT/TSTP handling before teardown. If the
              ;; user hits Ctrl+C during cleanup, let the JVM/default handler win
              ;; instead of re-entering the TUI dispatcher.

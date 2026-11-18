@@ -20,7 +20,6 @@
             [com.blockether.vis.tui.virtual :as virtual]
             [com.blockether.vis.tui.voice-output :as voice-output]
             [com.blockether.vis.tui.recordings :as recordings]
-            [com.blockether.vis.tui.voice-live :as voice-live]
             [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.transient :as tr]
             [com.blockether.vis.tui.workspace :as workspace]
@@ -7459,7 +7458,7 @@
 ;; Synthesis belongs to the gateway; only playback touches this TUI process.
 (reg-fx :speak-reply
         (fn [text]
-          (try (when-not (voice-live/active?) (voice-output/speak! (:active-tab-id @app-db) text))
+          (try (voice-output/speak! (:active-tab-id @app-db) text)
                (catch Throwable t
                  (tel/log! {:level :error :id ::voice-speak-failed :data {:ex t}})
                  (vis/notify! (str "Voice cannot speak: " (or (ex-message t) (str t)))
