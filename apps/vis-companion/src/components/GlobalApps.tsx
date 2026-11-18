@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { isAppSurfaceSetting } from '../lib/app-surfaces';
-import { newerAppView } from '../lib/app-view';
+import { canOpenApp, newerAppView } from '../lib/app-view';
 import { onSettingChange, type GatewayClient } from '../lib/gateway';
 import { foldGlobalApps, listedGlobalApps } from '../lib/global-apps';
 import type { LiveView } from '../lib/live-view';
@@ -99,6 +99,7 @@ export function GlobalApps({
   const picked = pickedId === null ? undefined : apps.find((one) => one.id === pickedId);
   const pick = useCallback(
     (view: LiveView) => {
+      if (!canOpenApp(view)) return;
       onListClose();
       setPickedId(view.id);
     },

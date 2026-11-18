@@ -68,6 +68,10 @@ describe('app reveal', () => {
     expect(revealedApp(apps, reveal)).toBe('todo');
   });
 
+  it('waits while the app is disconnected', () => {
+    expect(revealedApp([{ id: 'todo', extension: 'live-apps', key: 'todo', is_disconnected: true }], reveal)).toBeNull();
+  });
+
   it('waits while the app is not open yet', () => {
     expect(revealedApp([{ id: 'kanban', extension: 'live-apps', key: 'kanban' }], reveal)).toBeNull();
   });

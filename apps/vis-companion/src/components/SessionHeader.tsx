@@ -4,6 +4,7 @@ import type { SessionGoal } from '../lib/types';
 import { PathStep, type AgentPath } from './AgentCrumb';
 import { menuPosition, type AnchorBox, type MenuPosition } from '../lib/anchored-menu';
 import { useDeskRail } from '../lib/fit-rows';
+import { appStateWord, canOpenApp } from '../lib/app-view';
 import { isIosNativeApp } from '../lib/host';
 import { markSessionId } from '../lib/session-id';
 import { Menu, MenuItem, MENU_WIDTH } from './Menu';
@@ -124,7 +125,15 @@ export function SessionHeader({
   panel?: { isOpen: boolean; onToggle: () => void };
   /** The apps of this session. The session menu has one row with the name of each app. */
   apps?: {
-    items: readonly { id: string; title: string; icon?: import('../lib/view').AppIconName }[];
+    items: readonly {
+      id: string;
+      title: string;
+      icon?: import('../lib/view').AppIconName;
+      is_closed?: boolean;
+      is_archived?: boolean;
+      /** A disconnected app shows its state and its row cannot open it. */
+      is_disconnected?: boolean;
+    }[];
     /** The app that is open now. A press on its row closes it. */
     openId: string | null;
     onPick: (id: string) => void;
@@ -294,14 +303,18 @@ export function SessionHeader({
         <Menu label="Session actions" at={menu} onDismiss={closeMenu}>
           {apps?.items.map((app) => {
             const isOpen = app.id === apps.openId;
+            // An open app can always close. A closed row opens only an app that can open.
+            const isRefused = !isOpen && !canOpenApp(app);
             return (
               <MenuItem
                 key={app.id}
                 title={app.title}
                 meta={app.id === apps.reviewId ? '⌘/Ctrl+D' : undefined}
-                badge={isOpen ? 'open' : undefined}
+                badge={isOpen ? 'open' : isRefused ? appStateWord(app) : undefined}
                 icon={<AppIcon name={app.icon} className="size-3.5" />}
+                disabled={isRefused}
                 onSelect={() => {
+                  if (isRefused) return;
                   closeMenu();
                   if (isOpen) apps.onClose();
                   else apps.onPick(app.id);

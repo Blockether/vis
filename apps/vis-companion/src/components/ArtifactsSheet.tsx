@@ -60,6 +60,7 @@ import { ReferenceAttachment } from './ReferenceAttachment';
 import { Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
 import { AppListRow, AppSurface, useSessionApps } from './AppAttachment';
 import type { LiveView as LiveViewModel } from '../lib/live-view';
+import { canOpenApp } from '../lib/app-view';
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -1162,6 +1163,9 @@ export function ArtifactsSheet({
   const [versionsOf, setVersionsOf] = useState<SessionArtifact | null>(null);
   const apps = useSessionApps(client, sid);
   const [openedApp, setOpenedApp] = useState<LiveViewModel | null>(null);
+  const openApp = useCallback((view: LiveViewModel) => {
+    if (canOpenApp(view)) setOpenedApp(view);
+  }, []);
   // A thumbnail is a DOWNLOAD, so a session with two hundred artifacts in it is
   // two hundred requests the moment this sheet opens. One page at a time, by
   // count AND by weight, and a new filter starts its own first page.
@@ -1240,7 +1244,7 @@ export function ArtifactsSheet({
           <ul aria-label="Apps" className="mb-3 border border-edge">
             {apps.map((view) => (
               <li key={view.id}>
-                <AppListRow view={view} onOpen={setOpenedApp} />
+                <AppListRow view={view} onOpen={openApp} />
               </li>
             ))}
           </ul>

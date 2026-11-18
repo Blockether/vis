@@ -107,6 +107,14 @@ export function appStateWord(view: Pick<LiveView, 'is_closed' | 'is_archived' | 
   return '';
 }
 
+/**
+ * True when a press can open the app. A disconnected app never opens: its owner is
+ * not there to answer. An app that is open already and then disconnects stays open.
+ */
+export function canOpenApp(view: Pick<LiveView, 'is_disconnected'>): boolean {
+  return view.is_disconnected !== true;
+}
+
 /** The name of an app before its view arrives: the filename without `.app.json`. */
 export function appFallbackTitle(filename?: string): string {
   return (filename ?? '').replace(/\.app\.json$/i, '') || 'app';

@@ -11,6 +11,7 @@ import { runAppAction, SendKeys, type AppActionResult, type AppActionStatus } fr
 import {
   appFallbackTitle,
   appStateWord,
+  canOpenApp,
   draftAction,
   foldAppEvent,
   newerAppView,
@@ -43,6 +44,12 @@ import { BandButton, DialogFrame, DialogHeader, ExecutionAction, KeyCap, ListRow
 
 /** The open apps of the session, with their surfaces, for the rows of the transcript. */
 export const SessionAppViewsContext = createContext<readonly LiveViewModel[]>([]);
+
+/**
+ * True after the session read its app list in this mount. A restored app waits for
+ * this read, because the held list can be old. Outside a session nothing reads it.
+ */
+export const SessionAppsReadContext = createContext(true);
 
 /** Show the app that a press asked for (view.json `reveals`). Absent: nothing shows it. */
 export const AppRevealContext = createContext<((reveal: AppReveal) => void) | null>(null);
@@ -688,9 +695,25 @@ export const AppAttachmentRow = memo(function AppAttachmentRow({
   const [readInline, setReadInline] = useState<boolean | null>(null);
   const inline = readInline ?? appSurfaces(known).inline;
   const place = useRef<HTMLDivElement | null>(null);
-  const frame = shownAppFrame(opened ? (isFull ? 'full' : 'inline') : 'row', inline);
+  const isOpenable = !known || canOpenApp(known);
+  const word = known && !isOpenable ? appStateWord(known) : '';
+  // A disconnected app does not open again when the transcript comes back. The first
+  // list read of the session decides, because the held list can be old.
+  const isAppsRead = useContext(SessionAppsReadContext);
+  const [isRestoring, setRestoring] = useState(opened);
+  const isRestoreRefused = isRestoring && !isOpenable;
+  useEffect(() => {
+    if (!isRestoring) return;
+    if (isRestoreRefused) {
+      setOpened(false);
+      setFull(false);
+      setRestoring(false);
+    } else if (isAppsRead) setRestoring(false);
+  }, [isRestoring, isRestoreRefused, isAppsRead, setOpened, setFull]);
+  const frame = shownAppFrame(opened && !isRestoreRefused ? (isFull ? 'full' : 'inline') : 'row', inline);
   const go = useCallback(
     (step: 'open' | 'full' | 'escape' | 'close') => {
+      if (step === 'open' && !isOpenable) return;
       const next = appFrameStep(frame, step, inline);
       setOpened(next !== 'row');
       setFull(next === 'full');
@@ -698,20 +721,22 @@ export const AppAttachmentRow = memo(function AppAttachmentRow({
       if (next === 'row')
         requestAnimationFrame(() => place.current?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true }));
     },
-    [frame, inline, setOpened, setFull],
+    [frame, inline, isOpenable, setOpened, setFull],
   );
   const open = useCallback(() => go('open'), [go]);
   const onView = useCallback((view: LiveViewModel) => setReadInline(appSurfaces(view).inline), [setReadInline]);
   if (!viewId) return null;
   const row = embedded ? (
-    <ExecutionAction onClick={open} aria-label={`Open app ${name}`}>
+    <ExecutionAction onClick={open} disabled={!isOpenable} aria-label={`Open app ${name}`}>
       <AppIcon name={known?.icon} className="size-4 shrink-0" />
       <span className="min-w-0 flex-1 truncate">{name}</span>
+      {word && <span className="shrink-0 text-meta text-footer-muted">{word}</span>}
     </ExecutionAction>
   ) : (
-    <ListRow onClick={open} title={name} aria-label={`Open app ${name}`} className={APP_ROW_FOCUS}>
+    <ListRow onClick={open} disabled={!isOpenable} title={name} aria-label={`Open app ${name}`} className={APP_ROW_FOCUS}>
       <AppIcon name={known?.icon} className="size-4 shrink-0 text-accent-ink" />
       <span className="min-w-0 flex-1 truncate font-mono text-ui text-muted">{name}</span>
+      {word && <span className="shrink-0 font-mono text-meta text-footer-muted">{word}</span>}
     </ListRow>
   );
   return (
@@ -746,7 +771,7 @@ export const AppAttachmentRow = memo(function AppAttachmentRow({
   );
 });
 
-/** One app of the session list, with its title and state. */
+/** One app of the session list, with its title and state. A disconnected app cannot open. */
 export function AppListRow({
   view,
   stateWord = appStateWord,
@@ -757,8 +782,17 @@ export function AppListRow({
   onOpen: (view: LiveViewModel) => void;
 }) {
   const word = stateWord(view);
+  const isOpenable = canOpenApp(view);
   return (
-    <ListRow onClick={() => onOpen(view)} title={view.title} aria-label={`Open app ${view.title}`} className={APP_ROW_FOCUS}>
+    <ListRow
+      onClick={() => {
+        if (isOpenable) onOpen(view);
+      }}
+      disabled={!isOpenable}
+      title={view.title}
+      aria-label={`Open app ${view.title}`}
+      className={APP_ROW_FOCUS}
+    >
       <AppIcon name={view.icon} className="size-4 shrink-0 text-accent-ink" />
       <span className="min-w-0 flex-1 truncate font-mono text-ui text-white">{view.title}</span>
       {word && <span className="shrink-0 font-mono text-meta text-footer-muted">{word}</span>}
@@ -821,8 +855,17 @@ export function AppsListDialog({
  * The list follows the session stream: a new app joins it, a patch or a close
  * changes its row, and a missed patch or a reconnect reads the list again.
  */
-export function useSessionApps(client: GatewayClient, sid: string): LiveViewModel[] {
+export function useSessionApps(
+  client: GatewayClient,
+  sid: string,
+  /** Hears the list after each read from the gateway. */
+  onRead?: (apps: readonly LiveViewModel[]) => void,
+): LiveViewModel[] {
   const hub = useContext(SessionEventsContext);
+  const onReadRef = useRef(onRead);
+  useEffect(() => {
+    onReadRef.current = onRead;
+  }, [onRead]);
   const [apps, setAppsState] = useVisitState<LiveViewModel[]>(
     client.base ? JSON.stringify([client.base, sid, 'acknowledged-apps']) : null,
     [],
@@ -843,6 +886,7 @@ export function useSessionApps(client: GatewayClient, sid: string): LiveViewMode
         // A slow list never undoes a patch that arrived while it was read.
         const now = held.current;
         setApps(views.map((read) => newerAppView(now.find((one) => one.id === read.id) ?? null, read)));
+        onReadRef.current?.(held.current);
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) console.warn('app attachments: list failed', sid, error);

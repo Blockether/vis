@@ -128,3 +128,47 @@ it('opens a session app from the session menu', async () => {
   fireEvent.click(await screen.findByRole('button', { name: /^Review shortcuts/ }));
   expect(await screen.findByRole('button', { name: 'Split' })).toBeInTheDocument();
 });
+
+// User rule: a disconnected app never opens from the session menu or its key.
+it('does not open a disconnected session app', async () => {
+  const lost = { ...review, id: 'lost-review', is_disconnected: true };
+  const liveView = vi.fn(async (..._args: unknown[]) => lost);
+  const appViews = vi.fn(async () => [lost]);
+  renderSessionScreen({
+    client: { appViews, liveView },
+    subscriptions: { subscribeConnection: connected },
+  });
+  await waitFor(() => expect(appViews).toHaveBeenCalled());
+  await act(async () => {});
+  fireEvent.keyDown(document.body, { key: 'd', ctrlKey: true });
+  fireEvent.click(await screen.findByRole('button', { name: /^Session actions/ }));
+  const item = await screen.findByRole('button', { name: /^Review shortcuts/ });
+  expect(item).toBeDisabled();
+  expect(within(item).getByText('Disconnected')).toBeInTheDocument();
+  fireEvent.click(item);
+  await act(async () => {});
+  expect(screen.queryByRole('button', { name: 'Split' })).toBeNull();
+  // An earlier test can leave another app to restore; only the disconnected app counts.
+  expect(liveView.mock.calls.some((call) => (call as unknown[])[1] === 'lost-review')).toBe(false);
+});
+
+// User rule: a session that comes back does not open its app again when the app is now disconnected.
+it('closes a restored session app when the first list read says it is disconnected', async () => {
+  const kept = { ...review, id: 'restored-review' };
+  const shown = renderSessionScreen({
+    client: { appViews: async () => [kept], liveView: async () => kept },
+    subscriptions: { subscribeConnection: connected },
+  });
+  fireEvent.click(await screen.findByRole('button', { name: /^Session actions/ }));
+  fireEvent.click(await screen.findByRole('button', { name: /^Review shortcuts/ }));
+  expect(await screen.findByRole('button', { name: 'Split' })).toBeInTheDocument();
+  shown.unmount();
+  const lost = { ...kept, is_disconnected: true };
+  const appViews = vi.fn(async () => [lost]);
+  renderSessionScreen({
+    client: { appViews, liveView: async () => lost },
+    subscriptions: { subscribeConnection: connected },
+  });
+  await waitFor(() => expect(appViews).toHaveBeenCalled());
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Split' })).toBeNull());
+});

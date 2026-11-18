@@ -526,6 +526,57 @@ describe('AppAttachmentRow full screen', () => {
   });
 });
 
+// User rule: a disconnected app never opens. Its owner is not there to answer.
+describe('a disconnected app', () => {
+  const attachment = { view_id: 'app-1', filename: 'counter.app.json' } as unknown as IterationAttachment;
+  const lost = () => game(3, { is_stale: true });
+  const row = (client: GatewayClient, known: LiveView[], sid: string) => (
+    <SessionAppViewsContext.Provider value={known}>
+      <SessionEventsContext.Provider value={null}>
+        <div data-session-surface>
+          <AppAttachmentRow client={client} sid={sid} attachment={attachment} />
+        </div>
+      </SessionEventsContext.Provider>
+    </SessionAppViewsContext.Provider>
+  );
+
+  it('shows its state in the transcript row and does not open from it', async () => {
+    const { client, liveView } = fakeClient([game(3)], accepted);
+    render(row(client, [lost()], 'lost-row'));
+    const button = screen.getByRole('button', { name: 'Open app counter' });
+    expect(button).toBeDisabled();
+    expect(within(button).getByText('Disconnected')).toBeInTheDocument();
+    fireEvent.click(button);
+    await act(async () => {});
+    expect(document.querySelector('[data-app-frame="app-1"]')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(liveView).not.toHaveBeenCalled();
+  });
+
+  it('stays open when it disconnects, and does not open again when the transcript comes back', async () => {
+    const { client } = fakeClient([game(3), game(3)], accepted);
+    const first = render(row(client, [game(3)], 'lost-restore'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open app counter' }));
+    await screen.findByRole('toolbar', { name: 'App keys' });
+    first.rerender(row(client, [lost()], 'lost-restore'));
+    expect(document.querySelector('[data-app-frame="app-1"]')).not.toBeNull();
+    first.unmount();
+    render(row(client, [lost()], 'lost-restore'));
+    expect(await screen.findByRole('button', { name: 'Open app counter' })).toBeDisabled();
+    expect(document.querySelector('[data-app-frame="app-1"]')).toBeNull();
+  });
+
+  it('cannot be picked from an apps list', () => {
+    const onPick = vi.fn();
+    render(<AppsListDialog title="Apps" empty="No app." within="session" apps={[lost()]} onPick={onPick} onClose={() => undefined} />);
+    const button = screen.getByRole('button', { name: 'Open app Counter' });
+    expect(button).toBeDisabled();
+    expect(within(button).getByText('Disconnected')).toBeInTheDocument();
+    fireEvent.click(button);
+    expect(onPick).not.toHaveBeenCalled();
+  });
+});
+
 describe('AppSurface focus, names and owner loss', () => {
   it('takes the focus when it opens and gives it back to the opener when it closes', async () => {
     const { client } = fakeClient([wizard(3)], accepted);

@@ -5,6 +5,7 @@
  */
 
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
+import { canOpenApp } from './app-view';
 import { nestedLiveNodes, type LiveNode, type LiveView } from './live-view';
 
 const SURFACES_SCHEMA = viewSchema.$defs.app_surfaces.properties;
@@ -99,15 +100,16 @@ export function pressReveal(view: { nodes: readonly LiveNode[] }, nodeId: string
 
 /**
  * The id of the open app that `reveal` names: the same owner and key. Null while
- * that app is not open, so the press waits for its open.
+ * that app is not open or is disconnected, so the press waits for its open.
  */
-export function revealedApp<T extends Pick<LiveView, 'id' | 'extension' | 'key' | 'is_closed'>>(
+export function revealedApp<T extends Pick<LiveView, 'id' | 'extension' | 'key' | 'is_closed' | 'is_disconnected'>>(
   apps: readonly T[],
   reveal: AppReveal,
 ): string | null {
   for (let at = apps.length - 1; at >= 0; at--) {
     const view = apps[at];
-    if (view.key === reveal.key && view.extension === reveal.extension && view.is_closed !== true) return view.id;
+    if (view.key === reveal.key && view.extension === reveal.extension && view.is_closed !== true && canOpenApp(view))
+      return view.id;
   }
   return null;
 }

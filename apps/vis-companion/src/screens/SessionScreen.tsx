@@ -68,10 +68,11 @@ import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon, ZenIcon } from '../componen
 import { ZenPictures } from '../components/ZenPictures';
 import { setZenMode, useZenMode } from '../lib/transcript-display';
 import { useCommands } from '../lib/commands';
-import { AppRevealContext, SessionAppViewsContext, useSessionApps } from '../components/AppAttachment';
+import { AppRevealContext, SessionAppsReadContext, SessionAppViewsContext, useSessionApps } from '../components/AppAttachment';
 import { SessionAppSlot } from '../components/SessionAppSlot';
 import { useVisitState } from '../lib/review-memory';
 import { APP_REVEAL_WAIT_MS, pickedSessionApp, revealedApp, sessionApps, type AppReveal } from '../lib/app-surfaces';
+import { canOpenApp } from '../lib/app-view';
 import { FilePreview } from '../components/FilePreview';
 import { HumanInputPrompt } from '../components/HumanInputPrompt';
 import { JumpToLatestButton } from '../components/JumpToLatestButton';
@@ -5019,11 +5020,43 @@ export function SessionScreen({
   const [panelChoice, setPanelChoice] = useState<boolean | null>(null);
   // The session apps of the header menu. The list follows settings, so a saved app
   // setting moves an opened app or takes it out.
-  const sessionAppViews = useSessionApps(client, sid);
+  const [isAppsRead, setAppsRead] = useState(false);
+  const onAppsRead = useCallback(() => setAppsRead(true), []);
+  const sessionAppViews = useSessionApps(client, sid, onAppsRead);
   const listedApps = useMemo(() => sessionApps(sessionAppViews), [sessionAppViews]);
   const [appsAsked, setAppsAsked] = useState(0);
   const [pickedAppId, setPickedAppId] = useVisitState<string | null>(JSON.stringify([client.base, sid, 'picked-app']), null);
-  const pickedApp = pickedSessionApp(sessionAppViews, pickedAppId, docksPanel);
+  // A disconnected app does not open again when the session comes back. The first
+  // list read decides, because the held list can be old.
+  const [isRestoring, setRestoring] = useState(pickedAppId !== null);
+  const restoredApp = pickedAppId === null ? undefined : sessionAppViews.find((one) => one.id === pickedAppId);
+  const isRestoreRefused = isRestoring && !!restoredApp && !canOpenApp(restoredApp);
+  useEffect(() => {
+    if (!isRestoring) return;
+    if (isRestoreRefused) {
+      setPickedAppId(null);
+      setRestoring(false);
+    } else if (isAppsRead) setRestoring(false);
+  }, [isRestoring, isRestoreRefused, isAppsRead, setPickedAppId]);
+  const pickedApp = isRestoreRefused ? null : pickedSessionApp(sessionAppViews, pickedAppId, docksPanel);
+  // A press opens only an app that can open. An open app stays open when it disconnects.
+  const openApp = useCallback(
+    (id: string) => {
+      const view = sessionAppViews.find((one) => one.id === id);
+      if (view && canOpenApp(view)) setPickedAppId(id);
+    },
+    [sessionAppViews, setPickedAppId],
+  );
+  // A toggle closes the open app, or opens an app that can open.
+  const toggleApp = useCallback(
+    (id: string) =>
+      setPickedAppId((held) => {
+        if (held === id) return null;
+        const view = sessionAppViews.find((one) => one.id === id);
+        return view && canOpenApp(view) ? id : held;
+      }),
+    [sessionAppViews, setPickedAppId],
+  );
   // A press that reveals another app shows it once its owner opens it, or gives up.
   // The deadline is set at the press: app patches change the list often, and they
   // must not extend the wait.
@@ -5051,11 +5084,11 @@ export function SessionScreen({
       if (event.defaultPrevented || event.isComposing || event.repeat || event.altKey || event.shiftKey) return;
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'd') return;
       event.preventDefault();
-      setPickedAppId((held) => held === reviewAppId ? null : reviewAppId);
+      toggleApp(reviewAppId);
     };
     window.addEventListener('keydown', toggleReview);
     return () => window.removeEventListener('keydown', toggleReview);
-  }, [reviewAppId, setPickedAppId]);
+  }, [reviewAppId, toggleApp]);
   // The side panel holds one thing: an app picked into it replaces the live views.
   const isPanelOpen = panelViews.length > 0 && (panelChoice ?? docksPanel) && pickedApp?.slot !== 'sidebar';
   const watching = liveViews.at(-1)?.title ?? null;
@@ -5908,7 +5941,7 @@ export function SessionScreen({
   // The command toggles the only app. With more apps, or without a header, it asks the menu.
   const askApps = () => {
     const only = listedApps.length === 1 || zen ? listedApps[0] : undefined;
-    if (only) setPickedAppId((held) => (held === only.id ? null : only.id));
+    if (only) toggleApp(only.id);
     else setAppsAsked((count) => count + 1);
   };
   // The C-x keys and the command palette run the same actions as the controls above.
@@ -5929,6 +5962,7 @@ export function SessionScreen({
   const screen = (
     <AttachImageContext.Provider value={attachCapturedImage}>
       <SessionAppViewsContext.Provider value={sessionAppViews}>
+      <SessionAppsReadContext.Provider value={isAppsRead}>
       <AppRevealContext.Provider value={revealApp}>
       <WorkspaceRootsContext.Provider value={workspaceRoots}>
         <div className="flex h-full min-h-0 w-full">
@@ -5970,7 +6004,7 @@ export function SessionScreen({
               }
               apps={
                 listedApps.length > 0
-                  ? { items: listedApps, openId: pickedApp?.view.id ?? null, onPick: setPickedAppId, onClose: closeApp, reviewId: reviewAppId, asked: appsAsked }
+                  ? { items: listedApps, openId: pickedApp?.view.id ?? null, onPick: openApp, onClose: closeApp, reviewId: reviewAppId, asked: appsAsked }
                   : undefined
               }
             />
@@ -6570,6 +6604,7 @@ export function SessionScreen({
         </div>
       </WorkspaceRootsContext.Provider>
       </AppRevealContext.Provider>
+      </SessionAppsReadContext.Provider>
       </SessionAppViewsContext.Provider>
     </AttachImageContext.Provider>
   );
