@@ -5,7 +5,7 @@
 // three tiers of `GatewayClient.attachmentUrl` — this document's object URL, the
 // bytes this DEVICE has, then and only then the gateway — so an artifact the
 // device has already seen is never downloaded twice.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GatewayConn } from './types';
 import { clearAttachmentCache } from './attachment-cache';
 import {
@@ -66,7 +66,29 @@ beforeEach(async () => {
   serve();
 });
 
-afterEach(uninstallFakeCacheStorage);
+afterEach(() => {
+  vi.useRealTimers();
+  uninstallFakeCacheStorage();
+});
+
+/** A gateway whose artifact arrives as `parts` pieces of 1 MiB, one each `everyMs`. */
+function serveSlowly(parts: number, everyMs: number): void {
+  globalThis.fetch = (async () => {
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull: (controller) =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            if (sent < parts) controller.enqueue(new Uint8Array(1024 * 1024));
+            else controller.close();
+            sent += 1;
+            resolve();
+          }, everyMs);
+        }),
+    });
+    return new Response(body, { headers: { 'Content-Type': 'video/mp4' } });
+  }) as typeof fetch;
+}
 
 describe('downloading one produced artifact', () => {
   it('asks the endpoint the descriptors index, with the bearer it demands', async () => {
@@ -177,5 +199,34 @@ describe('the memory tier', () => {
     // bytes are still on this device.
     expect(urls.sizeOf(await client.attachmentUrl('s1', 'i1', 0))).toBe(1024);
     expect(asked).toHaveLength(before);
+  });
+});
+
+describe('the time limit of one artifact download', () => {
+  // The limit was 30 s for the whole download: a 30 MB video needed 1 MB/s.
+  it('gives a large artifact the time that its bytes need', async () => {
+    vi.useFakeTimers();
+    serveSlowly(12, 4_000);
+
+    const outcome = new GatewayClient(CONN).attachmentBlob('s1', 'i1', 0).then(
+      (blob) => blob.size,
+      (error: Error) => error.message,
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(await outcome).toBe(12 * 1024 * 1024);
+  });
+
+  it('stops a download that is slower than the lowest speed', async () => {
+    vi.useFakeTimers();
+    serveSlowly(12, 20_000);
+
+    const outcome = new GatewayClient(CONN).attachmentBlob('s1', 'i1', 0).then(
+      (blob) => blob.size,
+      (error: Error) => error.message,
+    );
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(await outcome).toBe('attachment download timed out');
   });
 });

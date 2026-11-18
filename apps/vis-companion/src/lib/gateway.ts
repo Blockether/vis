@@ -342,6 +342,63 @@ function requestDeadlineMs(transferBytes: number): number {
 }
 
 /**
+ * The deadline of one answer whose length is not known before it arrives. It starts
+ * at `REQUEST_TIMEOUT_MS`, and each part of the body adds the time that its bytes need.
+ */
+function answerDeadline(): {
+  signal: AbortSignal;
+  /** The limit now, for the text of a failure. */
+  limitMs: () => number;
+  /** The same answer with its whole body read; each part moves the deadline. */
+  whole: (response: Response) => Promise<Response>;
+  clear: () => void;
+} {
+  const controller = new AbortController();
+  const started = Date.now();
+  let limitMs = REQUEST_TIMEOUT_MS;
+  let isCleared = false;
+  let timer = window.setTimeout(() => controller.abort(), limitMs);
+  const grow = (receivedBytes: number): void => {
+    if (isCleared) return;
+    limitMs = requestDeadlineMs(receivedBytes);
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => controller.abort(), Math.max(0, started + limitMs - Date.now()));
+  };
+  return {
+    signal: controller.signal,
+    limitMs: () => limitMs,
+    async whole(response) {
+      if (!response.body) return response;
+      const reader = response.body.getReader();
+      const parts: Uint8Array<ArrayBuffer>[] = [];
+      let received = 0;
+      for (;;) {
+        const part = await reader.read();
+        if (part.done) break;
+        received += part.value.byteLength;
+        grow(received);
+        parts.push(part.value);
+      }
+      const bytes = new Uint8Array(received);
+      let at = 0;
+      for (const part of parts) {
+        bytes.set(part, at);
+        at += part.byteLength;
+      }
+      return new Response(bytes, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    },
+    clear() {
+      isCleared = true;
+      window.clearTimeout(timer);
+    },
+  };
+}
+
+/**
  * The gateways that said `Accept-Encoding: gzip` in an answer. Such a gateway
  * inflates a gzip request body; an older one does not, and gets plain bytes.
  */
@@ -2419,8 +2476,7 @@ export class GatewayClient {
     const diagnostic = startRequestDiagnostic(this.base, method, path);
     const headers = this.headers();
     if (options.contentType) headers.set('Content-Type', options.contentType);
-    const deadline = new AbortController();
-    const timer = window.setTimeout(() => deadline.abort(), REQUEST_TIMEOUT_MS);
+    const deadline = answerDeadline();
     const attempt = linkSignals(
       options.signal ? [options.signal, deadline.signal] : [deadline.signal],
     );
@@ -2448,13 +2504,13 @@ export class GatewayClient {
         }
         throw new GatewayError(res.status, errorText(parsed, res.status), parsed);
       }
-      return await raceAbort(read(res), attemptSignal);
+      return await raceAbort(deadline.whole(res).then(read), attemptSignal);
     } catch (cause) {
       const error =
         deadline.signal.aborted && !options.signal?.aborted
           ? new GatewayError(
               0,
-              `gateway did not finish the response within ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`,
+              `gateway did not finish the response within ${Math.round(deadline.limitMs() / 1000)}s`,
             )
           : cause instanceof GatewayError
             ? cause
@@ -2468,7 +2524,7 @@ export class GatewayClient {
         signal: options.signal,
         timedOut: deadline.signal.aborted && !options.signal?.aborted,
       });
-      window.clearTimeout(timer);
+      deadline.clear();
       attempt.release();
     }
   }
@@ -5585,8 +5641,7 @@ export class GatewayClient {
           transport: 'fetch',
           attempt: attempt + 1,
         });
-        const deadline = new AbortController();
-        const timer = window.setTimeout(() => deadline.abort(), REQUEST_TIMEOUT_MS);
+        const deadline = answerDeadline();
         let status = 0;
         let failure: { cause: unknown } | undefined;
         try {
@@ -5596,7 +5651,10 @@ export class GatewayClient {
           );
           status = response.status;
           if (response.ok) {
-            blob = await raceAbort(response.blob(), deadline.signal);
+            blob = await raceAbort(
+              deadline.whole(response).then((answer) => answer.blob()),
+              deadline.signal,
+            );
           } else {
             const error = new GatewayError(response.status, `HTTP ${response.status}`);
             failure = { cause: error };
@@ -5616,7 +5674,7 @@ export class GatewayClient {
             failure,
             timedOut: deadline.signal.aborted,
           });
-          window.clearTimeout(timer);
+          deadline.clear();
         }
         if (blob) break;
         await new Promise<void>((resolve) => window.setTimeout(resolve, landingDelays[attempt]));

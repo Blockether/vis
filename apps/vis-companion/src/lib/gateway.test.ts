@@ -1494,6 +1494,32 @@ describe('GatewayClient turn cancellation', () => {
     expect(await outcome).toBe('AAAA');
   });
 
+  it('gives a long transcript export the time that its bytes need', async () => {
+    vi.useFakeTimers();
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull: (controller) =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            if (sent < 12) controller.enqueue(new Uint8Array(1024 * 1024).fill(97));
+            else controller.close();
+            sent += 1;
+            resolve();
+          }, 4_000);
+        }),
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)));
+    const { GatewayClient } = await import('./gateway');
+
+    const outcome = new GatewayClient(conn).transcriptMd('session-1').then(
+      (markdown) => markdown.length,
+      (error: Error) => error.message,
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(await outcome).toBe(12 * 1024 * 1024);
+  });
+
   // The app sent each upload plain: it could not read that the gateway inflates gzip.
   // A recording does not get smaller (measured: 33.21 MB to 32.44 MB), a text file does.
   it('sends an upload as gzip only when gzip makes it smaller and the gateway inflates it', async () => {
