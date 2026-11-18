@@ -53,8 +53,13 @@
                 (get entry "command") "stdio"
                 (get entry "url") "streamable_http")
 
-          client-id
-          (get-in entry ["oauth" "clientId"])]
+          auth
+          (cond-> {}
+            (some? (get-in entry ["oauth" "clientId"]))
+            (assoc "client_id" (str (get-in entry ["oauth" "clientId"])))
+
+            (some? (get-in entry ["oauth" "callbackPort"]))
+            (assoc "callback_port" (get-in entry ["oauth" "callbackPort"])))]
 
       (cond (nil? transport) nil
             (= "stdio" transport) (cond-> {"transport" "stdio" "command" (get entry "command")}
@@ -67,8 +72,8 @@
                     (strings (get entry "headers"))
                     (assoc "headers" (strings (get entry "headers")))
 
-                    client-id
-                    (assoc "auth" {"client_id" (str client-id)}))))))
+                    (seq auth)
+                    (assoc "auth" auth))))))
 
 (defn ->entry
   "Claude Code server entry of a Vis server spec, in the shape that `claude mcp add` writes."
@@ -83,7 +88,10 @@
       (assoc "headers" (get spec "headers"))
 
       (get-in spec ["auth" "client_id"])
-      (assoc "oauth" {"clientId" (get-in spec ["auth" "client_id"])}))))
+      (assoc-in ["oauth" "clientId"] (get-in spec ["auth" "client_id"]))
+
+      (get-in spec ["auth" "callback_port"])
+      (assoc-in ["oauth" "callbackPort"] (get-in spec ["auth" "callback_port"])))))
 
 (defn read-file
   "The parsed JSON object at `file`, or {} when the file does not exist."

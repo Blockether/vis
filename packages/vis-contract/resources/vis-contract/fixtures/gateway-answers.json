@@ -1927,6 +1927,10 @@
       "archived_at": null
     },
     "POST /v1/sessions/:sid/agents/wait": [],
+    "POST /v1/sessions/:sid/blocks": {
+      "result": "4",
+      "is_error": false
+    },
     "POST /v1/sessions/:sid/drain-queue": {
       "turn": null
     },

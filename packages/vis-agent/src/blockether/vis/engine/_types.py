@@ -739,6 +739,15 @@ class Upload(TypedDict):
     size: int
 
 
+class SessionBlock(TypedDict):
+    """The result of one block: the text that the agent sees. `is_error` is true when
+    the block failed.
+    """
+
+    result: str
+    is_error: bool
+
+
 class TurnCancel(TypedDict):
     status: Literal["cancelling", "deleted"]
 
@@ -3162,6 +3171,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "POST /v1/sessions/:sid/agents/wait": "AgentRecords",
     "POST /v1/sessions/:sid/apps": "AppDoorAnswer",
     "POST /v1/sessions/:sid/attachments": "Upload",
+    "POST /v1/sessions/:sid/blocks": "SessionBlock",
     "POST /v1/sessions/:sid/cancel-current": "TurnCancel",
     "POST /v1/sessions/:sid/client-calls/:call_id/activity": "EmptyObject",
     "POST /v1/sessions/:sid/client-calls/:call_id/result": "EmptyObject",

@@ -1589,8 +1589,8 @@
                                   "POST"
                                   "/v1/mcp/servers/actions/kill"
                                   {:name "nope"})))))))
-  (it "asks for a transport before an MCP server reaches the gateway"
-      (expect (= 2 (:exit (cli-error #(mcp-cli/add-spec {:options {} :positionals ["nope"]}))))))
+  (it "ends a refused MCP command with exit code 1, as Claude Code does"
+      (expect (= 1 (:exit (cli-error #(mcp-cli/add-spec {:options {} :positionals ["nope"]}))))))
   (it "prints a fault without Java class names"
       (let [{:keys [err exit]} (cli-error #(throw (RuntimeException. "outer step failed"
                                                                      (ClassCastException.

@@ -282,6 +282,48 @@
   (paths/spit-private! (token-file server-name) (util/content-str m))
   m)
 
+;; Client secret store — one file per server next to the tokens, so sign-out keeps it
+
+(defn- secret-file
+  "The client secret file of `server-name`. The name must be canonical (see
+   `foundation.mcp.core/canonical-name`), so it cannot leave the directory."
+  ^java.io.File [server-name]
+  (when-not (re-matches #"[a-z0-9]+(?:-[a-z0-9]+)*" (str server-name))
+    (throw (ex-info (str "MCP server name is not canonical: " (pr-str server-name))
+                    {:type :mcp/invalid-name :server server-name})))
+  (io/file (paths/vis-home) "mcp-tokens" (str server-name ".client-secret.edn")))
+
+(defn save-client-secret!
+  "Keep `secret`, the client secret of the pre-registered client of `server-name`,
+   in an owner-only file. The config never holds it. Sign-out does not delete it."
+  [server-name secret]
+  (when-not (util/non-blank-string? secret)
+    (throw (ex-info "The MCP client secret is empty" {:type :mcp/invalid-secret :server server-name})))
+  (paths/spit-private! (secret-file server-name) (util/content-str {:client-secret secret}))
+  nil)
+
+(defn delete-client-secret!
+  "Delete the kept client secret of `server-name`. True when a secret was there."
+  [server-name]
+  (let [f (secret-file server-name)]
+    (boolean (and (.exists f) (.delete f)))))
+
+(defn- stored-client-secret
+  [server-name]
+  (let [f (secret-file server-name)]
+    (when (.exists f)
+      (try (with-open [r (io/reader f)]
+             (:client-secret (read (java.io.PushbackReader. r))))
+           (catch Throwable _ nil)))))
+
+(defn- client-secret-of
+  "The secret of the configured client of `auth-hint`: `auth.client_secret`, else
+   the kept secret of `server-name`. Nil without `auth.client_id`: a secret belongs
+   to the configured client, never to a client that registration made."
+  [server-name auth-hint]
+  (when (:client-id auth-hint)
+    (or (:client-secret auth-hint) (stored-client-secret server-name))))
+
 (defn- tokens-for
   "The saved tokens of `server-name` when they are for the origin of `server-url`,
    else nil. The file has the name of the server only, so after the URL of that
@@ -879,8 +921,11 @@
   (let [{:keys [as-url asmeta resource scope dpop?]}
         (auth-context server-name server-url www-auth auth-hint)
 
-        {:keys [grant client-id client-secret]}
+        {:keys [grant client-id]}
         auth-hint
+
+        client-secret
+        (client-secret-of server-name auth-hint)
 
         issuer
         (or (get asmeta "issuer") as-url)
@@ -999,7 +1044,10 @@
             :load saved
             :usable? usable?
             :refresh-token :refresh-token
-            :exchange! #(refresh-exchange! server-name (saved) client-secret %)
+            :exchange! #(refresh-exchange! server-name
+                                           (saved)
+                                           (or client-secret (client-secret-of server-name auth-hint))
+                                           %)
             :persist! #(write-tokens! server-name (assoc % :server-origin (origin-of server-url)))
             :on-rejected! (fn [_]
                             (forget! server-name))
@@ -1158,13 +1206,28 @@
                 (let [ctx
                       (auth-context server-name server-url www-auth auth-hint)
 
+                      port
+                      (:callback-port auth-hint)
+
                       transport
                       (auth-flow/callback-transport! callback-mode
-                                                     (if (= "app" callback-mode)
-                                                       auth-flow/app-callback-uri
-                                                       "http://127.0.0.1:0/mcp-callback")
+                                                     (cond (= "app" callback-mode)
+                                                           auth-flow/app-callback-uri
+                                                           port
+                                                           (str "http://localhost:" port "/callback")
+                                                           :else
+                                                           "http://127.0.0.1:0/mcp-callback")
                                                      (:state ctx)
                                                      600000)]
+
+                  ;; A pre-registered redirect URI names this port: no other port can work.
+                  (when (and port (not= "app" callback-mode) (nil? (:callback transport)))
+                    (throw (oauth-failure :mcp/oauth-error server-name
+                                          "authorize"
+                                          (str "the callback port "
+                                               port
+                                               " is in use. Stop the program that uses it, "
+                                               "or set another auth.callback_port."))))
 
                   (try (let [{:keys [url client-id registered-secret]}
                              (authorize-url ctx auth-hint (:redirect-uri transport))]
@@ -1186,7 +1249,7 @@
                    (check-issuer! ctx input)
                    (exchange-code! ctx
                                    (:client-id ctx)
-                                   (when (:client-id auth-hint) (:client-secret auth-hint))
+                                   (client-secret-of server-name auth-hint)
                                    (code-of input)
                                    (:redirect-uri ctx)))})))
 

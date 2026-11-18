@@ -45,6 +45,24 @@
                                                  "url" "https://mcp.example.com/mcp"
                                                  "auth" auth}}}}))))))
 
+(defdescribe mcp-callback-port-test
+  (it "accepts a port from 1 to 65535 only"
+      (doseq [[port accepted?] [[8080 true] [1 true] [65535 true] [0 false] [65536 false] ["8080" false]]]
+        (expect (= accepted?
+                   (config-validation/valid?
+                     {"mcp" {"servers" {"remote" {"transport" "streamable_http"
+                                                  "url" "https://mcp.example.com/mcp"
+                                                  "auth" {"callback_port" port}}}}}))))))
+
+(defdescribe mcp-json-approval-test
+  (it "accepts the approval keys of .mcp.json servers and refuses blank names"
+      (doseq [[mcp accepted?] [[{"enable_all_project_mcp_servers" true} true]
+                               [{"enabled_mcpjson_servers" ["figma"] "disabled_mcpjson_servers" ["fs"]} true]
+                               [{"enable_all_project_mcp_servers" "yes"} false]
+                               [{"enabled_mcpjson_servers" [" "]} false]
+                               [{"disabled_mcpjson_servers" "fs"} false]]]
+        (expect (= accepted? (config-validation/valid? {"mcp" mcp}))))))
+
 (defdescribe mcp-input-options-test
   (it "accepts roots and sampling as true or false only"
       (doseq [[options accepted?] [[{"roots" false} true] [{"sampling" true} true]

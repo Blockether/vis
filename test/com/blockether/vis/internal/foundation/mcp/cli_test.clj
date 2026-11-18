@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.mcp-approval :as mcp-approval]
             [com.blockether.vis.internal.foundation.mcp.cli :as mcp-cli]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.test-temp :as test-temp]
@@ -91,11 +92,42 @@
         (expect (= ["Removed MCP server fs from local config"
                     (str "File modified: " (io/file dir ".vis" "config.yml"))]
                    (cli! dir #'mcp-cli/cli-mcp-remove! "fs" "-s" "local")))
-        (expect (not (.exists (io/file dir ".vis" "config.yml"))))))
+        ;; The approval of the person who added the project server stays.
+        (expect (= {"enabled_mcpjson_servers" ["fs"]}
+                   (binding [workspace/*workspace-root* (str dir)]
+                     (get (config/load-project-config-raw) "mcp"))))))
   (it "matches a name the way the engine keys it"
       (let [dir (test-temp/temp-dir "vis-mcp-names")]
         (cli! dir #'mcp-cli/cli-mcp-add! "My_Srv" "--" "srv-mcp")
         (expect (= "MCP server my-srv already exists in local config"
                    (refusal #(cli! dir #'mcp-cli/cli-mcp-add! "my-srv" "other"))))
         (cli! dir #'mcp-cli/cli-mcp-remove! "my-srv")
-        (expect (not (.exists (io/file dir ".vis" "config.yml")))))))
+        (expect (not (.exists (io/file dir ".vis" "config.yml"))))))
+  (it "drops the approval of a .mcp.json server that remove names in another spelling"
+      ;; A kept approval would start a later `My_Srv` of another person without a question.
+      (let [dir (test-temp/temp-dir "vis-mcp-forget")]
+        (cli! dir #'mcp-cli/cli-mcp-add! "-s" "project" "My_Srv" "--" "srv-mcp")
+        (cli! dir #'mcp-cli/cli-mcp-remove! "my-srv" "-s" "project")
+        (expect (nil? (binding [workspace/*workspace-root* (str dir)]
+                        (get (config/load-project-config-raw) "mcp"))))))
+  (it
+    "starts a .mcp.json server of another person only after approval"
+    (let [dir
+          (test-temp/temp-dir "vis-mcp-approval")
+
+          started?
+          #(binding [workspace/*workspace-root* (str dir)] (contains?
+                                                             (get-in
+                                                               (config/load-project-root-config-raw)
+                                                               ["mcp" "servers"])
+                                                             "team"))]
+
+      (spit (io/file dir ".mcp.json") "{\"mcpServers\":{\"team\":{\"command\":\"team-mcp\"}}}")
+      (expect (not (started?)))
+      (expect (some #{"  Status: ! Needs approval"} (cli! dir #'mcp-cli/cli-mcp-get! "team")))
+      (binding [workspace/*workspace-root* (str dir)]
+        (config/update-project-config! #(mcp-approval/choose % "team" :approve)))
+      (expect (started?))
+      (expect (= "All project-scoped (.mcp.json) server approvals and rejections have been reset."
+                 (first (cli! dir #'mcp-cli/cli-mcp-reset-project-choices!))))
+      (expect (not (started?))))))

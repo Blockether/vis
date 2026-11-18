@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
+            [com.blockether.vis.internal.paths :as paths]
             [lazytest.core :refer [defdescribe expect it]]
             [taoensso.telemere :as tel]))
 
@@ -927,3 +928,90 @@
                          (mapv claims ["htm" "htu" "nonce"])))
               (expect (string? (get claims "ath"))))
             (expect (nil? (proof "POST" "https://mcp.example.test/mcp" "other-token" nil)))))))))
+
+(defn- free-port
+  []
+  (with-open [s (java.net.ServerSocket. 0)]
+    (.getLocalPort s)))
+
+(defn- sign-in!
+  "Start a browser flow for `server` with `auth-hint` and pass it to `f`, then
+   complete it with the redirect of the flow when `f` returns. Record each exchange
+   as `[client-id client-secret redirect]`."
+  ([exchanges server auth-hint] (sign-in! exchanges server auth-hint (fn [_])))
+  ([exchanges server auth-hint f]
+   (with-redefs-fn {#'oauth/auth-context (fn [& _] {:state "test-state" :verifier "test-verifier"})
+                    #'oauth/authorize-url (fn [_ _ _]
+                                            {:url "https://gateway.example.com/authorize"
+                                             :client-id (or (:client-id auth-hint) "registered")})
+                    #'oauth/exchange-code! (fn [_ client-id client-secret _ redirect]
+                                             (swap! exchanges conj [client-id client-secret redirect]))}
+     (fn []
+       (let [flow (oauth/start-authorization! server
+                                              "https://gateway.example.com/mcp"
+                                              {:auth-hint auth-hint})]
+         (try (f flow)
+              (oauth/complete-authorization! (get flow "flow_id")
+                                             (str (get flow "redirect_uri")
+                                                  "?code=test-code&state=test-state"))
+              flow
+              (finally (oauth/cancel-authorization! (get flow "flow_id")))))))))
+
+(defdescribe callback-port-test
+  (it "listens on the configured port with the redirect URI of Claude Code"
+      (let [port (free-port)
+            exchanges (atom [])
+            redirect (str "http://localhost:" port "/callback")]
+        (sign-in! exchanges "fixed" {:client-id "pre" :callback-port port}
+                  (fn [flow]
+                    (expect (= redirect (get flow "redirect_uri")))
+                    (expect (= "loopback" (get flow "callback_mode")))))
+        (expect (= [["pre" nil redirect]] @exchanges))))
+  (it "names the port when another program uses it"
+      (with-open [busy (java.net.ServerSocket. 0 50 (java.net.InetAddress/getByName "127.0.0.1"))]
+        (let [port (.getLocalPort busy)
+              message (try (sign-in! (atom []) "fixed" {:client-id "pre" :callback-port port})
+                           nil
+                           (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+          (expect (str/includes? (str message) (str "callback port " port " is in use")))))))
+
+(defdescribe stored-client-secret-test
+  (it "sends the kept secret of the configured client at exchange and refresh, also after sign-out"
+      (let [home (.toFile (java.nio.file.Files/createTempDirectory
+                            "vis-mcp-secret-"
+                            (make-array java.nio.file.attribute.FileAttribute 0)))
+            exchanges (atom [])
+            forms (atom [])]
+        (try
+          (with-redefs-fn {#'paths/vis-home (constantly (str home))}
+            (fn []
+              (oauth/save-client-secret! "figma" "kept-secret")
+              (sign-in! exchanges "figma" {:client-id "pre"})
+              ;; A configured secret wins, and a registered client gets no secret.
+              (sign-in! exchanges "figma" {:client-id "pre" :client-secret "configured"})
+              (sign-in! exchanges "figma" {})
+              (expect (= [["pre" "kept-secret"] ["pre" "configured"] ["registered" nil]]
+                         (mapv #(subvec % 0 2) @exchanges)))
+              ;; Sign-out deletes the tokens, not the secret.
+              (spit (io/file home "mcp-tokens" "figma.edn")
+                    (pr-str {:token "old" :refresh-token "refresh" :expires-at-ms 0
+                             :client-id "pre" :token-auth-method "client_secret_post"
+                             :token-endpoint "https://gateway.example.com/token"
+                             :server-origin "https://gateway.example.com"}))
+              (with-redefs-fn {#'oauth/http-post-form
+                               (fn [_ form _]
+                                 (swap! forms conj form)
+                                 {:status 200 :body {"access_token" "new" "expires_in" 3600}})}
+                #(expect (= "new" ((oauth/make-bearer-fn "figma" "https://gateway.example.com/mcp"
+                                                         (atom nil) nil {:client-id "pre"})
+                                   "old"))))
+              (expect (= "kept-secret" (get (first @forms) "client_secret")))
+              (oauth/forget! "figma")
+              (expect (not (.exists (io/file home "mcp-tokens" "figma.edn"))))
+              (sign-in! exchanges "figma" {:client-id "pre"})
+              (expect (= "kept-secret" (second (last @exchanges))))
+              (expect (true? (oauth/delete-client-secret! "figma")))
+              (sign-in! exchanges "figma" {:client-id "pre"})
+              (expect (nil? (second (last @exchanges))))))
+          (finally
+            (doseq [f (reverse (file-seq home))] (.delete ^java.io.File f)))))))

@@ -185,6 +185,27 @@
                                          :invalid-request
                                          (or (:message result) "invalid request")))))))
 
+(defn- run-block-handler
+  "POST /sessions/:sid/blocks — run one Python block `code` in the session sandbox,
+   as the `python_execution` tool of the agent runs it, with no model call. The
+   block waits for a running turn of the session. The answer is `result`, the text
+   that the agent sees, and `is_error`. A failed block is a 200 answer with
+   `is_error` true: the failure is the result."
+  [request]
+  (let [sid
+        (http/path-sid request)
+
+        code
+        (get (http/body-json request) "code")]
+
+    (cond (not (and sid (state/session-exists? sid))) (http/session-404
+                                                        (get-in request [:path-params :sid]))
+          (state/session-archived? sid) (http/session-archived-409 sid)
+          (not (and (string? code) (not (str/blank? code))))
+          (http/error-response 400 :invalid-request "code must be a non-blank string")
+          :else (let [{:keys [result error?]} (lp/run-block! sid code)]
+                  (http/json-response {:result result :is_error error?})))))
+
 (defn- list-turns-handler
   "GET the session's turns. `?status=queued` narrows the response to the live
    queued backlog — the tray's poll — which is served straight from the
@@ -621,6 +642,7 @@
    [:put "/v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note"]
    attachment-agent-note-handler
    [:post "/v1/sessions/:sid/attachments"] upload-attachment-handler
+   [:post "/v1/sessions/:sid/blocks"] run-block-handler
    [:get "/v1/sessions/:sid/turns"] list-turns-handler
    [:post "/v1/sessions/:sid/turns"] submit-turn-handler
    [:get "/v1/sessions/:sid/turns/:tid"] get-turn-handler

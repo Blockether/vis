@@ -938,6 +938,25 @@ class Routes:
         )
         return response.json()
 
+    def post_session_blocks(
+        self,
+        sid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> _types.SessionBlock:
+        """POST /v1/sessions/:sid/blocks — json response."""
+        response = self._client._request(
+            "POST",
+            "/v1/sessions/:sid/blocks",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def post_session_cancel_current(
         self,
         sid: str,

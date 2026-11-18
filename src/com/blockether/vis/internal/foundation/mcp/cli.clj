@@ -11,12 +11,17 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.mcp-approval :as mcp-approval]
             [com.blockether.vis.internal.config.mcp-json :as mcp-json]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
+            [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
+            [com.blockether.vis.internal.foundation.mcp.serve :as serve]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
-            [com.blockether.vis.internal.workspace.core :as workspace])
+            [com.blockether.vis.internal.loop.transcript :as transcript]
+            [com.blockether.vis.internal.workspace.core :as workspace]
+            [taoensso.telemere :as tel])
   (:import [java.io Console]))
 
 (defn- with-mcp-db!
@@ -25,7 +30,8 @@
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db)))
 
-(defn- refuse! [message] (throw (ex-info message {:vis/user-error true})))
+;; Claude Code ends a refused `claude mcp` command with exit code 1.
+(defn- refuse! [message] (throw (ex-info message {:vis/user-error true :vis/exit-code 1})))
 
 (defn- same-name?
   "True when the engine keys `a` and `b` as one server: `Figma_Dev` is `figma-dev`."
@@ -62,7 +68,12 @@
    "--client-secret" "client-secret"
    "--callback-port" "callback-port"
    "--target-id" "target-id"
+   "-d" "debug"
+   "--debug" "debug"
+   "--verbose" "verbose"
    "--db" "db"})
+
+(def ^:private boolean-options "Options that take no value." #{"client-secret" "debug" "verbose"})
 
 (def ^:private repeated-options
   "Options that take each next word of their shape too, as `-e A=1 B=2` does."
@@ -98,7 +109,7 @@
                 (str "Unknown option '" spelling
                      "'. Put the server command and its"
                      " arguments after --, for example: vis-agent mcp add NAME -- npx -y PACKAGE")))
-            (if (= "client-secret" k)
+            (if (boolean-options k)
               (recur more (assoc options k true) positionals)
               (let [[value more] (if inline [inline more] [(first more) (next more)])]
                 (when (nil? value) (refuse! (str "Option '" spelling "' needs a value.")))
@@ -147,11 +158,31 @@
 
 (defn- check-auth-options!
   [options]
+  (when-let [port (get options "callback-port")]
+    (when-not (and (re-matches #"\d{1,5}" port) (<= 1 (parse-long port) 65535))
+      (refuse! (str "Invalid callback port: " port ". Must be a number from 1 to 65535.")))))
+
+(defn- client-secret!
+  "The secret of `--client-secret`: `MCP_CLIENT_SECRET`, else asked without echo, as
+   `claude mcp add` does. It is for the OAuth client `auth.client_id` of `spec`."
+  [options spec]
   (when (get options "client-secret")
-    (refuse! (str "Vis does not keep a client secret as text. Give the server"
-                  " auth.client_secret: ${NAME} in its configuration file instead.")))
-  (when (get options "callback-port")
-    (refuse! "Vis chooses the OAuth callback port itself, so --callback-port is not available.")))
+    (when-not (get-in spec ["auth" "client_id"]) (refuse! "--client-secret requires --client-id."))
+    ;; The OAuth flow runs in the gateway and reads the secret from its own machine.
+    (when (gateway-client/remote-gateway)
+      (refuse! "--client-secret needs the gateway on this machine, not a remote gateway."))
+    (or (not-empty (System/getenv "MCP_CLIENT_SECRET"))
+        (if-let [^Console console (System/console)]
+          (or (not-empty (some->
+                           (.readPassword console "Enter OAuth client secret: " (object-array 0))
+                           (String.)))
+              (refuse! "The client secret cannot be empty."))
+          (refuse! "No terminal can ask for the client secret. Set MCP_CLIENT_SECRET.")))))
+
+(defn- save-client-secret!
+  "Keep `secret` for the OAuth client of `name` in the token store of this machine."
+  [name secret]
+  (when secret (oauth/save-client-secret! (mcp-core/canonical-name name) secret)))
 
 (defn add-spec
   "Vis server spec of the parsed words of `vis-agent mcp add`, which takes the
@@ -180,6 +211,8 @@
         (when (seq headers) (refuse! "Headers apply only to --transport http or sse."))
         (when (get options "client-id")
           (refuse! "--client-id applies only to --transport http or sse."))
+        (when (get options "callback-port")
+          (refuse! "--callback-port applies only to --transport http or sse."))
         (when (and (nil? (get options "transport")) (re-find #"^https?://" target))
           (commandline/stderr!
             (str
@@ -207,7 +240,10 @@
             (assoc "headers" headers)
 
             (get options "client-id")
-            (assoc "auth" {"client_id" (get options "client-id")}))))))
+            (assoc-in ["auth" "client_id"] (get options "client-id"))
+
+            (get options "callback-port")
+            (assoc-in ["auth" "callback_port"] (parse-long (get options "callback-port"))))))))
 
 ;;; ── Scopes ────────────────────────────────────────────────────────────────────
 
@@ -258,8 +294,10 @@
                          (merge (get-in (config/load-global-yaml-config-raw) ["mcp" "servers"])
                                 (get-in (config/load-global-config-raw) ["mcp" "servers"]))
 
+                         ;; Also the `.mcp.json` servers that wait for approval.
                          "project"
-                         (get-in (config/load-project-root-config-raw) ["mcp" "servers"])
+                         (merge (mcp-json/servers)
+                                (get-in (config/load-project-root-config-raw) ["mcp" "servers"]))
 
                          "local"
                          (get-in (config/load-project-config-raw) ["mcp" "servers"])))))
@@ -337,6 +375,43 @@
     (refuse! (str "MCP server " name " already exists in " scope " config")))
   (write-server! options scope name spec))
 
+(defn- choose!
+  "Keep the approval `choice` (`mcp-approval/choose`) of the `.mcp.json` server
+   `name` in the private `.vis/config.yml`."
+  [name choice]
+  (binding [workspace/*workspace-root* (root)]
+    (config/update-project-config! #(mcp-approval/choose % name choice))))
+
+(defn- forget!
+  "Drop each approval choice of a `.mcp.json` server that has the engine name of
+   `name`. A choice for `My_Srv` must not stay after `remove my-srv`."
+  [name]
+  (binding [workspace/*workspace-root* (root)]
+    (config/update-project-config! (fn [raw]
+                                     (reduce #(mcp-approval/choose %1 %2 :forget)
+                                             raw
+                                             (filter #(same-name? name %)
+                                                     (mapcat #(get-in raw ["mcp" %])
+                                                             ["enabled_mcpjson_servers"
+                                                              "disabled_mcpjson_servers"])))))))
+
+(defn- approve-own!
+  "A person who adds a server to `.mcp.json` approves it for this person."
+  [scope name]
+  (when (= "project" scope) (choose! name :approve)))
+
+(defn- approval
+  "`pending` or `rejected` when `name` of `scope` is a `.mcp.json` server that Vis
+   does not start, else nil."
+  [scope name]
+  (when (= "project" scope)
+    (binding [workspace/*workspace-root* (root)]
+      (let [started (by-canonical-name (get-in (config/load-project-root-config-raw)
+                                               ["mcp" "servers"]))]
+        (when-not (contains? started (mcp-core/canonical-name name))
+          (when-let [raw (first (filter #(same-name? name %) (keys (mcp-json/servers))))]
+            (mcp-approval/status (config/mcp-approval-choices) raw)))))))
+
 (defn- print-file! [file] (when file (commandline/stdout! (str "File modified: " file))))
 
 (defn- transport-label
@@ -373,9 +448,14 @@
         name
         (first positionals)
 
+        secret
+        (client-secret! options spec)
+
         file
         (save-new! options scope name spec)]
 
+    (save-client-secret! name secret)
+    (approve-own! scope name)
     (commandline/stdout!
       (if (= "stdio" (get spec "transport"))
         (str "Added stdio MCP server "
@@ -425,9 +505,14 @@
           (or (mcp-json/->spec entry)
               (refuse! "Invalid MCP server configuration: give type stdio, http or sse."))
 
+          secret
+          (client-secret! options spec)
+
           file
           (save-new! options scope name spec)]
 
+      (save-client-secret! name secret)
+      (approve-own! scope name)
       (commandline/stdout!
         (str "Added "
              (get {"streamable_http" "http"} (get spec "transport") (get spec "transport"))
@@ -540,19 +625,24 @@
       [name (get-in by-scope [scope name]) scope])))
 
 (defn- health
-  "Claude Code's status mark of `name` after the gateway tries to connect it."
-  [name spec]
-  (cond (false? (get spec "enabled")) "✗ Disabled"
-        :else (try (if (get (gateway-client/mcp-test-server! name spec) "is_connected")
-                     "✓ Connected"
-                     "! Needs authentication")
-                   ;; Only the gateway's answer about this server is a failed connect. An
-                   ;; unreachable gateway is not, and must not mark every server failed.
-                   (catch clojure.lang.ExceptionInfo e
-                     (let [status (:http-status (ex-data e))]
-                       (if (and status (<= 400 (long status) 499) (not= 401 (long status)))
-                         "✗ Failed to connect"
-                         (throw e)))))))
+  "Claude Code's status mark of `name` of `scope` after the gateway tries to connect
+   it. A `.mcp.json` server without approval does not connect: a stdio server runs
+   a command of the repository."
+  [name spec scope]
+  (let [approval (when-not (false? (get spec "enabled")) (approval scope name))]
+    (cond (false? (get spec "enabled")) "✗ Disabled"
+          (= "pending" approval) "! Needs approval"
+          (= "rejected" approval) "✗ Rejected"
+          :else (try (if (get (gateway-client/mcp-test-server! name spec) "is_connected")
+                       "✓ Connected"
+                       "! Needs authentication")
+                     ;; Only the gateway's answer about this server is a failed connect. An
+                     ;; unreachable gateway is not, and must not mark every server failed.
+                     (catch clojure.lang.ExceptionInfo e
+                       (let [status (:http-status (ex-data e))]
+                         (if (and status (<= 400 (long status) 499) (not= 401 (long status)))
+                           "✗ Failed to connect"
+                           (throw e))))))))
 
 (defn- target-text
   [spec]
@@ -583,9 +673,10 @@
           (do (commandline/stdout! "Checking MCP server health...\n")
               ;; Check the servers at the same time, and print them in order. A
               ;; failed future gives its own error, not a wrapped one.
-              (doseq [line (mapv (fn [[name spec]]
-                                   (future
-                                     (str name ": " (target-text spec) " - " (health name spec))))
+              (doseq [line (mapv (fn [[name spec scope]]
+                                   (future (str name
+                                                ": " (target-text spec)
+                                                " - " (health name spec scope))))
                                  servers)]
                 (commandline/stdout! (try @line
                                           (catch java.util.concurrent.ExecutionException e
@@ -613,7 +704,7 @@
             (refuse! (str "No MCP server found with name: " name)))
 
         status
-        (health name spec)]
+        (health name spec scope)]
 
     (commandline/stdout! (str name ":"))
     (commandline/stdout! (str "  Scope: " (scope-labels scope)))
@@ -648,6 +739,9 @@
                         (mcp-core/canonical-name name)))
         (refuse! (str "No MCP server found with name: \"" name "\" in " scope " config")))
   (let [file (write-server! options scope name nil)]
+    (when (= "project" scope) (forget! name))
+    (when-not (some #(contains? (servers-in %) (mcp-core/canonical-name name)) file-scopes)
+      (oauth/delete-client-secret! (mcp-core/canonical-name name)))
     (commandline/stdout! (str "Removed MCP server " name " from " scope " config"))
     (print-file! file)))
 
@@ -681,6 +775,119 @@
                         (str/join "\n"
                                   (map #(str "  vis-agent mcp remove \"" name "\" -s " %)
                                        found)))))))))
+
+;;; ── Approval of .mcp.json servers ──────────────────────────────────────────
+
+(defn- pending-project-servers
+  "The `.mcp.json` names that wait for the approval of the person, sorted."
+  []
+  (let [started
+        (by-canonical-name (get-in (config/load-project-root-config-raw) ["mcp" "servers"]))
+
+        choices
+        (config/mcp-approval-choices)]
+
+    (vec (sort (filter #(and (= "pending" (mcp-approval/status choices %))
+                             (not (contains? started (mcp-core/canonical-name %))))
+                       (map str (keys (mcp-json/servers))))))))
+
+(defn- ask-line
+  [^Console console prompt]
+  (str/trim (str (.readLine console prompt (object-array 0)))))
+
+(defn- ask-one!
+  "Claude Code's question about one new `.mcp.json` server."
+  [^Console console name]
+  (commandline/stdout! (str "New MCP server found in .mcp.json: " name "\n"))
+  (commandline/stdout! "MCP servers may execute code or access system resources.\n")
+  (commandline/stdout! "  1. Use this and all future MCP servers in this project")
+  (commandline/stdout! "  2. Use this MCP server")
+  (commandline/stdout! "  3. Continue without using this MCP server")
+  (loop []
+
+    (if-let [choice (get {"" :approve-all "1" :approve-all "2" :approve "3" :reject}
+                         (ask-line console "Choice (Enter = 1): "))]
+      (choose! name choice)
+      (recur))))
+
+(defn- ask-many!
+  "Claude Code's question about several new `.mcp.json` servers: the person selects
+   the servers to use, and Vis rejects the others."
+  [^Console console names]
+  (commandline/stdout! (str (count names) " new MCP servers found in .mcp.json\n"))
+  (commandline/stdout! "MCP servers may execute code or access system resources.\n")
+  (doseq [[i name] (map-indexed vector names)]
+    (commandline/stdout! (str "  " (inc i) ". " name)))
+  (let [chosen (loop []
+
+                 (let [answer (ask-line
+                                console
+                                "Servers to use (numbers such as 1,3; Enter = all; n = none): ")
+                       picks (cond (str/blank? answer) names
+                                   (#{"n" "N"} answer) []
+                                   :else (for [n (str/split answer #"[,\s]+")
+                                               :let [i (some-> (parse-long n)
+                                                               dec)]]
+
+                                           (when (and i (< -1 i (count names))) (nth names i))))]
+
+                   (if (every? some? picks) (set picks) (recur))))]
+    (doseq [name names]
+      (choose! name (if (chosen name) :approve :reject)))))
+
+(defn approve-project-servers!
+  "Ask about each new `.mcp.json` server of the current directory, as Claude Code
+   does when it starts. The terminal client calls it before it takes the screen.
+   Without a terminal, the servers stay pending, and Vis does not start them."
+  []
+  (when-let [console (System/console)]
+    (binding [workspace/*workspace-root* (root)]
+      (when (workspace/source-enabled? "project")
+        (let [names (pending-project-servers)]
+          (case (count names)
+            0
+            nil
+
+            1
+            (ask-one! console (first names))
+
+            (ask-many! console names)))))))
+
+(defn- cli-mcp-reset-project-choices!
+  [_ words]
+  (let [{:keys [options positionals]} (parse-words #{"db"} words)]
+    (with-mcp-db! options)
+    (when (seq positionals) (refuse! (str "Unexpected arguments: " (str/join " " positionals))))
+    (binding [workspace/*workspace-root* (root)]
+      (config/update-project-config! mcp-approval/reset))
+    (commandline/stdout!
+      "All project-scoped (.mcp.json) server approvals and rejections have been reset.")
+    (commandline/stdout! "You will be prompted for approval next time you start Vis.")))
+
+(defn- cli-mcp-serve!
+  [_ words]
+  (let [{:keys [options positionals]}
+        (parse-words #{"debug" "verbose" "db"} words)
+
+        ;; The launcher takes `--debug`, `--verbose` and `-v` for itself and adds the
+        ;; console log handler; only `-d` arrives here. Read the handler before
+        ;; `config/init-cli!` removes it.
+        debug?
+        (boolean (or (get options "debug")
+                     (get options "verbose")
+                     (contains? (tel/get-handlers) :default/console)))]
+
+    (with-mcp-db! options)
+    (when (seq positionals) (refuse! (str "Unexpected arguments: " (str/join " " positionals))))
+    ;; `config/init-cli!` points System/out and System/err at the log file.
+    (let [exit (serve/serve! {:in System/in
+                              :out config/original-stdout
+                              :err config/original-stderr
+                              :cwd (root)
+                              :tools (transcript/model-facing-tools)
+                              :debug? debug?})]
+      (shutdown-agents)
+      (System/exit (int exit)))))
 
 ;;; ── Vis gateway commands ──────────────────────────────────────────────────────
 
@@ -762,11 +969,8 @@
     (commandline/stdout!
       "        Copy that FULL redirect URL (it works even if the page shows an error --")
     (commandline/stdout! "        the code is in the URL bar) and run:")
-    (commandline/stdout! (str "  vis-agent mcp auth-complete "
-                              name
-                              " --flow-id "
-                              flow_id
-                              " --input \"<PASTED_URL>\""))
+    (commandline/stdout!
+      (str "  vis-agent mcp auth-complete " name " --flow-id " flow_id " --input \"<PASTED_URL>\""))
     (commandline/stdout! "")
     (commandline/stdout! (str "flow_id=" flow_id))))
 
@@ -874,7 +1078,15 @@
       :type :string
       :doc "-H \"Name: value\". Request header of an http or sse server; repeat it."}
      {:name "client-id" :kind :flag :type :string :doc "OAuth client id of an http or sse server."}
-     target-arg db-arg]
+     {:name "client-secret"
+      :kind :flag
+      :type :boolean
+      :doc
+      "Ask for the OAuth client secret, or read MCP_CLIENT_SECRET. Vis keeps it in its token store."}
+     {:name "callback-port"
+      :kind :flag
+      :type :string
+      :doc "Fixed port of the OAuth callback, http://localhost:PORT/callback."} target-arg db-arg]
     :cmd/examples
     ["vis-agent mcp add --transport http notion https://mcp.notion.com/mcp"
      "vis-agent mcp add --transport http secure-api https://api.example.com/mcp --header \"Authorization: Bearer your-token\""
@@ -888,9 +1100,14 @@
     "Add an MCP server from a JSON string in the format of .mcp.json, like `claude mcp add-json`."
     :cmd/usage "vis-agent mcp add-json [options] <name> <json>"
     :cmd/raw-args? true
-    :cmd/args [{:name "name" :kind :positional :type :string :doc "Server name."}
-               {:name "json" :kind :positional :type :string :doc "The server entry as JSON."}
-               scope-arg target-arg db-arg]
+    :cmd/args
+    [{:name "name" :kind :positional :type :string :doc "Server name."}
+     {:name "json" :kind :positional :type :string :doc "The server entry as JSON."} scope-arg
+     {:name "client-secret"
+      :kind :flag
+      :type :boolean
+      :doc "Ask for the OAuth client secret of oauth.clientId, or read MCP_CLIENT_SECRET."}
+     target-arg db-arg]
     :cmd/examples
     ["vis-agent mcp add-json weather-api '{\"type\":\"http\",\"url\":\"https://api.weather.com/mcp\",\"headers\":{\"Authorization\":\"Bearer token\"}}'"
      "vis-agent mcp add-json local-weather '{\"type\":\"stdio\",\"command\":\"/path/to/weather-cli\",\"args\":[\"--api-key\",\"abc123\"],\"env\":{\"CACHE_DIR\":\"/tmp\"}}'"]
@@ -933,6 +1150,26 @@
                target-arg db-arg]
     :cmd/examples ["vis-agent mcp remove notion" "vis-agent mcp remove notion -s user"]
     :cmd/run-fn cli-mcp-remove!}
+   {:cmd/name "serve"
+    :cmd/parent ["mcp"]
+    :cmd/doc
+    "Run Vis as an MCP server on standard input and output, like `claude mcp serve`. Its tools are the tools of the Vis agent."
+    :cmd/usage "vis-agent mcp serve [-d|--debug] [--verbose]"
+    :cmd/raw-args? true
+    :cmd/args [{:name "debug" :kind :flag :type :boolean :doc "-d. Write each message to stderr."}
+               {:name "verbose" :kind :flag :type :boolean :doc "Write each message to stderr."}
+               db-arg]
+    :cmd/examples ["vis-agent mcp serve"]
+    :cmd/run-fn cli-mcp-serve!}
+   {:cmd/name "reset-project-choices"
+    :cmd/parent ["mcp"]
+    :cmd/doc
+    "Reset all approved and rejected project-scoped (.mcp.json) servers within this project."
+    :cmd/usage "vis-agent mcp reset-project-choices"
+    :cmd/raw-args? true
+    :cmd/args [db-arg]
+    :cmd/examples ["vis-agent mcp reset-project-choices"]
+    :cmd/run-fn cli-mcp-reset-project-choices!}
    {:cmd/name "test"
     :cmd/parent ["mcp"]
     :cmd/doc

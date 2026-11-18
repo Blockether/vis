@@ -2487,8 +2487,8 @@
     ;; in user.dir. Python and relative script reads must use that caller too.
     ;; #110: guest stderr stays the terminal's descriptor 2, not the block output.
     (try (pyrt/exec! python-context
-                     (str "import os\nos.chdir(" (env/py-json-literal cwd) ")\n"
-                          "__vis_keep_stderr__ = True\n"))
+                     (str "import os\nos.chdir(" (env/py-json-literal cwd)
+                          ")\n" "__vis_keep_stderr__ = True\n"))
          (pyrt/exec!
            python-context
            (str "import tls_policy\ntls_policy.configure(" (if tls-strict? "True" "False") ")\n"))
@@ -2843,14 +2843,14 @@
      :cmd/usage "vis-agent stdio"
      :cmd/extra-sections
      [{:title "USE FROM PYTHON"
-       :body (str/join "\n"
-                       ["  Agent() and StdioEngineClient start this command for you, select a private"
-                        "  session database, and stop the process when their context closes." ""
-                        "  from blockether.vis.engine import Agent"
-                        "  with Agent(project=\".\") as agent:"
-                        "      print(agent.run(\"Summarize this project\")[\"status\"])" ""
-                        "  Install the Python SDK and a compatible Vis executable separately."
-                        "  A task can incur provider charges and access project files." ""])}
+       :body (str/join
+               "\n"
+               ["  Agent() and StdioEngineClient start this command for you, select a private"
+                "  session database, and stop the process when their context closes." ""
+                "  from blockether.vis.engine import Agent" "  with Agent(project=\".\") as agent:"
+                "      print(agent.run(\"Summarize this project\")[\"status\"])" ""
+                "  Install the Python SDK and a compatible Vis executable separately."
+                "  A task can incur provider charges and access project files." ""])}
       {:title "DIRECT USE"
        :body (str/join
                "\n"
@@ -2865,9 +2865,10 @@
      (fn [_ _]
        (config/init-cli!)
        (when (str/blank? (System/getenv "VIS_DB_PATH"))
-         (throw (ex-info
-                  "stdio requires VIS_DB_PATH; use Agent() or StdioEngineClient() from the Python SDK"
-                  {:vis/user-error true})))
+         (throw
+           (ex-info
+             "stdio requires VIS_DB_PATH; use Agent() or StdioEngineClient() from the Python SDK"
+             {:vis/user-error true})))
        (try (gateway-stdio/serve!
               (java.io.BufferedReader.
                 (java.io.InputStreamReader. System/in java.nio.charset.StandardCharsets/UTF_8))
@@ -3513,7 +3514,8 @@
       (commandline/stderr! (str line)))
     (commandline/stderr! (str "vis-agent: " (or (ex-message t) "error"))))
   (shutdown-agents)
-  (exit-process! 2))
+  ;; A command can name its own code, as `vis-agent mcp` names the code of Claude Code.
+  (exit-process! (or (:vis/exit-code (ex-data t)) 2)))
 
 (defn- root-cause
   ^Throwable [^Throwable t]

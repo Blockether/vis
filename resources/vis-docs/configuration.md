@@ -860,17 +860,45 @@ When two scopes have the same name, `local` wins over `project`, and `project` w
 In the project scope, a server in `vis.yml` wins over the same name in `.mcp.json`.
 
 Vis reads `.mcp.json` in the Claude Code format, so a project that has this file for Claude Code
-also works in Vis. Vis does not ask you to approve the servers of `.mcp.json`. It trusts this file
-as it trusts `vis.yml`.
+also works in Vis. A stdio server of `.mcp.json` runs a command of the repository. So Vis starts a
+server of `.mcp.json` only after you approve it. When you start `vis-agent` in a terminal, Vis asks
+about each new server, as Claude Code does.
 
-These items are different from Claude Code:
+Vis keeps your choice in `.vis/config.yml`, in the `mcp` keys `enabled_mcpjson_servers`,
+`disabled_mcpjson_servers`, and `enable_all_project_mcp_servers`. `vis.yml` cannot approve a server.
+A server that you add with `--scope project` is approved for you. `vis-agent mcp list` shows
+`! Needs approval` for a server that waits, and Vis does not connect it. To ask again, run this
+command:
 
-- `add` refuses `--client-secret`. Put `auth.client_secret: ${ENV_NAME}` in the configuration
-  file. Vis does not keep the value of a secret.
-- `add` refuses `--callback-port`.
-- Vis has no `serve` command and no `reset-project-choices` command.
-- `--scope group` and `--scope session` with `--target-id` add a server to one group or one
-  session. Read [Scoped MCP servers](#scoped-mcp-servers).
+```bash
+vis-agent mcp reset-project-choices
+```
+
+A server that signs in with a pre-registered OAuth client takes these options:
+
+```bash
+vis-agent mcp add --transport http --client-id <CLIENT_ID> --client-secret \
+  --callback-port 8080 my-server https://mcp.example.com/mcp
+```
+
+- `--client-secret` asks for the secret, or reads `MCP_CLIENT_SECRET`. Vis keeps the secret in
+  `~/.vis/mcp-tokens`, not in a configuration file. `remove` deletes it. The gateway that signs
+  in reads this folder, so Vis refuses the option with a remote gateway.
+- `--callback-port` sets `auth.callback_port`. The sign-in then returns to
+  `http://localhost:<PORT>/callback`, the address that you registered for the client.
+
+`vis-agent mcp serve` runs Vis as an MCP server on standard input and output. Another MCP client,
+such as Claude Desktop, can then use the tools of Vis:
+
+```json
+{"mcpServers": {"vis": {"command": "vis-agent", "args": ["mcp", "serve"]}}}
+```
+
+With `-d`, `--debug` or `--verbose`, `serve` writes each message to standard error.
+
+A refused `vis-agent mcp` command ends with exit code 1, as in Claude Code. `--scope group` and
+`--scope session` with `--target-id` add a server to one group or one session. Read
+[Scoped MCP servers](#scoped-mcp-servers).
 
 ### Connections and transports
 

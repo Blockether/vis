@@ -881,7 +881,13 @@
         "client_secret": {
           "type": "string",
           "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
-          "description": "Secret of a pre-registered client as an environment reference, such as ${FIGMA_CLIENT_SECRET}. Plain text is refused."
+          "description": "Secret of a pre-registered client as an environment reference, such as ${FIGMA_CLIENT_SECRET}. Plain text is refused. Without it, Vis uses the secret that vis-agent mcp add --client-secret keeps outside the config."
+        },
+        "callback_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Fixed port of the sign-in callback. The redirect URI is then http://localhost:<port>/callback. Use it for a client whose redirect URI is registered. Without it, Vis uses a free port."
         },
         "scope": {
           "type": "string",
@@ -1081,6 +1087,26 @@
           "additionalProperties": {
             "$ref": "#/$defs/mcpServer"
           }
+        },
+        "enable_all_project_mcp_servers": {
+          "type": "boolean",
+          "description": "Approve all servers of the .mcp.json file of the project. Same as enableAllProjectMcpServers of Claude Code."
+        },
+        "enabled_mcpjson_servers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          },
+          "description": "Names of the approved servers of the .mcp.json file. Same as enabledMcpjsonServers of Claude Code."
+        },
+        "disabled_mcpjson_servers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          },
+          "description": "Names of the refused servers of the .mcp.json file. Same as disabledMcpjsonServers of Claude Code."
         }
       },
       "additionalProperties": false

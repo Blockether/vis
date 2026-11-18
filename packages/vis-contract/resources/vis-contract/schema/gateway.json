@@ -807,6 +807,18 @@
         "post": {
           "request": "json",
           "response": "json",
+          "request_schema": "session_block_request",
+          "response_schema": "session_block"
+        }
+      },
+      "path": "/v1/sessions/:sid/blocks"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
           "response_schema": "turn_cancel"
         }
       },
@@ -5383,6 +5395,38 @@
       "required": [
         "status"
       ]
+    },
+    "session_block_request": {
+      "type": "object",
+      "description": "One Python block to run in the session sandbox, as the `python_execution` tool of the agent runs it. No model is called.",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Python source."
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "additionalProperties": false
+    },
+    "session_block": {
+      "type": "object",
+      "description": "The result of one block: the text that the agent sees. `is_error` is true when the block failed.",
+      "properties": {
+        "result": {
+          "type": "string"
+        },
+        "is_error": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "result",
+        "is_error"
+      ],
+      "additionalProperties": false
     },
     "queue_send_now": {
       "type": "object",

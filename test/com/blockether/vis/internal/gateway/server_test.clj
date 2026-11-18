@@ -698,6 +698,52 @@
 
 ;; Send now (`→`): PATCH carries `deliver`, POST /queue/send-now marks the whole queue.
 (defdescribe
+  run-block-route
+  (it
+    "POST /blocks runs the code in the session and answers the text that the agent sees"
+    (let [sid
+          (random-uuid)
+
+          calls
+          (atom [])
+
+          outcome
+          (atom {:result "4" :error? false})
+
+          archived
+          (atom #{})
+
+          post!
+          (fn [id body]
+            (let [response (#'turns-api/run-block-handler
+                            {:request-method :post
+                             :path-params {:sid (str id)}
+                             :body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str body)
+                                                                             "UTF-8"))})]
+              [(:status response) (wire/parse-json (:body response))]))]
+
+      (with-redefs-fn {#'state/session-exists? (fn [actual]
+                                                 (= sid actual))
+                       #'state/session-archived? (fn [actual]
+                                                   (contains? @archived actual))
+                       #'lp/run-block! (fn [actual code]
+                                         (swap! calls conj [actual code])
+                                         @outcome)}
+        #(do (expect (= [200 {"result" "4" "is_error" false}] (post! sid {:code "print(2 + 2)"})))
+             (expect (= [[sid "print(2 + 2)"]] @calls))
+             ;; A failed block is a result, not a failed request.
+             (reset! outcome {:result "✗ runtime error: boom" :error? true})
+             (expect (= [200 {"result" "✗ runtime error: boom" "is_error" true}]
+                        (post! sid {:code "1/0"})))
+             (reset! calls [])
+             (expect (= 400 (first (post! sid {:code "  "}))))
+             (expect (= 400 (first (post! sid {}))))
+             (expect (= 404 (first (post! (random-uuid) {:code "1"}))))
+             (reset! archived #{sid})
+             (expect (= 409 (first (post! sid {:code "1"}))))
+             (expect (= [] @calls)))))))
+
+(defdescribe
   queue-send-now-routes
   (it
     "PATCH forwards request and deliver and maps the refusals"

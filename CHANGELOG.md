@@ -11,10 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - MCP: `vis-agent mcp` has the commands, arguments and messages of `claude mcp` in Claude Code: `add`, `add-json`, `add-from-claude-desktop`, `get`, `list` and `remove`. `--scope local`, the default, writes the private `.vis/config.yml` of the current directory. `--scope project` writes `.mcp.json`. `--scope user` writes `~/.vis/state.yml`. A local server wins over a project server, and a project server wins over a user server.
 - MCP: Vis reads the servers of the `.mcp.json` of a project, in the Claude Code format. A server in `vis.yml` wins over the same name in `.mcp.json`.
+- MCP: Vis starts a server of `.mcp.json` only after you approve it, as Claude Code does. `vis-agent` asks about each new server when it starts in a terminal. `vis-agent mcp reset-project-choices` deletes the choices. `vis-agent mcp list` shows `! Needs approval` and does not connect such a server.
+- MCP: `vis-agent mcp add` takes `--client-secret`, which asks for the secret or reads `MCP_CLIENT_SECRET` and keeps it in `~/.vis/mcp-tokens`, and `--callback-port`, which sets the new key `auth.callback_port`. With this key, the sign-in returns to `http://localhost:<PORT>/callback`. `.mcp.json` maps `oauth.callbackPort` to this key.
+- MCP: `vis-agent mcp serve` runs Vis as an MCP server on standard input and output, as `claude mcp serve` does. Its tools are the tools of the Vis agent, now `python_execution`. Each call runs in one Vis session of the current directory.
+- Gateway: `POST /v1/sessions/:sid/blocks` with `{"code": "..."}` runs one sandbox block in a session with no model. It waits for a running turn of the session and answers `{"result", "is_error"}`. The Python SDK has `client.routes.post_session_blocks`.
 
 ### Changed
 
 - MCP: `vis-agent gateway mcp` is now `vis-agent mcp`. `add` takes the arguments of `claude mcp add`. In your scripts, change `vis-agent gateway mcp add docs --url <URL>` to `vis-agent mcp add --scope user --transport http docs <URL>`, and `--headers "Name=value"` to `--header "Name: value"`. `vis-agent gateway mcp` stops with `Unknown command`.
+- MCP: a refused `vis-agent mcp` command ends with exit code 1, as in Claude Code. Before, it ended with exit code 2.
 - Hands-free voice: the `hands_free_voice` setting is removed. Live voice is on for each gateway, and it is available when the local speech models are ready. The capabilities answer keeps `enabled`, which is always `true`, for released clients. A start does not return `409 voice_disabled`.
 
 ### Fixed

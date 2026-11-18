@@ -1398,6 +1398,24 @@
                                             " read_attachment(id) opens it)."))))
                         (recur more (conj out line))))))))))
 
+(defn block-text
+  "The text that the agent sees for one executed block `f`: its printed stdout,
+   then its error, or nil when both are empty. Printed stdout is the only output
+   of a successful block. The same bounded projection goes to model replay, live
+   gateway events and human cards. `f` also gives the serving model, the scope
+   and the tool call id that `form/clip-to-wire` reads."
+  [f]
+  (let [out
+        (when-not (str/blank? (str (:stdout f)))
+          (form/clip-to-wire (elide-table-fences (:stdout f)) f))
+
+        err
+        (some-> (:error f)
+                error->display)]
+
+    (cond (and out err) (str out "\n" err)
+          :else (or err out))))
+
 (def ^:private FAILED_SOURCE_LINES
   "Leading lines of a failed form's source that replay beside its error."
   6)
@@ -1500,23 +1518,12 @@
                          (when g (str " · " g))))))
               forms)
 
-        ;; Printed stdout is the only successful output. The same bounded projection
-        ;; reaches model replay, live gateway events and human cards. A restored
-        ;; iteration provides its serving model even for older forms without the key.
-        stdout-wire
-        (fn [f]
-          (when-not (str/blank? (str (:stdout f)))
-            (form/clip-to-wire (elide-table-fences (:stdout f))
-                               (assoc f :llm-model (or (:llm-model f) (:llm-model iter-record))))))
-
+        ;; A restored iteration provides its serving model even for older forms
+        ;; without the key.
         form-output
         (fn [f]
-          (cond (:summary? f) nil
-                (:error f) (let [err (error->display (:error f))]
-                             (if-let [out (stdout-wire f)]
-                               (str out "\n" err)
-                               err))
-                :else (stdout-wire f)))
+          (when-not (:summary? f)
+            (block-text (assoc f :llm-model (or (:llm-model f) (:llm-model iter-record))))))
 
         ;; Output alone is unattributable once the assistant message that carried
         ;; the code is gone (a step that errored before that message landed, a
