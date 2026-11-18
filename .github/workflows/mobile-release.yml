@@ -101,7 +101,7 @@ jobs:
   ios:
     # A tag ships to TestFlight; a manual run only when iOS was asked for.
     if: ${{ github.event_name == 'push' || inputs.platforms != 'android' }}
-    # The self-hosted Apple-silicon builder must have Xcode 26+ (iOS 26 SDK).
+    # The self-hosted Apple-silicon builder must have Xcode 27+ (iOS 27 SDK); ios-release.mjs checks it.
     runs-on: [self-hosted, macOS, ARM64, vis-macos-arm64]
     timeout-minutes: 90
     steps:

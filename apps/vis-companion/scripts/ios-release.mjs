@@ -105,6 +105,16 @@ const buildNumber = flag('build') ?? capture('git', ['rev-list', '--count', 'HEA
 if (!/^\d+(\.\d+)*$/.test(marketingVersion)) die(`bad VIS_VERSION "${marketingVersion}"`);
 if (!/^\d+$/.test(buildNumber)) die(`bad --build "${buildNumber}" (git rev-list unavailable?)`);
 
+// App Store Connect accepts uploads after April 2027 only from the iOS 27 SDK (Xcode 27).
+// The self-hosted runner has whatever Xcode is installed, so stop before the build.
+const minIosSdk = 27;
+if (!has('prepare')) {
+  const sdk = capture('xcrun', ['--sdk', 'iphoneos', '--show-sdk-version']);
+  if (!(Number.parseInt(sdk, 10) >= minIosSdk)) {
+    die(`iOS SDK ${sdk || 'not found'}: App Store uploads need the iOS ${minIosSdk} SDK; install Xcode ${minIosSdk} or later`);
+  }
+}
+
 // Who gets this build is planned BEFORE the archive, exactly like the Play tracks: an unknown
 // audience must cost a second, not a ten-minute signed .ipa (scripts/testflight.mjs).
 let plan;
