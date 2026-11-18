@@ -68,7 +68,15 @@ export function LiveVoicePanel({
   const start = useCallback(async () => {
     if (disabled || pending.current) return;
     setRequested(true);
-    if (needsConsent && !consent) return;
+    if (needsConsent && !consent) {
+      // Consent is absent only after the last session ended. Show the consent again,
+      // not that session: its closed view hides the panel.
+      const previous = session.current;
+      session.current = null;
+      void previous?.stop();
+      setView(null);
+      return;
+    }
     const id = ++attempt.current;
     pending.current = true;
     setLoading(true);

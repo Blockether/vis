@@ -228,6 +228,22 @@ describe('hands-free opt-in panel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start voice' }));
     await waitFor(() => expect(client.startLiveVoice).toHaveBeenCalledTimes(1));
   });
+  it('asks for Android verification again when voice starts after End', async () => {
+    media.mobile = true;
+    media.platform = 'android';
+    const client = gateway();
+    const props = { client, sid: 's', disabled: false, onActive: vi.fn(), onBegin: vi.fn() };
+    const rendered = render(<LiveVoicePanel {...props} startRequest={1} />);
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Enable mobile audio testing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice' }));
+    await waitFor(() => expect(client.startLiveVoice).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'End voice mode' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Hands-free voice' })).not.toBeInTheDocument());
+    rendered.rerender(<LiveVoicePanel {...props} startRequest={2} />);
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Enable mobile audio testing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice' }));
+    await waitFor(() => expect(client.startLiveVoice).toHaveBeenCalledTimes(2));
+  });
   it('reports unsupported media only after a start request', async () => {
     media.reason = 'Install an app build with native hands-free audio support.';
     const client = gateway();
