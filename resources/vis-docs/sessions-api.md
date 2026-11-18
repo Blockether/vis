@@ -209,8 +209,8 @@ It does not confirm when a device played its last sample.
 Native cancellation is cooperative. Before its first audio callback, Pocket can complete latent generation for the current text chunk.
 
 The agent state `waiting_for_input` covers approvals and ordinary questions. Answer them through the authenticated interface, not voice.
-A `task.cancellation` event reports `requested`, `ambiguous` or `none`, with a message and an optional `turn_id`.
-Only `requested` means cancellation was requested. Neither cancellation nor this event undoes completed actions.
+A `task.cancellation` event reports `requested`, with a message and an optional `turn_id`.
+Neither cancellation nor this event undoes completed actions.
 
 ## Operations
 

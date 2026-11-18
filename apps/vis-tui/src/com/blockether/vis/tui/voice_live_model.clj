@@ -164,12 +164,6 @@
     "requested"
     "Task cancellation requested. Wait for task confirmation."
 
-    "ambiguous"
-    "No task cancelled. Choose a task in the normal task controls."
-
-    "none"
-    "No eligible task to cancel."
-
     "Task cancellation result unavailable."))
 
 (defn ended
@@ -215,7 +209,7 @@
 
     (if (and (get event "final")
              (contains? (:ended s) id)
-             (contains? #{"stop speaking" "end voice mode" "cancel that task"} text))
+             (contains? #{"stop speaking" "end voice mode"} text))
       (assoc-in s [:spoken-controls id] text)
       s)))
 
@@ -223,9 +217,7 @@
   [s type]
   (let [ids (for [[id text] (:spoken-controls s)
                   :when (= type
-                           ({"stop speaking" "output.interrupted"
-                             "end voice mode" "session.closed"
-                             "cancel that task" "task.cancellation"}
+                           ({"stop speaking" "output.interrupted" "end voice mode" "session.closed"}
                             text))]
 
               id)]

@@ -421,10 +421,8 @@
           "Hands-free · headset only · Mic: live · Speech: playing · Task: cancelling · /hands-free end"
           (model/status-text (assoc state "agent" "cancelling") false)))))
   (it "reports cancellation results without sending controls or changing task state"
-      (doseq [[status text]
-              [["requested" "Task cancellation requested. Wait for task confirmation."]
-               ["ambiguous" "No task cancelled. Choose a task in the normal task controls."]
-               ["none" "No eligible task to cancel."]]]
+      (doseq [[status text] [["requested"
+                              "Task cancellation requested. Wait for task confirmation."]]]
         (let [notices (atom [])
               before (assoc (model/initial 0 0) :server-state {"agent" "running"})
               r {:model (atom before) :send (ArrayBlockingQueue. 10)}
@@ -553,8 +551,7 @@
         (expect (= {:confirmed 0 :unknown 0} (model/recovery s "voice" nil)))))
   (it "resolves final spoken controls only after their observed control outcomes"
       (doseq [[text outcome] [["Stop speaking!" "output.interrupted"]
-                              ["End voice mode." "session.closed"]
-                              ["Cancel that task?" "task.cancellation"]]]
+                              ["End voice mode." "session.closed"]]]
         (let [s (-> (model/initial 0 0)
                     (model/ended 1)
                     (model/final-transcript {"utterance_id" 1 "text" text "final" true}))]

@@ -135,8 +135,6 @@ A muted microphone cannot hear an unmute command. Use the interface to resume.
 In the Companion, **Mute speech** controls output separately. **Cancel voice task** uses normal task cancellation.
 
 Say “Stop speaking” to stop output, or “End voice mode” to close voice mode without cancelling tasks.
-Say exactly “Cancel that task” to request cancellation of one active task owned by this voice session.
-If the target is ambiguous, nothing is cancelled. Use the normal task controls to select the task.
 Cancellation does not undo completed actions.
 
 **Send now** delivers queued messages into the running task at its next step. It does not start a separate task.

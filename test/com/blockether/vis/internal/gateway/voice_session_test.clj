@@ -202,26 +202,12 @@
         (expect (empty? @admitted)))))
   (describe
     "output and task isolation"
-    (it "cancels only a unique active owned task and asks when ownership is ambiguous"
-        (let [{:keys [session admitted cancelled events]} (fixture)]
-          (final! session 0 "Cancel that task.")
-          (expect (some #(and (= "task.cancellation" (:type %)) (= "none" (:status %))) @events))
-          (final! session 1 "Check the first result.")
-          (let [first-id (owned-turn session)]
-            (final! session 2 "Cancel that task.")
-            (expect (= [first-id] @cancelled))
-            (expect (= "cancelling" (:agent (voice/snapshot session))))
-            (final! session 3 "Do not cancel that task.")
-            (expect (= 2 (count @admitted)))
-            (final! session 4 "Cancel that task.")
-            (expect (= [first-id] @cancelled))
-            (expect (some #(and (= "task.cancellation" (:type %)) (= "ambiguous" (:status %)))
-                          @events))
-            (voice/task-state! session first-id "terminal")
-            (final! session 5 "Cancel that task.")
-            (expect (= 2 (count @cancelled)))
-            (expect (= 2 (count @admitted)))
-            (expect (every? #(contract/valid? "server_event" %) @events)))))
+    (it "sends a spoken cancel phrase to the agent and cancels no task"
+        (let [{:keys [session admitted cancelled]} (fixture)]
+          (final! session 0 "Check the first result.")
+          (final! session 1 "Cancel that task.")
+          (expect (empty? @cancelled))
+          (expect (= 2 (count @admitted)))))
     (it "keeps a current task visible when an older task reaches its terminal"
         (let [{:keys [session]} (fixture)]
           (final! session 0 "The first request")
@@ -384,7 +370,7 @@
     ;; Regression for the hands-free handoff: consumed voice rows must not remain active tasks.
     (it
       "does not revive stale input and transfers only a consumed owned queue row"
-      (let [{:keys [session cancelled]} (fixture)]
+      (let [{:keys [session]} (fixture)]
         (final! session 0 "Start the task")
         (let [running (owned-turn session)]
           (final! session 1 "The earlier follow-up")
@@ -411,8 +397,11 @@
               (expect (nil? (voice/commit-speech!
                               session
                               {:turn-id latest :source "consumed" :text "Duplicate task."})))
-              (final! session 3 "Cancel that task.")
-              (expect (= [running] @cancelled)))))))
+              (expect (= [running]
+                         (for [[id turn] (:owned-turns @(:state session))
+                               :when (not= "terminal" (:status turn))]
+
+                           id))))))))
     (it "does not regain speech from duplicate completion or a closed voice session"
         (let [{:keys [session]} (fixture)]
           (final! session 0 "Start the task")

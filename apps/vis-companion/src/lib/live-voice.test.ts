@@ -330,7 +330,7 @@ describe('hands-free live session', () => {
     expect(h.views.at(-1)?.receipts).toHaveLength(1);
     expect(h.sent).toHaveLength(sent + 1);
   });
-  it.each(['stop speaking', 'end voice mode', 'cancel that task'])(
+  it.each(['stop speaking', 'end voice mode'])(
     'does not require admission for confirmed spoken control %s',
     async (text) => {
       const h = harness();
@@ -364,13 +364,13 @@ describe('hands-free live session', () => {
       type: 'transcript',
       utterance_id: 1,
       revision: 1,
-      text: 'cancel that task',
+      text: 'end voice mode',
       final: false,
     });
     h.emit({
       type: 'task.cancellation',
-      status: 'none',
-      message: 'No active task.',
+      status: 'requested',
+      message: 'Cancellation was requested.',
     });
     vi.mocked(h.gateway.liveVoiceSnapshot).mockResolvedValue({
       state,
@@ -428,28 +428,25 @@ describe('hands-free live session', () => {
     await h.session.stop();
     expect(h.views.at(-1)?.reconciled).toBe(true);
   });
-  it.each(['requested', 'ambiguous', 'none'] as const)(
-    'displays %s cancellation outcomes without acting or retrying',
-    async (status) => {
-      const h = harness();
-      await h.session.start();
-      h.ready();
-      const before = h.sent.length;
-      h.emit({
-        type: 'task.cancellation',
-        status,
-        message: 'Use task controls to choose a task.',
-        ...(status === 'requested' ? { turn_id: tid } : {}),
-      });
-      expect(h.views.at(-1)).toMatchObject({
-        message: 'Use task controls to choose a task.',
-        turnId: null,
-        phase: 'live',
-      });
-      expect(h.sent).toHaveLength(before);
-      expect(h.gateway.startLiveVoice).toHaveBeenCalledTimes(1);
-    },
-  );
+  it('displays a cancellation outcome without acting or retrying', async () => {
+    const h = harness();
+    await h.session.start();
+    h.ready();
+    const before = h.sent.length;
+    h.emit({
+      type: 'task.cancellation',
+      status: 'requested',
+      message: 'Use task controls to choose a task.',
+      turn_id: tid,
+    });
+    expect(h.views.at(-1)).toMatchObject({
+      message: 'Use task controls to choose a task.',
+      turnId: null,
+      phase: 'live',
+    });
+    expect(h.sent).toHaveLength(before);
+    expect(h.gateway.startLiveVoice).toHaveBeenCalledTimes(1);
+  });
   it('keeps pending input independent of capture and output without answering forms', async () => {
     const h = harness();
     await h.session.start();
@@ -468,7 +465,7 @@ describe('hands-free live session', () => {
     expect(h.sent).toHaveLength(before);
     h.emit({
       type: 'task.cancellation',
-      status: 'none',
+      status: 'requested',
       message: 'Approval is mentioned in a message.',
     });
     expect(h.views.at(-1)?.state?.agent).toBe('waiting_for_input');

@@ -761,11 +761,7 @@
           "const": "task.cancellation"
         },
         "status": {
-          "enum": [
-            "requested",
-            "ambiguous",
-            "none"
-          ]
+          "const": "requested"
         },
         "message": {
           "type": "string",

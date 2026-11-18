@@ -373,31 +373,6 @@
            "Cancellation was requested. Completed actions are not undone. Check the task history."})
         (state! session)))))
 
-(defn- cancel-spoken-task!
-  [session]
-  (let [ids (mapv first
-                  (filter (fn [[_ turn]]
-                            (not= "terminal" (:status turn)))
-                          (:owned-turns @(:state session))))]
-    (case (count ids)
-      1
-      (cancel-task! session (first ids))
-
-      0
-      (emit!
-        session
-        {:type "task.cancellation"
-         :status "none"
-         :message
-         "No active task belongs to this voice session. Check the task history for completed actions."})
-
-      (emit!
-        session
-        {:type "task.cancellation"
-         :status "ambiguous"
-         :message
-         "More than one voice task is active. Select a task in the conversation before you cancel it."}))))
-
 (defn final!
   "Commit one immutable final through normal idempotent admission. Ignore late engine callbacks."
   [session utterance-id {:keys [text revision]}]
@@ -437,9 +412,6 @@
 
                       "end voice mode"
                       (close! session "user_ended")
-
-                      "cancel that task"
-                      (cancel-spoken-task! session)
 
                       (let [result (effect! session :admit {:request text :idempotency-key key})
                             receipt (merge base (select-keys result [:turn-id :status :error]))]

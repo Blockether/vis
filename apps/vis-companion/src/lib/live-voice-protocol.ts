@@ -55,7 +55,7 @@ export type LiveVoiceEvent =
   | { type: 'session.state'; state: LiveVoiceState }
   | {
       type: 'task.cancellation';
-      status: 'requested' | 'ambiguous' | 'none';
+      status: 'requested';
       message: string;
       turn_id?: string;
     }

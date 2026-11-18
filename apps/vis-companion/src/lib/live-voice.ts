@@ -289,10 +289,7 @@ export class LiveVoiceSession {
           .trim()
           .replace(/[.!?]+$/, '')
           .toLowerCase();
-        if (
-          event.final &&
-          ['stop speaking', 'end voice mode', 'cancel that task'].includes(control)
-        ) {
+        if (event.final && ['stop speaking', 'end voice mode'].includes(control)) {
           this.uncertainAdmissions.delete(event.utterance_id);
         }
         if (this.transcriptRevision.size > 32)
