@@ -2305,26 +2305,26 @@ therapy line 2"
 
 (defdescribe
   clipboard-copy-actions-test
-  (it "copies the marked session id and reports success"
+  (it "copies the marked session id without a notification"
       (let [copied
             (promise)
 
             notified
-            (promise)]
+            (atom [])]
 
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
                                                    (deliver copied text)
                                                    true)
-                         #'vis/notify! (fn [text & kvs]
-                                         (deliver notified [text kvs]))}
+                         #'vis/notify! (fn [text & _] (swap! notified conj text))}
           (fn []
-            (copy-session-id! "123e4567-e89b-12d3-a456-426614174000")
-            ;; The MARKED id lands on the clipboard: a bare UUID pasted
-            ;; anywhere else says nothing about what it addresses.
-            (expect (= "vis_session_id#123e4567-e89b-12d3-a456-426614174000"
-                       (deref copied 1000 ::timeout)))
-            (expect (= :success
-                       (:level (apply hash-map (second (deref notified 1000 ::timeout))))))))))
+            (let [done (copy-session-id! "123e4567-e89b-12d3-a456-426614174000")]
+              ;; The MARKED id lands on the clipboard: a bare UUID pasted
+              ;; anywhere else says nothing about what it addresses.
+              (expect (= "vis_session_id#123e4567-e89b-12d3-a456-426614174000"
+                         (deref copied 1000 ::timeout)))
+              (expect (true? (deref done 1000 ::timeout)))
+              ;; A successful copy shows no toast.
+              (expect (= [] @notified)))))))
   (it "a transcript drag whose document rebuild comes back blank falls back to the painted cells"
       ;; Regression: an expanded / live disclosure bubble can desync the
       ;; virtual-document rebuild from the on-screen paint, so it returns blank

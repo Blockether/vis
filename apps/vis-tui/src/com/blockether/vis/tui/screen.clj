@@ -617,7 +617,7 @@
   [text]
   (copy-text-async! "vis-tui-copy-session-id"
                     (vis-header/marked-session-id text)
-                    "✓ Copied session ID"))
+                    nil))
 
 (defn- copy-selection!
   ([text] (copy-selection! text :transcript))
