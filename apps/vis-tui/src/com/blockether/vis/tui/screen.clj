@@ -8277,6 +8277,37 @@
                              :level :success
                              :ttl-ms copy-success-ttl-ms)))))))))
 
+(defn- rename-session!
+  "Ask for a new title of the session `sid`, then send it to the gateway. The field
+   starts with `title`, the current title."
+  [screen sid title]
+  (when sid
+    (when-let [entered (with-dialog-lock
+                         #(dlg/text-input-dialog! screen
+                                                  "Rename session" "Session name"
+                                                  :initial (str (or title ""))))]
+      (if (str/blank? (str entered))
+        (vis/notify! "A session name cannot be empty" :level :warn :ttl-ms copy-success-ttl-ms)
+        (when (not= (str/trim (str entered)) (str/trim (str title)))
+          (vis/worker-future "tui-session-rename"
+                             (fn []
+                               (try (vis/gateway-set-session-title! sid (str/trim (str entered)))
+                                    (state/dispatch [:project-session-retitled sid
+                                                     (str/trim (str entered))])
+                                    (refresh-projects!)
+                                    (catch Throwable _
+                                      (vis/notify! "Could not rename session"
+                                                   :level :warn
+                                                   :ttl-ms copy-success-ttl-ms))))))))))
+
+(defn- rename-current-session!
+  "C-x s r: rename the session of the current tab."
+  [screen]
+  (when-let [sid (current-session-id)]
+    (rename-session! screen
+                     sid
+                     (get (try (vis/gateway-soul (str sid)) (catch Throwable _ nil)) "title"))))
+
 (def ^:private export-notice-ttl-ms
   "How long the notice of an export stays: the person reads the path and can click it."
   10000)
@@ -8631,23 +8662,7 @@
                                                :ttl-ms copy-success-ttl-ms)))))
 
       :rename-session
-      (when-let [entered (with-dialog-lock
-                           #(dlg/text-input-dialog! screen
-                                                    "Rename session" "Session name"
-                                                    :initial (str (or (get session "title") ""))))]
-        (if (str/blank? (str entered))
-          (vis/notify! "A session name cannot be empty" :level :warn :ttl-ms copy-success-ttl-ms)
-          (when (not= (str/trim (str entered)) (str/trim (str (get session "title"))))
-            (vis/worker-future "tui-session-rename"
-                               (fn []
-                                 (try (vis/gateway-set-session-title! sid (str/trim (str entered)))
-                                      (state/dispatch [:project-session-retitled sid
-                                                       (str/trim (str entered))])
-                                      (refresh-projects!)
-                                      (catch Throwable _
-                                        (vis/notify! "Could not rename session"
-                                                     :level :warn
-                                                     :ttl-ms copy-success-ttl-ms))))))))
+      (rename-session! screen sid (get session "title"))
 
       (:archive-session :unarchive-session)
       (let [away? (= :archive-session (:id pick))]
@@ -10760,6 +10775,9 @@
                     :session-group
                     (move-session-to-group! screen (current-session-id))
 
+                    :rename-session
+                    (rename-current-session! screen)
+
                     (:group-new :group-rename :group-recolour :group-archive :group-delete)
                     (session-group-verb! screen (current-session-id) cmd-id)
 
@@ -11040,6 +11058,9 @@
 
         :session-group
         (do (move-session-to-group! screen (current-session-id)) ::recur)
+
+        :rename-session
+        (do (rename-current-session! screen) ::recur)
 
         ;; C-x g — the verbs of the group that holds this session.
         (:group-new :group-rename :group-recolour :group-settings :group-archive :group-delete)

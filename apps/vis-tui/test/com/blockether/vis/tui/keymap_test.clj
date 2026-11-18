@@ -32,6 +32,8 @@
                    (expect (= :continue (:action r)))
                    (expect (= {:prefix :cx :prefix-group :session} (:state r))))
                  (expect (= :new-session (:action (press \s \n))))
+                 (expect (= :rename-session (:action (press \s \r))))
+                 (expect (contains? (ids {} :session) :rename-session))
                  (expect (= :cycle-model (:action (press \m \m))))
                  (expect (= :pick-reasoning (:action (press \m \r))))
                  (expect (= :search-open (:action (press \b \f))))

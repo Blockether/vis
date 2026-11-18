@@ -91,6 +91,13 @@
           "x-vis-group": "session"
         },
         {
+          "const": "rename-session",
+          "title": "rename session",
+          "description": "Change the title of this session",
+          "x-vis-key": "r",
+          "x-vis-group": "session"
+        },
+        {
           "const": "delete-session",
           "title": "delete session",
           "description": "Delete this session after you confirm",

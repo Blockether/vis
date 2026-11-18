@@ -9612,6 +9612,10 @@
   ;; Whole-session Markdown copy lives in the header as an icon.
   [{:id :show-sessions :group "Session" :label "Switch Session" :description "Open another session"}
    {:id :new-session :group "Session" :label "New Session" :description "Start an empty session"}
+   {:id :rename-session
+    :group "Session"
+    :label "Rename Session…"
+    :description "Change the title of this session"}
    ;; Both fork verbs are `:has-turns`-gated: a session with no turns has
    ;; nothing to fork, so the palette must not even offer them.
    {:id :fork-session
