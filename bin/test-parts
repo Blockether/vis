@@ -16,6 +16,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root" || exit 1
 # Two JVMs that start together must not both write the classpath cache.
 clojure -Spath -M:test > /dev/null || exit 1
+# On first use, a JVM copies the imaging and FFF libraries into ~/.cache, and a JVM
+# that starts at the same time loads the incomplete file. Copy them before the JVMs start.
+clojure -M -e "(require '[com.blockether.nativeresolver :as nr] 'com.blockether.imaging 'com.blockether.fff)
+  (run! #(nr/library-path @(resolve %)) '[com.blockether.imaging/native-spec com.blockether.fff/native-spec])" || exit 1
 
 # Without job control, bash starts a background command with SIGINT ignored, and the
 # tests that send SIGINT to a child fail. Job control also gives each JVM its own
