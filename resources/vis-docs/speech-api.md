@@ -207,7 +207,7 @@ A voice that does not exist gets status 404.
 <div data-variant="python">
 
 ```python
-transcript = client.speech.transcribe("out/line.wav", engine="vibevoice-asr-local")
+transcript = client.speech.transcribe("out/line.wav", engine="parakeet-local")
 print(transcript.text)
 ```
 
@@ -218,7 +218,7 @@ The audio must be a 16-bit PCM WAV file. The `Transcript` record has the `text` 
 <div data-variant="http">
 
 ```bash
-vis_api -X POST "$VIS_GATEWAY_URL/v1/voice?engine=vibevoice-asr-local" \
+vis_api -X POST "$VIS_GATEWAY_URL/v1/voice?engine=parakeet-local" \
   -H 'content-type: audio/wav' --data-binary @line.wav
 ```
 

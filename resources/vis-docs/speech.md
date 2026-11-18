@@ -28,8 +28,8 @@ The first use of an engine downloads its model, and the download can take some m
 | `qwen3-tts-local` | Expressive speech in ten languages | Built-in voices, such as `ryan` and `serena`, and voices that you add |
 | `pocket-tts-local` | Fast speech with your own voices | Built-in voices and voices that you add |
 | `piper-local` | Small and fast speech | Built-in voices |
-| `parakeet-local` | Fast transcription of short recordings | None |
-| `vibevoice-asr-local` | Transcription of long recordings | None |
+| `parakeet-local` | Default transcription engine, for short and long recordings | None |
+| `vibevoice-asr-local` | Alternative transcription engine | None |
 
 Select the default engines in the **General** section of the Companion app settings.
 
@@ -91,8 +91,8 @@ When you remove a voice, Vis deletes its recording. You cannot remove a built-in
 
 ## Transcribe a recording
 
-Send a 16-bit PCM WAV recording. The engine returns the text and its time segments. For a recording
-that is longer than a few sentences, use `vibevoice-asr-local`.
+Send a 16-bit PCM WAV recording. The engine returns the text and its time segments. Use
+`parakeet-local` for all recordings. It decodes a long recording in parts.
 
 ## See also
 
