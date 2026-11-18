@@ -3,6 +3,7 @@
    Single app-db atom, pure event handlers, side effects via reg-fx."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.tui.app-model :as app-model]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.view :as view-spec]
             [com.blockether.vis.tui.projects :as projects]
@@ -4447,14 +4448,17 @@
 
 (reg-event-db :app-pane-open
               ;; C-x b o: show session app `view-id` in the side panel slot, with the focus.
+              ;; A disconnected app does not open.
               (fn [db [_ session-id view-id]]
-                (cond-> (update db
-                                :live-panel assoc
-                                :open? true
-                                :focused? true
-                                :app {:session-id session-id :view-id view-id})
-                  (:project-sidebar db)
-                  (assoc-in [:project-sidebar :focused?] false))))
+                (if-not (app-model/openable? (get-in db [:app-views view-id :view]))
+                  db
+                  (cond-> (update db
+                                  :live-panel assoc
+                                  :open? true
+                                  :focused? true
+                                  :app {:session-id session-id :view-id view-id})
+                    (:project-sidebar db)
+                    (assoc-in [:project-sidebar :focused?] false)))))
 
 (reg-event-db :app-reveal
               ;; A press of a node with `reveals`: a later press replaces an earlier one.
@@ -5428,13 +5432,8 @@
                                        (fn [q]
                                          (conj (vec (or q [])) entry)))
                                (remember-input text))))
-         :fx (with-input-reset (cond-> [[:notify
-                                         (if session
-                                           "Queued — will send after current turn"
-                                           "Queued — will send when session is ready") :info 1500]]
-                                 gw-fx
-                                 (into gw-fx))
-                               opts)}))))
+         ;; The QUEUED row shows the message at once, so the queue adds no toast.
+         :fx (with-input-reset gw-fx opts)}))))
 
 (reg-event-fx
   :send-message

@@ -46,6 +46,11 @@
   [view]
   (= :stale (status view)))
 
+(defn openable?
+  "True when people can open the app. A disconnected app does not open on any surface."
+  [view]
+  (not (stale? view)))
+
 ;;; ── Diff lines ─────────────────────────────────────────────────────────────
 
 (defn- unquote-git-path

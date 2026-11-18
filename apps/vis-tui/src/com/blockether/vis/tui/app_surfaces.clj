@@ -55,11 +55,12 @@
 
 (defn session-apps
   "The app views of `app-views` (the tab's `{view-id {:view v}}`) that the session apps
-   picker lists, by title. A closed app and an app with `session` `off` are not listed."
+   picker lists, by title. A closed app, a disconnected app and an app with `session` `off`
+   are not listed."
   [app-views]
   (->> (vals app-views)
        (keep :view)
-       (filter #(and (open-view? %) (session-target %)))
+       (filter #(and (open-view? %) (model/openable? %) (session-target %)))
        by-title))
 
 (defn global-apps
@@ -260,14 +261,16 @@
 
 (defn reveal-step
   "What pending `reveal` does at `now-ms` while session `session-id` is in front with
-   `app-views`: nil without a reveal, `:wait` until its app opens, `:drop` after the wait
-   or for an app that the picker leaves out, else `{:show :pane|:chat :view-id id}`."
+   `app-views`: nil without a reveal, `:wait` until its app opens and is connected, `:drop`
+   after the wait or for an app that the picker leaves out, else
+   `{:show :pane|:chat :view-id id}`."
   [reveal session-id app-views now-ms]
   (when reveal
     (let [view (when (= (:session-id reveal)
                         (some-> session-id
                                 str))
                  (some #(when (and (open-view? %)
+                                   (model/openable? %)
                                    (= (:extension reveal) (:extension %))
                                    (= (:key reveal) (:key %)))
                           %)

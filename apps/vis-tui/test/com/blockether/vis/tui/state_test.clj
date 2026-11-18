@@ -3084,8 +3084,7 @@
                         [:enqueue-message "queued before ready" :a])]
 
         (expect (= ["queued before ready"] (mapv :text (get-in result [:db :pending-sends]))))
-        (expect (= [[:notify "Queued — will send when session is ready" :info 1500]]
-                   (:fx result)))))
+        (expect (= [] (:fx result)) "A queued message shows no toast")))
   (it "paints ONE visible queued row on Enter and reconciles the gateway ack into it"
       ;; REGRESSION (real session): a message submitted while a turn was running got
       ;; registered with the gateway but NOTHING appeared in the TUI — the channel
@@ -3430,7 +3429,7 @@
         (expect (empty? (get-in result [:db :tab-locals :a :pending-sends])))
         ;; … and no server-side queued turn is registered.
         (expect (not-any? #(= :gateway-enqueue (first %)) (:fx result)))
-        (expect (some #(= :notify (first %)) (:fx result)))))
+        (expect (not-any? #(= :notify (first %)) (:fx result)))))
   (it "schedules queue drain as an effect after message commit"
       (let [message-received-fn
             (-> #'state/event-registry
@@ -7052,6 +7051,17 @@
                               (get-in @state/app-db [:live-panel :app])))
                    (state/dispatch [:select-tab-index 1])
                    (expect (= {:session-id "B" :view-id "review-B"}
+                              (get-in @state/app-db [:live-panel :app]))))))
+
+(defdescribe disconnected-app-pane-test
+             (it "does not open a disconnected app in the side panel"
+                 (with-redefs [state/app-db (atom {:session {:id "A"}
+                                                   :app-views {"gone" {:view {:id "gone" :is-stale true}}
+                                                               "live" {:view {:id "live"}}}})]
+                   (state/dispatch [:app-pane-open "A" "gone"])
+                   (expect (nil? (get-in @state/app-db [:live-panel :app])))
+                   (state/dispatch [:app-pane-open "A" "live"])
+                   (expect (= {:session-id "A" :view-id "live"}
                               (get-in @state/app-db [:live-panel :app]))))))
 
 ;; All disclosures opened at once left each bubble out of view on a height estimate

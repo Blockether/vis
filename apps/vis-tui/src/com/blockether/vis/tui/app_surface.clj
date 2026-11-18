@@ -2231,7 +2231,7 @@
   "Open app `view-id` of `session-id`, or global app `view-id` without `session-id`,
    until the human closes it. `band` `{:left :width}` keeps the app in those screen
    columns; without it the app uses the whole terminal width. `close-label` names
-   what Esc does."
+   what Esc does. A disconnected app does not open."
   [^TerminalScreen screen session-id view-id & [{:keys [band close-label open-picture!]}]]
   (let [run! #(dlg/run-modal! screen
                               (component session-id
@@ -2240,13 +2240,13 @@
                                          screen
                                          close-label
                                          {:open-picture! open-picture!}))]
-    (if band
-      (binding [frame/*column-offset* (long (:left band))
-                dlg/*dialog-region* {:width (fn [cols _rows]
-                                              (app-surfaces/band-width band cols))}]
+    (cond (not (model/openable? (:view (held-view session-id view-id)))) nil
+          band (binding [frame/*column-offset* (long (:left band))
+                         dlg/*dialog-region* {:width (fn [cols _rows]
+                                                       (app-surfaces/band-width band cols))}]
 
-        (run!))
-      (run!))))
+                 (run!))
+          :else (run!))))
 
 (defn show!
   "Open the app attachment `row` of `session-id` until the human closes it."
