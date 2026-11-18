@@ -428,39 +428,46 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     let token = UUID()
     capturePipeline = token
     tapCaptureId = captureId
-    // Bound callback work waiting for the main queue, independently of bridge credits.
-    let credits = DispatchSemaphore(value: 4)
-    let overflow = NSLock()
-    var failed = false
+    // Bound the audio that waits for the main queue, independently of bridge credits.
+    // The bound is one second. The bridge holds two seconds of frames, so a larger
+    // burst after a main-queue stall can overflow the bridge. A longer stall drops
+    // audio and keeps the session.
+    let backlogLimit = 24000
+    let backlog = NSLock()
+    var waiting = 0
+    var dropped = 0
     input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-      guard credits.wait(timeout: .now()) == .success else {
-        overflow.lock()
-        let first = !failed
-        failed = true
-        overflow.unlock()
+      let capacity = Int(ceil(Double(buffer.frameLength) * 24000 / inputFormat.sampleRate)) + 64
+      backlog.lock()
+      // An empty queue takes each buffer, so an oversized buffer reaches its own check.
+      let admitted = waiting == 0 || waiting + capacity <= backlogLimit
+      if admitted { waiting += capacity } else { dropped += 1 }
+      let first = !admitted && dropped == 1
+      backlog.unlock()
+      guard admitted else {
         if first {
           DispatchQueue.main.async { [weak self] in
-            guard let self, self.sessionId == owner, self.capturePipeline == token else { return }
-            // A muted microphone drops its audio, so a full queue loses nothing.
-            guard self.state?.capturing == true else {
-              overflow.lock()
-              failed = false
-              overflow.unlock()
-              return
-            }
-            self.fail("Microphone processing exceeded its queue limit.")
+            backlog.lock()
+            let count = dropped
+            dropped = 0
+            backlog.unlock()
+            self?.diagnostic("capture queue was full, dropped \(count) buffers")
           }
         }
         return
       }
-      let capacity = Int(ceil(Double(buffer.frameLength) * 24000 / inputFormat.sampleRate)) + 64
+      let release = {
+        backlog.lock()
+        waiting -= capacity
+        backlog.unlock()
+      }
       guard capacity <= 4096,
         let converted = AVAudioPCMBuffer(
           pcmFormat: self?.format ?? inputFormat,
           frameCapacity: AVAudioFrameCount(capacity))
       else {
         DispatchQueue.main.async { [weak self] in
-          defer { credits.signal() }
+          defer { release() }
           guard let self, self.capturePipeline == token else { return }
           self.fail("Microphone conversion exceeded its frame limit.")
         }
@@ -486,7 +493,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
       }
       let conversionFailed = error != nil || status == .error
       DispatchQueue.main.async { [weak self] in
-        defer { credits.signal() }
+        defer { release() }
         guard let self, self.sessionId == owner, self.capturePipeline == token,
           let state = self.state, state.capturing, state.captureId == self.tapCaptureId
         else { return }
