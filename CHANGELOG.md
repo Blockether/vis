@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.21] - 2026-11-18
+
 ### Added
 
 - Sandbox: `defs["name"]` does the same lookup as `defs("name")`. Before, the subscript failed with `TypeError: 'function' object is not subscriptable`. The Python runtime is now at commit d20f31f.
@@ -14,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Python SDK: `StdioEngineClient` replaces `LocalEngine`, and `HttpLocalEngineClient` replaces `LocalService`. `HttpLocalEngineClient()` is a client that starts or joins the shared local gateway when it connects, and `client.shutdown()` stops that gateway. `GatewayClient` stays. `Agent` takes the client as `client=`, not `execution_layer=`, and `agent.client` replaces `agent.execution_layer`. In your code, rename `LocalEngine` to `StdioEngineClient` and `execution_layer=` to `client=`.
-- Python SDK: the base class `ExecutionLayer` is now `EngineClient`. The generated methods of the gateway routes, such as `get_session_usage()` and `post_settings()`, moved from the client to `client.routes`, an object of the new class `Routes`. In your code, change `client.get_session_usage(sid)` to `client.routes.get_session_usage(sid)`. The typed calls, such as `client.create_session()`, `client.speech` and `client.sounds`, stay on the client.
+- Python SDK: the base class `ExecutionLayer` is now `EngineClient`. The generated methods of the gateway routes, such as `get_session_usage()` and `post_settings()`, moved from the client to `client.routes`, an object of the new class `Routes`. In your code, change `client.get_session_usage(sid)` to `client.routes.get_session_usage(sid)`. The typed calls, such as `client.create_session()`, `client.speech` and `client.sounds`, stay on the client. `Speech` and `Sounds` take the client as `client`, not `layer`.
 - Python SDK: a generated record type that had the name of an SDK class now ends in `Record`: `SessionRecord`, `TurnRecord`, `TranscriptRecord`, `SessionGroupRecord`, `SessionModelRecord`, `CouncilEntryRecord`, `CouncilMemberRecord` and `CouncilThreadRecord`. Before, `Session` and `Turn` were each a class and a `TypedDict`.
 
 ### Fixed
@@ -31,10 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Compression: the Companion app sends an attachment as gzip when gzip makes it at least 10% smaller and the gateway inflates gzip. A recording that is compressed already stays plain. The gateway now lets a browser client read its `Accept-Encoding` header.
 - Compression: the Python SDK asks a remote gateway for a gzip event stream and gives each event when the gateway writes it. The CLI asks a remote gateway (`--gateway`, `VIS_GATEWAY_URL`) for gzip answers. Before, the SDK stream and each CLI answer came plain. The CLI event stream stays plain.
 - Diagnostics: the slow-request line of the gateway log has the length of the request body (`request-bytes`).
-
-## [v0.5.21] - 2026-11-17
-
-### Fixed
 - Gateway: a JSON request body has a limit of 64 Mi characters, the same limit as an inflated gzip body. A larger body gets the answer 413. Before, only a gzip body had a limit.
 - Gateway: `PATCH /v1/sessions/:sid/workspace/root` answers 400 for no path, a blank path and a path that is no directory, and 409 for a session without a workspace. Before, it answered 500.
 - MCP: a saved OAuth token goes only to the origin (scheme, host and port) of the server URL of the sign-in. After you change the URL of a server to another origin, the server asks for a new sign-in. Before, the token of the old host went to the new host.
