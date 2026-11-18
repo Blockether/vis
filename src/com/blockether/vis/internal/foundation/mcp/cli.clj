@@ -1050,10 +1050,11 @@
    "Configure MCP servers with the commands and arguments of `claude mcp`, and manage gateway servers."
    :cmd/usage
    "vis-agent mcp <add|add-json|add-from-claude-desktop|get|list|remove|test|enable|disable|kill|start|auth-start|auth-complete|auth-poll|auth-cancel|auth-logout>"
+   :cmd/usage-exit-code 1
    :cmd/subcommands #(registry/registered-under ["mcp"])})
 
-(def subcommands
-  "Subcommands registered under `vis-agent mcp`."
+(def ^:private subcommand-specs
+  "The commands under `vis-agent mcp`."
   [{:cmd/name "add"
     :cmd/parent ["mcp"]
     :cmd/doc
@@ -1288,3 +1289,8 @@
                {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
     :cmd/examples ["vis-agent mcp auth-logout linear"]
     :cmd/run-fn cli-mcp-auth-logout!}])
+
+(def subcommands
+  "Subcommands registered under `vis-agent mcp`. As in `claude mcp`, a usage error
+   ends with exit code 1."
+  (mapv #(assoc % :cmd/usage-exit-code 1) subcommand-specs))

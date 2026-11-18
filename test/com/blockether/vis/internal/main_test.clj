@@ -1591,6 +1591,12 @@
                                   {:name "nope"})))))))
   (it "ends a refused MCP command with exit code 1, as Claude Code does"
       (expect (= 1 (:exit (cli-error #(mcp-cli/add-spec {:options {} :positionals ["nope"]}))))))
+  (it "ends an unknown MCP subcommand with exit code 1, and other usage errors with 2"
+      (let [exit
+            #(#'main/usage-error-exit
+               (commandline/dispatch! (#'main/root-command) (cons "vis-agent" %) {:print-fn nil}))]
+        (expect (= 1 (exit ["mcp" "bogus"])))
+        (expect (= 2 (exit ["extension" "bogus"])))))
   (it "prints a fault without Java class names"
       (let [{:keys [err exit]} (cli-error #(throw (RuntimeException. "outer step failed"
                                                                      (ClassCastException.

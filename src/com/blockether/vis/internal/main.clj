@@ -3467,6 +3467,12 @@
   [args]
   (= ["python" "--shared" "uv" "run"] (vec (take 4 args))))
 
+(defn- usage-error-exit
+  "The exit code of the usage error `result` of `commandline/dispatch!`: the
+   `:cmd/usage-exit-code` of the command, else 2."
+  [result]
+  (or (:exit-code result) 2))
+
 (defn- unknown-command?
   "True when the user typed something the tree doesn't recognize.
    Detected by walking the tree: if `find-leaf` resolves only to the
@@ -3868,16 +3874,17 @@
                               ;; the process exited 0 even though the user-visible output was
                               ;; an error message + help text -- so any shell pipeline like
                               ;; `vis-agent foo --bogus && echo ok` printed `ok`. Map `:error` to
-                              ;; exit code 2 (POSIX convention for usage errors); `:no-match`
+                              ;; exit code 2 (POSIX convention for usage errors), or to the
+                              ;; `:cmd/usage-exit-code` of the command; `:no-match`
                               ;; can't actually fire here because `unknown-command?` above
                               ;; already short-circuited that case.
-                              (let [{:keys [status]} (timed-startup!
-                                                       measure?
-                                                       "dispatch"
-                                                       #(commandline/dispatch! root full-args))]
+                              (let [{:keys [status] :as result}
+                                    (timed-startup! measure?
+                                                    "dispatch"
+                                                    #(commandline/dispatch! root full-args))]
                                 (case status
                                   :error
-                                  (System/exit 2)
+                                  (System/exit (int (usage-error-exit result)))
 
                                   ;; Success path: force a deterministic process exit.
                                   ;; Python extension loading can spin up CPython and extension
