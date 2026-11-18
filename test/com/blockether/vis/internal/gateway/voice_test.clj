@@ -677,7 +677,7 @@
                   "text" "A verified result."})
                 (expect (await! #(= 50
                                     (count (filter (fn [event]
-                                                     (= :output (:kind event)))
+                                                     (:pcm event))
                                                    @events)))))
                 (control! runtime {:type "output.interrupt" :output-epoch 0 :reason "stop_speech"})
                 (let [receipt (second (first (filter #(= "voice.playback" (first %)) @durable)))]
@@ -752,12 +752,7 @@
 
                   frame
                   (fn [generation id]
-                    (contract/encode-frame {:kind :input
-                                            :generation generation
-                                            :stream-id id
-                                            :sequence 0
-                                            :sample-offset 0
-                                            :sample-rate 24000}
+                    (contract/encode-frame {:generation generation :stream-id id :sample-offset 0}
                                            (byte-array 960)))]
 
               (try
@@ -825,12 +820,7 @@
                                    @events)))
             (control! runtime {:type "utterance.start" :capture-generation 0 :utterance-id 0})
             (voice/message! runtime
-                            (contract/encode-frame {:kind :input
-                                                    :generation 0
-                                                    :stream-id 0
-                                                    :sequence 0
-                                                    :sample-offset 0
-                                                    :sample-rate 24000}
+                            (contract/encode-frame {:generation 0 :stream-id 0 :sample-offset 0}
                                                    (byte-array 960)))
             (expect (await! #(some (fn [event]
                                      (= "transcript" (:type event)))
@@ -856,7 +846,7 @@
               (expect (await! #(some (fn [event]
                                        (= "output.finished" (:type event)))
                                      @events)))
-              (expect (= 2 (count (filter #(= :output (:kind %)) @events))))
+              (expect (= 2 (count (filter :pcm @events))))
               (let [segment (:segment-id (first (filter #(= "speech.committed" (:type %))
                                                         @events)))]
                 (control!
@@ -871,8 +861,7 @@
                                      @events)))
               (expect (empty? @cancelled))
               (expect (= "live" (:capture (:state (voice/snapshot runtime)))))
-              (expect (every? #(or (= :output (:kind %)) (contract/valid? "server_event" %))
-                              @events)))))))))
+              (expect (every? #(or (:pcm %) (contract/valid? "server_event" %)) @events)))))))))
 
 (defdescribe
   input-abort-test

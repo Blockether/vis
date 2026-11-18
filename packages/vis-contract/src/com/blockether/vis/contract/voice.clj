@@ -3,8 +3,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire])
-  (:import [java.nio ByteBuffer ByteOrder]
-           [java.nio.charset StandardCharsets]))
+  (:import [java.nio ByteBuffer ByteOrder]))
 
 (set! *warn-on-reflection* true)
 
@@ -27,22 +26,19 @@
 
 (defn- invalid-frame [] (ex-info "Invalid live voice frame" {:type :voice/invalid-frame}))
 
+(defn- pcm-size?
+  "True for an even PCM16 size of one sample to one frame."
+  [size]
+  (and (even? (long size)) (<= 2 (long size) (* 2 (long (:frame-samples limits))))))
+
 (defn encode-frame
-  "Encode one header and its PCM16 bytes. Reject oversized frames before allocation."
+  "Encode one header and its PCM16 bytes. The direction gives the kind and the
+   length gives the sample count. Reject oversized frames before allocation."
   ^bytes [header ^bytes pcm]
-  (let [size
-        (alength pcm)
-
-        header
-        (assoc header :sample-count (quot size 2))]
-
-    (when-not (and (even? size) (valid? "frame_header" header)) (throw (invalid-frame)))
+  (let [size (alength pcm)]
+    (when-not (and (pcm-size? size) (valid? "frame_header" header)) (throw (invalid-frame)))
     (let [buffer (doto (ByteBuffer/allocate (+ (long (:header-bytes limits)) size))
                    (.order ByteOrder/LITTLE_ENDIAN))]
-      (.put buffer (.getBytes ^String (:magic frame-format) StandardCharsets/US_ASCII))
-      (.put buffer (byte (:version frame-format)))
-      (.put buffer (byte (get (:kinds frame-format) (keyword (:kind header)))))
-      (.putShort buffer (short 0))
       (doseq [field fields]
         (.putInt buffer (unchecked-int (get header field))))
       (.put buffer pcm)
@@ -57,52 +53,23 @@
               :else (throw (invalid-frame)))
 
         size
-        (.remaining buffer)
+        (- (.remaining buffer) (long (:header-bytes limits)))]
 
-        header-size
-        (long (:header-bytes limits))]
-
-    (when-not (<= header-size size (+ header-size (* 2 (long (:frame-samples limits)))))
-      (throw (invalid-frame)))
+    (when-not (pcm-size? size) (throw (invalid-frame)))
     (.order buffer ByteOrder/LITTLE_ENDIAN)
-    (let [magic
-          (byte-array 4)
-
-          _
-          (.get buffer magic)
-
-          version
-          (bit-and 255 (.get buffer))
-
-          kind-code
-          (bit-and 255 (.get buffer))
-
-          reserved
-          (.getShort buffer)
-
-          kind
-          (some (fn [[k v]]
-                  (when (= v kind-code) k))
-                (:kinds frame-format))
-
-          header
+    (let [header
           (reduce (fn [m field]
                     (assoc m field (Integer/toUnsignedLong (.getInt buffer))))
-                  {:kind kind}
+                  {}
                   fields)
 
-          count-samples
-          (:sample-count header)]
+          pcm
+          (byte-array size)]
 
-      (when-not (and (= (:magic frame-format) (String. magic StandardCharsets/US_ASCII))
-                     (= (:version frame-format) version)
-                     (zero? reserved)
-                     (valid? "frame_header" header)
-                     (= (* 2 (long count-samples)) (.remaining buffer)))
-        (throw (invalid-frame)))
-      (let [pcm (byte-array (.remaining buffer))]
-        (.get buffer pcm)
-        (assoc header :pcm pcm)))))
+      (.get buffer pcm)
+      (assoc header
+        :sample-count (quot size 2)
+        :pcm pcm))))
 
 (defn pcm->samples
   "Convert validated PCM16 bytes to normalized Float32 samples."

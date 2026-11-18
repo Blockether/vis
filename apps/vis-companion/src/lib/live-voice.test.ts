@@ -115,14 +115,12 @@ function harness(muted = false) {
     sent
       .filter((item): item is string => typeof item === 'string')
       .map((text) => JSON.parse(text) as Record<string, unknown>);
-  const output = (epoch = 1, sequence = 0, segment = 1, samples: Int16Array = new Int16Array(480)) =>
+  const output = (epoch = 1, frame = 0, segment = 1, samples: Int16Array = new Int16Array(480)) =>
     socket.onmessage?.({
       data: encodeVoiceFrame({
-        kind: 'output',
         generation: epoch,
         streamId: segment,
-        sequence,
-        sampleOffset: sequence * 480,
+        sampleOffset: frame * 480,
         samples,
       }),
     });

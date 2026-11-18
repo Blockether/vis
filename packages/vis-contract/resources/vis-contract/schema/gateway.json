@@ -9655,10 +9655,6 @@
           "type": "string",
           "minLength": 1
         },
-        "sequence": {
-          "type": "integer",
-          "minimum": 0
-        },
         "generated": {
           "type": "integer",
           "minimum": 0
@@ -9680,7 +9676,6 @@
         "epoch",
         "turn_id",
         "source",
-        "sequence",
         "generated",
         "sent",
         "played",

@@ -2985,7 +2985,6 @@ class VoiceSpeechData(TypedDict):
     position: NotRequired[int]
     created_at: NotRequired[int]
     source: str
-    sequence: int
     generated: int
     sent: int
     played: int

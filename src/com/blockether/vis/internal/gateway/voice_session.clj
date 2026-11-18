@@ -253,7 +253,7 @@
                           :last-utterance utterance-id
                           :utterance "open"
                           :input-epoch (:output-epoch @(:state session))
-                          :current {:id utterance-id :generation generation :sequence 0 :samples 0})
+                          :current {:id utterance-id :generation generation :samples 0})
                         (swap! (:state session) assoc-in
                           [:pending utterance-id]
                           {:generation generation
@@ -266,7 +266,7 @@
                           (do (state! session) true))))))))
 
 (defn input-frame!
-  "Accept only contiguous current audio. Old or duplicate packets cannot reach an engine."
+  "Accept only contiguous current audio. Old or repeated audio cannot reach an engine."
   [session frame]
   #_{:clj-kondo/ignore [:locking-suspicious-lock]}
   (locking (:lock session)
@@ -274,26 +274,21 @@
       (let [{:keys [capture-generation current capture]}
             @(:state session)
 
-            {:keys [kind generation stream-id sequence sample-offset sample-count]}
+            {:keys [generation stream-id sample-offset sample-count]}
             frame]
 
-        (cond (or (not= :input kind)
-                  (not= generation capture-generation)
+        (cond (or (not= generation capture-generation)
                   (not= "live" capture)
                   (not= stream-id (:id current)))
               false
-              (< (long sequence) (long (:sequence current))) false
-              (or (not= sequence (:sequence current)) (not= sample-offset (:samples current)))
+              (< (long sample-offset) (long (:samples current))) false
+              (not= sample-offset (:samples current))
               (fail! session "input_discontinuity" "Input audio has a gap")
               (> (+ (long sample-offset) (long sample-count))
                  (* (quot (long (:sample-rate contract/limits)) 1000)
                     (long (:max-utterance-ms contract/limits))))
               (fail! session "utterance_too_long" "The utterance exceeds the duration limit")
-              :else (do (swap! (:state session) update
-                          :current
-                          #(-> %
-                               (update :sequence inc)
-                               (update :samples + sample-count)))
+              :else (do (swap! (:state session) update-in [:current :samples] + sample-count)
                         (touch! session)
                         (if (false? (effect! session :feed-input stream-id frame))
                           (reject-input! session)
@@ -516,7 +511,6 @@
                  :turn-id turn-id
                  :text text
                  :source source
-                 :sequence 0
                  :generated 0
                  :sent 0
                  :played 0
@@ -578,16 +572,10 @@
             (cond (not (<= 1 sample-count (long (:frame-samples contract/limits))))
                   (throw (ex-info "Invalid output frame size" {:type :voice/invalid-output}))
                   (and (not earlier?) (<= (+ outstanding sample-count) credit))
-                  (let [header {:kind :output
-                                :generation epoch
-                                :stream-id segment-id
-                                :sequence (:sequence segment)
-                                :sample-offset (:sent segment)
-                                :sample-rate (:sample-rate contract/limits)
-                                :sample-count sample-count}]
+                  (let [header
+                        {:generation epoch :stream-id segment-id :sample-offset (:sent segment)}]
                     (swap! (:state session) #(-> %
                                                  (assoc :output "synthesizing")
-                                                 (update-in [:segments segment-id :sequence] inc)
                                                  (update-in [:segments segment-id :sent]
                                                             +
                                                             sample-count)))

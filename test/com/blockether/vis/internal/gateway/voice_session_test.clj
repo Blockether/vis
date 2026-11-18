@@ -83,12 +83,7 @@
         (voice/start-utterance! session 0 2)
         (when (= operation :feed-input)
           (voice/input-frame! session
-                              {:kind :input
-                               :generation 0
-                               :stream-id 2
-                               :sequence 0
-                               :sample-offset 0
-                               :sample-count 480}))
+                              {:generation 0 :stream-id 2 :sample-offset 0 :sample-count 480}))
         (when (= operation :finish-input) (voice/end-utterance! session 0 2))
         (voice/final! session 1 {:text "Must not execute" :revision 1})
         (voice/final! session 2 {:text "Must not execute" :revision 1})
@@ -138,30 +133,21 @@
           (expect (= "running" (:agent (voice/snapshot session))))
           (expect (= 10 (count (filter #(= "voice.admission" (first %)) @durable))))
           (expect (every? #(contract/valid? "server_event" %) @events))))
-    (it "drops duplicate and stale frames and fails on an input gap"
-        (let [{:keys [session feeds]}
-              (fixture)
+    (it
+      "drops repeated and stale frames and fails on an input gap"
+      (let [{:keys [session feeds]}
+            (fixture)
 
-              frame
-              {:kind :input
-               :generation 0
-               :stream-id 1
-               :sequence 0
-               :sample-offset 0
-               :sample-count 480
-               :sample-rate 24000
-               :pcm (byte-array 960)}]
+            frame
+            {:generation 0 :stream-id 1 :sample-offset 0 :sample-count 480 :pcm (byte-array 960)}]
 
-          (voice/start-utterance! session 0 1)
-          (expect (voice/input-frame! session frame))
-          (expect (false? (voice/input-frame! session frame)))
-          (expect (false? (voice/input-frame! session (assoc frame :generation 9))))
-          (expect (= 1 (count @feeds)))
-          (voice/input-frame! session
-                              (assoc frame
-                                :sequence 2
-                                :sample-offset 960))
-          (expect (= "off" (:capture (voice/snapshot session))))))
+        (voice/start-utterance! session 0 1)
+        (expect (voice/input-frame! session frame))
+        (expect (false? (voice/input-frame! session frame)))
+        (expect (false? (voice/input-frame! session (assoc frame :generation 9))))
+        (expect (= 1 (count @feeds)))
+        (voice/input-frame! session (assoc frame :sample-offset 960))
+        (expect (= "off" (:capture (voice/snapshot session))))))
     (it "admits speech from before a mute and invalidates unfinished input on unmute"
         (let [finished
               (atom [])
@@ -189,17 +175,15 @@
           (final! session 0 "Cannot hear this")
           (expect (= "muted" (:capture (voice/snapshot session))))
           (expect (empty? @admitted))))
-    (it
-      "refuses overflow without passing more PCM to the engine"
-      (let [{:keys [session admitted]} (fixture {:feed-input (constantly false)})]
-        (voice/start-utterance! session 0 0)
-        (voice/input-frame!
-          session
-          {:kind :input :generation 0 :stream-id 0 :sequence 0 :sample-offset 0 :sample-count 480})
-        (voice/end-utterance! session 0 0)
-        (voice/final! session 0 {:text "Cannot execute this" :revision 1})
-        (expect (= "muted" (:capture (voice/snapshot session))))
-        (expect (empty? @admitted)))))
+    (it "refuses overflow without passing more PCM to the engine"
+        (let [{:keys [session admitted]} (fixture {:feed-input (constantly false)})]
+          (voice/start-utterance! session 0 0)
+          (voice/input-frame! session
+                              {:generation 0 :stream-id 0 :sample-offset 0 :sample-count 480})
+          (voice/end-utterance! session 0 0)
+          (voice/final! session 0 {:text "Cannot execute this" :revision 1})
+          (expect (= "muted" (:capture (voice/snapshot session))))
+          (expect (empty? @admitted)))))
   (describe
     "output and task isolation"
     (it "sends a spoken cancel phrase to the agent and cancels no task"

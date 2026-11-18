@@ -7,7 +7,7 @@
     "sample_rate": 24000,
     "frame_ms": 20,
     "frame_samples": 480,
-    "header_bytes": 32,
+    "header_bytes": 12,
     "input_buffer_ms": 2000,
     "output_credit_ms": 1000,
     "preroll_ms": 200,
@@ -30,22 +30,13 @@
     "max_pending_inputs": 32
   },
   "x-vis-voice-frame": {
-    "magic": "VISV",
-    "version": 1,
     "byte_order": "little_endian",
     "encoding": "pcm_s16le",
     "channels": 1,
-    "kinds": {
-      "input": 1,
-      "output": 2
-    },
     "fields": [
       "generation",
       "stream_id",
-      "sequence",
-      "sample_offset",
-      "sample_rate",
-      "sample_count"
+      "sample_offset"
     ]
   },
   "$defs": {
@@ -86,12 +77,6 @@
     "frame_header": {
       "type": "object",
       "properties": {
-        "kind": {
-          "enum": [
-            "input",
-            "output"
-          ]
-        },
         "generation": {
           "type": "integer",
           "minimum": 0,
@@ -102,33 +87,16 @@
           "minimum": 0,
           "maximum": 4294967295
         },
-        "sequence": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        },
         "sample_offset": {
           "type": "integer",
           "minimum": 0,
           "maximum": 4294967295
-        },
-        "sample_rate": {
-          "const": 24000
-        },
-        "sample_count": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 480
         }
       },
       "required": [
-        "kind",
         "generation",
         "stream_id",
-        "sequence",
-        "sample_offset",
-        "sample_rate",
-        "sample_count"
+        "sample_offset"
       ],
       "additionalProperties": false
     },

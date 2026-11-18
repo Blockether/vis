@@ -87,12 +87,7 @@
           (recur (next chunks) (+ offset (alength chunk)))))
       (mapv (fn [offset]
               (contract/encode-frame
-                {:kind :input
-                 :generation 0
-                 :stream-id 0
-                 :sequence (quot offset 480)
-                 :sample-offset offset
-                 :sample-rate 24000}
+                {:generation 0 :stream-id 0 :sample-offset offset}
                 (contract/samples->pcm
                   (java.util.Arrays/copyOfRange samples (int offset) (int (+ offset 480))))))
             (range 0 (alength samples) 480)))))
@@ -464,10 +459,13 @@
                           (doseq [original-frame frames]
                             (let [header (assoc (contract/decode-frame original-frame)
                                            :stream-id @utterance-id)
-                                  frame (contract/encode-frame (dissoc header :pcm) (:pcm header))
+                                  frame (contract/encode-frame (select-keys header
+                                                                            [:generation :stream-id
+                                                                             :sample-offset])
+                                                               (:pcm header))
                                   deadline (+ (long @feed-start)
                                               (quot (* 1000000000 (long (:sample-offset header)))
-                                                    (long (:sample-rate header))))]
+                                                    (long (:sample-rate contract/limits))))]
 
                               (wait-until! deadline)
                               (swap! lateness conj (max 0 (- (System/nanoTime) deadline)))

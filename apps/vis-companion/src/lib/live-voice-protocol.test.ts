@@ -11,47 +11,31 @@ import { VoiceEndpoint, VoiceResampler } from './live-voice-dsp';
 describe('live voice binary contract', () => {
   it('uses the shared little-endian header and signed PCM', () => {
     const frame = {
-      kind: 'input' as const,
       generation: 7,
       streamId: 9,
-      sequence: 3,
       sampleOffset: 1440,
       samples: Int16Array.from([-32768, -1, 0, 32767]),
     };
     const encoded = encodeVoiceFrame(frame);
-    expect(new TextDecoder().decode(encoded.slice(0, 4))).toBe('VISV');
-    expect(new DataView(encoded).getUint32(24, true)).toBe(24000);
+    expect(encoded.byteLength).toBe(L.header_bytes + 8);
+    expect(new DataView(encoded).getUint32(8, true)).toBe(1440);
     expect(decodeVoiceFrame(encoded)).toEqual(frame);
   });
-  it('rejects reserved flags, wrong rates, truncated packets and oversized frames', () => {
-    const packet = () =>
-      encodeVoiceFrame({
-        kind: 'output',
-        generation: 1,
-        streamId: 1,
-        sequence: 0,
-        sampleOffset: 0,
-        samples: new Int16Array(480),
-      });
-    for (const [offset, value] of [
-      [4, 2],
-      [5, 9],
-      [6, 1],
-      [24, 0],
-      [28, 0],
-    ]) {
-      const data = packet();
-      new DataView(data).setUint8(offset, value);
-      expect(() => decodeVoiceFrame(data)).toThrow();
-    }
-    expect(() => decodeVoiceFrame(packet().slice(0, 33))).toThrow();
+  it('rejects empty, odd, truncated and oversized frames', () => {
+    const packet = encodeVoiceFrame({
+      generation: 1,
+      streamId: 1,
+      sampleOffset: 0,
+      samples: new Int16Array(480),
+    });
+    expect(() => decodeVoiceFrame(packet.slice(0, L.header_bytes))).toThrow();
+    expect(() => decodeVoiceFrame(packet.slice(0, L.header_bytes + 3))).toThrow();
     expect(() => decodeVoiceFrame(new ArrayBuffer(3))).toThrow();
+    expect(() => decodeVoiceFrame(new ArrayBuffer(packet.byteLength + 2))).toThrow();
     expect(() =>
       encodeVoiceFrame({
-        kind: 'input',
         generation: 0,
         streamId: 0,
-        sequence: 0,
         sampleOffset: 0,
         samples: new Int16Array(481),
       }),

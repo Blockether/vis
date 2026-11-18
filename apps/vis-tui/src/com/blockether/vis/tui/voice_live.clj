@@ -234,7 +234,7 @@
             (throw (ex-info "Invalid live speech segment" {})))
           (swap! (:model r) assoc-in
             [:segments (get event "segment_id")]
-            {:sequence 0 :received 0 :scheduled 0})))
+            {:received 0 :scheduled 0})))
 
     "output.finished"
     (when (and (= (:epoch @(:model r)) (get event "output_epoch"))

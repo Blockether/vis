@@ -363,13 +363,9 @@
                                  @events)))
           (send! connection {:type "utterance.start" :capture-generation 0 :utterance-id 0})
           (.join (.sendBinary ^WebSocket (:socket connection)
-                              (ByteBuffer/wrap (contract/encode-frame {:kind :input
-                                                                       :generation 0
-                                                                       :stream-id 0
-                                                                       :sequence 0
-                                                                       :sample-offset 0
-                                                                       :sample-rate 24000}
-                                                                      (byte-array 960)))
+                              (ByteBuffer/wrap (contract/encode-frame
+                                                 {:generation 0 :stream-id 0 :sample-offset 0}
+                                                 (byte-array 960)))
                               true))
           (expect (await! #(some (fn [event]
                                    (= "transcript" (:type event)))
@@ -416,7 +412,7 @@
                                                  (= "session.ready" (:type event)))
                                                @(:events connection))))
                         (.join (.sendBinary ^WebSocket (:socket connection)
-                                            (ByteBuffer/wrap (byte-array 32))
+                                            (ByteBuffer/wrap (byte-array 13))
                                             true))
                         (expect (not= :timeout (deref (:closed connection) 5000 :timeout)))
                         (expect (empty? @admitted))))))
@@ -427,7 +423,7 @@
                               ^WebSocket socket (:socket connection)]
 
                           (if binary?
-                            (.join (.sendBinary socket (ByteBuffer/wrap (byte-array 993)) true))
+                            (.join (.sendBinary socket (ByteBuffer/wrap (byte-array 973)) true))
                             (.join (.sendText socket (apply str (repeat 8193 "x")) true)))
                           (expect (not= :timeout (deref (:closed connection) 5000 :timeout)))
                           (expect (empty? @admitted))))))))

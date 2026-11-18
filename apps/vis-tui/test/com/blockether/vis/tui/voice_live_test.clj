@@ -65,34 +65,31 @@
             (protocol/decode-frame encoded)]
 
         (expect (= 3 (:generation decoded)))
-        (expect (= :input (:kind decoded)))
         (expect (= 480 (:sample-count decoded)))
-        (aset-byte encoded 0 (byte 0))
-        (expect (fails? #(protocol/decode-frame encoded)))))
-  (it
-    "keeps playback active through short noise and resets speech qualification"
-    (let [initial
-          (assoc-in (model/initial 0 2) [:segments 1] {:sequence 0 :received 0})
+        (expect (fails? #(protocol/decode-frame (java.util.Arrays/copyOf ^bytes encoded 15))))))
+  (it "keeps playback active through short noise and resets speech qualification"
+      (let [initial
+            (assoc-in (model/initial 0 2) [:segments 1] {:received 0})
 
-          [noise effects]
-          (feed initial 5 true)
+            [noise effects]
+            (feed initial 5 true)
 
-          [quiet later]
-          (feed noise 1 false)
+            [quiet later]
+            (feed noise 1 false)
 
-          [retry retry-effects]
-          (feed quiet 5 true)
+            [retry retry-effects]
+            (feed quiet 5 true)
 
-          header
-          {:kind :output :generation 2 :stream-id 1 :sequence 0 :sample-offset 0 :sample-count 480}]
+            header
+            {:generation 2 :stream-id 1 :sample-offset 0 :sample-count 480}]
 
-      (expect (empty? effects))
-      (expect (empty? later))
-      (expect (empty? retry-effects))
-      (expect (false? (:blocked-output? retry)))
-      (expect (= (:segments initial) (:segments retry)))
-      (expect (second (model/accept-output retry header)))
-      (expect (nil? (:utterance retry)))))
+        (expect (empty? effects))
+        (expect (empty? later))
+        (expect (empty? retry-effects))
+        (expect (false? (:blocked-output? retry)))
+        (expect (= (:segments initial) (:segments retry)))
+        (expect (second (model/accept-output retry header)))
+        (expect (nil? (:utterance retry)))))
   (it "stops playback only when speech qualifies, before start and preroll audio"
       (let [[warm _]
             (feed (model/initial 3 5) 10 false)
@@ -115,12 +112,11 @@
                    (get-in effects [1 1])))
         (expect (= "utterance.start" (get-in effects [2 1 :type])))
         (expect (= 16 (count frames)))
-        (expect (= (range 16) (map #(get-in % [1 :sequence]) frames)))
         (expect (= (map #(* 480 %) (range 16)) (map #(get-in % [1 :sample-offset]) frames)))
         (expect (:blocked-output? active))
         (expect (empty? (:segments active)))
         (expect (= [:frame] (mapv first more)))
-        (expect (= 17 (get-in continued [:utterance :sequence])))))
+        (expect (= (* 17 480) (get-in continued [:utterance :samples])))))
   (it "keeps preroll bounded and automatically rearms across ten turns"
       (let [[warm _]
             (feed (model/initial 1 1) 200 false)
@@ -168,23 +164,22 @@
       (let [[s effects] (feed (model/initial 0 0) 1500 true)]
         (expect (nil? (:utterance s)))
         (expect (= "utterance.end" (get-in (last effects) [1 :type])))))
-  (it
-    "rejects stale output and invalid sequence without crediting it as heard"
-    (let [s
-          (assoc-in (model/initial 0 2) [:segments 1] {:sequence 0 :received 0 :scheduled 0})
+  (it "rejects stale output and an invalid offset without crediting it as heard"
+      (let [s
+            (assoc-in (model/initial 0 2) [:segments 1] {:received 0 :scheduled 0})
 
-          header
-          {:kind :output :generation 2 :stream-id 1 :sequence 0 :sample-offset 0 :sample-count 480}
+            header
+            {:generation 2 :stream-id 1 :sample-offset 0 :sample-count 480}
 
-          [next-state accepted?]
-          (model/accept-output s header)]
+            [next-state accepted?]
+            (model/accept-output s header)]
 
-      (expect accepted?)
-      (expect (false? (second (model/accept-output s (assoc header :generation 1)))))
-      (expect (fails? #(model/accept-output next-state header)))
-      (expect (= 0 (:played (model/receipt 2 1 (get-in next-state [:segments 1]) 100))))
-      (expect (= 120
-                 (:played (model/receipt 2 1 {:received 480 :scheduled 480 :base 1000} 1120))))))
+        (expect accepted?)
+        (expect (false? (second (model/accept-output s (assoc header :generation 1)))))
+        (expect (fails? #(model/accept-output next-state header)))
+        (expect (= 0 (:played (model/receipt 2 1 (get-in next-state [:segments 1]) 100))))
+        (expect (= 120
+                   (:played (model/receipt 2 1 {:received 480 :scheduled 480 :base 1000} 1120))))))
   (it "uses RMS on signed PCM without opening devices"
       (expect (false? (model/speech? (byte-array 960))))
       (expect (model/speech? (protocol/samples->pcm (float-array 480 0.1))))))
@@ -339,21 +334,14 @@
            :output (atom output)
            :muted (atom false)
            :scheduled (atom 0)
-           :model (atom (assoc-in (model/initial 0 0)
-                          [:segments 1]
-                          {:sequence 1 :received 480 :scheduled 0}))
+           :model (atom (assoc-in (model/initial 0 0) [:segments 1] {:received 480 :scheduled 0}))
            :send (ArrayBlockingQueue. 100)
            :play (ArrayBlockingQueue. 5)}
 
           _
-          (.offer ^ArrayBlockingQueue (:play r)
-                  {:kind :output
-                   :generation 0
-                   :stream-id 1
-                   :sequence 0
-                   :sample-offset 0
-                   :sample-count 480
-                   :pcm (byte-array 960)})
+          (.offer
+            ^ArrayBlockingQueue (:play r)
+            {:generation 0 :stream-id 1 :sample-offset 0 :sample-count 480 :pcm (byte-array 960)})
 
           capture
           (future (#'live/capture-loop! r))

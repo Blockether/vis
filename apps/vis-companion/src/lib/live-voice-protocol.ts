@@ -1,7 +1,6 @@
 import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/voice.json';
 
 export const LIVE_VOICE_LIMITS = schema['x-vis-voice-limits'];
-const FRAME = schema['x-vis-voice-frame'];
 export type LiveVoiceState = {
   voice_session_id: string;
   capture_generation: number;
@@ -136,33 +135,22 @@ export function encodeLiveVoiceControl(value: unknown): string {
   return JSON.stringify(value);
 }
 export type VoiceFrame = {
-  kind: 'input' | 'output';
   generation: number;
   streamId: number;
-  sequence: number;
   sampleOffset: number;
   samples: Int16Array;
 };
+/** Three little-endian uint32 values, then PCM16. The direction gives the kind. */
 export function encodeVoiceFrame(frame: VoiceFrame): ArrayBuffer {
   const count = frame.samples.length;
   if (count < 1 || count > LIVE_VOICE_LIMITS.frame_samples)
     throw new Error('Invalid voice frame size.');
   const buffer = new ArrayBuffer(LIVE_VOICE_LIMITS.header_bytes + count * 2);
   const view = new DataView(buffer);
-  [...FRAME.magic].forEach((c, i) => view.setUint8(i, c.charCodeAt(0)));
-  view.setUint8(4, FRAME.version);
-  view.setUint8(5, FRAME.kinds[frame.kind]);
-  [
-    frame.generation,
-    frame.streamId,
-    frame.sequence,
-    frame.sampleOffset,
-    LIVE_VOICE_LIMITS.sample_rate,
-    count,
-  ].forEach((value, i) => {
+  [frame.generation, frame.streamId, frame.sampleOffset].forEach((value, i) => {
     if (!Number.isInteger(value) || value < 0 || value > 0xffffffff)
       throw new Error('Invalid voice frame header.');
-    view.setUint32(8 + i * 4, value, true);
+    view.setUint32(i * 4, value, true);
   });
   frame.samples.forEach((value, i) =>
     view.setInt16(LIVE_VOICE_LIMITS.header_bytes + i * 2, value, true),
@@ -170,32 +158,17 @@ export function encodeVoiceFrame(frame: VoiceFrame): ArrayBuffer {
   return buffer;
 }
 export function decodeVoiceFrame(buffer: ArrayBuffer): VoiceFrame {
-  const view = new DataView(buffer);
-  if (
-    buffer.byteLength < LIVE_VOICE_LIMITS.header_bytes ||
-    [...FRAME.magic].some((c, i) => view.getUint8(i) !== c.charCodeAt(0)) ||
-    view.getUint8(4) !== FRAME.version ||
-    view.getUint16(6) !== 0 ||
-    !Object.values(FRAME.kinds).includes(view.getUint8(5))
-  )
-    throw new Error('Invalid voice frame header.');
-  const count = view.getUint32(28, true);
-  if (
-    view.getUint32(24, true) !== LIVE_VOICE_LIMITS.sample_rate ||
-    count < 1 ||
-    count > LIVE_VOICE_LIMITS.frame_samples ||
-    buffer.byteLength !== LIVE_VOICE_LIMITS.header_bytes + count * 2
-  )
+  const bytes = buffer.byteLength - LIVE_VOICE_LIMITS.header_bytes;
+  if (bytes < 2 || bytes % 2 !== 0 || bytes > LIVE_VOICE_LIMITS.frame_samples * 2)
     throw new Error('Invalid voice frame size.');
-  const samples = new Int16Array(count);
-  for (let i = 0; i < count; i++)
+  const view = new DataView(buffer);
+  const samples = new Int16Array(bytes / 2);
+  for (let i = 0; i < samples.length; i++)
     samples[i] = view.getInt16(LIVE_VOICE_LIMITS.header_bytes + i * 2, true);
   return {
-    kind: view.getUint8(5) === FRAME.kinds.input ? 'input' : 'output',
-    generation: view.getUint32(8, true),
-    streamId: view.getUint32(12, true),
-    sequence: view.getUint32(16, true),
-    sampleOffset: view.getUint32(20, true),
+    generation: view.getUint32(0, true),
+    streamId: view.getUint32(4, true),
+    sampleOffset: view.getUint32(8, true),
     samples,
   };
 }

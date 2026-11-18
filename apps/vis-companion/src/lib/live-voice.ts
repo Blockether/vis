@@ -58,7 +58,6 @@ export function liveVoiceStatus(view: LiveVoiceView): LiveVoiceStatus | null {
 type Segment = {
   epoch: number;
   id: number;
-  sequence: number;
   received: number;
   played: number;
   finished?: number;
@@ -98,7 +97,6 @@ export class LiveVoiceSession {
   private echo = new VoiceEchoGuard(this.endpoint.threshold);
   private utteranceId = 0;
   private uncertainAdmissions = new Set<number>();
-  private sequence = 0;
   private sampleOffset = 0;
   private suppressed = false;
   private interruptEpoch: number | null = null;
@@ -325,7 +323,6 @@ export class LiveVoiceSession {
         this.segments.set(event.segment_id, {
           epoch: event.output_epoch,
           id: event.segment_id,
-          sequence: 0,
           received: 0,
           played: 0,
         });
@@ -413,7 +410,7 @@ export class LiveVoiceSession {
         this.interrupt('barge_in');
         if (this.stopped) return;
         this.utteranceId++;
-        this.sequence = this.sampleOffset = 0;
+        this.sampleOffset = 0;
         this.update({ transcript: '', final: false });
         this.send({
           type: 'utterance.start',
@@ -430,10 +427,8 @@ export class LiveVoiceSession {
       } else {
         this.send(
           encodeVoiceFrame({
-            kind: 'input',
             generation,
             streamId: this.utteranceId,
-            sequence: this.sequence++,
             sampleOffset: this.sampleOffset,
             samples: event.samples,
           }),
@@ -444,7 +439,6 @@ export class LiveVoiceSession {
   }
   private output(data: ArrayBuffer): void {
     const frame = decodeVoiceFrame(data);
-    if (frame.kind !== 'output') throw new Error('Unexpected input media from the gateway.');
     if (
       this.suppressed ||
       this.view.outputMuted ||
@@ -453,14 +447,9 @@ export class LiveVoiceSession {
       return;
     const segment = this.segments.get(frame.streamId);
     if (!segment) throw new Error('Voice output has no committed segment.');
-    if (
-      frame.sequence < segment.sequence &&
-      frame.sampleOffset + frame.samples.length <= segment.received
-    )
-      return;
-    if (frame.sequence !== segment.sequence || frame.sampleOffset !== segment.received)
+    if (frame.sampleOffset + frame.samples.length <= segment.received) return;
+    if (frame.sampleOffset !== segment.received)
       throw new Error('Voice output is out of order.');
-    segment.sequence++;
     segment.received += frame.samples.length;
     const start = frame.sampleOffset;
     const rendered = this.echo.submitted(frame.samples, this.audio.outputReferenceStartMs);

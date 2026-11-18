@@ -32,14 +32,7 @@
 
 (defn- frame-effect
   [s u pcm]
-  [:frame
-   {:kind :input
-    :generation (:generation s)
-    :stream-id (:id u)
-    :sequence (:sequence u)
-    :sample-offset (:samples u)
-    :sample-rate (get limits "sample_rate")
-    :sample-count (quot (alength ^bytes pcm) 2)} pcm])
+  [:frame {:generation (:generation s) :stream-id (:id u) :sample-offset (:samples u)} pcm])
 
 (defn capture
   "Consume one 20 ms frame. Effects preserve interrupt, start, audio and end order."
@@ -59,7 +52,6 @@
                             (quot (long (get limits "max_utterance_ms")) 1000))))
             next-u (assoc u
                      :samples samples
-                     :sequence (inc (long (:sequence u)))
                      :silence silence)]
 
         [(assoc s
@@ -85,14 +77,13 @@
                   {}))]
 
         (if interrupt?
-          (let [u {:id (:next-id s) :sequence 0 :samples 0 :silence 0}
-                [end-u effects] (reduce (fn [[current effects] frame]
-                                          [(-> current
-                                               (update :sequence inc)
-                                               (update :samples + (quot (alength ^bytes frame) 2)))
-                                           (conj effects (frame-effect s current frame))])
-                                        [u []]
-                                        frames)]
+          (let [u {:id (:next-id s) :samples 0 :silence 0}
+                [end-u effects]
+                (reduce (fn [[current effects] frame]
+                          [(update current :samples + (quot (alength ^bytes frame) 2))
+                           (conj effects (frame-effect s current frame))])
+                        [u []]
+                        frames)]
 
             [(assoc s
                :next-id (inc (long (:next-id s)))
@@ -110,23 +101,18 @@
            stop-effects])))))
 
 (defn accept-output
-  "Reject stale, unknown, duplicate and discontinuous output before scheduling it."
+  "Reject stale, unknown, repeated and discontinuous output before scheduling it."
   [s header]
-  (let [{:keys [generation stream-id sequence sample-offset sample-count kind]}
+  (let [{:keys [generation stream-id sample-offset sample-count]}
         header
 
         segment
         (get-in s [:segments stream-id])]
 
     (cond (or (:blocked-output? s) (not= generation (:epoch s))) [s false]
-          (or (not= kind :output)
-              (nil? segment)
-              (not= sequence (:sequence segment))
-              (not= sample-offset (:received segment)))
-          (throw (ex-info "Invalid live voice output sequence" {}))
-          :else [(-> s
-                     (update-in [:segments stream-id :sequence] inc)
-                     (update-in [:segments stream-id :received] + sample-count)) true])))
+          (or (nil? segment) (not= sample-offset (:received segment)))
+          (throw (ex-info "Invalid live voice output offset" {}))
+          :else [(update-in s [:segments stream-id :received] + sample-count) true])))
 
 (defn receipt
   [epoch segment-id segment position]
