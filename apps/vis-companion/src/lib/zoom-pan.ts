@@ -66,16 +66,41 @@ export function clampTransform(next: Transform): Transform {
 /** A pinch rarely stops exactly on 1:1; this close to it is fitted. */
 const FIT_EPSILON = 0.01;
 
-/** Fitted and centred, as the viewer opens: the only state a drag swipes from. */
+/** Fitted and centred, as the viewer opens: the only state a gallery swipes from. */
 export function isFitted(transform: Transform): boolean {
   return (
     Math.abs(transform.scale - FIT_SCALE) <= FIT_EPSILON && transform.x === 0 && transform.y === 0
   );
 }
 
-/** A button or a wheel notch: scale about the centre, keeping the offset. */
+/** A button step: scale about the middle of the frame, so what is there stays there. */
 export function zoomedBy(current: Transform, factor: number): Transform {
-  return clampTransform({ ...current, scale: current.scale * factor });
+  const scale = clamp(current.scale * factor, MIN_SCALE, MAX_SCALE);
+  const applied = scale / current.scale;
+  return { scale, x: current.x * applied, y: current.y * applied };
+}
+
+export type Size = { width: number; height: number };
+
+/** How much of a moved picture always stays in the frame, in CSS pixels. */
+export const KEEP_IN_VIEW = 96;
+
+/**
+ * The transform with its offset held back, so that a part of the picture stays
+ * in the frame: a picture that moves at every scale must never be lost. `picture`
+ * is its size at 1:1. A frame without a size (not laid out) holds nothing back.
+ */
+export function keptInView(transform: Transform, picture: Size, frame: Size): Transform {
+  if (frame.width <= 0 || frame.height <= 0) return transform;
+  const reach = (shown: number, room: number) =>
+    Math.max(0, (room + shown) / 2 - Math.min(KEEP_IN_VIEW, shown));
+  const x = reach(picture.width * transform.scale, frame.width);
+  const y = reach(picture.height * transform.scale, frame.height);
+  return {
+    scale: transform.scale,
+    x: clamp(transform.x, -x, x),
+    y: clamp(transform.y, -y, y),
+  };
 }
 
 /**

@@ -424,7 +424,10 @@ export function ImageViewer({
           is the safe-area inset TALLER (48px + inset). Both therefore carry the
           same inset the band does, and drop it again at `sm:` exactly where the
           band's `sm:pt-0` does, so picture and title never disagree about where
-          the top of the screen is.
+          the top of the screen is. The cap is the frame less its own pads (5rem
+          and 6rem): a percentage does not work here, because the box around the
+          picture has no height of its own, and a tall picture then runs under
+          the toolbar at 100%.
 
           HANDWRITING IS NOT A SELECTION.
 
@@ -450,7 +453,7 @@ export function ImageViewer({
             alt={shown.name}
             draggable={false}
             onLoad={fitAnnotations}
-            className="block max-h-full max-w-[calc(100vw-2rem)] select-none object-contain"
+            className="block max-h-[calc(100dvh-11rem-env(safe-area-inset-top))] max-w-[calc(100vw-2rem)] select-none object-contain sm:max-h-[calc(100dvh-11rem)]"
           />
           {editable ? (
             <AnnotationLayer
@@ -528,7 +531,6 @@ export function ImageViewer({
                   void applyEdit();
                   return;
                 }
-                zoom.reset();
                 setDrawing((current) => !current);
                 setStatus('');
                 setError('');

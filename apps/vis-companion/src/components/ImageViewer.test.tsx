@@ -269,8 +269,6 @@ it('suspends the snap transition while a pinch or pan is live, and restores it o
 // layer lets the second finger reach its move handler.
 it('still pinch-zooms with a second finger while a stroke is in progress', () => {
   Element.prototype.setPointerCapture = vi.fn();
-  // Draw resets the transform to fitted, so zoom AFTER entering drawing mode
-  // or the reset — not the pinch — would be the only thing this proves.
   act(() => control('Draw on image').click());
   act(() => control('Zoom in').click());
   expect(control('Reset zoom').textContent).toBe('135%');
@@ -402,6 +400,84 @@ it('draws a stroke that starts beside the picture and crosses onto it', () => {
   at('pointerup', 160, 200);
 
   expect(named('Undo').disabled).toBe(false);
+});
+
+// Regression, user report (paraphrased: "in the edit mode I cannot move the picture;
+// a drag on the area beside it does nothing"). With the pen out, a mouse had no way
+// to move the picture: every drag was a stroke and the wheel was ignored. A finger
+// has a second finger for that, a mouse has the margin and the wheel.
+describe('a mouse while the pen is out', () => {
+  const surface = () => {
+    const viewport = document.querySelector<HTMLDivElement>('[role="dialog"] .cursor-grab');
+    const stage = document.querySelector<HTMLDivElement>('[role="dialog"] .transform-gpu');
+    if (!viewport || !stage) throw new Error('viewer surface not found');
+    // The picture is at 100..500 x 100..400; all around it is margin.
+    stage.getBoundingClientRect = () =>
+      ({ left: 100, top: 100, right: 500, bottom: 400, width: 400, height: 300 }) as DOMRect;
+    return { viewport, stage };
+  };
+  const mouse = (target: Element, type: string, x: number, y: number) =>
+    act(() => {
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 1,
+          isPrimary: true,
+          pointerType: 'mouse',
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+        }),
+      );
+    });
+
+  it('moves the picture with a drag on the margin, and draws nothing', () => {
+    Element.prototype.setPointerCapture = vi.fn();
+    act(() => control('Draw on image').click());
+    const { viewport, stage } = surface();
+
+    mouse(viewport, 'pointerdown', 40, 200);
+    mouse(viewport, 'pointermove', 90, 260);
+    mouse(viewport, 'pointerup', 90, 260);
+
+    expect(stage.style.transform).toBe('translate3d(50px, 60px, 0) scale(1)');
+    expect(named('Undo').disabled).toBe(true);
+  });
+
+  it('still draws with a drag on the picture', () => {
+    Element.prototype.setPointerCapture = vi.fn();
+    act(() => control('Draw on image').click());
+    const { viewport, stage } = surface();
+    const canvas = document.querySelector('canvas');
+    if (!canvas) throw new Error('annotation canvas not found');
+    canvas.width = 400;
+    canvas.height = 300;
+    canvas.getBoundingClientRect = stage.getBoundingClientRect;
+
+    mouse(viewport, 'pointerdown', 200, 200);
+    mouse(viewport, 'pointermove', 260, 240);
+    mouse(viewport, 'pointerup', 260, 240);
+
+    expect(stage.style.transform).toBe('translate3d(0px, 0px, 0) scale(1)');
+    expect(named('Undo').disabled).toBe(false);
+  });
+
+  it('zooms with the wheel', () => {
+    act(() => control('Draw on image').click());
+    const { viewport } = surface();
+    act(() => {
+      viewport.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }),
+      );
+    });
+    expect(control('Reset zoom').textContent).not.toBe('100%');
+  });
+
+  // The view a person chose is the place they want to draw.
+  it('keeps the zoom when the pen comes out', () => {
+    act(() => control('Zoom in').click());
+    act(() => control('Draw on image').click());
+    expect(control('Reset zoom').textContent).toBe('135%');
+  });
 });
 
 // Regression, user report ("on desktop and safari the zooming is too fast and not
@@ -649,7 +725,8 @@ describe('a gallery in the viewer', () => {
     open(0, [pictures[0]]);
     swipe(60);
     expect(title()).toBe('one.png');
-    expect(stage()?.style.transform).not.toContain('translate3d(-140px');
+    // The picture moved with the drag and stays there. A gallery slide goes home.
+    expect(stage()?.style.transform).toBe('translate3d(-140px, 0px, 0) scale(1)');
     expect(document.querySelector('[aria-live="polite"]')?.textContent).not.toContain('of 1');
   });
 });

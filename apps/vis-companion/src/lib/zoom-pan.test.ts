@@ -3,7 +3,9 @@ import {
   MAX_SCALE,
   MIN_SCALE,
   NO_TRANSFORM,
+  KEEP_IN_VIEW,
   clampTransform,
+  keptInView,
   panFrom,
   panTransform,
   pinchFrom,
@@ -49,17 +51,30 @@ describe('zoom limits', () => {
     });
   });
 
-  it('keeps the offset while it is zoomed in', () => {
-    expect(zoomedBy({ scale: 2, x: 30, y: -10 }, 1.35)).toEqual({
-      scale: 2.7,
-      x: 30,
-      y: -10,
-    });
-    expect(zoomedBy({ scale: 1.2, x: 30, y: -10 }, 0.1)).toEqual({
-      scale: MIN_SCALE,
-      x: 30,
-      y: -10,
-    });
+  // A button zooms about the middle of the frame: what is there stays there, so
+  // a picture that was moved far at 3x comes back toward the middle on the way out.
+  it('zooms a button step about the middle of the frame', () => {
+    const closer = zoomedBy({ scale: 2, x: 30, y: -10 }, 1.5);
+    expect(closer).toEqual({ scale: 3, x: 45, y: -15 });
+    const out = zoomedBy({ scale: 3, x: -900, y: 300 }, 0.01);
+    expect(out.scale).toBe(MIN_SCALE);
+    expect(out.x).toBeCloseTo(-150, 6);
+    expect(out.y).toBeCloseTo(50, 6);
+  });
+
+  // A picture that can be moved at every scale must not be lost: a part of it
+  // always stays in the frame, so there is always something to take hold of.
+  it('keeps a part of a moved picture in the frame', () => {
+    const frame = { width: 1000, height: 600 };
+    const picture = { width: 800, height: 400 };
+    const far = keptInView({ scale: 0.5, x: 5000, y: -5000 }, picture, frame);
+    expect(far).toEqual({ scale: 0.5, x: 700 - KEEP_IN_VIEW, y: -(400 - KEEP_IN_VIEW) });
+    const near = { scale: 2, x: 120, y: -80 };
+    expect(keptInView(near, picture, frame)).toEqual(near);
+    // A picture smaller than the kept part stays in the frame whole.
+    expect(keptInView({ scale: 0.5, x: 5000, y: 0 }, { width: 100, height: 100 }, frame).x).toBe(
+      475,
+    );
   });
 });
 

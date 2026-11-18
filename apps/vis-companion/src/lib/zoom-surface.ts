@@ -14,6 +14,7 @@ import {
   distance,
   isDoubleTap,
   isFitted,
+  keptInView,
   panFrom,
   panTransform,
   pinchFrom,
@@ -29,6 +30,7 @@ import {
   zoomedBy,
   type Gesture,
   type Point,
+  type Size,
   type Tap,
   type Transform,
 } from './zoom-pan';
@@ -69,7 +71,10 @@ export interface ZoomSwipe {
 export interface ZoomPanOptions {
   /** A new value is a new picture: it opens fitted again. */
   resetKey: unknown;
-  /** The pen is out: a lone pointer draws, and only a pinch still zooms. */
+  /**
+   * The pen is out: a lone pointer on the picture draws. A pinch and the wheel
+   * still zoom, and a mouse moves the picture from the margin beside it.
+   */
   pen?: RefObject<ZoomPen | null> | null;
   /** A fitted picture with neighbours walks to them with a sideways drag. */
   swipe?: ZoomSwipe | null;
@@ -77,6 +82,19 @@ export interface ZoomPanOptions {
   skips?: (at: Point, frame: DOMRect) => boolean;
   /** Every new zoom and pan, for a picture that draws itself again when it rests. */
   onChange?: (transform: Transform) => void;
+}
+
+/**
+ * The part of the frame that its pads keep clear of the bars above and below it.
+ * The picture is centred in this part, and a moved picture stays in it.
+ */
+function clearRoom(frame: HTMLElement): Size {
+  const style = getComputedStyle(frame);
+  const pad = (side: string) => parseFloat(style.getPropertyValue(`padding-${side}`)) || 0;
+  return {
+    width: frame.clientWidth - pad('left') - pad('right'),
+    height: frame.clientHeight - pad('top') - pad('bottom'),
+  };
 }
 
 /** A double click this soon after a double tap is the same gesture, sent twice. */
@@ -129,7 +147,18 @@ export function useZoomPan(options: ZoomPanOptions) {
 
   const apply = useCallback(
     (next: Transform) => {
-      const transform = clampTransform(next);
+      const frame = viewportRef.current;
+      const node = transformedRef.current;
+      const clamped = clampTransform(next);
+      // The picture moves at every scale, so a part of it is held in the frame.
+      const transform =
+        frame && node
+          ? keptInView(
+              clamped,
+              { width: node.offsetWidth, height: node.offsetHeight },
+              clearRoom(frame),
+            )
+          : clamped;
       transformRef.current = transform;
       paint();
       if (labelRef.current) labelRef.current.textContent = zoomLabel(transform);
@@ -200,9 +229,19 @@ export function useZoomPan(options: ZoomPanOptions) {
     // A lone finger while drawing is a stroke, and it is the VIEWPORT that owns
     // the pointer: the sheet only covers the picture, so a stroke begun on the
     // dark margin beside it would otherwise never start and the line would only
-    // appear for someone who touched down exactly inside the edge. Only a SECOND
+    // appear for someone who touched down exactly inside the edge. A SECOND
     // finger starts a gesture here, so a pinch still works while the pen is out.
-    if (pen && !pinching) {
+    // A mouse has no second finger and lands exactly where it points: on the
+    // margin it moves the picture, as the grab cursor there says.
+    const box = transformedRef.current?.getBoundingClientRect();
+    const isOffPicture =
+      !box ||
+      point.x < box.left ||
+      point.x > box.right ||
+      point.y < box.top ||
+      point.y > box.bottom;
+    const isMovingByMouse = event.pointerType === 'mouse' && isOffPicture;
+    if (pen && !pinching && !isMovingByMouse) {
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
       pen.current?.beginAt(event.clientX, event.clientY);
@@ -215,17 +254,15 @@ export function useZoomPan(options: ZoomPanOptions) {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setGliding(false);
-    // A fitted picture has nothing to pan, so the finger's whole travel means the
-    // NEIGHBOURING picture, if there is one. A zoomed or moved picture pans. A second finger is a pinch,
-    // so whatever the first one had dragged goes back first.
+    // A drag moves the picture. Only in a gallery, a fitted picture has
+    // neighbours to go to, so there the finger's whole travel means the
+    // NEIGHBOURING picture. A second finger is a pinch, so whatever the first
+    // one had dragged goes back first.
     if (pinching) slide(0);
-    const fitted = isFitted(transformRef.current);
     gestureRef.current = pinching
       ? pinchFrom(a, b, transformRef.current)
-      : fitted
-        ? swipe
-          ? swipeFrom(event.pointerId, point)
-          : null
+      : swipe && isFitted(transformRef.current)
+        ? swipeFrom(event.pointerId, point)
         : panFrom(event.pointerId, point, transformRef.current);
   }
 
@@ -257,7 +294,7 @@ export function useZoomPan(options: ZoomPanOptions) {
     if (gesture.kind === 'pinch' && a && b) {
       event.preventDefault();
       apply(pinchTransform(gesture, a, b));
-    } else if (!pen && gesture.kind === 'pan' && gesture.pointerId === event.pointerId) {
+    } else if (gesture.kind === 'pan' && gesture.pointerId === event.pointerId) {
       event.preventDefault();
       apply(panTransform(gesture, point));
     }
@@ -345,9 +382,12 @@ export function useZoomPan(options: ZoomPanOptions) {
       }, WHEEL_REST_MS);
     };
 
+    // A stroke in progress holds the picture still: the ink must stay under the pen.
+    const isDrawingNow = () => Boolean(latest.current.pen) && pointersRef.current.size > 0;
+
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
-      if (latest.current.pen) return;
+      if (isDrawingNow()) return;
       direct();
       apply(
         zoomedAbout(
@@ -365,7 +405,7 @@ export function useZoomPan(options: ZoomPanOptions) {
     let baseScale = 1;
     const onGestureStart = (event: SafariGestureEvent) => {
       event.preventDefault();
-      if (latest.current.pen) return;
+      if (isDrawingNow()) return;
       base = { ...transformRef.current };
       baseScale = event.scale || 1;
       direct();
