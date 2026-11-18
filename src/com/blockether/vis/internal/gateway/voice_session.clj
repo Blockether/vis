@@ -385,7 +385,11 @@
                     :text text
                     :revision revision}]
 
-          (cond (str/blank? text) (swap! (:state session) assoc :utterance "rejected")
+          (cond (str/blank? text) (do (swap! (:state session) assoc :utterance "rejected")
+                                      (emit! session
+                                             {:type "utterance.rejected"
+                                              :utterance-id utterance-id
+                                              :reason "no_speech"}))
                 (> (count text) 4000)
                 (fail! session "transcript_too_long" "The transcript exceeds the text limit")
                 (>= (count (:receipts @(:state session))) (long (:max-admissions contract/limits)))

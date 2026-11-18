@@ -300,9 +300,11 @@ export class LiveVoiceSession {
       }
       case 'utterance.rejected':
         this.uncertainAdmissions.delete(event.utterance_id);
-        this.update({
-          message: 'Speech was not admitted. Input is paused. Unmute before trying again.',
-        });
+        // Speech without words needs no notice. Only an overflow pauses input.
+        if (event.reason === 'input_overflow')
+          this.update({
+            message: 'Speech was not admitted. Input is paused. Unmute before trying again.',
+          });
         break;
       case 'utterance.admitted':
         this.uncertainAdmissions.delete(event.utterance_id);

@@ -314,6 +314,19 @@ describe('hands-free live session', () => {
     expect(h.views.at(-1)?.reconciled).toBe(true);
     expect(h.views.at(-1)?.receipts).toHaveLength(1);
   });
+  it('ends without a warning after speech that held no words', async () => {
+    const h = harness();
+    await h.session.start();
+    h.ready();
+    for (let id = 1; id <= 2; id++) {
+      h.frames(6, 3000);
+      h.frames(Math.ceil(L.endpoint_silence_ms / L.frame_ms), 0);
+    }
+    h.emit({ type: 'utterance.rejected', utterance_id: 2, reason: 'no_speech' });
+    expect(h.views.at(-1)?.message).toBeNull();
+    await h.session.stop();
+    expect(h.views.at(-1)).toMatchObject({ phase: 'closed', reconciled: true, message: null });
+  });
   it('keeps a missing ended utterance uncertain when only an older receipt survives', async () => {
     const h = harness();
     await h.session.start();

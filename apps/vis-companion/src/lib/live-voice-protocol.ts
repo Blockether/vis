@@ -58,7 +58,7 @@ export type LiveVoiceEvent =
       message: string;
       turn_id?: string;
     }
-  | { type: 'utterance.rejected'; utterance_id: number; reason: 'input_overflow' }
+  | { type: 'utterance.rejected'; utterance_id: number; reason: 'input_overflow' | 'no_speech' }
   | { type: 'transcript'; utterance_id: number; revision: number; text: string; final: boolean }
   | {
       type: 'utterance.admitted';

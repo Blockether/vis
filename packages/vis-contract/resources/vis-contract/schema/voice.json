@@ -495,7 +495,10 @@
           "minimum": 0
         },
         "reason": {
-          "const": "input_overflow"
+          "enum": [
+            "input_overflow",
+            "no_speech"
+          ]
         }
       },
       "required": [

@@ -133,6 +133,13 @@
           (expect (= "running" (:agent (voice/snapshot session))))
           (expect (= 10 (count (filter #(= "voice.admission" (first %)) @durable))))
           (expect (every? #(contract/valid? "server_event" %) @events))))
+    (it "tells the client when ended speech held no words"
+        (let [{:keys [session admitted events]} (fixture)]
+          (final! session 1 "  ")
+          (expect (empty? @admitted))
+          (expect (= [{:type "utterance.rejected" :utterance-id 1 :reason "no_speech"}]
+                     (filterv #(= "utterance.rejected" (:type %)) @events)))
+          (expect (every? #(contract/valid? "server_event" %) @events))))
     (it
       "drops repeated and stale frames and fails on an input gap"
       (let [{:keys [session feeds]}
