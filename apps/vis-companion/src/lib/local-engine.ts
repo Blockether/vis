@@ -193,6 +193,9 @@ async function open(mine: number, task: EngineTask, log: string[]): Promise<void
     const deadline = Date.now() + GATEWAY_WAIT_MS;
     while ((await probeGateway()).state === 'down') {
       if (mine !== turn) return;
+      if (!(await host<boolean>('engine_gateway_running'))) {
+        return fail('start', 'The gateway stopped before it answered.', await host<string[]>('engine_gateway_log'));
+      }
       if (Date.now() > deadline) {
         return fail('start', 'The gateway did not answer.', await host<string[]>('engine_gateway_log'));
       }

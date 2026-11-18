@@ -16,6 +16,8 @@ function computer(start: {
   build?: string;
   /** The newest build that a check finds. */
   newest?: { track: string; build: string };
+  /** The gateway process ends at once and writes this log. */
+  gatewayFails?: string[];
 }) {
   const world = { isInstalled: start.isInstalled, isUp: false, calls: [] as string[] };
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -33,7 +35,9 @@ function computer(start: {
     world.calls.push(command);
     if (command === 'engine_run') world.isInstalled = start.installs;
     if (command === 'engine_gateway_token') return start.saved ?? null;
-    if (command === 'engine_gateway_start') world.isUp = true;
+    if (command === 'engine_gateway_start') world.isUp = !start.gatewayFails;
+    if (command === 'engine_gateway_running') return !start.gatewayFails;
+    if (command === 'engine_gateway_log') return start.gatewayFails ?? [];
     if (command === 'engine_progress') {
       return { task: 'install', running: false, ok: world.isInstalled, log: ['HTTP 503'] };
     }
@@ -90,6 +94,20 @@ describe('Vis on this computer', () => {
       log: ['HTTP 503'],
     });
     expect(world.calls).not.toContain('engine_gateway_start');
+  });
+
+  // Report: the gateway stopped at once without a JDK, and the app waited for it.
+  it('shows the log at once when the gateway stops before it answers', async () => {
+    const log = ['vis-agent: could not run Java: /usr/bin/java'];
+    computer({ isInstalled: true, installs: true, gatewayFails: log });
+    const engine = await bootedEngine();
+
+    expect(engine.localEngineState().engine).toEqual({
+      kind: 'failed',
+      task: 'start',
+      reason: 'The gateway stopped before it answered.',
+      log,
+    });
   });
 
   it('starts the gateway of an installed engine when the app opens', async () => {

@@ -7,6 +7,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -23,6 +24,9 @@ const REFERENCES: &str = "https://github.com/Blockether/vis.git/info/refs?servic
 const LOG_LINES: usize = 200;
 /// The lines of the gateway log that a failed start shows.
 const GATEWAY_LOG_LINES: usize = 20;
+
+/// The process id of the gateway that `engine_gateway_start` started, while it runs.
+static GATEWAY_PID: AtomicU32 = AtomicU32::new(0);
 
 /// The engine has no build for Windows or for an Intel Mac.
 const SUPPORTED: bool = cfg!(any(
@@ -345,12 +349,23 @@ pub async fn engine_gateway_start() -> Result<(), String> {
         .stderr(errors);
     own_group(&mut command);
     let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let pid = child.id();
+    GATEWAY_PID.store(pid, Ordering::SeqCst);
     // An update restarts only the gateway that this file names.
-    fs::write(gateway_pid_file(), child.id().to_string()).map_err(|e| e.to_string())?;
+    fs::write(gateway_pid_file(), pid.to_string()).map_err(|e| e.to_string())?;
     std::thread::spawn(move || {
         let _ = child.wait();
+        // A later start owns the value when it started another gateway.
+        let _ = GATEWAY_PID.compare_exchange(pid, 0, Ordering::SeqCst, Ordering::SeqCst);
     });
     Ok(())
+}
+
+/// True while the gateway that `engine_gateway_start` started runs. A gateway that
+/// stops before it answers did not start, and its log tells why.
+#[tauri::command]
+pub async fn engine_gateway_running() -> bool {
+    GATEWAY_PID.load(Ordering::SeqCst) != 0
 }
 
 /// The newest lines that the gateway wrote since `engine_gateway_start`.
