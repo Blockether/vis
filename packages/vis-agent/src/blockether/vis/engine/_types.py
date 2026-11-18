@@ -2971,9 +2971,6 @@ class VoicePlaybackData(TypedDict):
     created_at: NotRequired[int]
     output_epoch: int
     generated: int
-    received: int
-    decoded: int
-    scheduled: int
     played: int
     reason: str
     schema: int
@@ -2991,9 +2988,6 @@ class VoiceSpeechData(TypedDict):
     sequence: int
     generated: int
     sent: int
-    received: int
-    decoded: int
-    scheduled: int
     played: int
     finished: bool
     schema: int

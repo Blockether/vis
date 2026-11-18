@@ -136,13 +136,7 @@
         played
         (min (long scheduled) (max 0 (- (long position) (long (:base segment position)))))]
 
-    {:type "playback.receipt"
-     :output_epoch epoch
-     :segment_id segment-id
-     :received (:received segment 0)
-     :decoded (:received segment 0)
-     :scheduled scheduled
-     :played played}))
+    {:type "playback.receipt" :output_epoch epoch :segment_id segment-id :played played}))
 
 (defn status-text
   "Keep capture, output and task state independent in the voice banner."

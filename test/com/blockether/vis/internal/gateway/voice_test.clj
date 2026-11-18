@@ -296,42 +296,47 @@
                    (expect (#'media/peer-left? (ex-info "Send failed" {} gone)))
                    (expect (not (#'media/peer-left? (ex-info "Missing method" {})))))))
 
-(defdescribe event-overflow-test
-             (it "closes an overflowed subscription off the session event thread"
-                 (let [sink
-                       (atom nil)
+(defdescribe
+  event-overflow-test
+  (it
+    "closes an overflowed subscription off the session event thread"
+    (let [sink
+          (atom nil)
 
-                       release
-                       (promise)
+          release
+          (promise)
 
-                       closed
-                       (promise)
+          closed
+          (promise)
 
-                       coordinator
-                       {:state (atom {:closed false})}
+          coordinator
+          {:state (atom {:closed false})}
 
-                       runtime
-                       {:events (ArrayBlockingQueue. 1)
-                        :sid (str session-id)
-                        :id "subscriber"
-                        :coordinator coordinator
-                        :threads (atom [])}]
+          runtime
+          {:events (ArrayBlockingQueue. 1)
+           :sid (str session-id)
+           :id "subscriber"
+           :coordinator coordinator
+           :threads (atom [])}]
 
-                   (with-redefs-fn {#'state/subscribe! (fn [_ _ f _]
-                                                         (reset! sink f))
-                                    #'state/unsubscribe! (fn [& _] nil)
-                                    #'voice/task-event! (fn [& _] @release)
-                                    #'voice/close! (fn [_ reason]
-                                                     (swap! (:state coordinator) assoc :closed true)
-                                                     (deliver closed [reason (Thread/currentThread)]))}
-                     #(do (#'voice/subscribe! runtime)
-                          (dotimes [_ 4] (@sink {"type" "turn.started"}))
-                          (deliver release true)
-                          (let [[reason thread] (deref closed 3000 nil)]
-                            (expect (= "event_overflow" reason))
-                            (expect (some? thread))
-                            (expect (not= (Thread/currentThread) thread)))
-                          (.join ^Thread (first @(:threads runtime)) 3000))))))
+      (with-redefs-fn {#'state/subscribe! (fn [_ _ f _]
+                                            (reset! sink f))
+                       #'state/unsubscribe! (fn [& _]
+                                              nil)
+                       #'voice/task-event! (fn [& _]
+                                             @release)
+                       #'voice/close! (fn [_ reason]
+                                        (swap! (:state coordinator) assoc :closed true)
+                                        (deliver closed [reason (Thread/currentThread)]))}
+        #(do (#'voice/subscribe! runtime)
+             (dotimes [_ 4]
+               (@sink {"type" "turn.started"}))
+             (deliver release true)
+             (let [[reason thread] (deref closed 3000 nil)]
+               (expect (= "event_overflow" reason))
+               (expect (some? thread))
+               (expect (not= (Thread/currentThread) thread)))
+             (.join ^Thread (first @(:threads runtime)) 3000))))))
 
 (defdescribe mobile-capability-gate-test
              (it "lists native mobile test clients without claiming device qualification"
@@ -854,14 +859,9 @@
               (expect (= 2 (count (filter #(= :output (:kind %)) @events))))
               (let [segment (:segment-id (first (filter #(= "speech.committed" (:type %))
                                                         @events)))]
-                (control! runtime
-                          {:type "playback.receipt"
-                           :output-epoch 0
-                           :segment-id segment
-                           :received 960
-                           :decoded 960
-                           :scheduled 960
-                           :played 960})
+                (control!
+                  runtime
+                  {:type "playback.receipt" :output-epoch 0 :segment-id segment :played 960})
                 (expect (await! #(some (fn [[type _]]
                                          (= "voice.playback" type))
                                        @durable))))

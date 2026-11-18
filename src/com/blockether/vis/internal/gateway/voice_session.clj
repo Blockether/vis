@@ -83,9 +83,6 @@
                :turn-id (:turn-id segment)
                :output-epoch (:epoch segment)
                :generated (:generated segment)
-               :received (:received segment)
-               :decoded (:decoded segment)
-               :scheduled (:scheduled segment)
                :played (:played segment)
                :reason reason})))
 
@@ -522,9 +519,6 @@
                  :sequence 0
                  :generated 0
                  :sent 0
-                 :received 0
-                 :decoded 0
-                 :scheduled 0
                  :played 0
                  :finished false}]
 
@@ -611,9 +605,6 @@
                  :output-epoch (:epoch segment)
                  :segment-id segment-id
                  :generated (:generated segment)
-                 :received (:received segment)
-                 :decoded (:decoded segment)
-                 :scheduled (:scheduled segment)
                  :played (:played segment)
                  :reason "drained"})
       (swap! (:state session) (fn [state]
@@ -638,21 +629,14 @@
       (.notifyAll ^Object (:lock session)))))
 
 (defn playback!
-  "Accept monotonic sample receipts. Receipt of bytes is not proof of playback."
-  [session {:keys [output-epoch segment-id received decoded scheduled played]}]
+  "Accept a played position that does not go back and does not pass the sent samples."
+  [session {:keys [output-epoch segment-id played]}]
   #_{:clj-kondo/ignore [:locking-suspicious-lock]}
   (locking (:lock session)
     (when (and (live? session) (= output-epoch (:output-epoch @(:state session))))
       (if-let [segment (get-in @(:state session) [:segments segment-id])]
-        (if (and (<= 0 played scheduled decoded received (:sent segment))
-                 (every? (fn [[key value]]
-                           (>= (long value) (long (get segment key))))
-                         [[:received received] [:decoded decoded] [:scheduled scheduled]
-                          [:played played]]))
-          (do (swap! (:state session) update-in
-                [:segments segment-id]
-                merge
-                {:received received :decoded decoded :scheduled scheduled :played played})
+        (if (<= (long (:played segment)) (long played) (long (:sent segment)))
+          (do (swap! (:state session) assoc-in [:segments segment-id :played] played)
               (touch! session)
               (drain-finished! session segment-id)
               (.notifyAll ^Object (:lock session)))

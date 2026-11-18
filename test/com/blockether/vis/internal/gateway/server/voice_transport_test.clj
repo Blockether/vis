@@ -390,13 +390,7 @@
           (expect (= [0 480] (mapv :sample-offset @(:frames connection))))
           (let [segment (:segment-id (first (filter #(= "speech.committed" (:type %)) @events)))]
             (send! connection
-                   {:type "playback.receipt"
-                    :output-epoch 0
-                    :segment-id segment
-                    :received 960
-                    :decoded 960
-                    :scheduled 960
-                    :played 960}))
+                   {:type "playback.receipt" :output-epoch 0 :segment-id segment :played 960}))
           (expect (await! #(some (fn [[type _]]
                                    (= "voice.playback" type))
                                  @durable)))

@@ -222,21 +222,6 @@
           "minimum": 0,
           "maximum": 4294967295
         },
-        "received": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        },
-        "decoded": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        },
-        "scheduled": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        },
         "played": {
           "type": "integer",
           "minimum": 0,
@@ -247,9 +232,6 @@
         "type",
         "output_epoch",
         "segment_id",
-        "received",
-        "decoded",
-        "scheduled",
         "played"
       ],
       "additionalProperties": false

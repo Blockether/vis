@@ -60,8 +60,6 @@ type Segment = {
   id: number;
   sequence: number;
   received: number;
-  decoded: number;
-  scheduled: number;
   played: number;
   finished?: number;
 };
@@ -329,8 +327,6 @@ export class LiveVoiceSession {
           id: event.segment_id,
           sequence: 0,
           received: 0,
-          decoded: 0,
-          scheduled: 0,
           played: 0,
         });
         break;
@@ -466,7 +462,6 @@ export class LiveVoiceSession {
       throw new Error('Voice output is out of order.');
     segment.sequence++;
     segment.received += frame.samples.length;
-    segment.decoded = segment.received;
     const start = frame.sampleOffset;
     const rendered = this.echo.submitted(frame.samples, this.audio.outputReferenceStartMs);
     this.audio.play(frame.samples, (count) => {
@@ -480,17 +475,12 @@ export class LiveVoiceSession {
       }
       this.retire(segment);
     });
-    segment.scheduled = segment.received;
-    this.receipt(segment);
   }
   private receipt(segment: Segment): void {
     this.send({
       type: 'playback.receipt',
       output_epoch: segment.epoch,
       segment_id: segment.id,
-      received: segment.received,
-      decoded: segment.decoded,
-      scheduled: segment.scheduled,
       played: segment.played,
     });
   }

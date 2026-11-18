@@ -646,7 +646,7 @@ describe('hands-free live session', () => {
     h.output(1);
     expect(h.audio.play).toHaveBeenCalledTimes(2);
   });
-  it('distinguishes received, scheduled and played samples and ignores duplicate frames', async () => {
+  it('reports only played samples and ignores duplicate frames', async () => {
     const h = harness();
     await h.session.start();
     h.ready();
@@ -654,15 +654,14 @@ describe('hands-free live session', () => {
     h.output();
     h.output();
     expect(h.audio.play).toHaveBeenCalledTimes(1);
-    expect(h.controls().at(-1)).toMatchObject({
-      type: 'playback.receipt',
-      received: 480,
-      decoded: 480,
-      scheduled: 480,
-      played: 0,
-    });
+    expect(h.controls().filter((event) => event.type === 'playback.receipt')).toEqual([]);
     h.progress[0](240);
-    expect(h.controls().at(-1)).toMatchObject({ played: 240 });
+    expect(h.controls().at(-1)).toEqual({
+      type: 'playback.receipt',
+      output_epoch: 1,
+      segment_id: 1,
+      played: 240,
+    });
     h.session.interrupt();
     h.progress[0](480);
     expect(

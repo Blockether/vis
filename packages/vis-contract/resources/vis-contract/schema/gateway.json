@@ -9667,18 +9667,6 @@
           "type": "integer",
           "minimum": 0
         },
-        "received": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "decoded": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "scheduled": {
-          "type": "integer",
-          "minimum": 0
-        },
         "played": {
           "type": "integer",
           "minimum": 0
@@ -9695,9 +9683,6 @@
         "sequence",
         "generated",
         "sent",
-        "received",
-        "decoded",
-        "scheduled",
         "played",
         "finished"
       ]
@@ -9735,18 +9720,6 @@
           "type": "integer",
           "minimum": 0
         },
-        "received": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "decoded": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "scheduled": {
-          "type": "integer",
-          "minimum": 0
-        },
         "played": {
           "type": "integer",
           "minimum": 0
@@ -9762,9 +9735,6 @@
         "turn_id",
         "output_epoch",
         "generated",
-        "received",
-        "decoded",
-        "scheduled",
         "played",
         "reason"
       ]

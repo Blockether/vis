@@ -364,7 +364,6 @@
       (try (expect (nil? (deref capture 2000 :timeout)))
            (expect (nil? (deref playback 2000 :timeout)))
            (let [receipt (.poll ^ArrayBlockingQueue (:send r))]
-             (expect (= 480 (:received receipt) (:decoded receipt) (:scheduled receipt)))
              (expect (= 120 (:played receipt))))
            (expect (not-any? #{"close" "stop"} @calls))
            (finally (reset! running false) (future-cancel capture) (future-cancel playback)))))

@@ -413,9 +413,6 @@
                                                                      :output-epoch (:generation
                                                                                      frame)
                                                                      :segment-id (:stream-id frame)
-                                                                     :received position
-                                                                     :decoded position
-                                                                     :scheduled position
                                                                      :played position})
                                                      true)))))
                                   (CompletableFuture/completedFuture nil))

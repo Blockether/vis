@@ -192,7 +192,7 @@ Never place a ticket or gateway token in the URL.
 </div>
 
 Capture generations reject stale input. Output epochs reject stale speech after interruption.
-Playback receipts distinguish received, decoded, scheduled and played positions. Played positions are conservative render estimates, not proof of hearing.
+A playback receipt gives only the played position of a speech segment. A played position is a conservative render estimate, not proof of hearing.
 Only committed conversation records are eligible for synthesis. Provisional text, hidden reasoning and tool logs are not speech sources.
 
 A `conversation` block shares its `text` between display and speech. Its `phase` distinguishes `progress` from the final `answer`.

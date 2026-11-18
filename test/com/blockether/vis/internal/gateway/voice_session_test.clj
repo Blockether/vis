@@ -258,34 +258,21 @@
                                               {:turn-id "other" :text "Unowned" :source "x"})))
           (expect (some? (segment! session)))
           (expect (nil? (segment! session)))))
-    (it "keeps received and played positions distinct"
+    (it "records the played position, not the sent position, at an interruption"
         (let [{:keys [session durable]} (fixture)]
           (final! session 0 "Check this")
           (let [{:keys [id epoch]} (segment! session)]
             (voice/reserve-output! session id epoch 480)
-            (voice/playback! session
-                             {:output-epoch epoch
-                              :segment-id id
-                              :received 480
-                              :decoded 480
-                              :scheduled 480
-                              :played 0})
+            (voice/playback! session {:output-epoch epoch :segment-id id :played 240})
             (voice/interrupt! session epoch "stop_speech")
             (let [receipt (second (last (filter #(= "voice.playback" (first %)) @durable)))]
-              (expect (= 480 (:received receipt)))
-              (expect (= 0 (:played receipt)))))))
+              (expect (= 240 (:played receipt)))))))
     (it "drains once when playback reaches the end before synthesis finishes"
         (let [{:keys [session durable]} (fixture)]
           (final! session 0 "Check this")
           (let [{:keys [id epoch]} (segment! session)]
             (voice/reserve-output! session id epoch 480)
-            (voice/playback! session
-                             {:output-epoch epoch
-                              :segment-id id
-                              :received 480
-                              :decoded 480
-                              :scheduled 480
-                              :played 480})
+            (voice/playback! session {:output-epoch epoch :segment-id id :played 480})
             (voice/output-finished! session id epoch)
             (voice/output-finished! session id epoch)
             (expect (empty? (:segments @(:state session))))
@@ -300,13 +287,7 @@
               {:turn-id (owned-turn session) :text "Next answer." :source "answer:1"})
             (voice/reserve-output! session id epoch 480)
             (voice/output-finished! session id epoch)
-            (voice/playback! session
-                             {:output-epoch epoch
-                              :segment-id id
-                              :received 480
-                              :decoded 480
-                              :scheduled 480
-                              :played 480})
+            (voice/playback! session {:output-epoch epoch :segment-id id :played 480})
             (expect (= 1 (count (:segments @(:state session)))))
             (expect (not= "drained" (:output (voice/snapshot session)))))))
     (it "reports an interrupt request before a synchronous abort acknowledgement"
@@ -338,13 +319,7 @@
           (final! session 0 "Check this")
           (let [{:keys [id epoch]} (segment! session)]
             (voice/reserve-output! session id epoch 480)
-            (voice/playback! session
-                             {:output-epoch epoch
-                              :segment-id id
-                              :received 480
-                              :decoded 480
-                              :scheduled 480
-                              :played 481})
+            (voice/playback! session {:output-epoch epoch :segment-id id :played 481})
             (expect (= "off" (:capture (voice/snapshot session))))
             (expect (empty? @cancelled)))))
     (it "accepts explicit cancellation only for owned turns"
