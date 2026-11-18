@@ -662,7 +662,9 @@ def test_live_voice_http_lifecycle_methods():
     with endpoint(lambda *_: (200, {"ok": True})) as (url, calls):
         client = GatewayClient(url)
         assert client.routes.get_voice_live_capabilities() == {"ok": True}
-        assert client.routes.post_session_voice_live("s", body={"muted": True}) == {"ok": True}
+        assert client.routes.post_session_voice_live("s", body={"muted": True}) == {
+            "ok": True
+        }
         assert client.routes.get_session_voice_live("s", "v") == {"ok": True}
         assert client.routes.delete_session_voice_live("s", "v") == {"ok": True}
         assert [(method, path) for method, path, _, _ in calls] == [
