@@ -427,7 +427,7 @@
         },
         {
           "const": "has-panel",
-          "description": "The session has a side panel view."
+          "description": "The session has a side panel view, or an app in the side panel."
         },
         {
           "const": "has-apps",

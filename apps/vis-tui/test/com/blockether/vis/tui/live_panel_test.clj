@@ -111,6 +111,17 @@
                  (expect (keymap/verb-available? @state/app-db {:show-when :has-panel}))
                  (state/dispatch [:live-view-close "a" {:reason :completed}])
                  (expect (empty? (:live-views @state/app-db))))))
+  ;; User report: the side panel with an app had no visible way out. C-x b p closes it,
+  ;; but its band row was hidden because only a live view counted as a panel view.
+  (it "lists C-x b p while the side panel holds a session app"
+      (with-db (fn []
+                 (swap! state/app-db assoc :app-views {"v" {:view {:id "v" :nodes []}}})
+                 (state/dispatch [:app-pane-open "A" "v"])
+                 (expect (keymap/verb-available? @state/app-db {:show-when :has-panel}))
+                 (state/dispatch [:live-panel-toggle-open])
+                 (expect (keymap/verb-available? @state/app-db {:show-when :has-panel}))
+                 (swap! state/app-db assoc :app-views {})
+                 (expect (not (keymap/verb-available? @state/app-db {:show-when :has-panel}))))))
   (it "C-x V opens the panel with the focus, then moves the focus back to the transcript"
       (with-db (fn []
                  (state/dispatch [:live-panel-focus])
@@ -604,6 +615,28 @@
                      (expect (true? (get-in @state/app-db [:live-panel :open?])))
                      (expect (true? (get-in @state/app-db [:live-panel :focused?])))
                      (expect (= "review" (get-in @state/app-db [:live-panel :app :view-id])))))))
+
+;; User report: a click in the chat did not take the keyboard back from the side pane app.
+(defdescribe app-pane-click-focus
+             (it "gives the keyboard to the chat on a press outside the pane, and keeps it inside"
+                 (let [held (var-get #'screen/app-pane)
+                       saved @held]
+                   (try (with-db
+                          (fn []
+                            (swap! state/app-db assoc
+                              :app-views {"review" {:view {:id "review"}}}
+                              :live-panel
+                              {:open? true :focused? true :app {:session-id "s1" :view-id "review"}})
+                            (reset! held {["s1" "review"]
+                                          {:box {:left 60 :top 0 :width 40 :height 20}
+                                           :geom {:content-top 2 :list-h 10 :rows []}
+                                           :state {}}})
+                            (expect (true? (#'screen/app-pane-click! @state/app-db 70 5)))
+                            (expect (true? (get-in @state/app-db [:live-panel :focused?])))
+                            (expect (nil? (#'screen/app-pane-click! @state/app-db 10 5)))
+                            (expect (false? (get-in @state/app-db [:live-panel :focused?])))
+                            (expect (true? (get-in @state/app-db [:live-panel :open?])))))
+                        (finally (reset! held saved))))))
 
 ;; User report, Council #9635: app help must work in the docked pane too.
 (defdescribe

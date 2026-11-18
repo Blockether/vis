@@ -3028,14 +3028,25 @@
 
 (defn- app-pane-click!
   "A press at `mx` and `my` in the side pane app gives the pane the keyboard, like C-o,
-   and moves the app cursor to the clicked row. Returns true when the press hit the pane."
+   and moves the app cursor to the clicked row. Returns true when the press hit the pane.
+   A press outside the pane gives the keyboard back to the chat and returns nil, so the
+   chat also handles the press."
   [db mx my]
-  (when-let [{:keys [row]} (app-pane-point db mx my)]
-    (state/dispatch [:focus-area :panel])
-    (when row
-      (update-app-pane! (get-in db [:live-panel :app]) #(assoc-in % [:state :selected] row)))
-    (state/dispatch [:bump-render-version])
-    true))
+  (if-let [{:keys [row]} (app-pane-point db mx my)]
+    (do (state/dispatch [:focus-area :panel])
+        (when row
+          (update-app-pane! (get-in db [:live-panel :app]) #(assoc-in % [:state :selected] row)))
+        (state/dispatch [:bump-render-version])
+        true)
+    (let [{:keys [left top width height]} (:box (current-app-pane))]
+      (when (and (= :panel (focused-area db))
+                 (get-in db [:live-panel :app])
+                 (not (and left
+                           (<= (long left) (long mx) (dec (+ (long left) (long width))))
+                           (<= (long top) (long my) (dec (+ (long top) (long height)))))))
+        (state/dispatch [:focus-area :chat])
+        (state/dispatch [:bump-render-version])
+        nil))))
 
 (defn- edit-live-input!
   "Edit one input of a live view and send the new value at once as a `change`.

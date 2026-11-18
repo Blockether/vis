@@ -598,7 +598,7 @@
    `:codex-session?`), `:has-images` needs a picture in the session (the screen
    marks it as `:has-images?`), `:image-viewer` also needs a graphical terminal (the
    screen marks it as `:graphical-terminal?`), `:has-recordings` needs a recording in the
-   session (the screen marks it as `:has-recordings?`), `:has-panel` needs a panel view,
+   session (the screen marks it as `:has-recordings?`), `:has-panel` needs a panel view or an app in the side panel,
    `:has-group` needs a current session in a group, `:has-agents` needs a subagent (the
    screen marks it as `:has-agents?`), `:child-session` needs a subagent session,
    `:has-apps` needs an app that the combined apps picker lists and `:has-global-apps`
@@ -625,7 +625,8 @@
     (true? (:has-recordings? db))
 
     :has-panel
-    (boolean (some #(= :panel (get-in % [:view :placement])) (:live-views db)))
+    (boolean (or (contains? (:app-views db) (get-in db [:live-panel :app :view-id]))
+                 (some #(= :panel (get-in % [:view :placement])) (:live-views db))))
 
     :has-group
     (not (str/blank? (str (get-in db [:session :group-id]))))
