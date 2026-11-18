@@ -478,7 +478,7 @@ describe('hands-free live session', () => {
       'vis-ticket.one-use',
     ]);
     for (let turn = 1; turn <= 10; turn++) {
-      h.frames(6, 3000);
+      h.frames(12, 3000);
       h.emit({
         type: 'transcript',
         utterance_id: turn,
@@ -581,6 +581,23 @@ describe('hands-free live session', () => {
     expect(h.audio.stopOutput).toHaveBeenCalledTimes(stops + 1);
     expect(h.audio.capture).toHaveBeenCalledTimes(1);
   });
+  it('keeps playback through a burst of echo that the device did not cancel', async () => {
+    // Regression: on the phone speaker, echo bursts of 160 ms near -31 dBFS interrupted the assistant.
+    const h = harness();
+    await h.session.start();
+    h.ready();
+    h.commit();
+    h.output();
+    const count = (type: string) => h.controls().filter((event) => event.type === type).length;
+    h.frames(8, 920);
+    h.frames(1, 0);
+    expect(count('utterance.start')).toBe(0);
+    expect(count('output.interrupt')).toBe(0);
+    // The same level starts an utterance when the assistant is silent.
+    await vi.advanceTimersByTimeAsync(1000);
+    h.frames(6, 920);
+    expect(count('utterance.start')).toBe(1);
+  });
   it('keeps playback through short noise and interrupts only after continuous speech qualifies', async () => {
     const h = harness();
     await h.session.start();
@@ -589,9 +606,9 @@ describe('hands-free live session', () => {
     h.output();
     const sent = h.sent.length;
     const stops = vi.mocked(h.audio.stopOutput).mock.calls.length;
-    h.frames(5, 3000);
+    h.frames(11, 3000);
     h.frames(1, 0);
-    h.frames(5, 3000);
+    h.frames(11, 3000);
     expect(h.sent).toHaveLength(sent);
     expect(h.audio.stopOutput).toHaveBeenCalledTimes(stops);
     h.output(1, 1);
@@ -607,7 +624,7 @@ describe('hands-free live session', () => {
     expect(JSON.parse(h.sent[beforeStart + 1] as string)).toMatchObject({
       type: 'utterance.start',
     });
-    expect(h.sent.slice(beforeStart + 2)).toHaveLength(10);
+    expect(h.sent.slice(beforeStart + 2)).toHaveLength(16);
     expect(h.sent.slice(beforeStart + 2).every((frame) => frame instanceof ArrayBuffer)).toBe(true);
     expect(vi.mocked(h.audio.stopOutput).mock.invocationCallOrder.at(-1)).toBeLessThan(
       h.socket.send.mock.invocationCallOrder[beforeStart],
@@ -623,7 +640,7 @@ describe('hands-free live session', () => {
     h.commit();
     h.output();
     expect(h.audio.play).toHaveBeenCalledTimes(1);
-    h.frames(6, 3000);
+    h.frames(12, 3000);
     const controls = h.controls();
     expect(controls.findIndex((c) => c.type === 'output.interrupt')).toBeLessThan(
       controls.findIndex((c) => c.type === 'utterance.start'),

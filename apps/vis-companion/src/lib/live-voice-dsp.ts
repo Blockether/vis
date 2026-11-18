@@ -35,6 +35,12 @@ export class VoiceResampler {
 
 export type VadEvent = { type: 'start' } | { type: 'end' } | { type: 'frame'; samples: Int16Array };
 /** A deterministic pilot gate. Acoustic qualification is separate from these thresholds. */
+/**
+ * How much louder and longer speech must be to start an utterance while the assistant speaks.
+ * The echo canceller of a phone lets bursts through: 160 ms near 0.03 of full scale were measured.
+ */
+const PLAYBACK_BAR = 2;
+
 export class VoiceEndpoint {
   private preroll: Int16Array[] = [];
   private active = false;
@@ -56,17 +62,22 @@ export class VoiceEndpoint {
     this.reset();
     return open;
   }
-  push(samples: Int16Array): VadEvent[] {
+  /** `playback` says that the microphone can hear the assistant. */
+  push(samples: Int16Array, playback = false): VadEvent[] {
     const ms = (samples.length * 1000) / L.sample_rate;
     const energy = Math.sqrt(
       samples.reduce((sum, v) => sum + (v / 32768) ** 2, 0) / samples.length,
     );
-    const loud = energy >= this.threshold;
+    const bar = playback && !this.active ? PLAYBACK_BAR : 1;
+    const loud = energy >= this.threshold * bar;
     if (!this.active) {
+      const speechMs = L.min_speech_ms * bar;
+      // Keep the same lead before the speech for each bar.
+      const prerollMs = L.preroll_ms - L.min_speech_ms + speechMs;
       this.preroll.push(samples);
-      while (this.preroll.length > L.preroll_ms / L.frame_ms) this.preroll.shift();
+      while (this.preroll.length > prerollMs / L.frame_ms) this.preroll.shift();
       this.loudMs = loud ? this.loudMs + ms : 0;
-      if (this.loudMs < L.min_speech_ms) return [];
+      if (this.loudMs < speechMs) return [];
       this.active = true;
       this.quietMs = 0;
       this.durationMs = this.preroll.length * L.frame_ms;

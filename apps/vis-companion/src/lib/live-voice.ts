@@ -15,6 +15,9 @@ import type {
   VoiceAdmissionReceipt,
 } from './live-voice-protocol';
 
+/** The microphone hears the assistant for this long after a played sample: latency and room echo. */
+const PLAYBACK_TAIL_MS = 500;
+
 export interface LiveVoiceGateway {
   liveVoiceCapabilities(signal?: AbortSignal): Promise<LiveVoiceCapabilities>;
   startLiveVoice(sid: string, clientId: string, muted: boolean): Promise<LiveVoiceStart>;
@@ -95,6 +98,7 @@ export class LiveVoiceSession {
   private captureGeneration: number | null = null;
   private endpoint = new VoiceEndpoint();
   private echo = new VoiceEchoGuard(this.endpoint.threshold);
+  private playbackUntil = 0;
   private utteranceId = 0;
   private uncertainAdmissions = new Set<number>();
   private sampleOffset = 0;
@@ -405,7 +409,8 @@ export class LiveVoiceSession {
       });
   }
   private input(samples: Int16Array, generation: number): void {
-    for (const event of this.endpoint.push(this.echo.filter(samples))) {
+    const playback = performance.now() < this.playbackUntil;
+    for (const event of this.endpoint.push(this.echo.filter(samples), playback)) {
       if (event.type === 'start') {
         this.interrupt('barge_in');
         if (this.stopped) return;
@@ -451,11 +456,13 @@ export class LiveVoiceSession {
     if (frame.sampleOffset !== segment.received)
       throw new Error('Voice output is out of order.');
     segment.received += frame.samples.length;
+    this.playbackUntil = performance.now() + PLAYBACK_TAIL_MS;
     const start = frame.sampleOffset;
     const rendered = this.echo.submitted(frame.samples, this.audio.outputReferenceStartMs);
     this.audio.play(frame.samples, (count) => {
       if (this.stopped || this.segments.get(segment.id) !== segment) return;
       rendered(count);
+      this.playbackUntil = performance.now() + PLAYBACK_TAIL_MS;
       segment.played = Math.max(segment.played, start + count);
       try {
         this.receipt(segment);
