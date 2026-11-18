@@ -687,16 +687,24 @@
                (.stop ^com.sun.net.httpserver.HttpServer (:server provider) 0)
                (#'native/delete-tree! home)))))
 
+(defn- live-assets?
+  "True when the local speech assets are installed. Else print why the test does not run."
+  []
+  (or (:available (live/capabilities))
+      (println "SKIP: Install the live speech assets to run this test.")))
+
 (defdescribe native-live-voice-media
              (it "decodes incremental speech and streams a useful answer through native callbacks"
-                 (run-native-media!
-                   false
-                   (Long/parseLong (or (System/getenv "VIS_TEST_NATIVE_VOICE_SOAK_SECONDS") "0")))))
+                 (when (live-assets?)
+                   (run-native-media! false
+                                      (Long/parseLong (or (System/getenv
+                                                            "VIS_TEST_NATIVE_VOICE_SOAK_SECONDS")
+                                                          "0"))))))
 
 (defdescribe native-live-voice-presentation-repair
              ;; Regression: the iPhone received fallback speech when reply repair failed before inference.
              (it "repairs malformed output once and speaks the repaired answer"
-                 (run-native-media! false 0 {:repair? true})))
+                 (when (live-assets?) (run-native-media! false 0 {:repair? true}))))
 
 (defdescribe native-live-voice-persistent-lease
              (it "keeps one voice lease across successive utterances and idle heartbeats"
