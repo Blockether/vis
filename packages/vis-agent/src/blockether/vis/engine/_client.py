@@ -753,7 +753,7 @@ class EngineClient(ABC):
                 the folder that the session works in.
             timeout: Optional timeout in seconds for this creation request.
             **options: Session creation fields from the gateway contract. For a
-                project path, pass `**layer.session_options(project)`. This
+                project path, pass `**client.session_options(project)`. This
                 applies local and gateway path rules and channel defaults
                 correctly.
 
@@ -1450,7 +1450,7 @@ class Session:
 
     Get it from `Agent.session`, `EngineClient.create_session` or
     `EngineClient.session`. Constructing a handle does not read the session.
-    The handle borrows the layer. Keep the layer open while you use the handle.
+    The handle borrows the client. Keep the client open while you use the handle.
 
     Use `send` for a new turn and `turns` for history. `read` fetches the
     current session state. `events` follows progress. `input_views` and `answer`

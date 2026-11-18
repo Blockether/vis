@@ -363,13 +363,9 @@ def __getattr__(name: str) -> Any:
     `blockether.vis.engine.Sounds` API: the sounds that the gateway machine plays.
     """
     if name == "speech":
-        from blockether.vis.engine._speech import Speech
-
-        return Speech(_host_layer())
+        return _host_layer().speech
     if name == "sounds":
-        from blockether.vis.engine._sounds import Sounds
-
-        return Sounds(_host_layer())
+        return _host_layer().sounds
     if name in ("session", "council"):
         sid = _host.bound_session()
         if not sid:

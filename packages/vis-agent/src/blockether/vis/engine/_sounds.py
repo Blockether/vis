@@ -116,15 +116,15 @@ def _custom_wire(preset: SoundPreset) -> dict[str, Any]:
 class Sounds:
     """Read and change the sounds that the gateway machine plays."""
 
-    def __init__(self, layer: EngineClient):
-        self._layer = layer
+    def __init__(self, client: EngineClient):
+        self._client = client
 
     def get(self) -> SoundSettings:
         """Return the current sound settings with every preset."""
         enabled = _row(
-            self._layer.routes.get_setting(_ENABLED, query=_GLOBAL), _ENABLED
+            self._client.routes.get_setting(_ENABLED, query=_GLOBAL), _ENABLED
         )
-        row = _row(self._layer.routes.get_setting(_PRESETS, query=_GLOBAL), _PRESETS)
+        row = _row(self._client.routes.get_setting(_PRESETS, query=_GLOBAL), _PRESETS)
         value = row.get("value")
         options = row.get("editor_options")
         if not isinstance(value, dict) or not isinstance(options, dict):
@@ -170,7 +170,7 @@ class Sounds:
             if chosen is None:
                 raise ValueError(f"no preset is called {preset.strip()}")
         if enabled is not _UNSET:
-            self._layer.routes.post_settings(
+            self._client.routes.post_settings(
                 body={**_GLOBAL, "id": _ENABLED, "action": "value", "value": enabled}
             )
         if current is not None and chosen is not None:
@@ -234,7 +234,7 @@ class Sounds:
         """
         if slot not in SLOTS:
             raise ValueError(f"slot must be one of {', '.join(SLOTS)}")
-        reply = self._layer.routes.post_setting_preview(
+        reply = self._client.routes.post_setting_preview(
             _PRESETS, body={"slot": slot, "value": _slot_value(slot, value)}
         )
         played = reply.get("is_played") if isinstance(reply, dict) else None
@@ -243,7 +243,7 @@ class Sounds:
         return played
 
     def _write(self, active: str, custom: tuple[SoundPreset, ...]) -> None:
-        self._layer.routes.post_settings(
+        self._client.routes.post_settings(
             body={
                 **_GLOBAL,
                 "id": _PRESETS,

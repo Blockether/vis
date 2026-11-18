@@ -109,13 +109,13 @@ class Speech:
     job; these methods wait for it and return the result.
     """
 
-    def __init__(self, layer: EngineClient):
-        self._layer = layer
+    def __init__(self, client: EngineClient):
+        self._client = client
 
     def voices(self, engine: str | None = None) -> list[Voice]:
         """List the voices of `engine`, imported voices included."""
         reply = _object(
-            self._layer.routes.get_speech_voices(query=_engine_query(engine)), "voices"
+            self._client.routes.get_speech_voices(query=_engine_query(engine)), "voices"
         )
         name = str((reply.get("engine") or {}).get("id") or engine or "")
         return [_voice(entry, name) for entry in reply.get("voices") or []]
@@ -140,7 +140,7 @@ class Speech:
         if not name or not name.strip():
             raise ValueError("name must not be blank")
         reply = _object(
-            self._layer.routes.post_speech_voices(
+            self._client.routes.post_speech_voices(
                 content=_audio_bytes(recording),
                 query=_engine_query(engine, name=name, lang=language, text=transcript),
             ),
@@ -174,7 +174,7 @@ class Speech:
         if not body:
             raise ValueError("give name, language or transcript")
         reply = _object(
-            self._layer.routes.patch_speech_voice(
+            self._client.routes.patch_speech_voice(
                 voice_id, body=body, query=_engine_query(engine)
             ),
             "voice",
@@ -184,7 +184,7 @@ class Speech:
     def remove_voice(self, voice_id: str, *, engine: str = CLONING_ENGINE) -> bool:
         """Delete an imported voice. Return False when the engine has no such voice."""
         try:
-            self._layer.routes.delete_speech_voice(
+            self._client.routes.delete_speech_voice(
                 voice_id, query=_engine_query(engine)
             )
         except GatewayError as error:
@@ -195,7 +195,7 @@ class Speech:
 
     def voice_sample(self, voice_id: str, *, engine: str | None = None) -> bytes:
         """Return a short audio sample of a voice. Raises `GatewayError` 404 without one."""
-        return self._layer.routes.get_speech_voice_sample(
+        return self._client.routes.get_speech_voice_sample(
             voice_id, query=_engine_query(engine)
         ).content
 
@@ -203,8 +203,8 @@ class Speech:
         """Return the readiness of a speaking engine; `prepare=True` starts its download."""
         query = _engine_query(engine)
         if prepare:
-            return _object(self._layer.routes.post_speech_model(query=query), "model")
-        return _object(self._layer.routes.get_speech_model(query=query), "model")
+            return _object(self._client.routes.post_speech_model(query=query), "model")
+        return _object(self._client.routes.get_speech_model(query=query), "model")
 
     def speak(
         self,
@@ -231,7 +231,7 @@ class Speech:
             body["voice"] = voice
         if seed is not None:
             body["seed"] = seed
-        response = self._layer._request(
+        response = self._client._request(
             "POST", "/v1/speech", body=body, query=_engine_query(engine)
         )
         if response.status == 200:
@@ -239,7 +239,7 @@ class Speech:
                 response.content, _media_type(response.headers), engine, voice, seed
             )
         job = self._wait("speech", response.json(), timeout)
-        audio = self._layer.routes.get_speech_job_audio(job["id"])
+        audio = self._client.routes.get_speech_job_audio(job["id"])
         return SpeechAudio(
             audio.content,
             _media_type(audio.headers),
@@ -260,7 +260,7 @@ class Speech:
         Engines include `parakeet-local` and `vibevoice-asr-local`. Raises `GatewayError`
         400 for audio that is not WAV and `VisTimeout` after `timeout` seconds.
         """
-        job = self._layer.routes.post_voice(
+        job = self._client.routes.post_voice(
             content=_audio_bytes(audio), query=_engine_query(engine)
         )
         job = self._wait("voice", job, timeout)
@@ -276,9 +276,9 @@ class Speech:
             raise ProtocolError(f"invalid {direction} job")
         if not job.get("is_done"):
             follow = (
-                self._layer.speech_events
+                self._client.speech_events
                 if direction == "speech"
-                else self._layer.voice_events
+                else self._client.voice_events
             )
             # The job stream sends the current state first, then each change.
             events = follow(job["id"])

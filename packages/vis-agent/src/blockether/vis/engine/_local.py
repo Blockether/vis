@@ -157,8 +157,8 @@ class StdioEngineClient(EngineClient):
     Construction is lazy. `connect` or context entry starts the subprocess, and repeated
     connection calls reuse it. `close` stops only this owned process and discards its
     temporary session database. It does not revert project edits or stop any separately
-    running Vis server. Explicitly injected agents borrow this layer. Close those agents
-    before you leave the layer's context. If you do not close the layer, the process
+    running Vis server. Explicitly injected agents borrow this client. Close those agents
+    before you leave the client's context. If you do not close the client, the process
     stops and the temporary database is removed when Python collects the client or exits.
     Do not rely on this: an unclosed client keeps its process until then.
 
@@ -370,7 +370,7 @@ class StdioEngineClient(EngineClient):
         return _reply(status, decoded, headers)
 
     def _session_create_timeout(self, timeout: float | None) -> float | None:
-        """Wait for the first session up to the startup deadline of the layer."""
+        """Wait for the first session up to the startup deadline of the client."""
         return max(self.timeout, self._startup_timeout) if timeout is None else timeout
 
     def session(self, sid):
