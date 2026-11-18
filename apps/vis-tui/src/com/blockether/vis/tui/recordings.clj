@@ -25,16 +25,24 @@
   [filename]
   (or (re-find #"\.[A-Za-z0-9]{1,8}$" (str filename)) ".audio"))
 
-(defn- cached-recording!
+(defn- cache-file
   "The cache file of persisted user attachment `att` (wire map, string keys). The file
-   name is the attachment ID, so a second load of the session reuses the file."
+   name is the attachment ID, so a second load of the session reuses the file. A row
+   without an ID gets a new name on each call."
   ^File [att]
-  (let [id
-        (or (not-empty (str (get att "id"))) (str (random-uuid)))
+  (File. (timg/attachment-cache-dir)
+         (str (or (not-empty (str (get att "id"))) (str (random-uuid)))
+              (extension (get att "filename")))))
 
-        f
-        (File. (timg/attachment-cache-dir) (str id (extension (get att "filename"))))]
+(defn cached?
+  "True when the attachment cache holds the file of persisted recording `att`."
+  [att]
+  (.isFile (cache-file att)))
 
+(defn- cached-recording!
+  "The cache file of `att`, written from its inline bytes when the cache does not hold it."
+  ^File [att]
+  (let [f (cache-file att)]
     (when-not (.isFile f)
       (Files/write (.toPath f)
                    ^bytes (.decode (Base64/getDecoder) (str (get att "base64")))
@@ -44,13 +52,14 @@
 (defn persisted-recordings
   "The entries for the audio files that a person sent in one persisted turn, from its
    wire `attachments`. Each file goes to the attachment cache, so the entry still plays
-   after the original file is gone. A file without inline bytes is left out."
+   after the original file is gone. A file with no inline bytes and no cache file is
+   left out."
   [attachments]
   (into []
         (keep (fn [att]
                 (when (and (= "user" (str (get att "source")))
                            (audio? (get att "media_type"))
-                           (not (str/blank? (str (get att "base64")))))
+                           (or (not (str/blank? (str (get att "base64")))) (cached? att)))
                   (try {:source :user
                         :filename (str (or (get att "filename") "recording"))
                         :media-type (str (get att "media_type"))

@@ -1,7 +1,7 @@
 import { FilePicker, type PickedFile } from '@capawesome/capacitor-file-picker';
 import { Capacitor } from '@capacitor/core';
 import { blobAsDataUrl } from './image-file';
-import type { GatewayAttachment } from './types';
+import type { GatewayAttachment, TranscriptAttachment } from './types';
 import { randomUuid } from './uuid';
 
 export interface PendingAttachment extends GatewayAttachment {
@@ -113,6 +113,11 @@ export interface AttachmentLimits {
   maxVideoBytes?: number;
   maxAudioBytes?: number;
   mediaTypes?: string[];
+}
+
+/** Whether a transcript row carries the bytes of its attachment. */
+export function hasAttachmentBytes(attachment: TranscriptAttachment): attachment is GatewayAttachment {
+  return !!attachment.base64;
 }
 
 /**

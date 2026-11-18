@@ -1,5 +1,7 @@
 (ns com.blockether.vis.tui.recordings-test
-  (:require [com.blockether.vis.tui.recordings :as recordings]
+  (:require [com.blockether.vis.tui.chat :as chat]
+            [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.tui.recordings :as recordings]
             [com.blockether.vis.tui.terminal-image :as timg]
             [lazytest.core :as lt :refer [defdescribe expect it]])
   (:import [java.io File]
@@ -61,3 +63,41 @@
                 (recordings/staged-recordings
                   [{:path "/tmp/memo.wav" :media-type "audio/wav" :filename "memo.wav"}
                    {:path "/tmp/a.pdf" :media-type "application/pdf" :filename "a.pdf"}])))))
+
+;; Session 475b983a-62be-400c-aaf7-ff7bb4822c88: a transcript read sent a 32 MiB
+;; recording each time. The gateway now sends a large user file as a row without bytes.
+(defdescribe
+  recording-without-inline-bytes-test
+  (it "reads the bytes that the transcript row of a recording left out, one time"
+      (let [turn
+            {"turn_id" "t1"
+             "status" "completed"
+             "request" "listen"
+             "attachments" [(assoc (dissoc persisted-memo "base64") "size" (alength memo-bytes))]}
+
+            reads
+            (atom [])]
+
+        (with-redefs [vis/gateway-transcript-page
+                      (fn [_ _]
+                        {"turns" [turn] "offset" 0 "total" 1 "has_more" false})
+
+                      vis/gateway-turn-attachments
+                      (fn [sid tid]
+                        (swap! reads conj [sid tid])
+                        [persisted-memo])]
+
+          (let [recording
+                #(first (recordings/session-recordings (:messages (chat/history-page "s1"
+                                                                                     {:limit 10}))))
+
+                opened
+                (recording)
+
+                reopened
+                (recording)]
+
+            (expect (= (seq memo-bytes)
+                       (seq (Files/readAllBytes (.toPath (File. (str (:path opened))))))))
+            (expect (= (:path opened) (:path reopened)))
+            (expect (= [["s1" "t1"]] @reads)))))))

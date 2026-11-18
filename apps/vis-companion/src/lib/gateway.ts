@@ -68,6 +68,7 @@ import type {
   SseEvent,
   SubmittedTurn,
   Toggle,
+  TranscriptAttachment,
   TranscriptIteration,
   TranscriptTurn,
   ForkPoint,
@@ -3936,10 +3937,10 @@ export class GatewayClient {
    * business in `localStorage`, and a turn this far back is settled anyway —
    * from then on the persisted row owns its images.
    */
-  private readonly sentAttachments = new Map<string, GatewayAttachment[]>();
+  private readonly sentAttachments = new Map<string, TranscriptAttachment[]>();
   private static readonly SENT_ATTACHMENT_CACHE = 8;
 
-  rememberSentAttachments(sid: string, tid: string | undefined, sent: GatewayAttachment[]): void {
+  rememberSentAttachments(sid: string, tid: string | undefined, sent: TranscriptAttachment[]): void {
     if (!tid || !sent.length) return;
     const key = `${sid}\u0000${tid}`;
     // Re-insert so the newest turn is always last in iteration order.
@@ -3952,7 +3953,7 @@ export class GatewayClient {
     }
   }
 
-  cachedSentAttachments(sid: string, tid: string | undefined): GatewayAttachment[] | undefined {
+  cachedSentAttachments(sid: string, tid: string | undefined): TranscriptAttachment[] | undefined {
     if (!tid) return undefined;
     return this.sentAttachments.get(`${sid}\u0000${tid}`);
   }
@@ -3971,24 +3972,28 @@ export class GatewayClient {
    * In-flight requests are shared, and the entry is dropped once settled: a turn
    * mid-hand-off can legitimately answer empty, and the next mount must be free
    * to ask again.
+   *
+   * A `refresh` with a cached copy reads only the words, and the rows keep the
+   * bytes of that copy. A copy from a transcript row can be without bytes: a
+   * read that is not a `refresh` then asks the gateway.
    */
   async fetchTurnAttachments(
     sid: string,
     tid: string | undefined,
     signal?: AbortSignal,
     refresh = false,
-  ): Promise<GatewayAttachment[]> {
+  ): Promise<TranscriptAttachment[]> {
     if (!tid) return [];
     const cached = this.cachedSentAttachments(sid, tid);
 
-    if (!refresh && cached?.length) return cached;
+    if (!refresh && cached?.length && cached.every((row) => !!row.base64)) return cached;
     const key = `${sid}\u0000${tid}`;
     const inflight = this.attachmentFetches.get(key);
     if (inflight) return inflight;
     const pending = (async () => {
       const metadataOnly = refresh && !!cached?.length;
       const path = `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments`;
-      const res = await this.request<{ attachments?: GatewayAttachment[] }>(
+      const res = await this.request<{ attachments?: TranscriptAttachment[] }>(
         'GET',
         metadataOnly ? `${path}?transcription_only=true` : path,
         undefined,
@@ -4013,7 +4018,29 @@ export class GatewayClient {
     return pending;
   }
 
-  private readonly attachmentFetches = new Map<string, Promise<GatewayAttachment[]>>();
+  private readonly attachmentFetches = new Map<string, Promise<TranscriptAttachment[]>>();
+
+  /**
+   * The bytes of ONE stored attachment of a turn: the same route with `?id=`.
+   *
+   * A transcript row leaves the bytes of a large attachment in the store, so that
+   * a 32 MiB recording does not come with each read of the transcript. The row
+   * that shows the attachment reads its bytes here. The copy that this device
+   * sent is used first.
+   */
+  async fetchAttachmentBytes(sid: string, tid: string, id: string, signal?: AbortSignal): Promise<string> {
+    const own = this.cachedSentAttachments(sid, tid)?.find((row) => row.id === id)?.base64;
+    if (own) return own;
+    const res = await this.request<{ attachments?: TranscriptAttachment[] }>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments?id=${encodeURIComponent(id)}`,
+      undefined,
+      signal,
+    );
+    const base64 = res.attachments?.find((row) => row.id === id)?.base64;
+    if (!base64) throw new GatewayError(404, 'The gateway has no bytes for this attachment.');
+    return base64;
+  }
 
   /**
    * Drop ONE row from the cached backlog.

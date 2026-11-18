@@ -60,6 +60,9 @@ export function StoredTurnRow({
           requestKind={turn.request_kind}
           council={turn.council}
           attachments={turn.attachments}
+          client={answer.client}
+          sid={answer.sid}
+          turnId={turn.turn_id}
         >
           {request}
         </UserMessage>

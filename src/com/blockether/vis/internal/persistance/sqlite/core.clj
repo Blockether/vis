@@ -4205,6 +4205,16 @@
                              [:= :session_turn_iteration_id nil] [:= :queued_turn_id nil]]
                      :order-by [[:position :asc]]})))))
 
+(def ^:private turn-attachment-inline-columns
+  "The columns of a `session_attachment` row whose `bytes` BLOB is read only when
+   it is not larger than the one `?` of this list. `size_bytes` stays exact for a
+   row that an old store wrote without it."
+  (str "id, session_turn_soul_id, session_turn_iteration_id, tool_call_id, queued_turn_id, "
+       "position, kind, media_type, filename, reference, view_id, live_invocation_id, "
+       "live_activity_id, version, audience, storage_uri, transcription, transcription_segments, "
+       "COALESCE(size_bytes, length(bytes)) AS size_bytes, "
+       "CASE WHEN length(bytes) <= ? THEN bytes END AS bytes"))
+
 (defn db-list-turns-attachments
   "Batch variant of [[db-list-turn-attachments]]: INBOUND user images for MANY
    `session_turn_soul` ids in ONE query (the `user` rail only -
@@ -4212,26 +4222,41 @@
    :source :position :kind :media-type :filename :size :base64} …]}` (each vector
    ordered by `:position`). Missing ids are simply absent from the map. Safe: no
    ids / no datasource -> `{}`. Lets the gateway hydrate a whole session's user
-   images without an N+1 per-turn query."
-  [db-info session-turn-soul-ids]
-  (let [ids (->> session-turn-soul-ids
-                 (keep #(some-> %
-                                ->ref))
-                 distinct
-                 vec)]
-    (if-not (and (ds db-info) (seq ids))
-      {}
-      (reduce (fn [m row]
-                (update m (:session_turn_soul_id row) (fnil conj []) (row->attachment row)))
-              {}
-              (query-sql! db-info
-                          (into [(str "SELECT * FROM session_attachment "
-                                      "WHERE session_turn_soul_id IN ("
-                                      (str/join "," (repeat (count ids) "?"))
-                                      ") AND session_turn_iteration_id IS NULL "
-                                      "AND queued_turn_id IS NULL "
-                                      "ORDER BY session_turn_soul_id ASC, position ASC")]
-                                ids))))))
+   images without an N+1 per-turn query.
+
+   `:inline-limit` in `opts` is the largest payload, in bytes, that a row brings
+   with it. A larger row keeps its `:size` and has no `:base64`, and the query
+   does not read its BLOB: a transcript must not pay for a 32 MiB recording on
+   each read. The 2-arity reads each payload."
+  ([db-info session-turn-soul-ids] (db-list-turns-attachments db-info session-turn-soul-ids nil))
+  ([db-info session-turn-soul-ids {:keys [inline-limit]}]
+   (let [ids (->> session-turn-soul-ids
+                  (keep #(some-> %
+                                 ->ref))
+                  distinct
+                  vec)]
+     (if-not (and (ds db-info) (seq ids))
+       {}
+       (reduce (fn [m row]
+                 (update m
+                         (:session_turn_soul_id row)
+                         (fnil conj [])
+                         (cond-> (row->attachment row)
+                           (and inline-limit (nil? (:bytes row)))
+                           (dissoc :base64))))
+               {}
+               (query-sql! db-info
+                           (into [(str "SELECT "
+                                       (if inline-limit turn-attachment-inline-columns "*")
+                                       " FROM session_attachment "
+                                       "WHERE session_turn_soul_id IN ("
+                                       (str/join "," (repeat (count ids) "?"))
+                                       ") AND session_turn_iteration_id IS NULL "
+                                       "AND queued_turn_id IS NULL "
+                                       "ORDER BY session_turn_soul_id ASC, position ASC")]
+                                 (cond->> ids
+                                   inline-limit
+                                   (cons (long inline-limit))))))))))
 
 (defn db-list-queued-turn-attachments
   "The images of messages that the human sent into a running turn (`→ Send now`),

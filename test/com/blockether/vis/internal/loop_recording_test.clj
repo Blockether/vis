@@ -195,7 +195,52 @@
           (expect (not (contains? attachment "base64")))
           (expect (nil? (persistence/db-get-session-prompt-cache-state db state-id)))
           (expect (= words
-                     (:transcription (first (persistence/db-list-turn-attachments db tid))))))))))
+                     (:transcription (first (persistence/db-list-turn-attachments db tid)))))))))
+  ;; Session 475b983a-62be-400c-aaf7-ff7bb4822c88: a transcript leaves a large payload
+  ;; in the store. A client that shows one picture must not also read a 32 MiB recording.
+  (it
+    "answers only the attachment that the request names"
+    (let [db
+          (h/store)
+
+          sid
+          (h/store-session! db {:channel :api})
+
+          picture
+          {:filename "shot.png"
+           :media-type "image/png"
+           :source "user"
+           :base64 "cGljdHVyZQ=="
+           :size 7}
+
+          tid
+          (persistence/db-store-session-turn!
+            db
+            {:parent-session-id sid :user-request "Look" :attachments [recording picture]})
+
+          id
+          (str (:id (second (persistence/db-list-turn-attachments db tid))))]
+
+      (with-redefs [lp/db-info
+                    (constantly db)
+
+                    state/soul
+                    (constantly {:id sid})
+
+                    at/request-attachments!
+                    identity]
+
+        (let [response
+              (#'turns-api/turn-attachments-handler
+               {:path-params {:sid (str sid) :tid (str tid)}
+                :query-params {"id" id}})
+
+              rows
+              (get (wire/parse-json (:body response)) "attachments")]
+
+          (expect (= 200 (:status response)))
+          (expect (= [["shot.png" "cGljdHVyZQ=="]]
+                     (mapv (juxt #(get % "filename") #(get % "base64")) rows))))))))
 
 (defdescribe recording-watchdog-test
              (it "does not mistake a long recording join for a stalled provider or model output"

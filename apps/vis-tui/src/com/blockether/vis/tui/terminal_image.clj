@@ -730,6 +730,19 @@
     (.mkdirs dir)
     dir))
 
+(defn- attachment-cache-file
+  "The cache file of persisted picture or clip `att`, named by its row id. A row
+   without an id gets a new name on each call, so the cache never answers it."
+  ^java.io.File [att]
+  (java.io.File. (attachment-cache-dir)
+                 (str (or (not-empty (str (get att "id"))) (str (java.util.UUID/randomUUID)))
+                      (or (TerminalImage/extensionForMime (str (get att "media_type"))) ".png"))))
+
+(defn materialized?
+  "True when the attachment cache holds the file of persisted picture or clip `att`."
+  [att]
+  (.isFile (attachment-cache-file att)))
+
 (defn materialize-attachment
   "Decode ONE persisted user image attachment (canonical wire map, STRING keys
    `id`/`base64`/`media_type`/`filename`) into a STABLE cache file keyed by its
@@ -738,44 +751,39 @@
    neither a usable still nor a decodable clip. Idempotent: an already-written
    cache file is reused,
    never rewritten, so a resumed session re-renders the picture from DB-owned
-   bytes even after the original source path is gone. Never throws."
+   bytes even after the original source path is gone. A row without `base64`
+   uses its cache file, and is nil when the cache does not hold it. Never throws."
   [att]
-  (try
-    (let [media
-          (str (get att "media_type"))
+  (try (let [media
+             (str (get att "media_type"))
 
-          b64
-          (str (get att "base64"))]
+             b64
+             (str (get att "base64"))
 
-      (when (and (or (str/starts-with? media "image/") (video-mime? media)) (not (str/blank? b64)))
-        (let [ext
-              (or (TerminalImage/extensionForMime media) ".png")
+             f
+             (attachment-cache-file att)]
 
-              id
-              (or (not-empty (str (get att "id"))) (str (java.util.UUID/randomUUID)))
+         (when (and (or (str/starts-with? media "image/") (video-mime? media))
+                    (or (.isFile f) (not (str/blank? b64))))
+           (when-not (.isFile f)
+             (java.nio.file.Files/write (.toPath f)
+                                        ^bytes (.decode (java.util.Base64/getDecoder) b64)
+                                        ^"[Ljava.nio.file.OpenOption;"
+                                        (make-array java.nio.file.OpenOption 0)))
+           (let [path
+                 (.getAbsolutePath f)
 
-              f
-              (java.io.File. (attachment-cache-dir) (str id ext))]
+                 size
+                 (.length f)
 
-          (when-not (.isFile f)
-            (java.nio.file.Files/write (.toPath f)
-                                       ^bytes (.decode (java.util.Base64/getDecoder) b64)
-                                       ^"[Ljava.nio.file.OpenOption;"
-                                       (make-array java.nio.file.OpenOption 0)))
-          (let [path
-                (.getAbsolutePath f)
+                 {:keys [w h]}
+                 (or (probe-dimensions path media) {})]
 
-                size
-                (.length f)
-
-                {:keys [w h]}
-                (or (probe-dimensions path media) {})]
-
-            {:path path
-             :mime media
-             :filename (or (not-empty (str (get att "filename"))) "image")
-             :size size
-             :size-label (fmt/format-bytes size)
-             :width w
-             :height h}))))
-    (catch Throwable _ nil)))
+             {:path path
+              :mime media
+              :filename (or (not-empty (str (get att "filename"))) "image")
+              :size size
+              :size-label (fmt/format-bytes size)
+              :width w
+              :height h})))
+       (catch Throwable _ nil)))

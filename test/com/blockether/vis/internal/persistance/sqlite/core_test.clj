@@ -244,7 +244,39 @@
           (expect (= {} (sqlite-core/db-list-turns-attachments s [])))
           (expect (= {} (sqlite-core/db-list-turns-attachments s [nil])))
           (expect (= {} (sqlite-core/db-list-turns-attachments nil [first-id]))))
-        (expect (zero? @formats)))))
+        (expect (zero? @formats))))
+  (it "leaves the payload of a row over the inline limit in the store"
+      ;; Session 475b983a-62be-400c-aaf7-ff7bb4822c88: each transcript read sent the
+      ;; 32 MiB recording of one turn again, as 44.8 MB of JSON.
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})
+
+            payload
+            (fn [size]
+              (.encodeToString (java.util.Base64/getEncoder) (byte-array (int size))))
+
+            tid
+            (persistance/db-store-session-turn!
+              s
+              {:parent-session-id sid
+               :user-request "listen"
+               :attachments [{:media-type "text/plain" :base64 (payload 8) :filename "small.txt"}
+                             {:media-type "text/plain" :base64 (payload 9) :filename "large.txt"}]})
+
+            full
+            (get (persistance/db-list-turns-attachments s [tid]) (str tid))
+
+            rows
+            (get (persistance/db-list-turns-attachments s [tid] {:inline-limit 8}) (str tid))]
+
+        (expect (= [(payload 8) (payload 9)] (mapv :base64 full)))
+        (expect (= [(payload 8) nil] (mapv :base64 rows)))
+        (expect (not (contains? (second rows) :base64)))
+        (expect (= [8 9] (mapv :size rows)))
+        (expect (= (mapv #(dissoc % :base64) full) (mapv #(dissoc % :base64) rows))))))
 
 (defdescribe
   previous-request-usage-query-test

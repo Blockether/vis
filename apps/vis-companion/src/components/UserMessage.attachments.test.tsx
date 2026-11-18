@@ -3,6 +3,7 @@ import { fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { UserMessage } from './ChatContent';
 import { shareArtifact } from '../lib/artifact-share';
+import type { GatewayClient } from '../lib/gateway';
 
 vi.mock('../lib/artifact-share', () => ({
   artifactShareVerb: () => 'Save',
@@ -111,4 +112,70 @@ it('plays a sent clip from its data address when its bytes cannot be read', asyn
   expect(await view.findByText('Could not share video. Try again.')).toBeVisible();
   expect(view.getByRole('button', { name: `Save ${clip.filename}` })).toBeEnabled();
   expect(shareArtifact).not.toHaveBeenCalled();
+});
+
+// Session 475b983a-62be-400c-aaf7-ff7bb4822c88: a 32 MiB recording came with each read
+// of the transcript. A transcript row now leaves large bytes in the gateway's store.
+function storeOf(bytes: Record<string, string>) {
+  const fetchAttachmentBytes = vi.fn(async (_sid: string, _tid: string, id: string) => bytes[id]);
+  return { fetchAttachmentBytes, client: { fetchAttachmentBytes } as unknown as GatewayClient };
+}
+
+it('loads a picture whose bytes its transcript row left in the store', async () => {
+  const { client, fetchAttachmentBytes } = storeOf({ a1: 'iVBORw0KGgo=' });
+  const view = render(
+    <UserMessage
+      attachments={[{ id: 'a1', filename: 'shot.png', media_type: 'image/png', size: 900_000 }]}
+      client={client}
+      sid="s1"
+      turnId="t1"
+    >
+      {''}
+    </UserMessage>,
+  );
+
+  await waitFor(() =>
+    expect(view.container.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,iVBORw0KGgo='),
+  );
+  expect(fetchAttachmentBytes).toHaveBeenCalledWith('s1', 't1', 'a1', expect.any(AbortSignal));
+});
+
+it('loads a large recording only when the reader asks for it', async () => {
+  const { client, fetchAttachmentBytes } = storeOf({ a2: 'AAAAIGZ0eXBNNEEg' });
+  const view = render(
+    <UserMessage
+      attachments={[
+        { id: 'a2', filename: 'talk.m4a', media_type: 'audio/mp4', size: 33_208_749, transcription: 'the words' },
+      ]}
+      client={client}
+      sid="s1"
+      turnId="t1"
+    >
+      {''}
+    </UserMessage>,
+  );
+
+  expect(view.getByText('talk.m4a')).toBeVisible();
+  expect(fetchAttachmentBytes).not.toHaveBeenCalled();
+  fireEvent.click(view.getByRole('button', { name: 'Load recording' }));
+  await waitFor(() => expect(view.container.querySelector('audio')).not.toBeNull());
+  expect(fetchAttachmentBytes).toHaveBeenCalledTimes(1);
+});
+
+it('keeps the control of a recording whose load failed', async () => {
+  const fetchAttachmentBytes = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('AAAAIGZ0eXBNNEEg');
+  const view = render(
+    <UserMessage
+      attachments={[{ id: 'a2', filename: 'talk.m4a', media_type: 'audio/mp4', size: 33_208_749 }]}
+      client={{ fetchAttachmentBytes } as unknown as GatewayClient}
+      sid="s1"
+      turnId="t1"
+    >
+      {''}
+    </UserMessage>,
+  );
+
+  fireEvent.click(view.getByRole('button', { name: 'Load recording' }));
+  fireEvent.click(await view.findByRole('button', { name: 'Could not load the recording. Try again' }));
+  await waitFor(() => expect(view.container.querySelector('audio')).not.toBeNull());
 });

@@ -110,6 +110,7 @@ import type {
   DeliveredUserInput,
   IterationAttachment,
   JsonValue,
+  TranscriptAttachment,
   TranscriptForm,
   TranscriptIteration,
   TranscriptTurn,
@@ -118,6 +119,7 @@ import type {
   CouncilRequest,
 } from '../lib/types';
 import type { GatewayClient } from '../lib/gateway';
+import { hasAttachmentBytes } from '../lib/attachments';
 import {
   providerWaitDetail,
   pythonBusyDetail,
@@ -3105,11 +3107,11 @@ function useDeliveredPictures(
     const read = async (attempt: number) => {
       const rows = await client
         .fetchTurnAttachments(sid, tid, controller.signal)
-        .catch((): GatewayAttachment[] => []);
+        .catch((): TranscriptAttachment[] => []);
       if (controller.signal.aborted) return;
-      const found = rows.filter(
-        (att) => !!att.base64 && (att.source ?? 'user') === 'user' && att.media_type.startsWith('image/'),
-      );
+      const found = rows
+        .filter(hasAttachmentBytes)
+        .filter((att) => (att.source ?? 'user') === 'user' && att.media_type.startsWith('image/'));
       if (found.length > 0) setPictures(found);
       if (found.length < expected && attempt + 1 < DELIVERED_PICTURE_READS)
         timer = setTimeout(() => void read(attempt + 1), 1000 * (attempt + 1));
@@ -4836,26 +4838,155 @@ export const AssistantMessage = memo(function AssistantMessage({
 // A user attachment carries its own bytes, already base64 — persisted, so the
 // picture survives a restart after the clipboard or temp file it came from is
 // gone. Some rows store the data URL whole and some only its payload.
+function bytesSrc(mediaType: string, base64: string): string {
+  return base64.startsWith('data:') ? base64 : `data:${mediaType};base64,${base64}`;
+}
+
 function attachmentSrc(att: GatewayAttachment): string {
-  return att.base64.startsWith('data:')
-    ? att.base64
-    : `data:${att.media_type};base64,${att.base64}`;
+  return bytesSrc(att.media_type, att.base64);
 }
 
 // Metadata catches up while a recording plays. Identity belongs to its content
 // slot, not to a database id that arrives later and would replace the player.
-function attachmentKey(att: GatewayAttachment, index: number): string {
-  return `${index}:${att.media_type}:${att.filename}:${att.size ?? att.base64.length}`;
+function attachmentKey(att: TranscriptAttachment, index: number): string {
+  return `${index}:${att.media_type}:${att.filename}:${att.size ?? att.base64?.length ?? 0}`;
+}
+
+/** A recording, a clip or a file of at most this size loads with its row. A larger one waits for a press. */
+const AUTO_LOAD_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+type StoredBytesState = 'loading' | 'failed';
+
+/** The bytes that the transcript rows of one message left in the gateway's store. */
+interface StoredBytes {
+  /** The row with its bytes, when the transcript or a load has them. */
+  withBytes: (att: TranscriptAttachment) => TranscriptAttachment;
+  /** Whether a row without bytes can read them. */
+  canLoad: (att: TranscriptAttachment) => boolean;
+  state: (att: TranscriptAttachment) => StoredBytesState | undefined;
+  /** The base64 bytes of the row. Each row is read one time while its load is good. */
+  load: (att: TranscriptAttachment) => Promise<string>;
+}
+
+/**
+ * A transcript carries a small attachment inline. A large one comes without its
+ * bytes, so that opening a session does not download each recording in it. A
+ * picture and a small file load with the row; the rest loads on `load`.
+ */
+function useStoredBytes(
+  attachments: TranscriptAttachment[],
+  client: GatewayClient | undefined,
+  sid: string | undefined,
+  turnId: string | undefined,
+): StoredBytes {
+  const [bytes, setBytes] = useState<Record<string, string>>({});
+  const [states, setStates] = useState<Record<string, StoredBytesState>>({});
+  const reads = useRef(new Map<string, Promise<string>>());
+  const abort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    abort.current = controller;
+    return () => controller.abort();
+  }, []);
+  const source = client && sid && turnId ? { client, sid, turnId } : null;
+  const canLoad = (att: TranscriptAttachment) => !!source && !!att.id && !att.base64;
+  const isEager = (att: TranscriptAttachment) =>
+    att.media_type.startsWith('image/') || (att.size ?? 0) <= AUTO_LOAD_ATTACHMENT_BYTES;
+  const read = useCallback(
+    (id: string): Promise<string> => {
+      if (!client || !sid || !turnId) return Promise.reject(new Error('The attachment has no bytes to read.'));
+      const reading = reads.current.get(id);
+      if (reading) return reading;
+      setStates((current) => ({ ...current, [id]: 'loading' }));
+      const next: Promise<string> = client.fetchAttachmentBytes(sid, turnId, id, abort.current?.signal).then(
+        (base64) => {
+          setBytes((current) => ({ ...current, [id]: base64 }));
+          return base64;
+        },
+        (error: unknown) => {
+          // A later read of the same row owns the entry and the state.
+          if (reads.current.get(id) === next) {
+            reads.current.delete(id);
+            setStates((current) => ({ ...current, [id]: 'failed' }));
+          }
+          throw error;
+        },
+      );
+      reads.current.set(id, next);
+      return next;
+    },
+    [client, sid, turnId],
+  );
+  const load = useCallback(
+    (att: TranscriptAttachment): Promise<string> => {
+      if (att.base64) return Promise.resolve(att.base64);
+      return att.id ? read(att.id) : Promise.reject(new Error('The attachment has no bytes to read.'));
+    },
+    [read],
+  );
+  const eager = attachments
+    .filter((att) => canLoad(att) && isEager(att))
+    .map((att) => att.id)
+    .join('|');
+  useEffect(() => {
+    if (!eager) return;
+    for (const id of eager.split('|')) void read(id).catch(() => {});
+  }, [eager, read]);
+  return {
+    withBytes: (att) => (!att.base64 && att.id && bytes[att.id] ? { ...att, base64: bytes[att.id] } : att),
+    canLoad,
+    state: (att) => (att.id ? (states[att.id] ?? (canLoad(att) && isEager(att) ? 'loading' : undefined)) : undefined),
+    load,
+  };
+}
+
+/**
+ * Stands where the bytes of an attachment go while the gateway's store still has
+ * them: a pulse during the load, else the control that starts it.
+ */
+function StoredBytesCue({
+  attachment,
+  noun,
+  stored,
+}: {
+  attachment: TranscriptAttachment;
+  /** What the control calls the attachment, e.g. `recording`. */
+  noun: string;
+  stored: StoredBytes;
+}) {
+  const state = stored.state(attachment);
+  if (state === 'loading') {
+    return <div role="status" aria-label={`Loading ${noun}`} className="h-11 w-full animate-pulse bg-thinking-surface" />;
+  }
+  return (
+    <div className="flex min-h-11 w-full items-center px-2">
+      <TextButton onClick={() => void stored.load(attachment).catch(() => {})}>
+        {state === 'failed' ? `Could not load the ${noun}. Try again` : `Load ${noun}`}
+      </TextButton>
+    </div>
+  );
 }
 
 /** User files keep their original bytes and a usable action in the transcript. */
-function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
+function UserFileAttachment({
+  attachment,
+  onLoad,
+  isLoadFailed = false,
+}: {
+  attachment: TranscriptAttachment;
+  /** Reads the bytes that the transcript row left in the store. Absent when nothing can. */
+  onLoad?: (attachment: TranscriptAttachment) => Promise<string>;
+  isLoadFailed?: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const name = attachment.filename || 'Attachment';
   const media = attachment.media_type;
-  const url = attachment.base64 ? attachmentSrc(attachment) : null;
+  const url = hasAttachmentBytes(attachment) ? attachmentSrc(attachment) : null;
   const size = attachmentBytes(attachment.size);
+  const needed = useCallback(() => {
+    if (!url && onLoad) void onLoad(attachment).catch(() => {});
+  }, [url, onLoad, attachment]);
   if (isDocMedia(media, name)) {
     return (
       <DocPreview
@@ -4863,8 +4994,8 @@ function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
         mime={media}
         sizeLabel={size}
         url={url}
-        failed={!url}
-        onNeeded={() => {}}
+        failed={!url && (!onLoad || isLoadFailed)}
+        onNeeded={needed}
       />
     );
   }
@@ -4873,14 +5004,15 @@ function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
   return (
     <div>
       <ListRow
-        disabled={busy || !url}
+        disabled={busy || (!url && !onLoad)}
         aria-label={`${verb} ${name}`}
         onClick={async () => {
-          if (!url) return;
+          if (!url && !onLoad) return;
           setBusy(true);
           setNotice('');
           try {
-            const blob = await (await fetch(url)).blob();
+            const source = url ?? bytesSrc(media, await onLoad!(attachment));
+            const blob = await (await fetch(source)).blob();
             setNotice(archive ? await keepArchive(blob, name, media) : await shareArtifact(blob, name, media));
           } catch {
             setNotice(archive ? 'Could not save archive. Try again.' : 'Could not share file. Try again.');
@@ -4899,9 +5031,9 @@ function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
         </span>
         <span className="font-mono text-ui text-accent-ink">{busy ? 'Preparing…' : verb}</span>
       </ListRow>
-      {(notice || !url) && (
+      {(notice || (!url && !onLoad)) && (
         <p role="status" className="px-3 pb-2 font-mono text-ui text-dialog-hint">
-          {!url ? 'File bytes unavailable.' : notice}
+          {!url && !onLoad ? 'File bytes unavailable.' : notice}
         </p>
       )}
     </div>
@@ -5048,22 +5180,32 @@ export const UserMessage = memo(function UserMessage({
   council,
   position,
   createdAt,
+  client,
+  sid,
+  turnId,
 }: {
   children: string;
-  attachments?: GatewayAttachment[];
+  attachments?: TranscriptAttachment[];
   requestKind?: RequestKind;
   council?: CouncilRequest;
   position?: number;
   createdAt?: number;
+  /** With `sid` and `turnId`: reads the bytes that a transcript row left in the store. */
+  client?: GatewayClient;
+  sid?: string;
+  turnId?: string;
 }) {
   const parts = parseUserMessage(children);
   const words = parts.some((part) => part.type !== 'text' || part.text.trim() !== '');
   // Persisted user images re-render from DB-owned base64 (survives a restart even
   // after the original clipboard/temp source file is gone). Tool artifacts render
   // in the assistant trace, so only the `user` rail belongs in the user bubble.
-  const userAttachments = (attachments ?? []).filter((a) => (a.source ?? 'user') === 'user');
+  const sentAttachments = (attachments ?? []).filter((a) => (a.source ?? 'user') === 'user');
+  // A transcript row can be without its bytes. It shows when the store can give them.
+  const stored = useStoredBytes(sentAttachments, client, sid, turnId);
+  const userAttachments = sentAttachments.map(stored.withBytes);
   const mediaAttachments = userAttachments.filter(
-    (a) => !!a.base64 && /^(image|video|audio)\//.test(a.media_type),
+    (a) => (!!a.base64 || stored.canLoad(a)) && /^(image|video|audio)\//.test(a.media_type),
   );
   const files = userAttachments.filter((a) => !/^(image|video|audio)\//.test(a.media_type));
   // An empty request still parses to ONE empty text part, so "is there a body?" is
@@ -5090,16 +5232,19 @@ export const UserMessage = memo(function UserMessage({
   // trigger, which spells `border-0 bg-transparent` on itself. Inline bytes also
   // carry their header, so a wide picture's plate takes the picture's own ratio
   // before anything decodes (`inlinePictureSize`).
-  const picture = (att: GatewayAttachment, index: number, fill: boolean) => (
-    <ExpandableImage
-      key={att.id ?? `pic-${index}`}
-      src={attachmentSrc(att)}
-      alt={att.filename ?? 'attachment'}
-      galleryAt={index}
-      frameClassName="h-full w-full"
-      className={fill ? mediaTileContentClass : mediaContentClass}
-    />
-  );
+  const picture = (att: TranscriptAttachment, index: number, fill: boolean) =>
+    hasAttachmentBytes(att) ? (
+      <ExpandableImage
+        key={att.id ?? `pic-${index}`}
+        src={attachmentSrc(att)}
+        alt={att.filename ?? 'attachment'}
+        galleryAt={index}
+        frameClassName="h-full w-full"
+        className={fill ? mediaTileContentClass : mediaContentClass}
+      />
+    ) : (
+      <StoredBytesCue key={att.id ?? `pic-${index}`} attachment={att} noun="picture" stored={stored} />
+    );
   // The bubble uses the same prose rule as answers. Its raw text can contain
   // paths and URLs that the renderer cannot scope separately, so `break-words` remains
   // the last-resort overflow guard while hyphenation keeps the rag even.
@@ -5133,7 +5278,12 @@ export const UserMessage = memo(function UserMessage({
         <div className={`mt-2.5 min-w-0 ${RAIL_SPINE_PAPER}`}>
           <DocStack>
             {files.map((attachment, index) => (
-              <UserFileAttachment key={attachmentKey(attachment, index)} attachment={attachment} />
+              <UserFileAttachment
+                key={attachmentKey(attachment, index)}
+                attachment={attachment}
+                onLoad={stored.canLoad(attachment) ? stored.load : undefined}
+                isLoadFailed={stored.state(attachment) === 'failed'}
+              />
             ))}
           </DocStack>
         </div>
@@ -5153,7 +5303,7 @@ export const UserMessage = memo(function UserMessage({
               transcriptionSegments={att.transcription_segments}
               transcriptionStatus={att.transcription_status}
               action={
-                att.base64 ? (
+                hasAttachmentBytes(att) ? (
                   <MediaShareButton
                     name={att.filename || 'recording'}
                     mediaType={att.media_type}
@@ -5163,7 +5313,11 @@ export const UserMessage = memo(function UserMessage({
                 ) : null
               }
             >
-              <RecordingPlayer src={attachmentSrc(att)} />
+              {hasAttachmentBytes(att) ? (
+                <RecordingPlayer src={attachmentSrc(att)} />
+              ) : (
+                <StoredBytesCue attachment={att} noun="recording" stored={stored} />
+              )}
             </MediaRecording>
           ))}
           {clips.map((att, index) => (
@@ -5172,7 +5326,7 @@ export const UserMessage = memo(function UserMessage({
               name={att.filename}
               meta={mediaMeta(att)}
               action={
-                att.base64 ? (
+                hasAttachmentBytes(att) ? (
                   <MediaShareButton
                     name={att.filename || 'video'}
                     mediaType={att.media_type}
@@ -5182,7 +5336,11 @@ export const UserMessage = memo(function UserMessage({
                 ) : null
               }
             >
-              <ClipVideo src={attachmentSrc(att)} controls className={mediaContentClass} />
+              {hasAttachmentBytes(att) ? (
+                <ClipVideo src={attachmentSrc(att)} controls className={mediaContentClass} />
+              ) : (
+                <StoredBytesCue attachment={att} noun="video" stored={stored} />
+              )}
             </MediaPlate>
           ))}
           {layout === 'grid' ? (
@@ -5197,7 +5355,7 @@ export const UserMessage = memo(function UserMessage({
                 key={att.id ?? `plate-${index}`}
                 name={att.filename}
                 meta={mediaMeta(att)}
-                size={inlinePictureSize(att.base64)}
+                size={att.base64 ? inlinePictureSize(att.base64) : null}
               >
                 {picture(att, index, false)}
               </MediaPlate>

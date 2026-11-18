@@ -174,7 +174,8 @@
   (db-list-turn-attachments [db-info session-turn-soul-id])
   (db-set-turn-attachment-transcription! [db-info session-turn-soul-id position transcription
                                           segments])
-  (db-list-turns-attachments [db-info session-turn-soul-ids])
+  (db-list-turns-attachments [db-info session-turn-soul-ids]
+                             [db-info session-turn-soul-ids opts])
   (db-list-turn-all-attachments [db-info session-turn-soul-id])
   (db-list-session-attachments [db-info session-id])
   (db-list-session-attachments-meta [db-info session-id])

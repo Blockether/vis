@@ -2607,6 +2607,29 @@
             (stored persistance/db-list-turns-attachments)
             (stored persistance/db-list-queued-turn-attachments))))))
 
+(def ^:private TRANSCRIPT_INLINE_ATTACHMENT_BYTES
+  "The largest user attachment, in decoded bytes, that a transcript row or a turn
+   history row carries inline. A larger row keeps its `size` and has no `base64`:
+   a client reads those bytes with [[turn-attachments]] when it shows them.
+
+   Without this limit one 32 MiB recording made each transcript read of session
+   475b983a-62be-400c-aaf7-ff7bb4822c88 a 44.8 MB response."
+  (* 256 1024))
+
+(defn- row-attachments
+  "The stored user attachments of `turn-ids` for transcript rows, keyed by turn id.
+   A payload over [[TRANSCRIPT_INLINE_ATTACHMENT_BYTES]] stays in the store, unless
+   `full?` asks for each payload (the standalone export has no gateway to ask)."
+  ([db turn-ids] (row-attachments db turn-ids false))
+  ([db turn-ids full?]
+   (try (if full?
+          (persistance/db-list-turns-attachments db turn-ids)
+          (persistance/db-list-turns-attachments db
+                                                 turn-ids
+                                                 {:inline-limit
+                                                  TRANSCRIPT_INLINE_ATTACHMENT_BYTES}))
+        (catch Throwable _ {}))))
+
 (def ^:private persisted-status->wire
   "Durable engine turn status -> wire status. A map lookup rather than `case`:
    the constants collide on hash, so `case` degrades to a linear scan anyway."
@@ -2699,8 +2722,7 @@
         (into #{} (map (comp str :turn_id)) live)
 
         att-by-soul
-        (try (persistance/db-list-turns-attachments (lp/db-info) (map :id persisted-rows))
-             (catch Throwable _ {}))
+        (row-attachments (lp/db-info) (map :id persisted-rows))
 
         persisted
         (->> persisted-rows
@@ -3645,27 +3667,27 @@
   mobile) see the SAME maps, so there is exactly ONE transcript shape and a
   channel can never again be written against a shape only one transport sees."
   [sid]
-  (try
-    (let [db
-          (lp/db-info)
+  (try (let [db
+             (lp/db-info)
 
-          turns
-          (persistance/db-list-session-turns db sid)
+             turns
+             (persistance/db-list-session-turns db sid)
 
-          att-by-soul
-          (try (persistance/db-list-turns-attachments db (map :id turns)) (catch Throwable _ {}))]
+             att-by-soul
+             (row-attachments db (map :id turns))]
 
-      ;; One batch read for the iterations of all turns: a read for each turn
-      ;; took 20 ms of a 40-turn transcript, the batch 9 ms.
-      (with-turn-agents db
-                        sid
-                        (with-turn-iterations
-                          db
-                          turns
-                          #(wire/canonical (mapv (partial transcript-turn db att-by-soul) turns)))))
-    (catch Throwable t
-      (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
-      [])))
+         ;; One batch read for the iterations of all turns: a read for each turn
+         ;; took 20 ms of a 40-turn transcript, the batch 9 ms.
+         (with-turn-agents db
+                           sid
+                           (with-turn-iterations db
+                                                 turns
+                                                 #(wire/canonical
+                                                    (mapv (partial transcript-turn db att-by-soul)
+                                                          turns)))))
+       (catch Throwable t
+         (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
+         [])))
 
 (def ^:private TRANSCRIPT_PAGE_MAX_BYTES
   "Byte ceiling for ONE WINDOWED transcript page — the fact that makes a page a
@@ -3756,11 +3778,13 @@
   (nil = the NEWEST `:limit` rows). `:iteration-limit` keeps recent steps
   within 128 KiB per turn and reduces the page budget to 256 KiB. Each turn
   reports `iterations_offset` and `iterations_total`. The turn trace endpoint
-  keeps the complete history. Answers and user attachments are not truncated.
+  keeps the complete history. Answers are not truncated. A user attachment over
+  `TRANSCRIPT_INLINE_ATTACHMENT_BYTES` comes without its `base64`, unless
+  `:full-attachments?` is set.
 
   Returns `{:turns <oldest-first window> :total <turn count> :offset <window
   start> :has-more <older rows exist>}`."
-  [sid {:keys [limit offset iteration-limit]}]
+  [sid {:keys [limit offset iteration-limit full-attachments?]}]
   (try
     (let [db
           (lp/db-info)
@@ -3786,7 +3810,7 @@
           (if limit (window-turns db sid (subvec all start end)) (subvec all start end))
 
           att-by-soul
-          (try (persistance/db-list-turns-attachments db (map :id window)) (catch Throwable _ {}))
+          (row-attachments db (map :id window) full-attachments?)
 
           hydrate
           (if iteration-limit

@@ -941,13 +941,50 @@
                :msg (str "Failed to rebuild history: " (ex-message e))})
       [])))
 
+(defn- lacks-bytes?
+  "True when the TUI shows or plays user attachment `att` and has no bytes for it: its
+   transcript row has no `base64` and the attachment cache does not hold its file."
+  [att]
+  (let [media (str (get att "media_type"))]
+    (and (= "user" (str (get att "source")))
+         (str/blank? (str (get att "base64")))
+         (cond (recordings/audio? media) (not (recordings/cached? att))
+               (or (str/starts-with? media "image/") (timg/video-mime? media))
+               (not (timg/materialized? att))
+               :else false))))
+
+(defn- with-attachment-bytes
+  "`turns` with the bytes that their transcript rows left out. The gateway sends a large
+   user file as a row with a `size` and no `base64`, and the turn attachments route has
+   its bytes. This makes one read for each turn that needs it, and no read after the
+   attachment cache holds the file. A failed read leaves the row as it came."
+  [session-id turns]
+  (mapv (fn [turn]
+          (if (or (= "running" (str (get turn "status")))
+                  (not-any? lacks-bytes? (get turn "attachments")))
+            turn
+            (let [payloads (try (into {}
+                                      (map (juxt #(get % "id") #(get % "base64")))
+                                      (vis/gateway-turn-attachments session-id
+                                                                    (get turn "turn_id")))
+                                (catch Exception _ {}))]
+              (update turn
+                      "attachments"
+                      (partial mapv
+                               (fn [att]
+                                 (if-let [payload (and (lacks-bytes? att)
+                                                       (get payloads (get att "id")))]
+                                   (assoc att "base64" payload)
+                                   att)))))))
+        turns))
+
 (defn rebuild-history
   "The WHOLE session's history. UNBOUNDED: the gateway hydrates every turn and
    every iteration before this returns, which on a long session is seconds of
    work and megabytes of JSON. Kept for surfaces that genuinely need all of it
    (a whole-session export); interactive open goes through `history-page`."
   [session-id]
-  (try (turns->messages (vis/gateway-transcript session-id))
+  (try (turns->messages (with-attachment-bytes session-id (vis/gateway-transcript session-id)))
        (catch Exception e
          (t/log! {:level :warn
                   :id ::rebuild-history-failed
@@ -978,7 +1015,7 @@
              (vis/gateway-transcript-page session-id (select-keys opts [:limit :offset]))
 
              turns
-             (vec (get page "turns"))]
+             (with-attachment-bytes session-id (get page "turns"))]
 
          {:messages (turns->messages turns)
           :offset (long (or (get page "offset") 0))

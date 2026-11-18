@@ -1670,7 +1670,8 @@
 (defn transcript
   "Every turn of `sid`, hydrated. UNBOUNDED — the whole session is listed AND
    hydrated, which on a long session is seconds of work and megabytes of JSON.
-   Prefer `transcript-page` for anything interactive."
+   Prefer `transcript-page` for anything interactive. A large user attachment
+   comes without its `base64`: read it with the turn attachments route."
   [sid]
   (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/transcript")) "turns"))
 
@@ -1684,7 +1685,8 @@
    arithmetic.
 
    Returns the canonical wire map `{\"turns\" [...] \"total\" n \"offset\" n
-   \"has_more\" bool}` (oldest-first turns)."
+   \"has_more\" bool}` (oldest-first turns). A large user attachment comes
+   without its `base64`: read it with the turn attachments route."
   [sid {:keys [limit offset]}]
   (let [qs (cond-> []
              (some? limit)

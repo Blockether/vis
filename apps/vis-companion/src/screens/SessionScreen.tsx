@@ -94,6 +94,7 @@ import {
   dragCarriesFiles,
   editedAttachment,
   isVideoMediaType,
+  hasAttachmentBytes,
   pickDocumentAttachments,
   pendingFromGateway,
   pickMediaAttachments,
@@ -198,6 +199,7 @@ import type {
   RouterModelDetails,
   Toggle,
   GatewayAttachment,
+  TranscriptAttachment,
   RequestKind,
   CouncilRequest,
 } from '../lib/types';
@@ -1413,7 +1415,7 @@ export function SessionScreen({
       authored?.attachments ??
       (images.length
         ? images
-        : (client.cachedSentAttachments(sid, turnId) ?? []).map(pendingFromGateway));
+        : (client.cachedSentAttachments(sid, turnId) ?? []).filter(hasAttachmentBytes).map(pendingFromGateway));
     if (text || attachments.length) restoreComposerImages(text, attachments);
     if (authored?.pastes.size) {
       setPastes((current) => {
@@ -1432,7 +1434,7 @@ export function SessionScreen({
       const images =
         authoredQueueRef.current.has(item.turnId) || !item.attachments.length
           ? []
-          : (await client.fetchTurnAttachments(sid, item.turnId)).map(pendingFromGateway);
+          : (await client.fetchTurnAttachments(sid, item.turnId)).filter(hasAttachmentBytes).map(pendingFromGateway);
       await client.deleteQueuedTurn(sid, item.turnId);
       restoreCancelledQueued(item.turnId, item.request, images);
       requestAnimationFrame(() => composerRef.current?.focus());
@@ -5097,7 +5099,7 @@ export function SessionScreen({
   // player below keeps its DOM identity while only the words underneath catch up.
   const [fetchedRunningTurnAttachments, setFetchedRunningTurnAttachments] = useState<{
     id: string;
-    rows: GatewayAttachment[];
+    rows: TranscriptAttachment[];
   } | null>(null);
   const runningTurnAttachments = runningTurn?.attachments;
   const runningTurnNeedsAttachmentRefresh =
@@ -5159,8 +5161,13 @@ export function SessionScreen({
     // ran forever for a turn that was deleted or whose worker died.
     let attempt = 0;
     let reading = false;
+    // A transcript row can be without bytes. It must not replace a copy that has them.
     for (const turn of turnsRef.current) {
-      if (remaining.includes(turn.turn_id) && turn.attachments?.length) {
+      if (
+        remaining.includes(turn.turn_id) &&
+        turn.attachments?.length &&
+        !client.cachedSentAttachments(sid, turn.turn_id)?.length
+      ) {
         client.rememberSentAttachments(sid, turn.turn_id, turn.attachments);
       }
     }
@@ -5171,7 +5178,7 @@ export function SessionScreen({
       reading = true;
       // `null` is a failed read, which earns another try; a 404 is a turn that is gone.
       const updates = await Promise.all(
-        remaining.map(async (id): Promise<readonly [string, GatewayAttachment[] | null]> => {
+        remaining.map(async (id): Promise<readonly [string, TranscriptAttachment[] | null]> => {
           try {
             return [
               id,

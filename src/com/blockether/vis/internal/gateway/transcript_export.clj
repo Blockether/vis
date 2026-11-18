@@ -91,7 +91,7 @@
    are the team rows of those turns."
   [sid]
   (when-let [soul (state/soul sid)]
-    (let [turns (:turns (state/transcript-page sid {}))]
+    (let [turns (:turns (state/transcript-page sid {:full-attachments? true}))]
       {"session" (select-keys soul ["id" "title" "agent_name" "workspace" "model" "model_pref"])
        "usage" (state/session-usage-info sid)
        "turns" turns

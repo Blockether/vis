@@ -573,6 +573,8 @@
   "GET /v1/sessions/:sid/turns/:tid/attachments — the inline media a USER sent
    with one turn. `?transcription_only=true` omits the large base64 body when a
    client already has the bytes and is only collecting local speech results.
+   `?id=<attachment id>` answers only that attachment: a transcript row leaves a
+   large payload in the store, and a client reads it here when it shows it.
 
    The live rail deliberately ships byte-free chips, and a turn's persisted row
    only exists once it lands, so before this endpoint the only copy of a
@@ -603,9 +605,11 @@
                                                                  position
                                                                  words
                                                                  (:transcription-segments after)))
+          id (http/query-str request "id")
+          named (if id (filterv #(= id (str (:id %))) refreshed) refreshed)
           response (if (= "true" (http/query-str request "transcription_only"))
-                     (mapv #(dissoc % :base64) refreshed)
-                     refreshed)]
+                     (mapv #(dissoc % :base64) named)
+                     named)]
 
       (http/json-response {:attachments response}))
     (http/session-404 (get-in request [:path-params :sid]))))

@@ -908,6 +908,13 @@ export interface GatewayAttachment {
 }
 
 /**
+ * An attachment as a transcript row holds it. The row leaves the bytes of a large
+ * attachment in the gateway's store and keeps its `size`: read them with
+ * `GatewayClient.fetchAttachmentBytes`.
+ */
+export type TranscriptAttachment = Omit<GatewayAttachment, 'base64'> & { base64?: string };
+
+/**
  * ONE artifact a tool call PRODUCED (an `attach`ed image/file), as the
  * gateway's byte-free descriptor. It ships identically on the live
  * `iteration.completed` frame and on the persisted transcript, so a
@@ -1577,7 +1584,7 @@ export interface TranscriptTurn {
   status?: string;
   prior_outcome?: string;
   content?: ContentBlock[];
-  attachments?: GatewayAttachment[];
+  attachments?: TranscriptAttachment[];
   iterations?: TranscriptIteration[];
   /** Number of earlier steps omitted from this window. */
   iterations_offset?: number;

@@ -9173,3 +9173,57 @@
                      #(expect (= expected ((:awaits-person? state/agent-runtime) "lead")) order)))
                  (with-redefs-fn {#'state/registry (atom {})}
                    #(expect (false? ((:awaits-person? state/agent-runtime) "unknown"))))))
+
+(defdescribe
+  transcript-attachment-bytes-test
+  ;; Session 475b983a-62be-400c-aaf7-ff7bb4822c88: one 32 MiB recording made each
+  ;; `GET …/transcript` a 44.8 MB response, six times in eight minutes.
+  (it
+    "keeps the bytes of a large user attachment out of transcript rows"
+    (let [store
+          (sqlite/db-open! :memory)
+
+          payload
+          (fn [size]
+            (.encodeToString (java.util.Base64/getEncoder) (byte-array (int size))))
+
+          attachments-of
+          (fn [turn]
+            (mapv #(select-keys % ["filename" "size" "base64"]) (get turn "attachments")))
+
+          lazy
+          [{"filename" "small.txt" "size" 8 "base64" (payload 8)} {"filename" "large.txt" "size" 9}]
+
+          full
+          (assoc-in lazy [1 "base64"] (payload 9))]
+
+      (try (let [sid
+                 (str (h/store-session! store {:channel :api}))
+
+                 tid
+                 (str (persistance/db-store-session-turn!
+                        store
+                        {:parent-session-id sid
+                         :user-request "listen"
+                         :attachments
+                         [{:media-type "text/plain" :base64 (payload 8) :filename "small.txt"}
+                          {:media-type "text/plain" :base64 (payload 9) :filename "large.txt"}]}))]
+
+             (with-redefs-fn {#'lp/db-info (constantly store)
+                              #'state/TRANSCRIPT_INLINE_ATTACHMENT_BYTES 8}
+               (fn []
+                 (expect (= lazy (attachments-of (first (state/transcript sid)))))
+                 (expect (= lazy
+                            (attachments-of (first (:turns (state/transcript-page sid
+                                                                                  {:limit 5}))))))
+                 (expect (= lazy (attachments-of (first (state/list-turns sid)))))
+                 ;; The turn attachments route is where a client reads those bytes.
+                 (expect (= full
+                            (mapv #(select-keys % ["filename" "size" "base64"])
+                                  (state/turn-attachments sid tid))))
+                 ;; A standalone export has no gateway to ask, so it keeps each payload.
+                 (expect (= full
+                            (attachments-of (first (:turns (state/transcript-page
+                                                             sid
+                                                             {:full-attachments? true})))))))))
+           (finally (sqlite/db-close! store))))))

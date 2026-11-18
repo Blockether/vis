@@ -1413,6 +1413,47 @@ describe('GatewayClient turn cancellation', () => {
     expect(rows[0]?.transcription).toBe('ready words');
   });
 
+  // Session 475b983a-62be-400c-aaf7-ff7bb4822c88: a transcript row leaves large bytes
+  // in the store, and the row that shows the attachment reads them.
+  it('reads the bytes of one stored attachment by its id', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          attachments: [{ id: 'a1', filename: 'talk.m4a', media_type: 'audio/mp4', base64: 'AAAA' }],
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+
+    const bytes = await new GatewayClient(conn).fetchAttachmentBytes('session-1', 'turn-1', 'a1');
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      '/v1/sessions/session-1/turns/turn-1/attachments?id=a1',
+    );
+    expect(bytes).toBe('AAAA');
+  });
+
+  it('asks the gateway for a turn whose cached rows have no bytes', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          attachments: [{ id: 'a1', filename: 'talk.m4a', media_type: 'audio/mp4', base64: 'AAAA' }],
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    client.rememberSentAttachments('session-1', 'turn-1', [
+      { id: 'a1', filename: 'talk.m4a', media_type: 'audio/mp4' },
+    ]);
+
+    const rows = await client.fetchTurnAttachments('session-1', 'turn-1');
+
+    expect(rows[0]?.base64).toBe('AAAA');
+  });
+
   it('cancels a known turn by id, which needs no correlation id', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({})));
     vi.stubGlobal('fetch', fetchMock);
