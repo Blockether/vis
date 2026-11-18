@@ -299,6 +299,41 @@
                (finally (.countDown gate)
                         (deref worker 2000 nil)
                         (run! #(.join ^Thread % 2000) fillers)))))))
+  ;; A stalled turn waited for a worker thread that started last. The report kept the
+  ;; oldest 256 of 906 threads and lost it.
+  (it
+    "keeps the newest platform threads when threads fill the thread limit"
+    (with-logs
+      (fn [_]
+        (let [gate
+              (CountDownLatch. 1)
+
+              parked
+              (CountDownLatch. 301)
+
+              start!
+              (fn [thread-name]
+                (doto (Thread. ^Runnable #(do (.countDown parked) (.await gate)) (str thread-name))
+                  (.setDaemon true)
+                  (.start)))
+
+              fillers
+              (mapv #(start! (str "platform-filler-" %)) (range 300))
+
+              newest
+              (start! "newest-platform-fixture")]
+
+          (try (expect (.await parked 5 TimeUnit/SECONDS))
+               (let [threads (get (wire/parse-json (slurp (:path (diagnostics/capture!
+                                                                   {:session-id "session"
+                                                                    :turn-id "newest"
+                                                                    :reason :turn-stall}))
+                                                          :encoding
+                                                          "UTF-8"))
+                                  "threads")]
+                 (expect (= 256 (count threads)))
+                 (expect (some #(= "newest-platform-fixture" (get % "name")) threads)))
+               (finally (.countDown gate) (run! #(.join ^Thread % 2000) (conj fillers newest))))))))
   (it "returns the saved hang reports of one session, newest first"
       (with-logs (fn [_]
                    (diagnostics/capture!

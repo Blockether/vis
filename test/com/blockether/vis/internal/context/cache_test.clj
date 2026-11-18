@@ -238,6 +238,27 @@
                                                                                          {}}})})
                                 "resources")))
         (expect (not (contains? (set ctx-engine/model-facing-keys) "session_resources")))))
+  ;; A cancelled turn kept its thread: `enrich-ctx` answered `{}` for the interrupt,
+  ;; and the next call of the same prepare step blocked on the same callbacks again.
+  (it "passes a turn interrupt on and keeps the interrupt flag set"
+      (let [outcome
+            (try (with-redefs [prompt/active-extensions
+                               (fn [_]
+                                 [])
+
+                               extension/ctx-contributions
+                               (fn [_ _]
+                                 (throw (InterruptedException. "turn cancelled")))]
+
+                   (ctx-loop/enrich-ctx {:session-id "s1"} base-ctx)
+                   :returned)
+                 (catch InterruptedException _ :interrupted))
+
+            flag-set?
+            (Thread/interrupted)]
+
+        (expect (= :interrupted outcome))
+        (expect flag-set?)))
   (it "renders turn and utilization explicitly for iteration 1"
       (let [boundary (:text (cr/turn-boundary {:ctx (assoc base-ctx
                                                       "session_turn" 7

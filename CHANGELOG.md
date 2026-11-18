@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Live apps: Settings listed one app several times when the app had more than one key. An app can now declare `settings_name` (`vis.ui.app(..., settings_name=...)`). Apps of one owner with the same settings name share one pair of settings. The Review app uses one name for all its roots, so Settings show it one time.
+- Sandbox: the limit of live sandboxes (`VIS_ENV_CACHE_MAX`) and the memory limit also stop the idle sandbox of a session with an open panel, header or app. Before, such a sandbox and its Python workers never stopped: one gateway kept 92 sandboxes with a limit of 8, and 205 Python workers used 35 GB. An open view still keeps its sandbox after the idle time.
+- Python workers: one worker start has a limit of 60 s for the spawn, the connection and the first exchange. Before, a spawn that did not return blocked each turn of its session. A spare worker that its caller does not get is stopped. Before, it ran with no owner.
+- Turns: a cancelled turn stops while the extensions build the session context. An extension that does not answer in 75 s is left out, and the gateway log names it (`ctx-contribution-timeout`). Before, the turn kept its thread and the gateway abandoned the session engine.
+- Diagnostics: a hang report keeps the newest threads when the gateway has more threads than the report holds. Before, it kept the oldest threads, and the threads of the blocked turn were absent.
 
 ## [v0.5.21] - 2026-11-17
 

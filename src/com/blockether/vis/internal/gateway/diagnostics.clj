@@ -183,16 +183,17 @@
         (cancellation/virtual-workers)))
 
 (defn- bounded-threads
-  "The target turn thread first, then platform and virtual threads by id. Each
-   kind keeps at least half of the free MAX_THREADS slots, so many platform
-   threads never hide every virtual worker."
+  "The target turn thread first, then platform and virtual threads, newest first.
+   A stalled turn waits for threads that started in it, so the oldest threads
+   go first when MAX_THREADS cuts the list. Each kind keeps at least half of the
+   free MAX_THREADS slots, so many platform threads never hide every virtual worker."
   [target-name threads]
   (let [{targets true others false}
         (group-by #(= target-name (:name %)) threads)
 
         by-id
         (fn [entries]
-          (sort-by #(or (:id %) 0) entries))
+          (sort-by #(- (long (or (:id %) 0))) entries))
 
         platform
         (by-id (remove :virtual others))

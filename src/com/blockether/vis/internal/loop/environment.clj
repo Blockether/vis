@@ -1346,17 +1346,20 @@
 (defn- drives-owned-view?
   "True when an extension namespace of `environment`'s sandbox drives an open
    panel or header, or holds an open app. Disposal would close that view, or
-   disconnect that app, while its work continues."
+   disconnect that app, while its work continues. Only the idle limit obeys this:
+   the sandbox limit and the memory limit are bounds on the whole gateway."
   [environment]
   (boolean (some-> (env/python-context-if-built environment)
                    python-extensions/drives-owned-view?)))
 
 (defn- evict-if-idle!
-  "Dispose + `dissoc` cache entry `k` when its lock is free (no turn running),
-   it has been idle at least `min-idle-ms` (0 = force) and no extension of its
-   sandbox drives an open owned view ([[drives-owned-view?]]). Lock-guarded and
-   re-checked under the lock, so it never races a live turn or a concurrent
-   `close!`. `cause` and `(detail-fn idle-ms)` say why, for the log. Returns true
+  "Dispose + `dissoc` cache entry `k` when its lock is free (no turn running)
+   and it has been idle at least `min-idle-ms` (0 = force). The `:idle-timeout`
+   cause also keeps an entry whose sandbox drives an open owned view
+   ([[drives-owned-view?]]); each other cause stops it, or one session with a
+   view in each sandbox defeats the sandbox limit and the memory limit.
+   Lock-guarded and re-checked under the lock, so it never races a live turn or a
+   concurrent `close!`. `cause` and `(detail-fn idle-ms)` say why, for the log. Returns true
    iff it evicted. Eviction only puts the session to sleep, so the processes that
    its Python started keep running."
   [k min-idle-ms cause detail-fn]
@@ -1379,7 +1382,8 @@
 
                (when (and cur
                           (>= (long idle) (long min-idle-ms))
-                          (not (drives-owned-view? (:environment cur))))
+                          (not (and (= :idle-timeout cause)
+                                    (drives-owned-view? (:environment cur)))))
                  (try (binding [python-worker/*keep-children?* true]
                         (dispose-environment! (:environment cur) cause (detail-fn idle)))
                       (catch Throwable _ nil))

@@ -10286,6 +10286,24 @@
                  (expect (true? (evict-if-idle! k 5000 :idle-timeout str)))
                  (expect (not (contains? @env-cache k))))
                (finally (swap! env-cache dissoc k)))))
+    ;; Report 2026-11-17: 92 sandboxes stayed live with a limit of 8, because
+    ;; each one drove an owned view and no sweep could stop it.
+    (doseq [cause [:session-limit :memory-pressure]]
+      (it (str "stops an entry that drives an open owned view for " (name cause))
+          (let [k "reaper-test/panel-over-limit"
+                entry (new-cache-entry {:marker :panel})]
+
+            (swap! env-cache assoc k entry)
+            (try (with-redefs [env/python-context-if-built (fn [_]
+                                                             :worker)
+                               python-extensions/drives-owned-view? (fn [_]
+                                                                      true)
+                               loop-env/dispose-environment! (fn [& _]
+                                                               nil)]
+
+                   (expect (true? (evict-if-idle! k 0 cause str)))
+                   (expect (not (contains? @env-cache k))))
+                 (finally (swap! env-cache dissoc k))))))
     (it "puts the session to sleep: the disposal keeps the children of its Python"
         ;; Regression: an idle sandbox stop killed every process that its Python had
         ;; started. Only a gateway stop or a closed session ends them.

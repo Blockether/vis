@@ -1718,6 +1718,12 @@
                    "Extension :ext/ctx-fn fn threw")
          nil)))
 
+(def ^:private ctx-contribution-limit-ms
+  "Wall-clock limit that all `:ext/ctx-fn` callbacks of one call share. It is
+   above the 60 s limit of a Python worker start, so a slow start still reports
+   its own error, and below the 120 s stall limit of a turn."
+  75000)
+
 (defn ctx-contributions
   "Return merged structured `ctx` contributions for active extensions.
 
@@ -1727,39 +1733,57 @@
    and values are string-keyed all the way down — the merged map crosses the
    Python boundary as the model's `session` dict, which throws on any keyword
    key/value. This fn only aggregates (deep-merge); producers own the keys.
-   Exceptions and non-map returns are logged and ignored so bad optional
-   context never blocks a turn.
+   Exceptions, non-map returns and callbacks that exceed
+   `ctx-contribution-limit-ms` are logged and ignored so bad optional context
+   never blocks a turn.
 
    The callbacks run in parallel, because the first one of a Python extension
-   starts its worker (#396). The merge keeps the extension order."
+   starts its worker (#396). Each runs on its own thread, so the caller can stop
+   the wait for a callback that does not answer. The merge keeps the extension
+   order."
   [environment active-extensions]
   (let [exts
         (filterv :ext/ctx-fn active-extensions)
 
         tasks
-        (if (< (count exts) 2)
-          (mapv (fn [ext]
-                  (delay (ctx-contribution environment ext)))
-                exts)
-          (mapv (fn [ext]
-                  (cancellation/worker-future "vis-ctx-contribution"
-                                              (bound-fn [] (ctx-contribution environment ext))
-                                              {:platform? true}))
-                exts))]
+        (mapv (fn [ext]
+                (cancellation/worker-future "vis-ctx-contribution"
+                                            (bound-fn [] (ctx-contribution environment ext))
+                                            {:platform? true}))
+              exts)
+
+        deadline
+        (+ (System/nanoTime) (* 1000000 (long ctx-contribution-limit-ms)))]
 
     (try (reduce (fn [acc [ext task]]
-                   (let [contribution @task]
-                     (if (map? contribution)
-                       (deep-merge acc contribution)
-                       (do (when (some? contribution)
-                             (tel/log! {:level :warn
-                                        :id ::ctx-contribution-invalid
-                                        :data {:ext (:ext/name ext) :returned (type contribution)}}
-                                       "Extension :ext/ctx-fn fn returned non-map"))
-                           acc))))
+                   (let [left-ms
+                         (max 0 (quot (- deadline (System/nanoTime)) 1000000))
+
+                         contribution
+                         (deref task left-ms ::timeout)]
+
+                     (cond (map? contribution)
+                           (deep-merge acc contribution)
+
+                           (= ::timeout contribution)
+                           (do (tel/log! {:level :warn
+                                          :id ::ctx-contribution-timeout
+                                          :data {:ext (:ext/name ext)
+                                                 :limit-ms ctx-contribution-limit-ms}}
+                                         "Extension :ext/ctx-fn fn did not answer in time")
+                               acc)
+
+                           :else
+                           (do (when (some? contribution)
+                                 (tel/log! {:level :warn
+                                            :id ::ctx-contribution-invalid
+                                            :data {:ext (:ext/name ext)
+                                                   :returned (type contribution)}}
+                                           "Extension :ext/ctx-fn fn returned non-map"))
+                               acc))))
                  {}
                  (map vector exts tasks))
-         (finally (run! #(when (future? %) (future-cancel %)) tasks)))))
+         (finally (run! future-cancel tasks)))))
 
 (defn- tool-result->public-value
   [result]

@@ -1670,6 +1670,82 @@ print(worker_value)"))))
                     (.close ^java.nio.channels.SocketChannel accepted))))))
           (finally (.close server) (.destroyForcibly process))))))
 
+;; Report 2026-11-17: a spawn that did not return kept the lock of its worker,
+;; and each turn of the session waited for that worker without a limit.
+(defdescribe worker-startup-limit-test
+             (it
+               "gives up on a spawn that does not return and stops the process that arrives late"
+               (let [release
+                     (java.util.concurrent.CountDownLatch. 1)
+
+                     ^java.util.List command
+                     ["sh" "-c" "sleep 30"]
+
+                     process
+                     (.start (ProcessBuilder. command))]
+
+                 (try
+                   (with-redefs-fn
+                     {#'com.blockether.vis.internal.python.runtime/ensure-library! (constantly nil)
+                      #'com.blockether.vis.internal.python.worker/child-argv (constantly ["unused"])
+                      #'com.blockether.vis.internal.python.worker/START_LIMIT_MS 200
+                      #'com.blockether.vis.internal.sandbox.jail/spawn! (fn [& _]
+                                                                          (.await release)
+                                                                          process)}
+                     (fn []
+                       (let [task (future (try (#'com.blockether.vis.internal.python.worker/start!
+                                                worker/shared-key)
+                                               (catch clojure.lang.ExceptionInfo e (ex-data e))))]
+                         (try (let [result (deref task 3000 ::timeout)]
+                                (expect (= :vis/python-worker (:type result)))
+                                (.countDown release)
+                                (expect (.waitFor process 3 java.util.concurrent.TimeUnit/SECONDS)))
+                              (finally (future-cancel task))))))
+                   (finally (.countDown release) (.destroyForcibly process))))))
+
+;; Report 2026-11-17: a caller takes the spare out of the registry before it waits
+;; for it. A caller that left the wait kept that worker running with no owner.
+(defdescribe
+  spare-wait-test
+  (let [waits (fn [limit-ms leave!]
+                (let [release (promise)
+                      stopped (promise)
+                      state {:process :fake}
+                      spare (future @release state)
+                      key (worker/extension-worker-key (str (java.util.UUID/randomUUID)))]
+
+                  (with-redefs-fn {#'worker/START_LIMIT_MS limit-ms
+                                   #'worker/spare-warmup (atom "pass\n")
+                                   #'worker/spares (atom {(:packages key) spare})
+                                   #'worker/spare-dirs (atom #{})
+                                   #'worker/stop-state! (fn [s]
+                                                          (deliver stopped s))}
+                    (fn []
+                      (let [taken (promise)
+                            waiter (doto (Thread. ^Runnable
+                                                  #(deliver taken
+                                                            (try (#'worker/take-spare! key)
+                                                                 (catch InterruptedException _
+                                                                   :interrupted))))
+                                     (.setDaemon true)
+                                     (.start))]
+
+                        (leave! waiter)
+                        (let [answer (deref taken 3000 :waiting)]
+                          (deliver release true)
+                          {:answer answer
+                           :stopped? (= state (deref stopped 3000 :not-stopped))}))))))]
+    (it "stops a spare whose caller was interrupted in the wait"
+        (expect (= {:answer :interrupted :stopped? true}
+                   (waits 60000
+                          (fn [^Thread waiter]
+                            (Thread/sleep 100)
+                            (.interrupt waiter))))))
+    (it "leaves a spare that is not ready in the start limit, and stops it"
+        (expect (= {:answer nil :stopped? true}
+                   (waits 100
+                          (fn [_])))))))
+
 ;; A blocked startup held the process-wide monitor before the first provider call,
 ;; stalling unrelated sessions in :engine-start and ignoring their cancellation.
 (defdescribe

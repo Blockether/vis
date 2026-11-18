@@ -316,7 +316,34 @@
 
                    (expect (= {1 true 2 true} (:met ctx)))
                    (expect (= root (:root ctx)))
-                   (expect (= 2 (:last ctx))))))
+                   (expect (= 2 (:last ctx)))))
+             ;; One callback that started a Python worker never answered, and each
+             ;; turn of the session waited on it without a limit.
+             (it "drops a callback that exceeds the limit and keeps the other contributions"
+                 (let [release
+                       (java.util.concurrent.CountDownLatch. 1)
+
+                       stuck
+                       {:ext/name "test.ctx-stuck"
+                        :ext/ctx-fn (fn [_]
+                                      (.await release)
+                                      {:stuck true})}
+
+                       quick
+                       {:ext/name "test.ctx-quick"
+                        :ext/ctx-fn (fn [_]
+                                      {:quick true})}
+
+                       call
+                       (fn [exts]
+                         (deref (future (with-redefs [extension/ctx-contribution-limit-ms 100]
+                                          (extension/ctx-contributions {} exts)))
+                                3000
+                                :blocked))]
+
+                   (try (expect (= {} (call [stuck])))
+                        (expect (= {:quick true} (call [stuck quick])))
+                        (finally (.countDown release))))))
 
 (defdescribe
   session-provider-kickoff-hooks-test

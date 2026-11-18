@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
@@ -186,6 +187,9 @@
           ext-ctx
           (try (perf/timed :ctx/contributions (extension/ctx-contributions env active-exts))
                (catch Throwable t
+                 ;; A cancelled turn must stop here. With `{}` as the answer, the
+                 ;; next call blocks on the same callbacks again.
+                 (when (cancellation/preserve-interrupt! t) (throw t))
                  (tel/log!
                    {:level :warn :id ::ctx-contributions-failed :data {:error (ex-message t)}})
                  {}))

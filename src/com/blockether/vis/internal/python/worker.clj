@@ -427,24 +427,69 @@
     (.start thread)
     thread))
 
+(def ^:private START_LIMIT_MS
+  "Maximum time for one worker start. The spawn, the connection and the first
+   exchange share it."
+  60000)
+
+(defn- start-deadline
+  "The `System/nanoTime` value at which a start that began at `start-ns` must end."
+  ^long [^long start-ns]
+  (+ start-ns (* 1000000 (long START_LIMIT_MS))))
+
+(defn- ms-until
+  "Milliseconds from now to `deadline`, a `System/nanoTime` value. Never negative."
+  ^long [^long deadline]
+  (max 0 (quot (- deadline (System/nanoTime)) 1000000)))
+
 (defn- await-worker-connection
   "Wait only while the child can still connect. No blocked accept future survives
    an early child exit or a startup timeout. The selector bounds exit detection.
-   The 60 s limit uses the monotonic clock, so a host sleep does not use it up."
-  [^ServerSocketChannel server ^Process process]
-  (.configureBlocking server false)
-  (with-open [selector (Selector/open)]
-    (.register server selector SelectionKey/OP_ACCEPT)
-    (let [deadline (+ (System/nanoTime) (* 60000 1000000))]
-      (loop []
+   `deadline` is a `System/nanoTime` value, by default the start limit from now.
+   That clock is monotonic, so a host sleep does not use the limit up."
+  ([server process] (await-worker-connection server process (start-deadline (System/nanoTime))))
+  ([^ServerSocketChannel server ^Process process deadline]
+   (.configureBlocking server false)
+   (with-open [selector (Selector/open)]
+     (.register server selector SelectionKey/OP_ACCEPT)
+     (loop []
 
-        (when (.isInterrupted (Thread/currentThread))
-          (throw (InterruptedException. "Python worker startup interrupted")))
-        (or (.accept server)
-            (when (and (.isAlive process) (neg? (- (System/nanoTime) deadline)))
-              (.select selector 100)
-              (.clear (.selectedKeys selector))
-              (recur)))))))
+       (when (.isInterrupted (Thread/currentThread))
+         (throw (InterruptedException. "Python worker startup interrupted")))
+       (or (.accept server)
+           (when (and (.isAlive process) (neg? (- (System/nanoTime) (long deadline))))
+             (.select selector 100)
+             (.clear (.selectedKeys selector))
+             (recur)))))))
+
+(defn- spawn-within!
+  "Answer the process of `spawn`, a function of no arguments, or throw when it
+   does not return before `deadline`. The spawn is native code that an interrupt
+   does not stop, so it runs on its own thread. A process that arrives after the
+   caller left is destroyed."
+  [spawn deadline]
+  (let [claim
+        (atom ::waiting)
+
+        task
+        (cancellation/worker-future "vis-python-worker-spawn"
+                                    (bound-fn []
+                                              (let [^Process process (spawn)]
+                                                (when-not (compare-and-set! claim ::waiting process)
+                                                  (.destroyForcibly process))
+                                                process))
+                                    {:platform? true})]
+
+    (try (let [process (deref task (ms-until deadline) ::timed-out)]
+           (when (= ::timed-out process)
+             (throw (ex-info "the python worker did not start"
+                             {:type :vis/python-worker :reason :spawn-timeout})))
+           process)
+         (catch ExecutionException e (throw (or (.getCause e) e)))
+         (catch Throwable t
+           (when-not (compare-and-set! claim ::waiting ::abandoned)
+             (.destroyForcibly ^Process @claim))
+           (throw t)))))
 
 (def ^:private STACK_CONTROL_MS
   "Maximum wait for a stack-control exchange, including a blocked socket write."
@@ -623,6 +668,7 @@
     (with-open [server (ServerSocketChannel/open StandardProtocolFamily/UNIX)]
       (try
         (let [start-ns (System/nanoTime)
+              deadline (start-deadline start-ns)
               names (socket-names (.toPath socket) child-dir)
               _ (bind-control! server (:bind names) (.toPath socket))
               library (try (python-runtime/ensure-library!)
@@ -673,13 +719,15 @@
           (let [^Process process
                 ;; #420: start in user.dir, which the boot policy grants. A host can set
                 ;; -Duser.dir apart from its process directory, which the jail does not grant.
-                (process-jail/spawn! (child-argv library (:dial names) guest-dir dir runtime-roots)
-                                     child-dir
-                                     policy
-                                     {:extra-environment extra :merge-stderr? true})
+                (spawn-within! #(process-jail/spawn!
+                                  (child-argv library (:dial names) guest-dir dir runtime-roots)
+                                  child-dir
+                                  policy
+                                  {:extra-environment extra :merge-stderr? true})
+                               deadline)
                 _ (drain-output! process log)
                 _ (prune-run-dir-on-exit! process log)
-                accepted (await-worker-connection server process)]
+                accepted (await-worker-connection server process deadline)]
 
             (when-not accepted
               (.destroy process)
@@ -709,7 +757,8 @@
                    "code" (str "import json, sys\n__vis_runtime_roots__ = json.loads("
                                (pr-str (util/json-str runtime-roots))
                                ")\nsys.path[:] = __vis_runtime_roots__ + [p for p in sys.path"
-                               " if p not in __vis_runtime_roots__]\n")})
+                               " if p not in __vis_runtime_roots__]\n")}
+                  (ms-until deadline))
                 (tel/log! {:level :info
                            :id ::started
                            :data {:pid (.pid process)
@@ -845,6 +894,18 @@
     (when (and @spare-warmup (contains? @spare-dirs packages) (not (contains? @spares packages)))
       (swap! spares assoc packages (start-spare! packages)))))
 
+(declare stop-spares!)
+
+(defn- await-spare
+  "The state of `spare`, or nil when it failed or is not ready in the start limit.
+   The caller took `spare` out of `spares`, so nothing else can stop it: a spare
+   that the caller does not get is stopped in the background."
+  [spare]
+  (let [state (try (deref spare START_LIMIT_MS ::not-ready)
+                   (catch InterruptedException e (stop-spares! [spare]) (throw e))
+                   (catch Throwable _ nil))]
+    (if (= ::not-ready state) (do (stop-spares! [spare]) nil) state)))
+
 (defn- take-spare!
   "The warm spare for the trusted extension worker `k`, or nil. Every request for
    such a worker keeps one new spare ready for the next context."
@@ -860,7 +921,7 @@
               spare))]
 
       (refill-spare! packages)
-      (let [state (when spare (try @spare (catch Throwable _ nil)))]
+      (let [state (when spare (await-spare spare))]
         (if (alive? state) state (when state (stop-state! state)))))))
 
 (defn- stop-spares!
