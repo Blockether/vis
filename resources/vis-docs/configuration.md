@@ -896,9 +896,9 @@ such as Claude Desktop, can then use the tools of Vis:
 
 With `-d`, `--debug` or `--verbose`, `serve` writes each message to standard error.
 
-A refused `vis-agent mcp` command ends with exit code 1, as in Claude Code. `--scope group` and
-`--scope session` with `--target-id` add a server to one group or one session. Read
-[Scoped MCP servers](#scoped-mcp-servers).
+A refused `vis-agent mcp` command ends with exit code 2, like each usage error of Vis. Claude Code
+uses exit code 1. `--scope group` and `--scope session` with `--target-id` add a server to one
+group or one session. Read [Scoped MCP servers](#scoped-mcp-servers).
 
 ### Connections and transports
 

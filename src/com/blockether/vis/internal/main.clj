@@ -3467,12 +3467,6 @@
   [args]
   (= ["python" "--shared" "uv" "run"] (vec (take 4 args))))
 
-(defn- usage-error-exit
-  "The exit code of the usage error `result` of `commandline/dispatch!`: the
-   `:cmd/usage-exit-code` of the command, else 2."
-  [result]
-  (or (:exit-code result) 2))
-
 (defn- unknown-command?
   "True when the user typed something the tree doesn't recognize.
    Detected by walking the tree: if `find-leaf` resolves only to the
@@ -3520,8 +3514,7 @@
       (commandline/stderr! (str line)))
     (commandline/stderr! (str "vis-agent: " (or (ex-message t) "error"))))
   (shutdown-agents)
-  ;; A command can name its own code, as `vis-agent mcp` names the code of Claude Code.
-  (exit-process! (or (:vis/exit-code (ex-data t)) 2)))
+  (exit-process! 2))
 
 (defn- root-cause
   ^Throwable [^Throwable t]
@@ -3866,7 +3859,8 @@
                                                 (println)
                                                 (println (str "Unknown command: "
                                                               (str/join " " args)))
-                                                (System/exit 1))
+                                                ;; A usage error, like an unknown subcommand.
+                                                (System/exit 2))
                               :else
                               ;; `dispatch!` returns `{:status :ok|:help|:error|:no-match ...}`.
                               ;; `:error` covers spec-validation failures (missing required
@@ -3874,17 +3868,16 @@
                               ;; the process exited 0 even though the user-visible output was
                               ;; an error message + help text -- so any shell pipeline like
                               ;; `vis-agent foo --bogus && echo ok` printed `ok`. Map `:error` to
-                              ;; exit code 2 (POSIX convention for usage errors), or to the
-                              ;; `:cmd/usage-exit-code` of the command; `:no-match`
+                              ;; exit code 2 (POSIX convention for usage errors); `:no-match`
                               ;; can't actually fire here because `unknown-command?` above
                               ;; already short-circuited that case.
-                              (let [{:keys [status] :as result}
-                                    (timed-startup! measure?
-                                                    "dispatch"
-                                                    #(commandline/dispatch! root full-args))]
+                              (let [{:keys [status]} (timed-startup!
+                                                       measure?
+                                                       "dispatch"
+                                                       #(commandline/dispatch! root full-args))]
                                 (case status
                                   :error
-                                  (System/exit (int (usage-error-exit result)))
+                                  (System/exit 2)
 
                                   ;; Success path: force a deterministic process exit.
                                   ;; Python extension loading can spin up CPython and extension

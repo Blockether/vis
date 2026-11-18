@@ -598,8 +598,6 @@
    Returns:
      {:status :ok       :command cmd :result <whatever run-fn returned>}
      {:status :help     :command cmd :help-text <string>}
-     {:status :error    :command cmd :error <string> :help-text <string>
-                        :exit-code <the :cmd/usage-exit-code of cmd, when it has one>}
      {:status :no-match :args args}"
   ([root args] (dispatch! root args {:print-fn println}))
   ([root args {:keys [print-fn]}]
@@ -617,9 +615,7 @@
                    help (str err "\n\n" (render-command command path))]
 
                (when print-fn (print-fn help))
-               (cond-> {:status :error :command command :error err :help-text help}
-                 (:cmd/usage-exit-code command)
-                 (assoc :exit-code (:cmd/usage-exit-code command))))
+               {:status :error :command command :error err :help-text help})
              (or help? (and (nil? (:cmd/run-fn command)) (seq children)))
              (let [help (render-command command path)]
                (when print-fn (print-fn help))
@@ -648,9 +644,7 @@
                (if err
                  (let [help (str err "\n\n" (render-command command path))]
                    (when print-fn (print-fn help))
-                   (cond-> {:status :error :command command :error err :help-text help}
-                     (:cmd/usage-exit-code command)
-                     (assoc :exit-code (:cmd/usage-exit-code command))))
+                   {:status :error :command command :error err :help-text help})
                  {:status :ok :command command :result ((:cmd/run-fn command) parsed residual)}))))
      {:status :no-match :args args})))
 

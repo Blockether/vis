@@ -30,8 +30,7 @@
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db)))
 
-;; Claude Code ends a refused `claude mcp` command with exit code 1.
-(defn- refuse! [message] (throw (ex-info message {:vis/user-error true :vis/exit-code 1})))
+(defn- refuse! [message] (throw (ex-info message {:vis/user-error true})))
 
 (defn- same-name?
   "True when the engine keys `a` and `b` as one server: `Figma_Dev` is `figma-dev`."
@@ -1050,11 +1049,10 @@
    "Configure MCP servers with the commands and arguments of `claude mcp`, and manage gateway servers."
    :cmd/usage
    "vis-agent mcp <add|add-json|add-from-claude-desktop|get|list|remove|test|enable|disable|kill|start|auth-start|auth-complete|auth-poll|auth-cancel|auth-logout>"
-   :cmd/usage-exit-code 1
    :cmd/subcommands #(registry/registered-under ["mcp"])})
 
-(def ^:private subcommand-specs
-  "The commands under `vis-agent mcp`."
+(def subcommands
+  "Subcommands registered under `vis-agent mcp`."
   [{:cmd/name "add"
     :cmd/parent ["mcp"]
     :cmd/doc
@@ -1289,8 +1287,3 @@
                {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
     :cmd/examples ["vis-agent mcp auth-logout linear"]
     :cmd/run-fn cli-mcp-auth-logout!}])
-
-(def subcommands
-  "Subcommands registered under `vis-agent mcp`. As in `claude mcp`, a usage error
-   ends with exit code 1."
-  (mapv #(assoc % :cmd/usage-exit-code 1) subcommand-specs))

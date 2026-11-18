@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - MCP: `vis-agent gateway mcp` is now `vis-agent mcp`. `add` takes the arguments of `claude mcp add`. In your scripts, change `vis-agent gateway mcp add docs --url <URL>` to `vis-agent mcp add --scope user --transport http docs <URL>`, and `--headers "Name=value"` to `--header "Name: value"`. `vis-agent gateway mcp` stops with `Unknown command`.
-- MCP: a refused `vis-agent mcp` command ends with exit code 1, as in Claude Code. Before, it ended with exit code 2.
+- CLI: an unknown command, such as `vis-agent bogus --help`, ends with exit code 2, like each usage error. Before, it ended with exit code 1. A command that runs and fails still ends with exit code 1.
 - Hands-free voice: the `hands_free_voice` setting is removed. Live voice is on for each gateway, and it is available when the local speech models are ready. The capabilities answer keeps `enabled`, which is always `true`, for released clients. A start does not return `409 voice_disabled`.
 - Automations: one run of an extension automation can work for 180 minutes. Before, the limit was 30 minutes (#490).
 

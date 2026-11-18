@@ -162,7 +162,6 @@
        (optional-valid? x :cmd/owns-tty? boolean?)
        (optional-valid? x :cmd/raw-args? boolean?)
        (optional-valid? x :cmd/internal? boolean?)
-       (optional-valid? x :cmd/usage-exit-code #(and (int? %) (<= 1 (long %) 255)))
        (optional-valid? x :cmd/parent #(and (vector? %) (every? string? %)))
        (optional-valid? x :cmd/args #(and (vector? %) (every? arg? %)))
        (optional-valid? x :cmd/subcommands #(or (and (vector? %) (every? map? %)) (ifn? %)))
