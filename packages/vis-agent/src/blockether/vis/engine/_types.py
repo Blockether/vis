@@ -1423,7 +1423,7 @@ class VoiceLiveCapabilitiesProfile(TypedDict):
 
 class VoiceLiveCapabilities(TypedDict):
     """The answer of the live voice capabilities route. reason says why voice is not
-    available. engines is null when hands-free voice is off.
+    available. enabled is always true.
     """
 
     enabled: bool

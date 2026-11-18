@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Hands-free voice: the `hands_free_voice` setting is removed. Live voice is on for each gateway, and it is available when the local speech models are ready. The capabilities answer keeps `enabled`, which is always `true`, for released clients. A start does not return `409 voice_disabled`.
+
 ## [v0.5.21] - 2026-11-18
 
 ### Added

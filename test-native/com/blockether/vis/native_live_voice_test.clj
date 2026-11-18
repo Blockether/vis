@@ -218,10 +218,7 @@
           (.update digest ^bytes frame))
         (println "INPUT framed PCM SHA256" (.formatHex (java.util.HexFormat/of) (.digest digest))))
       (#'native/overlay! home (:port provider))
-      (spit (io/file home ".vis/config.yml")
-            "titling:\n  mode: disabled\ntoggles:\n  hands_free_voice: true\n"
-            :append
-            true)
+      (spit (io/file home ".vis/config.yml") "titling:\n  mode: disabled\n" :append true)
       (let [[gateway _] (#'startup/start-native!
                          home
                          binary

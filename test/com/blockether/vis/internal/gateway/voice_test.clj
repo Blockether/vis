@@ -2,7 +2,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.voice :as contract]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.event-check :as event-check]
             [com.blockether.vis.internal.gateway.server.voice :as media]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -77,8 +76,7 @@
                                     {:state :finished}))}]
 
     (binding [voice/*engine-api* api]
-      (with-redefs [toggles/enabled? (constantly (get options :enabled true))
-                    state/subscribe! (fn [_ _ sink _]
+      (with-redefs [state/subscribe! (fn [_ _ sink _]
                                        (reset! subscriber sink)
                                        [])
                     state/unsubscribe! (fn [_ _]
@@ -348,16 +346,6 @@
                                          (:clients profile)))
                               (expect (false? (:mobile-qualified profile))))))))
 
-(defdescribe hands-free-setting-test
-             (it "uses the global scope that Settings can display"
-                 (let [spec (toggles/toggle-spec "hands_free_voice")]
-                   (expect (= ["global"] (:scopes spec)))
-                   (expect (true? (:settings? spec)))
-                   (expect (true? (:experimental? spec)))
-                   (expect (false? (:default spec)))))
-             (it "places the switch in Voice settings"
-                 (expect (= :voice (:group (toggles/toggle-spec "hands_free_voice"))))))
-
 (defdescribe
   live-admission-status-test
   ;; A real Companion turn returned streaming and closed voice on schema validation.
@@ -618,11 +606,7 @@
               (expect
                 (nil?
                   (voice/claim! session-id voice-session-id ticket "https://gateway.example.com")))
-              (expect (= 409 (:status (start))))))))
-    (it "leaves the feature disabled unless it is enabled explicitly"
-        (fixture {:enabled false}
-                 (fn [{:keys [start]}]
-                   (expect (= 409 (:status (start))))))))
+              (expect (= 409 (:status (start)))))))))
   (describe
     "streaming and task ownership"
     (it "tracks owned human input without speaking private form content"

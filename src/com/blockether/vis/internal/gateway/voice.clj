@@ -2,7 +2,6 @@
   "Own live voice leases, bounded workers and one-use media tickets. Store no raw audio."
   (:require [com.blockether.vis.contract.voice :as contract]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.voice-session :as coordinator]
             [com.blockether.vis.internal.util :as util]
@@ -13,17 +12,6 @@
            [java.util.concurrent ArrayBlockingQueue CountDownLatch TimeUnit]))
 
 (set! *warn-on-reflection* true)
-
-(toggles/register-toggle!
-  {:id "hands_free_voice"
-   :label "Hands-free voice"
-   :description "Enable experimental local speech. Start capture explicitly in a supported client."
-   :default false
-   :owner :vis
-   :persist? true
-   :experimental? true
-   :group :voice
-   :scopes ["global"]})
 
 (defonce ^:private sessions (atom {}))
 
@@ -47,15 +35,11 @@
 (defn capabilities
   "Read readiness without downloading assets or changing the selected batch engines."
   []
-  (let [enabled
-        (toggles/enabled? "hands_free_voice")
-
-        engines
-        (when enabled ((get (engine-api) 'capabilities)))]
-
-    {:enabled enabled
-     :available (boolean (and enabled (:available engines)))
-     :reason (if enabled (:reason engines) "Enable Hands-free voice in gateway settings first.")
+  (let [engines ((get (engine-api) 'capabilities))]
+    ;; Released clients read `enabled` before `available`. Live voice has no switch.
+    {:enabled true
+     :available (boolean (:available engines))
+     :reason (:reason engines)
      :limits contract/limits
      :engines engines
      :profile {:language "en"
@@ -647,7 +631,6 @@
                                                (long (:retention-ms contract/limits))))))
                               all)))
       (cond (not (contract/valid? "start" body)) {:status 400 :error "invalid_request"}
-            (not (:enabled capabilities)) {:status 409 :error "voice_disabled"}
             (not (:available capabilities)) {:status 425 :error "engines_not_ready"}
             (some #(or (running? %) (workers-alive? %)) (vals @sessions)) {:status 409
                                                                            :error "voice_busy"}

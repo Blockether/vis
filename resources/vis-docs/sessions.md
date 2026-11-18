@@ -43,10 +43,9 @@ Vis waits for 1,100 milliseconds of silence before it ends an utterance.
 
 ### Start a conversation
 
-1. In gateway settings, enable **Hands-free voice** (`hands_free_voice`). The global setting is off by default.
-2. Open the session in the Companion in a desktop browser.
-3. Choose **Start hands-free voice** and allow microphone access.
-4. Wait for **Listening**, then speak your request.
+1. Open the session in the Companion in a desktop browser.
+2. Choose **Start hands-free voice** and allow microphone access.
+3. Wait for **Listening**, then speak your request.
 
 The desktop browser requires the microphone track to report echo cancellation as enabled.
 If that setting is false or unknown, capture stops. Use dictation or text instead.
@@ -61,10 +60,9 @@ If local speech is unavailable, use text or dictation. This mode does not switch
 The native iOS app and Android 12 or newer include an unverified mobile mode. Mobile browsers do not support this mode.
 Each start requires explicit consent to test. Simulator checks do not establish physical microphone, speaker or echo performance.
 
-1. Enable **Hands-free voice** in gateway settings.
-2. Keep the native Companion app open and set a low speaker volume.
-3. Select **Enable mobile audio testing**, then choose **Start mobile voice test**.
-4. Allow microphone access and wait for **Listening**.
+1. Keep the native Companion app open and set a low speaker volume.
+2. Select **Enable mobile audio testing**, then choose **Start mobile voice test**.
+3. Allow microphone access and wait for **Listening**.
 
 The iOS app uses system voice processing. Android uses its communication audio path and an enabled acoustic echo canceller.
 If the device cannot enable echo cancellation, voice stops. It does not switch to an unprocessed microphone.
@@ -180,7 +178,7 @@ Speaker echo, simultaneous speech, headsets and Bluetooth still need physical te
 The current ASR needs an initial 3.467-second window, then advances in 2.933-second steps.
 There is no two-second response or 200-millisecond interruption guarantee.
 
-To opt out, end voice mode and turn off **Hands-free voice**. Existing dictation, manual replay and text remain available.
+To stop, end voice mode. Existing dictation, manual replay and text remain available.
 For lifecycle calls and admission recovery, read [Live voice sessions](sessions-api.md#live-voice-sessions).
 
 ## Start a new session

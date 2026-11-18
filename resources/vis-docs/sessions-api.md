@@ -86,7 +86,7 @@ examples also use `SESSION_ID`, the ID of a session that you created or found.
 ## Live voice sessions
 
 For desktop and native mobile testing workflows, read [Use hands-free voice](sessions.md#use-hands-free-voice).
-Enable the experimental global `hands_free_voice` setting before starting. The gateway permits one English-only local voice session.
+The gateway permits one English-only local voice session.
 
 ### Check readiness and start
 
