@@ -89,6 +89,7 @@
               :codex-session? true
               :has-agents? true
               :has-images? true
+              :has-recordings? true
               :graphical-terminal? true
               :session {:group-id "g1" :agent {:parent-id "p1"}}
               :tabs [{:id :a} {:id :b}]}]
@@ -204,6 +205,13 @@
                  (expect (not (contains? (ids {} :attachments) :open-newest-image)))
                  (expect (contains? (ids {:has-images? true} :attachments) :open-newest-image))
                  (expect (= :open-newest-image (:action (press \a \o))))))
+
+(defdescribe play-recording-hydra-test
+             (it "shows Play recording only in a session with a recording"
+                 (expect (not (contains? (ids {} :attachments) :play-recording)))
+                 (expect (contains? (ids {:has-recordings? true} :attachments) :play-recording))
+                 (expect (= :play-recording (:action (press \a \p))))
+                 (expect (= "C-x a p" (keymap/label-for :play-recording)))))
 
 (defn- with-extension-bindings
   "Run `f` with extension `bindings` in the C-x keymap, then restore the built-in

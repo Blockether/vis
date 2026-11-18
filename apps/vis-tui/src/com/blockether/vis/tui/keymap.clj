@@ -597,7 +597,8 @@
    fork at, `:codex` needs a session on OpenAI Codex (the screen marks it as
    `:codex-session?`), `:has-images` needs a picture in the session (the screen
    marks it as `:has-images?`), `:image-viewer` also needs a graphical terminal (the
-   screen marks it as `:graphical-terminal?`), `:has-panel` needs a panel view,
+   screen marks it as `:graphical-terminal?`), `:has-recordings` needs a recording in the
+   session (the screen marks it as `:has-recordings?`), `:has-panel` needs a panel view,
    `:has-group` needs a current session in a group, `:has-agents` needs a subagent (the
    screen marks it as `:has-agents?`), `:child-session` needs a subagent session,
    `:has-apps` needs an app that the combined apps picker lists and `:has-global-apps`
@@ -619,6 +620,9 @@
 
     :image-viewer
     (and (true? (:has-images? db)) (true? (:graphical-terminal? db)))
+
+    :has-recordings
+    (true? (:has-recordings? db))
 
     :has-panel
     (boolean (some #(= :panel (get-in % [:view :placement])) (:live-views db)))

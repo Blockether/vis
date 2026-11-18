@@ -13,6 +13,7 @@
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.attachments :as attach]
             [com.blockether.vis.tui.iteration :as iteration]
+            [com.blockether.vis.tui.recordings :as recordings]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
@@ -777,25 +778,29 @@
         []
         (mapcat
           (fn [q]
-            (let [user-message (assoc (user-message (user-request-with-images (or (get q "request")
-                                                                                  "")
-                                                                              (get q "attachments"))
-                                                    (or (some-> (get q "created_at")
-                                                                long
-                                                                ((fn [^long ms]
-                                                                   (java.util.Date. ms))))
-                                                        (java.util.Date.)))
-                                 ;; Reloaded/persisted turns carry no :client-turn-id, so without this
-                                 ;; `turn-identity` returns nil and every `[Pasted #N]` disclosure collapses
-                                 ;; to the same unscoped node-id (`user:paste:dN`) — clicking one paste would
-                                 ;; toggle every paste in the session. Stamp the gateway turn id (same one the
-                                 ;; assistant message carries) so reloaded paste ids are turn-scoped, exactly
-                                 ;; like the live send path scopes them by :client-turn-id.
-                                 :session-turn-id (get q "turn_id")
-                                 :turn-position (get q "position")
-                                 :request-kind (some-> (get q "request_kind")
-                                                       keyword)
-                                 :council (get q "council"))
+            (let [turn-recordings (recordings/persisted-recordings (get q "attachments"))
+                  user-message (cond-> (assoc (user-message (user-request-with-images
+                                                              (or (get q "request") "")
+                                                              (get q "attachments"))
+                                                            (or (some-> (get q "created_at")
+                                                                        long
+                                                                        ((fn [^long ms]
+                                                                           (java.util.Date. ms))))
+                                                                (java.util.Date.)))
+                                         ;; Reloaded/persisted turns carry no :client-turn-id, so without this
+                                         ;; `turn-identity` returns nil and every `[Pasted #N]` disclosure collapses
+                                         ;; to the same unscoped node-id (`user:paste:dN`) — clicking one paste would
+                                         ;; toggle every paste in the session. Stamp the gateway turn id (same one the
+                                         ;; assistant message carries) so reloaded paste ids are turn-scoped, exactly
+                                         ;; like the live send path scopes them by :client-turn-id.
+                                         :session-turn-id (get q "turn_id")
+                                         :turn-position (get q "position")
+                                         :request-kind (some-> (get q "request_kind")
+                                                               keyword)
+                                         :council (get q "council"))
+                                 ;; C-x a p plays the recordings of the turn.
+                                 (seq turn-recordings)
+                                 (assoc :recordings turn-recordings))
                   ;; `:prior-outcome :cancelled` is how the
                   ;; persistance layer marks an aborted turn (the
                   ;; sweep + cancel paths both write that value).

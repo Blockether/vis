@@ -18,6 +18,7 @@
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.virtual :as virtual]
             [com.blockether.vis.tui.voice-output :as voice-output]
+            [com.blockether.vis.tui.recordings :as recordings]
             [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.transient :as tr]
             [com.blockether.vis.tui.workspace :as workspace]
@@ -5493,7 +5494,10 @@
                   (str (java.util.UUID/randomUUID))
 
                   visible-preview-text
-                  (chat/user-request-with-staged-attachments preview-text attachments)]
+                  (chat/user-request-with-staged-attachments preview-text attachments)
+
+                  staged-recordings
+                  (recordings/staged-recordings attachments)]
 
               {:db (update-tab db
                                workspace-id
@@ -5501,8 +5505,10 @@
                                  (-> w
                                      (update :messages
                                              conj
-                                             (assoc (chat/user-message visible-preview-text)
-                                               :client-turn-id client-turn-id))
+                                             (cond-> (assoc (chat/user-message visible-preview-text)
+                                                       :client-turn-id client-turn-id)
+                                               (seq staged-recordings)
+                                               (assoc :recordings staged-recordings)))
                                      (update :messages
                                              conj
                                              (assoc (pending-assistant-for text)

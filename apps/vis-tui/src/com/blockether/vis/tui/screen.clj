@@ -33,6 +33,7 @@
     [com.blockether.vis.tui.ansi :as ansi]
     [com.blockether.vis.tui.primitives :as p]
     [com.blockether.vis.tui.projects :as projects]
+    [com.blockether.vis.tui.recordings :as recordings]
     [com.blockether.vis.tui.render :as render]
     [com.blockether.vis.tui.scroll :as scroll]
     [com.blockether.vis.tui.selection :as selection]
@@ -45,6 +46,7 @@
     [com.blockether.vis.tui.toasts :as toasts]
     [com.blockether.vis.tui.virtual :as virtual]
     [com.blockether.vis.tui.voice-input :as voice-input]
+    [com.blockether.vis.tui.voice-output :as voice-output]
     [com.blockether.vis.tui.dialogs :as dlg]
     [com.blockether.vis.tui.config :as vis-config]
     [com.blockether.vis.tui.external-opener :as opener]
@@ -3769,6 +3771,64 @@
   (if-let [image (peek (session-images (:messages @state/app-db)))]
     (open-image-externally! (:path image))
     (vis/notify! "No pictures in this session" :level :info :ttl-ms 2000)))
+
+(defn- recording-file
+  "Recording `entry` of session `sid` as `{:file :is-temp}`. A file that the person sent
+   plays from its local path. A file that the model attached plays in place when the
+   gateway runs here and keeps it, else from a downloaded temporary copy."
+  [sid {:keys [source path] :as entry}]
+  (if (= :user source)
+    {:file (java.io.File. (str path)) :is-temp false}
+    (if-let [local (artifact-inspector/reference-local-path entry (vis/gateway-local?))]
+      {:file (java.io.File. (str local)) :is-temp false}
+      {:file (or (artifact-inspector/materialize-artifact! sid entry)
+                 (throw (ex-info "The gateway has no bytes for this recording" {:entry entry})))
+       :is-temp true})))
+
+(defn- start-recording!
+  [sid entry]
+  (voice-output/play-recording! {:title (:filename entry)
+                                 :hint (str (keymap/label-for :play-recording) " stops")
+                                 :load! #(recording-file sid entry)}))
+
+(defn- pick-recording!
+  "The recording that the person picks from `entries`, newest first, or nil."
+  [screen entries]
+  (:entry (with-dialog-lock #(dlg/list-dialog! screen
+                                               "Recordings"
+                                               (mapv (fn [entry]
+                                                       {:label (:filename entry)
+                                                        :description (if (= :user (:source entry))
+                                                                       "you sent it"
+                                                                       "Vis attached it")
+                                                        :entry entry})
+                                                     (rseq entries))
+                                               {:enter-label "play" :height :content}))))
+
+(defn- play-recording!
+  "C-x a p: stop the recording that plays, or play a recording of the session. With more
+   than one recording, the person picks one."
+  [screen]
+  (if (voice-output/recording-playing?)
+    (voice-output/stop!)
+    (let [db
+          @state/app-db
+
+          sid
+          (get-in db [:session :id])
+
+          entries
+          (recordings/session-recordings (:messages db))]
+
+      (case (count entries)
+        0
+        (vis/notify! "No recordings in this session" :level :info :ttl-ms 2000)
+
+        1
+        (start-recording! sid (first entries))
+
+        (some->> (pick-recording! screen entries)
+                 (start-recording! sid))))))
 
 (defn- sent-images
   "The pictures that the person sent in the user messages of `messages`, oldest first."
@@ -9089,6 +9149,7 @@
           (assoc db
             :codex-session? (state/codex-session? db)
             :has-images? (boolean (seq (session-images (:messages db))))
+            :has-recordings? (boolean (seq (recordings/session-recordings (:messages db))))
             :graphical-terminal? (timg/graphical-terminal?)
             :has-agents?
             (boolean (and sid (agent-team/enabled? sid) (seq (:agents (agent-team/summary sid))))))]
@@ -10664,6 +10725,9 @@
                     :open-newest-image
                     (open-newest-image!)
 
+                    :play-recording
+                    (play-recording! screen)
+
                     :search-open
                     (state/dispatch [:search-open])
 
@@ -10837,6 +10901,9 @@
 
         :open-newest-image
         (do (open-newest-image!) ::recur)
+
+        :play-recording
+        (do (play-recording! screen) ::recur)
 
         :toggle-tasks
         (do (state/dispatch [:toggle-tasks]) ::recur)

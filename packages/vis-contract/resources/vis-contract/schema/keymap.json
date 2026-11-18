@@ -37,7 +37,7 @@
         {
           "const": "attachments",
           "title": "Attachments",
-          "description": "Attach files and look at pictures",
+          "description": "Attach files, look at pictures and play recordings",
           "x-vis-key": "a"
         },
         {
@@ -351,6 +351,15 @@
           "$comment": "The system viewer works on every terminal."
         },
         {
+          "const": "play-recording",
+          "title": "play recording",
+          "description": "Play or stop a recording of the session",
+          "x-vis-key": "p",
+          "x-vis-group": "attachments",
+          "x-vis-show-when": "has-recordings",
+          "$comment": "A client with its own player in the conversation does not bind this verb."
+        },
+        {
           "const": "toggle-voice-recording",
           "title": "record",
           "description": "Start or stop voice input",
@@ -435,6 +444,10 @@
         {
           "const": "has-images",
           "description": "The session has at least one picture."
+        },
+        {
+          "const": "has-recordings",
+          "description": "The session has at least one recording."
         },
         {
           "const": "has-agents",

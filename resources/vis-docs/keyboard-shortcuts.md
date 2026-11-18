@@ -69,7 +69,7 @@ such as a turn to fork, appears when it can act.
 | Ctrl+X g | Group of this session: new, rename, colour, settings, archive, and delete |
 | Ctrl+X m | Models and answers: model, thinking level, answer length, and providers |
 | Ctrl+X b | View: search, jump, folds, zen mode, side panel, **Projects**, and agent details |
-| Ctrl+X a | Attachments: attach a file, review attachments, and view pictures |
+| Ctrl+X a | Attachments: attach a file, review attachments, view pictures, and play recordings |
 | Ctrl+X v | Voice: recording and voice conversation |
 | Ctrl+X q | Queue: send or edit queued messages |
 | Ctrl+X t | Agents: open a subagent, list the subagents, or go back to the parent session. This group appears only when it can act |
@@ -141,6 +141,7 @@ To move a command, the extension names its verb id.
 | `focus-attachments` | Ctrl+X a i | Open the attachments and apps |
 | `view-images` | Ctrl+X a v | View the pictures |
 | `open-newest-image` | Ctrl+X a o | Open the newest picture |
+| `play-recording` | Ctrl+X a p | Play or stop a recording |
 | `toggle-voice-recording` | Ctrl+X v v | Start or stop voice input |
 | `toggle-voice-conversation` | Ctrl+X v c | Start or stop a voice conversation |
 | `providers` | Ctrl+X m p | Open the providers |
@@ -215,6 +216,7 @@ the same as the key.
 | Ctrl+X a i | Review your attached files, the files that this session produced, and its apps. Enter opens the selected app |
 | Ctrl+X a v | Show the pictures of this session one at a time. Only terminals that show pictures have this key. Read [View pictures](#view-pictures) |
 | Ctrl+X a o | Open the newest picture of this session in the picture app of your computer |
+| Ctrl+X a p | Play a recording of this session, or stop the recording that plays. With more than one recording, choose one from the list. The status line shows the time. A file that is not WAV or AIFF needs `ffmpeg` |
 | Ctrl+X v v | Start or stop a voice recording |
 | Ctrl+X v c | Turn voice conversation on or off. Vis reads each answer aloud, and sends each recording when its transcript is ready |
 | Ctrl+X b p | Show the live view panel at the side, or move the focus to it. In the panel, Up and Down select a view, Left folds it, and Right unfolds it. Tab shows the next extension, and Esc closes the panel |
