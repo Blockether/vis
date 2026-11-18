@@ -3914,6 +3914,7 @@
                         "ensure_java_runtime; status=$?; printf '%s' \"$JAVA_CMD\"; exit $status")]
                   (merge {"JAVA_CMD" ""
                           "JAVA_HOME" ""
+                          "SDKMAN_CANDIDATES_DIR" "/missing-sdkman"
                           "PATH" (str (.getPath dir) ":" (System/getenv "PATH"))}
                          selected))]
 
@@ -3921,6 +3922,36 @@
             (when (zero? expected)
               (expect (= (.getPath (if (= :home selector) (io/file dir "bin/java") java))
                          output)))))
+        (finally (delete-tree! dir)))))
+  (it
+    "finds the SDKMAN JDK when the PATH java is the macOS stub"
+    (let [dir
+          (.toFile (Files/createTempDirectory "vis-java-test-" (make-array FileAttribute 0)))
+
+          sdk-java
+          (io/file dir "sdkman/java/current/bin/java")
+
+          body
+          (re-find #"(?ms)^ensure_java_runtime\(\) \{.*?^\}\n" (slurp "bin/vis-agent"))]
+
+      (try
+        (write-executable! (io/file dir "java")
+                           "#!/bin/sh\necho 'Unable to locate a Java Runtime.' >&2\nexit 1\n")
+        (.mkdirs (.getParentFile sdk-java))
+        (write-executable! sdk-java
+                           "#!/bin/sh\nprintf '    java.specification.version = 25\\n' >&2\n")
+        (let [{:keys [exit output]}
+              (run-bash
+                ["bash" "-c"
+                 (str "warn() { :; }; "
+                      body
+                      "ensure_java_runtime; status=$?; printf '%s' \"$JAVA_CMD\"; exit $status")]
+                {"JAVA_CMD" ""
+                 "JAVA_HOME" ""
+                 "SDKMAN_CANDIDATES_DIR" (.getPath (io/file dir "sdkman"))
+                 "PATH" (str (.getPath dir) ":" (System/getenv "PATH"))})]
+          (expect (= 0 exit) output)
+          (expect (= (.getPath sdk-java) output)))
         (finally (delete-tree! dir))))))
 
 ;; Regression: launcher overwrote the operator's pip certificate configuration.

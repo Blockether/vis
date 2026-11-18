@@ -636,29 +636,37 @@ ensure_clojure_cli() {
 
 # Runtime selection is independent of the GraalVM native-image build toolchain.
 # Respect an explicit selector: a broken JAVA_CMD/JAVA_HOME is an error, not a fallback.
+# Without a selector, also try the SDKMAN JDK: an app that Finder opens has only the
+# system PATH, and its macOS /usr/bin/java is a stub that fails without a JDK.
 ensure_java_runtime() {
-  local java_cmd properties major
+  local candidate properties major
+  local -a candidates=() problems=()
   if [[ -n "${JAVA_CMD:-}" ]]; then
-    java_cmd="$(command -v "$JAVA_CMD" 2>/dev/null || true)"
+    candidates=("$(command -v "$JAVA_CMD" 2>/dev/null || true)")
   elif [[ -n "${JAVA_HOME:-}" ]]; then
-    java_cmd="$JAVA_HOME/bin/java"
+    candidates=("$JAVA_HOME/bin/java")
   else
-    java_cmd="$(command -v java 2>/dev/null || true)"
+    candidates=("$(command -v java 2>/dev/null || true)"
+                "${SDKMAN_CANDIDATES_DIR:-${HOME:-}/.sdkman/candidates}/java/current/bin/java")
   fi
-  if [[ -z "$java_cmd" || ! -x "$java_cmd" ]]; then
+  for candidate in "${candidates[@]}"; do
+    [[ -n "$candidate" && -x "$candidate" ]] || continue
+    if ! properties="$("$candidate" -XshowSettings:properties -version 2>&1)"; then
+      problems+=("could not run Java: $candidate")
+      continue
+    fi
+    major="$(printf '%s\n' "$properties" | sed -n 's/^ *java\.specification\.version = //p')"
+    if [[ "$major" =~ ^[0-9]+$ ]] && (( 10#$major >= 25 )); then
+      export JAVA_CMD="$candidate"
+      return 0
+    fi
+    problems+=("JDK 25+ required; selected Java reports '${major:-unknown}' ($candidate)")
+  done
+  if (( ${#problems[@]} == 0 )); then
     warn "Java not found; install a JDK 25+ or set JAVA_CMD / JAVA_HOME"
-    return 1
   fi
-  if ! properties="$("$java_cmd" -XshowSettings:properties -version 2>&1)"; then
-    warn "could not run Java: $java_cmd"
-    return 1
-  fi
-  major="$(printf '%s\n' "$properties" | sed -n 's/^ *java\.specification\.version = //p')"
-  if [[ ! "$major" =~ ^[0-9]+$ ]] || (( 10#$major < 25 )); then
-    warn "JDK 25+ required; selected Java reports '${major:-unknown}' ($java_cmd)"
-    return 1
-  fi
-  export JAVA_CMD="$java_cmd"
+  for candidate in ${problems[@]+"${problems[@]}"}; do warn "$candidate"; done
+  return 1
 }
 
 # ── Release bundle ───────────────────────────────────────────────────────────
