@@ -6790,7 +6790,7 @@
   (when-not (:dialog-open? @state/app-db)
     (if-let [{:keys [id title items selected]} (state/reasoning-picker @state/app-db)]
       (if (= "reasoning_level" id)
-        (state/dispatch [:cycle-reasoning-level title])
+        (state/dispatch [:cycle-reasoning-level])
         (when-let [choice (with-dialog-lock #(dlg/list-dialog! screen
                                                                title
                                                                items
@@ -6798,7 +6798,7 @@
                                                                 :selected selected
                                                                 :column-offset
                                                                 session-column-offset}))]
-          (state/dispatch [:set-reasoning-choice id title (:value choice)])))
+          (state/dispatch [:set-reasoning-choice id (:value choice)])))
       (state/dispatch [:reasoning-unconfigurable]))))
 
 (defn- workspace-sessions

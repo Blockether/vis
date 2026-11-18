@@ -1637,16 +1637,16 @@
          :selected (max 0 (.indexOf ^java.util.List choices current))}))))
 
 (reg-event-fx :set-reasoning-choice
-              (fn [db [_ id label value]]
+              (fn [db [_ id value]]
                 ;; Write the setting as an effect, never inside `swap!`; its synchronous
                 ;; listener dispatches again and would make CAS retries repeat the action.
-                {:db db :fx [[:set-setting-value (get-in db [:session :id]) id label value]]}))
+                {:db db :fx [[:set-setting-value (get-in db [:session :id]) id value]]}))
 
 (reg-event-fx :cycle-reasoning-level
-              (fn [db [_ label]]
+              (fn [db _]
                 ;; Simplified modes have three levels, so one key press steps to the next.
                 ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
-                {:db db :fx [[:cycle-toggle (get-in db [:session :id]) "reasoning_level" label]]}))
+                {:db db :fx [[:cycle-toggle (get-in db [:session :id]) "reasoning_level"]]}))
 
 (reg-event-fx :reasoning-unconfigurable
               (fn [db _]
@@ -1662,7 +1662,7 @@
                          settings-notification-ttl-ms]]}
                   ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
                   {:db db
-                   :fx [[:cycle-toggle (get-in db [:session :id]) "verbosity" "Verbosity"]]})))
+                   :fx [[:cycle-toggle (get-in db [:session :id]) "verbosity"]]})))
 
 (reg-event-fx
   :toggle-codex-fast-mode
@@ -1671,7 +1671,7 @@
       {:db db
        :fx [[:notify "Fast mode is available only for OpenAI Codex" :warn
              settings-notification-ttl-ms]]}
-      {:db db :fx [[:toggle-boolean (get-in db [:session :id]) "codex_fast_mode" "Fast mode"]]})))
+      {:db db :fx [[:toggle-boolean (get-in db [:session :id]) "codex_fast_mode"]]})))
 
 (reg-event-fx :toggle-thinking-summary
               (fn [db _]
@@ -1681,8 +1681,7 @@
                          :warn settings-notification-ttl-ms]]}
                   ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
                   {:db db
-                   :fx [[:toggle-boolean (get-in db [:session :id]) "thinking_summary"
-                         "Thinking summary"]]})))
+                   :fx [[:toggle-boolean (get-in db [:session :id]) "thinking_summary"]]})))
 
 (reg-event-fx :cycle-model
               ;; Ctrl+T cycles the ACTIVE SESSION's model preference — the SAME unified,
@@ -1733,9 +1732,7 @@
                               {:provider pid :model (:model next-e)}]
 
                           {:db (assoc db :session-model-pref pref)
-                           :fx [[:set-session-model sid pid (:model next-e)]
-                                [:notify (str "Model: " pid "/" (:model next-e)) :info
-                                 settings-notification-ttl-ms]]})))))
+                           :fx [[:set-session-model sid pid (:model next-e)]]})))))
 
 (reg-event-fx
   :set-model
@@ -1751,11 +1748,9 @@
                               settings-notification-ttl-ms]]}
             (and provider model)
             {:db (assoc db :session-model-pref {:provider provider :model model})
-             :fx [[:set-session-model sid provider model]
-                  [:notify (str "Model: " provider "/" model) :info settings-notification-ttl-ms]]}
+             :fx [[:set-session-model sid provider model]]}
             :else {:db (dissoc db :session-model-pref)
-                   :fx [[:set-session-model sid nil nil]
-                        [:notify "Model: router default" :info settings-notification-ttl-ms]]}))))
+                   :fx [[:set-session-model sid nil nil]]}))))
 
 (reg-event-db :clear-session-model-pref
               ;; A failed asynchronous PATCH only rolls back its own choice, even if the
@@ -7532,41 +7527,31 @@
                       (vis/notify! (str "Settings unavailable: " (ex-message e)) :level :warn)))))))
 
 (defn- change-session-setting!
-  ([sid id label action] (change-session-setting! sid id label action nil))
-  ([sid id label action value]
+  ;; The footer chip shows the new value, so a change adds no toast.
+  ([sid id action] (change-session-setting! sid id action nil))
+  ([sid id action value]
    (if-not sid
      (vis/notify! "Open a session first to change its settings" :level :warn)
      (gateway-queue-io!
-       #(try (let [target
-                   {:scope "session" :target-id (str sid)}
-
-                   row
-                   (if (some? value)
-                     (vis/change-setting! id action target value)
-                     (vis/change-setting! id action target))]
-
-               (refresh-session-settings! sid)
-               (vis/notify! (str label
-                                 ": "
-                                 (if (= "boolean" (get row "type"))
-                                   (if (get row "enabled") "on" "off")
-                                   (get row "value")))
-                            :level :info
-                            :ttl-ms settings-notification-ttl-ms))
+       #(try (let [target {:scope "session" :target-id (str sid)}]
+               (if (some? value)
+                 (vis/change-setting! id action target value)
+                 (vis/change-setting! id action target))
+               (refresh-session-settings! sid))
              (catch Exception e
                (vis/notify! (str "Setting unchanged: " (ex-message e)) :level :error)))))))
 
 (reg-fx :cycle-toggle
-        (fn [sid id label]
-          (change-session-setting! sid id label "cycle")))
+        (fn [sid id]
+          (change-session-setting! sid id "cycle")))
 
 (reg-fx :set-setting-value
-        (fn [sid id label value]
-          (change-session-setting! sid id label "value" value)))
+        (fn [sid id value]
+          (change-session-setting! sid id "value" value)))
 
 (reg-fx :toggle-boolean
-        (fn [sid id label]
-          (change-session-setting! sid id label "toggle")))
+        (fn [sid id]
+          (change-session-setting! sid id "toggle")))
 
 ;; Persist the active session's model preference to the shared, channel-neutral
 ;; store. The engine reads it on the next turn (router-for-model) and the web

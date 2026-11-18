@@ -64,7 +64,7 @@
                       vis/resolve-model-info (fn [_ provider _model]
                                                {:provider (keyword provider)})]
 
-          (expect (= [[:toggle-boolean "s1" "codex_fast_mode" "Fast mode"]]
+          (expect (= [[:toggle-boolean "s1" "codex_fast_mode"]]
                      (:fx (handler {:session {:id "s1"}
                                     :session-model-pref {:provider "openai-codex" :model "gpt"}}
                                    [:toggle-codex-fast-mode]))))
@@ -86,7 +86,7 @@
                                      (= "claude-opus-5" model)
                                      (assoc :thinking-display-style :anthropic-display)))]
 
-                     (expect (= [[:toggle-boolean "s1" "thinking_summary" "Thinking summary"]]
+                     (expect (= [[:toggle-boolean "s1" "thinking_summary"]]
                                 (:fx (handler {:session {:id "s1"}
                                                :session-model-pref {:provider "anthropic"
                                                                     :model "claude-opus-5"}}
@@ -866,13 +866,14 @@
                       (state/dispatch [:bump-render-version]))]
 
         (reset! state/app-db {:session {:id "s1"} :render-version 0})
-        (state/dispatch [:set-reasoning-choice "reasoning_level" "Reasoning effort" "quick"])
+        (state/dispatch [:set-reasoning-choice "reasoning_level" "quick"])
         (flush-queue-io!)
         (expect (= [["reasoning_level" "value" {:scope "session" :target-id "s1"} "quick"]] @calls))
         (expect (= :quick (get-in @state/app-db [:session-settings "s1" :reasoning-level])))
         (expect (= global (vis/toggle-value "reasoning_level"))))))
   (it "steps the simplified mode once at the captured session"
-      (let [calls (atom [])]
+      (let [calls (atom [])
+            notified (atom [])]
         (with-redefs [vis/change-setting! (fn [id action target]
                                             (swap! calls conj [id action target])
                                             {"id" id "type" "enum" "value" "deep"})
@@ -880,14 +881,15 @@
                                              {"groups" [{"toggles" [{"id" "reasoning_level"
                                                                      "type" "enum"
                                                                      "value" "deep"}]}]})
-                      vis/notify! (fn [& _]
-                                    (state/dispatch [:bump-render-version]))]
+                      vis/notify! (fn [text & _]
+                                    (swap! notified conj text))]
 
           (reset! state/app-db {:session {:id "s1"} :render-version 0})
-          (state/dispatch [:cycle-reasoning-level "Reasoning effort"])
+          (state/dispatch [:cycle-reasoning-level])
           (flush-queue-io!)
           (expect (= [["reasoning_level" "cycle" {:scope "session" :target-id "s1"}]] @calls))
-          (expect (= :deep (get-in @state/app-db [:session-settings "s1" :reasoning-level]))))))
+          (expect (= :deep (get-in @state/app-db [:session-settings "s1" :reasoning-level])))
+          (expect (= [] @notified) "A reasoning change shows no toast"))))
   (it "keeps a late response under its original owner after switching sessions"
       (reset! state/app-db {:session {:id "s2"} :render-version 0})
       (state/dispatch [:session-settings-loaded "s1"
@@ -1117,7 +1119,7 @@
         (state/dispatch [:cycle-model])
         (flush-queue-io!)
         (expect (= [["sess-1" "openai" "gpt-5-mini"]] @set-calls))
-        (expect (= ["Model: openai/gpt-5-mini" [:level :info :ttl-ms 1500]] @notified)))))
+        (expect (nil? @notified) "A model change shows no toast"))))
   (it "advances from the current pref (matched by provider+model) to the next, wrapping"
       (let [set-calls (atom [])]
         (with-redefs [vis/configured-providers-cached
