@@ -198,11 +198,11 @@ vis-agent tui --extensions none           # no optional extension
 
 Providers, sign-in data, and your default and fallback models always stay.
 
-The same flags work for a one-shot run, also with `--json-schema`:
+The same flags work for a one-shot run, which starts with `-p` or `--print`, also with `--json-schema`:
 
 ```bash
-vis-agent --vanilla --json-schema @city.json "Name the capital of Poland"
-vis-agent --no-global --extensions -spel --persist "Fix the failing test"
+vis-agent -p --vanilla --json-schema @city.json "Name the capital of Poland"
+vis-agent -p --no-global --extensions -spel --persist "Fix the failing test"
 ```
 
 In the terminal, the flags apply to each new session that the terminal opens. A saved session keeps
@@ -254,7 +254,7 @@ A saved session keeps its tool list when you resume it. To change the list, give
 when you open the session:
 
 ```bash
-vis-agent --session-id 6d78b3f2 --tools -py.repl_stop "Run the tests"
+vis-agent -p --session-id 6d78b3f2 --tools -py.repl_stop "Run the tests"
 vis-agent tui --continue --tools py.lint_code,py.repl_eval
 vis-agent tui --resume --tools '*'                # every tool on again
 ```
@@ -447,8 +447,8 @@ On the command line, `--model provider/model` selects both for one run and saves
 provider needs no configuration if it has a built-in preset with managed sign-in:
 
 ```bash
-vis-agent --model zai-coding-plan/glm-5.3 "task"
-vis-agent --model glm-5.3 "task"          # on the active provider
+vis-agent -p --model zai-coding-plan/glm-5.3 "task"
+vis-agent -p --model glm-5.3 "task"       # on the active provider
 ```
 
 ### Default thinking level

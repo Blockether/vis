@@ -338,7 +338,7 @@ directory:
 
 ```bash
 mkdir -m 700 "$TASK/runtime"
-VIS_RUNTIME_DIR="$TASK/runtime" HOME="$TASK/home" vis-agent "Fix the failing test"
+VIS_RUNTIME_DIR="$TASK/runtime" HOME="$TASK/home" vis-agent -p "Fix the failing test"
 ```
 
 The JVM property `-Dvis.runtime.dir` has the same effect and wins over the variable. The Python

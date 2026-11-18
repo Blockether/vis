@@ -490,7 +490,7 @@
        (run-binary dir
                    (into [(.getAbsolutePath (require-binary))
                           (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                          (.getAbsolutePath (io/file dir "sessions"))]
+                          (.getAbsolutePath (io/file dir "sessions")) "-p"]
                          args)
                    180))]
 

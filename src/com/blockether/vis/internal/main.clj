@@ -1450,7 +1450,9 @@
 
 (def ^:private run-boolean-flags
   "Root one-shot flags that take no value, mapped to their opts key."
-  {"--json" :json?
+  {"-p" :print?
+   "--print" :print?
+   "--json" :json?
    "--code" :code?
    "--raw" :raw?
    "--full-trace-stream" :full-trace-stream?
@@ -1678,9 +1680,10 @@
 
 (defn- print-run-usage!
   []
-  (commandline/stdout! "Usage: vis-agent [FLAGS] \"prompt\"")
+  (commandline/stdout! "Usage: vis-agent -p [FLAGS] \"prompt\"")
   (commandline/stdout! "")
   (commandline/stdout! "Flags:")
+  (commandline/stdout! "  -p, --print       Run one-shot agent work. Required for a prompt.")
   (commandline/stdout! "  --json            Print result as a single JSON envelope.")
   (commandline/stdout! "  --code            Print only [:code] block contents from the")
   (commandline/stdout! "                    parsed Markdown. Concatenated in source order;")
@@ -1745,17 +1748,17 @@
   (commandline/stdout! "")
   (commandline/stdout! "Examples:")
   (commandline/stdout!
-    "  vis-agent --provider zai-coding-plan --model glm-5.3 --reasoning-effort high --json \"Task\"")
-  (commandline/stdout! "  vis-agent \"Throwaway one-shot probe\"")
-  (commandline/stdout! "  vis-agent --json --model gpt-4o \"Explain auth flow\"")
-  (commandline/stdout! "  vis-agent --json-schema @city.json \"Name the capital of Poland\"")
+    "  vis-agent -p --provider zai-coding-plan --model glm-5.3 --reasoning-effort high --json \"Task\"")
+  (commandline/stdout! "  vis-agent -p \"Throwaway one-shot probe\"")
+  (commandline/stdout! "  vis-agent -p --json --model gpt-4o \"Explain auth flow\"")
+  (commandline/stdout! "  vis-agent -p --json-schema @city.json \"Name the capital of Poland\"")
   (commandline/stdout!
-    "  vis-agent --toggles reasoning_level=deep \"Run the test suite and fix failures\"")
-  (commandline/stdout! "  vis-agent --toggles reasoning_level=balanced \"Refactor carefully\"")
+    "  vis-agent -p --toggles reasoning_level=deep \"Run the test suite and fix failures\"")
+  (commandline/stdout! "  vis-agent -p --toggles reasoning_level=balanced \"Refactor carefully\"")
   (commandline/stdout!
-    "  vis-agent --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\"")
+    "  vis-agent -p --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\"")
   (commandline/stdout!
-    "  vis-agent --vanilla --json-schema @city.json \"Name the capital of Poland\""))
+    "  vis-agent -p --vanilla --json-schema @city.json \"Name the capital of Poland\""))
 
 (defn- cli-string-toggle
   "One line of text for the string toggle `k`. A secret is refused: other processes can
@@ -2027,7 +2030,7 @@
         (commandline/stderr! (str "vis-agent: " e)))
       (commandline/stderr! "  See the flag list:            vis-agent --help")
       (when (some #(str/starts-with? % "unknown flag") errors)
-        (commandline/stderr! "  Or make it the prompt text:   vis-agent -- <text>"))
+        (commandline/stderr! "  Or make it the prompt text:   vis-agent -p -- <text>"))
       (exit-process! 2))
     (when (or help? (str/blank? prompt)) (print-run-usage!) (exit-process! 0))
     ;; Check the extension and tool lists before any provider spend: a typo is a usage error.
@@ -3287,10 +3290,11 @@
   (str/join
     "\n"
     ["Vis - a coding agent that edits, runs and verifies code in your repo, with a persistent sandboxed Python REPL."
-     "" "USAGE" (help-row "vis-agent [FLAGS] \"prompt\"" "Run one-shot agent work.")
+     "" "USAGE" (help-row "vis-agent -p [FLAGS] \"prompt\"" "Run one-shot agent work.")
      (help-row "vis-agent <command> [args...]" "Run a command.")
      (help-row "vis-agent <command> --help" "Show command help.")
      (help-row "vis-agent [--help|--version]" "Show this help, or the version.") "" "ONE-SHOT FLAGS"
+     (help-row "-p, --print" "Run one-shot agent work; required for a prompt.")
      (help-row "--json" "Print result as JSON.")
      (help-row "--code" "Print only final answer code blocks.")
      (help-row "--json-schema JSON|@FILE" "Return answer JSON that matches a schema.")
@@ -3341,10 +3345,10 @@
      (help-row "<project>/vis.yml" "Project settings; .vis/config.yml overrides it.")
      (help-row "vis-agent providers status" "Show provider auth and model catalogs.")
      (help-row "vis-agent doctor" "Diagnose config, extensions, stale state.") "" "EXAMPLES"
-     "vis-agent \"fix failing tests\"" "vis-agent --json \"summarize this repo\""
-     "vis-agent --provider zai-coding-plan --model glm-5.3 --reasoning-effort high --json \"task\""
-     "vis-agent --toggles reasoning_level=deep \"refactor carefully\""
-     "vis-agent --full-trace-json-stream --db :memory \"debug startup\""
+     "vis-agent -p \"fix failing tests\"" "vis-agent -p --json \"summarize this repo\""
+     "vis-agent -p --provider zai-coding-plan --model glm-5.3 --reasoning-effort high --json \"task\""
+     "vis-agent -p --toggles reasoning_level=deep \"refactor carefully\""
+     "vis-agent -p --full-trace-json-stream --db :memory \"debug startup\""
      "vis-agent sessions search sqlite"
      "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN sessions list"]))
 
@@ -3481,28 +3485,23 @@
   "Words the `vis-agent` launcher implements ITSELF and never forwards. The
    engine advertises them in its own help (`vis-agent update`, `switch`, …) but
    owns none of them, so one reaching this binary means the caller ran the
-   engine directly, or a launcher too old to know the word — and without this
-   set it would become a PROMPT: `vis-agent upgrade` silently spent a turn
-   asking a model about the word \"upgrade\" instead of updating anything."
+   engine directly, or a launcher too old to know the word. This set names the
+   launcher as the fix instead of the generic unknown-command error."
   #{"update" "upgrade" "switch" "desktop" "runtime" "uninstall"})
 
 (defn- wrapper-owned-invocation?
-  "True for EXACTLY one bare wrapper word. Deliberately not for longer argument
-   lists: `vis-agent update the readme` is an ordinary prompt that happens to
-   start with one of these words, and stealing it would be the same class of
-   surprise this guard exists to remove."
+  "True for EXACTLY one bare wrapper word. Longer argument lists are not
+   launcher invocations: `vis-agent update the readme` is an unknown command."
   [args]
   (and (= 1 (count args)) (contains? wrapper-owned-commands (first args))))
 
 (defn- root-run-shortcut?
-  "True when bare `vis-agent ...` should run the one-shot CLI agent.
-   Unknown commands that ask for help stay errors, so typo diagnostics
-   remain honest (`vis-agent sessions --help` must not become a prompt), and a
-   lone wrapper-owned word is an invocation mistake, never a question."
+  "True when `vis-agent -p ...` should run the one-shot CLI agent. Like
+   `claude -p`, a prompt needs `-p`/`--print` before `--`: a typo such as
+   `vis-agent sesions` is an unknown command, never a paid model turn."
   [root args]
-  (and (unknown-command? root args)
-       (not (wrapper-owned-invocation? args))
-       (not-any? #{"--help" "-h"} args)))
+  (boolean (and (unknown-command? root args)
+                (some #{"-p" "--print"} (take-while #(not= "--" %) args)))))
 
 (defn- exit-with-user-error!
   [^Throwable t]
@@ -3754,12 +3753,13 @@
      - No args                  -> top-level help
      - `help` / `--help` / `-h` -> help for the resolved command
      - Recognized command       -> invoke its `:cmd/run-fn`
-     - Bare prompt / run flags  -> one-shot CLI agent
+     - `-p`/`--print` + prompt  -> one-shot CLI agent
+     - Other unknown words      -> unknown-command error, exit 2
      - Unknown command + help   -> honest unknown-command error
 
    Root prompt shortcut lives here, not in `commandline/dispatch!`, so
    the generic dispatcher stays a pure command tree while the binary owns
-   CLI ergonomics (`vis-agent fix this`, `vis-agent --json summarize`)."
+   CLI ergonomics (`vis-agent -p fix this`, `vis-agent -p --json summarize`)."
   [& raw-args]
   ;; #423: temporary files follow VIS_RUNTIME_DIR, so this runs before anything makes one.
   ;; A refused setting stops Vis: it never falls back to the system temporary directory.
@@ -3859,6 +3859,7 @@
                                                 (println)
                                                 (println (str "Unknown command: "
                                                               (str/join " " args)))
+                                                (println "To run a prompt: vis-agent -p \"prompt\"")
                                                 ;; A usage error, like an unknown subcommand.
                                                 (System/exit 2))
                               :else

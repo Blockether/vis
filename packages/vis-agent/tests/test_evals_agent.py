@@ -232,7 +232,7 @@ def test_shell_command_keeps_paths_and_the_prompt_in_variables(
     assert command.startswith(
         'unset VIS_GATEWAY_URL; cd "$VIS_HARBOR_SOURCE" && '
         '"$VIS_HARBOR_ENGINE" -Scp "$VIS_HARBOR_CLASSPATH" '
-        '-J-Duser.dir="$VIS_HARBOR_WORKSPACE" -M:vis --full-trace-json-stream'
+        '-J-Duser.dir="$VIS_HARBOR_WORKSPACE" -M:vis --print --full-trace-json-stream'
     )
     assert (
         "--provider p --model m --reasoning-effort high --persist "
@@ -254,7 +254,7 @@ def test_shell_command_keeps_paths_and_the_prompt_in_variables(
 def test_installed_cli_is_the_default_engine(tmp_path, clean_settings):
     agent = make_agent(tmp_path)
     assert agent.shell_command().startswith(
-        'unset VIS_GATEWAY_URL; "$VIS_HARBOR_ENGINE" --full-trace-json-stream'
+        'unset VIS_GATEWAY_URL; "$VIS_HARBOR_ENGINE" --print --full-trace-json-stream'
     )
     env = agent.process_env("go", tmp_path)
     assert env["VIS_HARBOR_ENGINE"] == DEFAULT_COMMAND
@@ -281,7 +281,7 @@ def test_native_binary_replaces_the_source_engine(tmp_path, clean_settings):
     binary.write_bytes(b"\x7fELF" + bytes(12))
     agent = make_agent(tmp_path, native_bin=str(binary))
     assert (
-        '"$VIS_HARBOR_ENGINE" -Duser.dir="$VIS_HARBOR_WORKSPACE" --full-trace-json-stream'
+        '"$VIS_HARBOR_ENGINE" -Duser.dir="$VIS_HARBOR_WORKSPACE" --print --full-trace-json-stream'
         in agent.shell_command()
     )
     assert agent.process_env("go", tmp_path)["VIS_HARBOR_ENGINE"] == str(binary)
@@ -388,7 +388,8 @@ def test_harbor_runs_one_trial_on_the_host(tmp_path):
     assert (record["exit_code"], record["is_cancelled"]) == (0, False)
     seen = json.loads((logs / TRACE_FILE).read_text())
     arguments = seen["arguments"]
-    assert arguments[:7] == [
+    assert arguments[:8] == [
+        "--print",
         "--full-trace-json-stream",
         "--provider",
         "stub-provider",
@@ -397,8 +398,8 @@ def test_harbor_runs_one_trial_on_the_host(tmp_path):
         "--persist",
         "--trajectory",
     ]
-    assert Path(arguments[7]).resolve() == (logs / TRAJECTORY_FILE).resolve()
-    assert arguments[8:] == [instruction]
+    assert Path(arguments[8]).resolve() == (logs / TRAJECTORY_FILE).resolve()
+    assert arguments[9:] == [instruction]
     assert Path(seen["cwd"]).name == "workspace"
     assert seen["gateway_url"] is None
     assert seen["db_path"].endswith("vis.mdb")

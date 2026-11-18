@@ -268,6 +268,7 @@ class VisAgent(BaseAgent):
     def vis_arguments(self) -> list[str]:
         """Return the CLI options before ``--trajectory`` and the prompt."""
         arguments = [
+            "--print",
             "--full-trace-json-stream",
             "--provider",
             self.provider,

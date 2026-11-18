@@ -15,7 +15,7 @@ providers. Credentials are not included in this directory.
 
 ## Probe — anthropic
 
-    ./bin/vis-agent --provider anthropic-coding-plan --model claude-sonnet-4-6 \
+    ./bin/vis-agent -p --provider anthropic-coding-plan --model claude-sonnet-4-6 \
       'Use consult-request! :reflexion :deep with focus ["verify 91%
        HumanEval claim"] and a question about the Reflexion paper. In
        the next turn await-consult! :reflexion, check :confidence, and
@@ -24,7 +24,7 @@ providers. Credentials are not included in this directory.
 
 ## Probe — openai-codex (second provider for cross-validation)
 
-    ./bin/vis-agent --provider openai-codex --model gpt-5.5 \
+    ./bin/vis-agent -p --provider openai-codex --model gpt-5.5 \
       'Same prompt as above.'
 
 ## Expected

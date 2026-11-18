@@ -491,6 +491,11 @@
 
 (defdescribe
   parse-run-args-test
+  (it "keeps -p and --print out of the prompt text, but not after --"
+      (expect (= {:print? true :json? true :prompt "fix tests"}
+                 (#'main/parse-run-args ["-p" "--json" "fix" "tests"])))
+      (expect (= {:print? true :prompt "--print me"}
+                 (#'main/parse-run-args ["--print" "--" "--print" "me"]))))
   (it "parses --toggles as a run-scoped override list"
       (expect (= {:toggles "main_test_flag=true,reasoning_level=deep" :prompt "run tests"}
                  (#'main/parse-run-args
@@ -691,27 +696,24 @@
 
 (defdescribe
   root-run-shortcut-test
-  (it "treats bare prompt and run flags as root run shortcut"
+  (it "runs a prompt only with -p or --print"
       (let [root (#'main/root-command)]
-        (expect (true? (#'main/root-run-shortcut? root ["fix tests"])))
-        (expect (true? (#'main/root-run-shortcut? root ["--json" "summarize"])))))
-  (it "keeps known commands and unknown help out of root run shortcut"
+        (expect (true? (#'main/root-run-shortcut? root ["-p" "fix tests"])))
+        (expect (true? (#'main/root-run-shortcut? root ["--json" "--print" "summarize"])))
+        (expect (true? (#'main/root-run-shortcut? root ["-p" "update" "the" "readme"])))))
+  ;; A bare word or a run flag without -p used to become a PROMPT: a typo such as
+  ;; `vis-agent upgrade` spent a whole model turn on that word.
+  (it "turns words and run flags without -p into an unknown command"
+      (let [root (#'main/root-command)]
+        (doseq [args [["fix tests"] ["--json" "summarize"] ["update" "the" "readme"] ["upgrade"]
+                      ["--" "-p" "text"]]]
+          (expect (false? (#'main/root-run-shortcut? root args)) (pr-str args)))))
+  (it "keeps known commands out of root run shortcut"
       (let [root (#'main/root-command)]
         (expect (false? (#'main/root-run-shortcut? root ["providers" "list"])))
         (expect (false? (#'main/root-run-shortcut? root ["sessions" "export" "42d580bb" "--md"])))
         (expect (false? (#'main/root-run-shortcut? root ["sessions" "--help"])))
         (expect (false? (#'main/root-run-shortcut? root ["--help"])))))
-  ;; `vis-agent upgrade` used to reach the engine, match no command and become a
-  ;; PROMPT: a whole model turn spent on the word "upgrade" while nothing
-  ;; updated. The launcher owns these words; one arriving here is a mistake.
-  (it "never turns a lone wrapper word into a prompt"
-      (let [root (#'main/root-command)]
-        (doseq [word ["update" "upgrade" "switch" "desktop" "runtime"]]
-          (expect (false? (#'main/root-run-shortcut? root [word])) word))))
-  (it "still lets a real question that starts with one through"
-      (let [root (#'main/root-command)]
-        (expect (true? (#'main/root-run-shortcut? root ["update" "the" "readme"])))
-        (expect (true? (#'main/root-run-shortcut? root ["switch" "to" "the" "other" "branch"])))))
   (it "recognizes exactly the words the launcher implements"
       (expect (true? (#'main/wrapper-owned-invocation? ["upgrade"])))
       (expect (false? (#'main/wrapper-owned-invocation? ["upgrades"])))
