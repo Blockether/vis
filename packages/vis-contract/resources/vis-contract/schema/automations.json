@@ -17,7 +17,7 @@
     "webhook_value_bytes": 4000,
     "callback_attempts": 6,
     "callback_timeout_ms": 10000,
-    "extension_run_timeout_ms": 1800000
+    "extension_run_timeout_ms": 10800000
   },
   "$defs": {
     "automation_id": {

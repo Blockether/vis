@@ -228,7 +228,7 @@ declaration: a `temporary` session or a `persistent` session in the project fold
 | Returns text or `vis.ok(...)` | Completes. The text is the answer. |
 | Returns `vis.err(...)` or raises an error | Fails. The text of the error is the error of the run. |
 | Asks a question or shows a form | Fails at once. |
-| Works for more than 30 minutes | Fails. The next run in the queue starts. |
+| Works for more than 180 minutes | Fails. The next run in the queue starts. |
 
 ## Receive callbacks
 
@@ -383,7 +383,7 @@ Vis drops a repeated delivery by its delivery ID. It reads the ID from `X-GitHub
 | Webhook timestamp window | 300 seconds |
 | One payload value in a prompt | 4000 bytes |
 | Callback attempts | 6, each with a 10-second timeout |
-| One run of an extension automation | 30 minutes |
+| One run of an extension automation | 180 minutes |
 
 ## See also
 

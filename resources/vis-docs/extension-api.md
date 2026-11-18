@@ -1073,7 +1073,7 @@ The return value sets the result of the run:
 A run has these limits:
 
 - A run cannot ask a person. A question or a form fails the run at once.
-- A run that works for more than 30 minutes fails. This limit is the only time limit of `run`.
+- A run that works for more than 180 minutes fails. This limit is the only time limit of `run`.
   A run does not need to give output while it works.
 - When a person cancels the turn of a run, Vis stops `run` and the run ends as cancelled.
 - Each run adds one turn without a model to its session. So a `persistent` session shows the
