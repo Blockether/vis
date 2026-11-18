@@ -11,7 +11,6 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.config.mcp-approval :as mcp-approval]
             [com.blockether.vis.internal.config.mcp-json :as mcp-json]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.extension.registry :as registry]
@@ -293,7 +292,6 @@
                          (merge (get-in (config/load-global-yaml-config-raw) ["mcp" "servers"])
                                 (get-in (config/load-global-config-raw) ["mcp" "servers"]))
 
-                         ;; Also the `.mcp.json` servers that wait for approval.
                          "project"
                          (merge (mcp-json/servers)
                                 (get-in (config/load-project-root-config-raw) ["mcp" "servers"]))
@@ -374,43 +372,6 @@
     (refuse! (str "MCP server " name " already exists in " scope " config")))
   (write-server! options scope name spec))
 
-(defn- choose!
-  "Keep the approval `choice` (`mcp-approval/choose`) of the `.mcp.json` server
-   `name` in the private `.vis/config.yml`."
-  [name choice]
-  (binding [workspace/*workspace-root* (root)]
-    (config/update-project-config! #(mcp-approval/choose % name choice))))
-
-(defn- forget!
-  "Drop each approval choice of a `.mcp.json` server that has the engine name of
-   `name`. A choice for `My_Srv` must not stay after `remove my-srv`."
-  [name]
-  (binding [workspace/*workspace-root* (root)]
-    (config/update-project-config! (fn [raw]
-                                     (reduce #(mcp-approval/choose %1 %2 :forget)
-                                             raw
-                                             (filter #(same-name? name %)
-                                                     (mapcat #(get-in raw ["mcp" %])
-                                                             ["enabled_mcpjson_servers"
-                                                              "disabled_mcpjson_servers"])))))))
-
-(defn- approve-own!
-  "A person who adds a server to `.mcp.json` approves it for this person."
-  [scope name]
-  (when (= "project" scope) (choose! name :approve)))
-
-(defn- approval
-  "`pending` or `rejected` when `name` of `scope` is a `.mcp.json` server that Vis
-   does not start, else nil."
-  [scope name]
-  (when (= "project" scope)
-    (binding [workspace/*workspace-root* (root)]
-      (let [started (by-canonical-name (get-in (config/load-project-root-config-raw)
-                                               ["mcp" "servers"]))]
-        (when-not (contains? started (mcp-core/canonical-name name))
-          (when-let [raw (first (filter #(same-name? name %) (keys (mcp-json/servers))))]
-            (mcp-approval/status (config/mcp-approval-choices) raw)))))))
-
 (defn- print-file! [file] (when file (commandline/stdout! (str "File modified: " file))))
 
 (defn- transport-label
@@ -454,7 +415,6 @@
         (save-new! options scope name spec)]
 
     (save-client-secret! name secret)
-    (approve-own! scope name)
     (commandline/stdout!
       (if (= "stdio" (get spec "transport"))
         (str "Added stdio MCP server "
@@ -511,7 +471,6 @@
           (save-new! options scope name spec)]
 
       (save-client-secret! name secret)
-      (approve-own! scope name)
       (commandline/stdout!
         (str "Added "
              (get {"streamable_http" "http"} (get spec "transport") (get spec "transport"))
@@ -624,24 +583,20 @@
       [name (get-in by-scope [scope name]) scope])))
 
 (defn- health
-  "Claude Code's status mark of `name` of `scope` after the gateway tries to connect
-   it. A `.mcp.json` server without approval does not connect: a stdio server runs
-   a command of the repository."
-  [name spec scope]
-  (let [approval (when-not (false? (get spec "enabled")) (approval scope name))]
-    (cond (false? (get spec "enabled")) "✗ Disabled"
-          (= "pending" approval) "! Needs approval"
-          (= "rejected" approval) "✗ Rejected"
-          :else (try (if (get (gateway-client/mcp-test-server! name spec) "is_connected")
-                       "✓ Connected"
-                       "! Needs authentication")
-                     ;; Only the gateway's answer about this server is a failed connect. An
-                     ;; unreachable gateway is not, and must not mark every server failed.
-                     (catch clojure.lang.ExceptionInfo e
-                       (let [status (:http-status (ex-data e))]
-                         (if (and status (<= 400 (long status) 499) (not= 401 (long status)))
-                           "✗ Failed to connect"
-                           (throw e))))))))
+  "Claude Code's status mark of `name` after the gateway tries to connect it."
+  [name spec]
+  (if (false? (get spec "enabled"))
+    "✗ Disabled"
+    (try (if (get (gateway-client/mcp-test-server! name spec) "is_connected")
+           "✓ Connected"
+           "! Needs authentication")
+         ;; Only the gateway's answer about this server is a failed connect. An
+         ;; unreachable gateway is not, and must not mark every server failed.
+         (catch clojure.lang.ExceptionInfo e
+           (let [status (:http-status (ex-data e))]
+             (if (and status (<= 400 (long status) 499) (not= 401 (long status)))
+               "✗ Failed to connect"
+               (throw e)))))))
 
 (defn- target-text
   [spec]
@@ -672,10 +627,10 @@
           (do (commandline/stdout! "Checking MCP server health...\n")
               ;; Check the servers at the same time, and print them in order. A
               ;; failed future gives its own error, not a wrapped one.
-              (doseq [line (mapv (fn [[name spec scope]]
+              (doseq [line (mapv (fn [[name spec]]
                                    (future (str name
                                                 ": " (target-text spec)
-                                                " - " (health name spec scope))))
+                                                " - " (health name spec))))
                                  servers)]
                 (commandline/stdout! (try @line
                                           (catch java.util.concurrent.ExecutionException e
@@ -703,7 +658,7 @@
             (refuse! (str "No MCP server found with name: " name)))
 
         status
-        (health name spec scope)]
+        (health name spec)]
 
     (commandline/stdout! (str name ":"))
     (commandline/stdout! (str "  Scope: " (scope-labels scope)))
@@ -738,7 +693,6 @@
                         (mcp-core/canonical-name name)))
         (refuse! (str "No MCP server found with name: \"" name "\" in " scope " config")))
   (let [file (write-server! options scope name nil)]
-    (when (= "project" scope) (forget! name))
     (when-not (some #(contains? (servers-in %) (mcp-core/canonical-name name)) file-scopes)
       (oauth/delete-client-secret! (mcp-core/canonical-name name)))
     (commandline/stdout! (str "Removed MCP server " name " from " scope " config"))
@@ -774,94 +728,6 @@
                         (str/join "\n"
                                   (map #(str "  vis-agent mcp remove \"" name "\" -s " %)
                                        found)))))))))
-
-;;; ── Approval of .mcp.json servers ──────────────────────────────────────────
-
-(defn- pending-project-servers
-  "The `.mcp.json` names that wait for the approval of the person, sorted."
-  []
-  (let [started
-        (by-canonical-name (get-in (config/load-project-root-config-raw) ["mcp" "servers"]))
-
-        choices
-        (config/mcp-approval-choices)]
-
-    (vec (sort (filter #(and (= "pending" (mcp-approval/status choices %))
-                             (not (contains? started (mcp-core/canonical-name %))))
-                       (map str (keys (mcp-json/servers))))))))
-
-(defn- ask-line
-  [^Console console prompt]
-  (str/trim (str (.readLine console prompt (object-array 0)))))
-
-(defn- ask-one!
-  "Claude Code's question about one new `.mcp.json` server."
-  [^Console console name]
-  (commandline/stdout! (str "New MCP server found in .mcp.json: " name "\n"))
-  (commandline/stdout! "MCP servers may execute code or access system resources.\n")
-  (commandline/stdout! "  1. Use this and all future MCP servers in this project")
-  (commandline/stdout! "  2. Use this MCP server")
-  (commandline/stdout! "  3. Continue without using this MCP server")
-  (loop []
-
-    (if-let [choice (get {"" :approve-all "1" :approve-all "2" :approve "3" :reject}
-                         (ask-line console "Choice (Enter = 1): "))]
-      (choose! name choice)
-      (recur))))
-
-(defn- ask-many!
-  "Claude Code's question about several new `.mcp.json` servers: the person selects
-   the servers to use, and Vis rejects the others."
-  [^Console console names]
-  (commandline/stdout! (str (count names) " new MCP servers found in .mcp.json\n"))
-  (commandline/stdout! "MCP servers may execute code or access system resources.\n")
-  (doseq [[i name] (map-indexed vector names)]
-    (commandline/stdout! (str "  " (inc i) ". " name)))
-  (let [chosen (loop []
-
-                 (let [answer (ask-line
-                                console
-                                "Servers to use (numbers such as 1,3; Enter = all; n = none): ")
-                       picks (cond (str/blank? answer) names
-                                   (#{"n" "N"} answer) []
-                                   :else (for [n (str/split answer #"[,\s]+")
-                                               :let [i (some-> (parse-long n)
-                                                               dec)]]
-
-                                           (when (and i (< -1 i (count names))) (nth names i))))]
-
-                   (if (every? some? picks) (set picks) (recur))))]
-    (doseq [name names]
-      (choose! name (if (chosen name) :approve :reject)))))
-
-(defn approve-project-servers!
-  "Ask about each new `.mcp.json` server of the current directory, as Claude Code
-   does when it starts. The terminal client calls it before it takes the screen.
-   Without a terminal, the servers stay pending, and Vis does not start them."
-  []
-  (when-let [console (System/console)]
-    (binding [workspace/*workspace-root* (root)]
-      (when (workspace/source-enabled? "project")
-        (let [names (pending-project-servers)]
-          (case (count names)
-            0
-            nil
-
-            1
-            (ask-one! console (first names))
-
-            (ask-many! console names)))))))
-
-(defn- cli-mcp-reset-project-choices!
-  [_ words]
-  (let [{:keys [options positionals]} (parse-words #{"db"} words)]
-    (with-mcp-db! options)
-    (when (seq positionals) (refuse! (str "Unexpected arguments: " (str/join " " positionals))))
-    (binding [workspace/*workspace-root* (root)]
-      (config/update-project-config! mcp-approval/reset))
-    (commandline/stdout!
-      "All project-scoped (.mcp.json) server approvals and rejections have been reset.")
-    (commandline/stdout! "You will be prompted for approval next time you start Vis.")))
 
 (defn- cli-mcp-serve!
   [_ words]
@@ -1160,15 +1026,6 @@
                db-arg]
     :cmd/examples ["vis-agent mcp serve"]
     :cmd/run-fn cli-mcp-serve!}
-   {:cmd/name "reset-project-choices"
-    :cmd/parent ["mcp"]
-    :cmd/doc
-    "Reset all approved and rejected project-scoped (.mcp.json) servers within this project."
-    :cmd/usage "vis-agent mcp reset-project-choices"
-    :cmd/raw-args? true
-    :cmd/args [db-arg]
-    :cmd/examples ["vis-agent mcp reset-project-choices"]
-    :cmd/run-fn cli-mcp-reset-project-choices!}
    {:cmd/name "test"
     :cmd/parent ["mcp"]
     :cmd/doc

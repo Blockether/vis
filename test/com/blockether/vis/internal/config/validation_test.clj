@@ -54,15 +54,6 @@
                                                   "url" "https://mcp.example.com/mcp"
                                                   "auth" {"callback_port" port}}}}}))))))
 
-(defdescribe mcp-json-approval-test
-  (it "accepts the approval keys of .mcp.json servers and refuses blank names"
-      (doseq [[mcp accepted?] [[{"enable_all_project_mcp_servers" true} true]
-                               [{"enabled_mcpjson_servers" ["figma"] "disabled_mcpjson_servers" ["fs"]} true]
-                               [{"enable_all_project_mcp_servers" "yes"} false]
-                               [{"enabled_mcpjson_servers" [" "]} false]
-                               [{"disabled_mcpjson_servers" "fs"} false]]]
-        (expect (= accepted? (config-validation/valid? {"mcp" mcp}))))))
-
 (defdescribe mcp-input-options-test
   (it "accepts roots and sampling as true or false only"
       (doseq [[options accepted?] [[{"roots" false} true] [{"sampling" true} true]

@@ -7,7 +7,6 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.external-opener :as external-opener]
-            [com.blockether.vis.internal.foundation.mcp.cli :as mcp-cli]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.pairing :as pairing]
             [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
@@ -501,8 +500,6 @@
     :cmd/doc "Run the terminal client with a local gateway lease (used by the launcher)."
     :cmd/raw-args? true
     :cmd/run-fn (fn [_ args]
-                  ;; Claude Code asks about new `.mcp.json` servers when it starts.
-                  (mcp-cli/approve-project-servers!)
                   (let [exit (gateway-client/run-tui! (vec (drop-while #{"--"} args)))]
                     (shutdown-agents)
                     (System/exit (int exit))))}

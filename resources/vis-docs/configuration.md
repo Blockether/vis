@@ -860,19 +860,8 @@ When two scopes have the same name, `local` wins over `project`, and `project` w
 In the project scope, a server in `vis.yml` wins over the same name in `.mcp.json`.
 
 Vis reads `.mcp.json` in the Claude Code format, so a project that has this file for Claude Code
-also works in Vis. A stdio server of `.mcp.json` runs a command of the repository. So Vis starts a
-server of `.mcp.json` only after you approve it. When you start `vis-agent` in a terminal, Vis asks
-about each new server, as Claude Code does.
-
-Vis keeps your choice in `.vis/config.yml`, in the `mcp` keys `enabled_mcpjson_servers`,
-`disabled_mcpjson_servers`, and `enable_all_project_mcp_servers`. `vis.yml` cannot approve a server.
-A server that you add with `--scope project` is approved for you. `vis-agent mcp list` shows
-`! Needs approval` for a server that waits, and Vis does not connect it. To ask again, run this
-command:
-
-```bash
-vis-agent mcp reset-project-choices
-```
+also works in Vis. Vis starts each server of `.mcp.json`. A stdio server runs a command of the
+repository, so read `.mcp.json` before you start Vis in a repository that you do not trust.
 
 A server that signs in with a pre-registered OAuth client takes these options:
 

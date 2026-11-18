@@ -24,7 +24,6 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.config.mcp-approval :as mcp-approval]
             [com.blockether.vis.internal.config.mcp-json :as mcp-json]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.provider.catalog :as catalog]
@@ -1489,21 +1488,13 @@
                              " project's gitignored .vis/config.yml overlay")}))))
   (reduce dissoc raw user-only-config-keys))
 
-(defn mcp-approval-choices
-  "The `mcp` block of the files that the person owns, `~/.vis/config.yml` under
-   `.vis/config.yml`: it keeps the approval of the `.mcp.json` servers. The
-   committed `vis.yml` does not count."
-  []
-  (merge (get (load-global-yaml-config-raw) "mcp") (get (load-project-config-raw) "mcp")))
-
 (defn load-project-root-config-raw
   "Load the visible project-root tier: the first existing of
    `<workspace>/vis.yml` / `vis.yaml`, or nil. Nil also when the session does not
    read the project tier. This file is COMMITTED, so `user-only-config-keys` are
    dropped from it with one warning — see that Var. The MCP servers of the shared
-   Claude Code file `.mcp.json` join this tier when the person approved them
-   (`mcp-approval-choices`); a `vis.yml` server of the same name replaces the
-   `.mcp.json` server."
+   Claude Code file `.mcp.json` join this tier; a `vis.yml` server of the same
+   name replaces the `.mcp.json` server."
   []
   (when (workspace/source-enabled? "project")
     (let [root
@@ -1513,7 +1504,7 @@
                 (project-root-yaml-paths))
 
           shared
-          (mcp-approval/approved (mcp-approval-choices) (mcp-json/servers))]
+          (mcp-json/servers)]
 
       (if (seq shared) (update-in (or root {}) ["mcp" "servers"] #(merge shared %)) root))))
 

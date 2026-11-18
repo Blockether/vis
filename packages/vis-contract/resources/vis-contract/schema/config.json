@@ -1087,26 +1087,6 @@
           "additionalProperties": {
             "$ref": "#/$defs/mcpServer"
           }
-        },
-        "enable_all_project_mcp_servers": {
-          "type": "boolean",
-          "description": "Approve all servers of the .mcp.json file of the project. Same as enableAllProjectMcpServers of Claude Code."
-        },
-        "enabled_mcpjson_servers": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": ".*\\S.*"
-          },
-          "description": "Names of the approved servers of the .mcp.json file. Same as enabledMcpjsonServers of Claude Code."
-        },
-        "disabled_mcpjson_servers": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": ".*\\S.*"
-          },
-          "description": "Names of the refused servers of the .mcp.json file. Same as disabledMcpjsonServers of Claude Code."
         }
       },
       "additionalProperties": false
