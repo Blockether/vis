@@ -710,10 +710,12 @@
             home
             (#'python-runtime/interpreter-home (.getCanonicalFile (io/file python)))
 
+            ;; The start check of a copy writes bytecode files that a new tree does not have.
             files
             (fn [^java.io.File dir]
               (count (filter #(and (.isFile ^java.io.File %)
-                                   (not (str/starts-with? (.getName ^java.io.File %) ".vis-")))
+                                   (not (str/starts-with? (.getName ^java.io.File %) ".vis-"))
+                                   (not (str/ends-with? (.getName ^java.io.File %) ".pyc")))
                              (file-seq dir))))
 
             start
