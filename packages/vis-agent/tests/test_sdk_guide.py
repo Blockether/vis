@@ -187,7 +187,7 @@ def test_local_recipe_uses_default_project_and_closes_its_engine(
         )
         return client
 
-    monkeypatch.setattr("blockether.vis.engine._agent.LocalEngine", local_engine)
+    monkeypatch.setattr("blockether.vis.engine._agent.PrivateEngine", local_engine)
     recipe("local_task").main()
     assert "Status: completed" in capsys.readouterr().out
     assert calls[-1][:2] == ("DELETE", "/v1/clients/sdk-lease")
@@ -297,10 +297,10 @@ def test_recipes_complete_against_real_engine(
             connection_environment(monkeypatch, client, work)
             recipe("gateway_task").main()
         else:
-            local_engine = engine.LocalEngine
+            local_engine = engine._local.PrivateEngine
             with monkeypatch.context() as local_patch:
                 local_patch.setattr(
-                    "blockether.vis.engine._agent.LocalEngine",
+                    "blockether.vis.engine._agent.PrivateEngine",
                     lambda **opts: local_engine(executable=client._command, **opts),
                 )
                 recipe("local_task").main()

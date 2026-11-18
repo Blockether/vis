@@ -71,7 +71,8 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
     for (const name of [
       'Agent.run',
       'Agent.send',
-      'LocalEngine',
+      'start',
+      'connect',
       'GatewayClient',
       'ExecutionLayer',
     ])
@@ -224,14 +225,14 @@ test.each(['blockether/vis.html', 'blockether/vis/engine.html'])(
       const document = dom.window.document;
       const input = document.querySelector('input[type="search"]');
       input.focus();
-      input.value = 'LocalEngine';
+      input.value = 'stop_shared';
       input.dispatchEvent(new dom.window.Event('input'));
       await expect
         .poll(() => document.querySelectorAll('.search-result').length)
         .toBeGreaterThan(0);
       expect(
         [...document.querySelectorAll('.search-result a')].some((link) =>
-          link.href.endsWith('engine.html#LocalEngine'),
+          link.href.endsWith('engine.html#stop_shared'),
         ),
       ).toBe(true);
       expect(requested).toContain(prefix + 'search.js');

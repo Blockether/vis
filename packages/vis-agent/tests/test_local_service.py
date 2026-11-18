@@ -1,4 +1,4 @@
-"""The shared local gateway of `LocalService` (#489); real-engine coverage is explicitly selected."""
+"""The shared local gateway of `start(shared=True)` (#489); real-engine coverage is explicitly selected."""
 
 import contextlib
 import json
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 from blockether.vis._contracts import definition
-from blockether.vis.engine import GatewayClient, LocalService, TransportError
+from blockether.vis.engine import GatewayClient, TransportError, start, stop_shared
 
 _HANDSHAKE = definition("gateway", "handshake")["properties"]
 _SRC = str(Path(__file__).resolve().parents[1] / "src")
@@ -108,7 +108,7 @@ def gateway(tmp_path):
     script.write_text(_FAKE_GATEWAY)
     home = tmp_path / "service"
     yield [sys.executable, str(script)], home
-    LocalService.stop(home=home)
+    stop_shared(home=home)
 
 
 def _starts(home):
@@ -132,11 +132,11 @@ def _alive(pid):
 
 def test_second_ensure_reuses_the_running_gateway_fast(gateway):
     command, home = gateway
-    with LocalService.ensure(executable=command, home=home) as first:
+    with start(shared=True, executable=command, home=home) as first:
         assert isinstance(first, GatewayClient)
         assert first.get_capabilities()["protocol"]["protocol"] > 0
         started = time.monotonic()
-        with LocalService.ensure(executable=command, home=home) as second:
+        with start(shared=True, executable=command, home=home) as second:
             assert time.monotonic() - started < 1
             assert second._url == first._url
     assert len(_starts(home)) == 1
@@ -145,12 +145,11 @@ def test_second_ensure_reuses_the_running_gateway_fast(gateway):
 def test_gateway_stops_after_its_last_client_and_starts_again(gateway):
     # A forgotten gateway must not run forever: it stops when the last lease ends.
     command, home = gateway
-    with LocalService.ensure(executable=command, home=home):
+    with start(shared=True, executable=command, home=home):
         pid = json.loads((home / "gateway.json").read_text())["pid"]
     _wait_exit(pid)
     assert not _alive(pid)
-    assert LocalService.discover(home=home) is None
-    with LocalService.ensure(executable=command, home=home):
+    with start(shared=True, executable=command, home=home):
         assert json.loads((home / "gateway.json").read_text())["pid"] != pid
     assert len(_starts(home)) == 2
 
@@ -169,19 +168,19 @@ def test_gateway_keeps_push_state_and_logs_in_its_home(gateway, tmp_path):
         path.chmod(0o755)
     # An argument list runs a JVM; a pinned launcher runs the native engine.
     for executable in (command, [str(launcher)]):
-        with LocalService.ensure(executable=executable, home=home):
+        with start(shared=True, executable=executable, home=home):
             folder = home.resolve()
             properties = json.loads((home / "properties").read_text())
             assert f"-Dvis.push.home={folder / 'push'}" in properties
             assert f"-Dvis.logs.dir={folder / 'logs'}" in properties
-        LocalService.stop(home=home)
+        stop_shared(home=home)
 
 
 def test_concurrent_ensure_starts_one_gateway(gateway):
     command, home = gateway
     code = (
-        "import sys; from blockether.vis.engine import LocalService; "
-        f"print(LocalService.ensure(executable={command!r}, home={str(home)!r})._url)"
+        "import sys; from blockether.vis.engine import start; "
+        f"print(start(shared=True, executable={command!r}, home={str(home)!r})._url)"
     )
     env = {**os.environ, "PYTHONPATH": _SRC}
     callers = [
@@ -215,7 +214,7 @@ def test_a_stale_record_is_replaced_without_ending_its_process(gateway):
                 }
             )
         )
-        client = LocalService.ensure(executable=command, home=home)
+        client = start(shared=True, executable=command, home=home)
         with client:
             pass
         record = json.loads((home / "gateway.json").read_text())
@@ -227,23 +226,18 @@ def test_a_stale_record_is_replaced_without_ending_its_process(gateway):
         stranger.wait()
 
 
-def test_stop_ends_the_gateway_and_discover_finds_none(gateway):
+def test_stop_shared_ends_the_gateway_for_its_clients(gateway):
     command, home = gateway
-    assert LocalService.discover(home=home) is None
-    client = LocalService.ensure(executable=command, home=home)
-    found = LocalService.discover(home=home)
-    assert found is not None
+    client = start(shared=True, executable=command, home=home)
     pid = json.loads((home / "gateway.json").read_text())["pid"]
     # An explicit stop ends the gateway while clients still hold leases.
-    assert LocalService.stop(home=home) is True
+    assert stop_shared(home=home) is True
     _wait_exit(pid)
     assert not _alive(pid)
-    for layer in (client, found):
-        with contextlib.suppress(TransportError):
-            layer.close()
+    with contextlib.suppress(TransportError):
+        client.close()
     assert not (home / "gateway.json").exists()
-    assert LocalService.discover(home=home) is None
-    assert LocalService.stop(home=home) is False
+    assert stop_shared(home=home) is False
 
 
 def test_real_local_service(tmp_path, monkeypatch):
@@ -261,21 +255,21 @@ def test_real_local_service(tmp_path, monkeypatch):
     project.mkdir()
     argv = shlex.split(command)
     try:
-        with LocalService.ensure(
-            executable=argv, home=home, startup_timeout=180
+        with start(
+            shared=True, executable=argv, home=home, startup_timeout=180
         ) as layer:
             session = layer.create_session(**layer.session_options(project))
             assert session.read()["id"] == session.id
             assert session.turns() == []
             pid = json.loads((home / "gateway.json").read_text())["pid"]
             started = time.monotonic()
-            with LocalService.ensure(executable=argv, home=home):
+            with start(shared=True, executable=argv, home=home):
                 assert time.monotonic() - started < 5
         # The managed gateway stops by itself after the last lease ends.
         _wait_exit(pid, 30)
         assert not _alive(pid)
-        with LocalService.ensure(
-            executable=argv, home=home, startup_timeout=180
+        with start(
+            shared=True, executable=argv, home=home, startup_timeout=180
         ) as layer:
             rows = layer.list_sessions(include_empty=True)["sessions"]
             assert any(row["id"] == session.id for row in rows)
@@ -285,4 +279,4 @@ def test_real_local_service(tmp_path, monkeypatch):
         assert not [log for log in (user / ".vis").glob("logs/**/*") if log.is_file()]
         assert any((home / "logs").glob("*/gateway-*.log"))
     finally:
-        LocalService.stop(home=home)
+        stop_shared(home=home)

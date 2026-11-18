@@ -408,8 +408,8 @@ class Event:
 class ExecutionLayer(ABC):
     """Shared session API for local processes and explicit gateway connections.
 
-    Applications normally choose `blockether.vis.engine.LocalEngine` or
-    `blockether.vis.engine.GatewayClient`, then use `create_session` to start a
+    Applications normally get a layer from `blockether.vis.engine.start` or
+    `blockether.vis.engine.connect`, then use `create_session` to start a
     conversation or `session` to attach to an existing session ID. `Agent` wraps
     this API when you only need one conversation.
 
@@ -3622,6 +3622,7 @@ class _UploadStream:
 class GatewayClient(ExecutionLayer):
     """Use an existing Vis gateway through an explicit HTTP(S) origin.
 
+    `blockether.vis.engine.connect` returns a connected instance of this class.
     Choose this layer when sessions must outlive your Python process, or when
     the engine runs on another machine. It never starts or discovers a gateway,
     and it never reads locally saved credentials. Get an authorized gateway URL
@@ -3640,12 +3641,12 @@ class GatewayClient(ExecutionLayer):
 
     ```python
     import os
-    from blockether.vis.engine import Agent, GatewayClient
+    from blockether.vis.engine import Agent, connect
 
-    with GatewayClient(
+    with connect(
         "https://gateway.example.com", token=os.environ["VIS_GATEWAY_TOKEN"]
-    ) as layer:
-        with Agent(project="/workspace/project", execution_layer=layer) as agent:
+    ) as client:
+        with Agent(project="/workspace/project", execution_layer=client) as agent:
             result = agent.run("Summarize this project without changing files.")
             print(result["status"])
     ```
@@ -3920,6 +3921,50 @@ class GatewayClient(ExecutionLayer):
         if not path.is_absolute():
             raise ValueError("project must be an absolute path on the gateway")
         return {"root": str(path), "channel": "app"}
+
+
+def connect(
+    url: str, *, token: str | None = None, timeout: float = 30
+) -> GatewayClient:
+    """Connect to a Vis gateway that runs separately, and return its client.
+
+    Use this when sessions must outlive your Python program, or when the engine
+    runs on another machine. To start an engine on this computer, call
+    `blockether.vis.engine.start`. This function never starts or discovers a
+    gateway, and it never reads locally saved credentials.
+
+    ```python
+    import os
+    from blockether.vis.engine import Agent, connect
+
+    with connect(
+        "https://gateway.example.com", token=os.environ["VIS_GATEWAY_TOKEN"]
+    ) as client:
+        with Agent(project="/workspace/project", execution_layer=client) as agent:
+            print(agent.run("Summarize this project without changing files.")["status"])
+    ```
+
+    Args:
+        url: HTTP(S) origin such as `https://gateway.example.com`, without a
+            path, query, fragment or embedded credentials.
+        token: Optional bearer token supplied by your application.
+        timeout: Positive finite transport timeout in seconds. Defaults to 30.
+
+    The call checks protocol compatibility and takes a client lease. Close the
+    client, or use it as a context manager. Closing releases the lease and the
+    streams of this client, not the gateway or its stored sessions.
+
+    Raises:
+        ValueError: `url` is not a plain HTTP(S) origin.
+        GatewayError: The gateway refused the connection, for example the token.
+        TransportError: The gateway cannot be reached or uses another protocol.
+    """
+    client = GatewayClient(url, token=token, timeout=timeout)
+    try:
+        return client.connect()
+    except BaseException:
+        client.close()
+        raise
 
 
 @dataclass(frozen=True, slots=True)

@@ -2844,7 +2844,7 @@
      :cmd/extra-sections
      [{:title "USE FROM PYTHON"
        :body (str/join "\n"
-                       ["  Agent() and LocalEngine start this command for you, select a private"
+                       ["  Agent() and start() start this command for you, select a private"
                         "  session database, and stop the process when their context closes." ""
                         "  from blockether.vis.engine import Agent"
                         "  with Agent(project=\".\") as agent:"
@@ -2866,7 +2866,7 @@
        (config/init-cli!)
        (when (str/blank? (System/getenv "VIS_DB_PATH"))
          (throw (ex-info
-                  "stdio requires VIS_DB_PATH; use Agent() or LocalEngine() from the Python SDK"
+                  "stdio requires VIS_DB_PATH; use Agent() or start() from the Python SDK"
                   {:vis/user-error true})))
        (try (gateway-stdio/serve!
               (java.io.BufferedReader.

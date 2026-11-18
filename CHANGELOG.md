@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Sandbox: `defs["name"]` does the same lookup as `defs("name")`. Before, the subscript failed with `TypeError: 'function' object is not subscriptable`. The Python runtime is now at commit d20f31f.
 
+### Changed
+
+- Python SDK: `start()` and `connect(url)` of `blockether.vis.engine` replace `LocalEngine` and `LocalService`. `start()` starts a private engine with temporary sessions, as `LocalEngine(...)` did. `start(shared=True)` starts or joins the shared local gateway, and `stop_shared()` stops it. `connect(url, token=...)` returns a connected `GatewayClient` for a gateway that runs separately. In your code, replace `LocalEngine(...)` with `start(...)`.
+
 ### Fixed
 
 - Live apps: Settings listed one app several times when the app had more than one key. An app can now declare `settings_name` (`vis.ui.app(..., settings_name=...)`). Apps of one owner with the same settings name share one pair of settings. The Review app uses one name for all its roots, so Settings show it one time.

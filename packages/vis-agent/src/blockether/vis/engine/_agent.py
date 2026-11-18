@@ -26,7 +26,7 @@ from ._client import (
     Turn,
     _duration,
 )
-from ._local import LocalEngine
+from ._local import PrivateEngine
 
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 
@@ -443,10 +443,10 @@ class Agent:
     Args:
         project: Project directory. Local execution resolves an existing directory
             immediately. Gateway execution requires an absolute path on the gateway.
-        execution_layer: A `blockether.vis.engine.LocalEngine` or
-            `blockether.vis.engine.GatewayClient` to borrow. When omitted, the agent
-            creates and owns a local engine. Configure executable, credentials and
-            transport timeouts on an explicit layer.
+        execution_layer: A client from `blockether.vis.engine.start` or
+            `blockether.vis.engine.connect` to borrow. When omitted, the agent
+            starts and owns a private local engine. Configure executable, credentials
+            and transport timeouts in those calls.
         extensions: Iterable of `blockether.vis.extension.Extension` declarations.
             Their Python callables stay in your application and execute on the
             calling thread while you read, wait or iterate events.
@@ -501,7 +501,7 @@ class Agent:
             raise TypeError("execution_layer must be an ExecutionLayer")
         self._owns_execution_layer = execution_layer is None
         self.execution_layer = (
-            LocalEngine(root=project) if execution_layer is None else execution_layer
+            PrivateEngine(root=project) if execution_layer is None else execution_layer
         )
         self._session_options: dict[str, Any] = dict(
             self.execution_layer.session_options(project)

@@ -24,6 +24,7 @@ from ._client import (
     TransportError,
     Turn,
     VisTimeout,
+    connect,
 )
 from ._council import (
     Council,
@@ -36,9 +37,8 @@ from ._council import (
 )
 from ._groups import SessionGroup
 from ._install import InstallError, ensure_installed, install
-from ._local import LocalEngine
 from ._models import Model, SessionModel
-from ._service import LocalService
+from ._service import start, stop_shared
 from ._sounds import SoundPreset, Sounds, SoundSettings
 from ._speech import Speech, SpeechAudio, Transcript, Voice
 
@@ -63,8 +63,6 @@ __all__ = [
     "JobEvent",
     "JobEvents",
     "JSONValue",
-    "LocalEngine",
-    "LocalService",
     "Model",
     "ProtocolError",
     "Query",
@@ -84,7 +82,10 @@ __all__ = [
     "Turn",
     "VisTimeout",
     "Voice",
+    "connect",
     "ensure_installed",
     "final_answer",
     "install",
+    "start",
+    "stop_shared",
 ]

@@ -21,6 +21,7 @@ import tempfile
 import threading
 import time
 import weakref
+from collections.abc import Sequence
 from email.message import Message
 from pathlib import Path
 from urllib.parse import urlencode
@@ -130,16 +131,8 @@ def _reply(status, decoded, headers):
     return _Reply(status, decoded, headers)
 
 
-class LocalEngine(ExecutionLayer):
-    """Own a private Vis process without starting an HTTP server.
-
-    Use this layer when you need to choose an executable, share one local process
-    between agents, or call the session API directly. With the default `vis-agent`,
-    `connect` uses the installed command when it runs this SDK's release. Otherwise it
-    downloads that release once into `$VIS_HOME/sdk` and checks it against the release
-    checksums.
-    Set `VIS_NO_AUTO_INSTALL=1` to turn off the download. This class never discovers
-    a gateway. Supported platforms are Linux and macOS.
+class PrivateEngine(ExecutionLayer):
+    """The private engine of `blockether.vis.engine.start`: one stdio process, no HTTP server.
 
     Args:
         executable: Executable path/name or nonempty argument sequence. The SDK
@@ -157,21 +150,6 @@ class LocalEngine(ExecutionLayer):
     stops and the temporary database is removed when Python collects the layer or exits.
     Do not rely on this: an unclosed layer keeps its process until then.
 
-    The first session of a new engine copy can take more than a minute, for example
-    after the first download or an SDK update. The engine then prepares the installed
-    Python extensions for its embedded Python: it installs their dependencies and
-    compiles them. A project with its own extensions can need this once too. So
-    `create_session` waits up to `startup_timeout`.
-
-    ```python
-    from blockether.vis.engine import Agent, LocalEngine
-
-    with LocalEngine(executable="vis-agent", root=".") as layer:
-        with Agent(project=".", execution_layer=layer) as agent:
-            result = agent.run("Summarize this project without changing files.")
-            print(result["status"])
-    ```
-
     A pipe timeout stops the process: a late reply must never be mistaken for the
     next request's answer. This differs from a `blockether.vis.engine.Turn.wait`
     deadline, which does not itself request cancellation. Startup, protocol and
@@ -181,7 +159,12 @@ class LocalEngine(ExecutionLayer):
     """
 
     def __init__(
-        self, *, executable="vis-agent", root=".", timeout=30, startup_timeout=120
+        self,
+        *,
+        executable: str | os.PathLike[str] | Sequence[str] = "vis-agent",
+        root: str | os.PathLike[str] = ".",
+        timeout: float = 30,
+        startup_timeout: float = 120,
     ):
         super().__init__(timeout=timeout)
         if os.name != "posix":
@@ -195,7 +178,7 @@ class LocalEngine(ExecutionLayer):
             isinstance(arg, str) and arg for arg in self._command
         ):
             raise ValueError("executable must be a nonempty argv sequence")
-        self._root = self.session_options(root)["root"]
+        self._root = self.session_options(os.fspath(root))["root"]
         self._startup_timeout = _duration(startup_timeout)
         self._process = None
         self._home = None

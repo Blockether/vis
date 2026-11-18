@@ -13,14 +13,14 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator
 @pytest.fixture
 def local(monkeypatch):
     def create(**options):
-        layer = engine.LocalEngine(**options)
+        layer = engine._local.PrivateEngine(**options)
         layer.connect = Mock(return_value=layer)
         layer.create_session = Mock()
         layer.close = Mock()
         return layer
 
     factory = Mock(side_effect=create)
-    monkeypatch.setattr("blockether.vis.engine._agent.LocalEngine", factory)
+    monkeypatch.setattr("blockether.vis.engine._agent.PrivateEngine", factory)
     return factory
 
 
@@ -139,7 +139,9 @@ def test_project_must_be_an_existing_directory(tmp_path):
 
 
 def test_missing_launcher_has_no_surviving_process(tmp_path):
-    layer = engine.LocalEngine(root=tmp_path, executable=str(tmp_path / "missing"))
+    layer = engine._local.PrivateEngine(
+        root=tmp_path, executable=str(tmp_path / "missing")
+    )
     agent = engine.Agent(tmp_path, execution_layer=layer)
     with pytest.raises(engine.TransportError):
         with agent:
@@ -249,7 +251,7 @@ def test_shared_layer_keeps_distinct_agents_alive(remote):
 
 
 def test_local_layer_is_borrowed_too(tmp_path, monkeypatch):
-    layer = engine.LocalEngine(root=tmp_path)
+    layer = engine._local.PrivateEngine(root=tmp_path)
     close = Mock()
     monkeypatch.setattr(layer, "close", close)
     engine.Agent(tmp_path, execution_layer=layer).close()

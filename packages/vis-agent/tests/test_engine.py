@@ -25,7 +25,6 @@ from blockether.vis.engine import (
     Event,
     GatewayClient,
     GatewayError,
-    LocalEngine,
     ProtocolError,
     _client,
     _local,
@@ -207,7 +206,7 @@ def model_endpoint(*, tool_code=None, before_reply=None, refuse=None, stall=None
 @contextmanager
 def real_client(transport, command, work, *, on_process=None):
     if transport == "stdio":
-        engine = LocalEngine(
+        engine = _local.PrivateEngine(
             executable=command, root=work, timeout=60, startup_timeout=180
         )
         try:

@@ -204,8 +204,8 @@ database.
 ## Keep it running on Linux
 
 Let a service manager own a **foreground** gateway. Do not use a Python program that calls
-`LocalEngine` again and again. `LocalEngine` is for a private child process with temporary session
-history, not for a persistent HTTP service.
+`start()` again and again. `start()` gives a private child process with temporary session
+history, not a persistent HTTP service.
 
 The systemd example below uses an account named `visgw`. Before you enable the unit, do these steps:
 

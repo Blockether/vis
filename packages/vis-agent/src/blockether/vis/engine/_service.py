@@ -1,6 +1,6 @@
-"""One warm local Vis gateway that SDK processes share (#489).
+"""Start a local Vis engine: a private one, or one gateway that SDK processes share (#489).
 
-`LocalService.ensure()` finds or starts one `vis-agent gateway` in a private state
+`start(shared=True)` finds or starts one `vis-agent gateway` in a private state
 folder and returns a connected `GatewayClient` for it. While a client holds a lease,
 the next `Agent` attaches in milliseconds instead of starting an engine. The
 gateway stops by itself when its last client leaves. Supports Linux and macOS.
@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from ._client import (
+    ExecutionLayer,
     GatewayClient,
     GatewayError,
     SessionOptions,
@@ -39,6 +40,7 @@ from ._install import (
     _vis_home,
     ensure_installed,
 )
+from ._local import PrivateEngine
 
 _HOST = "127.0.0.1"
 # Errors quote at most this much of the gateway log, starting at a line.
@@ -75,139 +77,166 @@ class _ServiceClient(GatewayClient):
         return max(self.timeout, self._startup_timeout) if timeout is None else timeout
 
 
-class LocalService:
-    """Share one warm local Vis gateway between SDK processes.
+def start(
+    *,
+    shared: bool = False,
+    executable: str | os.PathLike[str] | Sequence[str] = _COMMAND,
+    root: str | os.PathLike[str] | None = None,
+    home: str | os.PathLike[str] | None = None,
+    timeout: float = 30,
+    startup_timeout: float = 120,
+) -> ExecutionLayer:
+    """Start a Vis engine on this computer and return its connected client.
 
-    `Agent()` without an execution layer starts a private engine for each agent.
-    The first start of a new engine copy can take 40 s or more, and each later
-    start takes about 1.5 s. `ensure` starts one gateway once and keeps it running,
-    so each later call attaches in milliseconds:
+    To use a gateway that runs separately, call `blockether.vis.engine.connect`.
 
     ```python
-    from blockether.vis.engine import Agent, LocalService
+    from blockether.vis.engine import Agent, start
 
-    with LocalService.ensure() as layer:
-        with Agent(project=".", execution_layer=layer) as agent:
+    with start() as client:
+        with Agent(project=".", execution_layer=client) as agent:
             print(agent.run("Summarize this project without changing files.")["status"])
     ```
 
-    The gateway keeps its database, token, runtime folder, logs and push state in
-    `home` (default `$VIS_HOME/sdk/service`). It uses the provider settings of
-    `VIS_HOME`, but never the database, the gateway or the paired devices of your
-    own Vis. So its turns do not send notifications to your phone or browser. It listens only on
-    127.0.0.1, on a free port, and requires its token.
+    Without `shared`, the engine is private. It is one process that only this
+    client uses, without an HTTP server. Its sessions are temporary: `close` stops
+    the process and discards its session database. It does not revert project
+    edits. Each start takes about 1.5 s. `Agent()` without an execution layer
+    starts such an engine for itself.
 
-    The gateway stops by itself when no client holds a lease and no turn runs, as
-    the gateway of the Vis terminal app does. A client that was not closed keeps
-    its lease for up to 2 minutes after its process ends. A gateway that no client
-    ever used stops after 30 s. Sessions stay in its database, so the next `ensure`
-    starts the gateway again and finds them. Keep one client open while you work to
-    keep the gateway warm.
+    With `shared=True`, the engine is one local gateway that all your programs
+    share. The first call starts it, and each later call attaches in milliseconds.
+    Programs and threads that call at the same time get one gateway. Its sessions
+    stay in its database. `close` releases the lease of this client. The gateway
+    stops by itself when no client holds a lease and no turn runs. A client that
+    was not closed keeps its lease for up to 2 minutes after its process ends, and
+    a gateway that no client ever used stops after 30 s. Keep one client open while
+    you work to keep the gateway warm. `blockether.vis.engine.stop_shared` stops it
+    for all programs.
 
-    With the default `vis-agent`, the engine comes from the same place as for
-    `blockether.vis.engine.LocalEngine`: the installed command of this SDK's
-    release, else a checked download into `$VIS_HOME/sdk`.
+    The shared gateway keeps its database, token, runtime folder, logs and push
+    state in `home`. It uses the provider settings of `VIS_HOME`, but never the
+    database, the gateway or the paired devices of your own Vis. So its turns do
+    not send notifications to your phone or browser. It listens only on 127.0.0.1,
+    on a free port, and requires its token.
+
+    With the default `vis-agent`, the call uses the installed command when it runs
+    this SDK's release. Otherwise it downloads that release once into
+    `$VIS_HOME/sdk` and checks it against the release checksums. Set
+    `VIS_NO_AUTO_INSTALL=1` to turn off the download. The first session of a new
+    engine copy can take more than a minute, because the engine then prepares the
+    installed Python extensions. So `create_session` waits up to `startup_timeout`.
+    Supported platforms are Linux and macOS.
+
+    Args:
+        shared: False starts a private engine with temporary sessions. True
+            starts or joins the shared local gateway, which keeps its sessions.
+        executable: Executable path or name, or a nonempty argument sequence. The
+            SDK appends the engine command. It does not parse shell commands.
+        root: Existing working directory of a private engine. Default `"."`.
+            Not valid with `shared=True`: give the project to `Agent` or
+            `create_session`.
+        home: State folder of the shared gateway. Default `$VIS_HOME/sdk/service`.
+            Not valid without `shared=True`.
+        timeout: Positive finite timeout in seconds for each request.
+        startup_timeout: Positive finite deadline in seconds for the start of the
+            engine and for each session creation.
+
+    Close the client, or use it as a context manager. A pipe timeout of a private
+    engine stops its process: a late reply must never be mistaken for the answer
+    to the next request.
+
+    Raises:
+        ValueError: `root` or `home` does not apply to the chosen engine.
+        TransportError: The engine cannot be found, downloaded or started. The
+            message ends with its exit status and the end of its log.
+        VisTimeout: The engine did not answer within `startup_timeout`.
     """
+    if shared:
+        if root is not None:
+            raise ValueError("root applies only to a private engine")
+        return _ensure(
+            executable=executable,
+            home=home,
+            timeout=timeout,
+            startup_timeout=startup_timeout,
+        )
+    if home is not None:
+        raise ValueError("home applies only with shared=True")
+    return PrivateEngine(
+        executable=executable,
+        root="." if root is None else root,
+        timeout=timeout,
+        startup_timeout=startup_timeout,
+    ).connect()
 
-    @classmethod
-    def ensure(
-        cls,
-        *,
-        executable: str | os.PathLike[str] | Sequence[str] = _COMMAND,
-        home: str | os.PathLike[str] | None = None,
-        timeout: float = 30,
-        startup_timeout: float = 120,
-    ) -> GatewayClient:
-        """Return a connected client of the shared gateway, and start it when none runs.
 
-        Processes and threads that call this at the same time get one gateway: a
-        file lock in `home` lets only one of them start it. The client takes its
-        lease while the call holds the lock, so the gateway cannot stop before the
-        caller uses it. A record of a gateway that stopped, does not answer or
-        stops during the call is replaced. A running gateway of another engine
-        (for example after an SDK update) is replaced only when no client uses it
-        and no turn runs; else the call reuses it.
+def _ensure(
+    *,
+    executable: str | os.PathLike[str] | Sequence[str] = _COMMAND,
+    home: str | os.PathLike[str] | None = None,
+    timeout: float = 30,
+    startup_timeout: float = 120,
+) -> GatewayClient:
+    """Return a connected client of the shared gateway, and start it when none runs.
 
-        Args:
-            executable: Executable path or name, or an argument sequence. The SDK
-                appends `gateway start` and its options.
-            home: State folder of the gateway. Default `$VIS_HOME/sdk/service`.
-            timeout: Positive finite timeout in seconds for each request.
-            startup_timeout: Positive finite deadline in seconds for the start of
-                the gateway and for each session creation.
-
-        Close the client, or use it as a context manager. Closing releases its lease.
-        When it was the last lease, the gateway stops by itself.
-
-        Raises:
-            TransportError: The engine cannot be found or downloaded, or the
-                gateway exited during its start. The message ends with its log.
-            VisTimeout: The gateway did not answer within `startup_timeout`.
-        """
-        timeout, startup_timeout = _duration(timeout), _duration(startup_timeout)
-        folder = _folder(home)
-        command = _resolve(executable)
-        deadline = time.monotonic() + startup_timeout + timeout
-        with _locked(folder / "lock", deadline):
-            record = _read(folder)
-            token = _token(folder)
-            health = _health(record, token) if record else None
-            if record and health:
-                busy = health.get("clients") or health.get("running_turns")
-                if record["command"] == command or busy:
-                    client = _connected(record, token, timeout, startup_timeout)
-                    if client is not None:
-                        return client
-                    # It stopped by itself after its last client left.
-                    _retire(folder, record)
-                else:
-                    _stop(folder, record, token)
-            elif record:
-                _retire(folder, record)
-            record, token = _start(folder, command, startup_timeout)
-            return _client(record, token, timeout, startup_timeout).connect()
-
-    @classmethod
-    def discover(
-        cls,
-        *,
-        home: str | os.PathLike[str] | None = None,
-        timeout: float = 30,
-        startup_timeout: float = 120,
-    ) -> GatewayClient | None:
-        """Return a connected client of the running shared gateway, or None. Never start one."""
-        timeout, startup_timeout = _duration(timeout), _duration(startup_timeout)
-        folder = _folder(home)
+    A file lock in `home` lets only one caller start the gateway. The client takes
+    its lease while the call holds the lock, so the gateway cannot stop before the
+    caller uses it. A record of a gateway that stopped, does not answer or stops
+    during the call is replaced. A running gateway of another engine (for example
+    after an SDK update) is replaced only when no client uses it and no turn runs;
+    else the call reuses it.
+    """
+    timeout, startup_timeout = _duration(timeout), _duration(startup_timeout)
+    folder = _folder(home)
+    command = _resolve(executable)
+    deadline = time.monotonic() + startup_timeout + timeout
+    with _locked(folder / "lock", deadline):
         record = _read(folder)
         token = _token(folder)
-        if record is None or token is None or _health(record, token) is None:
-            return None
-        return _connected(record, token, timeout, startup_timeout)
-
-    @classmethod
-    def stop(cls, *, home: str | os.PathLike[str] | None = None) -> bool:
-        """Stop the shared gateway, and return True when one was running.
-
-        This stops the gateway for every process that uses it. Running turns stop
-        too. Stored sessions stay in its database for the next start.
-        """
-        folder = _folder(home)
-        with _locked(folder / "lock", time.monotonic() + 60):
-            record = _read(folder)
-            if record is None:
-                return False
-            token = _token(folder)
-            if _health(record, token):
+        health = _health(record, token) if record else None
+        if record and health:
+            busy = health.get("clients") or health.get("running_turns")
+            if record["command"] == command or busy:
+                client = _connected(record, token, timeout, startup_timeout)
+                if client is not None:
+                    return client
+                # It stopped by itself after its last client left.
+                _retire(folder, record)
+            else:
                 _stop(folder, record, token)
-                return True
+        elif record:
             _retire(folder, record)
+        record, token = _start(folder, command, startup_timeout)
+        return _client(record, token, timeout, startup_timeout).connect()
+
+
+def stop_shared(*, home: str | os.PathLike[str] | None = None) -> bool:
+    """Stop the shared local gateway of `start(shared=True)`. Return True when one ran.
+
+    This stops the gateway for every process that uses it. Running turns stop
+    too. Stored sessions stay in its database for the next start.
+
+    Args:
+        home: State folder of the gateway. Default `$VIS_HOME/sdk/service`.
+    """
+    folder = _folder(home)
+    with _locked(folder / "lock", time.monotonic() + 60):
+        record = _read(folder)
+        if record is None:
             return False
+        token = _token(folder)
+        if _health(record, token):
+            _stop(folder, record, token)
+            return True
+        _retire(folder, record)
+        return False
 
 
 def _folder(home: str | os.PathLike[str] | None) -> Path:
     """Create the private state folder. The engine refuses a runtime folder others can write."""
     if os.name != "posix":
-        raise ValueError("the local service currently supports Linux and macOS")
+        raise ValueError("the shared local gateway currently supports Linux and macOS")
     folder = Path(home) if home is not None else _vis_home() / "sdk" / "service"
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     folder = folder.resolve(strict=True)
@@ -218,7 +247,7 @@ def _folder(home: str | os.PathLike[str] | None) -> Path:
 
 
 def _resolve(executable: str | os.PathLike[str] | Sequence[str]) -> list[str]:
-    """Return the engine argv, with the same resolution and download as `LocalEngine`."""
+    """Return the engine argv, with the same resolution and download as a private engine."""
     command = (
         [os.fspath(executable)]
         if isinstance(executable, (str, os.PathLike))
@@ -230,7 +259,9 @@ def _resolve(executable: str | os.PathLike[str] | Sequence[str]) -> list[str]:
         try:
             return [ensure_installed()]
         except InstallError as error:
-            raise TransportError(f"could not start local service: {error}") from None
+            raise TransportError(
+                f"could not start shared local gateway: {error}"
+            ) from None
     return command
 
 
@@ -248,7 +279,7 @@ def _locked(path: Path, deadline: float) -> Iterator[None]:
             except BlockingIOError:
                 if time.monotonic() >= deadline:
                     raise VisTimeout(
-                        "another process holds the local service lock"
+                        "another process holds the lock of the shared local gateway"
                     ) from None
                 time.sleep(0.05)
         yield
@@ -464,7 +495,7 @@ def _start(
                 start_new_session=True,
             )
     except OSError as error:
-        raise TransportError(f"could not start local service: {error}") from None
+        raise TransportError(f"could not start shared local gateway: {error}") from None
     _STARTED.append(process)
     threading.Thread(
         target=_reap, args=(process,), name="vis-sdk-service", daemon=True
@@ -488,12 +519,14 @@ def _start(
             return record, token
         if process.poll() is not None:
             raise TransportError(
-                f"local service exited with status {process.returncode}"
+                f"shared local gateway exited with status {process.returncode}"
                 + _log_tail(log)
             )
         if time.monotonic() >= deadline:
             _signal_group(record, signal.SIGKILL)
-            raise VisTimeout("local service did not answer in time" + _log_tail(log))
+            raise VisTimeout(
+                "shared local gateway did not answer in time" + _log_tail(log)
+            )
         time.sleep(0.1)
 
 
@@ -538,7 +571,7 @@ def _log_tail(log: Path) -> str:
     if size > _LOG_TAIL:
         end = end.partition(b"\n")[2] or end
     text = end.decode("utf-8", "replace").strip()
-    return f"\nLocal service log:\n{text}" if text else ""
+    return f"\nShared local gateway log:\n{text}" if text else ""
 
 
 def _connected(
@@ -557,7 +590,9 @@ def _client(
     record: _Record, token: str | None, timeout: float, startup_timeout: float
 ) -> GatewayClient:
     if token is None:
-        raise TransportError("the local service has no token; call LocalService.stop()")
+        raise TransportError(
+            "the shared local gateway has no token; call stop_shared()"
+        )
     return _ServiceClient(
         record["url"], token=token, timeout=timeout, startup_timeout=startup_timeout
     )

@@ -89,7 +89,7 @@ python -m vis_review --global --root <folder>
 - `--url` is the gateway address (default: `$VIS_GATEWAY_URL`, else `http://127.0.0.1:8090`).
 - `--seconds` stops the program after that time.
 
-In your own code, call `vis_review.program.serve(client, root, session_id=...)`. The client can be a `GatewayClient` or a `LocalEngine`.
+In your own code, call `vis_review.program.serve(client, root, session_id=...)`. The client comes from `connect(url)` or `start()` of `blockether.vis.engine`.
 
 ## Tests
 

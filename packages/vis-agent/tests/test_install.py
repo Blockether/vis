@@ -12,12 +12,12 @@ import urllib.error
 import pytest
 from blockether.vis.engine import (
     InstallError,
-    LocalEngine,
     TransportError,
     _install,
     ensure_installed,
     install,
 )
+from blockether.vis.engine._local import PrivateEngine
 
 TAG = "v9.9.9"
 SHA = "a" * 40
@@ -190,7 +190,7 @@ def test_install_downloads_now_and_force_downloads_again(isolated, monkeypatch):
 
 def test_local_engine_reports_a_failed_download(isolated, monkeypatch):
     monkeypatch.setenv("VIS_NO_AUTO_INSTALL", "1")
-    engine = LocalEngine(root=isolated)
+    engine = PrivateEngine(root=isolated)
     with pytest.raises(
         TransportError, match="could not start local engine: .*VIS_NO_AUTO_INSTALL"
     ):

@@ -36,11 +36,9 @@ import sys
 import blockether.vis
 assert 'blockether.vis.extension' not in sys.modules
 assert 'blockether.vis._outside' not in sys.modules
-from blockether.vis.engine import ExecutionLayer, GatewayClient, LocalEngine
+from blockether.vis.engine import ExecutionLayer, GatewayClient, connect, start
 assert issubclass(GatewayClient, ExecutionLayer)
-assert issubclass(LocalEngine, ExecutionLayer)
 assert GatewayClient.__name__ == 'GatewayClient'
-assert LocalEngine.__name__ == 'LocalEngine'
 assert 'blockether.vis.extension' not in sys.modules
 assert 'blockether.vis._outside' not in sys.modules
 assert not hasattr(blockether.vis, '_host')

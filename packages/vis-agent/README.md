@@ -25,7 +25,7 @@ with Agent(project=".") as agent:
 
 The SDK starts a private Vis process with a temporary session database and removes both
 when the block ends. Tasks can incur provider charges and can change project files. To
-choose the executable or share one process between agents, use `LocalEngine`. See the
+choose the executable or share one process between agents, call `start()`. See the
 [stdio guide](https://vis.blockether.com/python-sdk.html#use-stdio-from-the-python-sdk).
 The first run with a new engine copy can take more than one minute. See
 [the first start of a private agent](https://vis.blockether.com/python-sdk.html#the-first-start-of-a-private-agent).
