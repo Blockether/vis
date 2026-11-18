@@ -71,14 +71,15 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
     for (const name of [
       'Agent.run',
       'Agent.send',
-      'start',
-      'connect',
+      'StdioEngineClient',
+      'HttpLocalEngineClient',
+      'HttpLocalEngineClient.shutdown',
       'GatewayClient',
       'ExecutionLayer',
     ])
       expect(document.getElementById(name), name).not.toBeNull();
     const agent = document.getElementById('Agent').textContent;
-    expect(agent).toContain('execution_layer:');
+    expect(agent).toContain('client:');
     expect(agent).toContain('ExecutionLayer');
     expect(agent).toContain('extensions=()');
     expect(document.querySelector('.view-source-button')).toBeNull();
@@ -225,14 +226,14 @@ test.each(['blockether/vis.html', 'blockether/vis/engine.html'])(
       const document = dom.window.document;
       const input = document.querySelector('input[type="search"]');
       input.focus();
-      input.value = 'stop_shared';
+      input.value = 'StdioEngineClient';
       input.dispatchEvent(new dom.window.Event('input'));
       await expect
         .poll(() => document.querySelectorAll('.search-result').length)
         .toBeGreaterThan(0);
       expect(
         [...document.querySelectorAll('.search-result a')].some((link) =>
-          link.href.endsWith('engine.html#stop_shared'),
+          link.href.endsWith('engine.html#StdioEngineClient'),
         ),
       ).toBe(true);
       expect(requested).toContain(prefix + 'search.js');

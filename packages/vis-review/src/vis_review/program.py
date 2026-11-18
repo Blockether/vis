@@ -79,7 +79,7 @@ def local_call(
 def serve(client, root, *, session_id=None, every=2.0, seconds=None, ready=None):
     """Open the review app through `client` and record the journal until stopped.
 
-    `client` is any execution layer, from `connect` or `start` of `blockether.vis.engine`.
+    `client` is any client of `blockether.vis.engine`, for example a `GatewayClient`.
     Without `session_id`, the app is global. `ready(app)` runs once the app is open.
     """
     root = os.path.realpath(os.fspath(root))

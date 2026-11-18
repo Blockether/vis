@@ -146,7 +146,7 @@ def test_structured_recipe_validates_a_gateway_result(recipe, gateway):
         {"type": "prose", "markdown": '{"cents": 1200, "express": false}'}
     ]
     with engine.GatewayClient(url, token="fixture-token") as client:
-        with engine.Agent("/srv/vis-project", execution_layer=client) as agent:
+        with engine.Agent("/srv/vis-project", client=client) as agent:
             quote = recipe("structured_quote").quote_delivery(agent)
             assert quote.cents == 1200
             assert quote.express is False
@@ -187,7 +187,7 @@ def test_local_recipe_uses_default_project_and_closes_its_engine(
         )
         return client
 
-    monkeypatch.setattr("blockether.vis.engine._agent.PrivateEngine", local_engine)
+    monkeypatch.setattr("blockether.vis.engine._agent.StdioEngineClient", local_engine)
     recipe("local_task").main()
     assert "Status: completed" in capsys.readouterr().out
     assert calls[-1][:2] == ("DELETE", "/v1/clients/sdk-lease")
@@ -297,14 +297,14 @@ def test_recipes_complete_against_real_engine(
             connection_environment(monkeypatch, client, work)
             recipe("gateway_task").main()
         else:
-            local_engine = engine._local.PrivateEngine
+            local_engine = engine._local.StdioEngineClient
             with monkeypatch.context() as local_patch:
                 local_patch.setattr(
-                    "blockether.vis.engine._agent.PrivateEngine",
+                    "blockether.vis.engine._agent.StdioEngineClient",
                     lambda **opts: local_engine(executable=client._command, **opts),
                 )
                 recipe("local_task").main()
-        with engine.Agent(work, execution_layer=client) as agent:
+        with engine.Agent(work, client=client) as agent:
             session_id = agent.session.id
             first = agent.run("Run the guide fixture.")
             assert first["status"] == "completed"
@@ -316,7 +316,7 @@ def test_recipes_complete_against_real_engine(
                 in agent.session.transcript(format="markdown").content.decode()
             )
             if transport == "stdio":
-                borrowed_process = agent.execution_layer._process
+                borrowed_process = agent.client._process
         if transport == "http":
             # Closing Agent must leave the existing gateway and saved session usable.
             with engine.GatewayClient(client._url, token=client._token) as resumed:
@@ -399,7 +399,7 @@ except Exception as error:
         weights = []
         with engine.Agent(
             work,
-            execution_layer=client,
+            client=client,
             extensions=[module.make_delivery_extension(weights)],
         ) as agent:
             result = module.quote_delivery(agent)
@@ -479,7 +479,7 @@ def test_live_python_recipes(recipe, live_project, monkeypatch, capsys, transpor
         with real_client("http", command, state) as client:
             connection_environment(monkeypatch, client, work)
             recipe("gateway_task").main()
-            with engine.Agent(work, execution_layer=client) as agent:
+            with engine.Agent(work, client=client) as agent:
                 turn = agent.send(
                     "Use Python to compute 7 * 6. Print the result, then reply SDK_GUIDE_OK 42. Do not read or change files."
                 )

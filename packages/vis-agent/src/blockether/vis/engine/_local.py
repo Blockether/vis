@@ -131,8 +131,20 @@ def _reply(status, decoded, headers):
     return _Reply(status, decoded, headers)
 
 
-class PrivateEngine(ExecutionLayer):
-    """The private engine of `blockether.vis.engine.start`: one stdio process, no HTTP server.
+class StdioEngineClient(ExecutionLayer):
+    """Own a private Vis process over standard input and output, without an HTTP server.
+
+    `Agent()` without a client creates one of these. Use this class yourself when
+    you need to choose an executable, share one local process between agents, or
+    call the session API directly. Its sessions are temporary. To keep sessions and
+    start the engine one time for many programs, use
+    `blockether.vis.engine.HttpLocalEngineClient`.
+
+    With the default `vis-agent`, `connect` uses the installed command when it runs
+    this SDK's release. Otherwise it downloads that release once into
+    `$VIS_HOME/sdk` and checks it against the release checksums. Set
+    `VIS_NO_AUTO_INSTALL=1` to turn off the download. This class never discovers
+    a gateway. Supported platforms are Linux and macOS.
 
     Args:
         executable: Executable path/name or nonempty argument sequence. The SDK
@@ -149,6 +161,21 @@ class PrivateEngine(ExecutionLayer):
     before you leave the layer's context. If you do not close the layer, the process
     stops and the temporary database is removed when Python collects the layer or exits.
     Do not rely on this: an unclosed layer keeps its process until then.
+
+    The first session of a new engine copy can take more than a minute, for example
+    after the first download or an SDK update. The engine then prepares the installed
+    Python extensions for its embedded Python: it installs their dependencies and
+    compiles them. A project with its own extensions can need this once too. So
+    `create_session` waits up to `startup_timeout`.
+
+    ```python
+    from blockether.vis.engine import Agent, StdioEngineClient
+
+    with StdioEngineClient(executable="vis-agent", root=".") as client:
+        with Agent(project=".", client=client) as agent:
+            result = agent.run("Summarize this project without changing files.")
+            print(result["status"])
+    ```
 
     A pipe timeout stops the process: a late reply must never be mistaken for the
     next request's answer. This differs from a `blockether.vis.engine.Turn.wait`

@@ -24,7 +24,6 @@ from ._client import (
     TransportError,
     Turn,
     VisTimeout,
-    connect,
 )
 from ._council import (
     Council,
@@ -37,8 +36,9 @@ from ._council import (
 )
 from ._groups import SessionGroup
 from ._install import InstallError, ensure_installed, install
+from ._local import StdioEngineClient
 from ._models import Model, SessionModel
-from ._service import start, stop_shared
+from ._service import HttpLocalEngineClient
 from ._sounds import SoundPreset, Sounds, SoundSettings
 from ._speech import Speech, SpeechAudio, Transcript, Voice
 
@@ -59,6 +59,7 @@ __all__ = [
     "ExecutionLayer",
     "GatewayClient",
     "GatewayError",
+    "HttpLocalEngineClient",
     "InstallError",
     "JobEvent",
     "JobEvents",
@@ -76,16 +77,14 @@ __all__ = [
     "SoundSettings",
     "Speech",
     "SpeechAudio",
+    "StdioEngineClient",
     "StructuredOutputError",
     "Transcript",
     "TransportError",
     "Turn",
     "VisTimeout",
     "Voice",
-    "connect",
     "ensure_installed",
     "final_answer",
     "install",
-    "start",
-    "stop_shared",
 ]

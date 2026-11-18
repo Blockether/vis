@@ -133,7 +133,7 @@ def test_application_extensions_identity_activity_and_session_lifetime(
         work,
         requests,
     ):
-        with Agent(work, execution_layer=client, extensions=[functions]) as agent:
+        with Agent(work, client=client, extensions=[functions]) as agent:
             # Both public forms use the same Extension, including inside a context.
             agent.register_extension(methods)
             session_id = agent.session.id
@@ -191,7 +191,7 @@ def test_application_extensions_identity_activity_and_session_lifetime(
                 == "completed"
             )
             assert len(calls) == 2 and counter._value == 4
-            with Agent(work, execution_layer=client) as unrelated:
+            with Agent(work, client=client) as unrelated:
                 assert (
                     unrelated.run("Inspect available callbacks.", timeout=60)["status"]
                     == "completed"
@@ -241,7 +241,7 @@ def test_cancelled_turn_does_not_reexecute_a_late_application_result(
         transport,
         tool_code="print(await cancel_from_application())",
     ) as (client, work, _):
-        with Agent(work, execution_layer=client, extensions=[extension]) as agent:
+        with Agent(work, client=client, extensions=[extension]) as agent:
             pending["turn"] = agent.send("Cancel from inside the application callback.")
             result = pending["turn"].wait(timeout=60)
             assert result["status"] == "cancelled", result

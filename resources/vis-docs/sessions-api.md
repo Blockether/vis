@@ -736,7 +736,7 @@ still run, so check its `status`.
 
 Without `idle_timeout`, the stream follows the session until you close it. A stream of a private
 engine, or of an `Agent` with application functions, reads pages. Without `idle_timeout`, that
-stream raises `VisTimeout` when no event comes for the `timeout` of the execution layer. The
+stream raises `VisTimeout` when no event comes for the `timeout` of the client. The
 default `timeout` is 30 seconds.
 
 To stop a stream from another thread, call `events.close()`. The loop ends at once, and the stream

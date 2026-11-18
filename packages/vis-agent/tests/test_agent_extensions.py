@@ -414,7 +414,7 @@ def test_application_gate_denies_one_tool_call_end_to_end(
         work,
         requests,
     ):
-        with Agent(work, execution_layer=client, extensions=[gated]) as agent:
+        with Agent(work, client=client, extensions=[gated]) as agent:
             result = agent.run("Read the application keys.", timeout=60)
             assert result["status"] == "completed", result
     text = tool_output(requests)

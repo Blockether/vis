@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Python SDK: `start()` and `connect(url)` of `blockether.vis.engine` replace `LocalEngine` and `LocalService`. `start()` starts a private engine with temporary sessions, as `LocalEngine(...)` did. `start(shared=True)` starts or joins the shared local gateway, and `stop_shared()` stops it. `connect(url, token=...)` returns a connected `GatewayClient` for a gateway that runs separately. In your code, replace `LocalEngine(...)` with `start(...)`.
+- Python SDK: `StdioEngineClient` replaces `LocalEngine`, and `HttpLocalEngineClient` replaces `LocalService`. `HttpLocalEngineClient()` is a client that starts or joins the shared local gateway when it connects, and `client.shutdown()` stops that gateway. `GatewayClient` stays. `Agent` takes the client as `client=`, not `execution_layer=`, and `agent.client` replaces `agent.execution_layer`. In your code, rename `LocalEngine` to `StdioEngineClient` and `execution_layer=` to `client=`.
 
 ### Fixed
 

@@ -10,8 +10,8 @@ import pytest
 
 @pytest.mark.parametrize(
     "document",
-    [engine.start, engine.connect, engine.GatewayClient],
-    ids=["start", "connect", "gateway-client"],
+    [engine.StdioEngineClient, engine.HttpLocalEngineClient, engine.GatewayClient],
+    ids=["stdio-engine-client", "http-local-engine-client", "gateway-client"],
 )
 def test_engine_docstring_examples_use_public_api(document, monkeypatch, capsys):
     examples = re.findall(r"```python\n(.*?)\n```", inspect.getdoc(document), re.S)
@@ -33,8 +33,10 @@ def test_engine_docstring_examples_use_public_api(document, monkeypatch, capsys)
         "content": [],
     }
     factory = MagicMock(return_value=layer)
-    monkeypatch.setattr(engine, "start", factory)
-    monkeypatch.setattr(engine, "connect", factory)
+    monkeypatch.setattr(engine, "StdioEngineClient", factory)
+    monkeypatch.setattr(engine, "HttpLocalEngineClient", factory)
+    monkeypatch.setattr(engine, "GatewayClient", factory)
+    monkeypatch.setattr("blockether.vis.engine._agent.StdioEngineClient", factory)
     monkeypatch.setenv("VIS_GATEWAY_TOKEN", "test-token")
 
     def unexpected_io(*_args, **_kwargs):

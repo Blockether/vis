@@ -6,13 +6,13 @@ import shlex
 import pytest
 from blockether.vis._contracts import definition
 from blockether.vis.engine import TransportError
-from blockether.vis.engine._local import PrivateEngine
+from blockether.vis.engine._local import StdioEngineClient
 
 _PROTOCOL = definition("gateway", "handshake")["properties"]["protocol"]["const"]
 
 
 def test_missing_executable_is_reported_without_a_live_process(tmp_path):
-    engine = PrivateEngine(executable=str(tmp_path / "missing"), root=tmp_path)
+    engine = StdioEngineClient(executable=str(tmp_path / "missing"), root=tmp_path)
     with pytest.raises(
         TransportError, match="could not start local engine: .*No such file"
     ):
@@ -29,26 +29,10 @@ def test_local_engine_starts_stdio_command(tmp_path):
         "import sys; assert sys.argv[1:] == ['stdio']; "
         f"print({hello!r}, flush=True); sys.stdin.read()"
     )
-    with PrivateEngine(
+    with StdioEngineClient(
         executable=[sys.executable, "-c", code], root=tmp_path
     ) as engine:
         assert engine._process.poll() is None
-
-
-def test_start_gives_a_connected_private_engine_and_refuses_shared_options(tmp_path):
-    import json
-    import sys
-
-    from blockether.vis.engine import start
-
-    hello = json.dumps({"protocol": _PROTOCOL})
-    code = f"import sys; print({hello!r}, flush=True); sys.stdin.read()"
-    with start(executable=[sys.executable, "-c", code], root=tmp_path) as client:
-        assert client._process.poll() is None
-    with pytest.raises(ValueError, match="shared=True"):
-        start(home=tmp_path)
-    with pytest.raises(ValueError, match="private engine"):
-        start(shared=True, root=tmp_path)
 
 
 def test_real_local_engine(tmp_path, monkeypatch):
@@ -88,7 +72,7 @@ def test_real_local_engine(tmp_path, monkeypatch):
             }
         )
     )
-    with PrivateEngine(
+    with StdioEngineClient(
         executable=shlex.split(command), root=tmp_path, startup_timeout=180
     ) as engine:
         assert engine.get_capabilities()["protocol"]["protocol"] > 0
@@ -121,7 +105,7 @@ def test_startup_failure_closes_owned_process(tmp_path, code, error):
         "protocol": ProtocolError,
         "transport": TransportError,
     }[error]
-    engine = PrivateEngine(
+    engine = StdioEngineClient(
         executable=[sys.executable, "-c", code], root=tmp_path, startup_timeout=0.2
     )
     with pytest.raises(expected):
@@ -138,7 +122,7 @@ def test_startup_failure_reports_the_engine_exit_and_stderr(tmp_path):
         "import sys; sys.stderr.write('Execution error: stdio (No such file)\\n'); "
         "sys.exit(3)"
     )
-    engine = PrivateEngine(executable=[sys.executable, "-c", code], root=tmp_path)
+    engine = StdioEngineClient(executable=[sys.executable, "-c", code], root=tmp_path)
     with pytest.raises(TransportError) as failure:
         engine.connect()
     message = str(failure.value)
@@ -158,7 +142,7 @@ def test_engine_crash_reports_its_stderr(tmp_path):
         f"import sys; print({hello!r}, flush=True); sys.stdin.readline(); "
         "sys.stderr.write('fatal: worker pool exhausted\\n'); sys.exit(5)"
     )
-    with PrivateEngine(
+    with StdioEngineClient(
         executable=[sys.executable, "-c", code], root=tmp_path
     ) as engine:
         with pytest.raises(TransportError) as failure:
@@ -179,7 +163,7 @@ def test_engine_that_died_while_idle_reports_why(tmp_path):
         f"import sys; print({hello!r}, flush=True); "
         "sys.stderr.write('fatal: idle crash\\n'); sys.exit(9)"
     )
-    with PrivateEngine(
+    with StdioEngineClient(
         executable=[sys.executable, "-c", code], root=tmp_path
     ) as engine:
         engine._process.wait(timeout=5)
@@ -202,7 +186,7 @@ def test_engine_stderr_never_blocks_and_errors_quote_only_its_end(tmp_path):
         f"sys.stderr.flush(); print({hello!r}, flush=True); "
         "sys.stdin.readline(); sys.exit(7)"
     )
-    with PrivateEngine(
+    with StdioEngineClient(
         executable=[sys.executable, "-c", code], root=tmp_path, startup_timeout=10
     ) as engine:
         with pytest.raises(TransportError) as failure:
@@ -228,7 +212,7 @@ signal.signal(signal.SIGTERM, signal.SIG_IGN if {ignore_term!r} else signal.SIG_
 print({hello!r}, flush=True)
 time.sleep(60)
 """
-    engine = PrivateEngine(executable=[sys.executable, "-c", code], root=tmp_path)
+    engine = StdioEngineClient(executable=[sys.executable, "-c", code], root=tmp_path)
     engine.connect()
     process = engine._process
     group_signals = []
@@ -272,7 +256,7 @@ def test_failed_close_is_terminal_but_cleanup_can_be_retried(tmp_path, monkeypat
 
     hello = json.dumps({"protocol": _PROTOCOL})
     code = f"import time; print({hello!r}, flush=True); time.sleep(60)"
-    engine = PrivateEngine(executable=[sys.executable, "-c", code], root=tmp_path)
+    engine = StdioEngineClient(executable=[sys.executable, "-c", code], root=tmp_path)
     engine.connect()
     process = engine._process
     send_signal = process.send_signal
@@ -330,7 +314,7 @@ signal.signal(signal.SIGTERM, stop)
 print({hello!r}, flush=True)
 time.sleep(60)
 """
-    engine = PrivateEngine(executable=[sys.executable, "-c", code], root=tmp_path)
+    engine = StdioEngineClient(executable=[sys.executable, "-c", code], root=tmp_path)
     engine.connect()
     process = engine._process
     try:
@@ -356,7 +340,7 @@ def test_request_timeout_preserves_error_and_closes_process(tmp_path):
 
     hello = json.dumps({"protocol": _PROTOCOL})
     code = f"import time; print({hello!r}, flush=True); time.sleep(30)"
-    with PrivateEngine(
+    with StdioEngineClient(
         executable=[sys.executable, "-c", code], root=tmp_path, timeout=0.1
     ) as engine:
         with pytest.raises(VisTimeout):
@@ -365,7 +349,7 @@ def test_request_timeout_preserves_error_and_closes_process(tmp_path):
 
 
 def test_local_event_polling_uses_the_canonical_cursor_key(monkeypatch, tmp_path):
-    engine = PrivateEngine(executable="unused", root=tmp_path)
+    engine = StdioEngineClient(executable="unused", root=tmp_path)
     calls = []
 
     def page(sid, *, query):
@@ -384,7 +368,7 @@ def test_local_event_polling_uses_the_canonical_cursor_key(monkeypatch, tmp_path
 def test_local_event_polling_has_a_bounded_idle_timeout(monkeypatch, tmp_path, kind):
     from blockether.vis.engine import VisTimeout
 
-    engine = PrivateEngine(executable="unused", root=tmp_path, timeout=0.01)
+    engine = StdioEngineClient(executable="unused", root=tmp_path, timeout=0.01)
     polls = []
 
     def page(*args, **kwargs):
@@ -415,7 +399,7 @@ def test_quiet_local_event_polling_backs_off(monkeypatch, tmp_path):
     # Audit row 3: a quiet stream read a page 10 times a second.
     from blockether.vis.engine import VisTimeout
 
-    engine = PrivateEngine(executable="unused", root=tmp_path, timeout=1.6)
+    engine = StdioEngineClient(executable="unused", root=tmp_path, timeout=1.6)
     polls = []
 
     def page(*args, **kwargs):
@@ -434,7 +418,7 @@ def test_quiet_local_event_polling_backs_off(monkeypatch, tmp_path):
 def test_invalid_local_event_does_not_advance_the_cursor(monkeypatch, tmp_path):
     from blockether.vis.engine import ProtocolError
 
-    engine = PrivateEngine(executable="unused", root=tmp_path)
+    engine = StdioEngineClient(executable="unused", root=tmp_path)
     monkeypatch.setattr(
         engine,
         "get_session_events_since",
@@ -458,7 +442,7 @@ def test_invalid_local_event_does_not_advance_the_cursor(monkeypatch, tmp_path):
 def test_local_job_events_poll_the_canonical_resource(
     monkeypatch, tmp_path, scope, kind
 ):
-    engine = PrivateEngine(executable="unused", root=tmp_path)
+    engine = StdioEngineClient(executable="unused", root=tmp_path)
     calls = []
     args = ("s", "j") if scope else ("j",)
 
@@ -486,7 +470,7 @@ def test_stream_protocol_failure_closes_the_owned_process(tmp_path):
         f"import sys; print('{{\"protocol\": {_PROTOCOL}}}', flush=True); "
         "sys.stdin.readline(); print('not-json', flush=True); sys.stdin.read()"
     )
-    with PrivateEngine(
+    with StdioEngineClient(
         executable=[sys.executable, "-c", code], root=tmp_path
     ) as engine:
         with engine.session("s").events() as events:
@@ -509,7 +493,7 @@ def test_local_errors_preserve_the_canonical_gateway_code(tmp_path):
     hello = json.dumps({"protocol": _PROTOCOL})
     reply = json.dumps({"status": 404, "headers": {}, "content": error})
     code = f"import sys; print({hello!r}, flush=True); sys.stdin.readline(); print({reply!r}, flush=True); sys.stdin.read()"
-    with PrivateEngine(
+    with StdioEngineClient(
         executable=[sys.executable, "-c", code], root=tmp_path
     ) as engine:
         with pytest.raises(GatewayError) as failure:
@@ -518,13 +502,13 @@ def test_local_errors_preserve_the_canonical_gateway_code(tmp_path):
         assert failure.value.code == "not_found"
 
 
-def test_execution_layers_are_siblings_without_http_state(tmp_path):
+def test_clients_are_siblings_without_http_state(tmp_path):
     from blockether.vis.engine import ExecutionLayer, GatewayClient
 
-    assert issubclass(PrivateEngine, ExecutionLayer)
+    assert issubclass(StdioEngineClient, ExecutionLayer)
     assert issubclass(GatewayClient, ExecutionLayer)
-    assert not issubclass(PrivateEngine, GatewayClient)
-    engine = PrivateEngine(root=tmp_path)
+    assert not issubclass(StdioEngineClient, GatewayClient)
+    engine = StdioEngineClient(root=tmp_path)
     assert engine.timeout == 30
     assert engine._command == ["vis-agent"]
     for name in ("_url", "_token", "_opener", "_heartbeat", "_heartbeat_stop"):
@@ -551,7 +535,7 @@ for count, line in enumerate(sys.stdin, 1):
     content = base64.b64encode(json.dumps(value).encode()).decode()
     print(json.dumps({{"status": 200, "headers": {{}}, "content": content}}), flush=True)
 """
-    with PrivateEngine(
+    with StdioEngineClient(
         executable=[sys.executable, "-c", code], root=tmp_path
     ) as engine:
         assert engine._ensure_client_lease() == "local-owner"
@@ -580,7 +564,7 @@ def test_threads_sharing_an_engine_each_get_their_own_reply(tmp_path):
         "    print(json.dumps({'status': 200, 'headers': {}, 'content': content}), flush=True)\n"
     )
     wrong = []
-    with PrivateEngine(
+    with StdioEngineClient(
         executable=[sys.executable, "-c", code], root=tmp_path
     ) as engine:
 
@@ -613,7 +597,7 @@ for line in sys.stdin:
     content = base64.b64encode(json.dumps({{"id": "first"}}).encode()).decode()
     print(json.dumps({{"status": 200, "headers": {{}}, "content": content}}), flush=True)
 """
-    with PrivateEngine(
+    with StdioEngineClient(
         executable=[sys.executable, "-c", code],
         root=tmp_path,
         timeout=0.3,
@@ -650,7 +634,7 @@ def test_collected_engine_stops_its_process_and_removes_its_directory(tmp_path):
     import sys
 
     code = _STUBBORN.format(hello=json.dumps({"protocol": _PROTOCOL}))
-    engine = PrivateEngine(executable=[sys.executable, "-c", code], root=tmp_path)
+    engine = StdioEngineClient(executable=[sys.executable, "-c", code], root=tmp_path)
     engine.connect()
     process, home = engine._process, engine._home.name
     del engine
@@ -672,8 +656,8 @@ def test_engine_left_open_at_exit_stops_with_the_interpreter(tmp_path):
 
     code = _STUBBORN.format(hello=json.dumps({"protocol": _PROTOCOL}))
     script = f"""import json
-from blockether.vis.engine._local import PrivateEngine
-engine = PrivateEngine(executable={[sys.executable, "-c", code]!r}, root={str(tmp_path)!r})
+from blockether.vis.engine._local import StdioEngineClient
+engine = StdioEngineClient(executable={[sys.executable, "-c", code]!r}, root={str(tmp_path)!r})
 engine.connect()
 print(json.dumps([engine._process.pid, engine._home.name]), flush=True)
 """

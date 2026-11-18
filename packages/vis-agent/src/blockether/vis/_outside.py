@@ -74,7 +74,7 @@ def request(frame):
     """Refuse a host session request outside a Vis process."""
     raise Refused(
         "vis.sessions, vis.session and vis.council need a Vis host. Outside an "
-        "extension, use connect or start from blockether.vis.engine."
+        "extension, use GatewayClient or StdioEngineClient from blockether.vis.engine."
     )
 
 

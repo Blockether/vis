@@ -98,9 +98,7 @@ def test_constructor_extensions_pump_on_calling_thread_and_use_lease(gateway, pu
         seen.append((value, threading.get_ident()))
         return value.upper()
 
-    with Agent(
-        "/work", execution_layer=client, extensions=[declaration(remember)]
-    ) as agent:
+    with Agent("/work", client=client, extensions=[declaration(remember)]) as agent:
         sid = agent.session.id
         queue(state, sid)
         turn = agent.send("Remember Ada")
@@ -137,7 +135,7 @@ def test_register_extension_before_and_after_the_first_request(gateway, inside_c
         """Return a supplied value in upper case."""
         return value.upper()
 
-    agent = Agent("/work", execution_layer=client)
+    agent = Agent("/work", client=client)
     try:
         if inside_context:
             agent.__enter__()
@@ -169,7 +167,7 @@ def test_registration_retries_once_when_the_session_is_busy(gateway):
         """Return another supplied value."""
         return value
 
-    with Agent("/work", execution_layer=client) as agent:
+    with Agent("/work", client=client) as agent:
         sid = agent.session.id
         state["busy"] = 1
         agent.register_extension(declaration(remember))
@@ -190,9 +188,7 @@ def test_update_extension_prompt_keeps_symbols_and_callbacks(gateway):
         """Return a supplied value."""
         return value
 
-    with Agent(
-        "/work", execution_layer=client, extensions=[declaration(remember)]
-    ) as agent:
+    with Agent("/work", client=client, extensions=[declaration(remember)]) as agent:
         sid = agent.session.id
         before = state["manifests"][sid][0]
         agent.send("Start")
@@ -210,12 +206,12 @@ def test_update_extension_prompt_keeps_symbols_and_callbacks(gateway):
 
 def test_agent_model_pins_the_conversation(gateway):
     client, _, calls = gateway
-    with Agent("/work", execution_layer=client, provider="local", model="m1") as agent:
+    with Agent("/work", client=client, provider="local", model="m1") as agent:
         _ = agent.session
     body = next(json.loads(c[3]) for c in calls if c[:2] == ("POST", "/v1/sessions"))
     assert (body["provider"], body["model"]) == ("local", "m1")
     with pytest.raises(ValueError, match="together"):
-        Agent("/work", execution_layer=client, model="m1")
+        Agent("/work", client=client, model="m1")
 
 
 def test_shared_layer_agents_isolate_callbacks_and_close_releases_references(gateway):
@@ -232,8 +228,8 @@ def test_shared_layer_agents_isolate_callbacks_and_close_releases_references(gat
 
     first_extension, first_ref = make_extension("first")
     second_extension, _ = make_extension("second")
-    first = Agent("/work", execution_layer=client, extensions=[first_extension])
-    second = Agent("/work", execution_layer=client, extensions=[second_extension])
+    first = Agent("/work", client=client, extensions=[first_extension])
+    second = Agent("/work", client=client, extensions=[second_extension])
     del first_extension, second_extension
     try:
         first_sid, second_sid = first.session.id, second.session.id
@@ -265,7 +261,7 @@ def test_invalid_constructor_extension_does_not_connect():
         client = GatewayClient(url)
         try:
             with pytest.raises(TypeError, match="Extension"):
-                Agent("/work", execution_layer=client, extensions=[object()])
+                Agent("/work", client=client, extensions=[object()])
             assert calls == []
         finally:
             client.close()
@@ -282,9 +278,7 @@ def test_failed_append_preserves_registered_callback(gateway):
         """Return an additional value."""
         return value
 
-    with Agent(
-        "/work", execution_layer=client, extensions=[declaration(remember)]
-    ) as agent:
+    with Agent("/work", client=client, extensions=[declaration(remember)]) as agent:
         sid = agent.session.id
         original = state["manifests"][sid]
         state["reject"] = True

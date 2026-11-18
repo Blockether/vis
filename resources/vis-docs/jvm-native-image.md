@@ -114,7 +114,7 @@ The gateway keeps its state under `$VIS_TEST_HOME/.vis`. Separate state is not a
 The process can still use the permitted project files and its inherited environment variables.
 
 To use the new capability, connect an SDK client to this gateway. For a Python job that owns its
-engine, pass the absolute path of the staged launcher as `start(executable=...)`. This engine uses a
+engine, pass the absolute path of the staged launcher as `StdioEngineClient(executable=...)`. This engine uses a
 temporary session database. [Python SDK](python-sdk.md) has the details.
 
 ## Native-image configuration

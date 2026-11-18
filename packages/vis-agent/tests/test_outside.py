@@ -161,7 +161,7 @@ def test_host_sessions_refuse_without_the_host(monkeypatch):
 
     monkeypatch.setattr(vis, "_LAYER", [])
     assert vis._host.bound_session() is None
-    with pytest.raises(TransportError, match="connect or start"):
+    with pytest.raises(TransportError, match="GatewayClient or StdioEngineClient"):
         vis.sessions.list()
 
 

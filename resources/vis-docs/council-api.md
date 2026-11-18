@@ -77,7 +77,7 @@ council = session.council()
 print(council.group_id)
 ```
 
-The handle uses the default Council group of the session. A session of `start()` has the same
+The handle uses the default Council group of the session. A `StdioEngineClient` session has the same
 handle. To publish, get the handle while the session is active. The handle stays bound to that group
 and to the active run. A read needs no active run.
 

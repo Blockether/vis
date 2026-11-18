@@ -26,7 +26,7 @@ from ._client import (
     Turn,
     _duration,
 )
-from ._local import PrivateEngine
+from ._local import StdioEngineClient
 
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 
@@ -443,10 +443,11 @@ class Agent:
     Args:
         project: Project directory. Local execution resolves an existing directory
             immediately. Gateway execution requires an absolute path on the gateway.
-        execution_layer: A client from `blockether.vis.engine.start` or
-            `blockether.vis.engine.connect` to borrow. When omitted, the agent
-            starts and owns a private local engine. Configure executable, credentials
-            and transport timeouts in those calls.
+        client: A `blockether.vis.engine.StdioEngineClient`,
+            `blockether.vis.engine.HttpLocalEngineClient` or
+            `blockether.vis.engine.GatewayClient` to borrow. When omitted, the agent
+            creates and owns a `StdioEngineClient`. Configure executable, credentials
+            and transport timeouts on an explicit client.
         extensions: Iterable of `blockether.vis.extension.Extension` declarations.
             Their Python callables stay in your application and execute on the
             calling thread while you read, wait or iterate events.
@@ -461,11 +462,11 @@ class Agent:
     Construction does not start a process or connect. Session access, context
     entry, `send` or `run` starts the conversation. Closing the default agent stops
     its private process and discards its temporary session database, not file edits.
-    An explicitly supplied layer is borrowed: you must close it yourself, after
+    An explicitly supplied client is borrowed: you must close it yourself, after
     all agents using it have finished. An agent cannot be reused after `close`.
 
     Raises:
-        TypeError: The supplied layer does not implement
+        TypeError: The supplied client does not implement
             `blockether.vis.engine.ExecutionLayer`, an extension is unsupported, or
             `tools` is not an iterable of strings.
         ValueError: A project or extension declaration is invalid, or only one of
@@ -478,7 +479,7 @@ class Agent:
         self,
         project=".",
         *,
-        execution_layer: ExecutionLayer | None = None,
+        client: ExecutionLayer | None = None,
         extensions=(),
         tools=None,
         provider: str | None = None,
@@ -495,16 +496,12 @@ class Agent:
             tools = list(tools)
             if not all(isinstance(name, str) for name in tools):
                 raise TypeError("tools must be an iterable of tool names")
-        if execution_layer is not None and not isinstance(
-            execution_layer, ExecutionLayer
-        ):
-            raise TypeError("execution_layer must be an ExecutionLayer")
-        self._owns_execution_layer = execution_layer is None
-        self.execution_layer = (
-            PrivateEngine(root=project) if execution_layer is None else execution_layer
-        )
+        if client is not None and not isinstance(client, ExecutionLayer):
+            raise TypeError("client must be an ExecutionLayer")
+        self._owns_client = client is None
+        self.client = StdioEngineClient(root=project) if client is None else client
         self._session_options: dict[str, Any] = dict(
-            self.execution_layer.session_options(project)
+            self.client.session_options(project)
         )
         if tools is not None:
             self._session_options["tools"] = tools
@@ -521,9 +518,9 @@ class Agent:
             raise TransportError("agent is closed")
         if self._session is None:
             try:
-                self.execution_layer.connect()
+                self.client.connect()
                 options: dict[str, Any] = self._session_options
-                self._session = self.execution_layer.create_session(**options)
+                self._session = self.client.create_session(**options)
                 self._mount_extensions(self._session, self._extensions)
             except BaseException:
                 try:
@@ -535,11 +532,11 @@ class Agent:
 
     def _mount_extensions(self, session: Session, extensions):
         if extensions.manifest:
-            self.execution_layer._ensure_client_lease()
-            self.execution_layer.put_session_client_extensions(
+            self.client._ensure_client_lease()
+            self.client.put_session_client_extensions(
                 session.id, body={"extensions": extensions.manifest}
             )
-        self.execution_layer._client_extensions[session.id] = extensions
+        self.client._client_extensions[session.id] = extensions
 
     def _replace_extensions(self, candidate):
         if self._closed:
@@ -682,19 +679,17 @@ class Agent:
             self._closed = True
             try:
                 if self._session is not None:
-                    for stream in tuple(self.execution_layer._streams):
+                    for stream in tuple(self.client._streams):
                         if getattr(stream, "session", None) == self._session:
                             stream.close()
-                    if self._extensions.manifest and not self.execution_layer._closed:
-                        self.execution_layer.delete_session_client_extensions(
-                            self._session.id
-                        )
+                    if self._extensions.manifest and not self.client._closed:
+                        self.client.delete_session_client_extensions(self._session.id)
             finally:
                 if self._session is not None:
-                    self.execution_layer._client_extensions.pop(self._session.id, None)
+                    self.client._client_extensions.pop(self._session.id, None)
                 self._extensions.clear()
-                if self._owns_execution_layer:
-                    self.execution_layer.close()
+                if self._owns_client:
+                    self.client.close()
 
     def __enter__(self):
         _ = self.session

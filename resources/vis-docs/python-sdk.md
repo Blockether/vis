@@ -1,7 +1,7 @@
 # Python SDK basics
 
 Use `Agent()` to embed Vis in your program and run tasks in your current project. To use a gateway
-that runs separately, give `Agent()` the client of `connect(url)`. Add the functions of your application with
+that runs separately, give `Agent()` a `GatewayClient`. Add the functions of your application with
 `extensions=[...]`. They keep access to your Python objects in both modes. Both modes have
 `run()`, `send()`, and one conversation for follow-up requests.
 
@@ -85,14 +85,14 @@ context, `Agent()` does these steps:
    extensions again.
 
 A project with its own extensions can need this preparation one time too. When the engine does not
-answer in time, `Agent()` raises `VisTimeout` and stops the engine. To wait longer, call `start()`
-with a longer `startup_timeout`:
+answer in time, `Agent()` raises `VisTimeout` and stops the engine. To wait longer, give a
+`StdioEngineClient` with a longer `startup_timeout`:
 
 ```python
-from blockether.vis.engine import Agent, start
+from blockether.vis.engine import Agent, StdioEngineClient
 
-with start(startup_timeout=300) as client:
-    with Agent(project=".", execution_layer=client) as agent:
+with StdioEngineClient(root=".", startup_timeout=300) as client:
+    with Agent(project=".", client=client) as agent:
         print(agent.run("Summarize this project without changing files.")["status"])
 ```
 
@@ -282,20 +282,20 @@ The local `Agent` example starts `vis-agent stdio` for you. In this mode, Python
 process and talks to it over standard input and output. The process starts no HTTP gateway. It is
 not an MCP server or a terminal chat.
 
-To choose the executable yourself, or to share one local process between agents, call
-`start()`:
+To choose the executable yourself, or to share one local process between agents, use
+`StdioEngineClient`:
 
 ```python
-from blockether.vis.engine import Agent, start
+from blockether.vis.engine import Agent, StdioEngineClient
 
-with start(executable="vis-agent", root=".") as client:
-    with Agent(project=".", execution_layer=client) as agent:
+with StdioEngineClient(executable="vis-agent", root=".") as client:
+    with Agent(project=".", client=client) as agent:
         result = agent.run("Summarize this project without changing files.")
         print(result["status"])
 ```
 
-`start()` gives the process a temporary session database and a log file for its standard
-error. When the context closes, the client stops the process and removes both files. If the
+`StdioEngineClient` gives the process a temporary session database and a log file for its standard
+error. When the context closes, `StdioEngineClient` stops the process and removes both files. If the
 engine fails, the error shows the exit status and the end of the log.
 
 With the default `executable="vis-agent"`, the SDK uses the installed command or
@@ -305,19 +305,19 @@ runtime. A start or a stop of this process does not affect a running gateway.
 
 ## Share one local gateway between your programs
 
-Each `Agent()` without an execution layer starts its own engine, which takes about 1.5 seconds.
-When your scripts run many short tasks, call `start(shared=True)`. It starts one local gateway
+Each `Agent()` without a client starts its own engine, which takes about 1.5 seconds.
+When your scripts run many short tasks, use `HttpLocalEngineClient`. It starts one local gateway
 the first time and connects to it in milliseconds after that:
 
 ```python
-from blockether.vis.engine import Agent, start
+from blockether.vis.engine import Agent, HttpLocalEngineClient
 
-with start(shared=True) as client:
-    with Agent(project=".", execution_layer=client) as agent:
+with HttpLocalEngineClient() as client:
+    with Agent(project=".", client=client) as agent:
         print(agent.run("Summarize this project without changing files.")["status"])
 ```
 
-`start(shared=True)` returns a connected `GatewayClient`. Programs and threads that call it at
+`HttpLocalEngineClient` is a `GatewayClient`. Programs and threads that connect at
 the same time get the same gateway, because a file lock lets only one of them start it.
 
 The gateway has these properties:
@@ -329,19 +329,17 @@ The gateway has these properties:
 - It listens only on 127.0.0.1, on a free port, and requires its token.
 - It stops when no client holds a lease and no turn runs. A client that you do not close keeps its
   lease for 2 minutes after its process ends. A gateway that no client used stops after 30 seconds.
-- Its sessions stay in its database. The next `start(shared=True)` starts the gateway again and
-  finds them.
+- Its sessions stay in its database. The next client starts the gateway again and finds them.
 
-Keep one client open while you work to keep the gateway ready. `stop_shared()` stops the gateway
-for all programs that use it, including their running turns, and returns `True` when a gateway
-ran. Both functions take `home`. The shared gateway works on Linux and macOS.
+Keep one client open while you work to keep the gateway ready. `client.shutdown()` stops the
+gateway for all programs that use it, including their running turns. It also closes the client,
+and returns `True` when a gateway ran. `HttpLocalEngineClient` works on Linux and macOS.
 
-`start(shared=True)` takes the same `executable` as a private engine, a request `timeout` of 30
-seconds, and a `startup_timeout` of 120 seconds. When the gateway does not answer in
-`startup_timeout`, the call raises `VisTimeout`. When the engine cannot start, the call raises
-`TransportError` with the end of the log. When a newer SDK uses another engine, the call replaces
-the old gateway only when no client uses it and no turn runs. `root` applies only to a private
-engine and `home` only to the shared gateway. The other combination raises `ValueError`.
+`HttpLocalEngineClient` takes `home` and the same `executable` as `StdioEngineClient`. It also
+takes a request `timeout` of 30 seconds and a `startup_timeout` of 120 seconds. When the gateway
+does not answer in `startup_timeout`, the client raises `VisTimeout`. When the engine cannot
+start, the client raises `TransportError` with the end of the log. When a newer SDK uses another
+engine, the client replaces the old gateway only when no client uses it and no turn runs.
 
 ## Connect to a gateway and run a task
 
@@ -369,17 +367,17 @@ Save this as `gateway_task.py` and run `python gateway_task.py`:
 import json
 import os
 
-from blockether.vis.engine import Agent, connect
+from blockether.vis.engine import Agent, GatewayClient
 
 
 def main():
-    with connect(
+    with GatewayClient(
         os.environ["VIS_GATEWAY_URL"],
         token=os.environ["VIS_GATEWAY_TOKEN"],
-    ) as execution_layer:
+    ) as client:
         with Agent(
             project=os.environ["VIS_PROJECT_ROOT"],
-            execution_layer=execution_layer,
+            client=client,
         ) as agent:
             result = agent.run("Summarize this project without changing files.")
             print(f"Session: {agent.session.id}")
@@ -391,26 +389,25 @@ if __name__ == "__main__":
     main()
 ```
 
-`connect()` returns a connected `GatewayClient`. It does not discover a gateway or load a local
-token. It accepts an HTTP or HTTPS origin with no path prefix, query, fragment, or URL
-credentials. TLS verification stays on, and the client refuses redirects. Transport options
-belong to the execution layer, not to `Agent`.
+Neither object discovers a gateway or loads a local token. `GatewayClient` accepts an HTTP or
+HTTPS origin with no path prefix, query, fragment, or URL credentials. TLS verification stays on,
+and the client refuses redirects. Transport options belong to the client, not to `Agent`.
 
-`connect()` calls `get_capabilities()` and checks the protocol. The client then sends the token
-with each request. The client also has one generated method for each
+When the `with` block starts, `GatewayClient` calls `get_capabilities()` and checks the protocol.
+It then sends the token with each request. The client also has one generated method for each
 gateway route. The method name is the HTTP method and the words of the route path, for example
 `get_session_usage()`. Each generated method returns the parsed JSON answer.
 
 The session uses the `app` channel, so the app on that gateway shows it. Each new `Agent` creates a
 new session. Keep the printed session ID. To resume the session
-later, open a `connect(url, token=...)` context and call `client.session(session_id)`.
+later, open a `GatewayClient(url, token=...)` context and call `client.session(session_id)`.
 
 To follow the progress of a turn, read [Follow progress](sessions-api.md#follow-progress).
 
 ## List sessions and follow events
 
 Save this as `session_events.py`. Both functions work with a `GatewayClient` and with the
-execution layer of an `Agent`:
+client of an `Agent`:
 
 ```python
 # session_events.py
@@ -425,7 +422,7 @@ def print_events(conversation, seconds=30):
             print(event.type)
 ```
 
-`recent_session_ids(agent.execution_layer)` returns the IDs of up to 20 recent sessions. Without
+`recent_session_ids(agent.client)` returns the IDs of up to 20 recent sessions. Without
 `include_empty="true"`, the list leaves out a session that has no turns yet, also the session of
 your `Agent`.
 
@@ -452,7 +449,7 @@ then raises `TransportError` for each request. Create a new client and a new `Ag
 
 Pass an `Extension` to your `Agent` to let it use business rules, query your data, or call your
 services. You need no `.vis/extensions/` file and no global registration call. The extension
-belongs to the conversation of that `Agent`, not to other agents that share its execution layer.
+belongs to the conversation of that `Agent`, not to other agents that share its client.
 
 Your functions run in your application process, on the SDK calling thread. They can capture
 existing objects, such as a database client or an in-memory list. The same is true with a remote
@@ -571,7 +568,7 @@ turn. During a turn, both methods raise `GatewayError` with the status 409 and t
 has that name.
 
 For a remote agent, pass the same extension object to
-`Agent(execution_layer=execution_layer, extensions=[extension], ...)` inside the gateway context.
+`Agent(client=client, extensions=[extension], ...)` inside the gateway context.
 
 ### When your functions run
 
@@ -649,7 +646,7 @@ identity of a live object stays in your application.
 | `StructuredOutputError` from `run()` | No structured result was valid. Read its `errors` and `attempts` |
 | A record whose `status` is not `completed` | The task did not complete normally. Inspect its content and its input requirements |
 
-A wait timeout is separate from the transport `timeout` of the execution layer. A local pipe
+A wait timeout is separate from the transport `timeout` of the client. A local pipe
 timeout stops its engine. The exit from a default local `Agent` context also stops unfinished work.
 An `Agent` with a borrowed layer leaves that layer running. A remote turn can outlive the client.
 
@@ -661,10 +658,10 @@ request.
 ```python
 import os
 
-from blockether.vis.engine import GatewayError, ProtocolError, TransportError, connect
+from blockether.vis.engine import GatewayClient, GatewayError, ProtocolError, TransportError
 
 try:
-    with connect(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as client:
+    with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as client:
         client.get_capabilities()
 except GatewayError as error:
     print("HTTP error:", error.status, error.code)
@@ -682,17 +679,17 @@ except TransportError:
 | API | Use it for | When it closes |
 | --- | --- | --- |
 | `Agent(project=".")` | One local conversation, with no gateway and no HTTP listener | It stops its engine and discards the session history |
-| `Agent(project=..., execution_layer=layer)` | One conversation on a local engine or a gateway client that the caller owns | It detaches its application extensions. The layer and the saved conversation stay open |
-| `start(executable=..., root=...)` | Several sessions in one private stdio process that you own | It stops that process and discards its session database |
-| `start(shared=True)` | Many runs of your programs on one local gateway that starts one time | It releases its lease. The gateway stops after its last lease |
-| `connect(url, token=...)` | Persistent or shared sessions on a gateway that runs separately | It closes its streams and releases its client lease |
+| `Agent(project=..., client=client)` | One conversation on a client that the caller owns | It detaches its application extensions. The client and the saved conversation stay open |
+| `StdioEngineClient(executable=..., root=...)` | Several sessions in one stdio process that you own | It stops that process and discards its session database |
+| `HttpLocalEngineClient()` | Many runs of your programs on one local gateway that starts one time | It releases its lease. The gateway stops after its last lease |
+| `GatewayClient(url, token=...)` | Persistent or shared sessions on a gateway that runs separately | It closes its streams and releases its client lease |
 
-Pass the client of `start()` or `connect()` when the default private engine does not fit. Each layer
+Pass one of the three clients when the default private engine does not fit. Each client
 and its session handles use one calling thread. Only the `close()` of an event stream is safe from
 another thread. To delete a saved conversation, call `conversation.delete()`.
 
-Always close an `Agent` or a layer, for example with `with`. If you do not close the client of
-`start()`, its process stops only when Python collects the object or exits.
+Always close an `Agent` or a client, for example with `with`. If you do not close a
+`StdioEngineClient`, its process stops only when Python collects the object or exits.
 
 ## See also
 
