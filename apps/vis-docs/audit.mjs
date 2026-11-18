@@ -6,10 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 // Give each entry a reason. The check fails when the advisory no longer occurs, so remove
 // the entry when a fixed release is installed.
-export const ALLOWED = {
-  'GHSA-fc5q-39xc-vjpf':
-    'picomatch <=4.0.7 has no fixed release. Only vite and vitest use it, at build and test time.',
-};
+export const ALLOWED = {};
 
 const BLOCKING = new Set(['high', 'critical']);
 
@@ -46,5 +43,5 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const problems = findings(JSON.parse(run.stdout || '{}'), lock);
   for (const problem of problems) console.error(problem);
   if (problems.length) process.exit(1);
-  console.log(`npm audit: no blocking advisory. Allowed: ${Object.keys(ALLOWED).join(', ')}`);
+  console.log(`npm audit: no blocking advisory. Allowed: ${Object.keys(ALLOWED).join(', ') || 'none'}`);
 }
