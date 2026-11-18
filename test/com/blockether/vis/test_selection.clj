@@ -51,12 +51,15 @@
 (def ^:private parts
   "The named parts and the namespace prefixes of each, in match order. The times are of
    one hosted Linux runner. `python-cli` and `python-uv` start a JVM for each
-   `vis-agent python` call (220 s and 230 s). `python-ext` is the extension worker
-   (220 s). `python` is the rest of the embedded Python (190 s). `core` is the model
-   loop, the tools and the gateway (250 s); the gateway answer check counts the
-   contract tests, so they run with the gateway. The part `other` has every namespace
-   that no named part has (245 s)."
-  [["python-cli" ["com.blockether.vis.internal.python.cli-environment-test"]]
+   `vis-agent python` call (215 s and 185 s). `python-cli` is the shortest job, so it
+   also has `release-bundle-test` (125 s), which most pushes to main leave out.
+   `python-ext` is the extension worker (150 s). `python` is the rest of the embedded
+   Python (190 s). `core` is the model loop, the tools and the gateway (260 s); the
+   gateway answer check counts the contract tests, so they run with the gateway. The
+   part `other` has every namespace that no named part has (305 s)."
+  [["python-cli"
+    ["com.blockether.vis.internal.python.cli-environment-test"
+     "com.blockether.vis.release-bundle-test"]]
    ["python-uv" ["com.blockether.vis.internal.python.cli-shared-uv-test"]]
    ["python-ext" ["com.blockether.vis.internal.python.extensions-test"]]
    ["python" ["com.blockether.vis.internal.python."]]

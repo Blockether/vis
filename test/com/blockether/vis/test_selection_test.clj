@@ -62,5 +62,7 @@
                  'com.blockether.vis.internal.paths-test release]]
         (expect (= all (selection/selected all nil false)))
         (expect (= (pop all) (selection/selected all nil true)))
-        (expect (= [(second all)] (selection/selected all "other" true)))
+        (expect (= [(second all)] (selection/selected all "other" false)))
+        (expect (= [release] (selection/selected all "python-cli" false)))
+        (expect (= [] (selection/selected all "python-cli" true)))
         (expect (= [(first all)] (selection/selected all "python" false))))))
