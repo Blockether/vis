@@ -141,14 +141,15 @@ describe('desktop package', () => {
     ).toBe(false);
   });
 
-  // A kept tools directory already holds an earlier registration. A second `mod artifact;`,
+  // A kept tools directory already holds the registrations of earlier builds, also the older
+  // `use artifact::open_xlsx;` form. A second `mod artifact;`,
   // `mod web_content;` or `rfd` line fails the Rust build, and an older command list misses
   // the new commands.
   it('replaces the registration of an earlier build in a kept tools directory', () => {
     const fresh = readFileSync.getMockImplementation();
     readFileSync.mockImplementation((path, ...rest) => {
       if (String(path).endsWith('lib.rs')) {
-        return 'mod util;\nmod web_content;\nmod artifact;\nuse artifact::{open_xlsx, reveal_artifact};\nfn run() { builder.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,download_file,]); }\nfn setup() {\n            let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;\n            web_content::reload_after_web_content_exit(&window);\n}\n';
+        return 'mod util;\nmod web_content;\nmod artifact;\nuse artifact::{open_xlsx, reveal_artifact};\nmod artifact;\nuse artifact::open_xlsx;\nfn run() { builder.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,download_file,]); }\nfn setup() {\n            let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;\n            web_content::reload_after_web_content_exit(&window);\n}\n';
       }
       if (String(path).endsWith('Cargo.toml')) {
         return `[package]\n\n[dependencies]\n${RFD_DEPENDENCY}\nserde = "1"\n`;

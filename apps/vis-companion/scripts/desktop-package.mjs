@@ -180,9 +180,10 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
     throw new Error('Pake native command registration changed');
   }
   if (!lib.includes(WINDOW_SETUP)) throw new Error('Pake window setup changed');
-  // A kept tools directory holds the registration of an earlier build, so drop it first.
+  // A kept tools directory holds the registrations of earlier builds, also the older
+  // `use name::command;` form, so drop all of them first.
   for (const [name] of HOST_MODULES) {
-    lib = lib.replace(new RegExp(`\\nmod ${name};\\nuse ${name}::\\{[^}]*\\};`), '');
+    lib = lib.replace(new RegExp(`\\nmod ${name};\\nuse ${name}::(?:\\{[^}]*\\}|\\w+);`, 'g'), '');
   }
   const commands = HOST_MODULES.flatMap(([, names]) => names);
   lib = lib
