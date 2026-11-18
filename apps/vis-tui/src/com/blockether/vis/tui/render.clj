@@ -5703,7 +5703,7 @@
    Each picture gets one row block: a thumbnail on the left, then its name, its type and size,
    and an Open externally button. The card has no title and no column names. A click on a
    thumbnail opens the image viewer at that picture, and the footer tells how to open the
-   viewer. A terminal without inline pictures shows the same table without thumbnails."
+   viewer. Only a terminal with inline pictures gets this card (see [[image-attachment-entries]])."
   [nodes content-w {:keys [session-turn-id] :as opts}]
   (let [parts
         (mapv image-block-parts nodes)
@@ -5713,9 +5713,6 @@
 
         viewable
         (filterv :path images)
-
-        graphical?
-        (timg/graphical-terminal?)
 
         first-id
         (or (some-> (re-find #"#(\d+)" (:summary (first parts)))
@@ -5741,7 +5738,7 @@
         block
         (fn [i {:keys [path mime width height name label size-label] :as image}]
           (let [box
-                (when (and graphical? path) (image-table-box image thumb-w))
+                (when path (image-table-box image thumb-w))
 
                 img
                 (when box
@@ -5762,7 +5759,7 @@
                   {:doc {:path path :mime mime :name name :size-label size-label :title name}})
 
                 rows
-                (image-table-block-rows image graphical? thumb-w)
+                (image-table-block-rows image true thumb-w)
 
                 label
                 (if path label (str label " · Unavailable"))
@@ -5801,15 +5798,11 @@
 
         ;; The chords come from the keymap, so the hint follows a moved key.
         hint-text
-        (if graphical?
-          (str "Click a thumbnail or press "
-               (keymap/label-for :view-images)
-               " to view pictures. "
-               (keymap/label-for :open-newest-image)
-               " opens the newest.")
-          (str "This terminal cannot show pictures. "
-               (keymap/label-for :open-newest-image)
-               " opens the newest one."))
+        (str "Click a thumbnail or press "
+             (keymap/label-for :view-images)
+             " to view pictures. "
+             (keymap/label-for :open-newest-image)
+             " opens the newest.")
 
         hint
         (attachment-card-row :image-table-hint hint-text {:table-hint hint-text})]
@@ -5817,6 +5810,19 @@
     (-> [(rule :top "┬")]
         (into (comp (interpose [(rule :separator "┼")]) cat) (map-indexed block images))
         (conj (rule :separator "┴") hint (attachment-card-row :bottom "" {})))))
+
+(defn- image-attachment-entries
+  "Render adjacent `vis-image` blocks for a terminal without inline pictures: one attachment
+   card with one row for each picture, like any other file. A click on a row opens the file."
+  [nodes]
+  (attachment-card-entries
+    (mapv (fn [{:keys [path mime name label size-label]}]
+            {:name name
+             :label (if path label (str label " · Unavailable"))
+             :target (when path
+                       {:doc {:path path :mime mime :name name :size-label size-label :title name}})})
+          (map (comp image-view-entry image-block-parts) nodes))
+    {}))
 
 (defn- table-block-parts
   "Parse a `vis-table` node body — the header lines `attach` writes, then the
@@ -6373,7 +6379,9 @@
                    ;; Adjacent pictures share one image table card.
                    (mapcat (fn [nodes]
                              (if (image-code-block? (first nodes))
-                               [[:card (image-table-entries nodes content-w opts)]]
+                               [[:card (if (timg/graphical-terminal?)
+                                         (image-table-entries nodes content-w opts)
+                                         (image-attachment-entries nodes))]]
                                (map (fn [node]
                                       (cond (table-code-block? node)
                                             [:card (table-disclosure-entries node content-w opts)]

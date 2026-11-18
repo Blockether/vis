@@ -4222,17 +4222,19 @@
 
           (with-redefs [timg/images-protocol (constantly :kitty)]
             (expect (= (render/image-fence-rows text 100) (count (filter :card-part line-meta)))))))
-    (it "a plain terminal shows the same table without thumbnails"
-        (let [{:keys [text line-meta]} (data nil (md (repeat 3 [1200 900])))]
-          (expect (str/includes? text "shot-2.png"))
-          (expect (str/includes? text "PNG · 1200x900 · 1.2 MB"))
-          (expect (str/includes? text
-                                 (str "This terminal cannot show pictures. "
-                                      (keymap/label-for :open-newest-image)
-                                      " opens")))
-          (expect (not (str/includes? text (keymap/label-for :view-images)))
-                  "A plain terminal has no image viewer")
-          (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png" "/tmp/shot-3.png"] (targets line-meta)))
+    (it "a plain terminal lists each picture on one attachment row"
+        (let [{:keys [text line-meta]}
+              (data nil (md (repeat 3 [1200 900])))
+
+              files
+              (filter #(= :file (:card-part %)) line-meta)]
+
+          (expect (= ["shot-1.png" "shot-2.png" "shot-3.png"] (mapv :card-name files)))
+          (expect (every? #(= "PNG · 1200x900 · 1.2 MB" (:card-label %)) files))
+          (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png" "/tmp/shot-3.png"]
+                     (mapv #(get-in % [:doc :path]) files)))
+          (expect (not (str/includes? text "cannot show pictures")))
+          (expect (not-any? #(= :image-table (:card-part %)) line-meta))
           (expect (not-any? #(#{:image :image-pad} (:kind %)) line-meta))))
     ;; Regression: a card that ended the prompt lost its bottom edge to margin trimming.
     (it "a card that ends the prompt keeps its last row"
@@ -5285,14 +5287,14 @@ h = 8"
               (render-step entry nil {})
 
               links
-              (filterv #(get-in % [:meta :table-target :doc]) entries)
+              (filterv #(get-in % [:meta :doc]) entries)
 
               text
               (text-of entries)]
 
           (expect (empty? (picture-rows entries)))
           (expect (seq links))
-          (expect (every? #(= "/tmp/chart.png" (get-in % [:meta :table-target :doc :path])) links))
+          (expect (= ["/tmp/chart.png"] (mapv #(get-in % [:meta :doc :path]) links)))
           (expect (str/includes? text "chart.png"))
           (expect (str/includes? text "PNG · 1200x800 · 245KB"))))
     (it "shows a printed document without an attachment row as a link"
