@@ -234,7 +234,7 @@ Neither cancellation nor this event undoes completed actions.
 | Answer a form or interrupt a view | `session.answer(...)`, `session.view_action(...)` | `client.routes.post_session_view(sid, view_id, body=...)` |
 | List turns or queued messages | `session.turns(...)` | `client.routes.get_session_turns(sid, query=...)` |
 | Change a queued message | No typed call | `client.routes.patch_session_turn(sid, tid, body=...)` |
-| Run one sandbox block with no model, as `vis-agent mcp serve` does | No typed call | `client.routes.post_session_blocks(sid, body={"code": ...})` |
+| Run one sandbox block with no model, as `vis-agent mcp serve` does | No typed call | `client.routes.post_session_run(sid, body={"code": ...})` |
 | Remove a queued message | No typed call | `client.routes.delete_session_turn(sid, tid)` |
 | List the files that the agent attached | `session.attachments(...)`, `turn.attachments()` | `client.routes.get_session_artifacts(sid)` |
 | Download one file | `attachment.read()`, `session.download_attachment(iid, index)` | `client.routes.get_session_iteration_attachments(sid, iid, idx)` |
@@ -291,7 +291,7 @@ Neither cancellation nor this event undoes completed actions.
 | Answer a form or interrupt a view | `POST /v1/sessions/{sid}/views/{view-id}/actions` |
 | List turns or queued messages | `GET /v1/sessions/{sid}/turns` |
 | Change a queued message | `PATCH /v1/sessions/{sid}/turns/{tid}` |
-| Run one sandbox block with no model | `POST /v1/sessions/{sid}/blocks` |
+| Run one sandbox block with no model | `POST /v1/sessions/{sid}/run` |
 | Remove a queued message | `DELETE /v1/sessions/{sid}/turns/{tid}` |
 | List the files that the agent attached | `GET /v1/sessions/{sid}/artifacts` |
 | Download one file | `GET /v1/sessions/{sid}/iterations/{iid}/attachments/{idx}` |

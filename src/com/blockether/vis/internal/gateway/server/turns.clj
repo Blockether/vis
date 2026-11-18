@@ -186,7 +186,7 @@
                                          (or (:message result) "invalid request")))))))
 
 (defn- run-block-handler
-  "POST /sessions/:sid/blocks — run one Python block `code` in the session sandbox,
+  "POST /sessions/:sid/run — run one Python block `code` in the session sandbox,
    as the `python_execution` tool of the agent runs it, with no model call. The
    block waits for a running turn of the session. The answer is `result`, the text
    that the agent sees, and `is_error`. A failed block is a 200 answer with
@@ -642,7 +642,7 @@
    [:put "/v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note"]
    attachment-agent-note-handler
    [:post "/v1/sessions/:sid/attachments"] upload-attachment-handler
-   [:post "/v1/sessions/:sid/blocks"] run-block-handler
+   [:post "/v1/sessions/:sid/run"] run-block-handler
    [:get "/v1/sessions/:sid/turns"] list-turns-handler
    [:post "/v1/sessions/:sid/turns"] submit-turn-handler
    [:get "/v1/sessions/:sid/turns/:tid"] get-turn-handler

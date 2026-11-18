@@ -1927,7 +1927,7 @@
       "archived_at": null
     },
     "POST /v1/sessions/:sid/agents/wait": [],
-    "POST /v1/sessions/:sid/blocks": {
+    "POST /v1/sessions/:sid/run": {
       "result": "4",
       "is_error": false
     },

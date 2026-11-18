@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - MCP: Vis reads the servers of the `.mcp.json` of a project, in the Claude Code format. A server in `vis.yml` wins over the same name in `.mcp.json`.
 - MCP: `vis-agent mcp add` takes `--client-secret`, which asks for the secret or reads `MCP_CLIENT_SECRET` and keeps it in `~/.vis/mcp-tokens`, and `--callback-port`, which sets the new key `auth.callback_port`. With this key, the sign-in returns to `http://localhost:<PORT>/callback`. `.mcp.json` maps `oauth.callbackPort` to this key.
 - MCP: `vis-agent mcp serve` runs Vis as an MCP server on standard input and output, as `claude mcp serve` does. Its tools are the tools of the Vis agent, now `python_execution`. Each call runs in one Vis session of the current directory.
-- Gateway: `POST /v1/sessions/:sid/blocks` with `{"code": "..."}` runs one sandbox block in a session with no model. It waits for a running turn of the session and answers `{"result", "is_error"}`. The Python SDK has `client.routes.post_session_blocks`.
+- Gateway: `POST /v1/sessions/:sid/run` with `{"code": "..."}` runs one sandbox block in a session with no model. It waits for a running turn of the session and answers `{"result", "is_error"}`. The Python SDK has `client.routes.post_session_run`.
 
 ### Changed
 

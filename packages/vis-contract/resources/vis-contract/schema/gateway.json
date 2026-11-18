@@ -811,7 +811,7 @@
           "response_schema": "session_block"
         }
       },
-      "path": "/v1/sessions/:sid/blocks"
+      "path": "/v1/sessions/:sid/run"
     },
     {
       "audience": "sdk",

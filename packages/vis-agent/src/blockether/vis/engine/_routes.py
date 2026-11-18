@@ -938,7 +938,7 @@ class Routes:
         )
         return response.json()
 
-    def post_session_blocks(
+    def post_session_run(
         self,
         sid: str,
         *,
@@ -946,10 +946,10 @@ class Routes:
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionBlock:
-        """POST /v1/sessions/:sid/blocks — json response."""
+        """POST /v1/sessions/:sid/run — json response."""
         response = self._client._request(
             "POST",
-            "/v1/sessions/:sid/blocks",
+            "/v1/sessions/:sid/run",
             path={"sid": sid},
             query=query,
             timeout=timeout,

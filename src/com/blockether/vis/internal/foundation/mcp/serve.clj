@@ -6,7 +6,7 @@
    has. A tool call runs in one Vis session for the
    workspace of `:cwd`. The first call creates the session, and later calls use it
    again, so the variables of a block stay for the next block. The gateway runs each
-   block (`POST /v1/sessions/:sid/blocks`), and no model is called.
+   block (`POST /v1/sessions/:sid/run`), and no model is called.
 
    The output carries only protocol messages. Logs go to stderr."
   (:require [charred.api :as json]
@@ -66,7 +66,7 @@
   "Run `code` in session `sid` and answer the gateway response."
   [sid code]
   (gateway-client/request! :post
-                           (str "/v1/sessions/" sid "/blocks")
+                           (str "/v1/sessions/" sid "/run")
                            {:body {"code" code} :timeout-ms block-timeout-ms}))
 
 (defn- python-execution!

@@ -91,8 +91,8 @@
                  (get-in by-id [4 "result"])))
       (expect (= {} (get-in by-id [5 "result"])))
       (expect (= [[:post "/v1/sessions" {"root" "/work/project" "title" "MCP client"}]
-                  [:post "/v1/sessions/s1/blocks" {"code" "x = 2"}]
-                  [:post "/v1/sessions/s1/blocks" {"code" "print(x + 2)"}]]
+                  [:post "/v1/sessions/s1/run" {"code" "x = 2"}]
+                  [:post "/v1/sessions/s1/run" {"code" "print(x + 2)"}]]
                  requests))))
   (it
     "answers a failed block as a tool error and a bad message as a protocol error"
@@ -120,5 +120,5 @@
                                            (gateway [[404 {"error" {"message" "unknown session"}}]
                                                      [200 {"result" "" "is_error" false}]]))]
         (expect (= false (get-in (first replies) ["result" "isError"])))
-        (expect (= ["/v1/sessions" "/v1/sessions/s1/blocks" "/v1/sessions" "/v1/sessions/s1/blocks"]
+        (expect (= ["/v1/sessions" "/v1/sessions/s1/run" "/v1/sessions" "/v1/sessions/s1/run"]
                    (mapv second requests))))))
