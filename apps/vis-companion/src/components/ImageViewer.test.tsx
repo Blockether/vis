@@ -603,6 +603,20 @@ describe('a gallery in the viewer', () => {
     expect(title()).toBe('two.png');
   });
 
+  // Regression, user report (paraphrased: "to move the picture I must zoom in a
+  // lot; a drag on the dark area beside it does not move it"). A zoomed-out
+  // picture is moved, and only a fitted one walks the gallery.
+  it('drags a zoomed-out picture from the margin instead of swiping', () => {
+    open(1);
+    act(() => document.querySelector<HTMLButtonElement>('[aria-label="Zoom out"]')?.click());
+    Element.prototype.setPointerCapture = vi.fn();
+    finger('pointerdown', 200);
+    finger('pointermove', 60, 360);
+    finger('pointerup', 60, 360);
+    expect(stage()?.style.transform).toContain('translate3d(-140px, 60px, 0)');
+    expect(title()).toBe('two.png');
+  });
+
   // A pointer the SYSTEM takes away — a call, a notification, the edge gesture —
   // is not a reader asking for the next picture.
   it('keeps the picture it was on when the touch is cancelled', () => {

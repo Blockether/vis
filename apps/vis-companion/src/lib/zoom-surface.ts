@@ -9,11 +9,11 @@ import {
 } from 'react';
 import {
   DOUBLE_TAP_PX,
-  FIT_SCALE,
   NO_TRANSFORM,
   clampTransform,
   distance,
   isDoubleTap,
+  isFitted,
   panFrom,
   panTransform,
   pinchFrom,
@@ -215,15 +215,17 @@ export function useZoomPan(options: ZoomPanOptions) {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setGliding(false);
-    // A picture that is not zoomed in has nothing to pan, so the finger's whole
-    // travel means the NEIGHBOURING picture instead. A second finger is a pinch,
+    // A fitted picture has nothing to pan, so the finger's whole travel means the
+    // NEIGHBOURING picture, if there is one. A zoomed or moved picture pans. A second finger is a pinch,
     // so whatever the first one had dragged goes back first.
     if (pinching) slide(0);
-    const isSwiping = Boolean(swipe) && transformRef.current.scale <= FIT_SCALE;
+    const fitted = isFitted(transformRef.current);
     gestureRef.current = pinching
       ? pinchFrom(a, b, transformRef.current)
-      : isSwiping
-        ? swipeFrom(event.pointerId, point)
+      : fitted
+        ? swipe
+          ? swipeFrom(event.pointerId, point)
+          : null
         : panFrom(event.pointerId, point, transformRef.current);
   }
 

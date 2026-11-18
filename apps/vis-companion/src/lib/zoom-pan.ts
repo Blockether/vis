@@ -3,7 +3,7 @@
  *
  * Nothing here touches the DOM. A gesture is a value, a transform is a value,
  * and the component that owns the pointers only decides WHEN to ask — so
- * "two fingers scale about their own midpoint" and "back to 1:1 recentres" are
+ * "two fingers scale about their own midpoint" and "Reset goes back to fitted" are
  * things a test can state, instead of things you can only find out by pinching
  * a phone.
  */
@@ -18,7 +18,7 @@ export type Transform = { scale: number; x: number; y: number };
 export const MIN_SCALE = 0.5;
 export const MAX_SCALE = 6;
 
-/** 1:1 — the scale the viewer opens at, and the floor for panning. */
+/** 1:1 — the scale the viewer opens at. */
 export const FIT_SCALE = 1;
 
 /** Fitted and centred: what the viewer opens at and what Reset returns to. */
@@ -56,13 +56,21 @@ export function midpoint(a: Point, b: Point): Point {
 }
 
 /**
- * Inside the scale range — and centred again once it is at or under 1:1, so a
- * picture pinched down can never be left parked off screen.
+ * Inside the scale range. The offset stays at every scale: a zoomed-out picture
+ * is moved like a page on a desk, and Reset brings it back to fitted.
  */
 export function clampTransform(next: Transform): Transform {
-  const scale = clamp(next.scale, MIN_SCALE, MAX_SCALE);
-  // At or below 1:1 the picture fits, so an offset could only strand it.
-  return scale <= FIT_SCALE ? { ...NO_TRANSFORM, scale } : { scale, x: next.x, y: next.y };
+  return { scale: clamp(next.scale, MIN_SCALE, MAX_SCALE), x: next.x, y: next.y };
+}
+
+/** A pinch rarely stops exactly on 1:1; this close to it is fitted. */
+const FIT_EPSILON = 0.01;
+
+/** Fitted and centred, as the viewer opens: the only state a drag swipes from. */
+export function isFitted(transform: Transform): boolean {
+  return (
+    Math.abs(transform.scale - FIT_SCALE) <= FIT_EPSILON && transform.x === 0 && transform.y === 0
+  );
 }
 
 /** A button or a wheel notch: scale about the centre, keeping the offset. */

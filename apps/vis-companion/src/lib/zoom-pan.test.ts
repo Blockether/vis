@@ -34,14 +34,13 @@ describe('zoom limits', () => {
     expect(clampTransform({ scale: 99, x: 0, y: 0 }).scale).toBe(MAX_SCALE);
   });
 
-  // A picture pinched back down but left dragged off screen is a picture the
-  // human cannot get back, so 1:1 always means centred.
-  it('recentres at or below 1:1', () => {
-    expect(clampTransform({ scale: 1, x: -400, y: 260 })).toEqual(NO_TRANSFORM);
+  // A picture zoomed out is a page on a desk: it stays where it was moved to.
+  // Reset is the way back to fitted and centred.
+  it('keeps the offset at every scale', () => {
     expect(clampTransform({ scale: 0.5, x: -400, y: 260 })).toEqual({
       scale: 0.5,
-      x: 0,
-      y: 0,
+      x: -400,
+      y: 260,
     });
     expect(clampTransform({ scale: 2, x: -400, y: 260 })).toEqual({
       scale: 2,
@@ -58,8 +57,8 @@ describe('zoom limits', () => {
     });
     expect(zoomedBy({ scale: 1.2, x: 30, y: -10 }, 0.1)).toEqual({
       scale: MIN_SCALE,
-      x: 0,
-      y: 0,
+      x: 30,
+      y: -10,
     });
   });
 });
@@ -90,11 +89,12 @@ describe('gestures', () => {
     });
   });
 
-  // A pan at 1:1 has nothing to reveal, so it is absorbed rather than left as a
-  // picture floating away from its own frame.
-  it('cannot drag a picture that is not zoomed', () => {
-    const gesture = panFrom(1, { x: 0, y: 0 }, NO_TRANSFORM);
-    expect(panTransform(gesture, { x: 120, y: 90 })).toEqual(NO_TRANSFORM);
+  // Regression, user report (paraphrased: "to move the picture I must zoom in a
+  // lot; a drag on the dark area beside it does not move it"): every pan at or
+  // below 1:1 was set back to the centre, so a zoomed-out picture did not move.
+  it('drags a picture that is zoomed out', () => {
+    const gesture = panFrom(1, { x: 0, y: 0 }, { scale: 0.69, x: 0, y: 0 });
+    expect(panTransform(gesture, { x: 120, y: 90 })).toEqual({ scale: 0.69, x: 120, y: 90 });
   });
 });
 
@@ -146,14 +146,12 @@ describe('a wheel, a trackpad and a Safari pinch', () => {
     expect(after.scale).toBeCloseTo(2.4, 6);
   });
 
-  it('still obeys the ceiling and recentres at or below 1:1', () => {
+  it('still obeys the ceiling and the floor', () => {
     const center = { x: 200, y: 150 };
     expect(zoomedAbout({ scale: 5, x: 0, y: 0 }, 4, { x: 260, y: 110 }, center).scale).toBe(6);
-    expect(zoomedAbout({ scale: 1.2, x: 40, y: 40 }, 0.1, { x: 260, y: 110 }, center)).toEqual({
-      scale: MIN_SCALE,
-      x: 0,
-      y: 0,
-    });
+    expect(zoomedAbout({ scale: 1.2, x: 40, y: 40 }, 0.1, { x: 260, y: 110 }, center).scale).toBe(
+      MIN_SCALE,
+    );
   });
 });
 // "Trim to view" is the answer to zooming into a detail and then wanting only
