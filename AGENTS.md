@@ -8,6 +8,8 @@ Run each project's tools from its own directory.
 
 - One namespace: `clojure -M:test --namespace my.ns-test` or `--var my.ns-test/my-test`.
 - Full suite: `clojure -M:test` (one JVM). Locally it skips `release-bundle-test` when no launcher, workflow or build file changed; CI and `VIS_TEST_ALL=1` run it. Lint: `clojure -M:lint`, reflection warnings included.
+- Parts: `VIS_TEST_PART=core clojure -M:test` runs one part of `test_selection.clj`. `bin/test-parts core other`
+  runs one JVM for each argument at the same time; a comma joins parts in one JVM.
 - Native: `clojure -T:build native`, then `clojure -M:test-native`. JVM tests do not prove the binary.
 - Companion Android Gradle uses stock JDK 21.
 - `clojure -M:audit` generates `audit/README.md` (network required). Never edit that file by hand.

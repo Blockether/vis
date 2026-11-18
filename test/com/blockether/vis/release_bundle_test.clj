@@ -4561,10 +4561,14 @@
          ["python3" "-c"
           (str/join
             "\n"
-            ["import copy, json, runpy" "from unittest.mock import patch"
+            ["import copy, json, re, runpy" "from unittest.mock import patch"
              "m = runpy.run_path('bin/verify-release-assets.py')"
              "repo, tag, sha = 'example/project', 'v9.8.7', 'a' * 40"
-             "names = m['required_recovery_checks']()" "assert len(names) == 30, names"
+             "names = m['required_recovery_checks']()"
+             ;; A test job that the recovery does not know passes with no evidence.
+             "matrix = open('.github/workflows/ci.yml').read().split(chr(10) + '  tests:' + chr(10))[1].split(chr(10) + '    steps:' + chr(10))[0]"
+             "jobs = {'Verify release source / tests / ' + name.strip() for name in re.findall('- (?:[{] )?name: ([^,' + chr(10) + ']+)', matrix)}"
+             "assert jobs and jobs == {name for name in names if ' / tests / ' in name}, (jobs, names)"
              "windows = 'desktop / Package Windows x64'" "assert windows in names, names"
              "replaced = {f'native / native / vis-agent-linux-{arch}.tar.gz' for arch in ('x64', 'arm64')}"
              "publisher = 'Verify complete assets, deploy libraries and publish stable'"

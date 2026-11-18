@@ -1,11 +1,15 @@
 (ns com.blockether.vis.test-selection
-  "Lazytest hook of the `:test` alias. On a developer machine it skips
-   `release-bundle-test` when no file that it runs or reads has changed. CI and
-   `VIS_TEST_ALL=1` run it. CI with `VIS_TEST_BASE`, the last green commit, skips it
-   in the same way. `VIS_TEST_PART` runs one of the two parts of the suite,
-   so two CI jobs share it. A `--namespace` or `--var` selection runs as given."
-  (:require [clojure.java.shell :as sh]
+  "Lazytest hook of the `:test` alias. It selects the test namespaces before Lazytest
+   loads them, so a run loads only the namespaces that it runs. On a developer machine
+   it leaves out `release-bundle-test` when no file that it runs or reads has changed.
+   CI and `VIS_TEST_ALL=1` run it. CI with `VIS_TEST_BASE`, the last green commit,
+   leaves it out in the same way. `VIS_TEST_PART` runs one part of the suite, or some
+   parts with commas between them, so parallel CI jobs share it. A `--namespace` or
+   `--var` selection runs as given."
+  (:require [clojure.java.io :as io]
+            [clojure.java.shell :as sh]
             [clojure.string :as str]
+            [clojure.tools.namespace.find :as find]
             [lazytest.hooks :as hooks]))
 
 (def ^:private release-ns 'com.blockether.vis.release-bundle-test)
@@ -35,65 +39,91 @@
                (some #(str/starts-with? path %) release-inputs))))
 
 (defn skip-release?
-  "True when the run may skip `release-bundle-test`. `changed` is nil when Git
+  "True when the run may leave out `release-bundle-test`. `changed` is nil when Git
    cannot tell what changed; then the test runs. CI runs it, unless `VIS_TEST_BASE`
    names the commit that `changed` compares with."
-  [config env changed]
-  (not (or (seq (:ns-filter config))
-           (seq (:var-filter config))
-           (and (not (str/blank? (get env "CI"))) (str/blank? (get env "VIS_TEST_BASE")))
+  [env changed]
+  (not (or (and (not (str/blank? (get env "CI"))) (str/blank? (get env "VIS_TEST_BASE")))
            (= "1" (get env "VIS_TEST_ALL"))
            (nil? changed)
            (some release-input? changed))))
 
-(def ^:private python-prefix "com.blockether.vis.internal.python.")
+(def ^:private parts
+  "The named parts and the namespace prefixes of each, in match order. The times are of
+   one hosted Linux runner. `python-cli` and `python-uv` start a JVM for each
+   `vis-agent python` call (220 s and 230 s). `python-ext` is the extension worker
+   (220 s). `python` is the rest of the embedded Python (190 s). `core` is the model
+   loop, the tools and the gateway (250 s); the gateway answer check counts the
+   contract tests, so they run with the gateway. The part `other` has every namespace
+   that no named part has (245 s)."
+  [["python-cli" ["com.blockether.vis.internal.python.cli-environment-test"]]
+   ["python-uv" ["com.blockether.vis.internal.python.cli-shared-uv-test"]]
+   ["python-ext" ["com.blockether.vis.internal.python.extensions-test"]]
+   ["python" ["com.blockether.vis.internal.python."]]
+   ["core"
+    ["com.blockether.vis.internal.loop-test" "com.blockether.vis.internal.foundation."
+     "com.blockether.vis.internal.gateway." "com.blockether.vis.contract."]]])
+
+(def ^:private part-names (conj (mapv first parts) "other"))
+
+(defn- part-of
+  [n]
+  (or (some (fn [[part prefixes]]
+              (when (some #(str/starts-with? (str n) %) prefixes) part))
+            parts)
+      "other"))
 
 (defn in-part?
-  "True when the namespace `n` runs in `part`, the value of `VIS_TEST_PART`. The part
-   `python` has the namespaces of the embedded Python, which take about half of the
-   time of the suite. The part `other` has every other namespace. Without a part,
-   every namespace runs."
+  "True when the namespace `n` runs in `part`, the value of `VIS_TEST_PART`: one part
+   name, or some names with commas between them. Without a part, every namespace runs."
   [part n]
-  (let [python? (str/starts-with? (str n) python-prefix)]
-    (case part
-      (nil "")
-      true
+  (or (str/blank? part)
+      (let [wanted (str/split part #",")]
+        (when-let [unknown (seq (remove (set part-names) wanted))]
+          (throw (ex-info (str "VIS_TEST_PART must name parts of "
+                               (str/join ", " part-names)
+                               ", not "
+                               (pr-str part))
+                          {:part part :unknown unknown})))
+        (boolean (some #{(part-of n)} wanted)))))
 
-      "python"
-      python?
+(defn selected
+  "The namespaces of `all` that the run has: those of `part`, without
+   `release-bundle-test` when `skip-release?`."
+  [all part skip-release?]
+  (into []
+        (comp (filter #(in-part? part %))
+              (remove #(and skip-release? (= release-ns %))))
+        all))
 
-      "other"
-      (not python?)
+(hooks/defhook selection
+               "Select the namespaces of the run before Lazytest loads them."
+               (config [config _]
+                       (if (or (seq (:ns-filter config)) (seq (:var-filter config)))
+                         config
+                         (let [all
+                               (into []
+                                     (mapcat #(find/find-namespaces-in-dir (io/file %)))
+                                     (or (:dirs config) ["test"]))
 
-      (throw (ex-info (str "VIS_TEST_PART must be python or other, not " (pr-str part))
-                      {:part part})))))
+                               part
+                               (System/getenv "VIS_TEST_PART")
 
-(hooks/defhook part
-               "Run only the namespaces of `VIS_TEST_PART`."
-               (pre-test-run [config m]
-                             (let [part (System/getenv "VIS_TEST_PART")]
-                               (if (or (seq (:ns-filter config)) (seq (:var-filter config)))
-                                 m
-                                 (update m
-                                         :children
-                                         #(filterv (fn [s]
-                                                     (in-part? part (:doc s)))
-                                            %))))))
+                               skip?
+                               (and (some #{release-ns} (selected all part false))
+                                    (skip-release? (System/getenv)
+                                                   (changed-paths (System/getenv
+                                                                    "VIS_TEST_BASE"))))
 
-(hooks/defhook release-scripts
-               "Skip `release-bundle-test` when its inputs are unchanged."
-               (pre-test-run [config m]
-                             (if (skip-release? config
-                                                (System/getenv)
-                                                (changed-paths (System/getenv "VIS_TEST_BASE")))
-                               (do (println (str "Skipped "
-                                                 release-ns
-                                                 ": no change under bin/, .github/, installer/, "
-                                                 "build.clj, VIS_VERSION or deps.edn. "
-                                                 "VIS_TEST_ALL=1 runs it."))
-                                   (update m
-                                           :children
-                                           #(filterv (fn [s]
-                                                       (not= release-ns (:doc s)))
-                                              %)))
-                               m)))
+                               run
+                               (selected all part skip?)]
+
+                           (when skip?
+                             (println (str "Skipped "
+                                           release-ns
+                                           ": no change under bin/, .github/, installer/, "
+                                           "build.clj, VIS_VERSION or deps.edn. "
+                                           "VIS_TEST_ALL=1 runs it.")))
+                           (if (= (count run) (count all))
+                             config
+                             (assoc config :ns-filter (set run)))))))

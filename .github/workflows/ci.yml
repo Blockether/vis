@@ -23,9 +23,10 @@ jobs:
   # native binary is built with. JVM users may use any JDK 25+ distribution.
   # fail-fast false so each OS reports independently. Windows is not supported.
   #
-  # Linux is the slowest runner, so two Linux jobs share the suite: `python` runs the
-  # namespaces of the embedded Python, `other` runs the rest.
-  # `VIS_TEST_PART` selects the part in `test_selection.clj`. macOS runs all in one job.
+  # Linux is the slowest runner, so four Linux jobs share the suite. `VIS_TEST_PART`
+  # selects the part of each job; `test_selection.clj` has the parts and their times.
+  # macOS runs all in one job: a hosted runner in one JVM, our own Mac in two JVMs
+  # at the same time, because its one runner cannot share a job matrix.
   #
   # Only main pushes use the local Mac; all pull requests stay on hosted runners.
   tests:
@@ -36,7 +37,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { name: linux python-cli, host: ubuntu-latest, part: python-cli }
+          - { name: linux python-uv, host: ubuntu-latest, part: python-uv }
+          - { name: linux python-ext, host: ubuntu-latest, part: python-ext }
           - { name: linux python, host: ubuntu-latest, part: python }
+          - { name: linux core, host: ubuntu-latest, part: core }
           - { name: linux other, host: ubuntu-latest, part: other }
           - name: macos
             host: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","ARM64","vis-macos-arm64"]') || 'macos-26' }}
@@ -137,16 +142,13 @@ jobs:
           path: ~/.vis/native
           key: vis-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'src/com/blockether/vis/internal/speech/sherpa.clj') }}
           restore-keys: vis-native-${{ runner.os }}-${{ runner.arch }}-
-      - name: Prepare git dependencies and provision native runtimes
-        run: |
-          clojure -X:deps prep
-          clojure -M -e "(require '[com.blockether.vis.internal.speech.sherpa :as sherpa]) (prn (sherpa/ensure-native!))"
-          clojure -M -e "(require '[com.blockether.vis.internal.python.runtime :as python-runtime]) (prn (python-runtime/ensure-library!))"
       # Extension fixtures import the vis-agent SDK, which needs its schema packages.
       # Install them into the shared sandbox packages before the guarded suite.
-      - name: Provision vis-agent packages for extension tests
+      # One JVM does all of this: each JVM start costs about 15 seconds on a hosted runner.
+      - name: Prepare git dependencies and provision native runtimes and vis-agent packages
         run: |
-          clojure -M -e "(require '[com.blockether.vis.internal.python.runtime :as python-runtime]) (python-runtime/ensure-library!) (let [r (python-runtime/pip-install! [\"jsonschema>=4.23,<5\" \"pydantic==2.14.1\" \"referencing>=0.28.4\"])] (println (:out r)) (System/exit (int (:exit r))))"
+          clojure -X:deps prep
+          clojure -M -e "(require '[com.blockether.vis.internal.speech.sherpa :as sherpa] '[com.blockether.vis.internal.python.runtime :as python-runtime]) (prn (sherpa/ensure-native!)) (prn (python-runtime/ensure-library!)) (let [r (python-runtime/pip-install! [\"jsonschema>=4.23,<5\" \"pydantic==2.14.1\" \"referencing>=0.28.4\"])] (println (:out r)) (System/exit (int (:exit r))))"
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.9.2"
@@ -183,12 +185,20 @@ jobs:
           VIS_REQUIRE_LINUX_SANDBOX_E2E: ${{ runner.os == 'Linux' && '1' || '0' }}
           # Every runner needs an explicit heap: GitHub's hosted macOS image has
           # less memory than Linux, whose default quarter-RAM heap also exhausted.
-          # Our own Apple-silicon runner has 36 GiB, so it takes the Linux size.
-          JAVA_TOOL_OPTIONS: ${{ env.JAVA_TOOL_OPTIONS }} ${{ (runner.os == 'macOS' && runner.environment == 'github-hosted') && '-Xmx5g' || '-Xmx10g' }}
+          # Our own Apple-silicon runner has 36 GiB for four JVMs, so it takes the same size.
+          JAVA_TOOL_OPTIONS: ${{ env.JAVA_TOOL_OPTIONS }} ${{ runner.os == 'macOS' && '-Xmx5g' || '-Xmx10g' }}
           VIS_TEST_PART: ${{ matrix.part }}
           VIS_TEST_BASE: ${{ steps.green.outputs.sha }}
-        # One JVM runs every namespace of the part in turn.
-        run: clojure -M:test
+          # Our Apple-silicon runner has the cores for four JVMs at the same time.
+          VIS_TEST_PARTS: ${{ (runner.os == 'macOS' && runner.environment == 'self-hosted') && 'python-cli,python-uv python-ext,python core other' || '' }}
+        # One JVM runs every namespace of its part in turn.
+        run: |
+          if [ -n "$VIS_TEST_PARTS" ]; then
+            read -r -a parts <<< "$VIS_TEST_PARTS"
+            bin/test-parts "${parts[@]}"
+          else
+            clojure -M:test
+          fi
 
   # The TUI is its own project and never loads the engine, so its suite has its own job
   # and does not wait for the engine suite.

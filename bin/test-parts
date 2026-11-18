@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Run the engine suite as concurrent JVMs: one JVM for each argument. An argument
+# is a value of VIS_TEST_PART (test/com/blockether/vis/test_selection.clj): one
+# part, or some parts with commas between them. Each JVM has its own database,
+# log, sandbox and extension directories below target/test-parts/. Each output
+# line starts with the parts of its JVM. The run fails when a JVM fails.
+#
+# Usage: bin/test-parts python-cli,python core,other
+#
+# Needs: clojure on PATH, and cores to spare. CI uses it on the self-hosted Mac,
+# where the jobs of a matrix cannot run at the same time on the one runner.
+set -uo pipefail
+
+[ "$#" -gt 0 ] || { echo "usage: bin/test-parts PART[,PART] ..." >&2; exit 2; }
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root" || exit 1
+# Two JVMs that start together must not both write the classpath cache.
+clojure -Spath -M:test > /dev/null || exit 1
+
+# Without job control, bash starts a background command with SIGINT ignored, and the
+# tests that send SIGINT to a child fail. Job control also gives each JVM its own
+# process group, which `stop` ends when the run stops early.
+set -m
+pids=()
+stop() {
+  for pid in ${pids[@]+"${pids[@]}"}; do
+    kill -TERM -- "-$pid" 2> /dev/null
+  done
+}
+trap stop EXIT
+trap 'exit 130' INT TERM
+
+for part in "$@"; do
+  state="target/test-parts/$part"
+  rm -rf "$state"
+  mkdir -p "$state"
+  (
+    set -o pipefail
+    SECONDS=0
+    VIS_TEST_PART="$part" clojure \
+      -J-Dvis.db.path="$state/vis-test.mdb" \
+      -J-Dvis.image-descriptions.dir="$state/image-descriptions" \
+      -J-Dvis.logs.dir="$state/logs" \
+      -J-Dvis.sandbox.dir="$state/sandbox" \
+      -J-Dvis.extensions.dir="$state/extensions" \
+      -M:test 2>&1 | awk -v tag="[$part] " '{ print tag $0; fflush() }'
+    code=$?
+    echo "[$part] exit status $code after ${SECONDS} s"
+    exit "$code"
+  ) &
+  pids+=("$!")
+done
+
+status=0
+for pid in "${pids[@]}"; do
+  wait "$pid" || status=1
+done
+exit "$status"
