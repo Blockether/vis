@@ -68,8 +68,7 @@
                      (:fx (handler {:session {:id "s1"}
                                     :session-model-pref {:provider "openai-codex" :model "gpt"}}
                                    [:toggle-codex-fast-mode]))))
-          (expect (= [[:notify "Fast mode is available only for OpenAI Codex" :warn 1500]]
-                     (:fx (handler {:session-model-pref {:provider "github-copilot" :model "gpt"}}
+          (expect (nil? (:fx (handler {:session-model-pref {:provider "github-copilot" :model "gpt"}}
                                    [:toggle-codex-fast-mode]))))))))
 
 (defdescribe thinking-summary-toggle-test
@@ -91,10 +90,7 @@
                                                :session-model-pref {:provider "anthropic"
                                                                     :model "claude-opus-5"}}
                                               [:toggle-thinking-summary]))))
-                     (expect (= [[:notify
-                                  "Thinking summary is available only for Claude adaptive thinking"
-                                  :warn 1500]]
-                                (:fx (handler {:session-model-pref {:provider "zai-coding-plan"
+                     (expect (nil? (:fx (handler {:session-model-pref {:provider "zai-coding-plan"
                                                                     :model "glm-5.3"}}
                                               [:toggle-thinking-summary]))))))))
 
@@ -911,11 +907,8 @@
           (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
                                 :render-version 0})
           (expect (nil? (state/reasoning-picker @state/app-db)))
-          (state/dispatch [:reasoning-unconfigurable])
           (expect (= "deep" (get-in @state/app-db [:settings :reasoning-level])))
-          (expect (= ["Reasoning effort is not configurable for this model"
-                      [:level :warn :ttl-ms 1500]]
-                     @notified)))))
+          (expect (nil? @notified)))))
   (it "leaves verbosity unchanged when the session's model rejects the field"
       (let [notified (atom nil)]
         (with-redefs [vis/get-router (constantly :router)
@@ -928,9 +921,7 @@
                                 :render-version 0})
           (state/dispatch [:cycle-verbosity])
           (expect (= "high" (get-in @state/app-db [:settings :verbosity])))
-          (expect (= ["Answer length is not configurable for this model"
-                      [:level :warn :ttl-ms 1500]]
-                     @notified)))))
+          (expect (nil? @notified) "An unsupported setting shows no toast"))))
   (it "cycles scoped verbosity on every model exposing the wire capability"
       (let [calls (atom [])]
         (with-redefs [vis/notify! (fn [& _])
@@ -984,7 +975,8 @@
                      (state/dispatch [:set-model "openai" "gpt-5"])
                      (flush-queue-io!)
                      (expect (nil? (:session-model-pref @state/app-db)))
-                     (expect (some #(re-find #"Model switch failed" (str %)) @notified))))))
+                     (expect (not-any? #(re-find #"(?i)model" (str %)) @notified)
+                             "A refused switch shows no toast")))))
 
 (defdescribe
   model-switch-rollback-test

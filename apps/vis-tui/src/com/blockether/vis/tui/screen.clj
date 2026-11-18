@@ -6788,7 +6788,7 @@
    modes off, a list in the session pane offers every thinking level of the model."
   [screen]
   (when-not (:dialog-open? @state/app-db)
-    (if-let [{:keys [id title items selected]} (state/reasoning-picker @state/app-db)]
+    (when-let [{:keys [id title items selected]} (state/reasoning-picker @state/app-db)]
       (if (= "reasoning_level" id)
         (state/dispatch [:cycle-reasoning-level])
         (when-let [choice (with-dialog-lock #(dlg/list-dialog! screen
@@ -6798,8 +6798,7 @@
                                                                 :selected selected
                                                                 :column-offset
                                                                 session-column-offset}))]
-          (state/dispatch [:set-reasoning-choice id (:value choice)])))
-      (state/dispatch [:reasoning-unconfigurable]))))
+          (state/dispatch [:set-reasoning-choice id (:value choice)]))))))
 
 (defn- workspace-sessions
   []

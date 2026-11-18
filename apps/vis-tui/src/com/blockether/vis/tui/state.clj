@@ -1648,18 +1648,10 @@
                 ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
                 {:db db :fx [[:cycle-toggle (get-in db [:session :id]) "reasoning_level"]]}))
 
-(reg-event-fx :reasoning-unconfigurable
-              (fn [db _]
-                {:db db
-                 :fx [[:notify "Reasoning effort is not configurable for this model" :warn
-                       settings-notification-ttl-ms]]}))
-
 (reg-event-fx :cycle-verbosity
               (fn [db _]
                 (if-not (verbosity-configurable? db)
-                  {:db db
-                   :fx [[:notify "Answer length is not configurable for this model" :warn
-                         settings-notification-ttl-ms]]}
+                  {:db db}
                   ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
                   {:db db
                    :fx [[:cycle-toggle (get-in db [:session :id]) "verbosity"]]})))
@@ -1668,17 +1660,13 @@
   :toggle-codex-fast-mode
   (fn [db _]
     (if-not (codex-session? db)
-      {:db db
-       :fx [[:notify "Fast mode is available only for OpenAI Codex" :warn
-             settings-notification-ttl-ms]]}
+      {:db db}
       {:db db :fx [[:toggle-boolean (get-in db [:session :id]) "codex_fast_mode"]]})))
 
 (reg-event-fx :toggle-thinking-summary
               (fn [db _]
                 (if-not (thinking-summary-configurable? db)
-                  {:db db
-                   :fx [[:notify "Thinking summary is available only for Claude adaptive thinking"
-                         :warn settings-notification-ttl-ms]]}
+                  {:db db}
                   ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
                   {:db db
                    :fx [[:toggle-boolean (get-in db [:session :id]) "thinking_summary"]]})))
@@ -1697,10 +1685,7 @@
                       entries
                       (model-cycle-entries-cached)]
 
-                  (cond (nil? sid) {:fx [[:notify "Open a session first to choose its model" :warn
-                                          settings-notification-ttl-ms]]}
-                        (empty? entries) {:fx [[:notify "No models configured" :warn
-                                                settings-notification-ttl-ms]]}
+                  (cond (or (nil? sid) (empty? entries)) {:db db}
                         :else
                         ;; `current` is the explicit per-session preference when present;
                         ;; otherwise fall back to the default already displayed in the footer: the
@@ -1744,8 +1729,7 @@
   ;; footer display follows. `db` reflects the current tab.
   (fn [db [_ provider model]]
     (let [sid (get-in db [:session :id])]
-      (cond (nil? sid) {:fx [[:notify "Open a session first to choose its model" :warn
-                              settings-notification-ttl-ms]]}
+      (cond (nil? sid) {:db db}
             (and provider model)
             {:db (assoc db :session-model-pref {:provider provider :model model})
              :fx [[:set-session-model sid provider model]]}
@@ -7527,11 +7511,10 @@
                       (vis/notify! (str "Settings unavailable: " (ex-message e)) :level :warn)))))))
 
 (defn- change-session-setting!
-  ;; The footer chip shows the new value, so a change adds no toast.
+  ;; The footer chip shows the new value, so a change adds no toast, and a failure only logs.
   ([sid id action] (change-session-setting! sid id action nil))
   ([sid id action value]
-   (if-not sid
-     (vis/notify! "Open a session first to change its settings" :level :warn)
+   (when sid
      (gateway-queue-io!
        #(try (let [target {:scope "session" :target-id (str sid)}]
                (if (some? value)
@@ -7539,7 +7522,10 @@
                  (vis/change-setting! id action target))
                (refresh-session-settings! sid))
              (catch Exception e
-               (vis/notify! (str "Setting unchanged: " (ex-message e)) :level :error)))))))
+               (tel/log! {:level :error
+                          :id ::session-setting-change-failed
+                          :error e
+                          :data {:session-id (str sid) :setting id}})))))))
 
 (reg-fx :cycle-toggle
         (fn [sid id]
@@ -7560,7 +7546,7 @@
   :set-session-model
   (fn [sid provider model]
     ;; A pick the GATEWAY refuses (a provider this gateway does not serve,
-    ;; e.g. after a `/reload` dropped it) answers 400 — surface it instead
+    ;; e.g. after a `/reload` dropped it) answers 400 — log it instead
     ;; of letting the throw escape into the event loop.
     (gateway-queue-io!
       (fn []
@@ -7572,8 +7558,7 @@
                (tel/log!
                  {:level :error :id ::model-switch-failed :error t :data {:session-id (str sid)}})
                (dispatch [:clear-session-model-pref sid
-                          (when (and provider model) {:provider provider :model model})])
-               (vis/notify! (str "Model switch failed: " (ex-message t)) :level :error)))
+                          (when (and provider model) {:provider provider :model model})])))
         ;; The background limits poller no longer resolves the active provider on
         ;; every 1s tick (issue #31); nudge it to re-resolve on its next tick so a
         ;; per-session model switch reflects in the footer's usage row promptly.
