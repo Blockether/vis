@@ -111,7 +111,7 @@
 (defn- sandbox-shim-messages
   "Sandbox DEPENDENCY check. Every extension-contributed Python shim (`ls`,
    `attach`, ...) is advertised to the model in the system prompt, yet installation
-   is best-effort: `env-python/install-sandbox-shims!` catches the failure, logs a
+   is best-effort: `env-python/install-shims!` catches the failure, logs a
    warning nobody reads, and the sandbox comes up WITHOUT the host-backed door.
    The agent then discovers the hole in the middle of a turn. Two things break
    silently that way — a shim source that never made it onto the classpath / into

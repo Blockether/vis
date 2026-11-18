@@ -915,6 +915,16 @@
              (ep/run-python-block
                ctx
                "print(isinstance(project_root_path, pathlib.Path), isinstance(session, dict))"))))))
+  (it "lets a block shadow a shim global only for that block"
+      (doseq [worker? [false true]]
+        (tpc/with-own [ctx {} nil {:worker? worker?}]
+                      (expect (nil? (:error (ep/run-python-block
+                                              ctx
+                                              "for f, ls in {'a': [1]}.items():\n    attach = f"))))
+                      (expect (= "True True\n"
+                                 (:stdout (ep/run-python-block
+                                            ctx
+                                            "print(callable(ls), callable(attach))")))))))
   (it
     "binds precisely the advertised registry, protects it, and removes stale aliases"
     (tpc/with-own

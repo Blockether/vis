@@ -1339,7 +1339,9 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                                 {"__vis_net_probe__" (fn [method target headers body]
                                                        (report-fn method target headers body))}
                                 (partial py-install-tool!))
-    (try (py-install-module! session "network_probe") (catch Throwable _ nil))))
+    (try (py-install-module! session "network_probe")
+         (add-protected-names! session ["network_filter" "network_probe"])
+         (catch Throwable _ nil))))
 
 (def ^:private sandbox-sdk-python
   (str "__import__('vis_sdk').install("
@@ -1364,7 +1366,9 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    A shim is a DOOR — `ls` and `attach` are Vis capabilities the host performs,
    not packages anyone can pip install — so the bindings go in as SYNCHRONOUS
    host tools and the source is exec'd in the session's own globals, where each
-   shim's `__vis_install_<name>__` staples its module or its global on. Anything
+   shim's `__vis_install_<name>__` staples its module or its global on. Its
+   `:shim/globals` become protected names: a block can shadow them only for that
+   block. Anything
    a wheel can serve is not a shim: the interpreter is a real CPython and
    `import numpy` fetches numpy."
   [session]
@@ -1379,7 +1383,8 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                                            (if-let [k (worker-of sess)]
                                              (pyext/install-sync-tool! k sess nm)
                                              (runtime/install-sync-tool! sess nm)))))
-           (exec! session (shim-python shim)))
+           (exec! session (shim-python shim))
+           (add-protected-names! session (:shim/globals shim)))
          (catch Throwable t
            (tel/log! {:level :warn :id ::shim-install-failed :shim (:shim/name shim) :error t})))))
 
