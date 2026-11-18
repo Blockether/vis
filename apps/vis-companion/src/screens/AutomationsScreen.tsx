@@ -519,17 +519,15 @@ function AutomationDetail({
         </section>
         {owner &&
           (isDeleteAsked ? (
-            <div className="border-x border-err-edge">
-              <ConfirmRow
-                question={`Delete ${automation.name}?`}
-                cost={`The automation comes back when the extension ${owner.extension} loads again. Pause it to stop its runs.`}
-                keepLabel="Keep automation"
-                confirmLabel={busy ? 'Deleting...' : 'Delete'}
-                isBusy={busy}
-                onKeep={() => setIsDeleteAsked(false)}
-                onConfirm={onDelete}
-              />
-            </div>
+            <ConfirmRow
+              question={`Delete ${automation.name}?`}
+              cost={`The automation comes back when the extension ${owner.extension} loads again. Pause it to stop its runs.`}
+              keepLabel="Keep automation"
+              confirmLabel={busy ? 'Deleting...' : 'Delete'}
+              isBusy={busy}
+              onKeep={() => setIsDeleteAsked(false)}
+              onConfirm={onDelete}
+            />
           ) : (
             <Button
               type="button"

@@ -680,16 +680,14 @@ export function AutomationForm({
         )}
         {input && automation && onDelete &&
           (isDeleteAsked ? (
-            <div className="border-x border-err-edge">
-              <ConfirmRow
-                question={`Delete ${automation.name}?`}
-                keepLabel="Keep automation"
-                confirmLabel={busy ? 'Deleting...' : 'Delete'}
-                isBusy={busy}
-                onKeep={() => setIsDeleteAsked(false)}
-                onConfirm={onDelete}
-              />
-            </div>
+            <ConfirmRow
+              question={`Delete ${automation.name}?`}
+              keepLabel="Keep automation"
+              confirmLabel={busy ? 'Deleting...' : 'Delete'}
+              isBusy={busy}
+              onKeep={() => setIsDeleteAsked(false)}
+              onConfirm={onDelete}
+            />
           ) : (
             <Button
               type="button"

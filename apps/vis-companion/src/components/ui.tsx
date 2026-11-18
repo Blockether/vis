@@ -777,11 +777,13 @@ export const ListRow = forwardRef<
  * `MenuItem`'s danger row and the swipe strip's `Delete` wear, so the ink that
  * means "this does not come back" is the same ink wherever it is asked.
  *
- * THE QUESTION OWNS ITS HORIZONTAL EDGES, AND THE COST STAYS INSIDE. The block
- * replaces a list row. The panel already owns the side edges, so painting them
- * again makes a second frame. A non-sizing overlay replaces the neutral list
- * dividers with `err-edge`, without making the question taller. A cost sentence
- * stays inside the question rather than reading as the next row's metadata.
+ * THE QUESTION OWNS ITS WHOLE FRAME, AND THE COST STAYS INSIDE. One non-sizing
+ * overlay draws an `err-edge` frame. Its top and bottom lie one pixel outside,
+ * over the list dividers. Its sides lie inside, because a panel that clips its
+ * content would cut off a side outside the block. So a list row, a panel and a
+ * bare form all show the same frame, and no caller adds edges of its own. The question does not get taller. A cost
+ * sentence stays inside the question rather than reading as the next row's
+ * metadata.
  *
  * IT STANDS WHAT THE ROW STOOD. The row hands over its measured `rowHeight`,
  * including its divider. The block takes that as its own minimum, and the
@@ -840,13 +842,13 @@ export function ConfirmRow({
     if (!isBusy) onConfirm();
   };
   return (
-    // The overlay replaces the horizontal list rules without contributing
-    // pixels of its own. The panel already supplies the side edges.
+    // The overlay lies over the neighbours' edges without pixels of its own.
+    // `z-[1]` keeps it over the divider that the next row paints.
     <div
       role="group"
       aria-label={question}
       onKeyDown={answerOnEnter}
-      className="relative flex flex-col after:pointer-events-none after:absolute after:-top-px after:inset-x-0 after:bottom-0 after:border-y after:border-err-edge"
+      className="relative flex flex-col after:pointer-events-none after:absolute after:inset-x-0 after:-inset-y-px after:z-[1] after:border after:border-err-edge"
       style={rowHeight === undefined ? undefined : { minHeight: rowHeight }}
     >
       {cost !== undefined && (
