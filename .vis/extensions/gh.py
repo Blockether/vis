@@ -2057,7 +2057,9 @@ PROMPT = """gh surface active — GitHub through the gh CLI:
   gh.watch(run=None, repo=None, pr=None)   one run or PR checks, live, until failure or completion
 Each answer is a typed frozen object (Account, RunSummary, WatchOutcome). A watch opens a live view
 that the human can watch and stop. Its WatchOutcome holds every job, step and failed-log tail, once.
-Use gh.watch(), not a shell polling loop or a loop around gh.watch(). It signs in when needed and
+For a long build or release, check the status once. If the run is still active and there is
+no other work to do, give the run link and end the turn. Do not wait in the shell.
+If the person asks you to wait, use gh.watch() once. It signs in when needed and
 follows a newer run that replaces the watched run.
 If the person stops a watch (is_stopped_by_human), do not watch again. Print human_note and answer it."""
 
