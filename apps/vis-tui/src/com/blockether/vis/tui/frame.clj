@@ -12,7 +12,7 @@
            [com.googlecode.lanterna.gui2 Component GridLayout GridLayout$Alignment Panel
             Panel$DefaultPanelRenderer TextGraphicsComponent TextGraphicsComponent$Painter
             TextGUIGraphics]
-           [com.googlecode.lanterna.screen Screen Screen$RefreshType]
+           [com.googlecode.lanterna.screen Screen Screen$RefreshType TerminalScreen]
            [java.util.concurrent.atomic AtomicBoolean]))
 
 (def ^:dynamic *column-offset*
@@ -59,8 +59,14 @@
   "Flush the back buffer: a DELTA refresh, except for the first flush after a
    resize, which repaints every cell. An explicit DELTA ignores Lanterna's own
    `fullRedrawHint`, so a resize under a modal left the pre-resize frame's cells
-   on the terminal. A full repaint that throws stays armed for the next flush."
+   on the terminal. A full repaint that throws stays armed for the next flush.
+
+   A visible caret follows each cell run that the terminal writes, so it would jump
+   over the screen while a frame is written (a scroll frame writes many runs). It is
+   hidden first; the refresh shows it again at its place after the cells."
   [^Screen screen]
+  (when (and (instance? TerminalScreen screen) (.getCursorPosition screen))
+    (.setCursorVisible (.getTerminal ^TerminalScreen screen) false))
   (if (.compareAndSet full-repaint-pending true false)
     (try (.refresh screen Screen$RefreshType/COMPLETE)
          (catch Throwable t (.set full-repaint-pending true) (throw t)))

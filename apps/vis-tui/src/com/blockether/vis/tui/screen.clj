@@ -4271,9 +4271,7 @@
                                               input-top
                                               cols
                                               slash-command-index))
-    (if (or (overlay-locked? db) (scroll/scrolled-up? (:scroll db)))
-      (frame/set-cursor! screen nil)
-      (frame/set-cursor! screen cursor))))
+    (if (overlay-locked? db) (frame/set-cursor! screen nil) (frame/set-cursor! screen cursor))))
 
 (defn- tab-content-loading?
   "True when the ACTIVE tab is still hydrating/building with an EMPTY transcript
@@ -4716,7 +4714,7 @@
                                                     slash-command-index))
 
           _
-          (if (or (overlay-locked? db) (scroll/scrolled-up? (:scroll db)))
+          (if (overlay-locked? db)
             (frame/set-cursor! screen nil)
             (frame/set-cursor! screen @cursor-position))
 
@@ -5167,12 +5165,11 @@
   "True when the ONLY thing that changed vs the last painted frame is the
    scroll position, AND the view is parked ABOVE the live bottom. In that
    state a full frame would repaint header/footer/input to byte-identical
-   cells (their inputs didn't change) and hide the input cursor (`scrolled-up?`
-   => nil) — so a messages-only repaint is pixel-identical to a full frame at a
+   cells (their inputs didn't change) and keep the composer caret where it is —
+   so a messages-only repaint is pixel-identical to a full frame at a
    fraction of the cost. Anything that could make the fast path diverge —
    loading (live bubble grows), a mouse selection, an open overlay / find bar /
-   jump-label mode, or the settle back to FOLLOW (which must restore the input
-   cursor) — fails the test and falls through to the full painter. The scroll
+   jump-label mode, or the settle back to FOLLOW — fails the test and falls through to the full painter. The scroll
    value itself is diffed out; every other db key must be equal."
   [prev-db db]
   (and prev-db
@@ -5664,9 +5661,7 @@
         ;; Active find bar owns the keyboard — cursor sits in its query field
         ;; (see the full-frame path / `find-bar-cursor` for the why).
         (frame/set-cursor! screen (TerminalPosition. sx sy))
-        (if (scroll/scrolled-up? (:scroll db))
-          (frame/set-cursor! screen nil)
-          (frame/set-cursor! screen cursor))))
+        (frame/set-cursor! screen cursor)))
     ;; Outer chat scrollbar FIRST, then the suggestion popup on top — the
     ;; SAME order as the full-frame path (`draw-messages-area!` scrollbar →
     ;; `draw-bottom-chrome!` suggestions). The popup sits just above the input
@@ -5750,8 +5745,8 @@
    frame, draws the visible bubbles and the scrollbar, and re-registers the
    transcript click regions; we then carry over the previous frame's header /
    footer / input click regions (their rows aren't repainted, so their regions
-   must survive `commit-frame!`) and hide the input cursor to match
-   `draw-bottom-chrome!` under `scrolled-up?`.
+   must survive `commit-frame!`). The composer caret stays where the last frame
+   put it, as `draw-bottom-chrome!` would put it again.
 
    Header, footer, input box and the background OUTSIDE the messages band are
    left exactly as the previous frame painted them — their inputs didn't
@@ -5868,8 +5863,7 @@
                         inner-h
                         db)
     (.commitFrame interactions/hit-map)
-    ;; scrolled-up? => input cursor hidden (matches draw-bottom-chrome!).
-    (.setCursorPosition screen nil)
+    ;; The composer did not change, so its caret stays where the last frame put it.
     (let [refresh-start-ns (System/nanoTime)]
       (frame/refresh! screen)
       (let [frame-end-ns (System/nanoTime)
