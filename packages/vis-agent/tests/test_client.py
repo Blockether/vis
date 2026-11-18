@@ -9,7 +9,7 @@ import threading
 import time
 import zlib
 from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
@@ -22,6 +22,7 @@ from blockether.vis.engine import (
     TransportError,
     VisTimeout,
 )
+from local_http import LocalHTTPServer
 
 _HANDSHAKE = definition("gateway", "handshake")["properties"]
 _ROUTES = schema("gateway")["x-vis-routes"]
@@ -83,7 +84,7 @@ def endpoint(respond):
 
         do_GET = do_POST = do_PATCH = do_PUT = do_DELETE = handle_request
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = LocalHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, args=(0.01,), daemon=True)
     thread.start()
     try:

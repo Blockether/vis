@@ -24,6 +24,7 @@ _FAKE_GATEWAY = textwrap.dedent(
     import json, os, sys, threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from pathlib import Path
+    from socketserver import TCPServer
 
     args = [arg for arg in sys.argv[1:] if not arg.startswith("-D")]
     assert args[:2] == ["gateway", "start"], args
@@ -95,7 +96,13 @@ _FAKE_GATEWAY = textwrap.dedent(
                 if not leases:
                     threading.Thread(target=server.shutdown).start()
 
-    server = ThreadingHTTPServer(("127.0.0.1", int(option["--port"])), Handler)
+    class Server(ThreadingHTTPServer):
+        def server_bind(self):
+            # No name lookup: see `local_http.LocalHTTPServer`. This script runs alone.
+            TCPServer.server_bind(self)
+            self.server_name, self.server_port = self.server_address[:2]
+
+    server = Server(("127.0.0.1", int(option["--port"])), Handler)
     server.serve_forever()
     """
 ).replace("PROTOCOL", str(_HANDSHAKE["protocol"]["const"]))

@@ -16,7 +16,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from itertools import count
 from pathlib import Path
 
@@ -29,6 +29,7 @@ from blockether.vis.engine import (
     _client,
     _local,
 )
+from local_http import LocalHTTPServer
 
 EXTENSION = """import blockether.vis.extension as vis
 def sdk_activity(phase, **_):
@@ -192,7 +193,7 @@ def model_endpoint(*, tool_code=None, before_reply=None, refuse=None, stall=None
             self.end_headers()
             self.wfile.write(data)
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Model)
+    server = LocalHTTPServer(("127.0.0.1", 0), Model)
     thread = threading.Thread(target=server.serve_forever, args=(0.01,), daemon=True)
     thread.start()
     try:

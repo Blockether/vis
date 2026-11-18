@@ -10,11 +10,12 @@ import shlex
 import shutil
 import subprocess
 from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from threading import Thread
 
 import pytest
+from local_http import LocalHTTPServer
 from test_engine import PROVIDER_EXTENSION, real_client
 
 CORE = Path(__file__).resolve().parents[3] / "apps/vis-companion/native/shortcuts"
@@ -64,7 +65,7 @@ def scripted_model():
             self.end_headers()
             self.wfile.write(data)
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Model)
+    server = LocalHTTPServer(("127.0.0.1", 0), Model)
     thread = Thread(target=server.serve_forever, args=(0.01,), daemon=True)
     thread.start()
     try:
