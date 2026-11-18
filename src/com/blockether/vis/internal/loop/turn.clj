@@ -231,9 +231,22 @@
               {:answer (or message "[SILENT]")}))
           :else {:answer (pr-str res)})))
 
+(def ^:private AUTOMATION_SETTLE_MS
+  "Time that a stopped automation callback gets to end before its turn ends."
+  5000)
+
+(def ^:private AUTOMATION_WATCHDOG_MARGIN_MS
+  "Time after the deadline of an automation callback before the gateway watchdog can
+   stop its turn. The deadline ends a live callback first; the watchdog is only the
+   backstop for a turn that does not end."
+  60000)
+
 (defn- call-automation!
   "Call the callback of automation `key` of `extension` in the session environment
-   and answer its outcome. A missing callback, a throw and a timeout are errors."
+   and answer its outcome. A missing callback, a throw and a timeout are errors. An
+   interrupt of this thread is the cancel of the turn: the outcome is
+   `{:cancelled true}`. A timeout and a cancel stop the callback and wait
+   [[AUTOMATION_SETTLE_MS]] for its end, so it never runs without its turn."
   [env {:keys [extension key payload timeout-ms]}]
   (if-let [run-fn (some->> (some-> (:extensions env)
                                    deref)
@@ -241,14 +254,22 @@
                            :ext/automations
                            (some #(when (= key (:key %)) %))
                            :run)]
-    (let [task (future (extension/with-context {:env env} (run-fn env payload)))]
+    (let [settled (promise)
+          task (future (try (extension/with-context {:env env} (run-fn env payload))
+                            (finally (deliver settled true))))
+          stop! (fn []
+                  (future-cancel task)
+                  (try (deref settled AUTOMATION_SETTLE_MS false)
+                       (catch InterruptedException _ false)))]
+
       (try (let [res (deref task (long timeout-ms) ::timeout)]
              (if (= ::timeout res)
-               (do (future-cancel task)
+               (do (stop!)
                    {:error (str "The automation callback did not end in "
                                 (quot (long timeout-ms) 1000)
                                 " seconds.")})
                (automation-outcome res)))
+           (catch InterruptedException _ (stop!) {:cancelled true})
            (catch java.util.concurrent.ExecutionException e
              (let [cause (or (ex-cause e) e)]
                {:error (or (ex-message cause) (str cause))}))
@@ -262,7 +283,11 @@
 (defn- run-automation-turn!
   "Persist the turn of one extension automation run. The extension callback runs
    instead of the model, so the turn makes no provider request. The turn fails
-   when the callback fails."
+   when the callback fails, and a cancel of the turn stores a cancelled turn. The
+   `:slash` marker carries the callback deadline as `:stall-timeout-ms`: that
+   deadline owns the wait, not the output watchdog of the gateway (#490).
+   `:hooks :prepare-result` transforms the result before it is stored, as in
+   [[run-normal-turn!]]."
   [env user-request automation-run loop-opts]
   (let [db-info
         (:db-info env)
@@ -274,7 +299,9 @@
         (when (fn? on-chunk)
           (try (on-chunk {:phase :slash
                           :iteration 1
-                          :slash (str (:extension automation-run) "/" (:key automation-run))})
+                          :slash (str (:extension automation-run) "/" (:key automation-run))
+                          :stall-timeout-ms (+ (long (:timeout-ms automation-run))
+                                               (long AUTOMATION_WATCHDOG_MARGIN_MS))})
                (catch Throwable t
                  (tel/log! {:level :warn
                             :id ::automation-progress-emit-failed
@@ -283,7 +310,7 @@
         t0
         (System/currentTimeMillis)
 
-        {:keys [answer error]}
+        {:keys [answer error cancelled]}
         (call-automation! env automation-run)
 
         duration-ms
@@ -295,11 +322,26 @@
         turn-pos
         (or (transcript/session-turn-position env turn-id) 1)
 
-        error-block
-        (when error (content/error "automation_failed" error false))
+        ;; A watchdog stop becomes its own failure here, before the turn is stored.
+        {:keys [status] turn-content :answer error-block :error}
+        (let [raw (cond cancelled {:status :cancelled
+                                   :answer (content/with-cancel-notice []
+                                                                       turn-id
+                                                                       (cancellation/cancel-reason
+                                                                         (:cancel-token
+                                                                           loop-opts)))}
+                        error (let [block (content/error "automation_failed" error false)]
+                                {:status :error :error block :answer [block]})
+                        :else {:status :success :answer [(content/prose answer)]})]
+          (if-let [prepare-result (get-in loop-opts [:hooks :prepare-result])]
+            (prepare-result raw)
+            raw))
 
-        turn-content
-        (if error-block [error-block] [(content/prose answer)])
+        failure
+        (get error-block "message")
+
+        prior-outcome
+        ({:cancelled :cancelled :error :error :success :complete} status)
 
         ctx-snapshot
         (when-let [ca (:ctx-atom env)]
@@ -315,7 +357,7 @@
             :duration-ms duration-ms
             :llm-full-duration-ms 0
             :thinking ""
-            :answer (or answer error)
+            :answer (or answer failure "")
             :llm-messages []
             :llm-returned-empty-code? false})
          (catch Throwable t
@@ -326,8 +368,8 @@
                                       (cond-> {:content turn-content
                                                :iteration-count 1
                                                :duration-ms duration-ms
-                                               :status (if error :error :success)
-                                               :prior-outcome (if error :error :complete)
+                                               :status status
+                                               :prior-outcome prior-outcome
                                                :ctx ctx-snapshot}
                                         error-block
                                         (assoc :error error-block))
@@ -336,10 +378,10 @@
              :answer turn-content
              :iteration-count 1
              :duration-ms duration-ms
-             :status (if error :error :success)
-             :prior-outcome (if error :error :complete)}
-      error
-      (assoc :error error))))
+             :status status
+             :prior-outcome prior-outcome}
+      failure
+      (assoc :error failure))))
 
 (defn- store-transcripts!
   "Fill in the words for every recording this turn was written down WITHOUT.

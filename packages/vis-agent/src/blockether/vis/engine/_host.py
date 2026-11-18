@@ -28,6 +28,11 @@ class HostLayer(EngineClient):
     extension module creates this client; an extension does not construct it.
     Responses follow the gateway contract. Refusals raise `GatewayError`, and
     a host without a gateway raises `TransportError`. Events use polling.
+
+    The host serves each request to its end. `timeout` does not stop one request,
+    because the host cannot abandon a change that it started. A wait, such as
+    `Turn.wait`, checks its deadline between two requests. The deadline of the
+    callback limits the whole work.
     """
 
     def __init__(self, call: Callable[[str], str], *, timeout: float = 30):
@@ -69,6 +74,7 @@ class HostLayer(EngineClient):
         if self._closed:
             raise TransportError("host layer is closed")
         frame = _request_frame(method, route, query=query, body=body, content=content)
+        # `timeout` is not sent: the host runs the request to its end.
         try:
             text = self._call(json.dumps(frame, allow_nan=False))
         except RuntimeError as error:

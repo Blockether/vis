@@ -8168,6 +8168,61 @@
                      (expect (= "github-copilot" (:provider streaming)))
                      (expect (= "claude-opus-5" (:model streaming)))))))
 
+;; #490: the watchdog stopped a model-free automation after six minutes of callback
+;; work and told the reader that the provider stopped responding. The turn called no
+;; provider, and the callback has its own deadline.
+(defdescribe
+  stalled-command-test
+  (let [advance
+        @#'state/advance-turn-stall-state
+
+        decision
+        @#'state/turn-stall-decision]
+
+    (it "names the command of a stalled turn, never a provider, and gives no retry code"
+        (let [running
+              (advance {:started? true :phase :engine-start}
+                       {:phase :slash :iteration 1 :slash "cleanup/sweep"}
+                       0)
+
+              stall
+              (atom (assoc running
+                      :stalled? true
+                      :stall-detail "no new output for 6m 0s while the command ran"))
+
+              text
+              (#'state/stall-failure-text stall)]
+
+          (expect (not (:produced? running)))
+          (expect (str/includes? text "cleanup/sweep"))
+          (expect (not (re-find #"(?i)provider|model" text)) text)
+          (expect (= "command_stalled" (#'state/stall-failure-code stall)))))
+    (it "leaves a live automation callback to its own deadline"
+        (let [environment
+              (loop-env/create-environment ::router {:db :memory})
+
+              chunks
+              (atom [])]
+
+          (swap! (:extensions environment) conj
+            {:ext/name "cleanup"
+             :ext/description "Worktree cleanup."
+             :ext/automations [{:key "sweep"
+                                :run (fn [_ _]
+                                       "Done.")}]})
+          (try (turn/run-turn!
+                 environment
+                 "Automation ran"
+                 {:hooks {:on-chunk #(swap! chunks conj %)}
+                  :automation-run
+                  {:extension "cleanup" :key "sweep" :timeout-ms 1800000 :payload {}}})
+               (let [running (advance {:started? true :phase :engine-start} (first @chunks) 0)]
+                 ;; The idle time of the incident, then a turn that outlives its callback deadline.
+                 (expect (not (:tripped? (decision running 360631))))
+                 (expect (not (:tripped? (decision running 1800000))))
+                 (expect (:tripped? (decision running 2400000))))
+               (finally (loop-env/dispose-environment! environment)))))))
+
 ;; Regression, issue #128: a session was keyed by whatever spelling the caller
 ;; held, so a producer with the id as a STRING (gateway.view reads it off
 ;; the request map)

@@ -4222,8 +4222,9 @@
   "Phases where a started turn may legitimately still owe its first output:
    queueing for the process-wide execution permit behind another session's turn is
    waiting, not wedging. Such a turn is still held to the full
-   [[TURN_STALL_TIMEOUT_MS]]."
-  #{:awaiting-permit})
+   [[TURN_STALL_TIMEOUT_MS]]. A `:slash` turn runs a local command or an automation
+   callback and calls no provider, so it owes no model output at all."
+  #{:awaiting-permit :slash})
 
 (defn- stall-detail-text
   "What the watchdog actually observed, recorded by it on the shared `stall` atom.
@@ -4271,10 +4272,21 @@
                                              deref)]
     (boolean (or provider produced?))))
 
+(defn- stall-command
+  "The label of the local command that the turn of `stall` runs, from its `:slash`
+   marker: a slash command or the `extension/key` of an automation callback. nil
+   when the turn runs no command."
+  [stall]
+  (:command (some-> stall
+                    deref)))
+
 (defn- stall-phase-text
   "Plain words for the phase a stalled turn was in."
   [phase]
   (case phase
+    :slash
+    "while the command ran"
+
     (:provider-call :provider-retry-reset :provider-fallback)
     "while waiting for the model to answer"
 
@@ -4312,23 +4324,39 @@
    A turn that never reached a provider must not blame one either: a turn parked
    on its own session's wedged engine died with `Provider stream stalled: no
    output for 360047ms in phase :awaiting-permit`, sending the reader after a
-   network that was never touched."
+   network that was never touched.
+
+   A turn that runs a local command names that command (#490): a model-free
+   automation callback died as `Provider stopped responding ... switch to another
+   model`."
   [stall]
-  (let [who (stall-attribution stall)]
-    (if (stall-reached-provider? stall)
-      (str "Provider stopped responding" (when who (str " (" who ")"))
-           ": " (stall-detail-text stall)
-           ". Vis stopped the turn. " stall-next-step)
-      (str "Turn stalled before reaching the provider: "
-           (stall-detail-text stall)
-           ". NEXT STEP: send your message again."))))
+  (let [who
+        (stall-attribution stall)
+
+        command
+        (stall-command stall)]
+
+    (cond (stall-reached-provider? stall) (str "Provider stopped responding" (when who
+                                                                               (str " (" who ")"))
+                                               ": " (stall-detail-text stall)
+                                               ". Vis stopped the turn. " stall-next-step)
+          command (str "The command "
+                       command
+                       " did not end: "
+                       (stall-detail-text stall)
+                       ". Vis stopped the turn.")
+          :else (str "Turn stalled before reaching the provider: "
+                     (stall-detail-text stall)
+                     ". NEXT STEP: send your message again."))))
 
 (defn- stall-failure-code
-  "The error code of a stalled turn: `turn_stalled` before the provider, else
-   `provider_stream_stalled`. An automation retries only `turn_stalled`: no model
-   output means that no tool ran."
+  "The error code of a stalled turn: `provider_stream_stalled` after the provider,
+   `command_stalled` while a local command ran, else `turn_stalled`. An automation
+   retries only `turn_stalled`: no model output and no command means that nothing ran."
   [stall]
-  (if (stall-reached-provider? stall) "provider_stream_stalled" "turn_stalled"))
+  (cond (stall-reached-provider? stall) "provider_stream_stalled"
+        (stall-command stall) "command_stalled"
+        :else "turn_stalled"))
 
 (def ^:private stall-exempt-phases
   "Phases where a running turn may legitimately produce no chunk for a long time:
@@ -4352,8 +4380,8 @@
    The marker still moves the idle deadline — the wait legitimately begins there —
    it just no longer claims the model said anything. Output already produced by an
    earlier iteration remains turn-level progress. Every provider attempt marker is
-   such a marker."
-  (conj provider-attempt-phases :attachment-transcription))
+   such a marker. So is `:slash`: it starts a local command, and no model wrote it."
+  (conj provider-attempt-phases :attachment-transcription :slash))
 
 (def ^:private provider-stream-phases
   "Chunks of a live provider stream: text deltas, the empty transport heartbeats
@@ -4431,7 +4459,11 @@
    (`:output-ms`, `:output-phase`), the last keepalive of hidden thinking
    (`:thinking-ms`), answer output after which Svar no longer re-sends
    (`:answer?`) and the end of the stream (`:done?`). Hidden thinking moves the
-   deadline, but it is not output."
+   deadline, but it is not output.
+
+   `:command` is the label of the local command that a `:slash` marker starts. That
+   marker can carry `:stall-timeout-ms`: the deadline of an automation callback owns
+   the wait, and the watchdog stays behind it."
   [state chunk now]
   (let [phase
         (:phase chunk)
@@ -4481,6 +4513,9 @@
 
       (:model chunk)
       (assoc :model (:model chunk))
+
+      (:slash chunk)
+      (assoc :command (:slash chunk))
 
       meaningful?
       (assoc :last-ms now)
@@ -4696,11 +4731,13 @@
 
 (defn- cancel-terminal-grace-ms
   "How long THIS cancelled turn's worker may keep its own terminal: the full
-   [[CANCEL_TERMINAL_GRACE_MS]] once it has produced output, the much shorter
-   [[SILENT_CANCEL_TERMINAL_GRACE_MS]] while it has produced none."
+   [[CANCEL_TERMINAL_GRACE_MS]] once it has produced output or runs a local command,
+   whose callback must settle, and the much shorter
+   [[SILENT_CANCEL_TERMINAL_GRACE_MS]] while it has done neither."
   ^long [stall]
-  (if (:produced? (some-> stall
-                          deref))
+  (if (or (:produced? (some-> stall
+                              deref))
+          (stall-command stall))
     (long CANCEL_TERMINAL_GRACE_MS)
     (long SILENT_CANCEL_TERMINAL_GRACE_MS)))
 

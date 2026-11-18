@@ -1073,7 +1073,9 @@ The return value sets the result of the run:
 A run has these limits:
 
 - A run cannot ask a person. A question or a form fails the run at once.
-- A run that works for more than 30 minutes fails.
+- A run that works for more than 30 minutes fails. This limit is the only time limit of `run`.
+  A run does not need to give output while it works.
+- When a person cancels the turn of a run, Vis stops `run` and the run ends as cancelled.
 - Each run adds one turn without a model to its session. So a `persistent` session shows the
   history of the runs.
 
@@ -1622,6 +1624,11 @@ def start_review(path: str) -> str:
 - `vis.sessions.get(session_id)` returns a handle without a request.
   `vis.sessions.list(search=None)` returns the sessions of the first page, or the matches of
   `search`.
+- Each record of `vis.sessions.list()` has the `status`, the `current_turn_id`, and the
+  `workspace` of its session, with the folder in `workspace["root"]`. Vis reads these records
+  from stored data. To check the state or the folder of other sessions, use these records. Do
+  not read the [context](context-management-api.md) of each session for this check. A context
+  read builds the context of the session and runs the context hooks of its extensions.
 - `vis.sessions.export(session_id=None)` returns a
   [snapshot](sessions-api.md#save-and-restore-a-session-snapshot) of the bound session or of
   `session_id`. `vis.sessions.restore(data, root=..., group_id=..., key=...)` restores one.
@@ -1659,6 +1666,9 @@ extension created. A refused call raises `GatewayError` with the status 403:
 
 These calls are for trusted extension code. The model cannot use them from `python_execution`. A
 read shows no Activity. Each change shows its own Activity under your tool's Activity.
+
+Vis runs each call to its end. The `timeout` argument of one request does not stop the request.
+A wait, such as `Turn.wait(timeout=...)`, checks its deadline between two requests.
 
 
 ## Call other session tools
