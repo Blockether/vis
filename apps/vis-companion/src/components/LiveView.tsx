@@ -1319,6 +1319,15 @@ const COLUMN_WIDTH = [
 /** The longest state word, and two characters for the mark and the gap before it. */
 const STATE_CHARS = Math.max(...Object.values(TONE_WORD).map((word) => word.length)) + 2;
 
+/**
+ * The narrowest the table gets: the name's 18ch and every measured column, each with
+ * its inset and its rule. A narrower screen scrolls the table instead.
+ */
+function tableMinWidth(steps: number[]): string {
+  const chars = steps.reduce((sum, step) => sum + 4 * (step + 1), 18);
+  return `calc(${chars}ch + ${2 * (steps.length + 1)}*var(--live-view-inset) + ${steps.length}px)`;
+}
+
 /** The `COLUMN_WIDTH` step that holds `chars` characters. */
 function widthStep(chars: number): number {
   return Math.min(COLUMN_WIDTH.length - 1, Math.max(0, Math.ceil(chars / 4) - 1));
@@ -1708,9 +1717,13 @@ function TableRows({
     // rule between columns (user report: the bare rows did not read as a table). The
     // scroll viewport owns the frame, so a wide table scrolls inside it.
     <div className="overflow-x-auto overscroll-x-contain border border-edge-strong">
-      <table className="w-full min-w-0 border-collapse font-mono text-body">
-        {/* The name takes the width that the measured columns leave, and at least 18ch:
-            a narrower screen scrolls the table instead of squeezing the name. */}
+      <table
+        className="w-full table-fixed border-collapse font-mono text-body"
+        style={{ minWidth: tableMinWidth(steps) }}
+      >
+        {/* A FIXED layout: the columns take the `col` widths and the name takes the rest.
+            An automatic layout spread the width of the folded group rows, which span every
+            column, over all columns, so opening a group moved them (user screenshots). */}
         <colgroup>
           <col />
           {steps.map((step, at) => (

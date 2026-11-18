@@ -9,6 +9,7 @@ import {
   STORY_LIVE_PRIMITIVES,
 } from '../dev/story-data';
 import { LiveViewPanel } from './LiveView';
+import type { LiveView } from '../lib/live-view';
 
 /**
  * A RUN, WATCHED WHILE IT IS BEING WRITTEN.
@@ -302,4 +303,42 @@ export const EmbeddedRow: Story = {
     await userEvent.click(page.getByRole('button', { name: /^Close / }));
     await expect(canvas.queryAllByRole('separator')).toHaveLength(0);
   },
+};
+
+// User report (screenshots of a GitHub watch): opening a folded group moved every column.
+// The folded group rows span all columns, and the browser spread their width over them.
+const groupedJobs: LiveView = {
+  id: 'grouped-jobs',
+  title: 'CI · run 44419661029',
+  seq: 1,
+  nodes: [
+    {
+      id: 'jobs',
+      type: 'table',
+      columns: [
+        { id: 'job', label: 'Job', align: 'left' },
+        { id: 'now', label: 'Now', align: 'left' },
+        { id: 'took', label: 'Took', align: 'left' },
+      ],
+      rows: [
+        { id: 'tui-linux', cells: ['linux', 'success', '2m 20s'], tone: 'ok', parent: 'tui' },
+        { id: 'tui-macos', cells: ['macos', 'success', '1m 41s'], tone: 'ok', parent: 'tui' },
+        { id: 'sdk-linux', cells: ['ubuntu-latest', 'success', '3m 2s'], tone: 'ok', parent: 'sdk' },
+        { id: 'sdk-macos', cells: ['macos-26', 'in progress', '5m 16s'], tone: 'running', parent: 'sdk' },
+      ],
+      max_rows: 500,
+      order: 'insertion',
+      is_selectable: false,
+      selected_ids: [],
+      groups: [
+        { id: 'tui', label: 'tui' },
+        { id: 'sdk', label: 'python-package / real SDK engine' },
+      ],
+    },
+  ],
+};
+
+/** Open a group: no column moves. Check it in a real browser; jsdom has no layout. */
+export const GroupedColumns: Story = {
+  args: { view: groupedJobs },
 };
