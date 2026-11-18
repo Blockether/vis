@@ -497,14 +497,14 @@
   (let [claim
         (atom ::waiting)
 
+        ^Callable start
+        (bound-fn []
+                  (let [^Process process (spawn)]
+                    (when-not (compare-and-set! claim ::waiting process) (.destroyForcibly process))
+                    process))
+
         task
-        (.submit spawn-threads
-                 ^Callable
-                 (bound-fn []
-                           (let [^Process process (spawn)]
-                             (when-not (compare-and-set! claim ::waiting process)
-                               (.destroyForcibly process))
-                             process)))]
+        (.submit spawn-threads start)]
 
     (try (let [process (deref task (ms-until deadline) ::timed-out)]
            (when (= ::timed-out process)
