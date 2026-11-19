@@ -138,7 +138,7 @@
                           dir
                           [(.getAbsolutePath ^File (#'native/require-binary))
                            (str "-Duser.home=" (.getAbsolutePath ^File dir)) "--db"
-                           (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                           (.getAbsolutePath (io/file dir "sessions")) "-p" "--raw"
                            "Run the supplied Python fixture and finish."]
                           180)
                          tools (->> @asked

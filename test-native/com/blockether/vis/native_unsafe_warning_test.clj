@@ -31,7 +31,7 @@
                                           dir
                                           ["env" "-i" (str "PATH=" (System/getenv "PATH"))
                                            (str "HOME=" (.getAbsolutePath dir)) "bash"
-                                           (.getAbsolutePath launcher) "--db" ":memory" "--raw"
+                                           (.getAbsolutePath launcher) "--db" ":memory" "-p" "--raw"
                                            "Reply with UNSAFE_CHECK_COMPLETE"]
                                           60)]
                (expect (= 0 exit) output)

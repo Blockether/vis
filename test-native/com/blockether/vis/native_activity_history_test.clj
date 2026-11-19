@@ -132,7 +132,7 @@
                       (#'binary/run-binary
                        dir
                        [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                        (.getAbsolutePath database) "--raw"
+                        (.getAbsolutePath database) "-p" "--raw"
                         "Run the supplied Python fixture and finish."]
                        180)
                       messages (mapcat #(get (json/read-json (:body %)) "messages") @asked)
@@ -231,7 +231,7 @@
                          {:keys [finished? exit output]}
                          (#'binary/run-binary
                           dir
-                          [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir))
+                          [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir)) "-p"
                            "--raw" "Run the supplied Python fixture and finish."]
                           90)
                          results (#'binary/provider-result-messages @asked)]

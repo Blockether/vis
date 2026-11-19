@@ -102,7 +102,7 @@
                             (#'native/run-binary
                              dir
                              [(.getAbsolutePath ^File binary) (str "-Duser.home=" home) "--db"
-                              (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                              (.getAbsolutePath (io/file dir "sessions")) "-p" "--raw"
                               "Run the supplied language repair fixtures and finish."]
                              360)
                             tools (#'native/provider-result-messages @asked)]

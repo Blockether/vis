@@ -424,7 +424,7 @@
               (run-binary dir
                           [(.getAbsolutePath (require-binary))
                            (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                           (.getAbsolutePath (io/file dir "sessions")) "--debug" "--raw"
+                           (.getAbsolutePath (io/file dir "sessions")) "--debug" "-p" "--raw"
                            "Reply with exactly: hello world"]
                           180)
 
@@ -627,7 +627,7 @@
                        (run-binary dir
                                    [(.getAbsolutePath (require-binary))
                                     (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                                    (.getAbsolutePath database) "--raw"
+                                    (.getAbsolutePath database) "-p" "--raw"
                                     "Inspect the bundled extension SDK"]
                                    180)]
 
@@ -693,7 +693,8 @@
                        (run-binary dir
                                    [(.getAbsolutePath (require-binary))
                                     (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                                    (.getAbsolutePath database) "--raw" "Check typed sequences"]
+                                    (.getAbsolutePath database) "-p" "--raw"
+                                    "Check typed sequences"]
                                    180)]
 
                    (expect finished? output)
@@ -767,7 +768,7 @@
                   (run-binary dir
                               [(.getAbsolutePath (require-binary))
                                (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                               (.getAbsolutePath database) "--raw"
+                               (.getAbsolutePath database) "-p" "--raw"
                                (str "/goal --budget " budget " Verify native goal continuation")]
                               180)
                   requests @asked]
@@ -915,7 +916,7 @@
                     (run-binary project
                                 [(.getAbsolutePath (require-binary))
                                  (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                                 (.getAbsolutePath database) "--raw"
+                                 (.getAbsolutePath database) "-p" "--raw"
                                  "Produce a specification, a report and a diff"]
                                 180)]
 
@@ -951,12 +952,12 @@
 
                    (try (overlay! dir port)
                         (spit (io/file dir "report.md") "# Native report\n")
-                        (let [{:keys [exit output]} (run-binary
-                                                      dir
-                                                      [(.getAbsolutePath (require-binary))
-                                                       (str "-Duser.home=" (.getAbsolutePath dir))
-                                                       "--db" ":memory" "--raw" "Link the report"]
-                                                      180)]
+                        (let [{:keys [exit output]}
+                              (run-binary dir
+                                          [(.getAbsolutePath (require-binary))
+                                           (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                                           ":memory" "-p" "--raw" "Link the report"]
+                                          180)]
                           (expect (= 0 exit) output)
                           (expect (str/includes? output "attachment://") output)
                           (expect (not (str/includes? output "](report.md)")) output))
@@ -1039,7 +1040,7 @@
                             (run-binary dir
                                         [(.getAbsolutePath (require-binary))
                                          (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                                         (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                                         (.getAbsolutePath (io/file dir "sessions")) "-p" "--raw"
                                          "Run the supplied Python fixture and finish."]
                                         180)
                             tools (->> @asked
@@ -1110,7 +1111,7 @@
                             (run-binary dir
                                         [(.getAbsolutePath (require-binary))
                                          (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                                         (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                                         (.getAbsolutePath (io/file dir "sessions")) "-p" "--raw"
                                          "Run the supplied Python fixtures and finish."]
                                         420)
                             tools (provider-result-messages @asked)]
@@ -1175,7 +1176,7 @@
                             (run-binary dir
                                         [(.getAbsolutePath (require-binary))
                                          (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                                         (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                                         (.getAbsolutePath (io/file dir "sessions")) "-p" "--raw"
                                          "Attach the supplied pictures and finish."]
                                         300)
                             tools (provider-result-messages @asked)
@@ -1250,7 +1251,7 @@
                       (run-binary dir
                                   [(.getAbsolutePath (require-binary))
                                    (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                                   (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                                   (.getAbsolutePath (io/file dir "sessions")) "-p" "--raw"
                                    "Run the supplied Python fixture and finish after its timeout."]
                                   420)
                       ;; A worker's run directory IS its diagnostic log directory,
@@ -1341,7 +1342,7 @@
                       (run-binary dir
                                   [(.getAbsolutePath (require-binary))
                                    (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                                   (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                                   (.getAbsolutePath (io/file dir "sessions")) "-p" "--raw"
                                    "Run the supplied Python fixtures and finish."]
                                   180)
                       tools (provider-result-messages @asked)]
@@ -2398,7 +2399,7 @@
                   (run-binary dir
                               [(.getAbsolutePath (require-binary))
                                (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                               (.getAbsolutePath database) "--raw"
+                               (.getAbsolutePath database) "-p" "--raw"
                                "Verify Unicode tokenization and fold the completed evidence."]
                               240)]
 

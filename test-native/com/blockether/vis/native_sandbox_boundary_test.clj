@@ -144,7 +144,7 @@
                         builder (doto (ProcessBuilder. ^java.util.List
                                                        [(.getAbsolutePath bin)
                                                         (str "-Duser.home=" (.getAbsolutePath dir))
-                                                        "--db" ":memory" "--raw"
+                                                        "--db" ":memory" "-p" "--raw"
                                                         "Run the sandbox probe."])
                                   (.directory dir)
                                   (.redirectErrorStream true)
