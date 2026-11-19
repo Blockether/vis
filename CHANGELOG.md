@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.22] - 2026-11-19
+
+Vis v0.5.21 was not published, because its release checks failed. v0.5.22 contains all v0.5.21 changes.
+
 ### Added
 
 - MCP: `vis-agent mcp` has the commands, arguments and messages of `claude mcp` in Claude Code: `add`, `add-json`, `add-from-claude-desktop`, `get`, `list` and `remove`. `--scope local`, the default, writes the private `.vis/config.yml` of the current directory. `--scope project` writes `.mcp.json`. `--scope user` writes `~/.vis/state.yml`. A local server wins over a project server, and a project server wins over a user server.
