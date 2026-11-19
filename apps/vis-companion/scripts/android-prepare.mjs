@@ -332,6 +332,14 @@ gradle = gradle
   .replace(/versionCode\s+\d+/, `versionCode ${versionCode}`)
   .replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`);
 
+// The proxy browser (`native/android/ProxyBrowserPlugin.java`) sets the proxy of the web view.
+if (!gradle.includes('androidx.webkit:webkit')) {
+  gradle = gradle.replace(
+    /^dependencies \{\n/m,
+    'dependencies {\n    implementation "androidx.webkit:webkit:$androidxWebkitVersion"\n',
+  );
+}
+
 if (gradle !== before) writeFileSync(gradlePath, gradle);
 console.log(
   `\u2713 app/build.gradle  versionName ${versionName}, versionCode ${versionCode}, signingConfig release`,
@@ -517,6 +525,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeSpeechPlugin.class);
         registerPlugin(OAuthLoopbackPlugin.class);
         registerPlugin(PasteMenuPlugin.class);
+        registerPlugin(ProxyBrowserPlugin.class);
         super.onCreate(savedInstanceState);
         // After super: the bridge exists now. Media from an http gateway plays
         // through the app origin; see MediaProxyClient.
@@ -1109,6 +1118,17 @@ if (
   readFileSync(pasteMenuPluginPath, 'utf8') !== pasteMenuPlugin
 ) {
   writeFileSync(pasteMenuPluginPath, pasteMenuPlugin);
+}
+const proxyBrowserPluginPath = join(javaPackageDir, 'ProxyBrowserPlugin.java');
+const proxyBrowserPlugin = readFileSync(
+  join(root, 'native/android/ProxyBrowserPlugin.java'),
+  'utf8',
+).replace('package com.blockether.viscompanion;', `package ${appId};`);
+if (
+  !existsSync(proxyBrowserPluginPath) ||
+  readFileSync(proxyBrowserPluginPath, 'utf8') !== proxyBrowserPlugin
+) {
+  writeFileSync(proxyBrowserPluginPath, proxyBrowserPlugin);
 }
 const backGesturePluginPath = join(javaPackageDir, 'BackGesturePlugin.java');
 const backGesturePlugin = readFileSync(

@@ -331,6 +331,7 @@ These workflows work in the Companion app. Shared features also work in the term
 | [Siri and Shortcuts](shortcuts.md) | Talk to Vis with the Action Button and use answers in shortcuts. |
 | [Speech and voices](speech.md) | Speak text, transcribe recordings, and add your own voices. |
 | [Sounds](sounds.md) | Hear a sound when a turn finishes, waits for you, or fails. |
+| [Private links](private-links.md) | Open links to company hosts that only the gateway can reach. |
 | [White label](white-label.md) | Give the web app your own name, logo, links, and theme. |
 
 ### TUI
@@ -379,6 +380,7 @@ For shared session workflows, read [Sessions](sessions.md).
 | [Evaluations API](evals-api.md) | Read benchmark scores, failure causes, and comparisons. |
 | [Speech API](speech-api.md) | Speak text, transcribe audio, and manage your own voices. |
 | [Sounds API](sounds-api.md) | Change the sound settings and choose your own sound files. |
+| [Private links API](private-links-api.md) | Read the proxy settings and send requests through the gateway. |
 | [White label API](white-label-api.md) | Read and set the brand of the web app. |
 | [Configuration API](configuration-api.md) | Change settings and reload extensions. |
 

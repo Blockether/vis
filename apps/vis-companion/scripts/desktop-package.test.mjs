@@ -11,6 +11,7 @@ import {
   ARTIFACT_COMMANDS,
   ENGINE_COMMANDS,
   PAKE_VERSION,
+  PROXY_BROWSER_COMMANDS,
   RFD_DEPENDENCY,
   WEB_CONTENT_RELOAD,
   WINDOW_SETUP,
@@ -165,7 +166,8 @@ describe('desktop package', () => {
       expect(lib.split(WEB_CONTENT_RELOAD)).toHaveLength(2);
       expect(lib).toContain(`use artifact::{${ARTIFACT_COMMANDS.join(', ')}};`);
       expect(lib).toContain(`use engine::{${ENGINE_COMMANDS.join(', ')}};`);
-      for (const name of [...ARTIFACT_COMMANDS, ...ENGINE_COMMANDS]) {
+      expect(lib).toContain(`use proxy_browser::{${PROXY_BROWSER_COMMANDS.join(', ')}};`);
+      for (const name of [...ARTIFACT_COMMANDS, ...ENGINE_COMMANDS, ...PROXY_BROWSER_COMMANDS]) {
         expect(lib.match(new RegExp(`\\n {12}${name},`, 'g'))).toHaveLength(1);
       }
       expect(writeFileSync.mock.calls.some(([path]) => String(path).endsWith('Cargo.toml'))).toBe(

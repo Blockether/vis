@@ -48,6 +48,7 @@ import {
   reachOf,
 } from './lib/endpoints';
 import { desktopInvoke } from './lib/desktop';
+import { usePrivateLinks } from './hooks/usePrivateLinks';
 import {
   LOCAL_GATEWAY_URL,
   bootLocalEngine,
@@ -476,6 +477,8 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
     () => (client ? new SessionSubscriptionHub(client) : null),
     [client],
   );
+  // Links to the private domains of the gateway open in the in-app browser.
+  usePrivateLinks(client);
   // The apps of the gateway that belong to no session. Only an SDK program opens one.
   const globalApps = useGlobalApps(client, subscriptions);
   const listedApps = useMemo(() => listedGlobalApps(globalApps), [globalApps]);

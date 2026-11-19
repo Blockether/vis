@@ -1258,6 +1258,9 @@ A gateway that launchd or systemd starts can read the key, because a service uni
 your shell profile. The key changes what the link says, not where the gateway listens. The address
 must still reach this computer.
 
+`gateway.proxy` lets the Companion app open links to company hosts through the gateway. To set it,
+read [Private links](private-links.md).
+
 ## Database
 
 Vis stores sessions in SQLite. It resolves the location in this order: the `--db` flag,

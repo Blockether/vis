@@ -6,6 +6,7 @@
 // we send it on every request. A 401 surfaces as GatewayError so the UI can
 // prompt a re-pair.
 
+import { privateLinkRoute, type PrivateLinkRoute, type ProxyAnswer } from './private-links';
 import {
   activityProjectionFromWire,
   activityStreamDecoder,
@@ -3249,6 +3250,12 @@ export class GatewayClient {
       name,
       server,
     });
+  }
+
+  /** The proxy of this gateway for private links, or null when the app opens links as before. */
+  async privateLinkRoute(signal?: AbortSignal): Promise<PrivateLinkRoute | null> {
+    const answer = await this.request<ProxyAnswer>('GET', '/v1/proxy', undefined, signal);
+    return privateLinkRoute(answer, this.base, this.token);
   }
 
   // ── Router: providers, models, auth ─────────────────────────────

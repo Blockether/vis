@@ -119,10 +119,14 @@ export const ENGINE_COMMANDS = [
   'engine_latest',
 ];
 
+/** Vis's own commands in `native/desktop/proxy_browser.rs`: the browser for private links. */
+export const PROXY_BROWSER_COMMANDS = ['proxy_browser_available', 'proxy_browser_open'];
+
 /** Each Vis module with commands, in the order of its registration. */
 const HOST_MODULES = [
   ['artifact', ARTIFACT_COMMANDS],
   ['engine', ENGINE_COMMANDS],
+  ['proxy_browser', PROXY_BROWSER_COMMANDS],
 ];
 
 /** The Pake line that creates the main window. */
@@ -208,7 +212,7 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
     if (!cargo.includes('\n[dependencies]\n')) throw new Error('Pake Cargo.toml changed');
     writeFileSync(cargoPath, cargo.replace('\n[dependencies]\n', `\n[dependencies]\n${RFD_DEPENDENCY}\n`));
   }
-  for (const name of ['artifact.rs', 'engine.rs', 'web_content.rs']) {
+  for (const name of ['artifact.rs', 'engine.rs', 'proxy_browser.rs', 'web_content.rs']) {
     writeFileSync(
       join(sourceDir, name),
       readFileSync(new URL(`../native/desktop/${name}`, import.meta.url), 'utf8'),

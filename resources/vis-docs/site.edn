@@ -74,6 +74,10 @@
      :page "sounds"
      :title "Sounds"}
     {:blurb
+     "Open links to company hosts that only the gateway computer can reach, in a browser inside the app."
+     :page "private-links"
+     :title "Private links"}
+    {:blurb
      "Give the web app your own name, logo, header links, and theme, on a gateway or in your own build."
      :page "white-label"
      :title "White label"}]
@@ -188,6 +192,11 @@
        :label "Sounds"
        :page "sounds-api"
        :title "Sounds API"}
+      {:blurb
+       "Read the proxy settings of the gateway and send requests to company hosts through it from Python or with HTTP requests."
+       :label "Private links"
+       :page "private-links-api"
+       :title "Private links API"}
       {:blurb
        "Read, set, and remove the brand of the web app that a gateway serves from Python or with HTTP requests."
        :label "White label"

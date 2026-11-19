@@ -1,7 +1,8 @@
 /**
  * Link handling for the desktop app, which is this same bundle inside a Pake (Tauri) window.
  */
-type HostInvoke = (command: string, payload?: Record<string, unknown>) => Promise<unknown>;
+import { isPrivateLink, openPrivateLink, type HostInvoke } from './private-links';
+
 type DesktopHost = Window & { __TAURI__?: { core?: { invoke?: HostInvoke } } };
 
 /**
@@ -21,17 +22,21 @@ export function desktopInvoke(): HostInvoke | undefined {
  * `window.open` is Pake's own rewrite rather than a browser, so the shell channel carries it.
  */
 export const openExternalUrl = (url: string): void => {
+  // A private link opens in the in-app browser through the gateway proxy, on each host.
+  if (isPrivateLink(url)) void openPrivateLink(url).catch(() => openOutside(url));
+  else openOutside(url);
+};
+
+function openOutside(url: string): void {
   const invoke = desktopInvoke();
   // A refused open leaves the screen as it was, with its instructions and manual return.
   if (invoke) void invoke('plugin:shell|open', { path: url }).catch(() => {});
   else window.open(url, '_blank', 'noopener,noreferrer');
-};
+}
 
 let claimed = false;
 
 function claimExternalLink(event: MouseEvent): void {
-  // Read per click rather than at install: on the web this listener stays inert.
-  if (!desktopInvoke()) return;
   if (event.defaultPrevented || event.button !== 0) return;
   const anchor = event.target instanceof Element ? event.target.closest('a') : null;
   const href = anchor?.getAttribute('href');
@@ -46,6 +51,9 @@ function claimExternalLink(event: MouseEvent): void {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
   // An in-app route is a render, not a visit to another site.
   if (url.origin === window.location.origin) return;
+  // Read per click rather than at install. Without the desktop channel the web view opens
+  // links itself, and this listener takes only private links.
+  if (!desktopInvoke() && !isPrivateLink(url.href)) return;
   event.preventDefault();
   event.stopImmediatePropagation();
   openExternalUrl(url.href);

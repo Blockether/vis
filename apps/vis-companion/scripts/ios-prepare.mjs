@@ -1080,6 +1080,9 @@ const liveVoiceFileOk = fileOk(liveVoiceSwift, liveVoiceSource);
 const pasteSwift = join(appDir, 'PasteMenu.swift');
 const pasteSource = readFileSync(join(root, 'native/ios/PasteMenuPlugin.swift'), 'utf8');
 const pasteFileOk = fileOk(pasteSwift, pasteSource);
+const proxyBrowserSwift = join(appDir, 'ProxyBrowser.swift');
+const proxyBrowserSource = readFileSync(join(root, 'native/ios/ProxyBrowserPlugin.swift'), 'utf8');
+const proxyBrowserFileOk = fileOk(proxyBrowserSwift, proxyBrowserSource);
 // The Live Activity of a voice session: one file that the app and the widget
 // extension share, and the extension's views.
 const voiceDir = join(root, 'ios', 'App', 'VisVoice');
@@ -1131,6 +1134,7 @@ const appPluginClasses = [
   'VisHostPlugin',
   'OAuthLoopbackPlugin',
   'PasteMenuPlugin',
+  'ProxyBrowserPlugin',
   'LiveVoicePlugin',
 ];
 const capConfigJson = existsSync(capConfig) ? JSON.parse(readFileSync(capConfig, 'utf8')) : null;
@@ -1140,9 +1144,16 @@ const speechConfigOk = !capConfigJson || packageClassList.includes('NativeSpeech
 const hostConfigOk = !capConfigJson || packageClassList.includes('VisHostPlugin');
 const oauthConfigOk = !capConfigJson || packageClassList.includes('OAuthLoopbackPlugin');
 const pasteConfigOk = !capConfigJson || packageClassList.includes('PasteMenuPlugin');
+const proxyBrowserConfigOk = !capConfigJson || packageClassList.includes('ProxyBrowserPlugin');
 const liveVoiceConfigOk = !capConfigJson || packageClassList.includes('LiveVoicePlugin');
 const capConfigOk =
-  badgeConfigOk && speechConfigOk && hostConfigOk && oauthConfigOk && pasteConfigOk && liveVoiceConfigOk;
+  badgeConfigOk &&
+  speechConfigOk &&
+  hostConfigOk &&
+  oauthConfigOk &&
+  pasteConfigOk &&
+  proxyBrowserConfigOk &&
+  liveVoiceConfigOk;
 
 let project = existsSync(pbxprojPath) ? readFileSync(pbxprojPath, 'utf8') : '';
 if (!project) die('no ios/App/App.xcodeproj/project.pbxproj — run `npm run add:ios` first');
@@ -1745,6 +1756,29 @@ if (!pasteProjectOk) {
     `\t\t${pasteIds.swiftRef} /* PasteMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteMenu.swift; sourceTree = "<group>"; };\n`,
   );
 }
+// ProxyBrowser is the same kind of app plugin: the in-app browser for private links.
+const proxyBrowserIds = { swiftRef: objectId(64), swiftBuild: objectId(65) };
+const proxyBrowserProjectOk = sourceProjectOk('ProxyBrowser', proxyBrowserIds);
+if (!proxyBrowserProjectOk) {
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift in Sources [*]/,'),
+    `\n\t\t\t\t${proxyBrowserIds.swiftBuild} /* ProxyBrowser.swift in Sources */,`,
+    'App Sources phase',
+  );
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift [*]/,'),
+    `\n\t\t\t\t${proxyBrowserIds.swiftRef} /* ProxyBrowser.swift */,`,
+    'App group',
+  );
+  before(
+    '/* End PBXBuildFile section */',
+    `\t\t${proxyBrowserIds.swiftBuild} /* ProxyBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${proxyBrowserIds.swiftRef} /* ProxyBrowser.swift */; };\n`,
+  );
+  before(
+    '/* End PBXFileReference section */',
+    `\t\t${proxyBrowserIds.swiftRef} /* ProxyBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyBrowser.swift; sourceTree = "<group>"; };\n`,
+  );
+}
 const liveVoiceIds = { swiftRef: objectId(44), swiftBuild: objectId(45) };
 const liveVoiceProjectOk = sourceProjectOk('LiveVoice', liveVoiceIds);
 if (!liveVoiceProjectOk) {
@@ -1969,6 +2003,7 @@ const liveVoiceOk = liveVoiceFileOk && liveVoiceProjectOk && liveVoiceConfigOk;
 const voiceOk = voiceFilesOk && voiceProjectOk;
 const oauthOk = oauthFileOk && oauthProjectOk && oauthConfigOk;
 const pasteOk = pasteFileOk && pasteProjectOk && pasteConfigOk;
+const proxyBrowserOk = proxyBrowserFileOk && proxyBrowserProjectOk && proxyBrowserConfigOk;
 const shareOk = shareFilesOk && projectOk;
 const badgeOk = notifyFilesOk && notifyProjectOk && badgeConfigOk;
 const speechOk = speechFileOk && speechProjectOk && speechConfigOk;
@@ -1986,6 +2021,7 @@ if (check) {
     hostOk &&
     oauthOk &&
     pasteOk &&
+    proxyBrowserOk &&
     liveVoiceOk &&
     voiceOk &&
     splashOk
@@ -2015,6 +2051,8 @@ if (check) {
                     ? 'ios: no OAuth loopback browser — run `node scripts/ios-prepare.mjs`'
                     : !pasteOk
                       ? 'ios: no PasteMenu plugin — run `node scripts/ios-prepare.mjs`'
+                      : !proxyBrowserOk
+                        ? 'ios: no ProxyBrowser plugin — run `node scripts/ios-prepare.mjs`'
                       : !liveVoiceOk
                         ? 'ios: no live audio plugin — run `node scripts/ios-prepare.mjs`'
                         : !voiceOk
@@ -2071,6 +2109,7 @@ if (!speechFileOk) writeFileSync(speechSwift, speechSource);
 if (!hostFileOk) writeFileSync(hostSwift, hostSource);
 if (!oauthFileOk) writeFileSync(oauthSwift, oauthSource);
 if (!pasteFileOk) writeFileSync(pasteSwift, pasteSource);
+if (!proxyBrowserFileOk) writeFileSync(proxyBrowserSwift, proxyBrowserSource);
 if (!liveVoiceFileOk) writeFileSync(liveVoiceSwift, liveVoiceSource);
 if (!voiceFilesOk) {
   mkdirSync(voiceDir, { recursive: true });
