@@ -458,6 +458,20 @@
               :total-cost-usd (when (seq costs) (double (reduce + costs)))
               :total-steps (count (:steps trajectory))})))
 
+(defn- saved-extra
+  "The session metadata and the end time of its last dated step."
+  [record steps]
+  (not-empty
+    (compact {:status (text-value (get record "status"))
+              :title (text-value (get record "title"))
+              :cwd (text-value (get record "cwd"))
+              :started-at (some-> (or (epoch-ms (get record "started_at"))
+                                       (epoch-ms (get record "created_at")))
+                                   iso-time)
+              :last-activity-at (some->> (rseq steps)
+                                         (some #(or (step-end-ms %) (epoch-ms (:timestamp %))))
+                                         iso-time)})))
+
 (defn- persisted-trajectory
   "The ATIF trajectory of one saved session. `children` maps a
    parent session id to its child records, so a child also embeds its own
@@ -495,8 +509,7 @@
                                                                             str)
                                                  :depth (get record "depth")}))})
            :steps steps
-           :extra (not-empty (compact {:status (text-value (get record "status"))
-                                       :title (text-value (get record "title"))}))}
+            :extra (saved-extra record steps)}
           (remove #(contains? seen (str (get % "session_id"))) (get children sid))
           #(persisted-trajectory
              {:children children :read-turns read-turns :project-step project-step}

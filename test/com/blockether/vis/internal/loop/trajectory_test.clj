@@ -278,6 +278,26 @@
                   :total-steps 2}
                  (:final-metrics (first (:subagent-trajectories team-document)))))))
 
+(defdescribe
+  saved-json-test
+  (it "exports the project path and the session times for saved trajectories"
+      (let [root {:session-id "session-1" :cwd "/work/project" :created-at 900}
+            child-record (dissoc child :turns)
+            turns {"session-1" [{"created_at" 1000
+                                "trace" [{"created_at" 1100 "finished_at" 1150}]}]
+                   "child-1" (:turns child)}
+            document (wire/parse-json (trajectory/saved-json root [child-record grandchild] turns))
+            sub (get-in document ["subagent_trajectories" 0])
+            nested (get-in sub ["subagent_trajectories" 0])]
+        (expect (= {"cwd" "/work/project"
+                    "started_at" "1970-01-01T00:00:00.900Z"
+                    "last_activity_at" "1970-01-01T00:00:01.150Z"}
+                   (get document "extra")))
+        (expect (= "1970-01-01T00:00:01.200Z" (get-in sub ["extra" "started_at"])))
+        (expect (= "1970-01-01T00:00:01.400Z" (get-in sub ["extra" "last_activity_at"])))
+        (expect (not (contains? (get sub "extra") "cwd")))
+        (expect (not (contains? (get nested "extra") "last_activity_at"))))))
+
 (def ^:private persisted-iterations
   "The iterations of the turn of a persisted run. The answer step also runs code."
   [{"position" 1

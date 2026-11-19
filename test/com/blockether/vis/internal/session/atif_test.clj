@@ -24,6 +24,21 @@
 
 (defdescribe
   saved-export-test
+  (it "exports the path of the assigned project, not the path of the workspace"
+      (let [store (db/db-open! :memory)]
+        (try
+          (let [workspace-root (.getCanonicalPath (temp/temp-dir "vis-atif-workspace"))
+                project-root (.getCanonicalPath (temp/temp-dir "vis-atif-project"))
+                workspace (db/db-workspace-insert!
+                            store {:repo-id "atif" :root workspace-root :state :active})
+                sid (db/db-store-session! store {:channel :api :workspace-id (:id workspace)})
+                project (db/db-create-project! store {:name "ATIF" :workspace-root project-root})]
+            (expect (not (contains? (get (wire/parse-json (atif/export-json store sid)) "extra")
+                                    "cwd")))
+            (db/db-set-session-project! store sid (:id project))
+            (expect (= project-root
+                       (get-in (wire/parse-json (atif/export-json store sid)) ["extra" "cwd"]))))
+          (finally (db/db-close! store)))))
   (it
     "exports attachment metadata and bounded tool output with token details"
     (let [store (db/db-open! :memory)]

@@ -92,11 +92,23 @@
           (recur (into seen ids) (into (pop pending) ids) (into records children)))
         records))))
 
+(defn- session-metadata
+  [store session]
+  {:started-at (:created-at session)
+   :cwd (some->> (:project-id session)
+                 (db/db-get-project store)
+                 :workspace-root)})
+
 (defn export-json
   "Read and encode a saved session without loading its attachment bytes."
   [store sid]
   (when-let [session (db/db-get-session store sid)]
-    (trajectory/saved-json (assoc (select-keys session [:title :provider :model])
-                             :session-id (str sid))
-                           (child-records store (str sid))
-                           #(read-turns store %))))
+    (let [sid (str sid)
+          root (merge (select-keys session [:title :provider :model])
+                      {:session-id sid}
+                      (session-metadata store session))
+          children (mapv (fn [record]
+                           (merge record
+                                  (session-metadata store (db/db-get-session store (:session_id record)))))
+                         (child-records store sid))]
+      (trajectory/saved-json root children #(read-turns store %)))))
