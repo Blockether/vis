@@ -184,7 +184,8 @@
                                     [db-info session-turn-ids opts]
     "Latest-state iterations of many turns by string turn id. `opts` takes `:request-health?`.")
   (db-list-session-turns-iterations-meta [db-info session-turn-ids])
-  (db-list-iterations [db-info iteration-ids])
+  (db-list-iterations [db-info iteration-ids]
+                      [db-info iteration-ids opts])
   (db-latest-turn-request-usage [db-info session-turn-id])
   (db-list-iteration-attachments [db-info iteration-id])
   (db-list-iterations-attachments [db-info iteration-ids])

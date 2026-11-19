@@ -503,7 +503,7 @@ If the desktop app or the browser can share a file, Vis asks you to keep the fil
 ### Export from the command line
 
 ```bash
-vis-agent sessions export <SESSION-ID> [--md | --html PATH | --snapshot PATH]
+vis-agent sessions export <SESSION-ID> [--md | --atif | --html PATH | --snapshot PATH]
 ```
 
 ### Markdown
@@ -513,6 +513,20 @@ Markdown is the default format. The command prints the transcript to stdout:
 ```bash
 vis-agent sessions export 3a7b2c1d > session.md
 ```
+
+### ATIF JSON
+
+Use `--atif` to read a session in another program. The command prints one ATIF v1.8 JSON document
+with the turns, tool calls, token counts, and subagent conversations:
+
+```bash
+vis-agent sessions export 3a7b2c1d --atif > session.json
+```
+
+The export lists attachment names, media types, and sizes. It does not include file contents or
+attachments for the model only. Vis replaces known credential values and cuts long text after
+20,000 characters. Review the JSON for other private data before you share it. To restore a session
+in Vis, use a snapshot instead.
 
 ### HTML
 

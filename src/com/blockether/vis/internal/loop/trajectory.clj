@@ -266,7 +266,11 @@
                   :completion-tokens (get iteration "output_tokens")
                   :cached-tokens (get iteration "input_cache_read_tokens")
                   :cost-usd (some-> (get iteration "cost_usd")
-                                    double)})
+                                    double)
+                  :extra (not-empty (compact {:cache-creation-tokens
+                                              (get iteration "input_cache_write_tokens")
+                                              :reasoning-tokens (get iteration
+                                                                     "output_reasoning_tokens")}))})
 
         thinking
         (get iteration "thinking")]
@@ -279,7 +283,8 @@
                               :provider (text-value (or (get iteration "llm_actual_provider")
                                                         (get iteration "provider")))
                               :finished-at-ms (or (epoch-ms (get iteration "finished_at")) created)
-                              :error (error-text (get iteration "error"))})}
+                              :error (error-text (get iteration "error"))
+                              :attachments (not-empty (get iteration "attachments"))})}
       created
       (assoc :timestamp (iso-time created))
 
@@ -300,36 +305,49 @@
 (defn- turn-steps
   "The ATIF steps of one turn of a Council child, from step `first-id`: the
    request, then one agent step for each persisted iteration."
-  [first-id turn]
+  [first-id turn project-step]
   (let [answer
         (or (not-empty (content/text-projection (vec (get turn "content"))))
             (text-value (get turn "answer")))
 
         iterations
-        (vec (or (seq (get turn "trace")) (when answer [{}])))
+        (or (seq (get turn "trace")) (when answer [{}]))
 
         created
         (epoch-ms (get turn "created_at"))]
 
-    (into [(cond-> {:step-id first-id :source "user" :message (request-text (get turn "request"))}
-             created
-             (assoc :timestamp (iso-time created)))]
-          (map-indexed (fn [i iteration]
-                         (iteration-step (+ first-id 1 i)
-                                         (get turn "position")
-                                         iteration
-                                         (when (= i (dec (count iterations))) answer))))
-          iterations)))
+    (loop [remaining
+           iterations
+
+           steps
+           [(project-step (cond-> {:step-id first-id
+                                   :source "user"
+                                   :message (request-text (get turn "request"))}
+                            created
+                            (assoc :timestamp (iso-time created))
+
+                            (seq (get turn "attachments"))
+                            (assoc-in [:extra :attachments] (get turn "attachments"))))]]
+
+      (if (seq remaining)
+        (let [more (next remaining)]
+          (recur more
+                 (conj steps
+                       (project-step (iteration-step (+ first-id (count steps))
+                                                     (get turn "position")
+                                                     (first remaining)
+                                                     (when-not more answer))))))
+        steps))))
 
 (defn- child-steps
   "The ATIF steps of each turn of one Council child. A child without a turn has
    only its task."
-  [record]
+  [record project-step]
   (or (not-empty (reduce (fn [steps turn]
-                           (into steps (turn-steps (inc (count steps)) turn)))
+                           (into steps (turn-steps (inc (count steps)) turn project-step)))
                          []
                          (get record "turns")))
-      [{:step-id 1 :source "user" :message (request-text (get record "task"))}]))
+      [(project-step {:step-id 1 :source "user" :message (request-text (get record "task"))})]))
 
 (defn- step-end-ms
   "The time when one agent step ended: its own end, else the end of its last call."
@@ -440,20 +458,25 @@
               :total-cost-usd (when (seq costs) (double (reduce + costs)))
               :total-steps (count (:steps trajectory))})))
 
-(defn- subagent-trajectory
-  "The embedded ATIF trajectory of one Council child record. `children` maps a
+(defn- persisted-trajectory
+  "The ATIF trajectory of one saved session. `children` maps a
    parent session id to its child records, so a child also embeds its own
    children. `seen` holds the session ids above the child, so a bad parent link
    cannot loop."
-  [children seen record]
+  [{:keys [children read-turns project-step]} seen record]
   (let [sid
         (str (get record "session_id"))
 
         seen
         (conj seen sid)
 
+        record
+        (cond-> record
+          read-turns
+          (assoc "turns" (read-turns sid)))
+
         steps
-        (child-steps record)
+        (child-steps record (or project-step identity))
 
         provider
         (or (text-value (get record "provider")) (some #(get-in % [:extra :provider]) steps))
@@ -472,9 +495,13 @@
                                                                             str)
                                                  :depth (get record "depth")}))})
            :steps steps
-           :extra (not-empty (compact {:status (text-value (get record "status"))}))}
+           :extra (not-empty (compact {:status (text-value (get record "status"))
+                                       :title (text-value (get record "title"))}))}
           (remove #(contains? seen (str (get % "session_id"))) (get children sid))
-          #(subagent-trajectory children seen %))]
+          #(persisted-trajectory
+             {:children children :read-turns read-turns :project-step project-step}
+             seen
+             %))]
 
     (assoc trajectory :final-metrics (child-metrics record trajectory))))
 
@@ -610,7 +637,7 @@
             root
             (assoc :session-id root))
           (get children (or root ""))
-          #(subagent-trajectory children #{(or root "")} %))]
+          #(persisted-trajectory {:children children} #{(or root "")} %))]
 
     (update document :final-metrics with-subagent-cost (subagent-cost document))))
 
@@ -664,25 +691,68 @@
                   :providers (try (:providers (config/current-config)) (catch Exception _ nil))
                   :settings (toggles/secret-values)}))
 
+(defn- redactor
+  "Compile the credential pattern once for all values in an export."
+  [secrets]
+  (if (empty? secrets)
+    identity
+    (let [pattern (re-pattern (str/join "|" (map #(Pattern/quote %) (sort-by count > secrets))))]
+      (fn walk [x]
+        (cond (string? x) (str/replace x pattern redacted)
+              (map? x) (into {}
+                             (map (fn [[k v]]
+                                    [(walk k) (walk v)]))
+                             x)
+              (sequential? x) (mapv walk x)
+              :else x)))))
+
 (defn redact
   "Replace each `secrets` value in each string of `data` with `[REDACTED]`."
   [data secrets]
-  (if (empty? secrets)
-    data
-    (let [pattern
-          (re-pattern (str/join "|" (map #(Pattern/quote %) (sort-by count > secrets))))
+  ((redactor secrets) data))
 
-          walk
-          (fn walk [x]
-            (cond (string? x) (str/replace x pattern redacted)
-                  (map? x) (into {}
-                                 (map (fn [[k v]]
-                                        [(walk k) (walk v)]))
-                                 x)
-                  (sequential? x) (mapv walk x)
-                  :else x))]
+(defn- clip-text
+  "Keep the first 20,000 Unicode code points and give the number left out."
+  [^String text]
+  (let [n (if (> (.length text) 20000) (long (code-points text)) 0)]
+    (if (> n 20000)
+      (str (.substring text 0 (.offsetByCodePoints text 0 20000))
+           "\n… ["
+           (- n 20000)
+           " more characters cut]")
+      text)))
 
-      (walk data))))
+(defn- clip-step
+  "Clip text in the shared step and its tools before retaining the next step."
+  [step]
+  (letfn [(clip [value]
+            (cond (string? value) (clip-text value)
+                  (map? value) (update-vals value clip)
+                  (vector? value) (mapv clip value)
+                  :else value))]
+    (clip step)))
+
+(defn saved-json
+  "Encode one saved session and its children as a redacted ATIF document.
+   `read-turns` gives the turns of one session on demand."
+  [root records read-turns]
+  (let [root
+        (wire/canonical root)
+
+        sid
+        (get root "session_id")
+
+        redact-value
+        (redactor (run-secrets))
+
+        children
+        (children-by-parent sid records)]
+
+    (wire/json-str (redact-value (persisted-trajectory {:children children
+                                                        :read-turns read-turns
+                                                        :project-step #(clip-step (redact-value %))}
+                                                       #{}
+                                                       root)))))
 
 (def ^:private owner-only (PosixFilePermissions/fromString "rw-------"))
 

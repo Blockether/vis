@@ -7075,26 +7075,28 @@
    Exact IDs may address previous retry states. Nil, duplicate and missing IDs
    add no rows; nil datasource returns {}. Payloads use the canonical iteration
    decoder, without fetching attachment bytes or routing-event history. Each
-   query binds at most 500 IDs. Select metadata before calling this reader."
-  [db-info iteration-ids]
-  (let [ids (into [] (comp (keep ->ref) (distinct)) iteration-ids)]
-    (if (and (ds db-info) (seq ids))
-      (let [by-id (reduce (fn [result batch]
-                            (reduce
-                              (fn [result row]
-                                (assoc result (:id row) (row->iteration row)))
-                              result
-                              (query-sql!
-                                db-info
-                                (into [(str
-                                         "SELECT i.* FROM session_turn_iteration i WHERE i.id IN ("
-                                         (str/join "," (repeat (count batch) "?"))
-                                         ")")]
-                                      batch))))
-                          {}
-                          (partition-all iteration-read-batch-size ids))]
-        (zipmap (keys by-id) (with-activity-rows db-info (vals by-id))))
-      {})))
+   query binds at most 500 IDs. Select metadata before calling this reader.
+   `:activity? false` leaves out the separate Activity history read."
+  ([db-info iteration-ids] (db-list-iterations db-info iteration-ids nil))
+  ([db-info iteration-ids {:keys [activity?] :or {activity? true}}]
+   (let [ids (into [] (comp (keep ->ref) (distinct)) iteration-ids)]
+     (if (and (ds db-info) (seq ids))
+       (let [by-id (reduce (fn [result batch]
+                             (reduce
+                               (fn [result row]
+                                 (assoc result (:id row) (row->iteration row)))
+                               result
+                               (query-sql!
+                                 db-info
+                                 (into [(str
+                                          "SELECT i.* FROM session_turn_iteration i WHERE i.id IN ("
+                                          (str/join "," (repeat (count batch) "?"))
+                                          ")")]
+                                       batch))))
+                           {}
+                           (partition-all iteration-read-batch-size ids))]
+         (if activity? (zipmap (keys by-id) (with-activity-rows db-info (vals by-id))) by-id))
+       {}))))
 
 (defn db-latest-turn-request-usage
   "Last positive-input request in the turn's latest state, or nil.

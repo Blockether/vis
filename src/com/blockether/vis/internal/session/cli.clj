@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.session.atif :as atif]
             [com.blockether.vis.internal.session.snapshot :as snapshot]
             [com.blockether.vis.internal.workspace.core :as workspace])
   (:import (java.io File)
@@ -386,6 +387,9 @@
         md?
         (boolean (get parsed "md"))
 
+        atif?
+        (boolean (get parsed "atif"))
+
         html-path
         (some-> (get parsed "html")
                 str/trim
@@ -401,10 +405,12 @@
                 resolve-out-path)
 
         chosen
-        (filterv some? [(when md? :md) (when html-path :html) (when snapshot-path :snapshot)])]
+        (filterv some?
+          [(when md? :md) (when atif? :atif) (when html-path :html)
+           (when snapshot-path :snapshot)])]
 
     (when (> (count chosen) 1)
-      (commandline/stdout! "Choose exactly one of --md, --html PATH or --snapshot PATH.")
+      (commandline/stdout! "Choose exactly one of --md, --atif, --html PATH or --snapshot PATH.")
       (shutdown-agents)
       (System/exit 2))
     (cond snapshot-path (let [counts (get (export-snapshot! (:id session) snapshot-path) "counts")]
@@ -426,6 +432,8 @@
                                 (refuse! (str "No session " (:id session)))))
                       (commandline/stdout! (str "Exported HTML: "
                                                 (paths/abbreviate-home (.getPath target)))))
+          atif? (commandline/stdout! (or (atif/export-json d (:id session))
+                                         (refuse! (str "No session " (:id session)))))
           :else (commandline/write-stdout! (transcript-export/md (:id session))))
     (shutdown-agents)))
 
@@ -622,21 +630,23 @@
     :cmd/run-fn cli-delete-session!}
    {:cmd/name "export"
     :cmd/parent ["sessions"]
-    :cmd/doc
-    "Export a session: Markdown on stdout, styled HTML to a file, or a snapshot to import elsewhere."
-    :cmd/usage "vis-agent sessions export <SESSION-ID> [--md | --html PATH | --snapshot PATH]"
+    :cmd/doc "Export a session as Markdown, ATIF JSON, HTML, or a snapshot."
+    :cmd/usage
+    "vis-agent sessions export <SESSION-ID> [--md | --atif | --html PATH | --snapshot PATH]"
     :cmd/args [{:name "session-id"
                 :kind :positional
                 :type :string
                 :required true
                 :doc "Session id (full UUID or unambiguous prefix)."}
                {:name "md" :kind :flag :type :boolean :doc "Print Markdown to stdout (default)."}
+               {:name "atif" :kind :flag :type :boolean :doc "Print ATIF JSON to stdout."}
                {:name "html" :kind :flag :type :string :doc "Write styled HTML export to PATH."}
                {:name "snapshot"
                 :kind :flag
                 :type :string
                 :doc "Write a .vissnap snapshot of the session and its subagents to PATH."}]
     :cmd/examples ["vis-agent sessions export 3a7b2c1d --md"
+                   "vis-agent sessions export 3a7b2c1d --atif"
                    "vis-agent sessions export 3a7b2c1d --html out.html"
                    "vis-agent sessions export 3a7b2c1d --snapshot work.vissnap"]
     :cmd/run-fn cli-export-session!}
