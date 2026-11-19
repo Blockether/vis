@@ -64,13 +64,13 @@ Do not write these:
 
 Keep the modules of `resources/vis-docs/site.edn` in this order:
 
-1. **Intro**: Rationale, Getting started, and Reporting a bug.
-2. **Config**: settings, project instructions, skills, and access policy.
-3. **CLI**: installation, updates, and gateway commands.
-4. **Companion**: app workflows and shared session features.
-5. **TUI**: terminal controls, with links to shared workflows.
-6. **Extensions & SDK**: extension guides, the **Basics** group, and **Feature APIs**.
-7. **References**: component and diagnostic reference pages.
+1. **Get started**: Getting started, Rationale, and Reporting a bug.
+2. **Guides**: four groups that the sidebar shows as collapsed lists.
+   - **Use Vis**: app workflows and shared session features.
+   - **Run Vis**: installation, updates, the gateway, and access policy.
+   - **Customize Vis**: settings, project instructions, skills, extension packages, and the brand.
+   - **Build on Vis**: extension guides, the Python SDK, and the HTTP API.
+3. **Reference**: lookup pages, then the **Feature APIs** group.
 
 - Keep each shared workflow on one page. Link to it from the other client section.
 - Give each concept `X` that a program can use one page `X-api.md` in **Feature APIs**.
@@ -79,6 +79,6 @@ Keep the modules of `resources/vis-docs/site.edn` in this order:
 - If a feature has an `X-api` page, put its SDK calls and gateway routes there, not on the concept page.
 - Link the `X-api` page from the concept page's `When to use` and `See also`.
 - Inside a group, give a page a sidebar `:label` without the group name, for example `Sessions` under **Feature APIs**. Keep the full name in `:title`.
-- On the public site, show the Extension Center link at the end of the **Extensions & SDK** module.
+- On the public site, show the Extension Center link at the end of the **Guides** module.
 - In the README, link to the manual and Curated Terminal Benchmark. Keep the manual contents on the documentation site.
 - `docs-modules-test` and `packages/vis-agent/tests/test_api_guides.py` check these rules.

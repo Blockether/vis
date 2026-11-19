@@ -13,19 +13,20 @@
        identically, on the FIRST line of the file: the browser tab and the page
        itself must never disagree about a page's name. The sidebar shows the same
        title, or a shorter `:label` inside a group whose name says the rest
-       (`HTTP API` under `Basics`, `Sessions` under `Feature APIs`). `index.md` is
+       (`Python SDK` under `Build on Vis`, `Sessions` under `Feature APIs`). `index.md` is
        the ONE exception — its title is rendered from the site navigation, so it
        carries no `#` at all.
      * Under the H1 comes a LEAD paragraph, before the first `##`: what this page
        covers, so a reader who stops there still knows what they found.
-     * The `:nav` of `vis-docs/site.edn` is the reading order: `Intro`, `Config`,
-       `CLI`, `Companion`, `TUI`, `Extensions & SDK`, and `References`. Only
-       `Intro` has `:intro?`. Extension guides, SDK basics, and Feature APIs
-       belong to `Extensions & SDK`. A feature page `X` that a program can
-       drive has one page `X-api` in `Feature APIs`, and `X` links it.
-       Shared client workflows have one owner page, with links from the other
-       client section. On the public site, the
-       Extension Center link ends the module that `:extension-center` names.
+     * The `:nav` of `vis-docs/site.edn` is the reading order: `Get started`,
+       `Guides`, and `Reference`. Only `Get started` has `:intro?`. `Guides` has
+       the groups `Use Vis`, `Run Vis`, `Customize Vis`, and `Build on Vis`.
+       Extension guides and SDK basics belong to `Build on Vis`. A feature page `X`
+       that a program can drive has one page `X-api` in the `Feature APIs` group
+       of `Reference`, and `X` links it. Shared client workflows have one owner
+       page. The sidebar shows a named group as a collapsed list that opens on
+       the current page. On the public site, the Extension Center link ends the
+       module that `:extension-center` names.
      * PAIRED VARIANTS: an `X-api` page gives each example twice. A
        `<div data-variant=\"python\">` block comes first, and a
        `<div data-variant=\"http\">` block follows it at once. Each tag and its
@@ -161,7 +162,8 @@
 (defn- site-file
   "`{:site {...} :nav [{:section _ :intro? _ :pages [{:page :title :blurb} ...]} ...]}`, read
    from `site-resource` and checked. A module with groups has `:groups [{:group _ :pages [...]}]`
-   instead of `:pages`, and a page can add a shorter sidebar `:label`. The nav VECTOR is the
+   instead of `:pages`. A group without `:group` lists its pages without a heading. A page can
+   add a shorter sidebar `:label`. The nav VECTOR is the
    order — a page's place in the manual is where it stands here, so there is no order number to
    keep in step."
   []
@@ -185,7 +187,7 @@
                                    (and (vector? (:groups %))
                                         (every? (fn [g]
                                                   (and (map? g)
-                                                       (string? (:group g))
+                                                       (or (nil? (:group g)) (string? (:group g)))
                                                        (vector? (:pages g))))
                                                 (:groups %)))
                                    (vector? (:pages %))))
@@ -337,7 +339,14 @@
                           :let [grp
                                 (:group (first run))]]
 
-                      (str (when grp (str "<div class=\"nav-grp\">" (esc grp) "</div>"))
+                      ;; A named group is a collapsed list. It opens on its own page, so
+                      ;; the reader always sees where the current page is.
+                      (str (when grp
+                             (str "<details class=\"nav-grp\""
+                                  (when (some #(= active-slug (:slug %)) run) " open")
+                                  "><summary>"
+                                  (esc grp)
+                                  "</summary>"))
                            (apply str
                              (for [{:keys [slug title label]} run]
                                (str "<a href=\""
@@ -346,7 +355,8 @@
                                     (when (= slug active-slug) " class=\"active\"")
                                     ">"
                                     (esc (or label title))
-                                    "</a>"))))))
+                                    "</a>")))
+                           (when grp "</details>"))))
                   ;; The catalog exists only on the public site. Its link ends the
                   ;; module that `:extension-center` names, after that module's pages.
                   (when (and (= mode :static)

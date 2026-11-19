@@ -185,21 +185,47 @@ a:hover {
   color: var(--fg);
   font-size: var(--text-small);
   font-weight: 700;
-  margin: 1.6rem 0.6rem 0.4rem;
-  padding-bottom: 0.3rem;
-  border-bottom: 1px solid var(--line);
+  margin: 1.6rem 0.7rem 0.4rem;
 }
-.nav-grp {
+.nav-sec:first-child {
+  margin-top: 0;
+}
+.nav-grp > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.34rem 0.7rem;
   color: var(--dim);
   font-size: var(--text-small);
-  font-weight: 600;
-  margin: 0.9rem 0.6rem 0.3rem;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.nav-grp > summary::-webkit-details-marker {
+  display: none;
+}
+.nav-grp > summary::after {
+  content: '›';
+  font-size: 1rem;
+  line-height: 1;
+  transition: transform 0.12s;
+}
+.nav-grp[open] > summary::after {
+  transform: rotate(90deg);
+}
+.nav-grp > summary:hover {
+  background: var(--panel);
+  color: var(--fg);
+}
+.nav-grp > a {
+  padding-left: 1.5rem;
 }
 .nav a {
   display: block;
   padding: 0.34rem 0.7rem;
   border-radius: 0;
-  color: var(--fg-soft);
+  color: var(--dim);
   font-size: var(--text-small);
   font-weight: 500;
   text-decoration: none;
@@ -884,7 +910,8 @@ button.primary:hover {
   button {
     min-width: 2.75rem;
   }
-  .nav a {
+  .nav a,
+  .nav-grp > summary {
     display: flex;
     align-items: center;
     min-height: 2.75rem;
