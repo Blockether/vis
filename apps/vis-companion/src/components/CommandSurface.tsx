@@ -143,7 +143,7 @@ function BandRow({ keyName, title, description }: { keyName: string; title: stri
       <span aria-hidden="true" className="shrink-0 text-dialog-hint">
         —
       </span>
-      <span className="min-w-0 text-meta text-dialog-hint mouse:text-ui">{description}</span>
+      <span className="min-w-0 truncate text-meta text-dialog-hint mouse:text-ui">{description}</span>
     </li>
   );
 }
