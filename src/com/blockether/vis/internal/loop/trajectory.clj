@@ -33,15 +33,18 @@
    configuration and from `api_key_command`, the gateway token, the values of
    secret settings, keychain and command values of
    `environment:`, and values of the environment, `.env` and `environment:` whose
-   names contain KEY, TOKEN, SECRET, PASSWORD or CREDENTIAL. Vis replaces only
-   these known values. It does not find other secrets in the text. Only the
-   owner can read the file."
+   names contain KEY, TOKEN, SECRET, PASSWORD or CREDENTIAL. Each value also
+   matches in its JSON-escaped and URL-encoded forms. Credentials that their
+   form shows also become `[REDACTED]`: private PEM keys, passwords in URLs,
+   credential headers and well-known API key and token formats. Vis does not
+   find other secrets in the text. Only the owner can read the file."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
+            [com.blockether.vis.internal.gateway.server.instance :as instance]
             [com.blockether.vis.internal.provider.credential-command :as cred]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.error :as error]
@@ -52,6 +55,8 @@
   (:import (java.io File)
            (java.nio.file CopyOption Files OpenOption Path StandardCopyOption)
            (java.nio.file.attribute FileAttribute PosixFilePermissions)
+           (java.net URLEncoder)
+           (java.nio.charset StandardCharsets)
            (java.time Instant)
            (java.util.regex Pattern)))
 
@@ -780,10 +785,18 @@
   [s]
   (let [encoded (wire/json-str s)] (subs encoded 1 (dec (count encoded)))))
 
+(defn- url-encoded
+  "`s` as `URLEncoder` and `encodeURIComponent` encode it, with upper and lower hex."
+  [^String s]
+  (let [form (URLEncoder/encode s StandardCharsets/UTF_8)
+        spaces (str/replace form "+" "%20")]
+    (distinct (mapcat (fn [x] [x (str/replace x #"%[0-9A-F]{2}" str/lower-case)]) [form spaces]))))
+
 (defn- with-escaped
-  "`secrets` and their JSON-escaped forms, longest first, because text can hold JSON."
+  "`secrets` and their JSON-escaped and URL-encoded forms, longest first, because text
+   can hold JSON and URLs."
   [secrets]
-  (->> secrets (mapcat (juxt identity json-escaped)) distinct (sort-by count >) vec))
+  (->> secrets (mapcat #(list* % (json-escaped %) (url-encoded %))) distinct (sort-by count >) vec))
 
 (defn- string-leaves
   [data]
@@ -792,11 +805,14 @@
         (sequential? data) (mapcat string-leaves data)
         :else nil))
 
-(defn- gateway-token
-  "The bearer token of the local gateway, or nil."
+(defn- gateway-tokens
+  "The bearer tokens of the local gateway: the one this server uses, also from another
+   token file, and the one in the default token file."
   []
   (let [file (discovery/default-token-file)]
-    (when (.isFile file) (try (str/trim (slurp file)) (catch Exception _ nil)))))
+    (keep not-empty
+          [(:token @instance/server-state)
+           (when (.isFile file) (try (str/trim (slurp file)) (catch Exception _ nil)))])))
 
 (defn run-secrets
   "The known credentials of this process and of the bound workspace, also JSON-escaped:
@@ -807,7 +823,7 @@
                                 :providers (try (:providers (config/current-config)) (catch Exception _ nil))
                                 :settings (concat (toggles/secret-values)
                                                   (cred/cached-tokens)
-                                                  (some-> (gateway-token) vector))
+                                                  (gateway-tokens))
                                 :environment (environment)})))
 
 (defn setting-secrets
@@ -818,20 +834,114 @@
                                                 leaf (string-leaves value)]
                                             leaf)})))
 
+(def ^:private token-format
+  "Credentials that their form shows: provider API keys and access tokens of
+   OpenAI, Anthropic, Stripe, GitHub, GitLab, Slack, AWS, Google, npm and
+   Hugging Face, and JSON Web Tokens, also encrypted ones."
+  (re-pattern
+    (str "(?<![A-Za-z0-9_-])(?:"
+         (str/join "|"
+                   ["sk-(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{30,}"
+                    "(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{20,}"
+                    "gh[pousr]_[A-Za-z0-9]{36,}"
+                    "github_pat_[A-Za-z0-9_]{50,}"
+                    "gl(?:pat|dt|ptt|rt)-[A-Za-z0-9_-]{20,}"
+                    "xox[abposr]-[A-Za-z0-9-]{10,}"
+                    "(?:AKIA|ASIA)[A-Z0-9]{16}"
+                    "AIza[0-9A-Za-z_-]{35}"
+                    "npm_[A-Za-z0-9]{36}"
+                    "hf_[A-Za-z0-9]{30,}"
+                    "eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]*\\.[A-Za-z0-9_-]*(?:\\.[A-Za-z0-9_-]+){0,2}"])
+         ")(?![A-Za-z0-9_-])")))
+
+(def ^:private token-markers
+  "A string without each of these has no match of [[token-format]]."
+  ["sk-" "sk_" "rk_" "ghp_" "gho_" "ghu_" "ghs_" "ghr_" "github_pat_" "glpat-" "gldt-" "glptt-"
+   "glrt-" "xox" "AKIA" "ASIA" "AIza" "npm_" "hf_" "eyJ"])
+
+(def ^:private private-key-format
+  "A private key: a PEM block with its end line, or with base64 lines after its start
+   line when the text was cut, and a PuTTY key file."
+  (re-pattern
+    (str "-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"
+         "(?:[\\s\\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|(?:\\r?\\n[A-Za-z0-9+/=]{16,})+)"
+         "|(?s)PuTTY-User-Key-File-[0-9]+:.*?Private-MAC:[ \\t]*[0-9a-fA-F]+")))
+
+(def ^:private url-credential
+  "The user and password in the authority of a URL."
+  #"(?i)(?<![\w+.-])([a-z][a-z0-9+.-]*+://)[^\s/?#@:]++:[^\s/?#@]++@")
+
+(def ^:private authorization-credential
+  "The credential after the scheme of an `Authorization` value, also in JSON or code."
+  #"(?i)(\b(?:proxy-)?authorization[\"']?[ \t]*[:=][ \t]*[\"']?(?:bearer|basic|token|bot)[ \t]+)([A-Za-z0-9._~+/=-]{8,}+)")
+
+(def ^:private digest-credential
+  "The parameters of a `Digest` value that prove the credential."
+  #"(?i)(\b(?:proxy-)?authorization[\"']?[ \t]*[:=][ \t]*[\"']?digest[ \t]+)([^\r\n]*)")
+
+(defn- credential-like?
+  "True for a token with a digit, a base64 sign, or an upper case letter after a lower
+   case letter, so that a word of prose stays."
+  [^String token]
+  (or (boolean (re-find #"[0-9+/=]" token))
+      (let [m (re-matcher #"[a-z]" token)]
+        (and (.find m) (boolean (re-find #"[A-Z]" (subs token (.start m))))))))
+
+(def ^:private cookie-value
+  "A `Cookie` or `Set-Cookie` value up to the end of the line or the quote."
+  #"(?i)(\b(?:set-)?cookie[\"']?[ \t]*:[ \t]*[\"']?)([^\r\n\"']+)")
+
+(defn- redact-forms
+  "Replace in `s` each credential that its form shows. Each pattern runs only when its
+   marker occurs, because a scan for a marker is much faster."
+  [^String s]
+  (let [lower (str/lower-case s)]
+    (cond-> s
+      (str/includes? s "vis-secret:")
+      (str/replace #"vis-secret:[A-Za-z0-9._-]+" "[SECRET HANDLE]")
+
+      (or (str/includes? s "PRIVATE KEY-----") (str/includes? s "PuTTY-User-Key-File-"))
+      (str/replace private-key-format redacted)
+
+      (str/includes? s "://")
+      (str/replace url-credential (fn [[_ scheme]] (str scheme redacted "@")))
+
+      (str/includes? lower "authorization")
+      (-> (str/replace authorization-credential
+                       (fn [[match prefix token]] (if (credential-like? token) (str prefix redacted) match)))
+          (str/replace digest-credential
+                       (fn [[_ prefix params]]
+                         (str prefix
+                              (str/replace params
+                                           #"(?i)\b(response|cnonce|nonce|opaque)=(\"?)[^\",\s]*+"
+                                           (fn [[_ k q]] (str k "=" q redacted)))))))
+
+      (str/includes? lower "cookie")
+      (str/replace cookie-value
+                   (fn [[_ prefix value]]
+                     (str prefix
+                          (str/replace value
+                                       #"(^|;[ \t]*)([\w.-]+)=([^;\s]{8,})"
+                                       (fn [[_ start name]] (str start name "=" redacted))))))
+
+      (some #(str/includes? s %) token-markers)
+      (str/replace token-format redacted))))
+
 (defn redactor
-  "Compile the credential pattern once for all values in an export."
+  "Compile the credential pattern once for all values in an export. Each of `secrets`,
+   and each credential that its form shows, becomes `[REDACTED]`."
   [secrets]
-  (if (empty? secrets)
-    identity
-    (let [pattern (re-pattern (str/join "|" (map #(Pattern/quote %) (sort-by count > secrets))))]
-      (fn walk [x]
-        (cond (string? x) (str/replace x pattern redacted)
-              (map? x) (into {}
-                             (map (fn [[k v]]
-                                    [(walk k) (walk v)]))
-                             x)
-              (sequential? x) (mapv walk x)
-              :else x)))))
+  (let [known (when (seq secrets)
+                (re-pattern (str/join "|" (map #(Pattern/quote %) (sort-by count > secrets)))))
+        text (fn [s] (redact-forms (if known (str/replace s known redacted) s)))]
+    (fn walk [x]
+      (cond (string? x) (text x)
+            (map? x) (into {}
+                           (map (fn [[k v]]
+                                  [(walk k) (walk v)]))
+                           x)
+            (sequential? x) (mapv walk x)
+            :else x))))
 
 (defn redact
   "Replace each `secrets` value in each string of `data` with `[REDACTED]`."

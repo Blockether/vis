@@ -8740,8 +8740,7 @@
     (when-let [tree (persistance/db-export-session-tree db sid)]
       ;; Each known credential becomes `[REDACTED]`, as in an ATIF export.
       (let [secrets (into [] (comp (mapcat #(session-secrets db (:id (:soul %)))) (distinct)) (:sessions tree))]
-        (snapshot/encode (cond-> tree
-                           (seq secrets) (snapshot/redact (trajectory/redactor secrets)))
+        (snapshot/encode (snapshot/redact tree (trajectory/redactor secrets))
                          {:vis-version (runtime/release-version) :now (util/now-ms)})))))
 
 (defn export-atif

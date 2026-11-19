@@ -3,6 +3,7 @@
             [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
+            [com.blockether.vis.internal.gateway.server.instance :as instance]
             [com.blockether.vis.internal.loop.trajectory :as trajectory]
             [com.blockether.vis.internal.provider.credential-command :as cred]
             [lazytest.core :refer [defdescribe expect it]])
@@ -412,10 +413,54 @@
       (let [file (.toFile (.resolve (temp-dir) "gateway.token"))]
         (spit file "gateway-token-12345678\n")
         (with-redefs [discovery/default-token-file (constantly file)
-                      cred/cached-tokens (constantly ["command-key-12345678"])]
+                      cred/cached-tokens (constantly ["command-key 12345678"])
+                      instance/server-state (atom {:token "custom-file-token-12345678"})]
           (let [secrets (set (trajectory/run-secrets))]
             (expect (contains? secrets "gateway-token-12345678"))
-            (expect (contains? secrets "command-key-12345678")))))))
+            (expect (contains? secrets "custom-file-token-12345678"))
+            (expect (contains? secrets "command-key 12345678"))
+            (expect (contains? secrets "command-key+12345678"))
+            (expect (contains? secrets "command-key%2012345678")))))))
+
+(defdescribe credential-format-test
+  (it "replaces credentials that their form shows and keeps the syntax around them"
+      (expect (= ["key [REDACTED] end"
+                  "GH=[REDACTED]"
+                  "[REDACTED]"
+                  "token [REDACTED]"
+                  "postgres://[REDACTED]@db:5432/x"
+                  "curl -H 'Authorization: Basic [REDACTED]' https://example.org"
+                  "{\"Authorization\": \"Bearer [REDACTED]\"}"
+                  "{\"Cookie\":\"session=[REDACTED]; theme=dark\"}"
+                  "key: [REDACTED]"
+                  "Authorization: Digest username=\"Mufasa\", nonce=\"[REDACTED]\", response=\"[REDACTED]\""
+                  "[REDACTED]"]
+                 (trajectory/redact ["key sk-proj-abcdefghijklmnopqrstuvwxyz0123456789AB end"
+                                     "GH=ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+                                     "AKIAABCDEFGHIJKLMNOP"
+                                     "token eyJhbGciOiJub25lIn0.e30."
+                                     "postgres://admin:hunter22@db:5432/x"
+                                     "curl -H 'Authorization: Basic dXNlcjpwYXNzMTIz' https://example.org"
+                                     "{\"Authorization\": \"Bearer abcDEF123456789xyz\"}"
+                                     "{\"Cookie\":\"session=abcdef123456789; theme=dark\"}"
+                                     "key: -----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU=\n-----END OPENSSH PRIVATE KEY-----"
+                                     "Authorization: Digest username=\"Mufasa\", nonce=\"dcd98b7102dd2f0e\", response=\"6629fae49393a053\""
+                                     "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..aXYxMjM0NTY.Y2lwaGVy.dGFn"]
+                                    []))))
+  (it "keeps code and prose that only look near a credential"
+      (let [text ["def f(cookie: str, max_tokens: int = 4096) -> str: return cookie"
+                  "const req = { authorization: name, cookie: value, cache: false };"
+                  "const config = { validateAuthorization: true, secureCookie: true };"
+                  "- Authorization: Only team members can edit projects.\n- Cookie: enable in browser settings."
+                  "Authorization: Basic authentication is used"
+                  "headers = {\"Authorization\": f\"Bearer {token}\"}"
+                  "https://example.org:443?email=me@local.example"
+                  "Put a line containing -----BEGIN PRIVATE KEY----- at the start of the file."
+                  "sk-model-config-for-sandbox-kubernetes"
+                  "task-sk-abcdefghijklmnopqrstuvwxyz0123456789"
+                  "git@github.com:org/repo.git" "https://example.com/a:b" "ghp_short"
+                  "3fa85f64-5717-4562-b3fc-2c963f66afa6"]]
+        (expect (= text (trajectory/redact text []))))))
 
 (defdescribe redact-test
              (it "replaces each known value in every string, map keys included"
