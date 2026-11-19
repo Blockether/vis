@@ -705,6 +705,17 @@
         "get": {
           "request": "none",
           "response": "json",
+          "response_schema": "proxy"
+        }
+      },
+      "path": "/v1/proxy"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
           "response_schema": "router_fleet"
         },
         "patch": {
@@ -2214,6 +2225,47 @@
     "unknown_header": "x-vis-client-lease-unknown"
   },
   "$defs": {
+    "proxy": {
+      "description": "The forward proxy of the gateway. A client sends a request for a matching host to `port` on the host of the gateway, with the gateway token as the user name of `Proxy-Authorization: Basic`.",
+      "type": "object",
+      "properties": {
+        "is_enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "allowed_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "denied_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      },
+      "required": [
+        "is_enabled",
+        "port",
+        "allowed_domains",
+        "denied_domains",
+        "ports"
+      ],
+      "additionalProperties": false
+    },
     "web_launch": {
       "description": "A one-time code that connects a browser to this gateway. `vis-agent web` puts it in the URL fragment.",
       "type": "object",

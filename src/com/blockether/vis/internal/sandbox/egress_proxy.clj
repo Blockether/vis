@@ -346,8 +346,11 @@
         addrs
         (when host (try (vec (InetAddress/getAllByName (str host))) (catch Throwable _ nil)))
 
+        ;; `:deny-names-only?` matches denied domains by name alone. The gateway proxy
+        ;; asks for it: many VPC hosts share one load balancer address, and a denied
+        ;; name must not block the allowed names on the same address.
         denied-ips
-        (denied-address-set (:denied-domains policy))
+        (when-not (:deny-names-only? policy) (denied-address-set (:denied-domains policy)))
 
         loopback?
         (fn [^InetAddress a]

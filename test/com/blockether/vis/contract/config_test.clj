@@ -9,13 +9,25 @@
                  (expect (not (document/valid? "config" {"titling" {"mode" "unknown"}})))
                  (expect (not (document/valid? "config" {"api_style_values" ["openai"]})))))
 
-(defdescribe schema-root-validates-the-gateway-pairing-address
-             (it "schema root validates the gateway pairing address"
-                 (expect (document/valid? "config" {"gateway" {"advertise" "10.0.0.5"}}))
-                 (expect (document/valid? "config"
-                                          {"gateway" {"advertise" "https://gateway.example.com"}}))
-                 (expect (not (document/valid? "config" {"gateway" {"advertise" "   "}})))
-                 (expect (not (document/valid? "config" {"gateway" {"url" "http://10.0.0.5"}})))))
+(defdescribe
+  schema-root-validates-the-gateway-pairing-address
+  (it "schema root validates the gateway pairing address"
+      (expect (document/valid? "config" {"gateway" {"advertise" "10.0.0.5"}}))
+      (expect (document/valid? "config" {"gateway" {"advertise" "https://gateway.example.com"}}))
+      (expect (not (document/valid? "config" {"gateway" {"advertise" "   "}})))
+      (expect (not (document/valid? "config" {"gateway" {"url" "http://10.0.0.5"}}))))
+  (it "schema root validates the gateway proxy and refuses an open proxy"
+      (expect (document/valid? "config"
+                               {"gateway" {"proxy" {"allowed_domains" ["corp.internal" "*.acme.io"]
+                                                    "denied_domains" ["vault.corp.internal"]
+                                                    "ports" [443 8443]
+                                                    "port" 7891}}}))
+      (expect (not (document/valid? "config" {"gateway" {"proxy" {"allowed_domains" ["*"]}}})))
+      (expect (not (document/valid? "config" {"gateway" {"proxy" {"allowed_domains" []}}})))
+      (expect (not (document/valid? "config" {"gateway" {"proxy" {"ports" [443]}}})))
+      (expect (not (document/valid? "config"
+                                    {"gateway" {"proxy" {"allowed_domains" ["corp.internal"]
+                                                         "mitm" true}}})))))
 
 (defdescribe api-style-validation-and-normalization-share-the-schema
              (it "api style validation and normalization share the schema"

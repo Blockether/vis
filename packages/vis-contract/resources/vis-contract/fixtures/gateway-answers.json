@@ -2144,6 +2144,21 @@
       "reader": "local",
       "seen_answers": 1,
       "is_unread": false
+    },
+    "GET /v1/proxy": {
+      "is_enabled": true,
+      "port": 52311,
+      "allowed_domains": [
+        "corp.internal",
+        "*.acme.io"
+      ],
+      "denied_domains": [
+        "secret.corp.internal"
+      ],
+      "ports": [
+        80,
+        443
+      ]
     }
   },
   "errors": {

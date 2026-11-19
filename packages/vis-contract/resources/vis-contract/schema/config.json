@@ -764,8 +764,56 @@
       "properties": {
         "advertise": {
           "$ref": "#/$defs/nonBlankString"
+        },
+        "proxy": {
+          "$ref": "#/$defs/gatewayProxy"
         }
       },
+      "additionalProperties": false
+    },
+    "gatewayProxyDomain": {
+      "description": "A host name pattern. `example.com` and `*.example.com` both match example.com and each subdomain. `*` alone is not permitted, because then the gateway is an open proxy.",
+      "type": "string",
+      "pattern": "^\\s*(\\*\\.)?[A-Za-z0-9_\\[\\]:.-]+\\s*$"
+    },
+    "gatewayProxy": {
+      "description": "The forward proxy of the gateway. Paired clients open these hosts through the network of the gateway machine, for example a company VPC.",
+      "type": "object",
+      "properties": {
+        "allowed_domains": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/gatewayProxyDomain"
+          }
+        },
+        "denied_domains": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gatewayProxyDomain"
+          }
+        },
+        "ports": {
+          "description": "The target ports that the proxy opens. The default is 80 and 443.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "port": {
+          "description": "The port that the proxy listens on. Without it, the system gives a free port on each start.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      },
+      "required": [
+        "allowed_domains"
+      ],
       "additionalProperties": false
     },
     "grep": {

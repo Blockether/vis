@@ -37,6 +37,7 @@ from ._groups import SessionGroup
 from ._install import InstallError, ensure_installed, install
 from ._local import StdioEngineClient
 from ._models import Model, SessionModel
+from ._proxy import GatewayProxy
 from ._routes import Query, Routes
 from ._service import HttpLocalEngineClient
 from ._sounds import SoundPreset, Sounds, SoundSettings
@@ -59,6 +60,7 @@ __all__ = [
     "EngineClient",
     "GatewayClient",
     "GatewayError",
+    "GatewayProxy",
     "HttpLocalEngineClient",
     "InstallError",
     "JobEvent",

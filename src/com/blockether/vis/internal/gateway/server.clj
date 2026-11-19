@@ -49,6 +49,7 @@
     [com.blockether.vis.internal.gateway.server.mcp :as mcp-api]
     [com.blockether.vis.internal.gateway.server.projects :as projects-api]
     [com.blockether.vis.internal.gateway.server.providers :as providers-api]
+    [com.blockether.vis.internal.gateway.server.proxy :as proxy-api]
     [com.blockether.vis.internal.gateway.server.sessions :as sessions-api]
     [com.blockether.vis.internal.gateway.server.settings :as settings-api]
     [com.blockether.vis.internal.gateway.server.speech :as speech-api]
@@ -1844,9 +1845,9 @@
    [[gateway-contract/route-table]] belongs to exactly one of them."
   [server-handlers council-api/handlers automations-api/handlers evals-api/handlers
    decisions-api/handlers devices-api/handlers fs-api/handlers mcp-api/handlers
-   projects-api/handlers providers-api/handlers sessions-api/handlers settings-api/handlers
-   speech-api/handlers voice-api/handlers transcripts-api/handlers turns-api/handlers
-   views-api/handlers web/handlers])
+   projects-api/handlers providers-api/handlers proxy-api/handlers sessions-api/handlers
+   settings-api/handlers speech-api/handlers voice-api/handlers transcripts-api/handlers
+   turns-api/handlers views-api/handlers web/handlers])
 
 (defn- route-precedence
   "Sort key for a route path. At the first segment where two paths differ, a fixed
@@ -2490,7 +2491,8 @@
      (decision-cache/enable!)
      ;; The gateway's own control-plane port is reserved so a jailed child can NEVER reach
      ;; it through the proxy, even though loopback egress is allowed by default (SSRF floor).
-     (try (gateway-sandbox/set-reserved-ports! [port]) (catch Throwable _ nil))
+     ;; The forward proxy of `gateway.proxy` starts here, and its port is reserved too.
+     (proxy-api/sync!)
      (try (discovery/register-self! db {:port port :host host :secret token})
           (catch Throwable t
             (tel/log! :warn ["gateway: registry self-registration failed" (ex-message t)])))
@@ -2593,6 +2595,7 @@
           (catch Throwable t
             (tel/log! :warn ["gateway: decision session shutdown failed" (ex-message t)])))
      (try (.stop server) (catch Throwable _ nil))
+     (proxy-api/stop!)
      (stop-route-contributions! (:contribs @live-app))
      ;; The live-view bridge holds patches for up to one flush window. A gateway
      ;; going away must publish what the engine already accepted, not swallow it.

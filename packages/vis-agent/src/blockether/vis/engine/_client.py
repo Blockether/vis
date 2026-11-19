@@ -45,9 +45,10 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from blockether.vis._contracts import definition, schema, validate
 from blockether.vis.activity import ActivityProjection
-from blockether.vis.engine import _types
+from blockether.vis.engine import _proxy, _types
 from blockether.vis.engine._groups import SessionGroup
 from blockether.vis.engine._models import Model, SessionModel
+from blockether.vis.engine._proxy import GatewayProxy
 from blockether.vis.engine._routes import Routes
 from blockether.vis.views import EVENT_DEFINITIONS, InputView, LiveView, ViewEvent
 
@@ -1323,6 +1324,29 @@ class GatewayClient(EngineClient):
             upload_length=length,
             timeout=timeout,
         ).json()
+
+    def proxy(self) -> GatewayProxy | None:
+        """Return the forward proxy of this gateway, or None when it is off.
+
+        The gateway opens the hosts of `gateway.proxy` in its global configuration
+        through the network of its machine, for example a company VPC. The proxy
+        listens on the host of this client's URL and needs the gateway token, so a
+        client without a token raises `ValueError`. Each call asks the gateway
+        again, so a configuration change shows at once.
+
+        ```python
+        proxy = client.proxy()
+        if proxy and proxy.covers(link):
+            with proxy.opener().open(link) as answer:
+                body = answer.read()
+        ```
+        """
+        if not self._token:
+            raise ValueError("the gateway proxy needs the gateway token")
+        answer = self.routes.get_proxy()
+        return _proxy.from_answer(
+            answer, host=urlsplit(self._url).hostname or "", token=self._token
+        )
 
     def connect(self) -> GatewayClient:
         """Check protocol compatibility and acquire this client's lease once.

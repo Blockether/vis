@@ -696,6 +696,19 @@ class ProviderStatus(TypedDict):
     status: ProviderStatusStatus
 
 
+class Proxy(TypedDict):
+    """The forward proxy of the gateway. A client sends a request for a matching host
+    to `port` on the host of the gateway, with the gateway token as the user name of
+    `Proxy-Authorization: Basic`.
+    """
+
+    is_enabled: bool
+    port: int | None
+    allowed_domains: list[str]
+    denied_domains: list[str]
+    ports: list[int]
+
+
 class RouterSelection(TypedDict):
     """Both router tags. A role is null where it has no tag."""
 
@@ -830,6 +843,7 @@ class AgentsAgent(TypedDict):
     created_at: NotRequired[int]
     resumed_at: NotRequired[int | None]
     finished_at: NotRequired[int]
+    turn_ids: NotRequired[list[str]]
     runs: NotRequired[list[AgentsAgentRunsItem]]
 
 
@@ -2678,6 +2692,7 @@ class TeamChange(TypedDict):
     created_at: NotRequired[JSONValue]
     resumed_at: NotRequired[JSONValue]
     finished_at: NotRequired[JSONValue]
+    turn_ids: NotRequired[list[dict[str, JSONValue]] | None]
     runs: NotRequired[list[dict[str, JSONValue]] | None]
 
 
@@ -3056,6 +3071,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/providers/:provider-id/limits": "ProviderLimits",
     "GET /v1/providers/:provider-id/models": "ProviderModels",
     "GET /v1/providers/:provider-id/status": "ProviderStatus",
+    "GET /v1/proxy": "Proxy",
     "GET /v1/router": "RouterFleet",
     "GET /v1/session-groups": "SessionGroupPage",
     "GET /v1/sessions": "SessionList",

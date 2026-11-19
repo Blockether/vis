@@ -1,0 +1,122 @@
+{
+  "description": "Which link a client sends through the gateway proxy. A case is proxied when its host matches `allowed_domains`, does not match `denied_domains`, and its port is in `ports`. `example.com` and `*.example.com` both match example.com and each subdomain. A denied match wins. The gateway decides each connection with the same rules.",
+  "groups": [
+    {
+      "allowed_domains": [
+        "corp.internal",
+        "*.acme.io",
+        "grafana.example.com"
+      ],
+      "denied_domains": [
+        "secret.corp.internal"
+      ],
+      "ports": [
+        80,
+        443
+      ],
+      "cases": [
+        {
+          "url": "https://corp.internal/",
+          "is_proxied": true
+        },
+        {
+          "url": "https://wiki.corp.internal/page?q=1",
+          "is_proxied": true
+        },
+        {
+          "url": "http://a.b.corp.internal/",
+          "is_proxied": true
+        },
+        {
+          "url": "https://acme.io/",
+          "is_proxied": true
+        },
+        {
+          "url": "https://ci.acme.io/",
+          "is_proxied": true
+        },
+        {
+          "url": "https://grafana.example.com/d/1",
+          "is_proxied": true
+        },
+        {
+          "url": "https://WIKI.Corp.Internal./",
+          "is_proxied": true
+        },
+        {
+          "url": "https://secret.corp.internal/",
+          "is_proxied": false
+        },
+        {
+          "url": "https://api.secret.corp.internal/",
+          "is_proxied": false
+        },
+        {
+          "url": "https://evilcorp.internal/",
+          "is_proxied": false
+        },
+        {
+          "url": "https://corp.internal.evil.com/",
+          "is_proxied": false
+        },
+        {
+          "url": "https://example.com/",
+          "is_proxied": false
+        },
+        {
+          "url": "https://other.example.com/",
+          "is_proxied": false
+        },
+        {
+          "url": "https://corp.internal:8443/",
+          "is_proxied": false
+        },
+        {
+          "url": "http://corp.internal:80/",
+          "is_proxied": true
+        },
+        {
+          "url": "mailto:me@corp.internal",
+          "is_proxied": false
+        },
+        {
+          "url": "not a url",
+          "is_proxied": false
+        }
+      ]
+    },
+    {
+      "allowed_domains": [
+        "10.20.0.5",
+        "intranet"
+      ],
+      "denied_domains": [],
+      "ports": [
+        443,
+        8443
+      ],
+      "cases": [
+        {
+          "url": "https://10.20.0.5:8443/",
+          "is_proxied": true
+        },
+        {
+          "url": "https://10.20.0.5/",
+          "is_proxied": true
+        },
+        {
+          "url": "http://10.20.0.5/",
+          "is_proxied": false
+        },
+        {
+          "url": "https://intranet/",
+          "is_proxied": true
+        },
+        {
+          "url": "https://10.20.0.6/",
+          "is_proxied": false
+        }
+      ]
+    }
+  ]
+}

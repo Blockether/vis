@@ -699,6 +699,15 @@ class Routes:
         )
         return response.json()
 
+    def get_proxy(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> _types.Proxy:
+        """GET /v1/proxy — json response."""
+        response = self._client._request(
+            "GET", "/v1/proxy", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
     def get_router(
         self, *, query: Query | None = None, timeout: float | None = None
     ) -> _types.RouterFleet:
