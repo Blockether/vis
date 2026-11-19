@@ -99,14 +99,15 @@ pub async fn proxy_browser_open(
         ports,
     });
     let relay = relay_port().map_err(|error| error.to_string())?;
+    let title = page.host_str().unwrap_or("Private link").to_string();
     if let Some(window) = app.get_webview_window(LABEL) {
         window.navigate(page).map_err(|error| error.to_string())?;
+        let _ = window.set_title(&title);
         let _ = window.unminimize();
         return window.set_focus().map_err(|error| error.to_string());
     }
     let proxy = tauri::Url::parse(&format!("http://127.0.0.1:{relay}"))
         .map_err(|error| error.to_string())?;
-    let title = page.host_str().unwrap_or("Private link").to_string();
     let builder = tauri::WebviewWindowBuilder::new(&app, LABEL, tauri::WebviewUrl::External(page))
         .title(title)
         .inner_size(1100.0, 800.0)
