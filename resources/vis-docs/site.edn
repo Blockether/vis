@@ -211,5 +211,4 @@
    :section "References"}]
  :site {:extension-center {:section "Extensions & SDK" :title "Extension Center"}
         :repo "https://github.com/Blockether/vis"
-        :tagline "Explore a project, change code, and run checks."
         :title "Vis"}}

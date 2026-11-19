@@ -487,7 +487,7 @@
 
 (defn page-html
   "Full HTML document for one page. `mode` ∈ #{:static :live}."
-  [{:keys [site] :as site-data} {:keys [slug title html toc variants] :as _page} mode]
+  [{:keys [site] :as site-data} {:keys [slug title blurb html toc variants] :as _page} mode]
   (let [home? (= slug "index")]
     (str
       "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -502,7 +502,7 @@
       (esc (:title site))
       "</title>"
       "<meta name=\"description\" content=\""
-      (esc (:tagline site))
+      (esc blurb)
       "\">"
       "<link rel=\"preload\" href=\""
       (asset mode "fonts/jetbrains-mono.woff2")
@@ -564,9 +564,6 @@
       ;; body grid
       "<label for=\"navtoggle\" class=\"scrim\"></label>"
       "<div class=\"shell\"><aside class=\"side\">"
-      "<div class=\"tagline\">"
-      (esc (:tagline site))
-      "</div>"
       (nav-html site-data slug mode)
       "</aside>"
       "<main class=\"main\"><article class=\"content\">"

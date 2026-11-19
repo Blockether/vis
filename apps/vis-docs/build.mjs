@@ -61,7 +61,7 @@ await writeFile(
 );
 await writeFile(
   new URL('llms.txt', dist),
-  `# Vis\n\n> ${site.tagline}\n\n## Documentation\n\n` +
+  `# Vis\n\n## Documentation\n\n` +
     pages.map((page) => `- [${page.title}](${origin}/${page.slug}.md): ${page.blurb}\n`).join('') +
     '\n## Python SDK API reference\n\n' +
     pythonApi

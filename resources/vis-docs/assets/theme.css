@@ -181,14 +181,6 @@ a:hover {
   padding: 2rem 1.1rem 3rem;
   border-right: 1px solid var(--line-soft);
 }
-.side .tagline {
-  color: var(--dim);
-  font-size: var(--text-small);
-  line-height: 1.5;
-  margin: 0 0.3rem 1.4rem;
-  padding-bottom: 1.2rem;
-  border-bottom: 1px solid var(--line-soft);
-}
 .nav-sec {
   color: var(--amber-deep);
   font-size: var(--text-small);
