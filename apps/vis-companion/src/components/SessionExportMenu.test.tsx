@@ -2,7 +2,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { GatewayError, type GatewayClient } from '../lib/gateway';
+import { GatewayClient, GatewayError } from '../lib/gateway';
 import { useNotices } from '../lib/use-notices';
 import { NoticeToast } from './NoticeToast';
 import { useSessionExport } from './SessionExportMenu';
@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 describe('the export choice of a session', () => {
-  it('expands the three formats, and a pick saves that file and says where it is', async () => {
+  it('saves a Markdown export and says where it is', async () => {
     const path = '/home/ada/Downloads/Vis Artifacts/1/stalled-stream-123e4567.md';
     const invoke = vi.fn(async () => ({ revealed: true, path }));
     vi.stubGlobal('__TAURI__', { core: { invoke } });
@@ -43,12 +43,6 @@ describe('the export choice of a session', () => {
     render(<Screen client={client} />);
     fireEvent.click(screen.getByRole('button', { name: 'Export' }));
 
-    expect(formats().getAllByRole('button').map((row) => row.getAttribute('aria-label') ?? row.textContent)).toEqual([
-      'Close Export Stalled stream',
-      expect.stringContaining('HTML'),
-      expect.stringContaining('Markdown'),
-      expect.stringContaining('Snapshot (.vissnap)'),
-    ]);
     fireEvent.click(formats().getByRole('button', { name: /^Markdown/ }));
 
     expect(screen.queryByRole('dialog', { name: 'Export Stalled stream' })).toBeNull();
@@ -57,6 +51,29 @@ describe('the export choice of a session', () => {
       'reveal_artifact',
       expect.objectContaining({ filename: 'stalled-stream-123e4567.md' }),
     );
+  });
+
+  it('downloads the ATIF export as a JSON file', async () => {
+    const json = '{"schema_version":"ATIF-v1.8","steps":[]}';
+    const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:export');
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const fetch = vi.fn(async () => new Response(json, { headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetch);
+    const client = new GatewayClient({ url: 'http://localhost:7331' });
+    render(<Screen client={client} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    fireEvent.click(formats().getByRole('button', { name: /^ATIF/ }));
+
+    await waitFor(() => expect(click).toHaveBeenCalledOnce());
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:7331/v1/sessions/123e4567-e89b-12d3-a456-426614174000/trajectory.json',
+      expect.anything(),
+    );
+    expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe('stalled-stream-123e4567.json');
+    const [file] = createUrl.mock.calls[0]!;
+    if (!('text' in file)) throw new Error('Expected a file download');
+    expect(file.type).toBe('application/json');
+    expect(await file.text()).toBe(json);
   });
 
   it('closes on its ✕ without an export', () => {

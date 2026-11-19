@@ -455,14 +455,14 @@ describe('ProjectGroup groups', () => {
     expect(within(sheet(`Sessions in ${ROOT}`)).getByText('New session').closest('button')).toBeEnabled();
   });
 
-  it('imports a snapshot into the group of its menu, and into the project from the sessions menu', async () => {
+  it('imports a session into the group of its menu, and into the project from the sessions menu', async () => {
     const importSnapshot = vi.fn();
     const { user } = mount(machine(), { state: null, start: vi.fn(async () => {}), importSnapshot });
     await user.click(await screen.findByRole('button', { name: 'Actions for Wallet work' }));
-    await user.click(within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: 'Import snapshot…' }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: /^Import session/ }));
     expect(importSnapshot).toHaveBeenLastCalledWith(conn, ROOT, WALLET);
     await user.click(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }));
-    await user.click(within(sheet(`Sessions in ${ROOT}`)).getByRole('button', { name: 'Import snapshot…' }));
+    await user.click(within(sheet(`Sessions in ${ROOT}`)).getByRole('button', { name: /^Import session/ }));
     expect(importSnapshot).toHaveBeenLastCalledWith(conn, ROOT);
   });
 

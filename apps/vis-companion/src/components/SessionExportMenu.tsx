@@ -65,7 +65,7 @@ function ChoiceMenu({
   );
 }
 
-/** The three formats of a session export, as one menu under the control that opened it. */
+/** The formats of a session export, as one menu under the control that opened it. */
 export function SessionExportMenu({
   title,
   at,
@@ -98,7 +98,7 @@ export function SessionExportMenu({
 type MadeExport = { session: ExportedSession; format: SessionExportFormat; blob: Blob; ways: ExportWay[] };
 
 /**
- * The export choice of one screen. `open` shows the three formats under `anchor`. A pick makes
+ * The export choice of one screen. `open` shows the formats under `anchor`. A pick makes
  * the file. When this host can keep it in more than one way, the same menu then asks which
  * one, so the share sheet opens from a press. A toast of `notices` says what happened or why
  * it failed.

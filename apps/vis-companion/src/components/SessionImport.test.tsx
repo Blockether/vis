@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { GatewayError, type GatewayClient } from '../lib/gateway';
+import { GatewayClient, GatewayError } from '../lib/gateway';
 import type { Session } from '../lib/types';
 import { useNotices } from '../lib/use-notices';
 import { NoticeToast } from './NoticeToast';
@@ -28,10 +29,12 @@ function Screen({ client, onImported }: { client: GatewayClient; onImported: (se
 
 const pick = (file: File) => {
   fireEvent.click(screen.getByRole('button', { name: 'Import' }));
-  fireEvent.change(screen.getByLabelText('Snapshot file to import'), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText('Session file to import'), { target: { files: [file] } });
 };
 
-describe('the snapshot import of a screen', () => {
+afterEach(() => vi.unstubAllGlobals());
+
+describe('the session import of a screen', () => {
   it('sends the picked file to its target, says what was imported and gives the new session', async () => {
     const made = { id: 'new-1', title: 'Shop work' } as Session;
     const importSession = vi.fn(async () => made);
@@ -42,6 +45,26 @@ describe('the snapshot import of a screen', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Imported Shop work as a new session.'));
     expect(importSession).toHaveBeenCalledExactlyOnceWith(snapshot, target);
     expect(onImported).toHaveBeenCalledExactlyOnceWith(made);
+  });
+
+  it('can pick and import an ATIF file', async () => {
+    const atif = new File(['{"schema_version":"ATIF-v1.8","steps":[]}'], 'shop.json', { type: 'application/json' });
+    const made = { id: 'new-1', title: 'Shop work' } as Session;
+    const fetch = vi.fn(async (_url: string, _init: RequestInit) => Response.json(made, { status: 201 }));
+    vi.stubGlobal('fetch', fetch);
+    const client = new GatewayClient({ url: 'http://localhost:7331' });
+    const onImported = vi.fn();
+    render(<Screen client={client} onImported={onImported} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    await userEvent.upload(screen.getByLabelText(/file to import/i), atif);
+
+    await waitFor(() => expect(onImported).toHaveBeenCalledExactlyOnceWith(made));
+    expect(fetch).toHaveBeenCalledOnce();
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(new URL(url).pathname).toBe('/v1/sessions/actions/import');
+    expect(Object.fromEntries(new URL(url).searchParams)).toEqual({ root: target.root, group_id: target.groupId });
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(atif);
   });
 
   it('says why the gateway refused a file, and opens no session', async () => {

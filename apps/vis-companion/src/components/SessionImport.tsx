@@ -1,14 +1,14 @@
 import { useCallback, useRef, type ReactNode } from 'react';
 
 import type { GatewayClient } from '../lib/gateway';
-import { SNAPSHOT_ACCEPT, importFailure, type ImportTarget } from '../lib/session-import';
+import { SESSION_IMPORT_ACCEPT, importFailure, type ImportTarget } from '../lib/session-import';
 import type { Session } from '../lib/types';
 import type { Notices } from '../lib/use-notices';
 
 /**
- * The snapshot import of one screen. `open` shows the file picker of the host; the picked
- * `.vissnap` file becomes a new session at `target`. A toast of `notices` says what happened
- * or why it failed, and `onImported` gets the new session. Render `input` one time.
+ * The session import of one screen. `open` shows the file picker of the host. The selected
+ * file becomes a new session at `target`. A toast of `notices` says what happened or why it
+ * failed, and `onImported` gets the new session. Render `input` one time.
  */
 export function useSessionImport(notices: Notices): {
   open: (client: GatewayClient, target: ImportTarget, onImported: (session: Session) => void) => void;
@@ -48,8 +48,8 @@ export function useSessionImport(notices: Notices): {
     <input
       ref={field}
       type="file"
-      accept={SNAPSHOT_ACCEPT}
-      aria-label="Snapshot file to import"
+      accept={SESSION_IMPORT_ACCEPT}
+      aria-label="Session file to import"
       hidden
       onChange={(event) => {
         const file = event.target.files?.[0];

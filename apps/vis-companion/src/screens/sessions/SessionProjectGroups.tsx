@@ -652,7 +652,7 @@ export type ProjectCreation = {
   state: { at: string | null; label: string } | null;
   /** `groupId` starts the session inside that group, not loose in the project. */
   start: (conn: GatewayConn, root: string, groupId?: string) => Promise<void>;
-  /** Ask for a `.vissnap` file and import it as a new session of `root`, in `groupId` if given. */
+  /** Import a session file into `root` and, if given, `groupId`. */
   importSnapshot: (conn: GatewayConn, root: string, groupId?: string) => void;
 };
 
@@ -2383,7 +2383,8 @@ export const ProjectGroup = memo(function ProjectGroup({
                     }}
                   />
                   <MenuItem
-                    title="Import snapshot…"
+                    title="Import session…"
+                    hint="Snapshot (.vissnap) or ATIF (.json)"
                     icon={<UploadIcon className="size-3.5" />}
                     onSelect={() => {
                       setMenu(null);
@@ -2619,7 +2620,8 @@ export const ProjectGroup = memo(function ProjectGroup({
                 )}
                 {!bandArchived && (
                   <MenuItem
-                    title="Import snapshot…"
+                    title="Import session…"
+                    hint="Snapshot (.vissnap) or ATIF (.json)"
                     icon={<UploadIcon className="size-3.5" />}
                     onSelect={() => {
                       setMenu(null);

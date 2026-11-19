@@ -5380,18 +5380,23 @@ export class GatewayClient {
     return this.exportBlob(`/v1/sessions/${encodeURIComponent(sid)}/snapshot`, signal);
   }
 
+  /** The session and its child trajectories as an ATIF file. */
+  sessionTrajectory(sid: string, signal?: AbortSignal): Promise<Blob> {
+    return this.exportBlob(`/v1/sessions/${encodeURIComponent(sid)}/trajectory.json`, signal);
+  }
+
   /**
-   * Import the `.vissnap` bytes as a new session and answer its row. `root` is the project
-   * folder of the new session, and `groupId` puts it in that session group.
+   * Import a snapshot or an ATIF file as a new session and answer its row. `root` is the
+   * project folder of the new session, and `groupId` puts it in that session group.
    */
-  async importSession(snapshot: Blob, to: { root?: string; groupId?: string } = {}): Promise<Session> {
+  async importSession(file: Blob, to: { root?: string; groupId?: string } = {}): Promise<Session> {
     const query = new URLSearchParams();
     if (to.root) query.set('root', to.root);
     if (to.groupId) query.set('group_id', to.groupId);
     const response = await this.sessionFile(`/v1/sessions/actions/import?${query}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream' },
-      body: snapshot,
+      body: file,
     });
     return (await response.json()) as Session;
   }

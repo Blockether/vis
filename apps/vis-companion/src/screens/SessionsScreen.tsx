@@ -1841,7 +1841,7 @@ export function SessionsScreen({
     // The delete is confirmed in the row, so it needs the list on screen.
     'delete-session': isVisible && !!openSession && !!row && (() => startDelete(row, openSession.conn)),
   });
-  // The export of a row: the three formats under the row action, then a toast with the result.
+  // The export of a row: the formats under the row action, then a toast with the result.
   const sessionExport = useSessionExport(notices);
   const openExport = sessionExport.open;
   const exportRow = useCallback(

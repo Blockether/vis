@@ -9,34 +9,43 @@ import { GatewayError, type GatewayClient } from './gateway';
  * The gateway makes the file. This host keeps it: the desktop app saves it and shows it in the
  * file manager, a phone opens the share sheet, a browser downloads it. A desktop app or a
  * browser that can share a file lets the person choose between that and the share sheet. The
- * TUI offers the same three formats and gives the file the same name.
+ * TUI offers the same formats and gives the file the same name.
  */
-export type SessionExportFormat = 'html' | 'md' | 'vissnap';
+export type SessionExportFormat = 'html' | 'md' | 'vissnap' | 'atif';
 
 export const SESSION_EXPORT_FORMATS: readonly {
-  /** The format, which is also the file extension. */
   id: SessionExportFormat;
+  extension: string;
   title: string;
   hint: string;
   mediaType: string;
   /** What a message calls the file. */
   noun: string;
 }[] = [
-  { id: 'html', title: 'HTML', hint: 'One page that opens in a browser', mediaType: 'text/html', noun: 'HTML page' },
-  { id: 'md', title: 'Markdown', hint: 'The text of each turn', mediaType: 'text/markdown', noun: 'Markdown file' },
+  { id: 'html', extension: 'html', title: 'HTML', hint: 'One page that opens in a browser', mediaType: 'text/html', noun: 'HTML page' },
+  { id: 'md', extension: 'md', title: 'Markdown', hint: 'The text of each turn', mediaType: 'text/markdown', noun: 'Markdown file' },
   {
     id: 'vissnap',
+    extension: 'vissnap',
     title: 'Snapshot (.vissnap)',
     hint: 'A file that Vis imports as a new session',
     mediaType: 'application/octet-stream',
     noun: 'Snapshot',
+  },
+  {
+    id: 'atif',
+    extension: 'json',
+    title: 'ATIF (.json)',
+    hint: 'A trajectory that Vis and Harbor read',
+    mediaType: 'application/json',
+    noun: 'ATIF file',
   },
 ];
 
 /** The session that an export reads. */
 export type ExportedSession = { id: string; title: string };
 
-/** `<slug of the title>-<first 8 characters of the id>.<format>`. */
+/** `<slug of the title>-<first 8 characters of the id>.<extension>`. */
 export function sessionExportFilename(session: ExportedSession, format: SessionExportFormat): string {
   const slug = session.title
     .toLowerCase()
@@ -44,13 +53,15 @@ export function sessionExportFilename(session: ExportedSession, format: SessionE
     .replace(/^-+|-+$/g, '')
     .slice(0, 48)
     .replace(/-+$/, '');
-  return `${slug || 'vis-session'}-${session.id.slice(0, 8)}.${format}`;
+  const { extension } = SESSION_EXPORT_FORMATS.find((row) => row.id === format)!;
+  return `${slug || 'vis-session'}-${session.id.slice(0, 8)}.${extension}`;
 }
 
 /** The bytes of `session` in `format`, from the gateway. */
 export function readExport(client: GatewayClient, session: ExportedSession, format: SessionExportFormat): Promise<Blob> {
   if (format === 'html') return client.transcriptHtml(session.id);
   if (format === 'vissnap') return client.sessionSnapshot(session.id);
+  if (format === 'atif') return client.sessionTrajectory(session.id);
   return client.transcriptMarkdown(session.id);
 }
 
