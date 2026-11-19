@@ -66,6 +66,8 @@ export interface Subagent {
   parent_id: string;
   leader_id: string;
   team_id: string;
+  /** The leader turns in which the agent worked, oldest first: the turn that started it, then the turn of each follow-up ping. */
+  turn_ids?: string[];
   task: string;
   /** A label from the agents contract, such as `research`. It sets no limit. */
   role?: string;

@@ -27,7 +27,7 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { TurnAgents, agentsByTurn, dockTeams, leaderLane, storedAgents, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, currentTurn, dockTeams, leaderLane, storedAgents, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
@@ -4974,7 +4974,7 @@ export function SessionScreen({
   const teams = useMemo(() => agentsByTurn(agents), [agents]);
   // A team stands in the dock while its turn runs or an agent of it still works; then in its turn.
   const docked = useMemo(
-    () => new Set(dockTeams(agents, sid, runningTurnId).map((members) => members[0].team_id)),
+    () => new Set(dockTeams(agents, sid, runningTurnId).map((members) => currentTurn(members[0]))),
     [agents, sid, runningTurnId],
   );
   // The leader lane of the running turn heads the chart of the dock.

@@ -18,6 +18,7 @@ import {
   agentsByTurn,
   leaderLane,
   leaderParts,
+  storedAgents,
   storedLeaderLane,
   axisMarks,
   dockTeams,
@@ -378,6 +379,18 @@ describe('teams', () => {
     expect(dockTeams(agents, 'leader', 'turn-3').map((team) => team[0].team_id)).toEqual(['turn-3', 'turn-2']);
     expect(dockTeams(agents, 'leader').map((team) => team[0].team_id)).toEqual(['turn-2']);
     expect(dockTeams([], 'leader', 'turn-3')).toEqual([]);
+  });
+
+  // User report 2026-11-19: a turn that pinged its agents with a follow-up task showed no team.
+  it('shows an agent in the turn that started it and in each turn that pinged it', () => {
+    const pinged = { ...child, session_id: 'pinged', turn_ids: ['turn-1', 'turn-3'] };
+    const groups = agentsByTurn([pinged, { ...child, session_id: 'new', team_id: 'turn-3' }]);
+    expect(groups.get('turn-1')?.map((agent) => agent.session_id)).toEqual(['pinged']);
+    expect(groups.get('turn-3')?.map((agent) => agent.session_id)).toEqual(['pinged', 'new']);
+    expect(dockTeams([pinged, { ...child, session_id: 'new', team_id: 'turn-3' }], 'leader', 'turn-3').map((team) => team.map((agent) => agent.session_id)))
+      .toEqual([['pinged', 'new']]);
+    const turn = (turn_id: string, agents: Subagent[]) => ({ turn_id, agents }) as unknown as TranscriptTurn;
+    expect(storedAgents([turn('turn-1', [pinged]), turn('turn-3', [pinged])]).map((agent) => agent.session_id)).toEqual(['pinged']);
   });
 });
 

@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import { useCommands } from '../lib/commands';
 import type { Subagent } from '../lib/types';
-import { TeamLine, TimelineToggle, TurnAgents, dockTeams, hasTimeline, type TeamProps } from './AgentTeam';
+import { TeamLine, TimelineToggle, TurnAgents, currentTurn, dockTeams, hasTimeline, type TeamProps } from './AgentTeam';
 import { ChevronIcon, MARK_NUDGE } from './icons';
 
 /**
@@ -30,7 +30,7 @@ export function AgentDock({ agents, sid, runningTurnId, leader, ...team }: Omit<
   // One table for all docked teams, so each child has one row and one key. The leader of the
   // running turn heads it only when that turn started a team.
   const members = teams.flat();
-  const head = teams.some((team) => team[0].team_id === runningTurnId) ? leader : undefined;
+  const head = teams.some((team) => currentTurn(team[0]) === runningTurnId) ? leader : undefined;
   const toggle = hasTimeline(members, head) ? (
     <TimelineToggle
       isOn={open && isTimeline}

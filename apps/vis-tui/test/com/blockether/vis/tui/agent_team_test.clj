@@ -647,6 +647,25 @@
                        (select-keys head [:session-id :node-id :collapsed?])))
             (expect (= (- (count (:prewrapped-lines folded)) 1)
                        (team/card-height (:agent-team-card (nth decorated 1)) 100)))))))
+  ;; User report 2026-11-19: a turn that pinged its agents with a follow-up task showed no team.
+  (it "shows an agent in the turn that started it and in each turn that pinged it"
+      (let [pinged {"session_id" "a1" "parent_id" "leader" "team_id" "turn-1"
+                    "turn_ids" ["turn-1" "turn-3"] "status" "completed" "title" "Review"}
+            messages [{:role :assistant :session-turn-id "turn-1" :text "start" :session-agents [pinged]}
+                      {:role :assistant :session-turn-id "turn-2" :text "quiet"}
+                      {:role :assistant :session-turn-id "turn-3" :text "ping" :session-agents [pinged]}]
+            running (assoc pinged "status" "running")]
+        (with-redefs [team/summary (constantly {:agents []})]
+          (let [decorated (team/decorate-messages messages "leader")]
+            (expect (= ["turn-1" nil "turn-3"] (mapv #(get-in % [:agent-team-card :team-id]) decorated)))
+            (expect (= [1 1] (keep #(some-> % :agent-team-card :rows count) decorated))
+                    "The agent is one row in each card")))
+        (with-redefs [team/summary (constantly {:agents [running]})]
+          (expect (= #{"turn-3"} (team/dock-team-ids [running] "turn-3")))
+          (expect (= ["turn-1" nil nil]
+                     (mapv #(get-in % [:agent-team-card :team-id])
+                           (team/decorate-messages messages "leader" "turn-3")))
+                  "The pinging turn shows the agent in the dock while it runs"))))
   (it "keeps a team with a working agent in the dock after its turn ends"
       (with-redefs [team/summary (constantly {:agents waiting-team})]
         (let [messages [{:role :assistant :session-turn-id "turn-1" :text "ok"}

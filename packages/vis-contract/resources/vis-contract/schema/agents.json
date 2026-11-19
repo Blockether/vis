@@ -546,6 +546,15 @@
           "type": "integer",
           "minimum": 0
         },
+        "turn_ids": {
+          "$comment": "The leader turns in which the agent worked, oldest first: the turn that started it (team_id), then the turn of each follow-up Council ping. A client shows the agent in the team block of each of these turns.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "runs": {
           "$comment": "The earlier tasks of the agent, oldest first. A follow-up Council ping adds the task that ended before it. The current task is not in the list. A client draws each run in the color of its status, so a failed run stays visible after a resume.",
           "type": "array",

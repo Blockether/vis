@@ -836,26 +836,42 @@ export function TurnAgents({ agents, onOpen, leader, placement = 'transcript', i
   ) : table;
 }
 
-/** The team rows that the transcript turns hold: each turn has the agents that it started. */
+/**
+ * The team rows that the transcript turns hold: each turn has the agents that worked in it. An
+ * agent that a later turn pinged stands in two turns; it is one row here, the newest.
+ */
 export function storedAgents(turns: readonly TranscriptTurn[]): Subagent[] {
-  return turns.flatMap((turn) => turn.agents ?? []);
+  return [...new Map(turns.flatMap((turn) => turn.agents ?? []).map((agent) => [agent.session_id, agent])).values()];
 }
 
-/** The session's subagents grouped by the turn that started them (`team_id`). */
+/** The leader turns in which the agent worked, oldest first. A row without `turn_ids` worked only in the turn that started it. */
+export function turnsOf(agent: Subagent): readonly string[] {
+  return agent.turn_ids?.length ? agent.turn_ids : [agent.team_id];
+}
+
+/** The leader turn of the agent's current task: the last turn that started or pinged it. */
+export function currentTurn(agent: Subagent): string {
+  return turnsOf(agent).at(-1) ?? agent.team_id;
+}
+
+/** The session's subagents grouped by each turn in which they worked: the turn that started them and each turn that pinged them. */
 export function agentsByTurn(agents: readonly Subagent[]): ReadonlyMap<string, Subagent[]> {
   const byTurn = new Map<string, Subagent[]>();
-  for (const agent of agents) byTurn.set(agent.team_id, [...(byTurn.get(agent.team_id) ?? []), agent]);
+  for (const agent of agents) {
+    for (const turn of turnsOf(agent)) byTurn.set(turn, [...(byTurn.get(turn) ?? []), agent]);
+  }
   return byTurn;
 }
 
 /**
- * The teams of `sid` in the dock: the team of the running turn, and each team that
- * still has a queued or running agent after its turn ended. Spawn order.
+ * The teams of `sid` in the dock, keyed by the turn of their current task (`currentTurn`): the
+ * team of the running turn, also the agents that it pinged, and each team that still has a queued
+ * or running agent after its turn ended. Spawn order.
  */
 export function dockTeams(agents: readonly Subagent[], sid: string, runningTurnId?: string | null): Subagent[][] {
   const teams = new Map<string, Subagent[]>();
   for (const agent of agents) {
-    if (agent.parent_id === sid) teams.set(agent.team_id, [...(teams.get(agent.team_id) ?? []), agent]);
+    if (agent.parent_id === sid) teams.set(currentTurn(agent), [...(teams.get(currentTurn(agent)) ?? []), agent]);
   }
   return [...teams.entries()]
     .filter(([id, team]) => id === runningTurnId || team.some(isLive))

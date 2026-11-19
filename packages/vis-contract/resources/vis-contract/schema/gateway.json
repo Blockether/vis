@@ -3125,6 +3125,16 @@
             }
           ]
         },
+        "turn_ids": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/turn_ids"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "runs": {
           "anyOf": [
             {

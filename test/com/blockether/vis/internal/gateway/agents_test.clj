@@ -1323,3 +1323,41 @@
                     "A turn without subagents has no agents key"))
           (expect (every? #(not (contains? % "agents")) (state/transcript (first children)))
                   "A child session shows no team in its own turns"))))))
+
+;; User report 2026-11-19: a turn that pinged its agents with a follow-up task showed no team. The
+;; team block stood only in the turn that started the agents.
+(defdescribe
+  transcript-follow-up-team-test
+  (it
+    "shows an agent in the turn that started it and in the turn of each follow-up ping"
+    (with-team
+      {:statuses ["completed"]}
+      (fn [{:keys [db leader children]}]
+        (let [child
+              (first children)
+
+              team
+              (get (ps/db-agent-info db child) :team_id)
+
+              ping
+              (str (ps/db-store-session-turn! db {:parent-session-id leader :user-request "Ping"}))
+
+              _
+              (ps/db-agent-resume! db child 1 (System/currentTimeMillis))
+
+              _
+              (Thread/sleep 5)
+
+              quiet
+              (str (ps/db-store-session-turn! db {:parent-session-id leader :user-request "Quiet"}))
+
+              by-id
+              (into {} (map (juxt #(get % "turn_id") identity)) (state/transcript leader))]
+
+          (expect (= [child] (mapv #(get % "session_id") (get-in by-id [team "agents"]))))
+          (expect (= [child] (mapv #(get % "session_id") (get-in by-id [ping "agents"]))))
+          (expect (= [team ping] (get-in by-id [ping "agents" 0 "turn_ids"])))
+          (expect (not (contains? (get by-id quiet) "agents"))
+                  "A turn without a ping has no agents key")
+          (expect (= [[team ping]] (mapv :turn_ids (state/agent-rows leader)))
+                  "The live team rows name the same turns"))))))

@@ -2872,7 +2872,7 @@
                     (persistance/db-agent-team-counts [sid])
                     (get (str sid)))))
 
-(declare agent-view agent-activity)
+(declare agent-view agent-activity turn-ids)
 
 ;; Two seconds keeps the worst case (each child changes all the time) below the reads of the
 ;; old 3 s and 5 s client polls, and still shows a step sooner than those polls did.
@@ -3688,24 +3688,32 @@
 
 (defn- with-turn-agents
   "Put the team rows of each turn of `rows` (canonical transcript turns) into that turn as
-   `agents`, in the row shape of the `subscription.ready` frame. A team belongs to the turn that
-   started it (`team_id`), so the transcript shows it with the rest of the turn and a client
-   does not wait for a second read. A turn without subagents gets no key. One read lists the
-   children of `sid`; only the children of these turns are built."
+   `agents`, in the row shape of the `subscription.ready` frame. A child belongs to each turn in its
+   `turn_ids`: the turn that started it and the turn of each follow-up Council ping. So the
+   transcript shows the team with the rest of the turn, and a client does not wait for a second
+   read. A turn without subagents gets no key. One read lists the children of `sid`; only the
+   children of these turns are built."
   [db sid rows]
   (let [ids
         (into #{} (map #(get % "turn_id")) rows)
 
-        teams
-        (->> (persistance/db-agent-list db sid)
-             (filter #(contains? ids (str (:team_id %))))
-             (group-by #(str (:team_id %))))]
+        turns
+        (delay (persistance/db-list-session-turns-meta db sid))
 
-    (if (empty? teams)
+        views
+        (->> (persistance/db-agent-list db sid)
+             (keep (fn [child]
+                     (let [own (filterv ids (turn-ids turns child))]
+                       (when (seq own) [own (agent-view db child turns)]))))
+             (reduce (fn [acc [own view]]
+                       (reduce #(update %1 %2 (fnil conj []) view) acc own))
+                     {}))]
+
+    (if (empty? views)
       rows
       (mapv (fn [row]
-              (if-let [team (get teams (get row "turn_id"))]
-                (assoc row "agents" (wire/canonical (mapv #(agent-view db %) team)))
+              (if-let [team (get views (get row "turn_id"))]
+                (assoc row "agents" (wire/canonical team))
                 row))
             rows))))
 
@@ -7965,48 +7973,82 @@
                         line)))
             (reverse (seq (:events (session-entry sid))))))))
 
+(defn- turn-ids
+  "The leader turns in which `child` worked, oldest first: the turn that started it (`team_id`),
+   then the turn of each follow-up Council ping. A ping resumes a child only while its leader runs
+   a turn, so a task belongs to the last leader turn that started before the task. `turns` is a
+   delay of the leader's `db-list-session-turns-meta`: a child without a follow-up reads nothing."
+  [turns child]
+  (let [team
+        (str (:team_id child))
+
+        starts
+        (keep identity (conj (mapv :start (:runs child)) (:resumed_at child)))]
+
+    (if (empty? (rest starts))
+      [team]
+      (let [marks
+            (->> @turns
+                 (keep (fn [turn]
+                         (when-let [at (:created-at turn)]
+                           [(inst-ms at) (str (:id turn))])))
+                 (sort-by first))
+
+            turn-at
+            (fn [start]
+              (some->> marks
+                       (take-while #(<= (long (first %)) (long start)))
+                       last
+                       second))]
+
+        (into [team] (comp (keep turn-at) (remove #{team}) (distinct)) starts)))))
+
 (defn- agent-view
   "One team row. `question` is the open question that the child asks its parent, with its
    `question_entry_id` and any budget or file request. `note` is the newest progress note of a
-   queued or running child, and `activity` its latest Activity line."
-  [db child]
-  (let [sid
-        (:session_id child)
+   queued or running child, and `activity` its latest Activity line. `turn_ids` names each leader
+   turn in which the child worked (see `turn-ids`); `turns` is a delay of the leader's turns."
+  ([db child]
+   (agent-view db child (delay (persistance/db-list-session-turns-meta db (:leader_id child)))))
+  ([db child turns]
+   (let [sid
+         (:session_id child)
 
-        request
-        (agents/open-request sid)
+         request
+         (agents/open-request sid)
 
-        live?
-        (contains? #{"queued" "running"} (:status child))
+         live?
+         (contains? #{"queued" "running"} (:status child))
 
-        note
-        (when live? (agents/latest-note db child (util/now-ms)))
+         note
+         (when live? (agents/latest-note db child (util/now-ms)))
 
-        activity
-        (when live? (agent-activity sid))]
+         activity
+         (when live? (agent-activity sid))]
 
-    (cond-> (merge (dissoc child :spawn_key :spawn_fingerprint)
-                   (smodel/model-of db sid)
-                   {:routing_locked (persistance/db-routing-locked? db sid)
-                    :pending_input (bus/session-waiting? sid)
-                    :pending_input_count (bus/session-waiting-count sid)
-                    :usage (session-usage-info sid)})
-      request
-      (assoc :question
-        (:question request) :question_entry_id
-        (:entry_id request))
+     (cond-> (merge (dissoc child :spawn_key :spawn_fingerprint)
+                    (smodel/model-of db sid)
+                    {:routing_locked (persistance/db-routing-locked? db sid)
+                     :pending_input (bus/session-waiting? sid)
+                     :pending_input_count (bus/session-waiting-count sid)
+                     :usage (session-usage-info sid)
+                     :turn_ids (turn-ids turns child)})
+       request
+       (assoc :question
+         (:question request) :question_entry_id
+         (:entry_id request))
 
-      (:budget request)
-      (assoc :budget_request (:budget request))
+       (:budget request)
+       (assoc :budget_request (:budget request))
 
-      (:files request)
-      (assoc :files_request (:files request))
+       (:files request)
+       (assoc :files_request (:files request))
 
-      note
-      (assoc :note note)
+       note
+       (assoc :note note)
 
-      activity
-      (assoc :activity activity))))
+       activity
+       (assoc :activity activity)))))
 
 (defn agent-rows
   "The team rows of session `sid`: each child of a leader, or the team of a child. The

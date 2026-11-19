@@ -415,6 +415,32 @@
       :end (when (and (not (active? agent)) (number? (get agent "finished_at")))
              (long (get agent "finished_at")))})))
 
+(defn turns-of
+  "The leader turns in which `agent` worked, oldest first: the turn that started it and each turn
+   that pinged it with a follow-up task. A row without `turn_ids` worked only in the turn that
+   started it."
+  [agent]
+  (let [turns (get agent "turn_ids")]
+    (if (seq turns) (vec turns) [(get agent "team_id")])))
+
+(defn current-turn
+  "The leader turn of the current task of `agent`: the last turn that started or pinged it."
+  [agent]
+  (peek (turns-of agent)))
+
+(defn- in-turn?
+  [turn-id agent]
+  (boolean (some #{turn-id} (turns-of agent))))
+
+(defn turn-rows
+  "The rows of the agents that worked in turn `turn-id` (see `turns-of`), in start order."
+  [turn-id agents]
+  (->> (numbered agents)
+       (filter #(in-turn? turn-id (second %)))
+       (sort-by first)
+       (mapv (fn [[n agent]]
+               (team-row n agent agents)))))
+
 (defn team-rows
   "The rows of team `team-id` from `agents`, in start order, so a row never moves."
   [team-id agents]
@@ -1056,7 +1082,7 @@
    fold state: `:session-id`, `:node-id`, `:expanded?` and the `:span` of the team."
   ([team-id agents] (card team-id agents nil))
   ([team-id agents leader]
-   (when-let [rows (seq (team-rows team-id agents))]
+   (when-let [rows (seq (turn-rows team-id agents))]
      (let [rows (into (if-let [row (leader-row leader)]
                         [row]
                         [])
@@ -1144,12 +1170,13 @@
     projected))
 
 (defn dock-team-ids
-  "Teams that the dock shows: the team of the running turn `running-turn`, and each team
-   with an agent that still works or waits."
+  "Teams that the dock shows, by the turn of their current task (`current-turn`): the team of
+   the running turn `running-turn`, also the agents that it pinged, and each team with an agent
+   that still works or waits."
   [agents running-turn]
   (into
-    (if (and running-turn (some #(= running-turn (get % "team_id")) agents)) #{running-turn} #{})
-    (comp (filter active?) (keep #(get % "team_id")))
+    (if (and running-turn (some #(= running-turn (current-turn %)) agents)) #{running-turn} #{})
+    (comp (filter active?) (keep current-turn))
     agents))
 
 (defonce ^:private ^java.util.IdentityHashMap decorated-memo (java.util.IdentityHashMap. 64))
@@ -1167,7 +1194,7 @@
           decorated)))))
 
 (defn decorate-messages
-  "Give the last assistant message of each turn that started a team its `:agent-team-card`.
+  "Give the last assistant message of each turn in which a team worked its `:agent-team-card`.
    The rows come from the transcript turns (`:session-agents`), and the cached snapshot of `sid`
    replaces each row that it also has, so a card paints with its turn. A team in the dock gets
    no block: the turn `running-turn` still runs, or an agent still works. `open?` tells from the
@@ -1177,11 +1204,11 @@
   ([messages sid] (decorate-messages messages sid nil))
   ([messages sid running-turn] (decorate-messages messages sid running-turn (constantly false)))
   ([messages sid running-turn open?]
-   (let [agents (merge-agents (into [] (mapcat :session-agents) messages) (:agents (summary sid)))]
+   (let [agents (merge-agents (merge-agents [] (mapcat :session-agents messages)) (:agents (summary sid)))]
      (if (or (empty? agents) (empty? messages))
        messages
        (let [docked (dock-team-ids agents running-turn)
-             teams (into #{} (comp (keep #(get % "team_id")) (remove docked)) agents)
+             teams (into #{} (comp (mapcat turns-of) (remove nil?) (remove docked)) agents)
              last-index (reduce (fn [acc [i m]]
                                   (let [turn (:session-turn-id m)]
                                     (if (and (= :assistant (:role m)) (contains? teams turn))
@@ -1199,7 +1226,7 @@
                                             :session-id (str sid)
                                             :node-id node-id
                                             :expanded? (boolean (open? node-id))
-                                            :span (team-span (filter #(= team-id (get % "team_id")) agents)))]
+                                            :span (team-span (filter #(in-turn? team-id %) agents)))]
                             (assoc out i (decorate (nth out i) team-card)))
                           out))
                       (vec messages)
@@ -1271,7 +1298,7 @@
         (dock-team-ids agents running-turn)]
 
     (->> (numbered agents)
-         (filter #(contains? docked (get (second %) "team_id")))
+         (filter #(contains? docked (current-turn (second %))))
          (sort-by (fn [[n agent]]
                     [(or (get agent "created_at") 0) (str (get agent "team_id")) n]))
          (map-indexed (fn [i [n agent]]
@@ -1351,7 +1378,7 @@
              (dock-expanded? sid)
 
              team
-             (filterv #(contains? docked (get % "team_id")) agents)
+             (filterv #(contains? docked (current-turn %)) agents)
 
              head
              {:line {:kind :summary
