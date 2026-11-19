@@ -228,29 +228,32 @@ a:hover {
   line-height: 1.25;
   letter-spacing: -0.02em;
   margin: 0 0 1.1rem;
-  font-weight: 700;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--fg);
+  font-weight: 800;
   text-wrap: balance;
   color: var(--fg);
 }
 .content h2 {
   font-size: var(--text-heading);
   line-height: 1.4;
-  font-weight: 600;
+  font-weight: 700;
   margin: 2.4rem 0 0.9rem;
-  padding-top: 1.2rem;
-  border-top: 1px solid var(--line-soft);
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--faint);
   text-wrap: balance;
 }
 .content h3 {
   font-size: var(--text-body);
   line-height: 1.4;
-  font-weight: 600;
+  font-weight: 700;
   margin: 1.7rem 0 0.5rem;
   text-wrap: balance;
 }
 .content h2 .anchor,
 .content h3 .anchor {
   color: inherit;
+  text-decoration: none;
 }
 .content h2 .anchor:hover::after,
 .content h3 .anchor:hover::after {
