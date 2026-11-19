@@ -768,6 +768,9 @@ export function SessionsScreen({
         .then(async (row) => {
           patchMachine(key, withRank(favoriteRank(row)));
           await loadMachine(conn);
+          // The gateway ranks a star first. The pages read that order again even when
+          // the machine window looks unchanged, or the row waits for the next message.
+          setMachineMoves((current) => new Map(current).set(key, (current.get(key) ?? 0) + 1));
         })
         .catch(() => patchMachine(key, withRank(before)));
     },

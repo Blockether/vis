@@ -213,10 +213,13 @@ export function sessionsWindow(
   const standing =
     view === 'include' ? rows : rows.filter((row) => sessionIsArchived(row) === (view === 'only'));
   const recent = url.searchParams.get('order') === 'recent';
+  // Recency still keeps the starred band first, as `state/session-ranking` does.
+  const recentBand = (row: Session) => (typeof row.favorite_rank === 'number' ? FAVORITE_BAND : REST_BAND);
   const ranked = recent
     ? [...standing].sort((a, b) => {
-      const recency = sortKey(a, REST_BAND) - sortKey(b, REST_BAND);
-      return recency || (a.id === b.id ? 0 : a.id < b.id ? -1 : 1);
+      const band = recentBand(a) - recentBand(b);
+      const recency = sortKey(a, recentBand(a)) - sortKey(b, recentBand(b));
+      return band || recency || (a.id === b.id ? 0 : a.id < b.id ? -1 : 1);
     })
     : rankSessions(standing, dirty);
   const root = url.searchParams.get('root');

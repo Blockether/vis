@@ -13,8 +13,8 @@ const rowOrder = () =>
     row.getAttribute('data-session-id'),
   );
 
-// Regression, user report: the star must be visible as soon as it changes.
-// Updating the mark must not reorder sessions or change the current page.
+// Regression, user report: the star must be visible as soon as it changes, and the
+// starred row moves to the top, as the gateway ranks it.
 describe('starring a session', () => {
   const machines = [
     {
@@ -33,7 +33,7 @@ describe('starring a session', () => {
     },
   ];
 
-  it('keeps recency order and brings the starred row back into view', async () => {
+  it('moves the starred row to the top and brings it back into view', async () => {
     const view = renderSessionsScreen({ machines });
     restore = view.restore;
     await screen.findByText('Older session');
@@ -53,14 +53,8 @@ describe('starring a session', () => {
         .querySelector('button[aria-label="Star"]')!;
       await userEvent.click(star);
 
-      // The star changes its mark, not its position in the gateway's recency order.
-      await waitFor(() =>
-        expect(
-          screen.getByRole('group', { name: `${title} actions` })
-            .querySelector('button[aria-label="Unstar"]'),
-        ).toBeInTheDocument(),
-      );
-      expect(rowOrder()).toEqual(before);
+      // The gateway ranks starred rows first, so the row moves to the top.
+      await waitFor(() => expect(rowOrder()).toEqual([last, before[0]]));
     } finally {
       Element.prototype.scrollIntoView = scrollIntoView;
     }
@@ -73,6 +67,45 @@ describe('starring a session', () => {
         element.contains(document.querySelector(`[data-session-id="${last}"]`)),
       ),
     ).toBe(true);
+  });
+
+  // Regression, user report (paraphrased: "a starred session moves to the top only after
+  // I send a message"): the project page read again only when the machine window
+  // changed. A machine window that answers as before must not hold the old order.
+  it('moves the starred row to the top when the machine window does not change', async () => {
+    const view = renderSessionsScreen({ machines });
+    const base = globalThis.fetch;
+    let window: string | null = null;
+    let starred = false;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
+      );
+      const head = url.pathname === '/v1/sessions' && !url.searchParams.has('root')
+        && (init?.method ?? 'GET') === 'GET';
+      if (head && starred && window !== null) return new Response(window);
+      // A slow link: the page read that the tap starts lands before the star is saved.
+      if (init?.method === 'PATCH') await new Promise((resolve) => setTimeout(resolve, 150));
+      const response = await base(input, init);
+      if (head && !starred) window = await response.clone().text();
+      if (init?.method === 'PATCH') starred = true;
+      return response;
+    }) as typeof fetch;
+    restore = () => {
+      globalThis.fetch = base;
+      view.restore();
+    };
+    await screen.findByText('Older session');
+    const [first, second] = rowOrder();
+    const title = second === 'older' ? 'Older session' : 'Newer session';
+
+    await userEvent.click(
+      screen
+        .getByRole('group', { name: `${title} actions` })
+        .querySelector('button[aria-label="Star"]')!,
+    );
+
+    await waitFor(() => expect(rowOrder()).toEqual([second, first]));
   });
 
   // Regression, user report (paraphrased: the star is in two states at once): the
@@ -147,8 +180,8 @@ describe('starring a session', () => {
     expect(row.parentElement!.querySelector("svg[fill='currentColor']")).toBeInTheDocument();
   });
 
-  // Regression: a row starred on a later page must keep its mark visible there.
-  it('keeps a starred row on its current page', async () => {
+  // Regression: a row starred on a later page moves to the top of page one.
+  it('moves a row starred on a later page to the top of page one', async () => {
     const many = Array.from({ length: 17 }, (_, index) =>
       listSession({
         id: `s${String(index + 1).padStart(2, '0')}`,
@@ -171,17 +204,11 @@ describe('starring a session', () => {
         .querySelector('button[aria-label="Star"]')!,
     );
 
-    // The row stays on page two wearing its mark; starring does not change recency.
-    await waitFor(() =>
-      expect(
-        screen.getByRole('group', { name: 'Session 17 actions' })
-          .querySelector('button[aria-label="Unstar"]'),
-      ).toBeInTheDocument(),
-    );
-    expect(rowOrder()).toEqual(['s16', 's17']);
-    expect(screen.getByRole('textbox', { name: 'Current page' })).toHaveValue('2');
+    // The starred row leaves page two, and page one starts with it.
+    await waitFor(() => expect(rowOrder()).not.toContain('s17'));
+    await userEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+    await waitFor(() => expect(rowOrder()[0]).toBe('s17'));
     const row = document.querySelector('[data-session-id="s17"]')?.parentElement ?? null;
-    expect(row).toBeVisible();
     expect(row!.querySelector("svg[fill='currentColor']")).toBeInTheDocument();
   });
   // Regression on iOS: animated scrolling can cover a newly changed star.
