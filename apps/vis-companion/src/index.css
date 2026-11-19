@@ -706,6 +706,11 @@ ol.markdown-list > li::before {
     @apply touch-manipulation select-none disabled:cursor-default;
   }
 
+  /* A held composer control: see `holdPageSelection` in `components/ui.tsx`. */
+  html[data-press-hold] {
+    @apply select-none;
+  }
+
   button:disabled,
   [aria-disabled='true'] {
     @apply cursor-default;

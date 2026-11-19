@@ -1471,6 +1471,31 @@ function useTapPress(
  * keyboard up more than anything else in the app, and on iOS a tap is not
  * reliably a `click`.
  */
+/**
+ * iOS selects the text NEAR a long press, so a finger that drifts off a held
+ * control paints the page blue. `select-none` on the control does not stop
+ * this; only a page that selects nothing does. A touch press makes the page
+ * unselectable, and the lift gives it back a moment later, because WebKit can
+ * still start a selection just after the finger lifts.
+ */
+const PRESS_SELECTION_RELEASE_MS = 300;
+let pressSelectionRelease: ReturnType<typeof setTimeout> | undefined;
+
+function holdPageSelection(event: PointerEvent<HTMLElement>) {
+  if (event.pointerType === 'mouse') return;
+  const root = document.documentElement;
+  clearTimeout(pressSelectionRelease);
+  root.setAttribute('data-press-hold', '');
+  const release = () => {
+    window.removeEventListener('pointerup', release, true);
+    window.removeEventListener('pointercancel', release, true);
+    clearTimeout(pressSelectionRelease);
+    pressSelectionRelease = setTimeout(() => root.removeAttribute('data-press-hold'), PRESS_SELECTION_RELEASE_MS);
+  };
+  window.addEventListener('pointerup', release, true);
+  window.addEventListener('pointercancel', release, true);
+}
+
 export function ComposerButton({
   label,
   tone = 'quiet',
@@ -1494,7 +1519,15 @@ export function ComposerButton({
    */
   isHolding?: boolean;
 }) {
-  const press = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
+  const press = useTapPress(
+    onClick,
+    disabled,
+    (event) => {
+      holdPageSelection(event);
+      onPointerDown?.(event);
+    },
+    onPointerUp,
+  );
   const frame =
     'size-8 after:absolute after:left-1/2 after:top-1/2 after:h-11 after:w-9 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none';
   const face = {
