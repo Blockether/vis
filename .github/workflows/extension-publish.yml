@@ -90,7 +90,7 @@ jobs:
                 tag=$(gh api "repos/$repository/releases/latest" --jq .tag_name 2>/dev/null || true)
               else
                 # This repository also releases other products. Take its newest stable release with this tag prefix.
-                tag=$(gh api "repos/$repository/releases?per_page=100" \
+                tag=$(gh api "repos/$repository/releases?per_page=15" \
                   --jq "[.[] | select((.draft or .prerelease) | not) | select(.tag_name | startswith(\"$prefix\"))][0].tag_name // empty" \
                   2>/dev/null || true)
               fi
