@@ -182,10 +182,12 @@ a:hover {
   border-right: 1px solid var(--line-soft);
 }
 .nav-sec {
-  color: var(--amber-deep);
-  font-size: var(--text-small);
-  font-weight: 700;
-  margin: 1.5rem 0.6rem 0.5rem;
+  color: var(--fg);
+  font-size: var(--text-body);
+  font-weight: 800;
+  margin: 1.8rem 0.6rem 0.5rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--faint);
 }
 .nav-grp {
   color: var(--dim);
@@ -200,6 +202,7 @@ a:hover {
   color: var(--fg-soft);
   font-size: var(--text-small);
   font-weight: 500;
+  text-decoration: none;
   transition:
     background 0.12s,
     color 0.12s;
