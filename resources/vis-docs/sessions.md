@@ -525,7 +525,9 @@ vis-agent sessions export 3a7b2c1d --atif > session.json
 
 The export lists attachment names, media types, and sizes. It does not include file contents or
 attachments for the model only. Vis replaces known credential values and cuts long text after
-20,000 characters. Review the JSON for other private data before you share it.
+20,000 characters. Known values are provider keys and tokens, the gateway token, secret settings,
+and credentials in the environment, the project `.env` file, and `environment:`. Review the JSON
+for other private data before you share it.
 
 To read an ATIF trajectory in Vis, import the JSON file:
 
@@ -554,9 +556,11 @@ messages. An import gives you a new session that you can continue. A snapshot is
 backup.
 
 A snapshot holds the full conversation, also tool output and attached files. Vis replaces known
-credential values with `[REDACTED]` in the text, the tool records, and text files. The values of
-secret settings also become `[REDACTED]`: after an import, set them again. Binary files, such as
-images, stay unchanged. Review a snapshot for other private data before you share it.
+credential values with `[REDACTED]` in the text, the tool records, and text files. Known values
+are provider keys and tokens, the gateway token, secret settings, and credentials in the
+environment, the project `.env` file, and `environment:`. The values of secret settings also
+become `[REDACTED]`: after an import, set them again. Binary files, such as images, stay
+unchanged. Review a snapshot for other private data before you share it.
 
 1. On the first computer, write the snapshot. Vis adds `.vissnap` if the path has no
    extension:

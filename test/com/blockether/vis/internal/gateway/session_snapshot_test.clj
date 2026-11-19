@@ -237,15 +237,36 @@
                    (ps/db-store-iteration! store
                                            {:session-turn-id tid
                                             :code (wire/json-str {:token secret})
-                                            :forms []})
+                                            :forms [{:src (wire/json-str {:token secret}) :stdout secret}]})
                    (let [tree (:tree (snapshot/decode (with-redefs [trajectory/run-secrets (constantly [])]
                                                         (state/export-session sid))))]
                      (expect (not (str/includes? (pr-str (walk/postwalk #(if (bytes? %) (try (nippy/thaw %) (catch Exception _ %)) %)
                                                                         (dissoc tree :blobs)))
                                                  "ss-0123456789")))
                      (expect (= [{:setting_id id :value (wire/json-str "[REDACTED]")}]
-                                (:settings (first (:sessions tree))))))
+                                (:settings (first (:sessions tree)))))
+                     (expect (not (str/includes? (with-redefs [trajectory/run-secrets (constantly [])]
+                                                   (state/export-atif sid))
+                                                 "ss-0123456789"))))
                    (finally (toggles/unregister-toggle! id)))))))
+    (it "replaces credentials from the .env of the session workspace in both exports"
+        (with-store
+          (fn [store]
+            (let [secret "dotenv-0123456789abcdef"
+                  sid (session! store "Env")
+                  root (:root (first (rows store
+                                           ["SELECT w.root FROM workspace w JOIN session_state s ON s.workspace_id = w.id WHERE s.session_soul_id = ?"
+                                            sid])))
+                  tid (turn! store sid (str "Run" " plain-value-0123") :success)]
+              (spit (io/file root ".env") (str "API_KEY=" secret "\nNOTE=plain-value-0123\n"))
+              (ps/db-store-iteration! store {:session-turn-id tid :code "print(env)" :forms [{:src "print(env)" :stdout secret}]})
+              (let [snapshot-text (pr-str (walk/postwalk #(if (bytes? %) (try (nippy/thaw %) (catch Exception _ %)) %)
+                                                         (dissoc (:tree (snapshot/decode (state/export-session sid))) :blobs)))
+                    atif-text (state/export-atif sid)]
+                (expect (not (str/includes? snapshot-text secret)))
+                (expect (str/includes? snapshot-text "plain-value-0123"))
+                (expect (not (str/includes? atif-text secret)))
+                (expect (str/includes? atif-text "plain-value-0123")))))))
     (it "replaces credentials in the metadata of a saved record"
         (let [secret "sk-test-0123456789abcdef"
               blob (nippy/freeze [(with-meta {:message "safe"} {:security {:key secret}})])

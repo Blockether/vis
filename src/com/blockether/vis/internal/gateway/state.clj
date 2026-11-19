@@ -8722,6 +8722,15 @@
       (put-session! forked {:next-seq 0 :last-active (util/now-ms)})
       (publish-session-created! db (soul forked)))))
 
+(defn- session-secrets
+  "The credentials that an export of session `sid` must not carry: those of this process,
+   of the `.env` and `environment:` of the workspace of `sid`, and its secret settings."
+  [db sid]
+  (binding [workspace/*workspace-root* (or (some-> (resolve-workspace db sid) :root)
+                                           workspace/*workspace-root*)]
+    (into (trajectory/run-secrets)
+          (trajectory/setting-secrets (persistance/db-scoped-settings db "session" sid)))))
+
 (defn export-session
   "The redacted `.vissnap` snapshot bytes of `sid` and its managed children (#405). Answers nil for
    an unknown session. Throws `ex-info` with `:type` `:session/snapshot-too-large` or
@@ -8730,7 +8739,7 @@
   (let [db (lp/db-info)]
     (when-let [tree (persistance/db-export-session-tree db sid)]
       ;; Each known credential becomes `[REDACTED]`, as in an ATIF export.
-      (let [secrets (trajectory/snapshot-secrets tree)]
+      (let [secrets (into [] (comp (mapcat #(session-secrets db (:id (:soul %)))) (distinct)) (:sessions tree))]
         (snapshot/encode (cond-> tree
                            (seq secrets) (snapshot/redact (trajectory/redactor secrets)))
                          {:vis-version (runtime/release-version) :now (util/now-ms)})))))
@@ -8738,7 +8747,7 @@
 (defn export-atif
   "The ATIF JSON of `sid` and its managed children, or nil for an unknown session."
   [sid]
-  (atif/export-json (lp/db-info) sid))
+  (let [db (lp/db-info)] (atif/export-json db sid (partial session-secrets db))))
 
 (defn import-session!
   "Restore the snapshot or ATIF JSON `data` as a new session tree and answer the wire `soul` of its new

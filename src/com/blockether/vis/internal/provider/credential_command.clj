@@ -187,6 +187,11 @@
     (some-> (fresh-entry pid av)
             (select-keys [:token :error]))))
 
+(defn cached-tokens
+  "Each credential in the cache, for redaction. Runs nothing."
+  []
+  (keep :token (vals @cache)))
+
 (defn resolve!
   "Resolve provider `pid`'s credential from config value `v`, cached and
    single-flight. Returns `{:token s}` or `{:error non-secret-message}`; returns

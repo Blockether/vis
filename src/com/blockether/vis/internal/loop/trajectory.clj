@@ -29,8 +29,10 @@
    shape of both.
 
    Before the write, each known credential value becomes `[REDACTED]`: the
-   provider keys and tokens in `~/.vis/*-auth.json` and in the provider
-   configuration, the values of secret settings, and environment values whose
+   provider keys and tokens in `~/.vis/*-auth.json`, in the provider
+   configuration and from `api_key_command`, the gateway token, the values of
+   secret settings, keychain and command values of
+   `environment:`, and values of the environment, `.env` and `environment:` whose
    names contain KEY, TOKEN, SECRET, PASSWORD or CREDENTIAL. Vis replaces only
    these known values. It does not find other secrets in the text. Only the
    owner can read the file."
@@ -39,6 +41,8 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.gateway.discovery :as discovery]
+            [com.blockether.vis.internal.provider.credential-command :as cred]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.error :as error]
             [com.blockether.vis.internal.gateway.runtime :as runtime]
@@ -731,15 +735,22 @@
      :files      JSON credential files: each string under a credential key
      :providers  the provider configuration: each string under a credential key
      :settings   the values of secret settings
+     :environment  the values that Vis gives to child processes: an
+                 `environment:` value from the keychain or a command, and a
+                 `.env` or `environment:` value under a credential name, as
+                 `[[name source value]]`
 
    Values with fewer than 8 characters do not count."
-  [{:keys [env files providers settings]}]
+  [{:keys [env files providers settings environment]}]
   (->> (concat (keep (fn [[k v]]
                        (when (re-find secret-env-name (str k)) v))
                      env)
                (mapcat (comp secret-leaves read-json-file) files)
                (secret-leaves providers)
-               settings)
+               settings
+               (keep (fn [[k source v]]
+                       (when (or (#{:keychain :command} source) (re-find secret-env-name (str k))) v))
+                     environment))
        (filter #(and (string? %) (<= (long min-secret-length) (count %))))
        distinct
        (sort-by count >)
@@ -752,18 +763,27 @@
             (and (.isFile f) (str/ends-with? (.getName f) "-auth.json")))
           (.listFiles (io/file (paths/vis-home)))))
 
-(defn run-secrets
-  "The known credentials of this process."
+(defn- environment
+  "`[[name source value]]` of the variables that Vis gives to child processes in the
+   bound workspace."
   []
-  (known-secrets {:env (System/getenv)
-                  :files (credential-files)
-                  :providers (try (:providers (config/current-config)) (catch Exception _ nil))
-                  :settings (toggles/secret-values)}))
+  (try (into [] cat [(for [name (config/declared-environment-names)
+                           :let [{:keys [source value]} (config/extension-env-status name)]
+                           :when (and value (not= :literal source))]
+                       [name source value])
+                     (for [[name value] (config/workspace-environment-values)]
+                       [name :dotenv value])])
+       (catch Exception _ nil)))
 
 (defn- json-escaped
   "`s` as it shows inside a JSON string."
   [s]
   (let [encoded (wire/json-str s)] (subs encoded 1 (dec (count encoded)))))
+
+(defn- with-escaped
+  "`secrets` and their JSON-escaped forms, longest first, because text can hold JSON."
+  [secrets]
+  (->> secrets (mapcat (juxt identity json-escaped)) distinct (sort-by count >) vec))
 
 (defn- string-leaves
   [data]
@@ -772,20 +792,31 @@
         (sequential? data) (mapcat string-leaves data)
         :else nil))
 
-(defn snapshot-secrets
-  "[[run-secrets]] and the values of the secret settings that the session `tree` saved.
-   Each value also comes in its JSON-escaped form, because rows can hold JSON text."
-  [tree]
-  (let [saved (for [session (:sessions tree)
-                    {:keys [setting_id value]} (:settings session)
-                    :when (toggles/secret-setting? setting_id)
-                    leaf (string-leaves (try (wire/parse-json value) (catch Exception _ nil)))]
-                leaf)]
-    (->> (concat (run-secrets) (known-secrets {:settings saved}))
-         (mapcat (juxt identity json-escaped))
-         distinct
-         (sort-by count >)
-         vec)))
+(defn- gateway-token
+  "The bearer token of the local gateway, or nil."
+  []
+  (let [file (discovery/default-token-file)]
+    (when (.isFile file) (try (str/trim (slurp file)) (catch Exception _ nil)))))
+
+(defn run-secrets
+  "The known credentials of this process and of the bound workspace, also JSON-escaped:
+   also the gateway token and the provider keys that `api_key_command` gave."
+  []
+  (with-escaped (known-secrets {:env (System/getenv)
+                                :files (credential-files)
+                                :providers (try (:providers (config/current-config)) (catch Exception _ nil))
+                                :settings (concat (toggles/secret-values)
+                                                  (cred/cached-tokens)
+                                                  (some-> (gateway-token) vector))
+                                :environment (environment)})))
+
+(defn setting-secrets
+  "The values of the secret settings in `settings`, `{setting-id value}`, also JSON-escaped."
+  [settings]
+  (with-escaped (known-secrets {:settings (for [[id value] settings
+                                                :when (toggles/secret-setting? id)
+                                                leaf (string-leaves value)]
+                                            leaf)})))
 
 (defn redactor
   "Compile the credential pattern once for all values in an export."
@@ -851,8 +882,10 @@
 
 (defn saved-json
   "Encode one saved session and its children as a redacted ATIF document.
-   `read-turns` gives the turns of one session on demand."
-  [root records read-turns]
+   `read-turns` gives the turns of one session on demand. Each of `secrets`, by default
+   [[run-secrets]], becomes `[REDACTED]`."
+  ([root records read-turns] (saved-json root records read-turns (run-secrets)))
+  ([root records read-turns secrets]
   (let [root
         (wire/canonical root)
 
@@ -860,7 +893,7 @@
         (get root "session_id")
 
         redact-value
-        (redactor (run-secrets))
+        (redactor secrets)
 
         children
         (children-by-parent sid records)]
@@ -872,7 +905,7 @@
                                root)
          redact-value
          unique-call-ids
-         wire/json-str)))
+         wire/json-str))))
 
 (def ^:private owner-only (PosixFilePermissions/fromString "rw-------"))
 

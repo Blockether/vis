@@ -2,7 +2,9 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.loop.trajectory :as trajectory]
+            [com.blockether.vis.internal.provider.credential-command :as cred]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io File)
            (java.nio.file Files LinkOption Path)
@@ -392,10 +394,28 @@
   (it "takes the values of secret settings"
       (expect (= ["kb-token-12345678"]
                  (trajectory/known-secrets {:settings ["kb-token-12345678" "short"]}))))
+  (it "takes keychain and command values under any name, other sources only under a credential name"
+      (expect (= #{"kc-value-12345678" "cmd-value-12345678" "dotenv-key-12345678"}
+                 (set (trajectory/known-secrets
+                        {:environment [["GH_PAT" :keychain "kc-value-12345678"]
+                                       ["DEPLOY_HOOK" :command "cmd-value-12345678"]
+                                       ["SERVICE_API_KEY" :dotenv "dotenv-key-12345678"]
+                                       ["RUST_LOG" :dotenv "debug-everything"]
+                                       ["BUILD_DIR" :env "/var/build/output"]]})))))
   (it "ignores a credential file that is not JSON"
       (let [file (.toFile (.resolve (temp-dir) "broken-auth.json"))]
         (spit file "not json")
         (expect (= [] (trajectory/known-secrets {:files [file]}))))))
+
+(defdescribe run-secrets-test
+  (it "takes the gateway token and the provider keys that a command gave"
+      (let [file (.toFile (.resolve (temp-dir) "gateway.token"))]
+        (spit file "gateway-token-12345678\n")
+        (with-redefs [discovery/default-token-file (constantly file)
+                      cred/cached-tokens (constantly ["command-key-12345678"])]
+          (let [secrets (set (trajectory/run-secrets))]
+            (expect (contains? secrets "gateway-token-12345678"))
+            (expect (contains? secrets "command-key-12345678")))))))
 
 (defdescribe redact-test
              (it "replaces each known value in every string, map keys included"

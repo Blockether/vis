@@ -109,8 +109,10 @@
                  :workspace-root)})
 
 (defn export-json
-  "Read and encode a saved session without loading its attachment bytes."
-  [store sid]
+  "Read and encode a saved session without loading its attachment bytes. `session-secrets`
+   gives the credentials of one session id; by default those of this process."
+  ([store sid] (export-json store sid (fn [_] (trajectory/run-secrets))))
+  ([store sid session-secrets]
   (when-let [session (db/db-get-session store sid)]
     (let [sid (str sid)
           root (merge (select-keys session [:title :provider :model])
@@ -120,4 +122,8 @@
                            (merge record
                                   (session-metadata store (db/db-get-session store (:session_id record)))))
                          (child-records store sid))]
-      (trajectory/saved-json root children #(read-turns store %)))))
+      (trajectory/saved-json root
+                             children
+                             #(read-turns store %)
+                             (into [] (comp (mapcat session-secrets) (distinct))
+                                   (cons sid (map :session_id children))))))))
