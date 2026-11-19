@@ -142,8 +142,8 @@
                              :is-timeout (boolean (or (get envelope "is_timeout")
                                                       (get block "is_timeout")))
                              :activity (block-activity block)
-                             :stdout-chars (some-> (get block "stdout")
-                                                   code-points)
+                             :stdout-chars (or (get block "atif_stdout_chars")
+                                                (some-> (get block "stdout") code-points))
                              :error (get block "error")
                              :repaired-source (get block "repaired_source")})}
      :result {:source-call-id call-id :content (observation-text block)}}))
@@ -242,7 +242,7 @@
                    (str "t" turn-position "/i" iteration "/f" (inc (long i)))))
                forms))
 
-(defn- iteration-step
+(defn- model-iteration-step
   "The ATIF agent step of one persisted iteration: of a Council child, or of a
    persisted run. The final iteration of a turn carries `answer`. `turn-position`
    is the position of its turn."
@@ -280,13 +280,14 @@
              :source "agent"
              :message (or answer (get iteration "assistant_prose") "")
              :extra (compact {:iteration position
-                              :is-final (some? answer)
+                              :is-final (if (get iteration "atif_imported_step")
+                                            (get iteration "atif_final")
+                                            (some? answer))
                               :provider (text-value (or (get iteration "llm_actual_provider")
                                                         (get iteration "provider")))
                               :finished-at-ms (or (epoch-ms (get iteration "finished_at")) created)
                               :error (or (get iteration "atif_step_error") (error-text (get iteration "error")))
-                              :attachments (not-empty (get iteration "attachments"))
-                               :is-unattributed-cost (when (get iteration "atif_unattributed_cost") true)})}
+                              :attachments (not-empty (get iteration "attachments"))})}
       created
       (assoc :timestamp (iso-time created))
 
@@ -303,6 +304,18 @@
       (assoc :tool-calls
         (mapv :call calls) :observation
         {:results (mapv :result calls)}))))
+
+(defn- unattributed-cost-step [step-id cost]
+  {:step-id step-id
+   :source "agent"
+   :message ""
+   :metrics {:cost-usd cost}
+   :extra {:is-unattributed-cost true}})
+
+(defn- iteration-step [step-id turn-position iteration answer]
+  (if (get iteration "atif_unattributed_cost")
+    (unattributed-cost-step step-id (get iteration "cost_usd"))
+    (model-iteration-step step-id turn-position iteration answer)))
 
 (defn- cache-warm-step
   [step-id warm]
@@ -327,11 +340,7 @@
         exported (reduce + 0.0 (keep #(get-in % [:metrics :cost-usd]) steps))
         difference (- saved (double exported))]
     (if (> difference 1.0e-10)
-      (conj steps (project-step {:step-id (+ first-id (count steps))
-                                 :source "agent"
-                                 :message ""
-                                 :metrics {:cost-usd difference}
-                                 :extra {:is-unattributed-cost true}}))
+      (conj steps (project-step (unattributed-cost-step (+ first-id (count steps)) difference)))
       steps)))
 
 (defn- turn-steps
@@ -344,6 +353,9 @@
 
         iterations
         (or (seq (get turn "trace")) (when answer [{}]))
+
+        attachments
+        (into (vec (get turn "attachments")) (get (first iterations) "atif_user_attachments"))
 
         created
         (epoch-ms (get turn "created_at"))]
@@ -358,8 +370,8 @@
                             created
                             (assoc :timestamp (iso-time created))
 
-                            (seq (get turn "attachments"))
-                            (assoc-in [:extra :attachments] (get turn "attachments"))))]]
+                            (seq attachments)
+                            (assoc-in [:extra :attachments] attachments)))]]
 
       (if (seq remaining)
         (let [more (next remaining)
@@ -374,7 +386,8 @@
                    (conj (project-step (iteration-step (+ first-id (count steps))
                                                       (get turn "position")
                                                       iteration
-                                                      (when-not more answer)))))))
+                                                      (when (and (not more) (not (get iteration "atif_imported_step")))
+                                                        answer)))))))
         (with-unattributed-cost steps first-id turn project-step)))))
 
 (defn- child-steps
@@ -544,7 +557,9 @@
            :agent (compact
                     {:name "vis"
                      :version (runtime/release-version)
-                     :model-name (or (text-value (get record "model")) (some :model-name steps))
+                     :model-name (or (text-value (get record "atif_model"))
+                                      (text-value (get record "model"))
+                                      (some :model-name steps))
                      :extra (not-empty (compact {:provider provider
                                                  :parent-session-id (some-> (get record "parent_id")
                                                                             str)
@@ -768,13 +783,16 @@
 (defn- clip-text
   "Keep the first 20,000 Unicode code points and give the number left out."
   [^String text]
-  (let [n (if (> (.length text) 20000) (long (code-points text)) 0)]
-    (if (> n 20000)
-      (str (.substring text 0 (.offsetByCodePoints text 0 20000))
-           "\n… ["
-           (- n 20000)
-           " more characters cut]")
-      text)))
+  (if (> (.length text) 20000)
+    (let [n (long (code-points text))]
+      (if (> n 20000)
+        (let [end (.offsetByCodePoints text 0 20000)]
+          (if (and (<= n 20046)
+                   (re-matches #"\n… \[[1-9][0-9]* more characters cut\]" (.substring text end)))
+            text
+            (str (.substring text 0 end) "\n… [" (- n 20000) " more characters cut]")))
+        text))
+    text))
 
 (defn- clip-step
   "Clip text in the shared step and its tools before retaining the next step."

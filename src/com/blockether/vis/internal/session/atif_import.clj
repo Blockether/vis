@@ -84,6 +84,9 @@
              :atif-output output
              :timeout? timeout?
              :repaired? (true? (get call-extra "is_repaired"))}
+      (some? (get call-extra "stdout_chars"))
+      (assoc :atif-stdout-chars (numeric call-extra ["stdout_chars"] true))
+
       (string? (get call-extra "repaired_source"))
       (assoc :repaired-source (get call-extra "repaired_source"))
       failure
@@ -108,7 +111,11 @@
      :output_reasoning_tokens (numeric metrics ["extra" "reasoning_tokens"] true)
      :cost_usd (numeric metrics ["cost_usd"] false)}))
 
-(defn- iteration-row [position now {:keys [step warms]}]
+(defn- attachment-descriptors [step]
+  (mapv #(select-keys % ["filename" "media_type" "size_bytes"])
+        (objects (get-in step ["extra" "attachments"]) "attachments")))
+
+(defn- iteration-row [position now {:keys [step warms user-attachments]}]
   (let [extra (get step "extra")
         forms (step-forms step)
         created (or (time-ms (get step "timestamp")) now)]
@@ -122,6 +129,10 @@
             :llm_assistant_prose (text-content (get step "message"))
             :request_health (nippy/freeze {:cache-warms warms :atif-omit-step (nil? step)
                                          :atif-step-error (get extra "error")
+                                          :atif-imported-step (some? step)
+                                          :atif-final (get extra "is_final")
+                                          :atif-attachments (attachment-descriptors step)
+                                          :atif-user-attachments user-attachments
                                          :atif-unattributed-cost (true? (get extra "is_unattributed_cost"))})
             :code (str/join "\n" (map :src forms))
             :tool_calls (when (seq forms) (nippy/freeze forms))
@@ -142,9 +153,12 @@
 
 (defn- turn-row [{:keys [user steps]} now]
   (let [created (or (time-ms (get user "timestamp")) now)
+        attachments (attachment-descriptors user)
         groups (step-groups steps created)
+        groups (if (seq attachments) (assoc-in groups [0 :user-attachments] attachments) groups)
         iterations (mapv #(iteration-row (inc (long %1)) created %2) (range) groups)
-        answer (get (last (keep :step groups)) "message")
+        answer (get (or (last (filter #(true? (get-in % ["extra" "is_final"])) steps))
+                        (last (keep :step groups))) "message")
         tokens (fn [k] (reduce + 0 (keep k iterations)))]
     {:soul {:id (str (random-uuid)) :user_request (text-content (get user "message"))
             :created_at created}
@@ -208,6 +222,8 @@
       (invalid! "the agent must have a name."))
     (into [(cond-> {:soul {:id id :channel "tui" :created_at created}
                     :state {:title title}
+                     :atif-imported-model (when (string? (get agent "model_name"))
+                                            (get agent "model_name"))
                     :parent-id parent-id
                     :turns rows}
              parent-id

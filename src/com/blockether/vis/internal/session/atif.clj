@@ -16,7 +16,11 @@
       (select-keys [:position :thinking :assistant-prose :created-at :finished-at :provider :model
                     :error :input-tokens :output-tokens :input-cache-read-tokens
                     :input-cache-write-tokens :output-reasoning-tokens :cost-usd :forms])
-      (assoc :attachments (mapv attachment-descriptor attachments)
+      (assoc :attachments (into (mapv attachment-descriptor attachments)
+                                (get-in iteration [:request-health :atif-attachments]))
+              :atif-user-attachments (get-in iteration [:request-health :atif-user-attachments])
+              :atif-imported-step (get-in iteration [:request-health :atif-imported-step])
+              :atif-final (get-in iteration [:request-health :atif-final])
              :cache-warms (get-in iteration [:request-health :cache-warms])
              :atif-omit-step (get-in iteration [:request-health :atif-omit-step])
              :atif-step-error (get-in iteration [:request-health :atif-step-error])
@@ -25,7 +29,7 @@
               (fn [forms]
                 (mapv #(select-keys %
                                     [:src :code :stdout :error :tool-name :tool-call-id :envelope
-                                     :repaired? :timeout? :repaired-source :atif-output])
+                                     :repaired? :timeout? :repaired-source :atif-output :atif-stdout-chars])
                       forms)))
       wire/->wire))
 
@@ -99,6 +103,7 @@
 (defn- session-metadata
   [store session]
   {:started-at (:created-at session)
+    :atif-model (get-in session [:imported-from "atif_model_name"])
    :cwd (some->> (:project-id session)
                  (db/db-get-project store)
                  :workspace-root)})

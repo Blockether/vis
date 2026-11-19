@@ -6583,7 +6583,7 @@
                                [(:id (:soul s)) (str (new-uuid))]))
                         sessions)]
 
-              (doseq [{:keys [soul state settings parent-id]}
+              (doseq [{:keys [soul state settings parent-id atif-imported-model]}
                       sessions
 
                       :let [old-sid
@@ -6605,6 +6605,8 @@
                                              :origin (:origin soul)
                                              :imported_from (->json (cond-> (assoc imported-from
                                                                               "session_id" old-sid)
+                                                                      atif-imported-model
+                                                                       (assoc "atif_model_name" atif-imported-model)
                                                                       (and key (= old-sid root-old))
                                                                       (assoc "key" key)))}
                                       parent-id

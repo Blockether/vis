@@ -783,7 +783,49 @@
                              {:step-id 2 :source "agent" :message "Done" :metrics {:cost-usd 0.125}}]
                      :final-metrics {:total-cost-usd 0.1875}}
                 restored (state/import-session! (.getBytes (wire/json-str old) "UTF-8") {})
-                exported (wire/parse-json (state/export-atif (get restored "id")))]
+                exported (wire/parse-json (state/export-atif (get restored "id")))
+                second-import (state/import-session! (.getBytes (wire/json-str exported) "UTF-8") {})
+                exported-again (wire/parse-json (state/export-atif (get second-import "id")))]
+            (expect (= (get-in exported ["steps" 2]) (get-in exported-again ["steps" 2])))
             (expect (= 0.1875 (get-in exported ["final_metrics" "total_cost_usd"])))
             (expect (= 0.0625 (get-in exported ["steps" 2 "metrics" "cost_usd"])))
             (expect (true? (get-in exported ["steps" 2 "extra" "is_unattributed_cost"]))))))))
+
+
+(defdescribe
+  atif-restored-metadata-test
+  (it "keeps exported text and metadata stable across repeated imports"
+      (with-store
+        (fn [_]
+          (let [attachment {:filename "report.txt" :media-type "text/plain" :size-bytes 50}
+                clipped (str (apply str (repeat 20000 "x")) "\n… [123 more characters cut]")
+                data {:schema-version "ATIF-v1.8"
+                      :agent {:name "vis" :model-name "session-model"}
+                      :steps [{:step-id 1 :source "user" :message "Check it"
+                               :extra {:attachments [attachment]}}
+                              {:step-id 2 :source "agent" :message "Done" :model-name "step-model"
+                               :reasoning-content clipped
+                               :extra {:is-final true :attachments [attachment]}
+                               :tool-calls [{:tool-call-id "first" :function-name "python_execution"
+                                             :arguments {:code clipped} :extra {:stdout-chars 20123}}]
+                               :observation {:results [{:source-call-id "first" :content clipped}]}}
+                              {:step-id 3 :source "agent" :message "" :extra {:is-final false}}]}
+                round-trip (fn [doc]
+                             (let [restored (state/import-session! (.getBytes (wire/json-str doc) "UTF-8") {})]
+                               (wire/parse-json (state/export-atif (get restored "id")))))
+                restored (round-trip data)
+                [user a b] (get restored "steps")
+                [next-user next-a next-b] (get (round-trip restored) "steps")
+                select-step #(dissoc % "timestamp")]
+            (expect (= ["session-model" [(wire/->wire attachment)] [(wire/->wire attachment)]
+                         true false clipped clipped 20123 clipped]
+                       [(get-in restored ["agent" "model_name"])
+                        (get-in user ["extra" "attachments"])
+                        (get-in a ["extra" "attachments"])
+                        (get-in a ["extra" "is_final"])
+                        (get-in b ["extra" "is_final"])
+                        (get a "reasoning_content")
+                        (get-in a ["tool_calls" 0 "arguments" "code"])
+                        (get-in a ["tool_calls" 0 "extra" "stdout_chars"])
+                        (get-in a ["observation" "results" 0 "content"])]))
+            (expect (= (mapv select-step [user a b]) (mapv select-step [next-user next-a next-b]))))))))

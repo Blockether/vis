@@ -1449,6 +1449,103 @@
       ]
     },
     "GET /v1/sessions/:sid/suggest": [],
+    "GET /v1/sessions/:sid/trajectory.json": {
+      "schema_version": "ATIF-v1.8",
+      "session_id": "83cf8dab-1e78-45eb-87d8-15f19c133ae4",
+      "trajectory_id": "83cf8dab-1e78-45eb-87d8-15f19c133ae4",
+      "agent": {
+        "name": "vis",
+        "version": "dev",
+        "model_name": "test-model",
+        "extra": {
+          "provider": "test"
+        }
+      },
+      "steps": [
+        {
+          "step_id": 1,
+          "source": "user",
+          "message": "Check the seed",
+          "timestamp": "2026-11-19T21:36:01.836Z"
+        },
+        {
+          "step_id": 2,
+          "source": "agent",
+          "message": "",
+          "timestamp": "1970-01-01T00:00:00.002Z",
+          "model_name": "test-model",
+          "metrics": {
+            "prompt_tokens": 2,
+            "completion_tokens": 1,
+            "cached_tokens": 1,
+            "cost_usd": 0.0625,
+            "extra": {
+              "cache_creation_tokens": 1
+            }
+          },
+          "extra": {
+            "is_cache_warm": true,
+            "provider": "test"
+          }
+        },
+        {
+          "message": "Done.",
+          "timestamp": "2026-11-19T21:36:01.839Z",
+          "source": "agent",
+          "tool_calls": [
+            {
+              "tool_call_id": "vis-1",
+              "function_name": "python_execution",
+              "arguments": {
+                "code": "print(1)"
+              },
+              "extra": {
+                "is_repaired": false,
+                "ref": "t1/i1/f1",
+                "is_timeout": false,
+                "stdout_chars": 1
+              }
+            }
+          ],
+          "extra": {
+            "iteration": 1,
+            "is_final": false,
+            "finished_at_ms": 1795124161839
+          },
+          "reasoning_content": "Inspect the seed",
+          "step_id": 3,
+          "metrics": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cached_tokens": 0,
+            "cost_usd": 0.125,
+            "extra": {
+              "cache_creation_tokens": 0,
+              "reasoning_tokens": 0
+            }
+          },
+          "observation": {
+            "results": [
+              {
+                "source_call_id": "vis-1",
+                "content": "1"
+              }
+            ]
+          }
+        }
+      ],
+      "extra": {
+        "started_at": "2026-11-19T21:36:01.835Z",
+        "last_activity_at": "2026-11-19T21:36:01.839Z"
+      },
+      "final_metrics": {
+        "total_prompt_tokens": 0,
+        "total_completion_tokens": 0,
+        "total_cached_tokens": 0,
+        "total_cost_usd": 0.1875,
+        "total_steps": 3
+      }
+    },
     "GET /v1/sessions/:sid/transcript": {
       "turns": [
         {
