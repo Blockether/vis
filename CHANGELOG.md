@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.23] - 2026-11-19
+
+Vis v0.5.22 was not published, because its release checks failed. v0.5.23 contains all v0.5.22 changes.
+
 ### Changed
 
 - Council: a task has no limit on the total number of subagents, and 32 can run at the same time. Before, a task could have 128 subagents, and 16 could run at the same time.
