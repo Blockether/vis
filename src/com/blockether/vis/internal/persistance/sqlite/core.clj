@@ -5893,6 +5893,30 @@
                 0)))
     (db-agent-info db sid)))
 
+(defn- insert-rows!
+  "Insert `rows` into `table` with one prepared statement. Each row has the same columns,
+   like the rows of one `SELECT *`. A fork of a large session copies thousands of rows, and
+   one statement for each row took most of its time. Call it in a write transaction."
+  [tx-info table rows]
+  (when-let [columns (some-> (first rows)
+                             keys
+                             vec)]
+    (let [statement (str "INSERT INTO "
+                         (name table)
+                         " ("
+                         (str/join ", " (map name columns))
+                         ") VALUES ("
+                         (str/join ", " (repeat (count columns) "?"))
+                         ")")
+          params (mapv (fn [row]
+                         (mapv row columns))
+                       rows)]
+
+      (run-statement! tx-info
+                      #(with-open [ps (jdbc/prepare (ds tx-info) [statement])] (jdbc/execute-batch!
+                                                                                 ps
+                                                                                 params))))))
+
 (defn- turn-copy-rows
   "One transcript turn as raw rows: its soul, its latest state, that state's iterations in
    order and the turn's attachments. A fork and a session snapshot copy these rows."
@@ -5991,36 +6015,32 @@
                               "cancelled" :content_json
                               (->json (conj (vec (<-json (:content_json state)))
                                             (notice new-turn-id)))))]}))
-    (doseq [it
-            iterations
-
-            :let [history-id-map
-                  (copy-histories! (<-blob (:tool_calls it)))]]
-
-      (execute! tx-info
-                {:insert-into :session_turn_iteration
-                 :values [(assoc it
-                            :id (get iter-id-map (:id it))
-                            :session_turn_state_id new-ts-id
-                            :tool_calls (fork-iteration-tool-calls (:tool_calls it) history-id-map)
-                            :user_input (fork-user-input (:user_input it) att-id-map))]}))
+    (insert-rows! tx-info
+                  :session_turn_iteration
+                  (mapv (fn [it]
+                          (let [history-id-map (copy-histories! (<-blob (:tool_calls it)))]
+                            (assoc it
+                              :id (get iter-id-map (:id it))
+                              :session_turn_state_id new-ts-id
+                              :tool_calls (fork-iteration-tool-calls (:tool_calls it)
+                                                                     history-id-map)
+                              :user_input (fork-user-input (:user_input it) att-id-map))))
+                        iterations))
     ;; Attachments: user-rail rows (nil iteration) always copy; tool-rail rows copy only
     ;; when their iteration was copied (latest state), with the iteration FK remapped.
     ;; Skip tool rows from older versions.
-    (doseq [a
-            attachments
-
-            :let [it-id
-                  (:session_turn_iteration_id a)]
-            :when (or (nil? it-id) (contains? iter-id-map it-id))]
-
-      (execute! tx-info
-                {:insert-into :session_attachment
-                 :values [(assoc a
-                            :id (get att-id-map (:id a))
-                            :session_turn_soul_id new-turn-id
-                            :session_turn_iteration_id (some-> it-id
-                                                               iter-id-map))]}))
+    (insert-rows! tx-info
+                  :session_attachment
+                  (into []
+                        (keep (fn [a]
+                                (let [it-id (:session_turn_iteration_id a)]
+                                  (when (or (nil? it-id) (contains? iter-id-map it-id))
+                                    (assoc a
+                                      :id (get att-id-map (:id a))
+                                      :session_turn_soul_id new-turn-id
+                                      :session_turn_iteration_id (some-> it-id
+                                                                         iter-id-map))))))
+                        attachments))
     new-turn-id))
 
 (defn db-fork-session-at-turn!
