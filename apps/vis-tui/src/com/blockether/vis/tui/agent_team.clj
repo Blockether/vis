@@ -984,9 +984,76 @@
     (when (= :row (:kind line))
       (register-row! (:row line) (+ (long viewport-top) (long row)) left width))))
 
+(defn team-span
+  "The time span of the team of `agents`: `{:start :end}` in epoch ms. `:start` is the first
+   spawn. `:end` is the last end, or nil while an agent works or waits. Nil without a spawn."
+  [agents]
+  (let [marks (fn [k]
+                (keep #(let [v (get % k)] (when (number? v) (long v))) agents))]
+    (when-let [starts (seq (marks "created_at"))]
+      {:start (reduce min starts)
+       :end (when-not (some active? agents)
+              (some->> (seq (marks "finished_at"))
+                       (reduce max)))})))
+
+(defn span-time
+  "The time of team span `span` at `now-ms`, such as `3m 20s`: to its end, or to now while the
+   team works. Nil without a span, or for an ended team without an end time."
+  [{:keys [start end]} now-ms active?]
+  (when start
+    (cond end (duration-text (- (long end) (long start)))
+          active? (duration-text (- (long now-ms) (long start))))))
+
+(defn card-node-id
+  "The fold node of the transcript block of team `team-id`. The block starts folded to its head
+   line (user decision), so only a click or a bulk unfold shows its table."
+  [team-id]
+  (str "agent-team:" team-id))
+
+(defn card-head-segments
+  "The painted parts of the head line of a team block: `[col text part]` vectors. `part` is
+   `:mark`, `:head`, `:chrome` or `:time`. The fold mark, then the team and its time, like the
+   Companion team line: `▸ TEAM │ 3m 20s`."
+  [{:keys [expanded? span]}]
+  (let [time (span-time span 0 false)]
+    (cond-> [[0 (if expanded? "▾" "▸") :mark] [2 "TEAM" :head]]
+      time
+      (conj [7 "│" :chrome] [9 time :time]))))
+
+(defn- paint-card-head!
+  "Paint the head line of a team block. A click on it folds or unfolds the table."
+  [^TextGraphics g left row width viewport-top {:keys [team-head session-id node-id collapsed?]}]
+  (let [bg t/code-block-bg
+        y (long row)]
+    (doseq [[col text part]
+            (card-head-segments team-head)
+
+            :let [room
+                  (- (long width) (long col))]
+            :when (pos? room)]
+
+      (let [x (+ (long left) (long col))
+            text (p/ellipsize (str text) room)]
+        (case part
+          :head
+          (do (p/set-colors! g t/code-block-fg bg) (p/styled g [p/BOLD] (p/put-str! g x y text)))
+
+          :chrome
+          (do (p/set-colors! g t/code-border-fg bg) (p/put-str! g x y text))
+
+          (do (p/set-colors! g t/dialog-hint bg) (p/put-str! g x y text)))))
+    (p/clear-styles! g)
+    (.register interactions/hit-map
+               {:bounds {:row (+ (long viewport-top) y) :col left :width (max 1 (long width))}
+                :kind :toggle-details
+                :session-id session-id
+                :node-id node-id
+                :collapsed? collapsed?})))
+
 (defn card
   "The team block data of team `team-id` from `agents`, or nil when the team has no agent. The
-   row of the leader turn `leader` (see `leader-row`) comes first."
+   row of the leader turn `leader` (see `leader-row`) comes first. `decorate-messages` adds the
+   fold state: `:session-id`, `:node-id`, `:expanded?` and the `:span` of the team."
   ([team-id agents] (card team-id agents nil))
   ([team-id agents leader]
    (when-let [rows (seq (team-rows team-id agents))]
@@ -997,9 +1064,10 @@
        {:team-id team-id :rows rows :columns (row-columns rows)}))))
 
 (defn card-entries
-  "Transcript rows of a team table at `width` cells: `{:line :meta}` maps. A blank row stands
-   before and after the table."
-  [{:keys [rows]} width]
+  "Transcript rows of a team block at `width` cells: `{:line :meta}` maps. The head line folds
+   and unfolds the block; an unfolded block shows the table under it. A blank row stands before
+   and after the block."
+  [{:keys [rows expanded? session-id node-id] :as team-card} width]
   (let [marker
         m/MARKER_ACTIVITY
 
@@ -1007,15 +1075,25 @@
         (table-columns rows width)
 
         now
-        (System/currentTimeMillis)]
+        (System/currentTimeMillis)
 
-    (into [{:line marker :meta nil}]
-          (concat (map (fn [line]
-                         {:line (str marker (segments-text (table-segments line columns now)))
-                          :meta {:kind :activity-live-entry
-                                 :live-paint paint-team-line!
-                                 :team-line {:line line :columns columns}}})
-                       (table-lines rows))
+        head
+        {:line (str marker (segments-text (card-head-segments team-card)))
+         :meta {:kind :activity-live-entry
+                :live-paint paint-card-head!
+                :team-head (select-keys team-card [:expanded? :span])
+                :session-id (str session-id)
+                :node-id node-id
+                :collapsed? (not expanded?)}}]
+
+    (into [{:line marker :meta nil} head]
+          (concat (when expanded?
+                    (map (fn [line]
+                           {:line (str marker (segments-text (table-segments line columns now)))
+                            :meta {:kind :activity-live-entry
+                                   :live-paint paint-team-line!
+                                   :team-line {:line line :columns columns}}})
+                         (table-lines rows)))
                   [{:line marker :meta nil}]))))
 
 (defn- card-width ^long [bubble-w] (max 1 (- (long bubble-w) 4)))
@@ -1025,7 +1103,7 @@
    card. Layout adds it to the cached height of the message without its card."
   ^long [team-card _bubble-w]
   (if-let [rows (seq (:rows team-card))]
-    (+ 3 (count (table-lines rows)))
+    (+ 4 (long (if (:expanded? team-card) (count (table-lines rows)) 0)))
     0))
 
 (defn- gap-line?
@@ -1092,11 +1170,13 @@
   "Give the last assistant message of each turn that started a team its `:agent-team-card`.
    The rows come from the transcript turns (`:session-agents`), and the cached snapshot of `sid`
    replaces each row that it also has, so a card paints with its turn. A team in the dock gets
-   no block: the turn `running-turn` still runs, or an agent still works. Returns `messages`
-   unchanged when no team is known. An unchanged team keeps the decorated message identity, so
-   height caches still hit."
+   no block: the turn `running-turn` still runs, or an agent still works. `open?` tells from the
+   fold node of a card (`card-node-id`) whether the card shows its table; without it, each card
+   is folded. Returns `messages` unchanged when no team is known. An unchanged team keeps the
+   decorated message identity, so height caches still hit."
   ([messages sid] (decorate-messages messages sid nil))
-  ([messages sid running-turn]
+  ([messages sid running-turn] (decorate-messages messages sid running-turn (constantly false)))
+  ([messages sid running-turn open?]
    (let [agents (merge-agents (into [] (mapcat :session-agents) messages) (:agents (summary sid)))]
      (if (or (empty? agents) (empty? messages))
        messages
@@ -1114,7 +1194,13 @@
            messages
            (reduce-kv (fn [out team-id i]
                         (if-let [team-card (card team-id agents (message-leader (nth out i)))]
-                          (assoc out i (decorate (nth out i) team-card))
+                          (let [node-id (card-node-id team-id)
+                                team-card (assoc team-card
+                                            :session-id (str sid)
+                                            :node-id node-id
+                                            :expanded? (boolean (open? node-id))
+                                            :span (team-span (filter #(= team-id (get % "team_id")) agents)))]
+                            (assoc out i (decorate (nth out i) team-card)))
                           out))
                       (vec messages)
                       last-index)))))))
@@ -1130,26 +1216,6 @@
 (defn- summary-hint
   [expanded?]
   (str (keymap/label-or-palette :toggle-agent-dock) (if expanded? " hide details" " details")))
-
-(defn team-span
-  "The time span of the team of `agents`: `{:start :end}` in epoch ms. `:start` is the first
-   spawn. `:end` is the last end, or nil while an agent works or waits. Nil without a spawn."
-  [agents]
-  (let [marks (fn [k]
-                (keep #(let [v (get % k)] (when (number? v) (long v))) agents))]
-    (when-let [starts (seq (marks "created_at"))]
-      {:start (reduce min starts)
-       :end (when-not (some active? agents)
-              (some->> (seq (marks "finished_at"))
-                       (reduce max)))})))
-
-(defn span-time
-  "The time of team span `span` at `now-ms`, such as `3m 20s`: to its end, or to now while the
-   team works. Nil without a span, or for an ended team without an end time."
-  [{:keys [start end]} now-ms active?]
-  (when start
-    (cond end (duration-text (- (long end) (long start)))
-          active? (duration-text (- (long now-ms) (long start))))))
 
 (defn summary-segments
   "The painted parts of the dock summary line at `width` cells: `[col text part]` vectors.

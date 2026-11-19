@@ -2,7 +2,7 @@
 // Issue #483: in an HTML export, a subagent row looked like a control, and a click on it did
 // nothing, because the export held only the conversation of the leader. An export now holds the
 // conversation of each subagent below the leader, and a row opens it without a gateway.
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
@@ -20,8 +20,11 @@ function renderExport(document: object) {
   render(<TranscriptExport data={data} client={new GatewayClient({ url: SNAPSHOT_GATEWAY })} />);
 }
 
-const agentRow = (sid: string) =>
-  screen.getAllByRole('button').find((row) => row.getAttribute('data-agent-row') === sid)!;
+// A team of the transcript starts folded to its line, so the row opens it first.
+const agentRow = (sid: string) => {
+  for (const fold of screen.queryAllByRole('button', { name: /^team/, expanded: false })) fireEvent.click(fold);
+  return screen.getAllByRole('button').find((row) => row.getAttribute('data-agent-row') === sid)!;
+};
 
 const path = () => screen.getByRole('navigation', { name: 'Subagent path' });
 

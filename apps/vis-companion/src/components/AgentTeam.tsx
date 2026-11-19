@@ -6,6 +6,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useId,
   useSyncExternalStore,
 } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
@@ -16,6 +17,7 @@ import { SessionEventsContext } from '../lib/session-events';
 import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/time-axis';
 export { axisMarks, formatAgentTime };
 import { Markdown } from './ChatContent';
+import { ChevronIcon, MARK_NUDGE } from './icons';
 import { Chip, HoverNote } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
@@ -781,7 +783,8 @@ export interface TeamProps {
 /**
  * The subagents of one turn as a table in a frame: the team line with its time, then the row of the leader, then one row for each agent in spawn order. An agent
  * row opens the session of its agent; the leader row opens nothing. The dock shows the table without the frame. A subagent never asks a person: its
- * leader answers it, so a row has no question and no control for one.
+ * leader answers it, so a row has no question and no control for one. In the transcript the frame starts folded to its team line (user decision);
+ * the line opens the table, and Timeline opens it with the time bars.
  */
 export function TurnAgents({ agents, onOpen, leader, placement = 'transcript', isTimeline }: TeamProps & {
   /** The dock above the composer while the team works, or the turn of the transcript after. */
@@ -790,23 +793,45 @@ export function TurnAgents({ agents, onOpen, leader, placement = 'transcript', i
   isTimeline?: boolean;
 }) {
   const [isOwnTimeline, setOwnTimeline] = useState(false);
+  const [isOpen, setOpen] = useState(false);
+  const body = useId();
+  const line = useId();
   const now = useNow(agents.some((agent) => agent.status === 'running') || (leader != null && leader.end == null));
   if (agents.length === 0) return null;
   const rows = spawnOrder(agents);
   const table = <AgentTable rows={rows} now={now} onSelect={onOpen} isTimeline={isTimeline ?? isOwnTimeline} leader={leader} />;
-  const toggle = hasTimeline(rows, leader)
-    ? <TimelineToggle isOn={isOwnTimeline} onToggle={() => setOwnTimeline((value) => !value)} />
-    : undefined;
+  const isTimelineOn = isOpen && isOwnTimeline;
+  const toggle = hasTimeline(rows, leader) ? (
+    <TimelineToggle
+      isOn={isTimelineOn}
+      onToggle={() => {
+        setOwnTimeline(!isTimelineOn);
+        if (!isTimelineOn) setOpen(true);
+      }}
+    />
+  ) : undefined;
   return placement === 'transcript' ? (
     <section
       aria-label="Subagents"
       className="my-3 border border-dialog-edge font-mono text-meta text-white sm:text-ui"
       data-transcript-part
     >
-      <div className="flex border-b border-dialog-edge bg-panel px-3 py-1 sm:py-1.5">
-        <TeamLine agents={rows} action={toggle} />
+      {/* The fold control lies under the whole line, so the timeline control can stand inside it. */}
+      <div className={`relative flex min-w-0 items-baseline gap-2 bg-panel px-3 py-1 sm:py-1.5 ${isOpen ? 'border-b border-dialog-edge' : ''}`}>
+        <button
+          type="button"
+          aria-expanded={isOpen}
+          aria-controls={body}
+          aria-labelledby={`${line}-team ${line}-time`}
+          onClick={() => setOpen((value) => !value)}
+          className="absolute inset-0 rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
+        />
+        <span className="pointer-events-none relative flex min-w-0 flex-1 items-baseline gap-2">
+          <ChevronIcon open={isOpen} className={`size-3 shrink-0 text-dialog-hint ${MARK_NUDGE}`} />
+          <TeamLine agents={rows} action={toggle} labelId={line} />
+        </span>
       </div>
-      <div className="px-3 sm:px-0">{table}</div>
+      <div id={body} hidden={!isOpen} className="px-3 sm:px-0">{isOpen && table}</div>
     </section>
   ) : table;
 }

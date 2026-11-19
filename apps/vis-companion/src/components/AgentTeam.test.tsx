@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../lib/gateway';
 import teamFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/team-updated.json';
@@ -30,6 +31,13 @@ const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: '
   task: 'Verify the contract', status: 'running', iteration_budget: 4, iterations_used: 2,
   provider: 'p', model: 'small', routing_locked: true, usage: { cost_usd: 0.0123 }, created_at: T0 };
 const props = { onOpen: vi.fn() };
+
+// The transcript folds a team to its line (user decision), so a test of its table opens it first.
+const renderOpen = (ui: ReactElement) => {
+  const view = render(ui);
+  for (const fold of screen.queryAllByRole('button', { expanded: false })) fireEvent.click(fold);
+  return view;
+};
 
 const rowTexts = () => screen.getAllByRole('button').filter((row) => row.hasAttribute('data-agent-row')).map((row) => row.textContent);
 
@@ -174,7 +182,7 @@ describe('agent rows', () => {
       matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
     }));
     const onOpen = vi.fn();
-    render(<TurnAgents {...props} onOpen={onOpen} agents={[
+    renderOpen(<TurnAgents {...props} onOpen={onOpen} agents={[
       { ...child, note: 'Reading the routes' },
       { ...child, session_id: 'done', status: 'completed', finished_at: T0 + 9_000 },
     ]} />);
@@ -211,7 +219,7 @@ describe('agent rows', () => {
       matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
     }));
     const leader = { start: T0 - 10_000, end: T0 + 20_000, waits: [{ start: T0, end: T0 + 12_000 }], note: 'Both reviews pass.' };
-    render(<TurnAgents {...props} leader={leader} agents={[
+    renderOpen(<TurnAgents {...props} leader={leader} agents={[
       { ...child, title: 'Companion review', role: 'verify', status: 'completed', finished_at: T0 + 9_000, result: 'All **12** keys pass' },
       { ...child, session_id: 'tui', title: 'TUI review', role: 'verify', status: 'completed', finished_at: T0 + 15_000 },
     ]} />);
@@ -229,7 +237,7 @@ describe('agent rows', () => {
       { ...child, title: 'Companion review', status: 'completed' as const, finished_at: T0 + 9_000 },
       { ...child, session_id: 'tui', title: 'TUI review', status: 'running' as const },
     ];
-    const { unmount } = render(<TurnAgents {...props} agents={agents.map((agent) => ({ ...agent, status: 'completed' as const, finished_at: T0 + 9_000 }))} />);
+    const { unmount } = renderOpen(<TurnAgents {...props} agents={agents.map((agent) => ({ ...agent, status: 'completed' as const, finished_at: T0 + 9_000 }))} />);
     fireEvent.click(screen.getByRole('button', { name: 'Timeline' }));
     expect(within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem')).toHaveLength(2);
     unmount();
@@ -249,13 +257,13 @@ describe('agent rows', () => {
     expect(agentUpdate({ ...child, status: 'budget_limited' })).toBe('out of budget');
     expect(agentUpdate({ ...child, status: 'budget_limited', result: 'Read 41 of 60 files' })).toBe('Read 41 of 60 files');
     expect(agentUpdate({ ...child, status: 'failed' })).toBeUndefined();
-    render(<TurnAgents {...props} agents={[{ ...child, ...asks, note: 'The bug is in tokenize' }]} />);
+    renderOpen(<TurnAgents {...props} agents={[{ ...child, ...asks, note: 'The bug is in tokenize' }]} />);
     expect(rowTexts()[0]).toMatch(/^agent#1The bug is in tokenize/);
     expect(screen.queryByText(/old API|Slow tests/)).not.toBeInTheDocument();
   });
 
   it('keeps the spawn order whatever the status', () => {
-    render(<TurnAgents {...props} agents={[
+    renderOpen(<TurnAgents {...props} agents={[
       { ...child, session_id: 'late', created_at: T0 + 5, pending_input: true },
       { ...child, session_id: 'early', created_at: T0 + 1, status: 'completed' },
     ]} />);
@@ -266,7 +274,7 @@ describe('agent rows', () => {
   // other form. Its row has no control for it.
   it('shows an agent with an open form as running, with no control for its requests', () => {
     const onOpen = vi.fn();
-    render(<TurnAgents {...props} onOpen={onOpen} agents={[
+    renderOpen(<TurnAgents {...props} onOpen={onOpen} agents={[
       { ...child, pending_input: true },
       { ...child, session_id: 'asks', question: 'Keep the old API?', budget_request: { iterations: 8 } },
     ]} />);
@@ -282,7 +290,7 @@ describe('agent rows', () => {
     const first = { ...child, session_id: 'first', id: 'a1', status: 'completed' as const };
     const second = { ...child, session_id: 'second', id: 'a2', title: 'Implement' };
     const third = { ...child, session_id: 'third', id: 'a3', title: 'Verify', status: 'waiting' as const, after: ['a1', 'a2'] };
-    render(<TurnAgents {...props} onOpen={onOpen} agents={[first, second, third]} />);
+    renderOpen(<TurnAgents {...props} onOpen={onOpen} agents={[first, second, third]} />);
     const row = screen.getByRole('button', { name: /^agentVerify/ });
     expect(row).toBeDisabled();
     fireEvent.click(row);
@@ -294,7 +302,7 @@ describe('agent rows', () => {
   // User report 2026-11-03: a row opened a sheet with an Open button before the agent session.
   it('opens the session of an agent from its row, with no sheet between', () => {
     const onOpen = vi.fn();
-    render(<TurnAgents {...props} onOpen={onOpen} agents={[child, { ...child, session_id: 'second' }]} />);
+    renderOpen(<TurnAgents {...props} onOpen={onOpen} agents={[child, { ...child, session_id: 'second' }]} />);
     fireEvent.click(screen.getByRole('button', { name: /^agent#2/ }));
     expect(onOpen).toHaveBeenCalledExactlyOnceWith('second');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -318,9 +326,27 @@ describe('team line', () => {
     expect(teamTime([ended], T0 + 999_000)).toBeUndefined();
   });
 
+  // User request 2026-11-19: a team in the transcript starts folded to its team line.
+  it('folds a team of the transcript to its line, and opens it from the line or from Timeline', () => {
+    const agents = [child, { ...child, session_id: 'b' }].map((agent) => ({ ...agent, status: 'completed' as const, finished_at: T0 + 9_000 }));
+    const { unmount } = render(<TurnAgents {...props} agents={agents} />);
+    const fold = screen.getByRole('button', { name: /^team/, expanded: false });
+    expect(rowTexts()).toEqual([]);
+    fireEvent.click(fold);
+    expect(fold).toHaveAttribute('aria-expanded', 'true');
+    expect(rowTexts()).toHaveLength(2);
+    fireEvent.click(fold);
+    expect(rowTexts()).toEqual([]);
+    unmount();
+    render(<TurnAgents {...props} agents={agents} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline' }));
+    expect(screen.getByRole('button', { name: /^team/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem')).toHaveLength(2);
+  });
+
   it('ticks the team time on the team line while an agent runs', () => {
     vi.useFakeTimers({ now: T0 + 200_000 });
-    render(<TurnAgents {...props} agents={[{ ...child, role: 'research' }]} />);
+    renderOpen(<TurnAgents {...props} agents={[{ ...child, role: 'research' }]} />);
     const line = () => screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]');
     expect(line()).toHaveTextContent(/^team3m 20s$/);
     act(() => { vi.advanceTimersByTime(2000); });
@@ -373,7 +399,7 @@ describe('leader row', () => {
 
   it.each([true, false])('puts the leader of a stored turn first, with its wait, answer, time and status (wide: %s)', (isWide) => {
     wide(isWide);
-    render(<TurnAgents {...props} agents={team} leader={storedLeaderLane(turn('done'))} />);
+    renderOpen(<TurnAgents {...props} agents={team} leader={storedLeaderLane(turn('done'))} />);
     const rows = tableRows();
     expect(rows).toHaveLength(3);
     expect(rows[0]).toMatch(/^leaderBoth reviews pass\.30s \(waited 12s\)done$/);
@@ -401,13 +427,13 @@ describe('leader row', () => {
       { start: 1794213407814 - 3239, end: 1794213407814 },
       { start: 1794213410289 - 36, end: 1794213410289 },
     ]);
-    render(<TurnAgents {...props} agents={team} leader={leader} />);
+    renderOpen(<TurnAgents {...props} agents={team} leader={leader} />);
     expect(tableRows()[0]).toBe('leaderBoth subagents finished, and each replied with the text it was given:12s (waited 3s)done');
   });
 
   it('marks the leader of a stored turn that ended in an error or a stop as failed', () => {
     wide(true);
-    render(<TurnAgents {...props} agents={team} leader={storedLeaderLane(turn('interrupted'))} />);
+    renderOpen(<TurnAgents {...props} agents={team} leader={storedLeaderLane(turn('interrupted'))} />);
     expect(document.querySelector('[data-leader-row]')).toHaveTextContent(/30s \(waited 12s\)failed$/);
   });
 
@@ -430,7 +456,7 @@ describe('leader row', () => {
   // Issue #460: a team of a later turn keeps the task ids of its children, so the keys match a5 and a6.
   it('keys the lanes of a later team by the task ids of its children', () => {
     wide(true);
-    render(<TurnAgents {...props} isTimeline agents={[5, 6].map((n) => ({ ...child, session_id: `i${n}`, id: `a${n}`, status: 'completed' as const, finished_at: T0 + n * 1_000 }))} />);
+    renderOpen(<TurnAgents {...props} isTimeline agents={[5, 6].map((n) => ({ ...child, session_id: `i${n}`, id: `a${n}`, status: 'completed' as const, finished_at: T0 + n * 1_000 }))} />);
     const lanes = within(screen.getByRole('list', { name: 'Timeline' })).getAllByRole('listitem').map((lane) => lane.textContent?.split(' ')[0]);
     expect(lanes).toEqual(['A5', 'A6']);
   });
@@ -469,7 +495,7 @@ function streamHub(rememberAgents = vi.fn()) {
 
 function TeamView({ client, sid, stored }: { client: GatewayClient; sid: string; stored?: Subagent[] }) {
   const team = useAgentTeam(client, sid, stored);
-  return <TurnAgents agents={team.agents} onOpen={vi.fn()} />;
+  return <TurnAgents agents={team.agents} onOpen={vi.fn()} placement="dock" />;
 }
 
 function Team({ hub = null, ...props }: { client: GatewayClient; sid: string; stored?: Subagent[]; hub?: SessionSubscriptionHub | null }) {

@@ -1238,12 +1238,13 @@
                  "created_at" created})
 
               card-a
-              (agent-team/card "turn-1" [(agent "c1" "Reading files" 1000)])
+              (assoc (agent-team/card "turn-1" [(agent "c1" "Reading files" 1000)]) :expanded? true)
 
               card-b
-              (agent-team/card "turn-1"
-                               [(agent "c1" "Running the tests" 1000)
-                                (agent "c2" "Reviewing" 2000)])
+              (assoc (agent-team/card "turn-1"
+                                      [(agent "c1" "Running the tests" 1000)
+                                       (agent "c2" "Reviewing" 2000)])
+                :expanded? true)
 
               base
               (assoc (trace-assistant-msg 3 1 "done") :session-turn-id "turn-1")
@@ -1290,7 +1291,7 @@
   ;; stands after the trace and before the answer, with or without a trace.
   (it "puts the team block of a turn before its final answer"
       (render/invalidate-cache!)
-      (let [card
+      (let [folded
             (agent-team/card "turn-1"
                              [{"team_id" "turn-1"
                                "session_id" "c1"
@@ -1301,8 +1302,13 @@
                                "created_at" 1000
                                "finished_at" 5000}])
 
+            card
+            (assoc folded :expanded? true)
+
             project
-            (fn [message]
+            (fn project
+              ([message] (project message card))
+              ([message card]
               (:prewrapped-lines (#'virtual/project-message-cached
                                   (assoc message
                                     :session-turn-id "turn-1"
@@ -1310,7 +1316,7 @@
                                   bubble-w
                                   settings
                                   {}
-                                  "cid")))
+                                  "cid"))))
 
             index-of
             (fn [lines text]
@@ -1331,7 +1337,13 @@
             (expect (= (- (count lines) (count bare)) (agent-team/card-height card bubble-w))
                     "The card adds exactly the rows that layout reserves for it")
             (when (:traces message)
-              (expect (< (long (index-of lines "EXECUTION")) (long card-at)))))))))
+              (expect (< (long (index-of lines "EXECUTION")) (long card-at))))
+            ;; User request 2026-11-19: a team block starts folded to its head line.
+            (let [lines (project message folded)]
+              (expect (nil? (index-of lines "Fix parser")))
+              (expect (some? (index-of lines "▸ TEAM")))
+              (expect (= (- (count lines) (count bare)) (agent-team/card-height folded bubble-w))
+                      "A folded card adds exactly the rows that layout reserves for it")))))))
 
 (defdescribe
   long-transcript-scroll-test

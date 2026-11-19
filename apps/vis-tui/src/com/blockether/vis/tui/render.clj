@@ -4655,7 +4655,7 @@
   (let [s (str (or id ""))]
     (subs s 0 (min 8 (count s)))))
 
-(defn- detail-expanded?
+(defn detail-expanded?
   ([detail-expansions session-id node-id]
    (detail-expanded? detail-expansions session-id node-id true))
   ([detail-expansions session-id node-id default-expanded?]

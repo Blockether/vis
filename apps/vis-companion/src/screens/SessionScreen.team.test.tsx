@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 
 import type { Subagent } from '../lib/types';
 import { renderSessionScreen, sessionFixture } from './session-screen-harness';
@@ -37,6 +37,7 @@ describe('the team of a stored turn', () => {
     });
     expect(await screen.findByText('review the contract')).toBeInTheDocument();
     const team = screen.getByRole('region', { name: 'Subagents' });
+    fireEvent.click(within(team).getByRole('button', { name: /^team/, expanded: false }));
     expect(within(team).getAllByText('Contract review').length).toBeGreaterThan(0);
   });
 
@@ -54,6 +55,7 @@ describe('the team of a stored turn', () => {
     });
     expect(await screen.findByText('review the contract')).toBeInTheDocument();
     const team = screen.getByRole('region', { name: 'Subagents' });
+    fireEvent.click(within(team).getByRole('button', { name: /^team/, expanded: false }));
     expect(within(team).getAllByText('Contract review').length).toBeGreaterThan(0);
     expect(within(team).queryByText(/running/i)).not.toBeInTheDocument();
   });

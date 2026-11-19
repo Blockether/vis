@@ -1614,7 +1614,10 @@
 
         ;; The turn that started a team carries its team card from the cached snapshot.
         messages
-        (agent-team/decorate-messages messages session-id running-turn-id)
+        (agent-team/decorate-messages messages
+                                      session-id
+                                      running-turn-id
+                                      #(render/detail-expanded? detail-expansions session-id % false))
 
         n
         (long (count messages))

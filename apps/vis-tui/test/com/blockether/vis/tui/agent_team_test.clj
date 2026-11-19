@@ -627,13 +627,26 @@
           (expect (identical? (nth decorated 1) (nth (team/decorate-messages messages "leader") 1)))
           (expect (= messages (team/decorate-messages messages "leader" "turn-1"))
                   "The running turn shows its team in the dock, not in the transcript")
-          (let [projected (team/with-card-lines (assoc (nth decorated 1)
-                                                  :prewrapped-lines ["ok"]
-                                                  :line-meta [nil])
-                                                100)]
+          (let [project (fn [open?]
+                          (team/with-card-lines
+                            (assoc (nth (team/decorate-messages messages "leader" nil open?) 1)
+                              :prewrapped-lines ["ok"]
+                              :line-meta [nil])
+                            100))
+                projected (project #{"agent-team:turn-1"})
+                folded (project (constantly false))
+                head (some #(when (:team-head %) %) (:line-meta folded))]
             (expect (= (count (:prewrapped-lines projected)) (count (:line-meta projected))))
             (expect (some #(str/includes? % "All 120 tests pass") (:prewrapped-lines projected)))
-            (expect (not-any? #(str/includes? % "Team ·") (:prewrapped-lines projected)))))))
+            (expect (some #(str/includes? % "▾ TEAM") (:prewrapped-lines projected)))
+            (expect (not-any? #(str/includes? % "Team ·") (:prewrapped-lines projected)))
+            ;; User request 2026-11-19: a team block starts folded; its head line unfolds it.
+            (expect (not-any? #(str/includes? % "All 120 tests pass") (:prewrapped-lines folded)))
+            (expect (some #(str/includes? % "▸ TEAM") (:prewrapped-lines folded)))
+            (expect (= {:session-id "leader" :node-id "agent-team:turn-1" :collapsed? true}
+                       (select-keys head [:session-id :node-id :collapsed?])))
+            (expect (= (- (count (:prewrapped-lines folded)) 1)
+                       (team/card-height (:agent-team-card (nth decorated 1)) 100)))))))
   (it "keeps a team with a working agent in the dock after its turn ends"
       (with-redefs [team/summary (constantly {:agents waiting-team})]
         (let [messages [{:role :assistant :session-turn-id "turn-1" :text "ok"}
