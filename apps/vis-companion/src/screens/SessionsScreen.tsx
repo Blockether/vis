@@ -448,7 +448,8 @@ export function SessionsScreen({
     at: string | null;
     label: string;
   } | null>(null);
-  const [createError, setCreateError] = useState<string | null>(null);
+  // A failed create belongs to its machine: removing that machine drops the message.
+  const [createError, setCreateError] = useState<{ key: string; message: string } | null>(null);
   const [projectFolder, setProjectFolder] = useState<{
     conn: GatewayConn;
     at: MenuPosition;
@@ -913,6 +914,9 @@ export function SessionsScreen({
   // Pairing changes rebuild the fleet; machines that stayed keep their rows.
   useEffect(() => {
     setMachines((current) => hydrateMachines(connsRef.current, current));
+    setCreateError((held) =>
+      held && connsRef.current.some((conn) => machineKey(conn) === held.key) ? held : null,
+    );
   }, [fleetKey]);
 
   // Prime the list behind an open transcript once, using cached rows when available;
@@ -1635,7 +1639,7 @@ export function SessionsScreen({
         if (session.id) await onOpen(on, session.id, true);
         void load();
       } catch (cause) {
-        setCreateError((cause as Error).message);
+        setCreateError({ key: machineKey(on), message: (cause as Error).message });
       } finally {
         setCreating(null);
       }
@@ -2341,7 +2345,9 @@ export function SessionsScreen({
             popover is gone, so the word lands on the paper the list is about to fill. */}
         {createError && (
           <div className="border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
-            <Banner kind="err">{createError}</Banner>
+            <Banner kind="err" dismiss={{ label: 'Dismiss message', onClick: () => setCreateError(null) }}>
+              {createError.message}
+            </Banner>
           </div>
         )}
 

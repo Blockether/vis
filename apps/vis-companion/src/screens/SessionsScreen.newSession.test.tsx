@@ -145,6 +145,23 @@ describe('where "New session" lives', () => {
     expect(next).not.toBe(retried);
   });
 
+  // Regression, user report (paraphrased: the first connection failed, I removed the
+  // gateway and added it again, it connects, but the red banner stays): a failed create
+  // left its error on the list after its machine was removed.
+  it('drops a failed create message when its machine is removed', async () => {
+    const view = renderSessionsScreen({ machines: [{ ...alpha()[0], failCreates: 1 }] });
+    restore = view.restore;
+    await screen.findByText('First');
+
+    await startSession();
+    await screen.findByText(/Failed to fetch/);
+
+    view.setConns([]);
+    view.setConns(view.conns);
+    await screen.findByText('First');
+    expect(screen.queryByText(/Failed to fetch/)).toBeNull();
+  });
+
   // Regression, user report, Vis session 2692dc5c-b2fd-4502-b7fa-5fe440a16c1d (paraphrased:
   // with two projects added, a new session took its prompt to the first project).
   it('starts the session in the project it was asked on, not the first one', async () => {
