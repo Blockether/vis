@@ -85,8 +85,15 @@ jobs:
               "$REPOSITORY_URL" "${SUBDIRECTORY:--}" "$RELEASE_TAG" "$REVISION" > "$RUNNER_TEMP/targets"
           else
             : > "$RUNNER_TEMP/targets"
-            while read -r repository folder; do
-              tag=$(gh api "repos/$repository/releases/latest" --jq .tag_name 2>/dev/null || true)
+            while read -r repository folder prefix; do
+              if [ "$prefix" = "-" ]; then
+                tag=$(gh api "repos/$repository/releases/latest" --jq .tag_name 2>/dev/null || true)
+              else
+                # This repository also releases other products. Take its newest stable release with this tag prefix.
+                tag=$(gh api "repos/$repository/releases?per_page=100" \
+                  --jq "[.[] | select((.draft or .prerelease) | not) | select(.tag_name | startswith(\"$prefix\"))][0].tag_name // empty" \
+                  2>/dev/null || true)
+              fi
               if [ -z "$tag" ]; then
                 echo "$repository has no published release yet; skipping it." >&2
                 continue
@@ -95,14 +102,15 @@ jobs:
               printf '%s %s %s %s\n' \
                 "https://github.com/$repository" "$folder" "$tag" "$revision" >> "$RUNNER_TEMP/targets"
             done <<'FIRST_PARTY'
-          Blockether/vis-lang-interface -
-          Blockether/vis-lang-python -
-          Blockether/vis-lang-clojure extension
-          Blockether/vis-decisions -
-          Blockether/vis-optmem -
-          Blockether/vis-graphify -
-          Blockether/vis-podcaster -
-          Blockether/vis-reel -
+          Blockether/vis-lang-interface - -
+          Blockether/vis-lang-python - -
+          Blockether/vis-lang-clojure extension -
+          Blockether/vis-decisions - -
+          Blockether/vis-optmem - -
+          Blockether/vis-graphify - -
+          Blockether/vis-podcaster - -
+          Blockether/vis-reel - -
+          Blockether/spel extensions/vis-spel vis-spel/v
           FIRST_PARTY
           fi
           cat "$RUNNER_TEMP/targets"
