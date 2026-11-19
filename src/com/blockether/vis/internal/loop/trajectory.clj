@@ -745,6 +745,24 @@
                   :else value))]
     (clip step)))
 
+(defn- unique-call-ids
+  "Give the calls and their results one sequence of IDs across the whole export."
+  [trajectory]
+  (let [counter (volatile! 0)]
+    (letfn [(step-ids [step]
+              (reduce-kv (fn [step i _]
+                           (let [id (str "vis-" (vswap! counter #(inc (long %))))]
+                             (-> step
+                                 (assoc-in [:tool-calls i :tool-call-id] id)
+                                 (assoc-in [:observation :results i :source-call-id] id))))
+                         step
+                         (:tool-calls step)))
+            (trajectory-ids [trajectory]
+              (cond-> (update trajectory :steps #(mapv step-ids %))
+                (:subagent-trajectories trajectory)
+                (update :subagent-trajectories #(mapv trajectory-ids %))))]
+      (trajectory-ids trajectory))))
+
 (defn saved-json
   "Encode one saved session and its children as a redacted ATIF document.
    `read-turns` gives the turns of one session on demand."
@@ -761,11 +779,14 @@
         children
         (children-by-parent sid records)]
 
-    (wire/json-str (redact-value (persisted-trajectory {:children children
-                                                        :read-turns read-turns
-                                                        :project-step #(clip-step (redact-value %))}
-                                                       #{}
-                                                       root)))))
+    (->> (persisted-trajectory {:children children
+                                :read-turns read-turns
+                                :project-step #(clip-step (redact-value %))}
+                               #{}
+                               root)
+         redact-value
+         unique-call-ids
+         wire/json-str)))
 
 (def ^:private owner-only (PosixFilePermissions/fromString "rw-------"))
 

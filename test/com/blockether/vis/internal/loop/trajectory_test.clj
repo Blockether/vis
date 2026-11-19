@@ -296,7 +296,23 @@
         (expect (= "1970-01-01T00:00:01.200Z" (get-in sub ["extra" "started_at"])))
         (expect (= "1970-01-01T00:00:01.400Z" (get-in sub ["extra" "last_activity_at"])))
         (expect (not (contains? (get sub "extra") "cwd")))
-        (expect (not (contains? (get nested "extra") "last_activity_at"))))))
+        (expect (not (contains? (get nested "extra") "last_activity_at")))))
+  (it "uses distinct call ids across turns and children and pairs each result"
+      (let [turn (fn [position]
+                   {"position" position
+                    "trace" [{"position" 1
+                              "forms" [{"src" "print(1)" "tool_call_id" "call_1"}
+                                       {"src" "print(2)"}]}]})
+            turns {"session-1" [(turn 1) (turn 2)] "child-1" [(turn 1)]}
+            document (wire/parse-json
+                       (trajectory/saved-json {:session-id "session-1"} [child] turns))
+            steps (concat (get document "steps")
+                          (get-in document ["subagent_trajectories" 0 "steps"]))
+            calls (mapcat #(get % "tool_calls") steps)
+            results (mapcat #(get-in % ["observation" "results"]) steps)
+            ids (mapv #(get % "tool_call_id") calls)]
+        (expect (= 6 (count (distinct ids))))
+        (expect (= ids (mapv #(get % "source_call_id") results))))))
 
 (def ^:private persisted-iterations
   "The iterations of the turn of a persisted run. The answer step also runs code."
