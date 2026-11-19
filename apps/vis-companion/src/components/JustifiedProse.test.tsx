@@ -13,6 +13,8 @@ const paragraph =
 const coded = 'Look at `src/components/Prose.tsx` for the details of the change today.';
 const codedText = coded.replaceAll('`', '');
 let width = 240;
+/** Like `text-wrap: pretty`: a lone word on the last line takes the word before it along. */
+let pretty = false;
 let resize: ResizeObserverCallback;
 let disconnect: ReturnType<typeof vi.fn>;
 let reads: ReturnType<typeof vi.fn>;
@@ -93,6 +95,11 @@ function layoutOf(root: Element): Box[] {
     }
     order.push(word);
   }
+  const [before, last] = lines.slice(-2);
+  if (pretty && last?.length === 1 && before?.length > 1 && !boxed.has(before)) {
+    const moved = before.at(-1)!;
+    if ((last[0][1] - moved[0]) * CHAR <= width) last.unshift(before.pop()!);
+  }
   const boxes: Box[] = Array.from(text, () => ({ line: 0, left: 0, width: 0 }));
   for (const [number, line] of lines.entries()) {
     const used = line.reduce((sum, [start, end]) => sum + (end - start) * CHAR, 0);
@@ -148,6 +155,7 @@ function clientRects(this: Range) {
 
 beforeEach(() => {
   width = 240;
+  pretty = false;
   disconnect = vi.fn();
   fonts = Object.assign(new EventTarget(), {
     ready: Promise.resolve(),
@@ -280,6 +288,25 @@ describe('justified prose', () => {
     const prose = view.getByRole('paragraph');
     expect(endings(prose)).toEqual(['start', 'justify', 'start']);
     expect(prose.textContent).toBe(text);
+  });
+
+  // Regression, user report: `text-wrap: pretty` moved the word before a link down beside
+  // it, and the short line above kept native justification, with gaps across the column.
+  it('sets a line ragged when pretty wrapping moves words down beside a long token', async () => {
+    pretty = true;
+    const text = 'Missing pieces here: https://github.com/v/368';
+    const view = render(<JustifiedProse>{text}</JustifiedProse>);
+    await settle();
+    const prose = view.getByRole('paragraph');
+    const lines = [...prose.children].filter(
+      (line): line is HTMLElement =>
+        line instanceof HTMLElement && line.style.display === 'inline-block',
+    );
+    expect(lines.map((line) => line.textContent)).toEqual([
+      'Missing pieces',
+      'here: https://github.com/v/368',
+    ]);
+    expect(endings(prose)).toEqual(['start', 'start']);
   });
 
   it('keeps native lines when the risky token opens no wide gap', async () => {

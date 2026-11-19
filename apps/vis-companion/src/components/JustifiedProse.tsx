@@ -234,7 +234,9 @@ function nativeLines(element: HTMLElement, content: InlineContent): ProseLine[] 
   const words = [...measured.matchAll(/[^ \t\r\n\f]+/g)];
 
   // Each read costs tens of microseconds. Wide gaps open only beside a risky token: on
-  // its own line, or on the line before it that the token did not fit. Read those first.
+  // its own line, or on the line above it. Read those first. `text-wrap: pretty` can move
+  // words before the token down beside it, so the line above ends at the last earlier
+  // word that stands higher than the token, not always at the word just before it.
   const risky = [
     ...content.atomic,
     ...words
@@ -244,12 +246,23 @@ function nativeLines(element: HTMLElement, content: InlineContent): ProseLine[] 
   const suspects = new Set<number>();
   for (const [start, end] of risky) {
     suspects.add(end);
-    let at = start - 1;
-    suspects.add(at);
-    while (at >= 0 && !/[ \t\r\n\f]/.test(measured[at])) at--;
-    while (at >= 0 && /[ \t\r\n\f]/.test(measured[at])) at--;
-    while (at >= 0 && !/[ \t\r\n\f]/.test(measured[at])) at--;
-    suspects.add(at);
+    suspects.add(start - 1);
+    const top = rects(start, end)[0]?.top;
+    if (top === undefined) continue;
+    const above = (index: number) => {
+      const { index: at, 0: word } = words[index];
+      const rect = rects(at, at + word.length)[0];
+      return !!rect && middle(rect) < top;
+    };
+    let low = -1;
+    let high = words.findIndex(({ index }) => index >= start) - 1;
+    if (high < -1) high = words.length - 1;
+    while (low < high) {
+      const at = Math.ceil((low + high) / 2);
+      if (above(at)) low = at;
+      else high = at - 1;
+    }
+    if (low >= 0) suspects.add(words[low].index - 1);
   }
   if (![...suspects].some(wide)) return null;
 
