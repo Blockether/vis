@@ -541,9 +541,11 @@
           #(do (expect (= "page" (String. (client/session-export "s1" :html) "UTF-8")))
                (client/session-export "s1" :md)
                (client/session-export "s1" :snapshot)
+               (client/session-export "s1" :atif)
                (expect (= [["GET" "/v1/sessions/s1/transcript.html" :bytes]
                            ["GET" "/v1/sessions/s1/transcript.md" :bytes]
-                           ["GET" "/v1/sessions/s1/snapshot" :bytes]]
+                           ["GET" "/v1/sessions/s1/snapshot" :bytes]
+                           ["GET" "/v1/sessions/s1/trajectory.json" :bytes]]
                           @asked))
                (reset! answer
                  {:status 503
@@ -558,11 +560,17 @@
 (defdescribe
   session-import-test
   ;; The gateway files an import by its query. A refusal must come back as its
-  ;; message, so the person reads why the snapshot did not become a session.
+  ;; message, so the person reads why the file did not become a session.
   (it
-    "sends the snapshot bytes to the place and throws the gateway's message on a refusal"
+    "sends the snapshot and ATIF bytes to the place and shows the gateway error"
     (let [file
           (doto (java.io.File/createTempFile "vis-import" ".vissnap") (spit "VISSNAP-bytes"))
+
+          atif
+          "  {\"schema_version\": \"ATIF-v1.8\"}\n"
+
+          json-file
+          (doto (java.io.File/createTempFile "vis-import" ".json") (spit atif))
 
           asked
           (atom [])
@@ -581,10 +589,10 @@
                                              @answer)}
           #(do
              (expect (= "n1" (get (client/import-session! file {:group-id "g 1"}) "id")))
-             (client/import-session! file {:root "/code/my shop" :key "k1"})
+             (client/import-session! json-file {:root "/code/my shop" :key "k1"})
              (expect (= [["POST" "/v1/sessions/actions/import?group_id=g+1" "VISSNAP-bytes" true]
                          ["POST" "/v1/sessions/actions/import?root=%2Fcode%2Fmy+shop&key=k1"
-                          "VISSNAP-bytes" true]]
+                          atif true]]
                         @asked))
              (reset! answer
                {:status 400
@@ -593,7 +601,9 @@
              (expect (= "Not a snapshot."
                         (try (client/import-session! file {:root "/code"})
                              (catch clojure.lang.ExceptionInfo e (ex-message e)))))))
-        (finally (.delete file))))))
+        (finally
+           (.delete file)
+           (.delete json-file))))))
 
 (defdescribe router-refresh-failure-keeps-data-and-backs-off
              (it "router refresh failure keeps data and backs off"

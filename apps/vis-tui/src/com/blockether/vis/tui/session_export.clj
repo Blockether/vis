@@ -1,6 +1,6 @@
 (ns com.blockether.vis.tui.session-export
   "The export of one session to a file: the formats, the file name and the write.
-   Also the snapshot file that an import reads.
+   Also the file that an import reads.
 
    The gateway renders each format, so the TUI, the Companion and the CLI give the
    same file. The Companion names the file with the same rule."
@@ -14,6 +14,11 @@
    `:ext` is the file extension."
   [{:id :html :label "HTML" :ext "html" :key \h :description "One page that opens in a browser"}
    {:id :md :label "Markdown" :ext "md" :key \m :description "The text of each turn"}
+   {:id :atif
+    :label "ATIF (.json)"
+    :ext "json"
+    :key \a
+    :description "A trajectory that Vis and Harbor read"}
    {:id :snapshot
     :label "Snapshot"
     :ext "vissnap"
@@ -62,7 +67,7 @@
          target
          (finally (Files/deleteIfExists tmp)))))
 
-(defn snapshot-file
+(defn import-file
   "The readable file at the typed `path`, or nil. A leading `~` is the home folder,
    and quotes around the path are dropped, so a path pasted from a shell works."
   ^File [path]

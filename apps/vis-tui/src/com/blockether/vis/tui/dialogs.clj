@@ -9635,12 +9635,12 @@
    {:id :export-session
     :group "Session"
     :label "Export Session…"
-    :description "Save this session as HTML, Markdown or a snapshot"
+    :description "Save this session as HTML, Markdown, ATIF or a snapshot"
     :show-when :has-turns}
    {:id :import-session
     :group "Session"
     :label "Import Session…"
-    :description "Open a snapshot file as a new session"}
+    :description "Open a snapshot or ATIF file as a new session"}
    {:id :archive-session
     :group "Session"
     :label "Archive Session"

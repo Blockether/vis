@@ -8415,7 +8415,7 @@
           (assoc place :group (:group pick)))))))
 
 (defn- import-session!
-  "Import a `.vissnap` file as a new session. The person types the path of the file.
+  "Import a snapshot or ATIF file as a new session. The person types its path.
    `place` is the `{:project-id :root :group}` of a rail row. Without it, the person
    chooses a place in the project of the open session. A worker sends the file to
    the gateway. Then `open!` gets the id of the new session."
@@ -8423,10 +8423,10 @@
   (when-let [entered (with-dialog-lock
                        #(dlg/text-input-dialog!
                           screen
-                          "Import session" "Snapshot file"
-                          :body "The path of a .vissnap file, such as ~/Downloads/work.vissnap"))]
+                          "Import session" "Session file"
+                          :body "Enter the path of a snapshot (.vissnap) or ATIF (.json) file."))]
     (when-not (str/blank? (str entered))
-      (if-let [file (session-export/snapshot-file entered)]
+      (if-let [file (session-export/import-file entered)]
         (when-let [{:keys [project-id root group]} (or place
                                                        (import-place screen (current-session-id)))]
           (vis/worker-future
@@ -11028,7 +11028,7 @@
         :export-session
         (do (export-session! screen (current-session-id)) ::recur)
 
-        ;; C-x s i — type the path of a snapshot, then open it as a new session.
+        ;; C-x s i — type the path of a file, then open it as a new session.
         :import-session
         (do (import-session! screen nil #(switch-session! {:action :switch :id %})) ::recur)
 

@@ -2032,13 +2032,12 @@
 
 (def ^:private session-export-routes
   "The gateway route of each export format, after `/v1/sessions/<sid>`."
-  {:html "/transcript.html" :md "/transcript.md" :snapshot "/snapshot"})
+  {:html "/transcript.html" :md "/transcript.md" :atif "/trajectory.json" :snapshot "/snapshot"})
 
 (defn session-export
   "The bytes of session `sid` in the export format `fmt`: `:html` is the standalone
-   page, `:md` is the Markdown digest and `:snapshot` is the `.vissnap` file. Throws
-   `ex-info` with the gateway's message on a non-2xx, so the caller can say why no
-   file came."
+   page, `:md` is the Markdown digest, `:atif` is the trajectory JSON and `:snapshot`
+   is the `.vissnap` file. Throws `ex-info` with the gateway's message on a non-2xx."
   ^bytes [sid fmt]
   (let [entry
         (target!)
@@ -2056,7 +2055,7 @@
     (:body response)))
 
 (defn import-session!
-  "Import the `.vissnap` file `file` as a new session and return its soul. With
+  "Import a snapshot or ATIF `file` as a new session and return its soul. With
    `:group-id` the session goes into that group and its project. Without it, the
    session belongs to the workspace `:root`. `:key` makes a repeated import give the
    same session. Throws `ex-info` with the gateway's message on a refusal."
