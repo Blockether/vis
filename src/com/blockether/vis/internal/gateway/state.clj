@@ -56,6 +56,8 @@
     [com.blockether.vis.internal.foundation.shell-log :as shell-log]
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.gateway.runtime :as runtime]
+    [com.blockether.vis.internal.session.atif :as atif]
+    [com.blockether.vis.internal.session.atif-import :as atif-import]
     [com.blockether.vis.internal.session.snapshot :as snapshot]
     [com.blockether.vis.internal.workspace.core :as workspace]
     [taoensso.telemere :as tel]))
@@ -8728,8 +8730,13 @@
     (when-let [tree (persistance/db-export-session-tree db sid)]
       (snapshot/encode tree {:vis-version (runtime/release-version) :now (util/now-ms)}))))
 
+(defn export-atif
+  "The ATIF JSON of `sid` and its managed children, or nil for an unknown session."
+  [sid]
+  (atif/export-json (lp/db-info) sid))
+
 (defn import-session!
-  "Restore the snapshot `data` as a new session tree and answer the wire `soul` of its new
+  "Restore the snapshot or ATIF JSON `data` as a new session tree and answer the wire `soul` of its new
    root (#405). Each session gets a new id and a trunk workspace at `root`; without it, the
    folder of the project of `group-id`, else the gateway folder. The restorer's policy gives
    the permissions. With `key`, a second restore answers the root of the first one. Throws
@@ -8739,8 +8746,11 @@
   (let [db
         (lp/db-info)
 
-        {:keys [tree]}
-        (snapshot/decode data)
+        atif
+        (atif-import/read-document data)
+
+        tree
+        (if atif (atif-import/session-tree atif) (:tree (snapshot/decode data)))
 
         root
         (or (some-> root
@@ -8753,7 +8763,7 @@
         (persistance/db-import-session-tree!
           db
           tree
-          {:imported-from {"snapshot_sha256" (util/sha256-hex data)}
+          {:imported-from {(if atif "atif_sha256" "snapshot_sha256") (util/sha256-hex data)}
            :key (some-> key
                         str
                         not-empty)

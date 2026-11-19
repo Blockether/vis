@@ -946,6 +946,9 @@
 (defn- snapshot-error
   [^clojure.lang.ExceptionInfo e]
   (case (:type (ex-data e))
+    :session/invalid-atif
+    (http/error-response 400 :session/invalid-atif (ex-message e))
+
     :session/invalid-snapshot
     (http/error-response 400 :session/invalid-snapshot (ex-message e))
 
@@ -974,6 +977,15 @@
          (catch clojure.lang.ExceptionInfo e (snapshot-error e)))
     (http/session-404 (get-in request [:path-params :sid]))))
 
+(defn- export-atif-handler
+  "GET /v1/sessions/:sid/trajectory.json — the session and its children as ATIF."
+  [request]
+  (if-let [sid (http/path-sid request)]
+    (if-let [json (state/export-atif sid)]
+      {:status 200 :headers {"Content-Type" "application/json"} :body json}
+      (http/session-404 sid))
+    (http/session-404 (get-in request [:path-params :sid]))))
+
 (defn- read-snapshot-body
   "The request body bytes, or nil past `limit`."
   ^bytes [request limit]
@@ -989,7 +1001,7 @@
                 :else (do (.write out buffer 0 n) (recur (+ total n)))))))))
 
 (defn- import-session-handler
-  "POST /v1/sessions/actions/import — restore a `.vissnap` body as a new session tree.
+  "POST /v1/sessions/actions/import — restore a snapshot or ATIF as a new session tree.
    Query: optional `root`, `group_id` and `key`."
   [request]
   (if-let [data (read-snapshot-body request (snapshot/max-bytes))]
@@ -1029,4 +1041,5 @@
    [:get "/v1/sessions/:sid/forks"] fork-points-handler
    [:post "/v1/sessions/:sid/forks"] fork-session-handler
    [:get "/v1/sessions/:sid/snapshot"] export-session-handler
+   [:get "/v1/sessions/:sid/trajectory.json"] export-atif-handler
    [:get "/v1/sessions/:sid/suggest"] suggest-handler})

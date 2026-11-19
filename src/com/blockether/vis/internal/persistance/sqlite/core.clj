@@ -5303,7 +5303,9 @@
                         (seq (:user-input opts))
                         (assoc :user_input (->blob (:user-input opts)))
 
-                        (and (pos? (long (or (get tokens "input") 0))) (:request-health opts))
+                        (and (:request-health opts)
+                              (or (pos? (long (or (get tokens "input") 0)))
+                                  (seq (get-in opts [:request-health :cache-warms]))))
                         (assoc :request_health (->blob (:request-health opts)))
 
                         (seq routing)

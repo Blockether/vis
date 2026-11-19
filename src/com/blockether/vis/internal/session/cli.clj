@@ -13,7 +13,6 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as persistance]
-            [com.blockether.vis.internal.session.atif :as atif]
             [com.blockether.vis.internal.session.snapshot :as snapshot]
             [com.blockether.vis.internal.workspace.core :as workspace])
   (:import (java.io File)
@@ -355,13 +354,13 @@
                             (str k "=" (URLEncoder/encode (str v) StandardCharsets/UTF_8)))
                           params))))))
 
-(defn- import-snapshot!
-  "Restore the snapshot file at `path` through the gateway as a new session tree. Answers the
+(defn- import-session-file!
+  "Restore the session file at `path` through the gateway as a new session tree. Answers the
    wire session of its root. `opts` and `cwd` are as in [[import-query]]."
   [path opts cwd]
   (let [f (io/file path)]
     (when-not (.isFile f)
-      (refuse! (str "No snapshot file at " (paths/abbreviate-home (.getPath f)))))
+      (refuse! (str "No session file at " (paths/abbreviate-home (.getPath f)))))
     (let [response (gateway-client/request! :post
                                             (str "/v1/sessions/actions/import"
                                                  (import-query opts cwd))
@@ -432,8 +431,9 @@
                                 (refuse! (str "No session " (:id session)))))
                       (commandline/stdout! (str "Exported HTML: "
                                                 (paths/abbreviate-home (.getPath target)))))
-          atif? (commandline/stdout! (or (atif/export-json d (:id session))
-                                         (refuse! (str "No session " (:id session)))))
+          atif? (let [response (gateway-client/export-atif! (:id session))]
+                  (when-not (= 200 (:status response)) (refuse! (gateway-error response)))
+                  (commandline/write-stdout! (:body response)))
           :else (commandline/write-stdout! (transcript-export/md (:id session))))
     (shutdown-agents)))
 
@@ -463,11 +463,11 @@
                 str/trim
                 not-empty)]
 
-    (when-not path (refuse! "Name the snapshot file: vis-agent sessions import FILE"))
+    (when-not path (refuse! "Name the session file: vis-agent sessions import FILE"))
     (when (and root (not (.isDirectory (io/file root))))
       (refuse! (str "No folder at " (paths/abbreviate-home root))))
     (let [restored
-          (import-snapshot! path {:root root :group group :key key} (System/getProperty "user.dir"))
+          (import-session-file! path {:root root :group group :key key} (System/getProperty "user.dir"))
 
           id
           (get restored "id")]
@@ -652,13 +652,13 @@
     :cmd/run-fn cli-export-session!}
    {:cmd/name "import"
     :cmd/parent ["sessions"]
-    :cmd/doc "Restore a .vissnap snapshot as a new session, for example on another computer."
+    :cmd/doc "Import a .vissnap snapshot or ATIF JSON as a new session."
     :cmd/usage "vis-agent sessions import <FILE> [--root DIR] [--group ID] [--key KEY]"
     :cmd/args [{:name "file"
                 :kind :positional
                 :type :string
                 :required true
-                :doc "Snapshot file from `vis-agent sessions export <ID> --snapshot PATH`."}
+                :doc "A .vissnap snapshot or an ATIF JSON file."}
                {:name "root"
                 :kind :flag
                 :type :string
@@ -672,6 +672,7 @@
                 :type :string
                 :doc "Restore once: a second import with the same KEY returns the first session."}]
     :cmd/examples ["vis-agent sessions import work.vissnap"
+                   "vis-agent sessions import session.json"
                    "vis-agent sessions import work.vissnap --root ~/code/shop --key shop-1"]
     :cmd/run-fn cli-import-session!}
    {:cmd/name "search"

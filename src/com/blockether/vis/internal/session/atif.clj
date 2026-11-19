@@ -16,12 +16,16 @@
       (select-keys [:position :thinking :assistant-prose :created-at :finished-at :provider :model
                     :error :input-tokens :output-tokens :input-cache-read-tokens
                     :input-cache-write-tokens :output-reasoning-tokens :cost-usd :forms])
-      (assoc :attachments (mapv attachment-descriptor attachments))
+      (assoc :attachments (mapv attachment-descriptor attachments)
+             :cache-warms (get-in iteration [:request-health :cache-warms])
+             :atif-omit-step (get-in iteration [:request-health :atif-omit-step])
+             :atif-step-error (get-in iteration [:request-health :atif-step-error])
+             :atif-unattributed-cost (get-in iteration [:request-health :atif-unattributed-cost]))
       (update :forms
               (fn [forms]
                 (mapv #(select-keys %
                                     [:src :code :stdout :error :tool-name :tool-call-id :envelope
-                                     :repaired? :timeout? :repaired-source])
+                                     :repaired? :timeout? :repaired-source :atif-output])
                       forms)))
       wire/->wire))
 

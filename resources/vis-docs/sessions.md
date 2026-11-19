@@ -525,8 +525,17 @@ vis-agent sessions export 3a7b2c1d --atif > session.json
 
 The export lists attachment names, media types, and sizes. It does not include file contents or
 attachments for the model only. Vis replaces known credential values and cuts long text after
-20,000 characters. Review the JSON for other private data before you share it. To restore a session
-in Vis, use a snapshot instead.
+20,000 characters. Review the JSON for other private data before you share it.
+
+To read an ATIF trajectory in Vis, import the JSON file:
+
+```bash
+vis-agent sessions import session.json
+```
+
+Vis creates a new session with the conversation and its subagent conversations. The import
+keeps tool call records but does not run them. Use a snapshot to move attachments and saved
+session state.
 
 ### HTML
 

@@ -91,9 +91,10 @@
 (defn- observation-text
   "The stdout and the error of one code block."
   [block]
-  (->> [(get block "stdout") (error-text (get block "error"))]
-       (remove str/blank?)
-       (str/join "\n")))
+  (or (get block "atif_output")
+      (->> [(get block "stdout") (error-text (get block "error"))]
+           (remove str/blank?)
+           (str/join "\n"))))
 
 (defn- call-ids
   "One id for each block of one iteration: the tool call id of the provider, or a
@@ -283,8 +284,9 @@
                               :provider (text-value (or (get iteration "llm_actual_provider")
                                                         (get iteration "provider")))
                               :finished-at-ms (or (epoch-ms (get iteration "finished_at")) created)
-                              :error (error-text (get iteration "error"))
-                              :attachments (not-empty (get iteration "attachments"))})}
+                              :error (or (get iteration "atif_step_error") (error-text (get iteration "error")))
+                              :attachments (not-empty (get iteration "attachments"))
+                               :is-unattributed-cost (when (get iteration "atif_unattributed_cost") true)})}
       created
       (assoc :timestamp (iso-time created))
 
@@ -301,6 +303,36 @@
       (assoc :tool-calls
         (mapv :call calls) :observation
         {:results (mapv :result calls)}))))
+
+(defn- cache-warm-step
+  [step-id warm]
+  (let [tokens (get warm "tokens")]
+    (compact {:step-id step-id
+              :source "agent"
+              :message ""
+              :timestamp (some-> (epoch-ms (get warm "created_at")) iso-time)
+              :model-name (get warm "model")
+              :metrics (compact {:prompt-tokens (get tokens "input")
+                                 :completion-tokens (get tokens "output")
+                                 :cached-tokens (get tokens "cached")
+                                 :cost-usd (get warm "cost_usd")
+                                 :extra (not-empty (compact {:cache-creation-tokens
+                                                             (get tokens "cache_created")}))})
+              :extra (compact {:is-cache-warm true :provider (get warm "provider")})})))
+
+(defn- with-unattributed-cost
+  "Keep saved costs that have no call record, including warms in older sessions."
+  [steps first-id turn project-step]
+  (let [saved (double (or (get-in turn ["cost" "total_cost"]) 0))
+        exported (reduce + 0.0 (keep #(get-in % [:metrics :cost-usd]) steps))
+        difference (- saved (double exported))]
+    (if (> difference 1.0e-10)
+      (conj steps (project-step {:step-id (+ first-id (count steps))
+                                 :source "agent"
+                                 :message ""
+                                 :metrics {:cost-usd difference}
+                                 :extra {:is-unattributed-cost true}}))
+      steps)))
 
 (defn- turn-steps
   "The ATIF steps of one turn of a Council child, from step `first-id`: the
@@ -330,14 +362,20 @@
                             (assoc-in [:extra :attachments] (get turn "attachments"))))]]
 
       (if (seq remaining)
-        (let [more (next remaining)]
+        (let [more (next remaining)
+              iteration (first remaining)
+              steps (reduce (fn [out warm]
+                              (conj out (project-step (cache-warm-step (+ first-id (count out)) warm))))
+                            steps
+                            (get iteration "cache_warms"))]
           (recur more
-                 (conj steps
-                       (project-step (iteration-step (+ first-id (count steps))
-                                                     (get turn "position")
-                                                     (first remaining)
-                                                     (when-not more answer))))))
-        steps))))
+                 (cond-> steps
+                   (not (get iteration "atif_omit_step"))
+                   (conj (project-step (iteration-step (+ first-id (count steps))
+                                                      (get turn "position")
+                                                      iteration
+                                                      (when-not more answer)))))))
+        (with-unattributed-cost steps first-id turn project-step)))))
 
 (defn- child-steps
   "The ATIF steps of each turn of one Council child. A child without a turn has
@@ -363,7 +401,10 @@
    step that ends at or after that time. Without a time, the last agent step."
   [steps created-ms]
   (let [indexes (keep-indexed (fn [i step]
-                                (when (= "agent" (:source step)) i))
+                                (when (and (= "agent" (:source step))
+                                            (not (get-in step [:extra :is-cache-warm]))
+                                            (not (get-in step [:extra :is-unattributed-cost])))
+                                   i))
                               steps)]
     (or (when created-ms
           (some (fn [i]
@@ -450,7 +491,7 @@
           (or (sum (map #(get-in % path) turns)) (sum (map step-key metrics))))
 
         costs
-        (remove nil? [(total ["cost" "total_cost"] :cost-usd) (subagent-cost trajectory)])]
+        (remove nil? [(sum (map :cost-usd metrics)) (subagent-cost trajectory)])]
 
     (compact {:total-prompt-tokens (total ["tokens" "input"] :prompt-tokens)
               :total-completion-tokens (total ["tokens" "output"] :completion-tokens)

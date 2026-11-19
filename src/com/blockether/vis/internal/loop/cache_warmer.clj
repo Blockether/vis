@@ -148,7 +148,12 @@
                                     (:model request)
                                     (:provider request)))]
 
-    (when cost (swap! warmer update :pending-costs conj cost))
+    (when cost
+      (swap! warmer update :pending-costs conj
+             (assoc cost
+               :created-at started-ms
+               :model (or (:llm-model api-usage) (:model request))
+               :provider (or (:llm-provider api-usage) (:provider request)))))
     (when result
       (tel/log! {:level :info
                  :id ::warmed
@@ -267,9 +272,11 @@
 (defn stop! "Stops all warms of a closing session." [warmer] (when warmer (disarm! warmer true)))
 
 (defn drain-costs!
-  "Adds the costs of finished warms to a turn's `accounting-atom`."
+  "Adds the costs of finished warms to a turn and returns their usage records."
   [warmer accounting-atom]
   (when warmer
-    (let [[old] (swap-vals! warmer assoc :pending-costs [])]
-      (doseq [cost (:pending-costs old)]
-        (swap! accounting-atom accounting/add-cost cost)))))
+    (let [[old] (swap-vals! warmer assoc :pending-costs [])
+          costs (:pending-costs old)]
+      (doseq [cost costs]
+        (swap! accounting-atom accounting/add-cost cost))
+      (mapv #(dissoc % :cost-map) costs))))

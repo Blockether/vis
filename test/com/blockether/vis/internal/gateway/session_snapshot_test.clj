@@ -2,6 +2,7 @@
   "Session snapshots (#405): export a session tree to `.vissnap` bytes and restore it."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -652,7 +653,7 @@
                  (on there
                      (fn []
                        (let [opts {:root project :key "move-1"}
-                             restored ((cli-fn 'import-snapshot!) (.getPath file) opts "/elsewhere")
+                             restored ((cli-fn 'import-session-file!) (.getPath file) opts "/elsewhere")
                              new-id (get restored "id")]
 
                          (expect (= ["first ask"]
@@ -660,7 +661,7 @@
                          (expect (= project (get-in restored ["workspace" "root"])))
                          (expect (= new-id
                                     (get
-                                      ((cli-fn 'import-snapshot!) (.getPath file) opts "/elsewhere")
+                                      ((cli-fn 'import-session-file!) (.getPath file) opts "/elsewhere")
                                       "id")))))))))
            (finally (ps/db-close! here) (ps/db-close! there)))))
   (it "stops with the gateway message for a file that is not a snapshot"
@@ -669,7 +670,7 @@
                       (spit file "not a snapshot")
                       (through-router
                         #(let [e
-                               (try ((cli-fn 'import-snapshot!) (.getPath file) {} "/elsewhere")
+                               (try ((cli-fn 'import-session-file!) (.getPath file) {} "/elsewhere")
                                     nil
                                     (catch clojure.lang.ExceptionInfo e e))] (expect
                                                                                (:vis/user-error
@@ -683,3 +684,106 @@
         (expect (= "?group_id=g1" (query {:group "g1"} "/home/ana/shop")))
         (expect (= "?root=%2Ftmp%2Fmy+shop+%26+co&key=k%3D1"
                    (query {:root "/tmp/my shop & co" :key "k=1"} "/home/ana/shop"))))))
+
+
+(defdescribe
+  atif-round-trip-test
+  (it "keeps conversation records, warm costs, and child trajectories through HTTP import"
+      (with-store
+        (fn [store]
+          (through-router
+            (fn []
+              (let [sid (session! store "ATIF talk")
+                    tid (turn! store sid "Check the seed" :success)
+                    cid (child! store sid tid "completed")
+                    ctid (turn! store cid "Read the seed" :success)
+                    _ (ps/db-store-iteration! store {:session-turn-id ctid :code ""
+                                                     :assistant-prose "The seed is ready."
+                                                     :cost-usd 0.125})
+                    _ (ps/db-store-iteration!
+                        store {:session-turn-id tid :code "print(value)"
+                               :thinking "Check the value."
+                               :assistant-prose "The check did not finish."
+                               :tokens {"input" 10 "output" 2}
+                               :cost-usd 0.25
+                               :forms [{:src "print(value)" :stdout "partial"
+                                        :error {:message "Test failure"}}]
+                               :request-health {:cache-warms [{:model "warm-model" :provider "test"
+                                                               :created-at 2 :cost-usd 0.0625
+                                                               :tokens {"input" 10 "output" 1
+                                                                        "cached" 9 "cache_created" 1}}]}})
+                    exported (gateway-client/export-atif! sid)
+                    original (wire/parse-json (:body exported))
+                    path "/v1/sessions/actions/import?key=atif-round-trip"
+                    restore #(gateway-client/request! :post path {:body (.getBytes ^String (:body exported) "UTF-8")})
+                    response (restore)
+                    new-id (get (wire/parse-json (:body response)) "id")
+                    copied (wire/parse-json (:body (gateway-client/export-atif! new-id)))
+                    [user warm agent] (get copied "steps")
+                    child (first (get copied "subagent_trajectories"))]
+                (expect (= 200 (:status exported)))
+                (expect (= (state/export-atif sid) (:body exported)))
+                (expect (= "application/json" (get-in exported [:headers "Content-Type"])))
+                (expect (= 201 (:status response)))
+                (expect (not= sid new-id))
+                (expect (= new-id (get (wire/parse-json (:body (restore))) "id")))
+                (expect (= "Check the seed" (get user "message")))
+                (expect (= {"prompt_tokens" 10 "completion_tokens" 1 "cached_tokens" 9
+                            "cost_usd" 0.0625 "extra" {"cache_creation_tokens" 1}}
+                           (get warm "metrics")))
+                (expect (= "warm-model" (get warm "model_name")))
+                (expect (= {"is_cache_warm" true "provider" "test"} (get warm "extra")))
+                (expect (= "Check the value." (get agent "reasoning_content")))
+                (expect (= "The check did not finish." (get agent "message")))
+                (expect (= "print(value)" (get-in agent ["tool_calls" 0 "arguments" "code"])))
+                (expect (= "Test failure" (get-in agent ["tool_calls" 0 "extra" "error" "message"])))
+                (expect (= (get-in original ["steps" 2 "observation" "results" 0 "content"])
+                           (get-in agent ["observation" "results" 0 "content"])))
+                (expect (= ["Read the seed" "The seed is ready."] (mapv #(get % "message") (get child "steps"))))
+                (expect (= 0.4375 (get-in copied ["final_metrics" "total_cost_usd"])
+                           (reduce + (keep #(get-in % ["metrics" "cost_usd"])
+                                           (concat (get copied "steps") (get child "steps"))))))))))))
+  (it "rejects bad ATIF and imports a foreign tool without running it"
+      (with-store
+        (fn [_]
+          (through-router
+            (fn []
+              (let [import! #(gateway-client/request! :post "/v1/sessions/actions/import"
+                                                      {:body (.getBytes ^String % "UTF-8")})
+                    bad (import! "{\"schema_version\":\"ATIF-v1.8\", ")
+                    invalid (import! "{\"schema_version\":\"ATIF-v1.8\",\"steps\":[]}")
+                    imported (import! (wire/json-str {:schema-version "ATIF-v1.8"
+                                                       :agent {:name "harbor"}
+                                                       :steps [{:step-id 1 :source "user" :message "Check it"}
+                                                               {:step-id 2 :source "agent" :message "Done"
+                                                                :tool-calls [{:tool-call-id "call-1"
+                                                                              :function-name "read_file"
+                                                                              :arguments {"name" "seed.txt"}}]
+                                                                :observation {:results [{:source-call-id "call-1"
+                                                                                         :content "Seed"}]}}]}))
+                    sid (get (wire/parse-json (:body imported)) "id")
+                    agent (get-in (wire/parse-json (state/export-atif sid)) ["steps" 1])]
+                (expect (= 400 (:status bad) (:status invalid)))
+                (expect (str/includes? (:body bad) "not valid JSON"))
+                (expect (= 404 (:status (gateway-client/export-atif! (str (random-uuid))))))
+                (expect (= 201 (:status imported)))
+                (expect (= "read_file" (get-in agent ["tool_calls" 0 "function_name"])))
+                (expect (= "read_file {\"name\":\"seed.txt\"}" (get-in agent ["tool_calls" 0 "arguments" "code"])))
+                (expect (= "Seed" (get-in agent ["observation" "results" 0 "content"]))))))))))
+
+
+(defdescribe
+  atif-legacy-cost-test
+  (it "keeps costs that older Vis exports recorded only in the final total"
+      (with-store
+        (fn [_]
+          (let [old {:schema-version "ATIF-v1.8"
+                     :agent {:name "vis"}
+                     :steps [{:step-id 1 :source "user" :message "Check it"}
+                             {:step-id 2 :source "agent" :message "Done" :metrics {:cost-usd 0.125}}]
+                     :final-metrics {:total-cost-usd 0.1875}}
+                restored (state/import-session! (.getBytes (wire/json-str old) "UTF-8") {})
+                exported (wire/parse-json (state/export-atif (get restored "id")))]
+            (expect (= 0.1875 (get-in exported ["final_metrics" "total_cost_usd"])))
+            (expect (= 0.0625 (get-in exported ["steps" 2 "metrics" "cost_usd"])))
+            (expect (true? (get-in exported ["steps" 2 "extra" "is_unattributed_cost"]))))))))

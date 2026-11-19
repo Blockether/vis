@@ -1305,6 +1305,19 @@
     {
       "audience": "sdk",
       "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
+          "description": "Export the session and its children as ATIF v1.8.",
+          "response_schema": "session_atif",
+          "extension": "background"
+        }
+      },
+      "path": "/v1/sessions/:sid/trajectory.json"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "post": {
           "request": "json",
           "response": "json",
@@ -1664,6 +1677,7 @@
           "request": "binary",
           "response": "json",
           "response_schema": "session",
+          "description": "Import a .vissnap snapshot or an ATIF JSON document.",
           "extension": "callback"
         }
       },
@@ -4800,6 +4814,109 @@
     },
     "evals_leaderboard": {
       "$ref": "evals.json#/$defs/leaderboard"
+    },
+    "session_atif": {
+      "description": "An ATIF v1.8 trajectory from Vis.",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "session_id",
+        "trajectory_id",
+        "agent",
+        "steps",
+        "final_metrics"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "ATIF-v1.8"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "trajectory_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "object",
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "model_name": {
+              "type": "string"
+            }
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "step_id",
+              "source",
+              "message"
+            ],
+            "properties": {
+              "step_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "source": {
+                "enum": [
+                  "user",
+                  "agent",
+                  "system"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "final_metrics": {
+          "type": "object",
+          "required": [
+            "total_steps"
+          ],
+          "properties": {
+            "total_steps": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total_prompt_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total_completion_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total_cached_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total_cost_usd": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "subagent_trajectories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/session_atif"
+          }
+        }
+      }
     },
     "session_snapshot_manifest": {
       "type": "object",

@@ -3550,7 +3550,7 @@
           _ (swap! accounting-atom accounting/add-usage
               (:api-usage iteration-result)
               (:duration-ms iteration-result))
-          _ (cache-warmer/drain-costs! (:prompt-cache-warmer environment) accounting-atom)
+          cache-warms (cache-warmer/drain-costs! (:prompt-cache-warmer environment) accounting-atom)
           ;; Providers Svar left for rejecting their credentials start the auth
           ;; cooldown first: the re-admission and pick move below read it.
           _ (loop-router/note-auth-rejections! (:llm-routing-trace iteration-result) nil)
@@ -3692,6 +3692,7 @@
                        :presentation-status (:presentation-status iteration-result)
                        :presentation-repair (:presentation-repair iteration-result)
                        :request-health (cond-> (assoc (:request-health iteration-result)
+                                                  :cache-warms cache-warms
                                                  :budget-tokens budget
                                                  :reminder-tokens
                                                  (long (Math/ceil (* 0.75 (double budget)))))

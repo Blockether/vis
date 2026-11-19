@@ -1244,6 +1244,12 @@
                path
                opts))))
 
+(defn export-atif!
+  "Fetch the ATIF JSON of a saved session. Answers the raw HTTP response."
+  [sid]
+  (request! :get (str "/v1/sessions/" (enc sid) "/trajectory.json")
+            {:as :string :timeout-ms 120000}))
+
 (defn run-tui!
   "Run a terminal child while holding this runtime's local gateway lease.
    Discovery owns native/JVM re-exec, locking and existing-daemon reuse. Never
