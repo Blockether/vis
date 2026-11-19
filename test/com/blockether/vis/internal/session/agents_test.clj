@@ -53,8 +53,7 @@
       (expect (= agents/default-iterations
                  (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"])
                  120))
-      (expect (= agents/max-team-children (get schema "x-vis-max-team-children") 128))
-      (expect (= agents/max-active-children (get schema "x-vis-max-active-children") 16))
+      (expect (= agents/max-active-children (get schema "x-vis-max-active-children") 32))
       (expect (document/valid? "agents" agent))
       (expect (document/valid? "agents" (assoc agent "note" "Reading the parser")))
       (expect (not (document/valid? "agents" (assoc agent "note" ""))))
@@ -1712,13 +1711,7 @@
         (expect (agents/claim-iteration! {:db-info db :session-id idle})
                 "A woken child can pass the active cap; only a new spawn counts against it")
         (expect (= {:status "running" :iterations_used 1}
-                   (select-keys (agents/info db idle) [:status :iterations_used]))))
-      (doseq [child (ps/db-agent-list db leader)]
-        (ps/db-agent-update! db (:session_id child) {:status "completed"}))
-      (doseq [n (range (inc agents/max-active-children) agents/max-team-children)]
-        (ps/db-agent-update! db (fork n) {:status "completed"}))
-      (expect (= :budget-exceeded (refusal agents/max-team-children)))
-      (expect (= agents/max-team-children (count (ps/db-agent-list db leader)))))))
+                   (select-keys (agents/info db idle) [:status :iterations_used])))))))
 
 ;; Regression, issue #405: an extension's extend or deny of an open budget request
 ;; failed with inactive-session, because the reply had no live parent execution.

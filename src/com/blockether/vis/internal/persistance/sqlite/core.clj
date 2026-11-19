@@ -5823,8 +5823,6 @@
 
 (def ^:private agent-schema (document/schema-document "agents"))
 
-(def ^:private max-team-children (long (get agent-schema "x-vis-max-team-children")))
-
 (def ^:private max-active-children (long (get agent-schema "x-vis-max-active-children")))
 
 (defn db-agent-claim-iteration!
@@ -6145,15 +6143,6 @@
                             (prompt-cache-fork (count cut))
                             ->blob))]
 
-              (when (and agent
-                         (>= (long (:n (query-one! tx-info
-                                                   {:select [[[:count :*] :n]]
-                                                    :from :session_agent
-                                                    :where [:= :team_id (:team_id agent)]})))
-                             max-team-children))
-                ;; The team total never goes down, so a retry cannot clear it.
-                (throw (ex-info (str "A task may create at most " max-team-children " subagents.")
-                                {:error :budget-exceeded})))
               ;; A task that waits for others is not active yet.
               (when (and agent
                          (not (contains? #{"waiting" "blocked"} (:status agent)))

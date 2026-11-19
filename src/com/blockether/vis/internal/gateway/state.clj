@@ -8470,9 +8470,6 @@
           (when-not (and through (seq checkpoint))
             (agents/fail! :no-checkpoint
                           "Spawn requires the parent's complete model-input checkpoint"))
-          (when (>= (count (filter #(= through (:team_id %)) children))
-                    (long agents/max-team-children))
-            (agents/fail! :budget-exceeded "The task already has the maximum number of subagents"))
           (when (and (= "queued" status)
                      (>= (count (filter #(contains? #{"queued" "running"} (:status %)) children))
                          (long agents/max-active-children)))

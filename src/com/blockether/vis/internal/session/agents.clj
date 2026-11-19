@@ -128,8 +128,6 @@
 
 (def default-iterations (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"]))
 
-(def max-team-children (get schema "x-vis-max-team-children"))
-
 (def max-active-children (get schema "x-vis-max-active-children"))
 
 (def roles
