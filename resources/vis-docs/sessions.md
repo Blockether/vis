@@ -553,8 +553,10 @@ A snapshot is one `.vissnap` file with a session, its subagent sessions, and the
 messages. An import gives you a new session that you can continue. A snapshot is also a full
 backup.
 
-A snapshot holds the full conversation, also tool output and attached files. Vis does not remove
-private data from it. Share it only with people who may read the whole session.
+A snapshot holds the full conversation, also tool output and attached files. Vis replaces known
+credential values with `[REDACTED]` in the text, the tool records, and text files. The values of
+secret settings also become `[REDACTED]`: after an import, set them again. Binary files, such as
+images, stay unchanged. Review a snapshot for other private data before you share it.
 
 1. On the first computer, write the snapshot. Vis adds `.vissnap` if the path has no
    extension:

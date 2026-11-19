@@ -13,7 +13,9 @@
    The manifest holds the format and Vis versions, the creation time, the root session,
    the session tree, counts, sizes and the payload SHA-256. A decode checks the digest
    before it thaws the payload."
-  (:require [com.blockether.vis.contract.wire :as wire]
+  (:require [clojure.string :as str]
+            [clojure.walk :as walk]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
             [taoensso.nippy :as nippy])
@@ -70,6 +72,98 @@
      "sizes" {"payload_bytes" (alength payload)
               "attachment_bytes" (reduce + 0 (map #(alength ^bytes %) (vals (:blobs tree))))}
      "payload_sha256" (util/sha256-hex payload)}))
+
+(def ^:private nippy-head (.getBytes "NPY" StandardCharsets/US_ASCII))
+
+(defn- nippy-blob?
+  "True for the bytes of a BLOB column, which Nippy froze with its header."
+  [x]
+  (and (bytes? x)
+       (>= (alength ^bytes x) 4)
+       (Arrays/equals ^bytes nippy-head (Arrays/copyOfRange ^bytes x 0 3))))
+
+(defn- binary-media?
+  "True for a media type whose bytes are never text. SVG is text."
+  [media-type]
+  (let [media (str/lower-case (str media-type))]
+    (and (boolean (re-find #"^(image|audio|video|font)/" media))
+         (not (str/includes? media "svg")))))
+
+(defn- utf-8-text
+  "The text of `data`, or nil when it is not valid UTF-8 or holds a zero byte."
+  [^bytes data]
+  (when-not (some zero? data)
+    (try (str (.decode (.newDecoder StandardCharsets/UTF_8) (ByteBuffer/wrap data)))
+         (catch java.nio.charset.CharacterCodingException _ nil))))
+
+(defn- redact-rows
+  "Apply `redact-text` to each string of `rows`, also in each BLOB column. A BLOB that
+   does not change keeps its bytes."
+  [rows redact-text]
+  ;; `=` ignores metadata, so `changed` records each string that changes, also in metadata.
+  (letfn [(clean [changed x]
+            (cond (string? x) (let [y (redact-text x)]
+                                (when (not= x y) (vreset! changed true))
+                                y)
+                  (nippy-blob? x) (let [value (try (nippy/thaw x)
+                                                   (catch Exception e
+                                                     (throw (ex-info "A saved record is not readable"
+                                                                     {:type :session/snapshot-incomplete}
+                                                                     e))))
+                                        blob-changed (volatile! false)
+                                        cleaned (clean blob-changed value)]
+                                    (if @blob-changed
+                                      (do (vreset! changed true)
+                                          (nippy/freeze cleaned {:compressor nippy/zstd-compressor}))
+                                      x))
+                  (coll? x) (let [y (walk/walk (partial clean changed) identity x)]
+                              (if-let [m (meta x)] (with-meta y (clean changed m)) y))
+                  (and (symbol? x) (meta x)) (with-meta x (clean changed (meta x)))
+                  :else x))]
+    (clean (volatile! false) rows)))
+
+(defn redact
+  "The session `tree` with `redact-text` applied to each string: in rows, in BLOB columns
+   and in text attachments. A text attachment is valid UTF-8 with a media type that is not
+   image, audio, video or font. A changed text attachment gets a new SHA-256 and size; a
+   binary attachment with the same bytes keeps them. The manifest comes from the result,
+   so its titles are clean too."
+  [tree redact-text]
+  (let [text?
+        (fn [att] (and (:bytes_sha256 att) (not (binary-media? (:media_type att)))))
+
+        cleaned
+        (into {}
+              (for [sha (into #{}
+                              (comp (mapcat :turns) (mapcat :attachments) (filter text?) (map :bytes_sha256))
+                              (:sessions tree))
+                    :let [text (some-> (get-in tree [:blobs sha]) utf-8-text)
+                          clean (some-> text redact-text)]
+                    :when (and text (not= text clean))
+                    :let [data (.getBytes ^String clean StandardCharsets/UTF_8)]]
+                [sha {:sha (util/sha256-hex data) :data data}]))
+
+        rename
+        (fn [att]
+          (if-let [{:keys [sha ^bytes data]} (when (text? att) (get cleaned (:bytes_sha256 att)))]
+            (assoc att :bytes_sha256 sha :size_bytes (alength data))
+            att))
+
+        sessions
+        (mapv (fn [session]
+                (update session :turns
+                        (fn [turns] (mapv #(update % :attachments (partial mapv rename)) turns))))
+              (:sessions tree))
+
+        used
+        (into #{} (comp (mapcat :turns) (mapcat :attachments) (keep :bytes_sha256)) sessions)]
+
+    (assoc tree
+      :sessions (redact-rows sessions redact-text)
+      :council (redact-rows (:council tree) redact-text)
+      :blobs (into (select-keys (:blobs tree) used)
+                   (map (fn [{:keys [sha data]}] [sha data]))
+                   (vals cleaned)))))
 
 (defn encode
   "The snapshot bytes of one exported session `tree`. Throws `:session/snapshot-too-large`

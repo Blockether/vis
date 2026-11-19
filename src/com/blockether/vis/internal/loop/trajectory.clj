@@ -752,7 +752,7 @@
             (and (.isFile f) (str/ends-with? (.getName f) "-auth.json")))
           (.listFiles (io/file (paths/vis-home)))))
 
-(defn- run-secrets
+(defn run-secrets
   "The known credentials of this process."
   []
   (known-secrets {:env (System/getenv)
@@ -760,7 +760,34 @@
                   :providers (try (:providers (config/current-config)) (catch Exception _ nil))
                   :settings (toggles/secret-values)}))
 
-(defn- redactor
+(defn- json-escaped
+  "`s` as it shows inside a JSON string."
+  [s]
+  (let [encoded (wire/json-str s)] (subs encoded 1 (dec (count encoded)))))
+
+(defn- string-leaves
+  [data]
+  (cond (string? data) [data]
+        (map? data) (mapcat string-leaves (vals data))
+        (sequential? data) (mapcat string-leaves data)
+        :else nil))
+
+(defn snapshot-secrets
+  "[[run-secrets]] and the values of the secret settings that the session `tree` saved.
+   Each value also comes in its JSON-escaped form, because rows can hold JSON text."
+  [tree]
+  (let [saved (for [session (:sessions tree)
+                    {:keys [setting_id value]} (:settings session)
+                    :when (toggles/secret-setting? setting_id)
+                    leaf (string-leaves (try (wire/parse-json value) (catch Exception _ nil)))]
+                leaf)]
+    (->> (concat (run-secrets) (known-secrets {:settings saved}))
+         (mapcat (juxt identity json-escaped))
+         distinct
+         (sort-by count >)
+         vec)))
+
+(defn redactor
   "Compile the credential pattern once for all values in an export."
   [secrets]
   (if (empty? secrets)

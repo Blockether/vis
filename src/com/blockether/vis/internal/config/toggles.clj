@@ -391,6 +391,13 @@
                       (when (and (string? v) (seq v)) v)))))
           @registry)))
 
+(defn secret-setting?
+  "True when the registered or project setting `id` holds a secret."
+  [id]
+  (boolean (or (:secret? (toggle-spec id))
+               (some (fn [{:keys [specs]}] (some #(and (= id (:id %)) (:secret? %)) specs))
+                     (vals @project-registry)))))
+
 (defn object-problem
   "Nil when `value` is a valid value of the `:object` toggle `spec`, else a message
    for the person. The value must be a map or a vector, and the owner's

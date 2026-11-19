@@ -41,6 +41,7 @@
     [com.blockether.vis.internal.loop :as lp]
     [com.blockether.vis.internal.loop.environment :as loop-env]
     [com.blockether.vis.internal.loop.router :as loop-router]
+    [com.blockether.vis.internal.loop.trajectory :as trajectory]
     [com.blockether.vis.internal.loop.transcript :as transcript]
     [com.blockether.vis.internal.session.titling :as titling]
     [com.blockether.vis.internal.persistance.core :as persistance]
@@ -8722,13 +8723,17 @@
       (publish-session-created! db (soul forked)))))
 
 (defn export-session
-  "The `.vissnap` snapshot bytes of `sid` and its managed children (#405). Answers nil for
+  "The redacted `.vissnap` snapshot bytes of `sid` and its managed children (#405). Answers nil for
    an unknown session. Throws `ex-info` with `:type` `:session/snapshot-too-large` or
    `:session/snapshot-incomplete`."
   [sid]
   (let [db (lp/db-info)]
     (when-let [tree (persistance/db-export-session-tree db sid)]
-      (snapshot/encode tree {:vis-version (runtime/release-version) :now (util/now-ms)}))))
+      ;; Each known credential becomes `[REDACTED]`, as in an ATIF export.
+      (let [secrets (trajectory/snapshot-secrets tree)]
+        (snapshot/encode (cond-> tree
+                           (seq secrets) (snapshot/redact (trajectory/redactor secrets)))
+                         {:vis-version (runtime/release-version) :now (util/now-ms)})))))
 
 (defn export-atif
   "The ATIF JSON of `sid` and its managed children, or nil for an unknown session."

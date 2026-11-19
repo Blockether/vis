@@ -5,13 +5,17 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.trajectory :as trajectory]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.session.snapshot :as snapshot]
             [lazytest.core :refer [defdescribe describe expect it]]
             [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]
+            [clojure.walk :as walk]
+            [taoensso.nippy :as nippy]
             [reitit.ring :as reitit]))
 
 (defn- temp-dir [prefix] (.getCanonicalPath (test-temp/temp-dir prefix)))
@@ -155,7 +159,101 @@
                        new-id])))))))))
     (it "answers nil for an unknown session"
         (with-store (fn [_store]
-                      (expect (nil? (state/export-session (str (random-uuid)))))))))
+                      (expect (nil? (state/export-session (str (random-uuid))))))))
+    (it "replaces known credentials in rows, BLOB columns, Council entries and text files"
+        (with-store
+          (fn [store]
+            (let [secret
+                  "sk-test-0123456789abcdef"
+
+                  sid
+                  (session! store (str "Deploy with " secret))
+
+                  tid
+                  (turn! store sid (str "Use the key " secret) :success)
+
+                  image
+                  (.getBytes (str "png " secret) "UTF-8")
+
+                  thawed
+                  (fn [tree]
+                    (pr-str (walk/postwalk #(if (and (bytes? %) (pos? (alength ^bytes %)))
+                                              (try (nippy/thaw %) (catch Exception _ %))
+                                              %)
+                                           (dissoc tree :blobs))))]
+
+              (ps/db-store-iteration! store
+                                      {:session-turn-id tid
+                                       :code (str "print('" secret "')")
+                                       :forms [{:src (str "print('" secret "')") :stdout secret}]})
+              (attach! store tid image)
+              (jdbc/execute!
+                (:datasource store)
+                ["INSERT INTO session_attachment (id, session_turn_soul_id, position, media_type, filename, size_bytes, bytes, created_at) VALUES (?,?,?,?,?,?,?,?)"
+                 (str (random-uuid)) tid 1 "application/vnd.vis+json" ".env" 30
+                 (.getBytes (str "TOKEN=" secret) "UTF-8") 1])
+              ;; The same bytes as an image are binary and keep their content.
+              (jdbc/execute!
+                (:datasource store)
+                ["INSERT INTO session_attachment (id, session_turn_soul_id, position, media_type, filename, size_bytes, bytes, created_at) VALUES (?,?,?,?,?,?,?,?)"
+                 (str (random-uuid)) tid 2 "image/png" "same.png" 30
+                 (.getBytes (str "TOKEN=" secret) "UTF-8") 1])
+              (entry! store sid sid)
+              (jdbc/execute! (:datasource store) ["UPDATE council_entry SET content = ?" secret])
+              (let [plain
+                    (state/export-session sid)
+
+                    data
+                    (with-redefs [trajectory/run-secrets (constantly [secret])]
+                      (state/export-session sid))
+
+                    new-id
+                    (get (state/import-session! data {}) "id")
+
+                    files
+                    (rows
+                      store
+                      ["SELECT a.media_type, a.size_bytes, a.bytes FROM session_attachment a JOIN session_turn_soul t ON t.id = a.session_turn_soul_id JOIN session_state s ON s.id = t.session_state_id WHERE s.session_soul_id = ? ORDER BY a.position"
+                       new-id])]
+
+                (expect (str/includes? (thawed (:tree (snapshot/decode plain))) secret))
+                (expect (not (str/includes? (thawed (:tree (snapshot/decode data))) secret)))
+                (expect (= "Deploy with [REDACTED]" (get-in (snapshot/info data) ["sessions" 0 "title"])))
+                (expect (= ["Use the key [REDACTED]"]
+                           (mapv :user-request (ps/db-list-session-turns store new-id))))
+                (expect (= (seq image) (seq (:bytes (first files)))))
+                (expect (= "TOKEN=[REDACTED]" (String. ^bytes (:bytes (second files)) "UTF-8")))
+                (expect (= 16 (:size_bytes (second files))))
+                (expect (= (str "TOKEN=" secret) (String. ^bytes (:bytes (nth files 2)) "UTF-8"))))))))
+    (it "replaces the secret settings of the session, also in JSON text"
+        (with-store
+          (fn [store]
+            (let [id "snapshot_test_token"
+                  secret "pa\"ss-0123456789"
+                  sid (session! store "Settings")
+                  tid (turn! store sid "Run" :success)]
+              (toggles/register-toggle! {:id id :label "Token" :type :string :default "" :secret? true})
+              (try (ps/db-set-scoped-setting! store "session" sid id secret)
+                   (ps/db-store-iteration! store
+                                           {:session-turn-id tid
+                                            :code (wire/json-str {:token secret})
+                                            :forms []})
+                   (let [tree (:tree (snapshot/decode (with-redefs [trajectory/run-secrets (constantly [])]
+                                                        (state/export-session sid))))]
+                     (expect (not (str/includes? (pr-str (walk/postwalk #(if (bytes? %) (try (nippy/thaw %) (catch Exception _ %)) %)
+                                                                        (dissoc tree :blobs)))
+                                                 "ss-0123456789")))
+                     (expect (= [{:setting_id id :value (wire/json-str "[REDACTED]")}]
+                                (:settings (first (:sessions tree))))))
+                   (finally (toggles/unregister-toggle! id)))))))
+    (it "replaces credentials in the metadata of a saved record"
+        (let [secret "sk-test-0123456789abcdef"
+              blob (nippy/freeze [(with-meta {:message "safe"} {:security {:key secret}})])
+              tree (snapshot/redact {:sessions [{:record blob}] :council [] :blobs {}}
+                                    (trajectory/redactor [secret]))
+              value (nippy/thaw (:record (first (:sessions tree))))]
+          (expect (= [{:message "safe"}] value))
+          (expect (= {:security {:key "[REDACTED]"}} (meta (first value)))))))
   (describe
     "another machine"
     (it
