@@ -49,7 +49,10 @@
                  (with-tmp-root* (fn [^java.io.File root]
                                    (let [file (java.io.File. root "AGENTS.md")]
                                      (spit file "# first\n")
-                                     (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+                                     ;; Only the project tier, so a real ~/.vis/AGENTS.md stays out of the result.
+                                     (binding [workspace/*workspace-root* (.getCanonicalPath root)
+                                               workspace/*config-sources* #{"project"}]
+
                                        (let [first-result (:result (agents/reload!))
                                              cached-result (:result (agents/reload!))]
 
@@ -181,6 +184,38 @@
                                        (expect (= 1 (count files)))
                                        (expect (= :project (:scope (first files))))
                                        (expect (empty? warnings))))))))
+
+(defdescribe local-guidance-test
+             (it "a local file follows the main file of its directory and wins on a conflict"
+                 (with-tmp-root*
+                   (fn [^java.io.File root]
+                     (let [home
+                           (doto (java.io.File. root "home/.vis") .mkdirs)
+
+                           ws
+                           (doto (java.io.File. root "ws") .mkdirs)
+
+                           rules
+                           (fn []
+                             (binding [workspace/*workspace-root*
+                                       (str ws)
+
+                                       workspace/*config-sources*
+                                       nil
+
+                                       workspace/*filesystem-roots*
+                                       nil]
+
+                               (with-redefs-fn {#'agents/global-config-dir (constantly home)}
+                                 #(mapv (juxt :source :content) (:files (agents/instructions))))))]
+
+                       (spit (java.io.File. ws "AGENTS.md") "WS-RULE")
+                       (expect (= [[:agents-md "WS-RULE"]] (rules)))
+                       ;; A file that the person adds during a session is read at the next turn.
+                       (spit (java.io.File. ws "CLAUDE.local.md") "CLAUDE-LOCAL-RULE")
+                       (spit (java.io.File. ws "AGENTS.local.md") "LOCAL-RULE")
+                       (expect (= [[:agents-md "WS-RULE"] [:agents-local-md "LOCAL-RULE"]]
+                                  (rules))))))))
 
 (defdescribe config-source-guidance-test
              (it "reads AGENTS.md only from the tiers that the session reads"
