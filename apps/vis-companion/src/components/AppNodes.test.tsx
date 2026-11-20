@@ -351,6 +351,106 @@ describe('selected line comments', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
     expect(screen.getByRole('textbox', { name: 'Comment on a.txt line 1' })).toBeInTheDocument();
   });
+  // User request: like T3 Code, a pointer adds a comment from the control beside the line.
+  it('opens an editor from the control on a line that is not selected', () => {
+    const { container } = render(<DiffNodeView node={DIFF} actions={actions()} />);
+    const controls = () => container.querySelectorAll('.diff-add-comment[data-hover-only]');
+    expect(controls().length).toBeGreaterThan(1);
+    fireEvent.click(controls()[0]);
+    expect(screen.getByRole('textbox', { name: 'Comment on a.txt line 1' })).toBeInTheDocument();
+    // While the editor is open, no other line offers a second one.
+    expect(controls()).toHaveLength(0);
+  });
+
+  const LINES: LiveDiffNode = {
+    ...DIFF,
+    patch: '--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,4 @@\n keep\n+one\n+two\n+three',
+    threads: [],
+  };
+
+  it('saves one comment on the lines from a picked line to a Shift click', async () => {
+    const app = actions();
+    render(<DiffNodeView node={LINES} actions={app} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on a.txt line 4' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on a.txt line 2' }), { shiftKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Comment on a.txt lines 2–4' }), {
+      target: { value: 'Join these.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await waitFor(() =>
+      expect(app.draft).toHaveBeenCalledWith('review', {
+        anchor: { path: 'a.txt', side: 'new', start_line: 2, line: 4 },
+        body: 'Join these.',
+      }),
+    );
+  });
+
+  it('selects the lines that a drag over the numbers reaches', async () => {
+    const { container } = render(<DiffNodeView node={LINES} actions={actions()} />);
+    const number = (line: number) => screen.getByRole('button', { name: `Comment on a.txt line ${line}` });
+    fireEvent.pointerDown(number(3), { button: 0, pointerType: 'mouse' });
+    fireEvent.pointerMove(number(1));
+    fireEvent.pointerUp(number(1));
+    expect(container.querySelectorAll('tr[data-selected-line="range"]')).toHaveLength(3);
+    // The click that ends the press belongs to the drag; a later click is its own.
+    await act(() => new Promise((done) => setTimeout(done)));
+    // The control on any line of the selection comments on all of it.
+    fireEvent.click(container.querySelectorAll('.diff-add-comment[data-hover-only]')[0]);
+    expect(screen.getByRole('textbox', { name: 'Comment on a.txt lines 1–3' })).toBeInTheDocument();
+  });
+
+  // User report: a range over added lines left the removed lines between them unmarked.
+  it('saves one comment from one removed line to an added line, without the other removed lines', async () => {
+    const app = actions();
+    const node = { ...DIFF, threads: [], patch: '--- a/a.txt\n+++ b/a.txt\n@@ -1,4 +1,3 @@\n keep\n-gone\n-lost\n+one\n tail' };
+    const { container } = render(<DiffNodeView node={node} actions={app} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on a.txt old line 3' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on a.txt line 2' }), { shiftKey: true });
+    const marked = [...container.querySelectorAll('tr[data-selected-line]')].map((row) => row.textContent);
+    expect(marked).toEqual(['3Removed: lost', '2Added: one']);
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Comment on a.txt lines -3 to +2' }), {
+      target: { value: 'Swap.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await waitFor(() =>
+      expect(app.draft).toHaveBeenCalledWith('review', {
+        anchor: { path: 'a.txt', side: 'new', start_side: 'old', start_line: 3, line: 2 },
+        body: 'Swap.',
+      }),
+    );
+  });
+
+  it('marks the removed lines that stand between the selected lines', () => {
+    const node = { ...DIFF, threads: [], patch: '--- a/a.txt\n+++ b/a.txt\n@@ -1,4 +1,3 @@\n keep\n-gone\n+one\n tail\n-after' };
+    const { container } = render(<DiffNodeView node={node} actions={actions()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on a.txt line 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on a.txt line 3' }), { shiftKey: true });
+    const marked = [...container.querySelectorAll('tr[data-selected-line]')].map((row) => row.textContent);
+    expect(marked).toEqual(['1keep', '2Removed: gone', '2Added: one', '3tail']);
+  });
+
+  it('clears the selected lines when the editor is cancelled', () => {
+    const { container } = render(<DiffNodeView node={LINES} actions={actions()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on a.txt line 2' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on a.txt line 4' }), { shiftKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(container.querySelectorAll('tr[data-selected-line]')).toHaveLength(0);
+  });
+
+  it('opens one editor on the lines that a drag from the control reaches, without Shift', () => {
+    const { container } = render(<DiffNodeView node={LINES} actions={actions()} />);
+    const control = (line: number) =>
+      screen.getByRole('button', { name: `Comment on a.txt line ${line}` }).parentElement!.querySelector('.diff-add-comment')!;
+    fireEvent.pointerDown(control(2), { button: 0, pointerType: 'mouse' });
+    fireEvent.pointerMove(control(4).closest('tr')!.querySelector('.diff-code') ?? control(4));
+    fireEvent.pointerUp(control(4));
+    expect(container.querySelectorAll('tr[data-selected-line="range"]')).toHaveLength(3);
+    expect(screen.getByRole('textbox', { name: 'Comment on a.txt lines 2–4' })).toBeInTheDocument();
+  });
   it('submits a nonblank comment once while a save is pending', async () => {
     let finish!: (r: AppActionResult) => void;
     const app = actions({
