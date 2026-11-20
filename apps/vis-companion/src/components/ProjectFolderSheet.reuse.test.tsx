@@ -168,6 +168,26 @@ describe('the location field', () => {
   });
 });
 
+// User report: the add-project sheet opened with no focus in its field, and each
+// press on a chip or a folder took the focus away from it.
+describe('the field keeps the focus', () => {
+  it('has it when the sheet opens and after a chip, a folder and a crumb', async () => {
+    sheet();
+    const field = screen.getByLabelText('Filter folders or type a path');
+    expect(field).toHaveFocus();
+    await screen.findByRole('button', { name: /tools/ });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Hide empty' }));
+    expect(field).toHaveFocus();
+    await userEvent.click(screen.getByRole('button', { name: /^vis/ }));
+    expect(await screen.findByRole('button', { name: /^src/ })).toBeInTheDocument();
+    expect(field).toHaveFocus();
+    await userEvent.click(screen.getByRole('button', { name: 'code' }));
+    expect(await screen.findByRole('button', { name: /tools/ })).toBeInTheDocument();
+    expect(field).toHaveFocus();
+  });
+});
+
 describe('the chips and the sections', () => {
   it('uses the shipped chip and hides empty folders by default', async () => {
     sheet();

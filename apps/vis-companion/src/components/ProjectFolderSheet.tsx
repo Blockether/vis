@@ -22,12 +22,13 @@
  * `MenuItem`, so it stays the app's anchored dialog on every width, never a sheet
  * that slides up from the bottom.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { Button, Chip, Spinner } from './ui';
 import { AnchoredPanel, MenuHeading, MenuItem, MenuNote } from './Menu';
 import type { MenuPosition } from '../lib/anchored-menu';
 import { FolderPlusIcon, ProjectsIcon, SearchIcon } from './icons';
 import type { GatewayClient } from '../lib/gateway';
+import { shellHost } from '../lib/host';
 import type { BrowseEntry } from '../lib/types';
 
 /** How many crumbs stay on screen. A path too long for 390px elides from the LEFT. */
@@ -316,6 +317,19 @@ export function ProjectFolderSheet({
 
   const fieldRef = useRef<HTMLInputElement>(null);
 
+  // The sheet opens ready to type in, like a new session's composer: only where a
+  // keyboard is already on screen, because on a phone the focus raises the virtual one.
+  useEffect(() => {
+    if (shellHost() === 'native' || window.matchMedia?.('(pointer: coarse)').matches) return;
+    fieldRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  // A press on a crumb, a chip or a folder keeps the caret in the field, so the next
+  // keystroke filters the folder that the press opened.
+  const holdField = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target instanceof Element && event.target.closest('button')) event.preventDefault();
+  };
+
   // The field's keys: Backspace on an empty field goes up one folder. Enter opens the
   // folder that the text names or matches first; with no such folder it creates the
   // name, and a typed path with no name commits the folder it lists.
@@ -364,7 +378,10 @@ export function ProjectFolderSheet({
         </MenuHeading>
       )}
 
-      <div className={`flex shrink-0 flex-col gap-2 border-b border-dialog-edge bg-panel-2 py-2 ${SHEET_EDGE}`}>
+      <div
+        className={`flex shrink-0 flex-col gap-2 border-b border-dialog-edge bg-panel-2 py-2 ${SHEET_EDGE}`}
+        onMouseDown={holdField}
+      >
         <div className={LOCATION_FIELD}>
           <SearchIcon className="mr-1 size-4 text-dialog-hint" />
           {!typedSplit && (
@@ -428,7 +445,10 @@ export function ProjectFolderSheet({
       </div>
 
       {/* The last row drops its rule so it cannot double the footer's top edge. */}
-      <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0 [&>div>*:last-child]:border-b-0">
+      <div
+        className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0 [&>div>*:last-child]:border-b-0"
+        onMouseDown={holdField}
+      >
         {error ? (
           <p className={`py-3 font-mono text-meta text-err ${SHEET_EDGE}`}>{error}</p>
         ) : busy && !listing ? (
