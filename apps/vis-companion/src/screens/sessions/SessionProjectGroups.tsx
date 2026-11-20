@@ -2383,7 +2383,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                     }}
                   />
                   <MenuItem
-                    title="Import snapshot…"
+                    title="Import snapshot"
                     note="(.vissnap, or ATIF .json)"
                     icon={<UploadIcon className="size-3.5" />}
                     onSelect={() => {
@@ -2620,7 +2620,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                 )}
                 {!bandArchived && (
                   <MenuItem
-                    title="Import snapshot…"
+                    title="Import snapshot"
                     note="(.vissnap, or ATIF .json)"
                     icon={<UploadIcon className="size-3.5" />}
                     onSelect={() => {

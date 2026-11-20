@@ -594,7 +594,7 @@ it.
 You can also import the file without the command line:
 
 - In the desktop app, the phone app, or a browser, open the actions of **Sessions** in a project
-  in the session list. Choose **Import snapshot…**, then choose the file. Vis opens the new
+  in the session list. Choose **Import snapshot**, then choose the file. Vis opens the new
   session. To put the new session in a group, use the actions of that group.
 - In the terminal, press **Ctrl+X s i** and type the path of the file. If the project has groups,
   choose its sessions or one group. Vis opens the new session. In **Projects**, press **i** on a
