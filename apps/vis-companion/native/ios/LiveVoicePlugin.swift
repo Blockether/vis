@@ -20,6 +20,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     CAPPluginMethod(name: "stopOutput", returnType: CAPPluginReturnPromise),
     CAPPluginMethod(name: "close", returnType: CAPPluginReturnPromise),
     CAPPluginMethod(name: "setStatus", returnType: CAPPluginReturnPromise),
+    CAPPluginMethod(name: "setDictation", returnType: CAPPluginReturnPromise),
   ]
   private var sessionId: String?
   private var state: LiveVoiceState?
@@ -29,6 +30,10 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
   private var permissionCall: CAPPluginCall?
   /// A `VoiceActivity`. A stored property cannot name a type that needs iOS 17.
   private var activity: AnyObject?
+  /// The `VoiceActivity` of a web dictation. The web view records; this shows it.
+  private var dictation: AnyObject?
+  /// Time for the upload after a dictation stops. iOS suspends an app without audio.
+  private var dictationTime: UIBackgroundTaskIdentifier = .invalid
   private var hasTap = false
   private var tapCaptureId = 0
   private var audioActive = false
@@ -146,6 +151,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         inputBufferFrames: self.integer(call, "inputBufferFrames"),
         outputBufferSamples: self.integer(call, "outputBufferSamples"))
       self.sessionId = id
+      self.endDictationActivity()
       self.observeLifecycle()
       self.diagnosticRoute("prepared")
       // No engine, active audio session or permission request exists until start or play.
@@ -156,7 +162,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
   private func observeLifecycle() {
     let center = NotificationCenter.default
     let owner = state
-    VisVoiceControl.handler = { [weak self] control in self?.control(control) }
+    routeControls()
     for name in [
       AVAudioSession.interruptionNotification, AVAudioSession.mediaServicesWereResetNotification,
     ] {
@@ -638,6 +644,69 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     }
   }
 
+  /// Shows a web dictation on the lock screen. Display only. A transcription only
+  /// updates a shown dictation, so an outbox retry does not start an activity.
+  @objc public func setDictation(_ call: CAPPluginCall) {
+    command(call) {
+      guard let state = call.getString("state"),
+        ["recording", "transcribing", "idle"].contains(state)
+      else { throw LiveVoiceState.Failure.invalid }
+      if state == "transcribing" { self.holdDictationTime() }
+      if state == "idle" || self.sessionId != nil {
+        self.endDictationActivity()
+      } else if #available(iOS 17.0, *),
+        state == "recording" || self.dictation != nil,
+        let status = VisVoiceAttributes.ContentState(
+          state: state, muted: false, speaking: false, task: nil, resumable: false)
+      {
+        let activity = self.dictation as? VoiceActivity ?? VoiceActivity()
+        self.dictation = activity
+        activity.show(status)
+      }
+      if state == "idle" { self.releaseDictationTime() }
+      self.routeControls()
+      call.resolve()
+    }
+  }
+
+  private func endDictationActivity() {
+    if #available(iOS 17.0, *) { (dictation as? VoiceActivity)?.end() }
+    dictation = nil
+  }
+
+  private func holdDictationTime() {
+    guard dictationTime == .invalid else { return }
+    dictationTime = UIApplication.shared.beginBackgroundTask(withName: "vis-dictation") {
+      [weak self] in self?.releaseDictationTime()
+    }
+  }
+
+  private func releaseDictationTime() {
+    guard dictationTime != .invalid else { return }
+    UIApplication.shared.endBackgroundTask(dictationTime)
+    dictationTime = .invalid
+  }
+
+  /// One route for the lock-screen buttons of a voice session and of a dictation.
+  /// Without an owner, the intent removes the dead activity.
+  private func routeControls() {
+    guard sessionId != nil || dictation != nil else {
+      VisVoiceControl.handler = nil
+      return
+    }
+    VisVoiceControl.handler = { [weak self] control in
+      guard let self else { return }
+      guard control == "stop_recording" else {
+        self.control(control)
+        return
+      }
+      guard self.dictation != nil else { return }
+      // The web view stops the recording and uploads it while the phone stays locked.
+      self.holdDictationTime()
+      self.notifyListeners("dictation", data: ["control": control])
+    }
+  }
+
   /// A lock-screen button. The web session owns the protocol. Mute and end also
   /// stop the capture here, so that they work when the web view is slow.
   private func control(_ control: String) {
@@ -680,7 +749,7 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     permissionCall = nil
     for observer in observers { NotificationCenter.default.removeObserver(observer) }
     observers.removeAll()
-    VisVoiceControl.handler = nil
+    routeControls()
     if #available(iOS 17.0, *) { (activity as? VoiceActivity)?.end() }
     activity = nil
     stopEngine(closing: true)

@@ -52,6 +52,8 @@ public class LiveVoicePlugin extends Plugin {
     private boolean foreground = true;
     private boolean held;
     private boolean heldMicrophone;
+    /** A web dictation owns the service and its notice. A voice session never runs at the same time. */
+    private boolean dictating;
     private boolean permissionPending;
     private PluginCall permissionCall;
     private long rawHead;
@@ -138,7 +140,8 @@ public class LiveVoicePlugin extends Plugin {
         boolean microphone = getContext().checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                 == android.content.pm.PackageManager.PERMISSION_GRANTED;
         if (held && heldMicrophone == microphone) return;
-        LiveVoiceService.start(getContext(), microphone, this::control);
+        endDictation();
+        LiveVoiceService.start(getContext(), microphone, LiveVoiceState.Display.CONNECTING, this::control);
         held = true;
         heldMicrophone = microphone;
     }
@@ -148,6 +151,13 @@ public class LiveVoicePlugin extends Plugin {
      * Mute and End stop the microphone here first, so that they work when the web view is slow.
      */
     private synchronized void control(String control) {
+        if (control.equals("stop_recording")) {
+            if (!dictating) return;
+            JSObject event = new JSObject();
+            event.put("control", control);
+            notifyListeners("dictation", event);
+            return;
+        }
         if (sessionId == null) return;
         JSObject event = new JSObject();
         event.put("sessionId", sessionId);
@@ -165,6 +175,37 @@ public class LiveVoicePlugin extends Plugin {
                     call.getString("state"), call.getBoolean("muted", false), call.getString("task")));
             call.resolve();
         } catch (Exception error) { call.reject(error.getMessage()); }
+    }
+
+    /**
+     * Display of a web dictation. The web view records, and this service keeps its microphone
+     * behind a locked screen. A transcription needs no microphone, so it ends the notice.
+     */
+    @PluginMethod
+    public synchronized void setDictation(PluginCall call) {
+        String next = call.getString("state");
+        if ("recording".equals(next)) {
+            if (dictating) { call.resolve(); return; }
+            if (!foreground || held) { call.reject("The voice notice is unavailable."); return; }
+            try {
+                LiveVoiceService.start(getContext(), getContext().checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED,
+                        LiveVoiceState.Display.RECORDING, this::control);
+                dictating = true;
+                call.resolve();
+            } catch (Exception error) { call.reject(error.getMessage()); }
+        } else if ("transcribing".equals(next) || "idle".equals(next)) {
+            endDictation();
+            call.resolve();
+        } else {
+            call.reject("Invalid dictation state.");
+        }
+    }
+
+    private void endDictation() {
+        if (!dictating) return;
+        dictating = false;
+        LiveVoiceService.stop(getContext());
     }
 
     private void audioSession() {
@@ -541,5 +582,6 @@ public class LiveVoicePlugin extends Plugin {
         getBridge().removeWebViewListener(navigationListener);
         watchesNavigation = false;
         release();
+        endDictation();
     }
 }

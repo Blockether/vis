@@ -15,7 +15,8 @@ struct VisVoiceLiveActivity: Widget {
     ActivityConfiguration(for: VisVoiceAttributes.self) { context in
       VStack(alignment: .leading, spacing: 12) {
         HStack {
-          Text("Vis voice").font(.subheadline.weight(.medium))
+          Text(context.state.dictation ? "Vis dictation" : "Vis voice")
+            .font(.subheadline.weight(.medium))
           Spacer()
           VoiceTimer(start: context.attributes.startedAt)
         }
@@ -87,10 +88,21 @@ private struct VoiceTimer: View {
 }
 
 /// Three controls in fixed positions. Only End works while the session connects.
+/// A dictation has one control, Stop, and a transcription has none.
 private struct VoiceControls: View {
   let state: VisVoiceAttributes.ContentState
 
   var body: some View {
+    if state.state == "recording" {
+      VoiceButton(
+        title: "Stop", symbol: "stop.fill", tone: .end,
+        intent: VisVoiceControlIntent("stop_recording"))
+    } else if !state.dictation {
+      sessionControls
+    }
+  }
+
+  private var sessionControls: some View {
     HStack(spacing: 8) {
       if !state.muted {
         VoiceButton(

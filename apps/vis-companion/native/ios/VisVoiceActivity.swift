@@ -36,7 +36,8 @@ struct VisVoiceAttributes: ActivityAttributes {
 
     init?(state: String?, muted: Bool, speaking: Bool, task: String?, resumable: Bool) {
       guard let state,
-        ["connecting", "listening", "speaking", "muted", "waiting"].contains(state),
+        ["connecting", "listening", "speaking", "muted", "waiting", "recording", "transcribing"]
+          .contains(state),
         task == nil || ["running", "queued", "cancelling"].contains(task)
       else { return nil }
       self.state = state
@@ -47,6 +48,8 @@ struct VisVoiceAttributes: ActivityAttributes {
     }
 
     var connecting: Bool { state == "connecting" }
+    /// A dictation in the composer, not a voice session.
+    var dictation: Bool { state == "recording" || state == "transcribing" }
 
     var title: String {
       switch state {
@@ -54,11 +57,15 @@ struct VisVoiceAttributes: ActivityAttributes {
       case "speaking": return "Speaking"
       case "muted": return "Microphone muted"
       case "waiting": return "Needs your answer"
+      case "recording": return "Recording"
+      case "transcribing": return "Transcribing"
       default: return "Connecting"
       }
     }
 
     var detail: String? {
+      if state == "recording" { return "Stop puts your words in the message" }
+      if state == "transcribing" { return "Your words go to the message" }
       if state == "waiting" { return "Open Vis to answer" }
       if state == "muted" { return resumable ? "Vis cannot hear you" : "Open Vis to unmute" }
       switch task {
@@ -75,6 +82,8 @@ struct VisVoiceAttributes: ActivityAttributes {
       case "speaking": return "speaker.wave.2.fill"
       case "muted": return "mic.slash.fill"
       case "waiting": return "exclamationmark.bubble.fill"
+      case "recording": return "record.circle"
+      case "transcribing": return "text.bubble.fill"
       default: return "ellipsis"
       }
     }
@@ -83,7 +92,7 @@ struct VisVoiceAttributes: ActivityAttributes {
   var startedAt: Date
 }
 
-/// Mute, stop speech or end. It needs no unlock.
+/// Mute, stop speech, end, or stop a dictation. It needs no unlock.
 @available(iOS 17.0, *)
 struct VisVoiceControlIntent: LiveActivityIntent {
   static var title: LocalizedStringResource = "Control Vis voice"

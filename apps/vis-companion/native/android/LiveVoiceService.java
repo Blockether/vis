@@ -14,9 +14,9 @@ import android.os.IBinder;
 import android.os.PowerManager;
 
 /**
- * Keeps the process, its microphone and the processor while a voice session
- * continues behind a locked screen. It holds no audio. The plugin starts it in
- * the foreground. Its notice shows the session state and three controls.
+ * Keeps the process, its microphone and the processor while a voice session or a
+ * dictation continues behind a locked screen. It holds no audio. The plugin starts
+ * it in the foreground. Its notice shows the state and its controls.
  */
 public class LiveVoiceService extends Service {
     /** The plugin that owns the voice session. This service has no session. */
@@ -34,9 +34,10 @@ public class LiveVoiceService extends Service {
     private PowerManager.WakeLock awake;
 
     /** A plain start. A stop before the first command must not crash the process. */
-    static synchronized void start(Context context, boolean microphone, Controls owner) {
+    static synchronized void start(Context context, boolean microphone,
+            LiveVoiceState.Display first, Controls owner) {
         if (controls == null) {
-            display = LiveVoiceState.Display.CONNECTING;
+            display = first;
             startedAt = System.currentTimeMillis();
         }
         controls = owner;

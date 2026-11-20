@@ -24,12 +24,15 @@ final class LiveVoiceState {
     /** What the voice notice shows. It holds no transcript and no session name. */
     static final class Display {
         static final Display CONNECTING = new Display("connecting", false, null);
+        /** A dictation in the composer. Its only control is Stop, which keeps the words. */
+        static final Display RECORDING = new Display("recording", false, null);
         final String state;
         final boolean muted;
         final String task;
 
         Display(String state, boolean muted, String task) {
-            if (!java.util.Arrays.asList("connecting", "listening", "speaking", "muted", "waiting").contains(state)
+            if (!java.util.Arrays.asList("connecting", "listening", "speaking", "muted", "waiting", "recording")
+                    .contains(state)
                     || (task != null && !java.util.Arrays.asList("running", "queued", "cancelling").contains(task)))
                 throw new IllegalArgumentException("Invalid voice status.");
             this.state = state;
@@ -43,11 +46,13 @@ final class LiveVoiceState {
                 case "speaking": return "Speaking";
                 case "muted": return "Microphone muted";
                 case "waiting": return "Needs your answer";
+                case "recording": return "Recording";
                 default: return "Connecting";
             }
         }
 
         String text() {
+            if (state.equals("recording")) return "Dictation";
             if (state.equals("waiting")) return "Open Vis to answer";
             if (state.equals("muted")) return "Vis cannot hear you";
             if ("running".equals(task)) return "Voice session, task running";
@@ -59,6 +64,7 @@ final class LiveVoiceState {
         /** A fixed order. Only End works before the session is live. */
         String[] controls() {
             if (state.equals("connecting")) return new String[] {"end"};
+            if (state.equals("recording")) return new String[] {"stop_recording"};
             return new String[] {muted ? "unmute" : "mute", "stop_speech", "end"};
         }
 
@@ -67,6 +73,7 @@ final class LiveVoiceState {
                 case "mute": return "Mute";
                 case "unmute": return "Unmute";
                 case "stop_speech": return "Stop speech";
+                case "stop_recording": return "Stop";
                 default: return "End";
             }
         }

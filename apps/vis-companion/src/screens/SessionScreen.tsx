@@ -167,6 +167,7 @@ import {
 import { attachmentsFromSharedFiles } from '../lib/share-files';
 import { clearPendingVoice, readPendingVoice, savePendingVoice } from '../lib/pending-voice';
 import {
+  noteReaderGesture,
   readerMayBeScrolling,
   readerOwnsScroll,
   releaseReaderScroll,
@@ -215,6 +216,7 @@ import {
   voiceProgressLabel,
   type WavRecording,
 } from '../lib/voice';
+import { showDictation } from '../lib/dictation-notice';
 import { onWake } from '../lib/wake';
 import {
   applyScrollAnchor,
@@ -242,6 +244,8 @@ import { randomUuid } from '../lib/uuid';
 
 const TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
 const RUNNING_TURN_BODY_THROTTLE_MS = 150;
+/** The share of the transcript's height that Page Up or Page Down moves, as Chromium pages it. */
+const PAGE_KEY_STEP = 0.9;
 /** Reads of a pending recording's transcription before it waits for a wake: about 7.5 minutes. */
 const RECORDING_READS = 20;
 
@@ -2907,6 +2911,13 @@ export function SessionScreen({
   useEffect(() => {
     finishVoiceRef.current = finishVoice;
   });
+
+  // The lock screen (iOS) and the notice (Android) show a dictation. Their Stop finishes it.
+  const [dictationOwner] = useState(() => ({}));
+  useEffect(() => {
+    showDictation(dictationOwner, voicePhase, () => void finishVoiceRef.current());
+  }, [dictationOwner, voicePhase]);
+  useEffect(() => () => showDictation(dictationOwner, 'idle'), [dictationOwner]);
 
   // iOS background dictation requires both audio background mode and a play-and-record
   // session. Settle on page teardown, and verify capture on foreground return in case the
@@ -6541,6 +6552,25 @@ export function SessionScreen({
                       if (slashMatches.length && event.key === 'Escape') {
                         event.preventDefault();
                         setSlashDismissed(true);
+                        return;
+                      }
+                      // Page Up and Page Down page the transcript, as they do with the
+                      // focus in it. A text field keeps these keys for its caret, so the
+                      // composer, which holds the focus on desktop and web, swallowed them.
+                      if (
+                        (event.key === 'PageUp' || event.key === 'PageDown') &&
+                        !event.nativeEvent.isComposing &&
+                        !event.altKey &&
+                        !event.ctrlKey &&
+                        !event.metaKey &&
+                        !event.shiftKey &&
+                        scrollRef.current
+                      ) {
+                        event.preventDefault();
+                        noteReaderGesture();
+                        const viewport = scrollRef.current;
+                        const page = viewport.clientHeight * PAGE_KEY_STEP;
+                        viewport.scrollBy({ top: event.key === 'PageUp' ? -page : page, behavior: 'smooth' });
                         return;
                       }
                       // Shell-like recall (#372): ↑ on the first line brings back the

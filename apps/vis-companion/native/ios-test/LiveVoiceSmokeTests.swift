@@ -67,7 +67,7 @@ final class LiveVoiceSmokeTests: XCTestCase {
       Set(plugin.pluginMethods.map { $0.name }),
       Set([
         "getCapabilities", "prepare", "startCapture", "stopCapture", "acknowledgeCapture",
-        "play", "stopOutput", "close",
+        "play", "stopOutput", "close", "setStatus", "setDictation",
       ]))
     let reply = await invoke(plugin, "getCapabilities")
     XCTAssertNil(reply.error)
