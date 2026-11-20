@@ -30,15 +30,15 @@ Vis on first use.
 ### Get the desktop app
 
 Download Vis for Windows x64, universal macOS, or Linux x64 with the buttons below.
-For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.5.23/vis-companion-0.5.23-linux-arm64.AppImage).
+For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.5.24/vis-companion-0.5.24-linux-arm64.AppImage).
 The [latest GitHub release](https://github.com/Blockether/vis/releases/latest) lists all packages.
 
 <div class="store-links" aria-label="Download the desktop app">
-<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.23/vis-companion-0.5.23-windows-x64.msi"><img src="assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a>
+<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.24/vis-companion-0.5.24-windows-x64.msi"><img src="assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a>
 <span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.23/vis-companion-0.5.23-macos-universal.dmg"><img src="assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a>
+<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.24/vis-companion-0.5.24-macos-universal.dmg"><img src="assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a>
 <span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.23/vis-companion-0.5.23-linux-x64.AppImage"><img src="assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a>
+<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.24/vis-companion-0.5.24-linux-x64.AppImage"><img src="assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a>
 </div>
 
 Install the package and open Vis. Then [connect the desktop app](#connect-the-desktop-app).

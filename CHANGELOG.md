@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.24] - 2026-11-20
+
+### Added
+
+- Sessions: `vis-agent sessions export <SESSION-ID> --atif` prints the session as one ATIF v1.8 JSON document, with session metadata and subagent conversations. `vis-agent sessions import session.json` makes a new session from an ATIF document. The gateway (`GET /v1/sessions/:sid/trajectory.json` and `POST /v1/sessions/actions/import`), the TUI, the Companion app and the Python SDK (`client.routes.get_session_trajectory`) also export and import ATIF.
+- Private links (#492): the gateway runs an HTTP CONNECT proxy for the domains in `gateway.proxy`. The proxy needs the gateway token. `GET /v1/proxy` and `GatewayClient.proxy()` give its settings. The Companion app opens a link to a covered host in a browser inside the app, which sends its requests through this proxy. Other links open outside the app as before.
+- Companion: drag the right edge of the session list to change its width. The session list can be 960 px wide, and the live views panel 1200 px.
+- Companion: `npm run package:desktop -- --live` builds a desktop app that loads the Vite dev server.
+- Docs: YAML, TOML, INI and Markdown code blocks have syntax colors. The Extension Center also colors README code.
+
+### Changed
+
+- TUI and Companion: the team block of a turn starts folded to its team line. Click the line to unfold the table.
+
+### Fixed
+
+- Sessions: snapshot and ATIF exports replace credentials with `[REDACTED]`. This includes known values (provider keys, the gateway token, saved secret settings, credentials in the environment, `.env` and `environment:`) and credentials that their form shows: private keys, passwords in URLs, `Authorization` and `Cookie` values, well-known key and token formats, JSON Web Tokens, and base64 text that holds one of these. Before, a snapshot kept the stored rows unchanged.
+- Sessions: an ATIF import keeps session metadata when you import the same file again, and saved tool call IDs are unique.
+- Council: the TUI and the Companion show a team card in each turn that resumed a subagent, not only in the spawn turn.
+- Review: when two sessions change one file, each session sees only its own lines.
+- Companion: delete removes the archived sessions of a folder project. Before, the project came back after each delete.
+- Companion: a starred session moves to the top at once.
+- Companion: a new session focuses its composer on desktop, but not in the phone apps.
+
 ## [v0.5.23] - 2026-11-19
 
 Vis v0.5.22 was not published, because its release checks failed. v0.5.23 contains all v0.5.22 changes.
