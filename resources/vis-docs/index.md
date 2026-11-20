@@ -46,22 +46,20 @@ One gateway can serve several people and devices.
 - [Compare installation methods and update Vis](distributions.md).
 - [Run a gateway as a shared service](gateway-service.md).
 
-## Find reference information
+## Compare Vis with other agents
 
-The reference pages list the [keyboard shortcuts](keyboard-shortcuts.md), the
-[extension API](extension-api.md), the [components](components.md) of forms and live views, and the
-[log files](logging.md). Each Feature API page shows the calls for one feature in Python and in HTTP.
-Start with the [Sessions API](sessions-api.md).
+The table compares the features of five coding agents. It uses the documentation of each agent on
+20 November 2026. Features change often, so check the documentation of an agent before you choose.
 
-## Work safely
-
-Vis edits files and runs commands with the permissions of your user account. Start with a task that
-changes no files, and review each diff before you use it. To limit what child processes can read,
-write, and reach on the network, read [Process jail and network policy](jail.md).
-
-Keep token authentication on when a phone or another computer connects. Read
-[Running a gateway](gateway-service.md) before you open a gateway to a network. To report a problem
-without exposing private data, read [Reporting a bug](reporting-bugs.md).
+| Feature | Vis | [Claude Code](https://code.claude.com/docs) | [Codex](https://developers.openai.com/codex) | [OpenCode](https://opencode.ai/docs) | [pi](https://pi.dev) |
+| --- | --- | --- | --- | --- | --- |
+| License | Apache-2.0 | Proprietary | Apache-2.0 | MIT | MIT |
+| Models | [Many providers and local models](configuration.md#providers-and-models) | Claude models | OpenAI models, and other providers through configuration | Many providers and local models | Many providers and local models |
+| Apps | Terminal, desktop, web, iOS, and Android | Terminal, IDE, desktop, web, iOS, and Android | Terminal, IDE, desktop, web, and phone | Terminal, beta desktop app, web, and phone | Terminal |
+| How the model uses tools | [A Python program in each step](rationale.md#python-connects-the-steps) | Tool calls | Tool calls | Tool calls | Tool calls, and an optional JavaScript `codemode` tool |
+| Extensions | [Python packages](extension-packages.md) | Plugins with skills, hooks, subagents, and MCP servers | Skills and MCP servers | JavaScript and TypeScript plugins | TypeScript extensions and packages |
+| Subagents | [Yes](council.md) | Yes | Yes | Yes | No, a package can add them |
+| Use from your own code | [Python SDK](python-sdk.md) and [HTTP API](http-api.md) | Agent SDK for Python and TypeScript | Codex SDK and app server | JavaScript SDK and HTTP server | TypeScript SDK and RPC |
 
 ## Gallery
 
