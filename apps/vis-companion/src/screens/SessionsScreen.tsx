@@ -2618,13 +2618,17 @@ function MachineSections({
 /** How many rows one purge walk asks for at a time — a read nobody is watching. */
 const PURGE_WALK = 200;
 
-/** Walk gateway project pages to collect the complete session ID set for purge. */
+/**
+ * Walk gateway project pages to collect the complete session ID set for purge.
+ * Archived sessions are included: the project overview counts them, so a purge
+ * that keeps them leaves the project in place.
+ */
 async function projectSessionIds(api: GatewayClient, root: string): Promise<string[]> {
   const pins: ProjectWindows = new Map();
   const ids: string[] = [];
   let after = '';
   for (;;) {
-    const page = await api.listProjectPage(root, PURGE_WALK, after, pins);
+    const page = await api.listProjectPage(root, PURGE_WALK, after, pins, undefined, false, 'include');
     for (const session of page.rows) ids.push(session.id);
     if (!page.nextCursor || page.rows.length === 0 || ids.length >= page.total) break;
     after = page.nextCursor;
