@@ -2,9 +2,8 @@ Vis is an AI agent that works in your project. Give Vis a task and a project fol
 files, runs commands, edits code, and runs your checks. **Activities** show each step that Vis
 takes.
 
-Vis runs on the computer that holds your project. The terminal app, the desktop app, and the phone
-app connect to that computer and show the same sessions. You can use Vis as it is, change its
-instructions and tools, or call Vis from your own programs.
+Vis runs on the computer that holds your project. The terminal, desktop, and phone apps show the
+same sessions.
 
 ## Start using Vis
 
