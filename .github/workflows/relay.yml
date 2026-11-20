@@ -35,10 +35,10 @@ jobs:
     steps:
       # `npm ci` runs third-party install scripts in the same job as the
       # Cloudflare token; do not also hand them a git credential.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -58,10 +58,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: relay
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm

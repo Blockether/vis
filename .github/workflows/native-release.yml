@@ -310,7 +310,7 @@ jobs:
       # that run, so the artifact keeps the name of the release asset.
       - name: Upload dry-run bundle
         if: steps.target.outputs.publish != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}
@@ -322,7 +322,7 @@ jobs:
         # Diagnostics only: an artifact service that refuses the logs must not
         # fail the build that produced them, and with it the release.
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-build-logs-${{ matrix.asset }}
           path: ${{ runner.temp }}/vis-native-${{ github.run_id }}-${{ github.run_attempt }}/*.log
@@ -377,7 +377,7 @@ jobs:
         if: steps.target.outputs.publish == 'true'
         with:
           tag: ${{ inputs.tag || github.ref_name }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -633,7 +633,7 @@ jobs:
         # Diagnostics only: an artifact service that refuses the logs must not
         # fail the build that produced them, and with it the release.
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-build-logs-macos-arm64
           path: ${{ runner.temp }}/vis-native-${{ github.run_id }}-${{ github.run_attempt }}/*.log

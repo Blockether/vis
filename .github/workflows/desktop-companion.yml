@@ -87,7 +87,7 @@ jobs:
       # runner the next attempt continues the compile instead of restarting it.
       - name: Keep the Cargo target out of the cleaned workspace
         run: echo "CARGO_TARGET_DIR=$HOME/.cache/vis/desktop-target" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
 
@@ -262,7 +262,7 @@ jobs:
         run: ls -la build/desktop
 
       - name: Keep installers as a workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vis-companion-desktop-${{ matrix.asset }}
           path: apps/vis-companion/build/desktop/*
