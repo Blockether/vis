@@ -77,12 +77,12 @@ desktop app when I want a separate window. On my phone, I check progress or repl
 
 Each of these apps connects to the same gateway, the service that runs your sessions. The work
 stays on the computer that runs the gateway. A change of device does not start a second agent or
-copy a conversation. You return to the same work. The [Getting started guide](index.md#install)
+copy a conversation. You return to the same work. The [Quickstart](quickstart.md#install)
 has the downloads and the connection steps.
 
 ## See also
 
-- To install Vis, connect an app, and try a first task, read [Getting started](index.md).
+- To install Vis, connect an app, and try a first task, read [Quickstart](quickstart.md).
 - To turn a repeated task into a tool, read [Extending Vis](extending.md).
 - For working examples of checks and Activities, read [Extension design](extension-design.md).
 - To learn how a long session keeps useful work, read [Context management](context-management.md).

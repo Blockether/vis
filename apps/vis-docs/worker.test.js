@@ -55,7 +55,7 @@ test('docs and catalog share an origin, with documentation independent of D1', a
   const home = await fixture.runtime.dispatchFetch('https://center.example.com/');
   const homeHTML = await home.text();
   expect(home.status).toBe(200);
-  expect(homeHTML).toContain('Getting started');
+  expect(homeHTML).toContain('Overview');
   expect(homeHTML).not.toContain('id="catalog-data"');
   expect(homeHTML).toContain('class="center-link" href="/extensions/"');
   const docs = await fixture.runtime.dispatchFetch('https://center.example.com/extending.html');

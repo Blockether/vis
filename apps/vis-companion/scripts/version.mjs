@@ -89,7 +89,7 @@ export function syncPythonVersion({ quiet = false } = {}) {
 }
 
 // The desktop install badges download the installers of the current release.
-const installerLinkFiles = [join(repoRoot, 'README.md'), join(repoRoot, 'resources', 'vis-docs', 'index.md')];
+const installerLinkFiles = [join(repoRoot, 'README.md'), join(repoRoot, 'resources', 'vis-docs', 'quickstart.md')];
 
 /**
  * Point the desktop installer links in `files` at the VIS_VERSION release.

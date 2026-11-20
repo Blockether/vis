@@ -2,9 +2,13 @@
  [{:intro? true
    :pages
    [{:blurb
-     "Install Vis, try a first task, and connect the desktop app or the phone app to the same sessions."
+     "Learn what Vis does, and find the page for your next task in setup, customization, automation, or reference."
      :page "index"
-     :title "Getting started"}
+     :title "Overview"}
+    {:blurb
+     "Install Vis, try a first task, and connect the desktop app or the phone app to the same sessions."
+     :page "quickstart"
+     :title "Quickstart"}
     {:blurb
      "Why Vis exists: tools that replace reminders, Python that connects the steps, Activities that show the work, and one gateway for every device."
      :page "rationale"

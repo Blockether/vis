@@ -145,7 +145,7 @@ events without buffering and without a short idle timeout.
 
 Give the token to your program through its secret configuration. A pairing link and a QR code also
 contain credentials, so show them only in a private terminal. For the first connection of an app,
-read [Pair a phone](index.md#pair-a-phone).
+read [Pair a phone](quickstart.md#pair-a-phone).
 
 ### Access from anywhere with Tailscale
 
@@ -345,7 +345,7 @@ Review the files before you share them.
 
 ## See also
 
-- To install Vis and connect an app for the first time, read [Getting started](index.md).
+- To install Vis and connect an app for the first time, read [Quickstart](quickstart.md).
 - To work with the sessions that every connected client shows, read [Sessions](sessions.md).
 - To change the settings that the gateway reads, read [Configuration](configuration.md).
 - To connect a script or run a private local agent, read [Python SDK](python-sdk.md).

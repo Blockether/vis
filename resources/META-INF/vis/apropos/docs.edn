@@ -2,6 +2,7 @@
 ;; A page IS the markdown file it names; how the site titles, groups and orders
 ;; it lives in vis-docs/site.edn, which nothing searches.
 [{:kind "doc" :name "index" :resource "vis-docs/index.md"}
+ {:kind "doc" :name "quickstart" :resource "vis-docs/quickstart.md"}
  {:kind "doc" :name "rationale" :resource "vis-docs/rationale.md"}
  {:kind "doc" :name "context-management" :resource "vis-docs/context-management.md"}
  {:kind "doc" :name "python-sandbox" :resource "vis-docs/python-sandbox.md"}

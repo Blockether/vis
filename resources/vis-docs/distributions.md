@@ -370,7 +370,7 @@ To give the web app your own name, logo, and theme, read [White label](white-lab
 1. [Download the installer from GitHub Releases](https://github.com/Blockether/vis/releases/latest)
    for your computer.
 2. Install the package and open **Vis** from your application launcher.
-3. [Connect to your gateway](index.md#connect-an-app) to open your projects and continue your
+3. [Connect to your gateway](quickstart.md#connect-an-app) to open your projects and continue your
    sessions.
 
 | Platform | Package | Install |
@@ -390,7 +390,7 @@ Vis app as the stable package. To keep your stable app on macOS or Linux, use
 
 Run the gateway on the computer that holds your projects: macOS, Linux, or
 [Linux in WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) on Windows. For a local
-WSL2 gateway, enable localhost forwarding. The [connection guide](index.md#connect-an-app) covers
+WSL2 gateway, enable localhost forwarding. The [connection guide](quickstart.md#connect-an-app) covers
 local addresses and remote pairing.
 
 ### Notifications on the desktop
@@ -518,7 +518,7 @@ The launch opens the app alone, without a local gateway, in three cases: with `-
 
 On the first launch, add this machine in the app with `http://127.0.0.1:7890` and an empty bearer
 token. For a gateway on a different machine, use its URL and bearer token.
-[Desktop and mobile setup](index.md#connect-an-app) has the connection options.
+[Desktop and mobile setup](quickstart.md#connect-an-app) has the connection options.
 
 ## Automatic native betas
 
@@ -616,5 +616,5 @@ engine. On a platform without native bundles, use the dev track.
 - To add Java or Clojure code to the engine, read
   [Native builds for Java and Clojure extensions](jvm-native-image.md).
 - To download a client and connect to your sessions, read
-  [Getting started](index.md#connect-an-app).
+  [Quickstart](quickstart.md#connect-an-app).
 - For the settings of Vis and its state directory, read [Configuration](configuration.md).

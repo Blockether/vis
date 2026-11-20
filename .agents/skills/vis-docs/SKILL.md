@@ -64,7 +64,7 @@ Do not write these:
 
 Keep the modules of `resources/vis-docs/site.edn` in this order:
 
-1. **Get started**: Getting started, Rationale, and Reporting a bug.
+1. **Get started**: Overview, Quickstart, Rationale, and Reporting a bug.
 2. **Guides**: four groups that the sidebar shows as collapsed lists.
    - **Use Vis**: app workflows and shared session features.
    - **Run Vis**: installation, updates, the gateway, and access policy.

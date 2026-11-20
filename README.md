@@ -53,7 +53,7 @@ for the desktop app.
 <a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" height="40"></a>
 </p>
 
-[Linux ARM64](https://github.com/Blockether/vis/releases/download/v0.5.24/vis-companion-0.5.24-linux-arm64.AppImage) · [All packages](https://github.com/Blockether/vis/releases/latest) · [Other installation options](resources/vis-docs/distributions.md) · [Pair a phone](resources/vis-docs/index.md#pair-a-phone)
+[Linux ARM64](https://github.com/Blockether/vis/releases/download/v0.5.24/vis-companion-0.5.24-linux-arm64.AppImage) · [All packages](https://github.com/Blockether/vis/releases/latest) · [Other installation options](resources/vis-docs/distributions.md) · [Pair a phone](resources/vis-docs/quickstart.md#pair-a-phone)
 
 ## [Documentation](https://vis.blockether.com/)
 

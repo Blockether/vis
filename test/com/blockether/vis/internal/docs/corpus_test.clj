@@ -185,7 +185,7 @@ Whole skill body."}
       (let [es (dc/entries)]
         (doseq [[words page]
                 [["context window" "context-management"] ["tokens" "context-management"]
-                 ["api key" "configuration"] ["iphone" "index"] ["android" "index"]
+                 ["api key" "configuration"] ["iphone" "quickstart"] ["android" "quickstart"]
                  ["permissions" "jail"] ["log file" "logging"] ["crash" "logging"]
                  ["plugin" "extending"] ["custom tool" "extending"] ["transcript" "sessions"]
                  ["upgrade" "distributions"] ["graalvm" "jvm-native-image"]

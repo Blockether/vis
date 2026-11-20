@@ -617,7 +617,7 @@ can do the same steps with the
 
 - For every terminal key, read [Keyboard shortcuts](keyboard-shortcuts.md).
 - To follow and control the same session from another device, read
-  [Desktop and mobile setup](index.md#connect-an-app).
+  [Desktop and mobile setup](quickstart.md#connect-an-app).
 - To ask another session for help or a second review, read [Council](council.md).
 - To remove private information before you share an export, read
   [Reporting a bug](reporting-bugs.md).

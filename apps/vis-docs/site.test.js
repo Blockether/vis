@@ -101,13 +101,13 @@ test('the header keeps its controls within the centered page width', () => {
   }
 });
 
-test('Getting started is the only app setup guide in the published indexes', () => {
+test('Quickstart is the only app setup guide in the published indexes', () => {
   expect(htmlFiles).not.toContain('gateway.html');
   expect(existsSync('dist/gateway.md')).toBe(false);
   for (const file of ['sitemap-docs.xml', 'llms.txt', 'llms-full.txt']) {
     expect(readFileSync(`dist/${file}`, 'utf8'), file).not.toMatch(/\/gateway\.(?:html|md)/);
   }
-  const dom = new JSDOM(readFileSync('dist/index.html', 'utf8'));
+  const dom = new JSDOM(readFileSync('dist/quickstart.html', 'utf8'));
   try {
     for (const anchor of ['connecting-the-companion-app', 'pair-a-phone', 'gateway-reference']) {
       expect(dom.window.document.getElementById(anchor), anchor).not.toBeNull();
@@ -309,7 +309,7 @@ test('desktop badges download the current release installers in README and docum
     macos: `${release}-macos-universal.dmg`,
     linux: `${release}-linux-x64.AppImage`,
   };
-  for (const file of ['../../README.md', '../../resources/vis-docs/index.md']) {
+  for (const file of ['../../README.md', '../../resources/vis-docs/quickstart.md']) {
     const source = readFileSync(file, 'utf8');
     const dom = new JSDOM(source);
     try {
@@ -399,9 +399,9 @@ test('Wrangler serves the home page, HTML paths and assets with production routi
     }
     for (const method of ['GET', 'HEAD']) {
       for (const [path, target] of [
-        ['/gateway', '/'],
-        ['/gateway.html', '/'],
-        ['/gateway.md', '/index.md'],
+        ['/gateway', '/quickstart.html'],
+        ['/gateway.html', '/quickstart.html'],
+        ['/gateway.md', '/quickstart.md'],
         ['/queue-and-cancel', '/sessions.html'],
         ['/queue-and-cancel.html', '/sessions.html'],
         ['/queue-and-cancel.md', '/sessions.md'],

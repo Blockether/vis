@@ -1,186 +1,68 @@
-Vis explores a project, changes code, and runs checks. On this page, you install Vis, run a first
-task, and connect the desktop app or the phone app.
+Vis is an AI agent that works in your project. Give Vis a task and a project folder. Vis reads
+files, runs commands, edits code, and runs your checks. **Activities** show each step that Vis
+takes.
 
-<nav class="quick-links" aria-label="Getting started">
-  <a href="#install">Install</a>
-  <a href="#first-session">Try a task</a>
-  <a href="#connect-an-app">Connect an app</a>
-</nav>
+Vis runs on the computer that holds your project. The terminal app, the desktop app, and the phone
+app connect to that computer and show the same sessions. You can use Vis as it is, change its
+instructions and tools, or call Vis from your own programs.
 
-## Install
+## Start using Vis
 
-### Install Vis where your work runs
+If you are new to Vis, follow the [Quickstart](quickstart.md). It installs Vis, connects a model,
+and runs a first task.
 
-Install Vis on the computer that holds your project. Native packages support macOS on Apple silicon
-and Linux on x64 or ARM64. On Windows, use Linux in WSL2. For other platforms or a source build,
-read [Runtime distributions](distributions.md).
+If Vis is already installed, choose what you want to do:
 
-The installer needs `curl` and `tar`. It does not need Java or Git. It writes to `~/.local/bin` and
-can update your shell profile.
-[Read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent) before you run it.
+- [Continue, stop, fork, or find your work](sessions.md) in saved sessions.
+- [Choose a provider and a model](configuration.md#providers-and-models), or use a local model.
+- [Connect the desktop app or a phone](quickstart.md#connect-an-app) to the sessions on your computer.
+- [Ask another session for help](council.md) or for a second review.
+- [Learn how Vis keeps a long conversation usable](context-management.md).
+- [Read why Vis works this way](rationale.md).
 
-```bash
-curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
-```
+## Customize Vis
 
-The desktop app and the phone app connect to this engine. They do not run it. For a Python program,
-`pip install vis-agent` is enough, because the [Python SDK](python-sdk.md#install-the-sdk) downloads
-Vis on first use.
+Vis can follow the rules of your project, reuse instructions for a task, and load tools from
+extension packages.
 
-### Get the desktop app
+- [Choose providers, models, and project settings](configuration.md).
+- [Tell Vis how your codebase works](project-instructions.md).
+- [Give Vis reusable instructions for a task](skills.md).
+- [Add an extension or share your own](extension-packages.md).
+- [Give the web app your own name, logo, and theme](white-label.md).
 
-Download Vis for Windows x64, universal macOS, or Linux x64 with the buttons below.
-For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.5.24/vis-companion-0.5.24-linux-arm64.AppImage).
-The [latest GitHub release](https://github.com/Blockether/vis/releases/latest) lists all packages.
+## Automate or embed Vis
 
-<div class="store-links" aria-label="Download the desktop app">
-<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.24/vis-companion-0.5.24-windows-x64.msi"><img src="assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a>
-<span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.24/vis-companion-0.5.24-macos-universal.dmg"><img src="assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a>
-<span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.24/vis-companion-0.5.24-linux-x64.AppImage"><img src="assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a>
-</div>
+Vis can run a task without a chat, or run inside your own program.
 
-Install the package and open Vis. Then [connect the desktop app](#connect-the-desktop-app).
-[Desktop setup](distributions.md#open-the-desktop-app) describes the installation and launcher
-options.
+- [Run a prompt on a schedule or from a webhook](automations.md).
+- [Run Vis from a Python program](python-sdk.md) with the Python SDK.
+- [Call a gateway over HTTP](http-api.md) from any language.
+- [Build a tool that Vis can call](extending.md) in an extension.
 
-<span id="get-the-phone-app"></span>
+## Run Vis for a team
 
-### iPhone, iPad, and Android
+One gateway can serve several people and devices.
 
-These apps are public betas. Install one, then [pair it](#pair-a-phone).
+- [Compare installation methods and update Vis](distributions.md).
+- [Run a gateway as a shared service](gateway-service.md).
 
-<div class="store-links" aria-label="Install the Companion app">
-<a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a>
-<span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a>
-</div>
+## Find reference information
 
-## First session
+The reference pages list the [keyboard shortcuts](keyboard-shortcuts.md), the
+[extension API](extension-api.md), the [components](components.md) of forms and live views, and the
+[log files](logging.md). Each Feature API page shows the calls for one feature in Python and in HTTP.
+Start with the [Sessions API](sessions-api.md).
 
-Choose a provider and a model before you send a task. A provider may need an account or an API key,
-and it may charge for use. For a local model, use Ollama or LM Studio.
-[Providers and models](configuration.md#providers-and-models) lists the options.
+## Work safely
 
-Vis can edit files and run commands. Start with a task that changes no files.
+Vis edits files and runs commands with the permissions of your user account. Start with a task that
+changes no files, and review each diff before you use it. To limit what child processes can read,
+write, and reach on the network, read [Process jail and network policy](jail.md).
 
-### In the terminal
-
-Open a terminal in your project:
-
-```bash
-cd /path/to/project
-vis-agent tui
-```
-
-Vis starts a local gateway if none runs.
-
-1. Add a provider in the provider picker.
-2. Follow its sign-in instructions.
-3. Select a model.
-
-Press **Enter** to send a message. [Keyboard shortcuts](keyboard-shortcuts.md) lists the key for a
-new line and the other keys.
-
-### In the desktop or phone app
-
-[Connect the app](#connect-an-app). Then open your project, start a session, and choose a provider
-and a model.
-
-### Try a first task
-
-Send this message:
-
-> Explain how this project is organized and where its tests live. Don't change any files.
-
-The answer describes the structure of your project and its tests. Open **Activities** to see the
-searches that Vis ran and the files that Vis read.
-
-Next, ask for a small change and the tests for it. Review the diff before you use the change.
-To limit what Vis can access, read [Process jail and network policy](jail.md).
-
-<span id="connecting-the-companion-app"></span>
-
-## Connect an app
-
-The desktop app and the phone app connect to a **gateway**, the Vis service on the computer that
-holds your project. Your files and commands stay on that computer. The apps show the same sessions
-as the terminal.
-
-[Install Vis](#install) on that computer first. An app needs no separate Vis account.
-
-### Connect the desktop app
-
-On macOS and Linux, open the app from a terminal:
-
-```bash
-vis-agent desktop
-```
-
-The command opens the app. If no local gateway runs, the command starts one in the background. That
-gateway runs while the app runs.
-
-1. In **Add a machine**, enter `http://127.0.0.1:7890`.
-2. Leave the bearer token empty for the default local gateway.
-
-You add the machine only one time.
-
-If you open the app another way, no gateway starts. Check for a gateway:
-
-```bash
-vis-agent gateway status
-```
-
-If none runs, start one:
-
-```bash
-vis-agent gateway start --host 127.0.0.1
-```
-
-This command runs the gateway in the foreground, so keep that terminal open.
-
-If you turned on token authentication, enter the token. If you reuse a gateway that already runs,
-use the address that `vis-agent gateway status` shows.
-
-The app reaches a local WSL2 gateway through localhost forwarding. On an Intel Mac, use the
-[JVM distribution](distributions.md#native-vs-jvm) or a gateway on another computer.
-
-For a gateway on another computer, [pair the app](#pair-a-phone) and paste the pairing link.
-`127.0.0.1` reaches only the device that you use.
-
-### Pair a phone
-
-Your phone needs an address that it can reach over your local network or a private VPN. It cannot
-reach a gateway on `127.0.0.1`.
-
-Keep token authentication on for remote access. A pairing link and a QR code each include the token.
-Treat them as passwords, and do not share them in public. Use a trusted network, a VPN, or HTTPS
-for remote connections.
-
-On the computer that runs Vis, replace `10.0.0.5` with the network address of that computer:
-
-```bash
-vis-agent gateway start --host 10.0.0.5 --require-token --pair
-```
-
-Keep that terminal open. In **Add a machine**, scan the QR code or paste the pairing link. The app
-then opens the projects and sessions of that computer.
-
-If a gateway already runs, create a pairing link without a restart:
-
-```bash
-vis-agent gateway pair
-```
-
-A gateway that listens only on `127.0.0.1` needs a restart with an address that the phone can reach.
-Check for active work before you stop the gateway.
-[Stop or restart a gateway](gateway-service.md#stop-or-restart-a-gateway) has the steps.
-
-<span id="access-from-anywhere-with-tailscale"></span>
-
-For access away from home or a custom pairing address, read
-[Remote connections](gateway-service.md#connect-from-another-machine).
+Keep token authentication on when a phone or another computer connects. Read
+[Running a gateway](gateway-service.md) before you open a gateway to a network. To report a problem
+without exposing private data, read [Reporting a bug](reporting-bugs.md).
 
 ## See Vis in action
 
@@ -262,19 +144,6 @@ regression test, and a release preparation.
   </div>
 </section>
 
-## Gateway reference
-
-<span id="starting-the-gateway"></span>
-<span id="using-a-remote-gateway-from-the-cli"></span>
-<span id="tokens-and-http-401"></span>
-<span id="http-api"></span>
-<span id="python-sdk"></span>
-<span id="resource-limits"></span>
-
-For remote connections, tokens, and service setup, read [Running a gateway](gateway-service.md). To
-use Vis from your own code, read [Python SDK basics](python-sdk.md) or
-[HTTP API basics](http-api.md).
-
 <span id="see-also"></span>
 
 ## Learn more
@@ -303,7 +172,8 @@ use Vis from your own code, read [Python SDK basics](python-sdk.md) or
 
 | Page | Read it to |
 | --- | --- |
-| [Getting started](index.md) | Install Vis and connect your first client. |
+| [Overview](index.md) | Learn what Vis does and find the page for your task. |
+| [Quickstart](quickstart.md) | Install Vis, try a first task, and connect an app. |
 | [Rationale](rationale.md) | Learn the reasons behind the design of Vis. |
 | [Reporting a bug](reporting-bugs.md) | Report a problem without exposing private data. |
 

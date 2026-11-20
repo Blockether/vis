@@ -456,6 +456,6 @@ keys in the picture viewer. On a phone, swipe left or right.
 - To learn what Enter, Esc, and Ctrl+C do while Vis works, and how to find, fork, and organize
   sessions, read [Sessions](sessions.md).
 - To start Vis in your terminal and send a first task, read
-  [Getting started](index.md#in-the-terminal).
+  [Quickstart](quickstart.md#in-the-terminal).
 - To report a shortcut that does not work in your terminal, read
   [Reporting a bug](reporting-bugs.md).

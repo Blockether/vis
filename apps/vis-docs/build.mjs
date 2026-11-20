@@ -157,7 +157,7 @@ await writeFile(
     '  Cache-Control: public, max-age=0, must-revalidate\n',
 );
 // Keep / and explicit .html URLs static without spending a Worker request on the home page.
-// The app setup guide is now part of Getting started, and the guides to control and export
+// The app setup guide is now part of Quickstart, and the guides to control and export
 // sessions are now part of Sessions. The Java and Clojure SDK guide is removed, so its
 // bookmarks open HTTP API basics, which any JVM program can call. The motivation, token and
 // prompt pages are renamed to Rationale, Context management and Project instructions.
@@ -165,7 +165,7 @@ await writeFile(
 // switch. Keep bookmarks working.
 await writeFile(
   new URL('_redirects', dist),
-  '/ /index.html 200\n/gateway / 301\n/gateway.html / 301\n/gateway.md /index.md 301\n' +
+  '/ /index.html 200\n/gateway /quickstart.html 301\n/gateway.html /quickstart.html 301\n/gateway.md /quickstart.md 301\n' +
     '/queue-and-cancel /sessions.html 301\n/queue-and-cancel.html /sessions.html 301\n' +
     '/queue-and-cancel.md /sessions.md 301\n/exporting-sessions /sessions.html 301\n' +
     '/exporting-sessions.html /sessions.html 301\n/exporting-sessions.md /sessions.md 301\n' +
