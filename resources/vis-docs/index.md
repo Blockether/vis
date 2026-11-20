@@ -56,9 +56,16 @@ Vis has a part for each step of the loop:
 
 A script and the agent use the same CPython and the same shared packages. `vis-agent python --shared`
 runs your script with the packages of the agent, so a helper that the agent wrote also runs as a
-script. A script does not get the tool functions of the agent, such as `grep` and `shell`.
-[Run programs with `vis-agent python`](python-sandbox.md#run-programs-with-vis-agent-python) has
-the details.
+script. The tool functions of the agent, such as `grep` and `shell`, are available in two ways:
+
+- An extension calls them through `vis.tools`, in the session that called it. Read
+  [Call other session tools](extension-api.md#call-other-session-tools).
+- A script that uses the [Python SDK](python-sdk.md) sends a block of code to a session. The block
+  runs with all tools of that session and no model.
+  [Operations](sessions-api.md#operations) lists the call `post_session_run`.
+
+A plain script that calls `vis.tools` gets an error. [Run programs with
+`vis-agent python`](python-sandbox.md#run-programs-with-vis-agent-python) has the details.
 
 ## Start using Vis
 

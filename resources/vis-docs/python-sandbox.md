@@ -260,6 +260,10 @@ with the status of your program. Unlike `python_execution`, the command has no t
 no automatic imports. `vis-agent python --version` prints the Python version. Other interpreter
 options, such as `-u` or `-X`, are not supported.
 
+To use the tools from a program, send a block to a session through
+`client.routes.post_session_run`, as [Operations](sessions-api.md#operations) shows. The block runs
+with the tools of that session and no model.
+
 Each word after the program goes to the program, also `--help` and `-v`. Put the options of Vis
 before the program: `vis-agent python --no-network script.py --help`.
 
