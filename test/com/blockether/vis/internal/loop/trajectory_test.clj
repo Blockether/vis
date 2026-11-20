@@ -457,10 +457,41 @@
                   "https://example.org:443?email=me@local.example"
                   "Put a line containing -----BEGIN PRIVATE KEY----- at the start of the file."
                   "sk-model-config-for-sandbox-kubernetes"
+                  "fixtures/eyJplaceholderName.abc.png"
                   "task-sk-abcdefghijklmnopqrstuvwxyz0123456789"
                   "git@github.com:org/repo.git" "https://example.com/a:b" "ghp_short"
                   "3fa85f64-5717-4562-b3fc-2c963f66afa6"]]
         (expect (= text (trajectory/redact text []))))))
+
+(defn- base64 [^String s] (.encodeToString (java.util.Base64/getEncoder) (.getBytes s "UTF-8")))
+
+(defdescribe base64-credential-test
+  (it "replaces base64 text that holds a known value or a credential form"
+      (expect (= ["data:\n  password: [REDACTED]" "auth=[REDACTED]" "url: [REDACTED]"
+                  "Authorization: Basic [REDACTED]" "password: [REDACTED]" "blob:\n[REDACTED]\nnext line"]
+                 (trajectory/redact [(str "data:\n  password: " (base64 "my-known-secret-42"))
+                                     (str "auth=" (base64 "{\"auth\":\"my-known-secret-42\"}"))
+                                     (str "url: " (base64 "postgres://admin:hunter22@db/x"))
+                                     "Authorization: Basic YTpi"
+                                     (str "password: " (base64 "s3cr3t8!"))
+                                     (str "blob:\n"
+                                          (.encodeToString (java.util.Base64/getMimeEncoder)
+                                                           (.getBytes (str (apply str (repeat 50 "x"))
+                                                                           "my-known-secret-42"
+                                                                           (apply str (repeat 100 "y")))
+                                                                      "UTF-8"))
+                                          "\nnext line")]
+                                    ["my-known-secret-42" "s3cr3t8!"]))))
+  (it "keeps base64 data, paths and names without a credential"
+      (let [image (.encodeToString (java.util.Base64/getEncoder)
+                                   (let [bytes (byte-array 3000)] (.nextBytes (java.util.Random. 7) bytes) bytes))
+            text [(str "data:image/png;base64," image)
+                  (base64 "hello world, this is plain text")
+                  "Authorization: Basic authentication is used"
+                  "src/com/blockether/vis/internal/loop/trajectory.clj"
+                  "camelCaseIdentifierName and SomeLongClassName2"
+                  "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"]]
+        (expect (= text (trajectory/redact text ["my-known-secret-42"]))))))
 
 (defdescribe redact-test
              (it "replaces each known value in every string, map keys included"

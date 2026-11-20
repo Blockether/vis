@@ -36,7 +36,8 @@
    names contain KEY, TOKEN, SECRET, PASSWORD or CREDENTIAL. Each value also
    matches in its JSON-escaped and URL-encoded forms. Credentials that their
    form shows also become `[REDACTED]`: private PEM keys, passwords in URLs,
-   credential headers and well-known API key and token formats. Vis does not
+   credential headers and well-known API key and token formats. Base64 text that
+   holds a known value or one of these forms becomes `[REDACTED]` too. Vis does not
    find other secrets in the text. Only the owner can read the file."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -58,6 +59,7 @@
            (java.net URLEncoder)
            (java.nio.charset StandardCharsets)
            (java.time Instant)
+           (java.util Base64)
            (java.util.regex Pattern)))
 
 (def schema-version "The ATIF version of each trajectory that Vis writes." "ATIF-v1.8")
@@ -871,9 +873,40 @@
   "The user and password in the authority of a URL."
   #"(?i)(?<![\w+.-])([a-z][a-z0-9+.-]*+://)[^\s/?#@:]++:[^\s/?#@]++@")
 
+(defn- base64-text
+  "The UTF-8 text that the base64 or base64url `run` encodes, or nil."
+  [^String run]
+  (let [body (str/replace run #"=+$|\r|\n" "")]
+    (when-not (= 1 (mod (count body) 4))
+      (try (String. (.decode (if (re-find #"[_-]" body) (Base64/getUrlDecoder) (Base64/getDecoder)) body)
+                    StandardCharsets/UTF_8)
+           (catch IllegalArgumentException _ nil)))))
+
+(defn- printable?
+  "True for text without control characters and without bytes that are not UTF-8."
+  [^String s]
+  (not (re-find #"[\x00-\x08\x0E-\x1F\x7F\uFFFD]" s)))
+
+(defn- basic-credential?
+  "True when `token` is the base64 of a `user:password` pair."
+  [^String token]
+  (boolean (when-let [text (base64-text token)] (and (printable? text) (str/includes? text ":")))))
+
+(def ^:private base64-run
+  "A run of base64 or base64url text, also wrapped in lines of 64 or 76 characters."
+  #"(?<![A-Za-z0-9+/_-])(?:(?:(?:[A-Za-z0-9+/]{76}|[A-Za-z0-9+/]{64})\r?\n)++[A-Za-z0-9+/]*+|[A-Za-z0-9+/_-]{11,}+)={0,2}(?![A-Za-z0-9+/_=-])")
+
+(defn- base64-candidate?
+  "True for a run long enough to hold a credential of 8 bytes, with a digit or with both
+   letter cases."
+  [^String run]
+  (and (<= 11 (count run))
+       (or (boolean (re-find #"[0-9]" run))
+           (and (boolean (re-find #"[a-z]" run)) (boolean (re-find #"[A-Z]" run))))))
+
 (def ^:private authorization-credential
   "The credential after the scheme of an `Authorization` value, also in JSON or code."
-  #"(?i)(\b(?:proxy-)?authorization[\"']?[ \t]*[:=][ \t]*[\"']?(?:bearer|basic|token|bot)[ \t]+)([A-Za-z0-9._~+/=-]{8,}+)")
+  #"(?i)(\b(?:proxy-)?authorization[\"']?[ \t]*[:=][ \t]*[\"']?(bearer|basic|token|bot)[ \t]+)([A-Za-z0-9._~+/=-]{4,}+)")
 
 (def ^:private digest-credential
   "The parameters of a `Digest` value that prove the credential."
@@ -890,6 +923,11 @@
 (def ^:private cookie-value
   "A `Cookie` or `Set-Cookie` value up to the end of the line or the quote."
   #"(?i)(\b(?:set-)?cookie[\"']?[ \t]*:[ \t]*[\"']?)([^\r\n\"']+)")
+
+(defn- jwt?
+  "True when the first part of `token` is a JSON header with an `alg` field."
+  [^String token]
+  (boolean (some->> (first (str/split token #"\." 2)) base64-text (re-find #"\"alg\""))))
 
 (defn- redact-forms
   "Replace in `s` each credential that its form shows. Each pattern runs only when its
@@ -908,7 +946,11 @@
 
       (str/includes? lower "authorization")
       (-> (str/replace authorization-credential
-                       (fn [[match prefix token]] (if (credential-like? token) (str prefix redacted) match)))
+                       (fn [[match prefix scheme token]]
+                         (if (or (and (<= 8 (count token)) (credential-like? token))
+                                 (and (= "basic" (str/lower-case scheme)) (basic-credential? token)))
+                           (str prefix redacted)
+                           match)))
           (str/replace digest-credential
                        (fn [[_ prefix params]]
                          (str prefix
@@ -925,7 +967,7 @@
                                        (fn [[_ start name]] (str start name "=" redacted))))))
 
       (some #(str/includes? s %) token-markers)
-      (str/replace token-format redacted))))
+      (str/replace token-format #(if (or (not (str/starts-with? % "eyJ")) (jwt? %)) redacted %)))))
 
 (defn redactor
   "Compile the credential pattern once for all values in an export. Each of `secrets`,
@@ -933,7 +975,15 @@
   [secrets]
   (let [known (when (seq secrets)
                 (re-pattern (str/join "|" (map #(Pattern/quote %) (sort-by count > secrets)))))
-        text (fn [s] (redact-forms (if known (str/replace s known redacted) s)))]
+        ;; A base64 run hides a credential when its text holds a known value or a
+        ;; credential form. The whole run goes, as the parts of base64 do not split.
+        hidden? (fn [^String run]
+                  (when-let [text (when (base64-candidate? run) (base64-text run))]
+                    (or (and known (re-find known text))
+                        (and (printable? text) (not= text (redact-forms text))))))
+        text (fn [s]
+               (let [s (if known (str/replace s known redacted) s)]
+                 (redact-forms (str/replace s base64-run #(if (hidden? %) redacted %)))))]
     (fn walk [x]
       (cond (string? x) (text x)
             (map? x) (into {}
