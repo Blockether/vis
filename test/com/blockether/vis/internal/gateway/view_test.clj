@@ -17,8 +17,10 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.fixture-answers :as fixture]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.push :as push]
+            [com.blockether.vis.internal.gateway.server.turns :as turns-api]
             [com.blockether.vis.internal.gateway.server.views :as views-api]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.view :as gw-hi]
@@ -2231,6 +2233,86 @@
             (expect (= lines
                        (get-in (app-node (app-view sid view-id) "change")
                                ["threads" 0 "anchor"])))))))
+  ;; User request: a review comment shows in the composer, goes with the next
+  ;; message and is gone after the send.
+  (it "puts the drafts that the composer sends into the turn and removes them"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-op! {"op" "open"
+                               "view" {"title" "Review"
+                                       "session_id" sid
+                                       "placement" "attachment"
+                                       "nodes" [{"id" "change"
+                                                 "type" "diff"
+                                                 "patch" app-patch
+                                                 "new_revision" "def5678"
+                                                 "threads"
+                                                 [{"id" "finding"
+                                                   "anchor" app-line
+                                                   "messages" [{"id" "m1"
+                                                                "author" {"kind" "extension"
+                                                                          "name" "vis-review"}
+                                                                "created_at" 1
+                                                                "body" "error ruff: unused import"}]}]}
+                                                {"id" "general" "type" "thread" "messages" []}]}})
+                     "view_id")
+
+                draft!
+                #(view-action-response sid view-id (merge {"action" "draft" "node_id" "change"} %))
+
+                comment
+                (get (json-body (draft! {"anchor" {"path" "src/a.py"
+                                                   "side" "new"
+                                                   "start_line" 1
+                                                   "line" 2}
+                                         "body" "Join these"}))
+                     "thread_id")
+
+                _
+                (draft! {"thread_id" "finding" "body" ""})
+
+                _
+                (view-action-response sid
+                                      view-id
+                                      {"action" "draft" "node_id" "general" "body" "Not yet"})
+
+                chips
+                (fn []
+                  (->> (gw-hi/live-views sid nil false true)
+                       (some #(when (= view-id (:id %)) (:drafts %)))
+                       (mapv :thread-id)))
+
+                turns
+                (atom [])]
+
+            (expect (= ["finding" comment "general"] (chips)))
+            (with-redefs [state/submit-turn! (fn [_ opts]
+                                               (swap! turns conj opts)
+                                               {:turn (fixture/turn {:turn_id "t1"})})]
+              (#'turns-api/submit-turn-handler
+               {:path-params {:sid sid}
+                :body (body-stream {"request" "Fix [COMMENT a.py:1-2] these"
+                                    "display_request" "Fix [COMMENT a.py:1-2] these"
+                                    "comments" [{"view_id" view-id
+                                                 "node_id" "change"
+                                                 "thread_id" comment
+                                                 "reference" "[COMMENT a.py:1-2]"}
+                                                {"view_id" view-id
+                                                 "node_id" "change"
+                                                 "thread_id" "finding"}]})}))
+            (expect (= (str "Fix [COMMENT a.py:1-2] these\n\nComments in Review:\n"
+                            "- src/a.py:2: error ruff: unused import\n"
+                            "- [COMMENT a.py:1-2] src/a.py:1-2: Join these")
+                       (:request (first @turns))))
+            (expect (= (:request (first @turns)) (:display-request (first @turns))))
+            (expect (= ["general"] (chips)))
+            (expect (= ["finding"]
+                       (mapv #(get % "id")
+                             (get (app-node (app-view sid view-id) "change") "threads"))))))))
   (it "restores the value of each input type after a restart"
       ;; #421: a replayed record kept the field type as text. A saved value then
       ;; failed its domain check, and the app list of the session threw.
