@@ -8733,9 +8733,9 @@
   (binding [workspace/*workspace-root* (or (some-> (resolve-workspace db sid)
                                                    :root)
                                            workspace/*workspace-root*)]
-    (into (trajectory/run-secrets)
-          (concat (trajectory/setting-secrets (persistance/db-scoped-settings db "session" sid))
-                  (keep not-empty [(:token @instance/server-state)])))))
+    (concat (trajectory/run-secrets)
+            (trajectory/setting-secrets (persistance/db-scoped-settings db "session" sid))
+            (trajectory/secret-forms [(:token @instance/server-state)]))))
 
 (defn export-session
   "The redacted `.vissnap` snapshot bytes of `sid` and its managed children (#405). Answers nil for

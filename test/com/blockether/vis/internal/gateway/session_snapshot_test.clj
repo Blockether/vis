@@ -273,7 +273,7 @@
         (with-store
           (fn [store]
             (let [secret
-                  "server-token-0123456789"
+                  "server token-0123456789"
 
                   sid
                   (session! store "Server token")
@@ -283,7 +283,9 @@
 
               (ps/db-store-iteration!
                 store
-                {:session-turn-id tid :code secret :forms [{:src secret :stdout secret}]})
+                {:session-turn-id tid
+                 :code secret
+                 :forms [{:src secret :stdout "http://localhost/?t=server%20token-0123456789"}]})
               (with-redefs [trajectory/run-secrets
                             (constantly [])
 
@@ -296,8 +298,8 @@
                                                                              (catch Exception _ %))
                                                                         %)
                                                                      (dissoc tree :blobs)))
-                                              secret)))
-                  (expect (not (str/includes? (state/export-atif sid) secret)))))))))
+                                              "token-0123456789")))
+                  (expect (not (str/includes? (state/export-atif sid) "token-0123456789")))))))))
     (it
       "replaces credentials from the .env of the session workspace in both exports"
       (with-store

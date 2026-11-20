@@ -58,8 +58,8 @@
            (java.net URLEncoder)
            (java.nio.charset StandardCharsets)
            (java.time Instant)
-           (java.util Base64)
-           (java.util.regex Pattern)))
+           (java.util Base64 Locale)
+           (java.util.regex Matcher)))
 
 (def schema-version "The ATIF version of each trajectory that Vis writes." "ATIF-v1.8")
 
@@ -827,50 +827,119 @@
                       [form spaces]))))
 
 (defn- with-escaped
-  "`secrets` and their JSON-escaped and URL-encoded forms, longest first, because text
-   can hold JSON and URLs."
+  "`secrets` and their JSON-escaped and URL-encoded forms, because text can hold JSON and
+   URLs."
   [secrets]
-  (->> secrets
-       (mapcat #(list* % (json-escaped %) (url-encoded %)))
-       distinct
-       (sort-by count >)
-       vec))
+  (vec (distinct (mapcat #(list* % (json-escaped %) (url-encoded %)) secrets))))
 
-(defn- string-leaves
-  [data]
-  (cond (string? data) [data]
-        (map? data) (mapcat string-leaves (vals data))
-        (sequential? data) (mapcat string-leaves data)
-        :else nil))
+(defn secret-forms
+  "The credentials in `values` as an export shows them: each value of 8 characters or
+   more, with its JSON-escaped and URL-encoded forms."
+  [values]
+  (with-escaped (known-secrets {:settings values})))
 
-(defn- gateway-tokens
-  "The bearer token in the default token file of the local gateway."
+(defn- gateway-token
+  "The bearer token in the default token file of the local gateway, or nil."
   []
   (let [file (discovery/default-token-file)]
-    (keep not-empty [(when (.isFile file) (try (str/trim (slurp file)) (catch Exception _ nil)))])))
+    (when (.isFile file) (try (str/trim (slurp file)) (catch Exception _ nil)))))
 
 (defn run-secrets
-  "The known credentials of this process and of the bound workspace, also JSON-escaped:
+  "The known credentials of this process and of the bound workspace, with their forms:
    also the gateway token and the provider keys that `api_key_command` gave."
   []
   (with-escaped (known-secrets
                   {:env (System/getenv)
                    :files (credential-files)
                    :providers (try (:providers (config/current-config)) (catch Exception _ nil))
-                   :settings (concat (toggles/secret-values) (cred/cached-tokens) (gateway-tokens))
+                   :settings (concat (toggles/secret-values) (cred/cached-tokens) [(gateway-token)])
                    :environment (environment)})))
 
 (defn setting-secrets
-  "The values of the secret settings in `settings`, `{setting-id value}`, also JSON-escaped."
+  "The values of the secret settings in `settings`, `{setting-id value}`, with their forms."
   [settings]
-  (with-escaped (known-secrets {:settings (for [[id value]
-                                                settings
+  (secret-forms (for [[id value]
+                      settings
 
-                                                :when (toggles/secret-setting? id)
-                                                leaf
-                                                (string-leaves value)]
+                      :when (toggles/secret-setting? id)
+                      leaf
+                      (secret-leaves value true)]
 
-                                            leaf)})))
+                  leaf)))
+
+(defn- replace-spans
+  "Replace spans of `s` in one scan from the left. `(next-start s from)` gives the next
+   index from `from` where a span can start, or -1. `(span s i)` gives `[end text]` for
+   the span from `i` to `end` and its new text, `[end nil]` to keep the text to `end`, or
+   nil when no span starts at `i`. The result is `s` itself when no span has a new text."
+  [^String s next-start span]
+  (loop [i
+         (long (next-start s 0))
+
+         from
+         0
+
+         out
+         nil]
+
+    (if (neg? i)
+      (if out (str (.append ^StringBuilder out s (int from) (.length s))) s)
+      (let [[end text] (span s i)]
+        (cond (nil? end) (recur (long (next-start s (inc i))) from out)
+              (nil? text) (recur (long (next-start s end)) from out)
+              :else (recur (long (next-start s end))
+                           (long end)
+                           (doto ^StringBuilder (or out (StringBuilder. (.length s)))
+                             (.append s (int from) (int i))
+                             (.append ^String text))))))))
+
+(defmacro ^:private pair-code
+  "A code of the characters `a` and `b`, from 0 to 65535. A macro, because a function
+   call for each character of a text is slow."
+  [a b]
+  `(bit-or (bit-shift-left (bit-and (int ~a) 0xFF) 8) (bit-and (int ~b) 0xFF)))
+
+(defn- literal-index
+  "`literals` in a table by the [[pair-code]] of their first two characters, the longest
+   first. A literal of one character has no entry."
+  ^objects [literals]
+  (let [table (object-array 65536)]
+    (doseq [[k group] (->> (distinct literals)
+                           (filter #(<= 2 (count %)))
+                           (sort-by count >)
+                           (group-by (fn [^String literal]
+                                       (pair-code (.charAt literal 0) (.charAt literal 1)))))]
+      (aset table (int k) (into-array String group)))
+    table))
+
+(defn- literal-at
+  "The longest literal of `table` that starts at `i` in `s`, or nil."
+  [^objects table ^String s ^long i]
+  (when (< (inc i) (.length s))
+    (when-let [^objects literals (aget table (pair-code (.charAt s i) (.charAt s (inc i))))]
+      (loop [j 0]
+        (when (< j (alength literals))
+          (let [^String literal (aget literals j)]
+            (if (.startsWith s literal (int i)) literal (recur (inc j)))))))))
+
+(defn- next-literal
+  "The first index from `from` in `s` where a literal of `table` starts, or -1. This is
+   one scan of `s`, while a regex of all literals tries each literal at each position."
+  ^long [^objects table ^String s ^long from]
+  (let [last (dec (.length s))]
+    (loop [i from]
+      (cond (>= i last) -1
+            (and (aget table (pair-code (.charAt s i) (.charAt s (inc i)))) (literal-at table s i))
+            i
+            :else (recur (inc i))))))
+
+(defn- replace-secrets
+  "Replace in `s` each secret of `table`, from the left, the longest first."
+  [^objects table ^String s]
+  (replace-spans s
+                 #(next-literal table %1 (long %2))
+                 (fn [s i]
+                   [(+ (long i) (count (literal-at table s (long i)))) redacted])))
 
 (def ^:private token-format
   "Credentials that their form shows: provider API keys and access tokens of
@@ -889,17 +958,15 @@
          ")(?![A-Za-z0-9_-])")))
 
 (def ^:private token-markers
-  "A string without each of these has no match of [[token-format]]."
+  "Each match of [[token-format]] starts with one of these."
   ["sk-" "sk_" "rk_" "ghp_" "gho_" "ghu_" "ghs_" "ghr_" "github_pat_" "glpat-" "gldt-" "glptt-"
    "glrt-" "xox" "AKIA" "ASIA" "AIza" "npm_" "hf_" "eyJ"])
 
-(def ^:private private-key-format
-  "A private key: a PEM block with its end line, or with base64 lines after its start
-   line when the text was cut, and a PuTTY key file."
-  (re-pattern
-    (str "-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"
-         "(?:[\\s\\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|(?:\\r?\\n[A-Za-z0-9+/=]{16,})+)"
-         "|(?s)PuTTY-User-Key-File-[0-9]+:.*?Private-MAC:[ \\t]*[0-9a-fA-F]+")))
+(def ^:private private-key-start "-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+
+(def ^:private private-key-end #"-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+
+(def ^:private putty-key-end #"Private-MAC:[ \t]*[0-9a-fA-F]+")
 
 (def ^:private url-credential
   "The user and password in the authority of a URL."
@@ -930,9 +997,14 @@
   (boolean (when-let [text (base64-text token)]
              (and (printable? text) (str/includes? text ":")))))
 
-(def ^:private base64-run
-  "A run of base64 or base64url text, also wrapped in lines of 64 or 76 characters."
-  #"(?<![A-Za-z0-9+/_-])(?:(?:(?:[A-Za-z0-9+/]{76}|[A-Za-z0-9+/]{64})\r?\n)++[A-Za-z0-9+/]*+|[A-Za-z0-9+/_-]{11,}+)={0,2}(?![A-Za-z0-9+/_=-])")
+(def ^:private min-base64-length
+  "The length of the base64 of the shortest credential."
+  (long (Math/ceil (/ (* 4 (long min-secret-length)) 3.0))))
+
+(def ^:private wrapped-base64
+  "Base64 in lines of 64 or 76 characters. Group 1 is its last line. The group is absent
+   when the text after the lines is not the end of base64."
+  #"(?:(?:[A-Za-z0-9+/]{76}|[A-Za-z0-9+/]{64})\r?\n)++([A-Za-z0-9+/]*+={0,2}(?![A-Za-z0-9+/_=-]))?")
 
 (def ^:private ^"[Z" base64-chars
   "True at the code of each base64 and base64url character."
@@ -956,83 +1028,105 @@
           (if (and (< c 128) (aget table c)) (recur (inc j)) j))
         j))))
 
+(defn- padded-end
+  "The index after the `=` signs of the base64 run whose characters stop at `end` in `s`.
+   It is -1 when base64 text follows there, because a part of a longer text is not a run."
+  ^long [^String s ^long end]
+  (let [n
+        (.length s)
+
+        e
+        (long (loop [e end]
+                (if (and (< e n) (< (- e end) 2) (= \= (.charAt s e))) (recur (inc e)) e)))]
+
+    (if (and (< e n) (or (= \= (.charAt s e)) (< e (base64-end s e)))) -1 e)))
+
+(defn- base64-start
+  "The first index from `from` in `s` where a base64 run starts that is long enough for a
+   credential, or -1. `from` is not in a run."
+  [^String s from]
+  (let [n (.length s)]
+    (loop [i (long from)]
+      (if (>= i n)
+        -1
+        (let [end (base64-end s i)]
+          (if (< (- end i) (long min-base64-length)) (recur (max end (inc i))) i))))))
+
 (defn- replace-base64
-  "Replace in `s` each [[base64-run]] for which `hidden?` is true. A loop over the
-   characters finds the runs, because a regex scan of each position is slow."
+  "Replace in `s` each base64 run for which `hidden?` is true."
   [^String s hidden?]
   (let [n
         (.length s)
 
-        m
-        (doto (re-matcher base64-run s) (.useTransparentBounds true) (.useAnchoringBounds false))]
+        wrapped
+        (delay (re-matcher wrapped-base64 s))
 
-    (loop [i
-           0
+        mask
+        (fn [run]
+          (when (hidden? run) redacted))]
 
-           from
-           0
+    (replace-spans
+      s
+      base64-start
+      (fn [_ i]
+        (let [i
+              (long i)
 
-           out
-           nil]
+              end
+              (base64-end s i)]
 
-      (if (>= i n)
-        (if out (str (.append ^StringBuilder out s (int from) (int n))) s)
-        (let [end
-              (base64-end s i)
-
-              len
-              (- end i)]
-
-          (if (< len 11)
-            (recur (max end (inc i)) from out)
-            ;; Only a line of 64 or 76 characters can start wrapped base64.
-            (let [e (if (and (or (= len 64) (= len 76))
-                             (< end n)
-                             (#{\return \newline} (.charAt s end)))
-                      (when (.lookingAt (.region m (int i) (int n))) (.end m))
-                      (let [e (loop [e end]
-                                (if (and (< e n) (< (- e end) 2) (= \= (.charAt s e)))
-                                  (recur (inc e))
-                                  e))]
-                        (when-not (and (< e n) (or (= \= (.charAt s e)) (< e (base64-end s e))))
-                          e)))]
-              (cond (nil? e) (recur end from out)
-                    (hidden? (subs s i e)) (recur (long e)
-                                                  (long e)
-                                                  (doto ^StringBuilder (or out (StringBuilder. n))
-                                                    (.append s (int from) (int i))
-                                                    (.append ^String redacted)))
-                    :else (recur (long e) from out)))))))))
+          ;; Only a line of 64 or 76 characters can start wrapped base64.
+          (if-let [^Matcher lines
+                   (when (and (#{64 76} (- end i)) (< end n) (#{\return \newline} (.charAt s end)))
+                     (let [^Matcher m @wrapped]
+                       (when (.lookingAt (.region m (int i) (int n))) m)))]
+            (let [block (subs s i (.end lines))]
+              [(.end lines)
+               (if (neg? (.start lines 1))
+                 ;; The lines do not end as base64, so each line is a run. All lines go
+                 ;; in this one span, because a new try at each line reads them all again.
+                 (str/replace block #"[^\r\n]+" #(or (mask %) %))
+                 (mask block))])
+            (let [e (padded-end s end)]
+              (if (neg? e) [end nil] [e (mask (subs s i e))]))))))))
 
 (defn- base64-candidate?
-  "True for a run long enough to hold a credential of 8 bytes, with a digit or with both
-   letter cases."
+  "True for a run with a digit or with both letter cases."
   [^String run]
-  (and (<= 11 (.length run))
-       (loop [i
-              0
+  (loop [i
+         0
 
-              lower
-              false
+         lower
+         false
 
-              upper
-              false]
+         upper
+         false]
 
-         (if (< i (.length run))
-           (let [c (.charAt run i)]
-             (cond (Character/isDigit c) true
-                   (Character/isLowerCase c) (if upper true (recur (inc i) true upper))
-                   (Character/isUpperCase c) (if lower true (recur (inc i) lower true))
-                   :else (recur (inc i) lower upper)))
-           false))))
+    (if (< i (.length run))
+      (let [c (.charAt run i)]
+        (cond (Character/isDigit c) true
+              (Character/isLowerCase c) (if upper true (recur (inc i) true upper))
+              (Character/isUpperCase c) (if lower true (recur (inc i) lower true))
+              :else (recur (inc i) lower upper)))
+      false)))
+
+(defn- authorization-value
+  "A pattern for an `Authorization` value, also in JSON or code. Group 1 is the text to
+   the end of `scheme`, and the last group is `value`."
+  [scheme value]
+  (re-pattern (str "(?i)(\\b(?:proxy-)?authorization[\"']?[ \\t]*[:=][ \\t]*[\"']?"
+                   scheme
+                   "[ \\t]+)("
+                   value
+                   ")")))
 
 (def ^:private authorization-credential
-  "The credential after the scheme of an `Authorization` value, also in JSON or code."
-  #"(?i)(\b(?:proxy-)?authorization[\"']?[ \t]*[:=][ \t]*[\"']?(bearer|basic|token|bot)[ \t]+)([A-Za-z0-9._~+/=-]{4,}+)")
+  "The credential after the scheme of an `Authorization` value."
+  (authorization-value "(bearer|basic|token|bot)" "[A-Za-z0-9._~+/=-]{4,}+"))
 
 (def ^:private digest-credential
   "The parameters of a `Digest` value that prove the credential."
-  #"(?i)(\b(?:proxy-)?authorization[\"']?[ \t]*[:=][ \t]*[\"']?digest[ \t]+)([^\r\n]*)")
+  (authorization-value "digest" "[^\\r\\n]*"))
 
 (defn- credential-like?
   "True for a token with a digit, a base64 sign, or an upper case letter after a lower
@@ -1053,150 +1147,256 @@
                     base64-text
                     (re-find #"\"alg\""))))
 
-(defn- redact-forms
-  "Replace in `s` each credential that its form shows. Each pattern runs only when its
-   marker occurs, because a scan for a marker is much faster."
-  [^String s]
-  (let [lower (str/lower-case s)]
-    (cond-> s
-      (str/includes? s "vis-secret:")
-      (str/replace #"vis-secret:[A-Za-z0-9._-]+" "[SECRET HANDLE]")
+(defn- index-of
+  "A function that gives the next index of `marker` in a string from an index, or -1."
+  [^String marker]
+  (fn [^String s from]
+    (.indexOf s marker (int from))))
 
-      (or (str/includes? s "PRIVATE KEY-----") (str/includes? s "PuTTY-User-Key-File-"))
-      (str/replace private-key-format redacted)
+(defn- scheme-char?
+  "True when the character with code `c` can be in the scheme of a URL."
+  [^long c]
+  (or (<= 97 c 122) (<= 65 c 90) (<= 48 c 57) (== c 43) (== c 45) (== c 46)))
 
-      (str/includes? s "://")
-      (str/replace url-credential
-                   (fn [[_ scheme]]
-                     (str scheme redacted "@")))
+(defn- scheme-start
+  "The first index from `from` in `s` where the scheme of a URL starts, or -1."
+  [^String s from]
+  (loop [p (.indexOf s "://" (int from))]
+    (if (neg? p)
+      -1
+      (let [q (long
+                (loop [q p]
+                  (if (and (pos? q) (scheme-char? (int (.charAt s (dec q))))) (recur (dec q)) q)))]
+        (if (and (< q p) (<= (long from) q)) q (recur (.indexOf s "://" (inc p))))))))
 
-      (str/includes? lower "authorization")
-      (-> (str/replace authorization-credential
-                       (fn [[match prefix scheme token]]
-                         (if (or (and (<= 8 (count token)) (credential-like? token))
-                                 (and (= "basic" (str/lower-case scheme))
-                                      (basic-credential? token)))
-                           (str prefix redacted)
-                           match)))
-          (str/replace digest-credential
-                       (fn [[_ prefix params]]
-                         (str prefix
-                              (str/replace params
-                                           #"(?i)\b(response|cnonce|nonce|opaque)=(\"?)[^\",\s]*+"
-                                           (fn [[_ k q]]
-                                             (str k "=" q redacted)))))))
+(defn- word-start
+  "A function that gives the first index from an index where `word` starts in a string, or
+   where `prefix` starts when it is before the word; else -1. Each letter case matches.
+   `word` and `prefix` are in lower case."
+  [^String word ^String prefix]
+  (let [c
+        (int (.charAt word 0))
 
-      (str/includes? lower "cookie")
-      (str/replace cookie-value
-                   (fn [[_ prefix value]]
-                     (str prefix
-                          (str/replace value
-                                       #"(^|;[ \t]*)([\w.-]+)=([^;\s]{8,})"
-                                       (fn [[_ start name]]
-                                         (str start name "=" redacted))))))
+        size
+        (.length word)
 
-      (some #(str/includes? s %) token-markers)
-      (str/replace token-format #(if (or (not (str/starts-with? % "eyJ")) (jwt? %)) redacted %)))))
+        before
+        (.length prefix)]
 
-(defn- pair-code
-  "A code of the two characters at `i` in `s`, from 0 to 65535."
-  ^long [^String s ^long i]
-  (bit-or (bit-shift-left (bit-and (int (.charAt s i)) 0xFF) 8)
-          (bit-and (int (.charAt s (inc i))) 0xFF)))
+    (fn [^String s from]
+      (let [from
+            (long from)
 
-(defn- secret-index
-  "`secrets` in a table by the [[pair-code]] of their start, longest first. Nil when a
-   secret has less than two characters."
-  [secrets]
-  (when (every? #(<= 2 (count %)) secrets)
-    (let [table (object-array 65536)]
-      (doseq [^String secret (sort-by count > (distinct secrets))]
-        (let [k (pair-code secret 0)]
-          (aset table k (conj (or (aget table k) []) secret))))
-      table)))
+            last
+            (- (.length s) size)]
 
-(defn- secret-at
-  "The longest secret of `table` that starts at `i` in `s`, or nil."
-  [^objects table ^String s ^long i]
-  (when (< (inc i) (.length s))
-    (when-let [secrets (aget table (pair-code s i))]
-      (some (fn [^String secret]
-              (when (.startsWith s secret (int i)) secret))
-            secrets))))
+        (loop [p from]
+          (cond (> p last) -1
+                (and (== c (bit-or (int (.charAt s p)) 0x20))
+                     (.regionMatches s true (int p) word 0 size))
+                (if (and (<= from (- p before))
+                         (.regionMatches s true (int (- p before)) prefix 0 before))
+                  (- p before)
+                  p)
+                :else (recur (inc p))))))))
 
-(defn- replace-secrets
-  "Replace in `s` each secret of `table`, from the left, the longest first. This is one
-   scan of `s`, while a regex of all secrets tries each secret at each position."
-  [^objects table ^String s]
+(def ^:private token-index (literal-index token-markers))
+
+(def ^:private handle-form
+  "A handle of a Vis secret."
+  {:pattern #"vis-secret:[A-Za-z0-9._-]+"
+   :start (index-of "vis-secret:")
+   :replacement (constantly "[SECRET HANDLE]")})
+
+(def ^:private private-key-form
+  "A PEM block of a private key, to its end line."
+  {:pattern (re-pattern (str private-key-start "[\\s\\S]*?" private-key-end))
+   :start (index-of "-----BEGIN ")
+   :end private-key-end
+   :replacement (constantly redacted)})
+
+(def ^:private cut-key-form
+  "The start line of a private key with its base64 lines, when the text was cut before
+   the end line."
+  {:pattern (re-pattern (str private-key-start "(?:\\r?\\n[A-Za-z0-9+/=]{16,})+"))
+   :start (index-of "-----BEGIN ")
+   :replacement (constantly redacted)})
+
+(def ^:private putty-key-form
+  "A PuTTY key file, to the value of its last line."
+  {:pattern (re-pattern (str "(?s)PuTTY-User-Key-File-[0-9]+:.*?" putty-key-end))
+   :start (index-of "PuTTY-User-Key-File-")
+   :end putty-key-end
+   :replacement (constantly redacted)})
+
+(def ^:private url-form
+  {:pattern url-credential
+   :start scheme-start
+   ;; The next scheme starts after the `://` of this one.
+   :skip (fn [^String s i]
+           (+ 3 (.indexOf s "://" (int i))))
+   :replacement (fn [[_ scheme]]
+                  (str scheme redacted "@"))})
+
+(def ^:private authorization-form
+  {:pattern authorization-credential
+   :start (word-start "authorization" "proxy-")
+   :replacement (fn [[match prefix ^String scheme token]]
+                  (if (or (and (<= 8 (count token)) (credential-like? token))
+                          (and (.equalsIgnoreCase "basic" scheme) (basic-credential? token)))
+                    (str prefix redacted)
+                    match))})
+
+(def ^:private digest-form
+  {:pattern digest-credential
+   :start (word-start "authorization" "proxy-")
+   :replacement (fn [[_ prefix params]]
+                  (str prefix
+                       (str/replace params
+                                    #"(?i)\b(response|cnonce|nonce|opaque)=(\"?)[^\",\s]*+"
+                                    (fn [[_ k q]]
+                                      (str k "=" q redacted)))))})
+
+(def ^:private cookie-form
+  {:pattern cookie-value
+   :start (word-start "cookie" "set-")
+   :replacement (fn [[_ prefix value]]
+                  (str prefix
+                       (str/replace value
+                                    #"(^|;[ \t]*)([\w.-]+)=([^;\s]{8,})"
+                                    (fn [[_ start name]]
+                                      (str start name "=" redacted)))))})
+
+(def ^:private token-form
+  {:pattern token-format
+   :start #(next-literal token-index %1 (long %2))
+   :replacement #(if (or (not (str/starts-with? % "eyJ")) (jwt? %)) redacted %)})
+
+(defn- last-start
+  "The index where the last match of `pattern` starts in `s`, or -1."
+  ^long [pattern ^String s]
+  (let [m (re-matcher pattern s)]
+    (loop [i -1]
+      (if (.find m) (recur (long (.start m))) i))))
+
+(defn- form-scan
+  "The `[next-start span]` pair of `form` on `s` for [[replace-spans]]. It replaces each
+   match of the regex `:pattern` with `(replacement groups)`, as `str/replace` does, but
+   the regex runs only at some indexes, because a regex scan of each index is slow.
+   - `(start s from)` gives the first index from `from` where a match can start, or -1.
+     It must not miss a start.
+   - `:end` is a regex for the end of each match. Thus no match starts after the last
+     match of `:end`, and a try there reads the text to its end.
+   - `(skip s i)` gives the index to continue from when no match starts at `i`. No match
+     starts before it. Without `:skip`, this is the next index."
+  [^String s {:keys [pattern start end skip replacement]}]
   (let [n
         (.length s)
 
-        last
-        (dec n)]
+        matcher
+        (delay
+          (doto (re-matcher pattern s) (.useTransparentBounds true) (.useAnchoringBounds false)))
 
-    (loop [i
-           0
+        limit
+        (delay (last-start end s))]
 
-           from
-           0
+    [(if end
+       (fn [s from]
+         (let [i (long (start s from))]
+           (if (and (<= 0 i) (< i (long @limit))) i -1)))
+       start)
+     (fn [_ i]
+       (let [^Matcher m @matcher]
+         (cond (.lookingAt (.region m (int i) n)) [(.end m) (replacement (re-groups m))]
+               skip [(skip s i) nil])))]))
 
-           out
-           nil]
+(defn- replace-form
+  "Replace in `s` each credential of `form`. See [[form-scan]]."
+  [s form]
+  (let [[next-start span] (form-scan s form)]
+    (replace-spans s next-start span)))
 
-      (if (>= i last)
-        (if out (str (.append ^StringBuilder out s (int from) (int n))) s)
-        (if-let [^String secret (when (aget table
-                                            (bit-or
-                                              (bit-shift-left (bit-and (int (.charAt s i)) 0xFF) 8)
-                                              (bit-and (int (.charAt s (inc i))) 0xFF)))
-                                  (secret-at table s i))]
-          (let [e (+ i (.length secret))]
-            (recur e
-                   e
-                   (doto ^StringBuilder (or out (StringBuilder. n))
-                     (.append s (int from) (int i))
-                     (.append ^String redacted))))
-          (recur (inc i) from out))))))
+(defn- replace-first-form
+  "Replace in `s` each credential of `forms` in one scan, as one regex of their patterns
+   does: the match that starts first, and at one index the first of `forms`. The forms
+   have no `:skip`."
+  [^String s forms]
+  (let [scans
+        (map #(form-scan s %) forms)
 
-(defn- has-secret?
-  "True when `s` holds a secret of `table`."
-  [^objects table ^String s]
-  (loop [i 0]
-    (cond (>= i (.length s)) false
-          (secret-at table s i) true
-          :else (recur (inc i)))))
+        starts
+        (mapv first scans)
+
+        spans
+        (mapv second scans)
+
+        ;; The next start of each form, or -1. A form without a later start does not
+        ;; read the text again.
+        nexts
+        (long-array (map #(% s 0) starts))]
+
+    (replace-spans
+      s
+      (fn [s from]
+        (let [from (long from)]
+          (loop [k 0
+                 least -1]
+
+            (if (< k (alength nexts))
+              (let [known (aget nexts k)
+                    ;; A start before `from` is old.
+                    i (long (if (< -1 known from) (aset nexts k (long ((starts k) s from))) known))]
+
+                (recur (inc k) (if (and (<= 0 i) (or (neg? least) (< i least))) i least)))
+              least))))
+      (fn [s i]
+        (loop [k 0]
+          (when (< k (alength nexts))
+            (or (when (== (long i) (aget nexts k)) ((spans k) s i)) (recur (inc k)))))))))
+
+(defn- redact-forms
+  "Replace in `s` each credential that its form shows."
+  [^String s]
+  ;; The words of the last forms are rare, and a search in lower case text is fast.
+  (let [lower (.toLowerCase s Locale/ROOT)]
+    (cond-> (-> s
+                (replace-form handle-form)
+                (cond->
+                  (or (str/includes? s "PRIVATE KEY-----") (str/includes? s "PuTTY-User-Key-File-"))
+                  (replace-first-form [private-key-form cut-key-form putty-key-form]))
+                (replace-form url-form))
+      (str/includes? lower "authorization")
+      (-> (replace-form authorization-form)
+          (replace-form digest-form))
+
+      (str/includes? lower "cookie")
+      (replace-form cookie-form)
+
+      true
+      (replace-form token-form))))
 
 (defn redactor
-  "Compile the credential pattern once for all values in an export. Each of `secrets`,
-   and each credential that its form shows, becomes `[REDACTED]`."
+  "Build the function that replaces, in each string of a value, each of `secrets` and
+   each credential that its form shows with `[REDACTED]`. Build it once for an export."
   [secrets]
-  (let [index
-        (when (seq secrets) (secret-index secrets))
-
-        known
-        (when (and (seq secrets) (not index))
-          (re-pattern (str/join "|" (map #(Pattern/quote %) (sort-by count > secrets)))))
-
-        replace-known
-        (cond index #(replace-secrets index %)
-              known #(str/replace % known redacted)
-              :else identity)
-
-        known?
-        (cond index #(has-secret? index %)
-              known #(boolean (re-find known %))
-              :else (constantly false))
+  (let [known
+        (some-> (seq secrets)
+                literal-index)
 
         ;; A base64 run hides a credential when its text holds a known value or a
         ;; credential form. The whole run goes, as the parts of base64 do not split.
         hidden?
         (fn [^String run]
           (when-let [text (when (base64-candidate? run) (base64-text run))]
-            (or (known? text) (and (printable? text) (not= text (redact-forms text))))))
+            (or (and known (<= 0 (next-literal known text 0)))
+                (and (printable? text) (not= text (redact-forms text))))))
 
         text
         (fn [s]
-          (redact-forms (replace-base64 (replace-known s) hidden?)))]
+          (redact-forms (replace-base64 (cond->> s
+                                          known
+                                          (replace-secrets known))
+                                        hidden?)))]
 
     (fn walk [x]
       (cond (string? x) (text x)

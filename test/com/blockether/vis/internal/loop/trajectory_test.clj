@@ -8,7 +8,8 @@
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io File)
            (java.nio.file Files LinkOption Path)
-           (java.nio.file.attribute FileAttribute PosixFilePermissions)))
+           (java.nio.file.attribute FileAttribute PosixFilePermissions)
+           (java.util Locale)))
 
 (def ^:private result
   "One CLI result in the engine shape: a code iteration, then the final answer."
@@ -481,7 +482,15 @@
         "sk-model-config-for-sandbox-kubernetes" "fixtures/eyJplaceholderName.abc.png"
         "task-sk-abcdefghijklmnopqrstuvwxyz0123456789" "git@github.com:org/repo.git"
         "https://example.com/a:b" "ghp_short" "3fa85f64-5717-4562-b3fc-2c963f66afa6"]]
-      (expect (= text (trajectory/redact text []))))))
+      (expect (= text (trajectory/redact text [])))))
+  (it "finds a header name in upper case when the default locale has other case rules"
+      (let [default (Locale/getDefault)]
+        (Locale/setDefault (Locale/forLanguageTag "tr-TR"))
+        (try (expect (= "AUTHORIZATION: BASIC [REDACTED]\nCOOKIE: sid=[REDACTED]"
+                        (trajectory/redact
+                          "AUTHORIZATION: BASIC dXNlcjpwYXNzMTIz\nCOOKIE: sid=abcdef123456789"
+                          [])))
+             (finally (Locale/setDefault default))))))
 
 (defn- base64 [^String s] (.encodeToString (java.util.Base64/getEncoder) (.getBytes s "UTF-8")))
 
@@ -518,6 +527,36 @@
              "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"]]
 
         (expect (= text (trajectory/redact text ["my-known-secret-42"]))))))
+
+(defdescribe scan-cost-test
+             (it "checks each line of wrapped base64 that does not end as base64, in one scan"
+                 (let [line
+                       (base64 (apply str (repeat 48 "x")))
+
+                       hidden
+                       (base64 (apply str "my-known-secret-42" (repeat 30 "x")))
+
+                       lines
+                       (apply str (repeat 4096 (str line "\n")))
+
+                       start
+                       (System/nanoTime)
+
+                       public
+                       (trajectory/redact (str lines hidden "\n" line "\nfoo-bar")
+                                          ["my-known-secret-42"])]
+
+                   (expect (= (str lines "[REDACTED]\n" line "\nfoo-bar") public))
+                   (expect (< (- (System/nanoTime) start) 2e9))))
+             (it "reads the text one time when many private key lines have no end line"
+                 (let [text
+                       (apply str (repeat 8000 "see -----BEGIN PRIVATE KEY----- here\n"))
+
+                       start
+                       (System/nanoTime)]
+
+                   (expect (= text (trajectory/redact text [])))
+                   (expect (< (- (System/nanoTime) start) 2e9)))))
 
 (defdescribe redact-test
              (it "replaces each known value in every string, map keys included"
