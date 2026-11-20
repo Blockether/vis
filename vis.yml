@@ -107,7 +107,7 @@ extensions:
     version: "1.18.0"
   vis-lang-javascript:
     source: https://github.com/Blockether/vis-lang-javascript
-    version: "0.1.0"
+    version: "0.1.1"
   vis-spel:
     source: https://github.com/Blockether/spel
     subdirectory: extensions/vis-spel
