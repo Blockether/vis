@@ -1053,6 +1053,9 @@
           db
           {:parent-session-id leader :user-request "Parent task" :status :running})
         (with-redefs-fn {#'lp/db-info (constantly db)
+                         ;; The settings of this machine can name models that this router does not have.
+                         #'config/load-global-yaml-config-raw (constantly {})
+                         #'config/load-global-config-raw (constantly {})
                          #'loop-router/get-router (constantly router)
                          #'toggles/enabled? (constantly true)
                          #'council/runtime (fn [_]
@@ -1651,6 +1654,9 @@
         db
         {:parent-session-id leader :user-request "Parent" :status :running})
       (with-redefs-fn {#'lp/db-info (constantly db)
+                       ;; The settings of this machine can name models that this router does not have.
+                       #'config/load-global-yaml-config-raw (constantly {})
+                       #'config/load-global-config-raw (constantly {})
                        #'loop-router/get-router (constantly router)
                        #'council/enabled? (constantly true)
                        #'council/runtime (fn [_]
@@ -2108,6 +2114,9 @@
       (dotimes [_ agents/max-active-children]
         (child! db leader {:status "running"}))
       (with-redefs-fn {#'lp/db-info (constantly db)
+                       ;; The settings of this machine can name models that this router does not have.
+                       #'config/load-global-yaml-config-raw (constantly {})
+                       #'config/load-global-config-raw (constantly {})
                        #'loop-router/get-router (constantly router)
                        #'council/enabled? (constantly true)
                        #'council/runtime (constantly {leader {:activation-id "active"}})
