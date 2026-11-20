@@ -1058,13 +1058,21 @@
   (if (keyword? value) (name value) value))
 
 (defn- app-anchor
-  "One diff line that a thread belongs to: `{:path :side :line}`. The `anchor`
-   rule of the schema refuses any other value with the shared fault lines."
+  "The diff lines that a thread belongs to: `{:path :side :line}`, and
+   `:start-line` for a range, with `:start-side` when it starts on the other
+   side. The `anchor` rule of the schema refuses any other
+   value with the shared fault lines."
   [fail! anchor]
   (when-some [explanation (document/explain "view" "anchor" anchor)]
     (fail! (document/joined-lines
              (document/explain-lines explanation (wire/->wire anchor) "/anchor"))))
-  (update anchor :side enum-text))
+  (when (and (:start-line anchor)
+             (> (long (:start-line anchor)) (long (:line anchor)))
+             (= (enum-text (or (:start-side anchor) (:side anchor))) (enum-text (:side anchor))))
+    (fail! (document/named-line "/anchor" "anchor_order")))
+  (cond-> (update anchor :side enum-text)
+    (:start-side anchor)
+    (update :start-side enum-text)))
 
 (defn- app-message
   "One posted message. The host stamps the current owner as its author; only a
@@ -1102,9 +1110,14 @@
         (map? anchor)
         (assoc :anchor
           (merge anchor
-                 {:path (schema-text (:path anchor))
-                  :side (enum-text (:side anchor))
-                  :line (schema-long (:line anchor))}))
+                 (cond-> {:path (schema-text (:path anchor))
+                          :side (enum-text (:side anchor))
+                          :line (schema-long (:line anchor))}
+                   (some? (:start-line anchor))
+                   (assoc :start-line (schema-long (:start-line anchor)))
+
+                   (some? (:start-side anchor))
+                   (assoc :start-side (enum-text (:start-side anchor))))))
 
         (or (util/non-blank-string? draft) (and (some? draft) (not (string? draft))))
         (assoc :draft draft)

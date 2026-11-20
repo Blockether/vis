@@ -1382,21 +1382,29 @@
           [(line "/max_columns" "grid_columns")])
 
         "diff"
-        (concat (when decl? (toolbar-stamp-lines (get node "children") "/children"))
-                (keep-indexed (fn [i child]
-                                (when (and (map? child)
-                                           (= "group" (get child "type"))
-                                           (not (toolbar-command? child)))
-                                  (line (str "/children/" i) "toolbar_menu")))
-                              (get node "children"))
-                (keep-indexed (fn [i thread]
-                                (when (and (map? thread) (not (contains? thread "anchor")))
-                                  (line (str "/threads/" i) "thread_anchor")))
-                              (get node "threads"))
-                (some->> (repeated (map #(get % "id") (get node "threads")))
-                         (array-map "id")
-                         (line "/threads" "repeated_item_id")
-                         vector))
+        (concat
+          (when decl? (toolbar-stamp-lines (get node "children") "/children"))
+          (keep-indexed
+            (fn [i child]
+              (when (and (map? child) (= "group" (get child "type")) (not (toolbar-command? child)))
+                (line (str "/children/" i) "toolbar_menu")))
+            (get node "children"))
+          (keep-indexed (fn [i thread]
+                          (when (and (map? thread) (not (contains? thread "anchor")))
+                            (line (str "/threads/" i) "thread_anchor")))
+                        (get node "threads"))
+          (keep-indexed
+            (fn [i {{start "start_line" end "line" side "side" start-side "start_side"} "anchor"}]
+              (when (and (int? start)
+                         (int? end)
+                         (> start end)
+                         (or (nil? start-side) (= start-side side)))
+                (line (str "/threads/" i "/anchor") "anchor_order")))
+            (get node "threads"))
+          (some->> (repeated (map #(get % "id") (get node "threads")))
+                   (array-map "id")
+                   (line "/threads" "repeated_item_id")
+                   vector))
 
         ("stat" "steps" "badge" "list" "chart")
         (let [k (name (:key (get item-bounds (keyword kind))))]

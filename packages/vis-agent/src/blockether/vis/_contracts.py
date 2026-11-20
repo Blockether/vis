@@ -1303,6 +1303,17 @@ def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
         for i, thread in enumerate(node.get("threads") or []):
             if isinstance(thread, dict) and "anchor" not in thread:
                 lines.append(named_line(f"/threads/{i}", "thread_anchor"))
+            anchor = thread.get("anchor") if isinstance(thread, dict) else None
+            if isinstance(anchor, dict):
+                start, end = anchor.get("start_line"), anchor.get("line")
+                start_side = anchor.get("start_side", anchor.get("side"))
+                if (
+                    _is_number(start)
+                    and _is_number(end)
+                    and start > end
+                    and start_side == anchor.get("side")
+                ):
+                    lines.append(named_line(f"/threads/{i}/anchor", "anchor_order"))
         if (one := _repeated(_ids(node.get("threads")))) is not None:
             lines.append(named_line("/threads", "repeated_item_id", {"id": one}))
     elif kind in ("stat", "steps", "badge", "list", "chart"):

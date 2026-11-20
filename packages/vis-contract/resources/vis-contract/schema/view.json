@@ -938,7 +938,7 @@
       ]
     },
     "anchor": {
-      "description": "A diff line that a thread belongs to: the file path, the old or new side and the 1-based line on that side.",
+      "description": "The diff lines that a thread belongs to: the file path, the old or new side and the 1-based line on that side. For a range of lines, start_line is the first line and line is the last line. start_side is the side of the first line when it is not side. The thread shows below the last line.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -950,6 +950,18 @@
             "old",
             "new"
           ]
+        },
+        "start_side": {
+          "description": "The side of start_line when the range starts on the other side, as in a change from a removed line to an added line.",
+          "enum": [
+            "old",
+            "new"
+          ]
+        },
+        "start_line": {
+          "description": "The first line of a range. On the same side, it is not after line.",
+          "type": "integer",
+          "minimum": 1
         },
         "line": {
           "type": "integer",

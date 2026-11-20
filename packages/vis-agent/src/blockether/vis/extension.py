@@ -5502,7 +5502,8 @@ class LiveEvent:
     `is_set`. `values` holds every input that a submit button collected.
     A Send in an app gives `submission_id`, the id of its receipt, and `comments`:
     the thread messages that it posted, each with `node_id`, `thread_id`,
-    `message_id`, `body` and the `anchor` of a diff line.
+    `message_id`, `body` and the `anchor` of a diff line, or of a range of lines
+    from `start_line` to `line`, with `start_side` when it starts on the other side.
     A pressed app shortcut gives `action`, the id that the shortcut sends, and
     `key`, the key that the person pressed. A shortcut that names a node gives an
     `activate` event of that node instead.
@@ -6944,7 +6945,9 @@ class LiveAttachment(LiveView):
         """Answer people in a thread of node `node_id`, as the owner of the app.
 
         `thread_id` names an existing thread. On a diff without it, `anchor`
-        (`{"path", "side", "line"}`) starts a thread on that line. `submission_id`
+        (`{"path", "side", "line"}`) starts a thread on that line. Add
+        `start_line` for a range of lines: `line` is then the last line. When the
+        range starts on the other side, `start_side` names that side. `submission_id`
         names the Send that you answer, and its receipt moves to `answered`. The
         host sets the author. Answers `thread_id`, `message_id` and the new `seq`.
         """

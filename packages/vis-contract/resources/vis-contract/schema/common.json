@@ -114,6 +114,10 @@
         "a diff thread needs an anchor",
         "anchor"
       ],
+      "anchor_order": [
+        "the range of lines ends before it starts",
+        "anchor"
+      ],
       "repeated_item_id": [
         "two items have the id \"{id}\"",
         "unique"
