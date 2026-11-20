@@ -2383,8 +2383,8 @@ export const ProjectGroup = memo(function ProjectGroup({
                     }}
                   />
                   <MenuItem
-                    title="Import session…"
-                    hint="Snapshot (.vissnap) or ATIF (.json)"
+                    title="Import snapshot…"
+                    note="(.vissnap, or ATIF .json)"
                     icon={<UploadIcon className="size-3.5" />}
                     onSelect={() => {
                       setMenu(null);
@@ -2620,8 +2620,8 @@ export const ProjectGroup = memo(function ProjectGroup({
                 )}
                 {!bandArchived && (
                   <MenuItem
-                    title="Import session…"
-                    hint="Snapshot (.vissnap) or ATIF (.json)"
+                    title="Import snapshot…"
+                    note="(.vissnap, or ATIF .json)"
                     icon={<UploadIcon className="size-3.5" />}
                     onSelect={() => {
                       setMenu(null);

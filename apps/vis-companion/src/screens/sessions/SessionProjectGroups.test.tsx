@@ -459,10 +459,10 @@ describe('ProjectGroup groups', () => {
     const importSnapshot = vi.fn();
     const { user } = mount(machine(), { state: null, start: vi.fn(async () => {}), importSnapshot });
     await user.click(await screen.findByRole('button', { name: 'Actions for Wallet work' }));
-    await user.click(within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: /^Import session/ }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: /^Import snapshot/ }));
     expect(importSnapshot).toHaveBeenLastCalledWith(conn, ROOT, WALLET);
     await user.click(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }));
-    await user.click(within(sheet(`Sessions in ${ROOT}`)).getByRole('button', { name: /^Import session/ }));
+    await user.click(within(sheet(`Sessions in ${ROOT}`)).getByRole('button', { name: /^Import snapshot/ }));
     expect(importSnapshot).toHaveBeenLastCalledWith(conn, ROOT);
   });
 

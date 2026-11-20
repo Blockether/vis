@@ -298,6 +298,7 @@ export function MenuBack({
 export function MenuItem({
   title,
   meta,
+  note,
   hint,
   badge,
   icon,
@@ -310,6 +311,8 @@ export function MenuItem({
   title: string;
   /** Supporting fact on the title line; the hint remains its own line. */
   meta?: string;
+  /** A short aside right after the title, in smaller italics. */
+  note?: string;
   hint?: string;
   badge?: string;
   icon?: ReactNode;
@@ -347,10 +350,11 @@ export function MenuItem({
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-baseline gap-2">
           <span
-            className={`block min-w-0 flex-1 truncate font-mono text-ui font-bold ${danger ? 'text-err-ink' : 'text-white mouse:group-hover/menu-item:text-accent-ink'}`}
+            className={`block min-w-0 ${note ? '' : 'flex-1'} truncate font-mono text-ui font-bold ${danger ? 'text-err-ink' : 'text-white mouse:group-hover/menu-item:text-accent-ink'}`}
           >
             {title}
           </span>
+          {note && <span className="min-w-0 flex-1 truncate font-mono text-meta italic text-dialog-hint">{note}</span>}
           {meta && <span className="shrink-0 font-mono text-meta text-dialog-hint">{meta}</span>}
         </span>
         {hint && <span className="mt-0.5 block font-mono text-meta text-dialog-hint">{hint}</span>}
