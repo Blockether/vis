@@ -3,14 +3,10 @@
  * to an extension and stays while the session is open.
  */
 
-import {
-  useEffect,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
-} from 'react';
+import { useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { Chip, CloseButton, Disclosure } from './ui';
+import { ResizeEdge } from './ResizeEdge';
+import { useChosenWidth } from '../lib/chosen-width';
 import { LiveView, ToneMark, runSummary, runTone } from './LiveView';
 import type { GatewayClient } from '../lib/gateway';
 import type { LiveView as LiveViewModel } from '../lib/live-view';
@@ -30,24 +26,10 @@ export function liveViewOwner(view: LiveViewModel): string {
   return view.extension ?? 'session';
 }
 
-function clampWidth(width: number): number {
-  return Math.round(Math.min(LIVE_PANEL_WIDTH.max, Math.max(LIVE_PANEL_WIDTH.min, width)));
-}
-
 /** The width of a panel that the person has not resized, for a window `windowWidth` wide. */
 export function initialPanelWidth(windowWidth: number): number {
   const { share, fitMin, fitMax } = LIVE_PANEL_WIDTH;
   return Math.round(Math.min(fitMax, Math.max(fitMin, windowWidth * share)));
-}
-
-function storedWidth(): number {
-  const initial = initialPanelWidth(window.innerWidth);
-  try {
-    const stored = Number(window.localStorage.getItem(WIDTH_KEY));
-    return Number.isFinite(stored) && stored > 0 ? clampWidth(stored) : initial;
-  } catch {
-    return initial;
-  }
 }
 
 /** Views as fold rows. A folded view shows only its title and state. */
@@ -179,54 +161,12 @@ export function LivePanel({
 
 /** A panel beside the transcript. Drag its edge, or use the arrow keys on it, to resize it. */
 export function ResizablePanel({ children }: { children: ReactNode }) {
-  const [width, setWidth] = useState(storedWidth);
-  const [isChosen, setIsChosen] = useState(false);
-  useEffect(() => {
-    if (!isChosen) return;
-    try {
-      window.localStorage.setItem(WIDTH_KEY, String(width));
-    } catch {
-      // Private browsing can refuse storage. The width then lasts for this page only.
-    }
-  }, [width, isChosen]);
-  const drag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = width;
-    const move = (moved: PointerEvent) => {
-      setIsChosen(true);
-      setWidth(clampWidth(startWidth + startX - moved.clientX));
-    };
-    const stop = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', stop);
-      window.removeEventListener('pointercancel', stop);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', stop);
-    window.addEventListener('pointercancel', stop);
-  };
-  const resizeByKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const step = event.key === 'ArrowLeft' ? 1 : event.key === 'ArrowRight' ? -1 : 0;
-    if (step === 0) return;
-    event.preventDefault();
-    setIsChosen(true);
-    setWidth((held) => clampWidth(held + step * LIVE_PANEL_WIDTH.step));
-  };
+  const [chosen, choose] = useChosenWidth(WIDTH_KEY, LIVE_PANEL_WIDTH);
+  const [initial] = useState(() => initialPanelWidth(window.innerWidth));
+  const width = chosen ?? initial;
   return (
     <div className="relative flex h-full min-h-0 shrink-0 border-l border-dialog-edge" style={{ width }}>
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize live views"
-        aria-valuemin={LIVE_PANEL_WIDTH.min}
-        aria-valuemax={LIVE_PANEL_WIDTH.max}
-        aria-valuenow={width}
-        tabIndex={0}
-        className="absolute inset-y-0 -left-1.5 z-10 w-3 cursor-col-resize touch-none focus-visible:bg-accent/40"
-        onPointerDown={drag}
-        onKeyDown={resizeByKey}
-      />
+      <ResizeEdge label="Resize live views" side="start" bounds={LIVE_PANEL_WIDTH} width={width} onWidth={choose} />
       <div className="min-h-0 min-w-0 flex-1">{children}</div>
     </div>
   );
