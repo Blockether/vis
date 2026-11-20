@@ -10,6 +10,7 @@ import {
   prepareDesktopHost,
   ARTIFACT_COMMANDS,
   ENGINE_COMMANDS,
+  LIVE_URL,
   PAKE_VERSION,
   PROXY_BROWSER_COMMANDS,
   RFD_DEPENDENCY,
@@ -39,6 +40,9 @@ vi.mock('node:fs', async (importOriginal) => {
         return JSON.stringify({
           bundle: { targets: ['msi'], windows: { wix: { language: ['en-US'] } } },
         });
+      }
+      if (String(args[0]).endsWith('default.json')) {
+        return JSON.stringify({ remote: { urls: ['https://*.*'] } });
       }
       return original.readFileSync(...args);
     }),
@@ -232,6 +236,47 @@ describe('desktop package', () => {
     } finally {
       readFileSync.mockImplementation(read);
     }
+  });
+
+  // Without the dev server origin, the live window cannot open links or notify. A release
+  // built later in the same tools directory must not keep that HTTP origin.
+  it('gives host plugins to the dev server origin only in the live app', () => {
+    const remoteUrls = (live) => {
+      vi.clearAllMocks();
+      prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env, live });
+      const [, capability] = writeFileSync.mock.calls.find(([path]) =>
+        String(path).endsWith(join('capabilities', 'default.json')),
+      );
+      return JSON.parse(capability).remote.urls;
+    };
+    const read = readFileSync.getMockImplementation();
+    readFileSync.mockImplementation((...args) =>
+      String(args[0]).endsWith('default.json')
+        ? JSON.stringify({ remote: { urls: ['https://*.*', LIVE_URL] } })
+        : read(...args),
+    );
+    try {
+      expect(remoteUrls(true)).toEqual(['https://*.*', LIVE_URL]);
+      expect(remoteUrls(false)).toEqual(['https://*.*']);
+    } finally {
+      readFileSync.mockImplementation(read);
+    }
+  });
+
+  it('points the live app at the dev server instead of the bundle', () => {
+    const args = pakeArgs({
+      distDir: '/tmp/dist',
+      version: '0.1.30',
+      target: desktopTargets('darwin', 'arm64', true)[0],
+      icon: '/i.png',
+      dev: true,
+      live: true,
+    });
+    expect(args[0]).toBe(LIVE_URL);
+    // An installed dev app has the dev identifier; macOS would open that app instead.
+    expect(args[args.indexOf('--identifier') + 1]).toBe('com.blockether.viscompanion.desktop.live');
+    expect(args).not.toContain('/tmp/dist');
+    expect(args).not.toContain('--use-local-file');
   });
 });
 

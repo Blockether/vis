@@ -20,9 +20,14 @@
  *
  *   npm run build && npm run package:desktop         # release installers
  *   npm run build && npm run package:desktop -- --dev # unsigned host-only app
+ *   npm run package:desktop -- --live                 # dev app that shows `npm run dev`
  *
  * Dev uses a separate app identifier and `build/desktop-dev/` output directory.
+ * Live has its own identifier and `build/desktop-live/`, so it runs next to them.
  * It does not need release signing credentials or cross-compilation targets.
+ * The live app is a dev app whose window loads the Vite dev server (LIVE_URL)
+ * instead of `dist/`, so web changes show in the window without a new build.
+ * Rust changes in `native/desktop/` still need a new build.
  *
  * Pake needs Node >= 20 and a Rust toolchain (>= 1.85); on Linux the webkit2gtk-4.1
  * dev packages the workflow installs. Windows needs the MSVC C++ build tools and
@@ -40,6 +45,8 @@ export const PAKE_VERSION = '3.15.7';
 export const APP_NAME = 'Vis';
 export const ICON = join(appDir, 'native-assets', 'ios', 'AppIcon-512@2x.png');
 export const OUT_DIR = join(appDir, 'build', 'desktop');
+/** The Vite dev server; see `server` in `vite.config.ts`. */
+export const LIVE_URL = 'http://127.0.0.1:5273';
 
 /** Release installers, or a single host-native dev installer; refuse other hosts. */
 export function desktopTargets(platform, arch, dev = false) {
@@ -64,14 +71,13 @@ export const assetName = (version, target) =>
   `vis-companion-${version}-${target.asset}.${target.ext}`;
 
 /** The Pake invocation for one target: every flag the desktop app is built with. */
-export function pakeArgs({ distDir, version, target, icon = ICON, dev = false }) {
+export function pakeArgs({ distDir, version, target, icon = ICON, dev = false, live = false }) {
   return [
-    distDir,
-    '--use-local-file',
+    ...(live ? [LIVE_URL] : [distDir, '--use-local-file']),
     '--name',
     APP_NAME,
     '--identifier',
-    `com.blockether.viscompanion.desktop${dev ? '.dev' : ''}`,
+    `com.blockether.viscompanion.desktop${live ? '.live' : dev ? '.dev' : ''}`,
     '--app-version',
     version,
     '--icon',
@@ -148,7 +154,7 @@ function hasPake(pakeDir) {
 }
 
 /** Install a private Pake template with Vis's native file commands and window hooks. */
-export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = false }) {
+export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = false, live = false }) {
   if (windowsSigning) {
     for (const name of ['ENDPOINT', 'ACCOUNT', 'PROFILE', 'PUBLISHER']) {
       if (!env[`WINDOWS_SIGNING_${name}`]?.trim()) {
@@ -212,6 +218,17 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
     if (!cargo.includes('\n[dependencies]\n')) throw new Error('Pake Cargo.toml changed');
     writeFileSync(cargoPath, cargo.replace('\n[dependencies]\n', `\n[dependencies]\n${RFD_DEPENDENCY}\n`));
   }
+  // Tauri gives plugin commands (shell, notification) only to the remote origins of a
+  // capability. Pake allows HTTPS only, so the live app adds the HTTP dev server. The same
+  // tools directory serves later release builds, so each build sets the list again.
+  const capabilityPath = join(pakeDir, 'src-tauri', 'capabilities', 'default.json');
+  const capability = JSON.parse(readFileSync(capabilityPath, 'utf8'));
+  if (!Array.isArray(capability.remote?.urls)) throw new Error('Pake capability changed');
+  capability.remote.urls = [
+    ...capability.remote.urls.filter((url) => url !== LIVE_URL),
+    ...(live ? [LIVE_URL] : []),
+  ];
+  writeFileSync(capabilityPath, `${JSON.stringify(capability, null, 2)}\n`);
   for (const name of ['artifact.rs', 'engine.rs', 'proxy_browser.rs', 'web_content.rs']) {
     writeFileSync(
       join(sourceDir, name),
@@ -245,8 +262,10 @@ export function packageDesktop({
   platform = process.platform,
   arch = process.arch,
   dev = false,
+  live = false,
   log = console.log,
 } = {}) {
+  dev ||= live;
   const targets = desktopTargets(platform, arch, dev);
   // npm exposes its JS entry point: launching it with Node avoids .cmd quoting
   // and preserves paths with spaces without executing a Windows command shell.
@@ -255,11 +274,15 @@ export function packageDesktop({
     throw new Error('On Windows, run `npm run package:desktop` so npm supplies its CLI path');
   }
   const distDir = join(appDir, 'dist');
-  if (!existsSync(join(distDir, 'index.html'))) {
+  if (!live && !existsSync(join(distDir, 'index.html'))) {
     throw new Error(`${distDir} has no index.html — run \`npm run build\` first`);
   }
   const version = syncPackageVersion({ quiet: true });
-  const outDir = dev ? join(appDir, 'build', 'desktop-dev') : OUT_DIR;
+  const outDir = live
+    ? join(appDir, 'build', 'desktop-live')
+    : dev
+      ? join(appDir, 'build', 'desktop-dev')
+      : OUT_DIR;
   const env = {
     ...process.env,
     // Pake otherwise compiles under a disposable npx installation. Both Cargo
@@ -288,11 +311,12 @@ export function packageDesktop({
     toolsDir: join(appDir, 'build', 'desktop-tools'),
     env,
     windowsSigning: platform === 'win32' && !dev,
+    live,
   });
   mkdirSync(outDir, { recursive: true });
   const written = [];
   for (const target of targets) {
-    const args = pakeArgs({ distDir, version, target, dev });
+    const args = pakeArgs({ distDir, version, target, dev, live });
     // Pake normalizes Linux package names to lowercase, unlike macOS and Windows.
     const bundleName = platform === 'linux' ? APP_NAME.toLowerCase() : APP_NAME;
     const produced = join(outDir, `${bundleName}.${target.ext}`);
@@ -318,8 +342,10 @@ export function packageDesktop({
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   try {
     const args = process.argv.slice(2);
-    if (args.some((arg) => arg !== '--dev')) throw new Error('usage: desktop-package.mjs [--dev]');
-    packageDesktop({ dev: args.includes('--dev') });
+    if (args.some((arg) => arg !== '--dev' && arg !== '--live')) {
+      throw new Error('usage: desktop-package.mjs [--dev | --live]');
+    }
+    packageDesktop({ dev: args.includes('--dev'), live: args.includes('--live') });
   } catch (error) {
     console.error(`\n✗ ${error.message}\n`);
     process.exit(1);
