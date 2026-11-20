@@ -44,7 +44,9 @@ LATEST = "latest"
 LOCK_WAIT_S = 300
 MAX_METADATA = 128 * 1024
 # The milliseconds of the slow steps of the package that one `sync` call handles now.
-_steps = contextvars.ContextVar("extension_package_steps", default=None)
+_steps: contextvars.ContextVar[dict[str, int] | None] = contextvars.ContextVar(
+    "extension_package_steps", default=None
+)
 _EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", ".DS_Store"}
 # `.env*` holds secrets. `.venv-*` is an environment that Vis prepares for one interpreter.
 _EXCLUDED_PREFIXES = (".env", ".venv-")
@@ -428,9 +430,8 @@ def _catalog(repository, subdirectory):
         ) from exc
     except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         # The message of a network error can hold a path or a proxy address: name its kind only.
-        cause = (
-            exc.reason if isinstance(getattr(exc, "reason", None), Exception) else exc
-        )
+        reason = getattr(exc, "reason", None)
+        cause = reason if isinstance(reason, Exception) else exc
         number = getattr(cause, "errno", None)
         kind = type(cause).__name__ + (f" {number}" if isinstance(number, int) else "")
         raise ValueError(

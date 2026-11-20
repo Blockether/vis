@@ -6,7 +6,7 @@ import re
 import uuid
 from functools import cache, lru_cache
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeGuard
 
 _DATA = Path(__file__).with_name("_data")
 if not _DATA.is_dir():
@@ -1039,7 +1039,7 @@ def _repeated(ids) -> str | None:
     return min((one for one, n in counts.items() if n > 1), default=None)
 
 
-def _is_number(value: Any) -> bool:
+def _is_number(value: Any) -> TypeGuard[int | float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
@@ -1330,13 +1330,7 @@ def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
                 if isinstance(lane, dict)
                 else (None, None)
             )
-            if (
-                isinstance(start, (int, float))
-                and isinstance(end, (int, float))
-                and _is_number(start)
-                and _is_number(end)
-                and end < start
-            ):
+            if _is_number(start) and _is_number(end) and end < start:
                 lines.append(named_line(f"/lanes/{i}", "lane_order"))
     elif kind == "table":
         order = node.get("order")
