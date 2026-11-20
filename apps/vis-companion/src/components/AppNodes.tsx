@@ -1632,8 +1632,20 @@ function DiffToolbar({
   const menus = nodes.filter((node) => !icon(node));
   const iconActions = nodes.filter((node) => icon(node) && node.type === 'button');
   const iconMenus = nodes.filter((node) => icon(node) && node.type === 'group');
+  // The file headers stick below the toolbar, so the diff knows its height.
+  const bar = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = bar.current;
+    const diff = node?.parentElement;
+    if (!node || !diff || typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(() =>
+      diff.style.setProperty('--diff-toolbar-height', `${node.offsetHeight}px`),
+    );
+    watch.observe(node);
+    return () => watch.disconnect();
+  }, []);
   return (
-    <div className="diff-toolbar" role="toolbar" aria-label="Diff display">
+    <div ref={bar} className="diff-toolbar" role="toolbar" aria-label="Diff display">
       <span className="diff-toolbar-summary">
         {menus.length > 0 ? (
           <span className="diff-commands" role="group" aria-label="Review commands">

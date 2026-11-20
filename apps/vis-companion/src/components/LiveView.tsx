@@ -2546,7 +2546,7 @@ export function LiveViewPanel({
           execution group's column, and the same row rhythm as the CODE and ACTIVITY
           bands beside it. Only the standalone dialog keeps a frame. */}
       <section
-        className={`live-view-panel min-w-0 overflow-hidden ${
+        className={`live-view-panel min-w-0 overflow-clip ${
           isCard ? 'border border-dialog-edge bg-panel' : ''
         }`}
         data-execution-run={embedded || undefined}

@@ -1151,7 +1151,7 @@ ol.markdown-list > li::before {
   height: 44px;
   padding: 0 12px 0 8px;
   position: sticky;
-  top: 0;
+  top: var(--diff-toolbar-height, 0px);
   z-index: 5;
 }
 .diff-file-header .diff-fold {
@@ -1341,7 +1341,21 @@ ol.markdown-list > li::before {
 /* The toolbar stands in a pane of any width. When the scope and the controls do not
    fit one row, the controls take the next row, and the scope keeps its words (user
    report: at 820px the scope read "Uncom"). */
+/* The toolbar stays at the top of the scrolling diff, as in T3 Code. Its place and the
+   gap below it do not change when it sticks: no space above it, and its own padding
+   below it in place of the gap before the files. */
+.live-view-panel > ul:has(> li:first-child .app-diff > .diff-toolbar:first-child) {
+  padding-top: 0;
+}
+.app-diff > .diff-toolbar {
+  margin-block: 0;
+}
 .diff-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  padding-bottom: 12px;
+  background: var(--diff-paper, var(--color-panel));
   flex-wrap: wrap;
   row-gap: 4px;
   overflow-x: auto;
@@ -1375,7 +1389,7 @@ ol.markdown-list > li::before {
 
 .diff-search {
   position: sticky;
-  top: 0;
+  top: var(--diff-toolbar-height, 0px);
   z-index: 8;
   display: flex;
   flex-wrap: wrap;
