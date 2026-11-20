@@ -835,10 +835,7 @@ class ReviewApp:
         if self.end is not None and self.selected and self.selected > 1:
             done = self.journal.revert(self.selected, [self.path])
         elif self._is_own_range() and self.against is None:
-            start = self.journal.own_start(self.path)
-            if start is None:
-                return
-            done = self.journal.restore(max(start, 1), [self.path])
+            done = self.journal.undo_own(self.path)
         else:
             done = self.journal.restore(max(self.start, 1), [self.path])
         self._after_undo(done)

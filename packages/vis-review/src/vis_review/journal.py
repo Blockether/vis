@@ -490,13 +490,6 @@ class Journal:
         entry = self.entry(seq)
         return self.diff(seq - 1, seq, entry.files)
 
-    def own_start(self, rel: str) -> int | None:
-        """The checkpoint just before the session first changed `rel`, or None."""
-        for entry in self.entries:
-            if entry.kind in OWN_KINDS and rel in entry.files:
-                return entry.seq - 1
-        return None
-
     def own_diff(self, context: int = 3) -> list[FileDiff]:
         """The changes that the session itself made, without the edits of others.
 
@@ -749,6 +742,23 @@ class Journal:
                     continue
                 plan[rel] = before.get(rel)
             return self._write(plan, tuple(conflicts), f"Undo #{seq}")
+
+    def undo_own(self, rel: str) -> Undone:
+        """Take the own changes out of `rel` and keep the edits of others in it.
+
+        A file where another session changed the lines of an own change is a
+        conflict and stays as it is.
+        """
+        with self._lock:
+            self.checkpoint("outside", "Changes before an undo")
+            span = self._own_changes().get(rel)
+            if span is None:
+                return Undone(None, ())
+            before, after = span
+            target = self._merged(after, self.state.get(rel), before)
+            if target is None:
+                return Undone(None, (), (rel,))
+            return self._write({rel: target}, (), f"Undo the own changes of {rel}")
 
     def _write(self, plan: Mapping[str, str | None], conflicts, label: str) -> Undone:
         written: dict[str, str | None] = {}

@@ -334,7 +334,6 @@ def test_own_diff_leaves_out_the_edits_of_other_sessions(tmp_path):
     assert set(diffs) == {"mine.py", "shared.py"}
     assert "-m1\n+m2\n" in diffs["mine.py"].patch
     assert "-s2 by them\n+s3 by me\n" in diffs["shared.py"].patch
-    assert j.own_start("shared.py") == 2
 
 
 def _lines_with(**changed):
@@ -379,6 +378,34 @@ def test_two_sessions_that_change_one_file_see_only_their_own_lines(tmp_path, vi
     assert "-line 15\n+theirs 15\n" in other.patch
     assert "+mine" not in other.patch
     assert (other.added, other.removed) == (1, 1)
+
+
+def test_undo_of_an_own_file_keeps_the_lines_of_another_session(tmp_path):
+    # Undo file in "This session" brought the file back to before the first own
+    # change, so it also took out the later edit of another session.
+    mine, theirs = journal(tmp_path, "s1"), journal(tmp_path, "s2")
+    write(mine, "shared.py", _lines_with())
+    mine.checkpoint()
+    theirs.checkpoint()
+    write(mine, "shared.py", _lines_with(l2="mine 2"))
+    mine.checkpoint("block", "own edit")
+    theirs.checkpoint("outside", "Changes between blocks")
+    write(theirs, "shared.py", _lines_with(l2="mine 2", l15="theirs 15"))
+    theirs.checkpoint("block", "their edit")
+    done = mine.undo_own("shared.py")
+    assert done.restored == ("shared.py",)
+    assert read(mine, "shared.py") == _lines_with(l15="theirs 15")
+    assert mine.own_diff() == []
+    assert mine.undo_own("shared.py").restored == ()
+    write(theirs, "shared.py", _lines_with(l2="theirs 2", l15="theirs 15"))
+    theirs.checkpoint("block", "their edit of line 2")
+    write(mine, "shared.py", _lines_with(l2="mine again", l15="theirs 15"))
+    mine.checkpoint("block", "own edit of their line")
+    theirs.checkpoint("outside", "Changes between blocks")
+    write(theirs, "shared.py", _lines_with(l2="theirs again", l15="theirs 15"))
+    theirs.checkpoint("block", "their edit of the same line")
+    assert mine.undo_own("shared.py").conflicts == ("shared.py",)
+    assert read(mine, "shared.py") == _lines_with(l2="theirs again", l15="theirs 15")
 
 
 def test_an_undo_in_the_session_takes_its_change_out_of_the_own_diff(tmp_path):
