@@ -34,6 +34,23 @@
   *::-webkit-scrollbar {
     display: none;
   }
+
+  /* A review keeps its scrollbar: a long diff needs a visible place and length.
+     `auto` lets the styled WebKit bar apply, and that bar does not fade out. */
+  [data-app-surface]:has(> * .app-diff) {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+  [data-app-surface]:has(> * .app-diff)::-webkit-scrollbar {
+    display: block;
+    width: 8px;
+  }
+  [data-app-surface]:has(> * .app-diff)::-webkit-scrollbar-thumb {
+    background: var(--dialog-border);
+  }
+  [data-app-surface]:has(> * .app-diff)::-webkit-scrollbar-track {
+    margin-top: var(--diff-toolbar-height, 0px);
+  }
 }
 
 /* The two Blockether palettes put branded paper under a dialog close, and they carry the

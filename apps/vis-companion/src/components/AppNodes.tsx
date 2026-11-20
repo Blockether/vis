@@ -1636,7 +1636,8 @@ function DiffToolbar({
   const bar = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const node = bar.current;
-    const diff = node?.parentElement;
+    // The scroller takes it too: its scrollbar starts below the toolbar.
+    const diff = node?.closest<HTMLElement>('[data-app-surface]') ?? node?.parentElement;
     if (!node || !diff || typeof ResizeObserver === 'undefined') return;
     const watch = new ResizeObserver(() =>
       diff.style.setProperty('--diff-toolbar-height', `${node.offsetHeight}px`),
