@@ -235,9 +235,10 @@ hang reports only, not to each file in the log tree.
 
 ## Session state is separate
 
-`~/.vis/gateway/events/<session-id>.ndjson` is the permanent event journal of the gateway. The
-journal holds conversation and tool data, and log cleanup does not remove it. Configuration,
-credentials, and session databases are also outside the log tree.
+`~/.vis/gateway/events/<session-id>.ndjson` is the event journal of one session in the gateway. The
+journal holds conversation and tool data, and log cleanup does not remove it. A separate cleanup
+removes a journal that last changed more than 14 days ago. Configuration, credentials, and session
+databases are also outside the log tree.
 
 When a bug report needs transcript context, use a reviewed
 [session export](sessions.md#export-a-session). Do not share raw event journals, databases, or
