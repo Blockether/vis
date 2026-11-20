@@ -16,7 +16,7 @@ import type { LiveView as LiveViewModel } from '../lib/live-view';
  * takes `share` of the window between `fitMin` and `fitMax`, like the T3 Code diff
  * panel, so a review toolbar fits on one row.
  */
-export const LIVE_PANEL_WIDTH = { min: 280, max: 720, step: 16, share: 0.42, fitMin: 360, fitMax: 560 } as const;
+export const LIVE_PANEL_WIDTH = { min: 280, max: 1200, step: 16, share: 0.42, fitMin: 360, fitMax: 560 } as const;
 
 /** Only a width that the person chose is kept. The old key held every first width. */
 const WIDTH_KEY = 'vis.live-panel.chosen-width';

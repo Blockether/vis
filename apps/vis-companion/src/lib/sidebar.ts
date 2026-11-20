@@ -70,7 +70,7 @@ export function sidebarRailClass(isUp: boolean): string {
 }
 
 /** The desk's sidebar width in CSS pixels, and the step of one arrow key. */
-export const SIDEBAR_WIDTH = { min: 240, max: 640, step: 16 } as const;
+export const SIDEBAR_WIDTH = { min: 240, max: 960, step: 16 } as const;
 
 /** Only a width that the person chose is kept. */
 export const SIDEBAR_WIDTH_KEY = 'vis.sidebar.chosen-width';
