@@ -17,7 +17,7 @@ import { catalogMetadata, extensionPath } from './discovery.js';
 import { mountCommunity } from './community.js';
 import { loadTurnstile } from './turnstile.js';
 import { mountSelects } from '../../../resources/vis-docs/assets/select.js';
-/** README code blocks; Prism loads before this module and has no effect on other code. */
+/** README code only: the install command carries its own tokens. Prism loads before this module. */
 const highlight = (node) => window.Prism?.highlightAllUnder(node);
 function updateMetadata(data = {}) {
   document.head.querySelectorAll('[data-discovery]').forEach((node) => node.remove());
@@ -151,7 +151,7 @@ export function mount(container, request = fetch, initial) {
       if (disposed || revision !== routeRevision) return;
       detailItem = item;
       $('#detail').innerHTML = detailHTML(item);
-      highlight($('#detail'));
+      highlight($('#detail .package-readme'));
       renderInstall();
       updateMetadata({ item });
       feedback(item);
@@ -476,7 +476,7 @@ export function mount(container, request = fetch, initial) {
       if (!disposed) route();
     });
   } else if (initial.item) {
-    highlight($('#detail'));
+    highlight($('#detail .package-readme'));
     feedback(initial.item);
   }
   return () => {

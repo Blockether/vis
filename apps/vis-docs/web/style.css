@@ -331,17 +331,30 @@ button.quiet {
 #copy-status:empty {
   display: none;
 }
+/* Version and scope are two aligned form rows: labels in one column, equal fields. */
 .install-controls {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 18rem) max-content;
+  justify-content: start;
   align-items: center;
-  gap: 0.75rem 2rem;
+  gap: 0.75rem 1rem;
 }
-.install-scope {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
+.install-controls > .version-picker,
+.install-controls > .install-scope {
+  display: contents;
+}
+.install-controls label {
+  grid-column: 1;
   white-space: nowrap;
+}
+.install-controls :is(.version-picker, .install-scope) :is(.vis-select, select) {
+  grid-column: 2;
+  width: 100%;
+}
+.install-controls select {
+  height: 2.75rem;
+  font-size: var(--text-small);
+  border: 1px solid var(--line);
 }
 .install-actions {
   display: flex;
@@ -639,10 +652,18 @@ dialog form label {
   .version-picker label {
     grid-column: 1 / -1;
   }
-  .install-controls,
-  .install-scope {
-    display: grid;
-    gap: 0.5rem;
+  .install-controls {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: 0.5rem 0.75rem;
+  }
+  .install-controls label {
+    grid-column: 1 / -1;
+  }
+  .install-controls :is(.version-picker, .install-scope) :is(.vis-select, select) {
+    grid-column: 1;
+  }
+  .install-controls .install-scope label {
+    margin-top: 0.5rem;
   }
   .version-picker .vis-select,
   .version-picker select {

@@ -2,7 +2,14 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { mount, installCommand } from './app.js';
 import fixtures from './catalog.fixture.json';
-import { detailHTML, filters, filterURL, previewHTML, shellHTML } from './render.js';
+import {
+  detailHTML,
+  filters,
+  filterURL,
+  installCommandHTML,
+  previewHTML,
+  shellHTML,
+} from './render.js';
 import { readFileSync } from 'node:fs';
 const item = fixtures.at(-1);
 const tick = async () => {
@@ -415,6 +422,28 @@ test('README code blocks are highlighted, including TOML and YAML', async () => 
     await tick();
     for (const language of ['toml', 'yaml', 'bash'])
       expect($(`.package-readme code.language-${language} .token`)).not.toBeNull();
+  } finally {
+    delete window.Prism;
+  }
+});
+test('a server-rendered detail page keeps the install command tokens when Prism runs', () => {
+  (0, eval)(readFileSync('../../resources/vis-transcript/prism.min.js', 'utf8'));
+  const detail = { ...item, readme: '```bash\necho "hello"\n```', readme_format: 'md' };
+  document.body.innerHTML = `<div id="app">${shellHTML({ item: detail, items: fixtures })}</div>`;
+  vi.stubGlobal('matchMedia', () => ({
+    matches: false,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+  const own = document.createElement('code');
+  own.innerHTML = installCommandHTML(detail);
+  try {
+    dispose = mount($('#app'), vi.fn(async () => ({ ok: true, json: async () => ({}) })), {
+      item: detail,
+      items: fixtures,
+    });
+    expect($('.package-readme code.language-bash .token')).not.toBeNull();
+    expect($('#install-command code').innerHTML).toBe(own.innerHTML);
   } finally {
     delete window.Prism;
   }
