@@ -112,6 +112,7 @@ jobs:
             done <<'FIRST_PARTY'
           Blockether/vis-lang-interface - -
           Blockether/vis-lang-python - -
+          Blockether/vis-lang-javascript - -
           Blockether/vis-lang-clojure extension -
           Blockether/vis-decisions - -
           Blockether/vis-optmem - -
