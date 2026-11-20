@@ -1659,13 +1659,19 @@ zz_note = 'n' * 3000
           (expect (str/includes? out "body=0"))
           (expect (str/includes? out "exact=python-sandbox"))))
     (it "doc retrieves a documentation page by slug, forgiving case and `.md`"
-        (let [out (run (str "a = doc('index')\n"
-                            "b = doc('Index.MD')\n" "print('same='+str(a == b))\n"
-                            "print('head='+a.splitlines()[0])\n"
-                            "print('body='+str('pairing' in a.lower()))"))]
+        (let [page
+              (str/trimr (slurp (io/resource "vis-docs/index.md")))
+
+              out
+              (run (str "a = doc('index')\n"
+                        "b = doc('Index.MD')\n" "print('same='+str(a == b))\n"
+                        "print('head='+a.splitlines()[0])\n"
+                        "print('tail='+a.rstrip().splitlines()[-1])"))]
+
           (expect (str/includes? out "same=True"))
           (expect (str/includes? out "head=# index"))
-          (expect (str/includes? out "body=True"))))
+          ;; The page arrives whole, to its last line. The words of a page are not a contract.
+          (expect (str/includes? out (str "tail=" (last (str/split-lines page)) "\n")))))
     ;; A skill is a document like any other: `doc` prints the complete source and
     ;; there is no verb to call, so the entry carries no call line at all.
     (it "doc returns a skill whole, with no verb to invoke and no session effect"
