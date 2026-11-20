@@ -241,12 +241,19 @@
                     (when (or (map? weights) (map? (get ctx "engine_turn_weights")))
                       (+ (long (reduce + 0 (keep #(get weights %) scopes))) (long qa-toks))))
 
+                  ;; A fold without a saving must not read as a success. A model folded one
+                  ;; step, read "estimated growth ~101 tokens" and kept 32k tokens of old turns.
+                  ;; The remedy is a separate ` · ` part, so the Activity row leaves it out.
+                  no-saving
+                  (str ", so this fold saved no tokens · to save tokens, fold a broader scope: "
+                       "\"-tN/iK\" folds all steps through tN/iK")
+
                   removed
                   (cond (nil? toks) (when util " · removal estimate unavailable")
                         (pos? (long toks)) (str " · estimated removal ~" (fmt-tok toks) " tokens")
                         (neg? (long toks))
-                        (str " · estimated growth ~" (fmt-tok (- (long toks))) " tokens")
-                        :else " · estimated removal ~0 tokens")
+                        (str " · estimated growth ~" (fmt-tok (- (long toks))) " tokens" no-saving)
+                        :else (str " · estimated removal ~0 tokens" no-saving))
 
                   ;; Removal uses a local tokenizer; input is provider usage. Subtracting
                   ;; them cannot establish the remaining context or a non-foldable floor.

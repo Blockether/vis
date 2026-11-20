@@ -1466,8 +1466,9 @@
         (expect (= "folded t1 · estimated removal ~80k tokens · operating budget 100k → first"
                    (sf ["t1"] "first")))
         (expect
-          (= "folded through t1/i2 · estimated removal ~0 tokens · operating budget 100k → broader"
-             (sf "-t1/i2" "broader")))
+          (=
+            "folded through t1/i2 · estimated removal ~0 tokens, so this fold saved no tokens · to save tokens, fold a broader scope: \"-tN/iK\" folds all steps through tN/iK · operating budget 100k → broader"
+            (sf "-t1/i2" "broader")))
         (expect (= {:reclaimed-tokens 80000 :pending? false} @rebase))))
   ;; Blockether/vis#174: tokenizer removals are estimates, not provider usage.
   ;; Keep the measured input and both named limits separate; no projected floor.
@@ -1487,12 +1488,12 @@
           "folded through t1/i2 · estimated removal ~15k tokens · last input 42k measured tokens · operating budget 70k · model limit 96k → traced"
           (sf "-t1/i2" "traced")))))
   (it
-    "a scope with NO stamped weight reclaims nothing, so the card reads an explicit estimated removal ~0 alongside the live window fullness"
+    "a scope with NO stamped weight reclaims nothing, so the card says that the fold saved no tokens and names the broader range"
     (let [sf (get (compaction-verbs (priced-ctx)) 'fold-session)]
       ;; An unpriced scope must not fabricate a provider-measured reduction.
       (expect
         (=
-          "folded t2/i9 · estimated removal ~0 tokens · last input 42k measured tokens · operating budget 70k · model limit 96k → fresh"
+          "folded t2/i9 · estimated removal ~0 tokens, so this fold saved no tokens · to save tokens, fold a broader scope: \"-tN/iK\" folds all steps through tN/iK · last input 42k measured tokens · operating budget 70k · model limit 96k → fresh"
           (sf ["t2/i9"] "fresh")))))
   (it
     "prices every settled step of a prior turn, and a whole turn also by its request and answer"
@@ -1646,6 +1647,23 @@
                     "content" []}
                    (:presentation row)))
         (expect (not (str/includes? (pr-str @events) "private gist")))))
+  ;; A session of 2026-11-20 folded one step, read "estimated growth ~101 tokens" as a
+  ;; success and carried 32k tokens of old turns. The row must show the missing saving.
+  (it "shows on the Activity row that a fold saved no tokens, without the remedy for the model"
+      (let [events
+            (atom [])
+
+            _
+            (binding [extension/*tool-event-sink* #(swap! events conj %)]
+              ((get (compaction-verbs (priced-ctx)) 'fold-session) "t2/i9" "private gist"))
+
+            row
+            (first (:rows (activity/presentation (activity/replay @events))))]
+
+        (expect (= {"headline" "Folded steps"
+                    "summary" "t2/i9 · estimated removal ~0 tokens, so this fold saved no tokens"
+                    "content" []}
+                   (:presentation row)))))
   (it "records a refused fold as a failed row and still throws the same refusal"
       (let [events
             (atom [])

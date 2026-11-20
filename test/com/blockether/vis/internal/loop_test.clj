@@ -5064,7 +5064,8 @@
         (expect (< (abs (second @estimates)) 128))
         (let [receipt (fold "-t1/i1" (apply str (repeat 6000 "larger gist ")))]
           (expect (neg? (long (last @estimates))))
-          (expect (str/includes? receipt "estimated growth")))))
+          (expect (re-find #"estimated growth ~\d+k? tokens, so this fold saved no tokens" receipt))
+          (expect (str/includes? receipt "fold a broader scope: \"-tN/iK\"")))))
   (it "reports an unavailable estimate instead of a false zero when projection pricing fails"
       (let [{:keys [ctx fold rebase]} (retained-fold-fixture)]
         (swap! ctx assoc
