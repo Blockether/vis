@@ -47,9 +47,9 @@
        resolves against the TARGET page's own toc.
      * Every fenced block declares a language, one of `bash`, `clojure`, `edn`,
        `ini`, `java`, `json`, `markdown`, `python`, `text`, `toml`, `xml`, `yaml`.
-     * `index.md` is the MAP: it links every other page under `## Learn more`,
-       with that page's title as the link text, so a page nobody can reach from
-       the landing page does not exist for a reader.
+     * `index.md` is the OVERVIEW: it links the pages for the tasks a reader
+       brings. It does not list every page, because the sidebar does, and
+       `site-file` refuses a page that the navigation does not list.
      * The last `##` of every page is `See also` — two or more sibling pages, each
        with the reason to follow it. That web is what keeps ONE topic in ONE page:
        a topic explained twice is a cross-link somebody never wrote.

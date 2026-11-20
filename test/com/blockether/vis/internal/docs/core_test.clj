@@ -427,9 +427,8 @@
 (defn- page-canon
   "PURE: every way `page` breaks the page contract, as reader-facing lines.
    `anchors` is `{slug #{anchor-id}}` for the whole site, so a cross-page
-   fragment is checked against the toc of the page it points AT, and `pages` is
-   the whole page list, which the landing page has to be a map of."
-  [{:keys [slug title section intro? md blurb toc]} anchors pages]
+   fragment is checked against the toc of the page it points AT."
+  [{:keys [slug title section intro? md blurb toc]} anchors]
   (let [home?
         (= "index" slug)
 
@@ -458,18 +457,8 @@
 
     (concat
       (if home?
-        (concat (when (seq h1s)
-                  [(say
-                     "the landing page carries no H1 of its own — the themed hero is its title")])
-                (for [{other-slug :slug other-title :title}
-                      pages
-
-                      :when (not= "index" other-slug)
-                      :let [link
-                            (str "[" other-title "](" other-slug ".md)")]
-                      :when (not (str/includes? md link))]
-
-                  (say "the landing page never links " link " — it is the map of this manual")))
+        (when (seq h1s)
+          [(say "the landing page carries no H1 of its own — the themed hero is its title")])
         (concat
           (when-not (= 1 (count h1s)) [(say "wants exactly one H1, has " (count h1s))])
           (when-not (= (str "# " title) first-line)
@@ -543,7 +532,7 @@
             (into {} (map (juxt :slug #(set (map :id (:toc %))))) pages)
 
             broken
-            (mapcat #(page-canon % anchors pages) pages)]
+            (mapcat #(page-canon % anchors) pages)]
 
         (expect (seq pages))
         (expect (empty? broken)
