@@ -637,6 +637,8 @@
    "vis-docs/assets/diagrams/evals-scoring.mmd" "assets/diagrams/evals-scoring.mmd"
    "vis-docs/assets/diagrams/execution-model.svg" "assets/diagrams/execution-model.svg"
    "vis-docs/assets/diagrams/execution-model.mmd" "assets/diagrams/execution-model.mmd"
+   "vis-docs/assets/diagrams/improvement-loop.svg" "assets/diagrams/improvement-loop.svg"
+   "vis-docs/assets/diagrams/improvement-loop.mmd" "assets/diagrams/improvement-loop.mmd"
    "vis-docs/assets/fonts/jetbrains-mono.woff2" "assets/fonts/jetbrains-mono.woff2"
    "vis-docs/assets/theme.css" "assets/theme.css"
    "vis-docs/assets/docs.js" "assets/docs.js"

@@ -14,7 +14,7 @@ try {
     css,
     `@font-face { font-family: 'JetBrains Mono'; src: url(data:font/woff2;base64,${font.toString('base64')}) format('woff2'); }`,
   );
-  for (const name of ['council-messages', 'council-modules', 'evals-steps', 'evals-scoring', 'execution-model']) {
+  for (const name of ['council-messages', 'council-modules', 'evals-steps', 'evals-scoring', 'execution-model', 'improvement-loop']) {
     const input = new URL(`diagrams/${name}.mmd`, assets);
     const output = new URL(`diagrams/${name}.svg`, assets);
     execFileSync(

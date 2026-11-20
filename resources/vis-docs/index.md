@@ -37,6 +37,29 @@ An extension runs the same steps each time, and the model calls it as one functi
 model steps than a new plan for each release. [Extending Vis](extending.md) shows how to build an
 extension. [Feature toggles](configuration.md#feature-toggles) has the introspection setting.
 
+## Improve Vis for your project
+
+Vis works best when you adapt it to your project and check the effect of each change. Build tools
+for your project, run real tasks, measure the results, and improve the tools where tasks fail.
+Then run the same tasks again.
+
+[![Build tools for your project, run real tasks, measure the results, and inspect the failures. Then improve the tools and the checks, and run the same tasks again.](assets/diagrams/improvement-loop.svg)](assets/diagrams/improvement-loop.svg)
+
+Vis has a part for each step of the loop:
+
+- **Measure.** [Evaluations](evals.md) run the same tasks before and after a change, score the
+  results, and [compare the two runs](evals.md#compare-two-runs).
+- **Build.** [Extensions](extending.md) turn work that you repeat into tested Python tools.
+- **Watch.** A [live view](live-views.md) shows a long operation, such as a CI run or a build, in
+  one place while the agent waits. It shows progress, tables, logs, and controls. You build forms
+  and views from the same [components](components.md).
+
+A script and the agent use the same CPython and the same shared packages. `vis-agent python --shared`
+runs your script with the packages of the agent, so a helper that the agent wrote also runs as a
+script. A script does not get the tool functions of the agent, such as `grep` and `shell`.
+[Run programs with `vis-agent python`](python-sandbox.md#run-programs-with-vis-agent-python) has
+the details.
+
 ## Start using Vis
 
 If you are new to Vis, follow the [Quickstart](quickstart.md). It installs Vis, connects a model,

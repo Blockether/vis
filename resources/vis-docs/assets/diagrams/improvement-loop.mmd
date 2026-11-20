@@ -1,0 +1,45 @@
+---
+config:
+  theme: base
+  fontFamily: JetBrains Mono
+  deterministicIds: true
+  htmlLabels: false
+  themeVariables:
+    background: "#ffffff"
+    primaryColor: "#f8f8f8"
+    primaryTextColor: "#1e1e1e"
+    primaryBorderColor: "#505050"
+    secondaryColor: "#f8f8f8"
+    tertiaryColor: "#ffffff"
+    lineColor: "#505050"
+    textColor: "#1e1e1e"
+    actorTextColor: "#1e1e1e"
+    actorBorder: "#505050"
+    actorBkg: "#f8f8f8"
+    signalColor: "#505050"
+    signalTextColor: "#1e1e1e"
+    noteBkgColor: "#f8f8f8"
+    noteTextColor: "#1e1e1e"
+    noteBorderColor: "#505050"
+    edgeLabelBackground: "#ffffff"
+  themeCSS: ".edgeLabel rect, .labelBkg { opacity: 1; fill: #ffffff; } .edgeLabel text { paint-order: stroke; }"
+  flowchart:
+    htmlLabels: false
+    curve: linear
+    padding: 12
+    subGraphTitleMargin:
+      top: 12
+      bottom: 8
+---
+flowchart TB
+    accTitle: The improvement loop
+    accDescr: Build tools for your project. Then run real tasks, measure the results, inspect the failures, and improve the tools and the checks. Run the same tasks again after each change.
+    build["Build tools<br/>for your project"]
+    subgraph loop["The loop"]
+        direction LR
+        run["Run<br/>real tasks"] --> measure["Measure<br/>the results"]
+        measure --> inspect["Inspect<br/>the failures"]
+        inspect --> improve["Improve the tools<br/>and the checks"]
+        improve -- "same tasks again" --> run
+    end
+    build --> loop
