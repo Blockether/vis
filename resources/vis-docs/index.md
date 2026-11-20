@@ -11,6 +11,32 @@ macOS or bubblewrap on Linux.
 The terminal, desktop, and phone apps connect to the computer that holds your project and show the
 same sessions.
 
+## How Vis runs a task
+
+This step searches the project and runs the tests in one Python program:
+
+```python
+hits = grep({"query": ["def parse_date"], "paths": ["src"]})
+print(hits)
+tests = (await shell("pytest tests/test_dates.py -q")).wait(120)
+print(tests.exit, tests.logs(-10))
+```
+
+Only the printed text goes back to the model. The full results stay in Python variables, as
+[Reading tool results](python-sandbox.md#reading-tool-results) describes.
+
+[![In each step, the model writes one Python program. The program calls Vis tools and extension functions, and its printed results start the next step. Saved sessions and helpers become an extension, and the model finds its functions with apropos.](assets/diagrams/execution-model.svg)](assets/diagrams/execution-model.svg)
+
+Vis saves each session and the helpers that the model wrote. With `toggles.introspection: true`,
+the model can also read your earlier sessions. You can then turn work that you repeat into a tool:
+
+> Read my last three release sessions. Write a helper that runs their checks in the same order.
+> Then make it an extension with tests.
+
+An extension runs the same steps each time, and the model calls it as one function. This needs fewer
+model steps than a new plan for each release. [Extending Vis](extending.md) shows how to build an
+extension. [Feature toggles](configuration.md#feature-toggles) has the introspection setting.
+
 ## Start using Vis
 
 If you are new to Vis, follow the [Quickstart](quickstart.md). It installs Vis, connects a model,

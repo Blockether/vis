@@ -1,0 +1,42 @@
+---
+config:
+  theme: base
+  fontFamily: JetBrains Mono
+  deterministicIds: true
+  htmlLabels: false
+  themeVariables:
+    background: "#ffffff"
+    primaryColor: "#f8f8f8"
+    primaryTextColor: "#1e1e1e"
+    primaryBorderColor: "#505050"
+    secondaryColor: "#f8f8f8"
+    tertiaryColor: "#ffffff"
+    lineColor: "#505050"
+    textColor: "#1e1e1e"
+    actorTextColor: "#1e1e1e"
+    actorBorder: "#505050"
+    actorBkg: "#f8f8f8"
+    signalColor: "#505050"
+    signalTextColor: "#1e1e1e"
+    noteBkgColor: "#f8f8f8"
+    noteTextColor: "#1e1e1e"
+    noteBorderColor: "#505050"
+  flowchart:
+    htmlLabels: false
+    curve: linear
+---
+flowchart BT
+    accTitle: How Vis runs a task and turns repeated work into tools
+    accDescr: In each step, the model writes one Python program. The program calls Vis tools and extension functions and prints the results for the next step. Vis saves the sessions and the helpers. You can turn repeated steps into an extension with tests, and the model finds its functions with apropos.
+    subgraph each["Each step"]
+        direction LR
+        step["The model writes<br/>one Python program"] --> tools["Vis tools and<br/>extension functions"]
+        tools --> results["Printed results"]
+        results -- "next step" --> step
+    end
+    subgraph across["Across sessions"]
+        direction LR
+        saved[("Saved sessions<br/>and helpers")] -- "repeated steps" --> ext["Your extension<br/>with tests"]
+    end
+    each -- "saved" --> across
+    across -. "found with apropos" .-> each
