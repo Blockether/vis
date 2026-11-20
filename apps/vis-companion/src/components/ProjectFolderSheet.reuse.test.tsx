@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Capacitor } from '@capacitor/core';
 import {
   ProjectFolderSheet,
   isFolderName,
@@ -185,6 +186,34 @@ describe('the field keeps the focus', () => {
     await userEvent.click(screen.getByRole('button', { name: 'code' }));
     expect(await screen.findByRole('button', { name: /tools/ })).toBeInTheDocument();
     expect(field).toHaveFocus();
+  });
+});
+
+// User request: on a phone the focus raises the virtual keyboard, so the sheet opens
+// without it in the Android and iOS apps, also under a mouse, and under a touch pointer.
+describe('the field stays without focus on a phone', () => {
+  it('in the Android and iOS apps', async () => {
+    const native = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    try {
+      sheet();
+      await screen.findByRole('button', { name: /tools/ });
+      expect(screen.getByLabelText('Filter folders or type a path')).not.toHaveFocus();
+    } finally {
+      native.mockRestore();
+    }
+  });
+
+  it('under a touch pointer', async () => {
+    const media = vi
+      .spyOn(window, 'matchMedia')
+      .mockImplementation((query: string) => ({ matches: query === '(pointer: coarse)' }) as MediaQueryList);
+    try {
+      sheet();
+      await screen.findByRole('button', { name: /tools/ });
+      expect(screen.getByLabelText('Filter folders or type a path')).not.toHaveFocus();
+    } finally {
+      media.mockRestore();
+    }
   });
 });
 
