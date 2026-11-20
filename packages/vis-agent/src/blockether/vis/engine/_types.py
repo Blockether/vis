@@ -1278,6 +1278,38 @@ class KeybindingRunResult(TypedDict):
     body: NotRequired[str]
 
 
+class SessionAtifAgent(TypedDict):
+    name: str
+    version: str
+    model_name: NotRequired[str]
+
+
+class SessionAtifStepsItem(TypedDict):
+    step_id: int
+    source: Literal["user", "agent", "system"]
+    message: str
+
+
+class SessionAtifFinalMetrics(TypedDict):
+    total_steps: int
+    total_prompt_tokens: NotRequired[int]
+    total_completion_tokens: NotRequired[int]
+    total_cached_tokens: NotRequired[int]
+    total_cost_usd: NotRequired[float]
+
+
+class SessionAtif(TypedDict):
+    """An ATIF v1.8 trajectory from Vis."""
+
+    schema_version: Literal["ATIF-v1.8"]
+    session_id: str
+    trajectory_id: str
+    agent: SessionAtifAgent
+    steps: list[SessionAtifStepsItem]
+    final_metrics: SessionAtifFinalMetrics
+    subagent_trajectories: NotRequired[list[SessionAtif]]
+
+
 class VoiceJob(TypedDict):
     id: str
     direction: NotRequired[str]
@@ -3099,6 +3131,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/sessions/:sid/slashes": "SessionSlashes",
     "GET /v1/sessions/:sid/speech/jobs/:job-id": "VoiceJob",
     "GET /v1/sessions/:sid/suggest": "SessionSuggestions",
+    "GET /v1/sessions/:sid/trajectory.json": "SessionAtif",
     "GET /v1/sessions/:sid/transcript": "TranscriptRecord",
     "GET /v1/sessions/:sid/turns": "TurnList",
     "GET /v1/sessions/:sid/turns/:tid": "TurnRecord",

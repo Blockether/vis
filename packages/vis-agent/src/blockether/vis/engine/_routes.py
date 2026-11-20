@@ -1388,6 +1388,19 @@ class Routes:
         )
         return response
 
+    def get_session_trajectory(
+        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> _types.SessionAtif:
+        """GET /v1/sessions/:sid/trajectory.json — json response."""
+        response = self._client._request(
+            "GET",
+            "/v1/sessions/:sid/trajectory.json",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
     def post_session_speech(
         self,
         sid: str,
