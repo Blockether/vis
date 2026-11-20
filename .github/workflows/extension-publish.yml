@@ -43,6 +43,14 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-graalvm-25
       - uses: ./.github/actions/setup-clojure
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - run: clojure -X:deps prep
         working-directory: .
       - uses: actions/setup-node@v6
@@ -53,6 +61,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+          cache: pip
+          cache-dependency-path: packages/vis-agent/pyproject.toml
       - run: python -m pip install './packages/vis-agent[docs]'
         working-directory: .
       - run: npm ci
