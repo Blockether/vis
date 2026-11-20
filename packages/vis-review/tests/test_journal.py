@@ -337,6 +337,50 @@ def test_own_diff_leaves_out_the_edits_of_other_sessions(tmp_path):
     assert j.own_start("shared.py") == 2
 
 
+def _lines_with(**changed):
+    return "".join(f"{changed.get(f'l{n}', f'line {n}')}\n" for n in range(1, 31))
+
+
+@pytest.mark.parametrize("view", ["own_diff", "own_open"])
+def test_two_sessions_that_change_one_file_see_only_their_own_lines(tmp_path, view):
+    # Each session that changed the same file must show only its own changes.
+    top = repo(tmp_path)
+    (top / "sub" / "shared.py").write_text(_lines_with())
+    git(top, "add", "-A")
+    git(top, "commit", "-q", "-m", "shared")
+    mine = Journal(
+        top / "sub", "s1", tmp_path / "base", files=walked, clock=lambda: 1.0
+    )
+    theirs = Journal(
+        top / "sub", "s2", tmp_path / "base", files=walked, clock=lambda: 1.0
+    )
+    mine.checkpoint()
+    theirs.checkpoint()
+    write(mine, "shared.py", _lines_with(l2="mine 2"))
+    mine.checkpoint("block", "first own edit")
+    theirs.checkpoint("outside", "Changes between blocks")
+    write(theirs, "shared.py", _lines_with(l2="mine 2", l15="theirs 15"))
+    theirs.checkpoint("block", "their edit")
+    mine.checkpoint("outside", "Changes between blocks")
+    write(mine, "shared.py", _lines_with(l2="mine 2", l15="theirs 15", l28="mine 28"))
+    mine.checkpoint("block", "second own edit")
+    theirs.checkpoint("outside", "Changes between blocks")
+
+    def patch(j):
+        diffs = j.own_diff() if view == "own_diff" else j.own_open("HEAD")
+        assert [d.path for d in diffs] == ["shared.py"]
+        return diffs[0]
+
+    own, other = patch(mine), patch(theirs)
+    assert "-line 2\n+mine 2\n" in own.patch
+    assert "-line 28\n+mine 28\n" in own.patch
+    assert "+theirs 15" not in own.patch
+    assert (own.added, own.removed) == (2, 2)
+    assert "-line 15\n+theirs 15\n" in other.patch
+    assert "+mine" not in other.patch
+    assert (other.added, other.removed) == (1, 1)
+
+
 def test_an_undo_in_the_session_takes_its_change_out_of_the_own_diff(tmp_path):
     j = journal(tmp_path)
     write(j, "a.py", "v1\n")

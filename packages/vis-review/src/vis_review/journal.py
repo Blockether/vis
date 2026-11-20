@@ -144,6 +144,8 @@ class Journal:
         self._common_dir = ""
         # Git blob names by content digest. A content never changes, so nor does its name.
         self._oids: dict[str, str] = {}
+        # Merged contents by the digests of their three sides; None when the sides conflict.
+        self._merges: OrderedDict[tuple, str | None] = OrderedDict()
         self.entries: list[Entry] = []
         self.state: dict[str, str] = {}
         self._load()
@@ -499,8 +501,9 @@ class Journal:
         """The changes that the session itself made, without the edits of others.
 
         Each file goes from its content before the first own change to its
-        content after the last own change. An edit of another session between
-        these two changes stays in, because it is in the same file content.
+        content after the last own change. An edit of another session after the
+        first own change is on both sides, so the diff does not show it. Only an
+        edit of the same lines that the session changed stays in.
         """
         return [
             self.file_diff(rel, before, after, context)
@@ -519,6 +522,8 @@ class Journal:
             for rel, sha in entry.files.items():
                 if entry.kind in OWN_KINDS:
                     spans[rel] = (spans.get(rel, (state.get(rel),))[0], sha)
+                elif rel in spans:
+                    spans[rel] = self._carry(spans[rel], state.get(rel), sha)
                 if sha is None:
                     state.pop(rel, None)
                 else:
@@ -530,31 +535,86 @@ class Journal:
     def own_open(self, ref: str, context: int = 3) -> list[FileDiff] | None:
         """The own changes that git commit `ref` does not have; None where git cannot tell.
 
-        Each file that the session changed goes from its content at `ref` to the
-        newest checkpoint. A file that `ref` has with the same content is left
-        out: its change is merged.
+        Each file is the own change of `own_diff` without the changed lines that
+        `ref` has too. A file that `ref` has with the same content is left out:
+        its change is merged.
         """
         place = _place(self.root, ref)
         if place is None:
             return None
         prefix, top, commit = place
-        own = self.own_paths()
-        at_ref = self._oids_at(commit, own)
+        own = self._own_changes()
+        at_ref = self._oids_at(commit, list(own))
         if at_ref is None:
             return None
-        changed = [
-            rel for rel in own if at_ref.get(rel) != self._oid(self.state.get(rel))
-        ]
+        changed = [rel for rel in own if at_ref.get(rel) != self._oid(own[rel][1])]
         names = [prefix + rel for rel in changed if rel in at_ref]
         old = _restored(top, commit, names, prefix) if names else {}
         if old is None:
             return None
-        before = {rel: self.store.put(data) for rel, data in old.items()}
-        return [
-            self.file_diff(rel, before.get(rel), self.state.get(rel), context)
-            for rel in changed
-            if before.get(rel) != self.state.get(rel)
-        ]
+        diffs = []
+        for rel in changed:
+            before, after = own[rel]
+            if rel in old:
+                before = self._unmerged_base(before, after, self.store.put(old[rel]))
+            if before != after:
+                diffs.append(self.file_diff(rel, before, after, context))
+        return diffs
+
+    def _carry(
+        self, span: tuple[str | None, str | None], old: str | None, new: str | None
+    ) -> tuple[str | None, str | None]:
+        """`span` with the edit of another session from `old` to `new` on both sides.
+
+        The span stays as it is when the edit changes the lines of an own change.
+        """
+        before, after = span
+        merged = (
+            self._merged(old, before, new),
+            new if after == old else self._merged(old, after, new),
+        )
+        return span if None in merged else merged
+
+    def _unmerged_base(self, before: str | None, after: str | None, ref: str) -> str:
+        """`before` with each own changed block that `ref` has too; `ref` for a binary file."""
+        lines = [self._lines_of(sha) for sha in (before, after, ref)]
+        if None in lines:
+            return ref
+        own, at_ref = _hunks(lines[0], lines[1]), set(_hunks(lines[0], lines[2]))
+        kept = _merge(lines[0], [], [hunk for hunk in own if hunk in at_ref])
+        return self.store.put("".join(kept).encode("utf-8"))
+
+    def _merged(
+        self, base: str | None, ours: str | None, theirs: str | None
+    ) -> str | None:
+        """The digest of `ours` with the change from `base` to `theirs`; None on a conflict."""
+        if ours == base:
+            return theirs
+        if theirs == base:
+            return ours
+        key = (base, ours, theirs)
+        if key in self._merges:
+            return self._merges[key]
+        lines = [self._lines_of(sha) for sha in key]
+        found = None
+        if None not in lines:
+            merged = _merge(
+                lines[0], _hunks(lines[0], lines[1]), _hunks(lines[0], lines[2])
+            )
+            if merged is not None:
+                found = self.store.put("".join(merged).encode("utf-8"))
+        self._merges[key] = found
+        while len(self._merges) > MOST_CACHED_DIFFS:
+            self._merges.popitem(last=False)
+        return found
+
+    def _lines_of(self, sha: str | None) -> list[str] | None:
+        """The lines of the text with digest `sha`; None when absent, binary or too large."""
+        data = None if sha is None else self.store.get(sha)
+        if data is None or len(data) > MOST_DIFF_BYTES:
+            return None
+        text = _text(data)
+        return None if text is None else text.splitlines(keepends=True)
 
     def against(self, ref: str, context: int = 3) -> list[FileDiff] | None:
         """How each file differs from git commit `ref`; None where git cannot tell.
@@ -979,6 +1039,28 @@ def _git_hunks(old: str, new: str, context: int) -> str | None:
         return None
     start = done.out.find("\n@@ ")
     return "" if start < 0 else done.out[start + 1 :]
+
+
+def _hunks(old: list[str], new: list[str]) -> list[tuple[int, int, tuple[str, ...]]]:
+    """`(start, end, new lines)` of each block of `old` that `new` changes."""
+    matcher = difflib.SequenceMatcher(None, old, new, autojunk=False)
+    return [
+        (i1, i2, tuple(new[j1:j2]))
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes()
+        if tag != "equal"
+    ]
+
+
+def _merge(base: list[str], *sides: list[tuple]) -> list[str] | None:
+    """`base` with the hunks of each side; None when two hunks change the same lines."""
+    out: list[str] = []
+    at, last = 0, None
+    for start, end, lines in sorted(hunk for side in sides for hunk in side):
+        if start < at or (start == end and last == (start, end)):
+            return None
+        out += base[at:start] + list(lines)
+        at, last = end, (start, end)
+    return out + base[at:]
 
 
 def _lines(text: str) -> list[str]:
