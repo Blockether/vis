@@ -31,6 +31,8 @@ jobs:
   # Only main pushes use the local Mac; all pull requests stay on hosted runners.
   tests:
     name: tests / ${{ matrix.name }}
+    # Wait for the cache, so parallel cold jobs do not all download from Maven Central.
+    needs: deps
     runs-on: ${{ matrix.host }}
     timeout-minutes: 90
     strategy:
@@ -214,6 +216,7 @@ jobs:
   # and does not wait for the engine suite.
   tui:
     name: tui / ${{ matrix.name }}
+    needs: deps
     runs-on: ${{ matrix.host }}
     timeout-minutes: 30
     strategy:
@@ -297,12 +300,23 @@ jobs:
         uses: ./.github/actions/setup-graalvm-25
       - name: Resolve every classpath that CI and the release workflows read
         if: steps.deps.outputs.cache-hit != 'true'
+        # Maven Central can refuse a burst of downloads, and the resolver then reports
+        # an artifact that exists as missing. Remove that record before each new attempt.
         run: |
-          clojure -X:deps prep
-          for alias in test lint audit vis native test-native; do clojure -P -M:"$alias"; done
-          clojure -P -T:build
-          (cd apps/vis-tui && clojure -X:deps prep && clojure -P -M:test && clojure -P -T:build)
-          find ~/.m2 \( -name '*.lastUpdated' -o -name resolver-status.properties \) -delete
+          resolve() {
+            clojure -X:deps prep &&
+              for alias in test lint audit vis native test-native; do clojure -P -M:"$alias" || return 1; done &&
+              clojure -P -T:build &&
+              (cd apps/vis-tui && clojure -X:deps prep && clojure -P -M:test && clojure -P -T:build)
+          }
+          clean() { find ~/.m2 \( -name '*.lastUpdated' -o -name resolver-status.properties \) -delete; }
+          for attempt in 1 2 3; do
+            if resolve; then clean; exit 0; fi
+            clean
+            echo "::warning::Dependency resolution attempt $attempt failed"
+            sleep $((attempt * 30))
+          done
+          exit 1
       - if: steps.deps.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
@@ -316,6 +330,7 @@ jobs:
   # a stale :local/root path or a missing sibling the aggregate run would mask.
   classpath:
     name: classpath / ${{ matrix.path }}
+    needs: deps
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -345,6 +360,7 @@ jobs:
   # tests are still going.
   lint:
     name: lint / clj-kondo
+    needs: deps
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -367,6 +383,7 @@ jobs:
   # fails the job.
   mcp-conformance:
     name: mcp / client conformance
+    needs: deps
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -393,6 +410,7 @@ jobs:
   # namespaces no test loads. Native Image runs only after this is green.
   aot:
     name: build / aot uberjar
+    needs: deps
     runs-on: ubuntu-latest
     # Independent compilation catches errors while the slower test suites run.
     steps:
@@ -430,4 +448,5 @@ jobs:
 
   # The installed distributions and real HTTP/stdio SDK lifecycle share one gate.
   python-package:
+    needs: deps
     uses: ./.github/workflows/python-packages.yml
