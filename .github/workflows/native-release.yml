@@ -177,9 +177,8 @@ jobs:
       # Bump the version inside the action together with `.graalvm-version` —
       # native-image and its checked-in metadata are version-bound.
       - uses: ./.github/actions/setup-graalvm-25
-      - uses: DeLaGuardo/setup-clojure@13.6.1
+      - uses: ./.github/actions/setup-clojure
         with:
-          cli: latest
           bb: latest
       - uses: actions/cache@v6
         with:
@@ -187,7 +186,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       # Full agent; speech models download on first use.
       # GitHub's Linux runner ships ~4 GB of swap; back the 12-14 GB builder heap
@@ -488,9 +487,8 @@ jobs:
         with:
           tag: ${{ inputs.tag || github.ref_name }}
       - uses: ./.github/actions/setup-graalvm-25
-      - uses: DeLaGuardo/setup-clojure@13.6.1
+      - uses: ./.github/actions/setup-clojure
         with:
-          cli: latest
           bb: latest
       # Piper uses espeak-ng's phoneme tables. A clean macOS image does not
       # preinstall them, so make the native suite dependency explicit; brew is a
@@ -504,7 +502,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - name: Build native image
         env:

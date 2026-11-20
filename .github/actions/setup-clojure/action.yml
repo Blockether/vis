@@ -1,0 +1,28 @@
+name: 'Set up the Clojure CLI (pinned)'
+description: >-
+  Installs the Clojure CLI at the one version that this file pins, and exports
+  that version as CLOJURE_CLI_VERSION. Put the variable in each key of a deps
+  cache. `clojure -X:deps` replaces the project deps with the CLI's own deps,
+  which include the Clojure version of that CLI release. No project deps.edn
+  names it, so a cache key from the deps.edn files alone stays the same when
+  the CLI changes. With `cli: latest`, a new CLI release made each job download
+  that Clojure from Maven Central on each run, and parallel jobs got HTTP 429.
+inputs:
+  bb:
+    description: Babashka version to install too. Empty installs no Babashka.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Pin the Clojure CLI version
+      id: pin
+      shell: bash
+      run: |
+        version=1.12.7.1681
+        echo "version=${version}" >> "${GITHUB_OUTPUT}"
+        echo "CLOJURE_CLI_VERSION=${version}" >> "${GITHUB_ENV}"
+    - uses: DeLaGuardo/setup-clojure@13.6.1
+      with:
+        cli: ${{ steps.pin.outputs.version }}
+        bb: ${{ inputs.bb }}

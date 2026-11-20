@@ -163,9 +163,7 @@ jobs:
           RELEASE_METADATA: ${{ steps.release.outputs.metadata }}
         run: python3 bin/verify-release-assets.py "$RELEASE_METADATA" "$RELEASE_TAG"
       - uses: ./.github/actions/setup-graalvm-25
-      - uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest
+      - uses: ./.github/actions/setup-clojure
       - name: Deploy monorepo packages to Clojars
         env:
           CLOJARS_USERNAME: blockether-deployer

@@ -42,9 +42,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-graalvm-25
-      - uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest
+      - uses: ./.github/actions/setup-clojure
       - run: clojure -X:deps prep
         working-directory: .
       - uses: actions/setup-node@v6

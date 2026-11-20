@@ -72,16 +72,14 @@ jobs:
       # directly. Bump the version inside the action together with
       # `.graalvm-version` — native-image and its metadata are version-bound.
       - uses: ./.github/actions/setup-graalvm-25
-      - uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest
+      - uses: ./.github/actions/setup-clojure
       - uses: actions/cache@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       # Several unit tests resolve the provider router. Seed the machine-owned
       # YAML state store with a minimal provider; transport-facing tests mock IO.
@@ -240,16 +238,14 @@ jobs:
       # directly. Bump the version inside the action together with
       # `.graalvm-version` — native-image and its metadata are version-bound.
       - uses: ./.github/actions/setup-graalvm-25
-      - uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest
+      - uses: ./.github/actions/setup-clojure
       - uses: actions/cache@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - name: Run standalone TUI suite
         working-directory: apps/vis-tui
@@ -270,16 +266,14 @@ jobs:
       - uses: actions/checkout@v7
       # Install the pinned CE build toolchain directly.
       - uses: ./.github/actions/setup-graalvm-25
-      - uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest
+      - uses: ./.github/actions/setup-clojure
       - uses: actions/cache@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - name: Resolve ${{ matrix.path }} classpath
         run: cd ${{ matrix.path }} && clojure -X:deps prep && clojure -Spath > /dev/null
@@ -294,16 +288,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-graalvm-25
-      - uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest
+      - uses: ./.github/actions/setup-clojure
       - uses: actions/cache@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - name: Lint the whole tree
         run: clojure -X:deps prep && clojure -M:lint
@@ -319,9 +311,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-graalvm-25
-      - uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest
+      - uses: ./.github/actions/setup-clojure
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
@@ -331,7 +321,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - name: Run the MCP client conformance suite
         run: clojure -X:deps prep && bin/mcp-conformance
@@ -348,16 +338,14 @@ jobs:
       - uses: actions/checkout@v7
       # Install the pinned CE build toolchain directly.
       - uses: ./.github/actions/setup-graalvm-25
-      - uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest
+      - uses: ./.github/actions/setup-clojure
       - uses: actions/cache@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - name: AOT-compile all namespaces, refusing reflection or boxed math
         env:

@@ -45,9 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest # `clojure -M:audit` runs scripts/gen_audit.clj
+      - uses: ./.github/actions/setup-clojure # `clojure -M:audit` runs scripts/gen_audit.clj
 
       - name: Regenerate audit/README.md
         run: clojure -M:audit
