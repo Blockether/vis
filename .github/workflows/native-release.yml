@@ -180,14 +180,14 @@ jobs:
       - uses: ./.github/actions/setup-clojure
         with:
           bb: latest
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
       # Full agent; speech models download on first use.
       # GitHub's Linux runner ships ~4 GB of swap; back the 12-14 GB builder heap
       # with a real swapfile instead of letting the JVM die on GC overhead.
@@ -496,14 +496,14 @@ jobs:
       - name: Install native test dependencies
         run: brew install espeak-ng
       # Restore dependencies into the isolated build home.
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
       - name: Build native image
         env:
           # The same build path stamps release, beta and unpublished experiments.

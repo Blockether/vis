@@ -42,14 +42,14 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-graalvm-25
       - uses: ./.github/actions/setup-clojure
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
@@ -92,14 +92,14 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-graalvm-25
       - uses: ./.github/actions/setup-clojure
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
       - uses: actions/setup-node@v6
         with:
           node-version: '22'

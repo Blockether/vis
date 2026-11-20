@@ -44,6 +44,10 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      # Cache the Gradle distribution, the dependencies and the dexed libraries.
+      # Without it, each APK build downloads and dexes all of them again.
+      - uses: gradle/actions/setup-gradle@v6
+
       - uses: android-actions/setup-android@v4
         with:
           packages: platform-tools

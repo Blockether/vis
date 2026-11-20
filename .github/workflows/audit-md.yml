@@ -46,14 +46,14 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup-clojure # `clojure -M:audit` runs scripts/gen_audit.clj
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Regenerate audit/README.md
         run: clojure -M:audit

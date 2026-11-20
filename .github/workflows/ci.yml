@@ -56,6 +56,17 @@ jobs:
           echo "HOME=$RUNNER_TEMP/vis-ci-home" >> "$GITHUB_ENV"
           # The classpath resolver and execution JVM must use the same home.
           echo "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-ci-home" >> "$GITHUB_ENV"
+          # Keep Clojure dependencies outside the isolated home: where the cache
+          # restores them on a GitHub-hosted runner, and in a store that stays
+          # between jobs on a self-hosted runner. Remove recorded download failures,
+          # because the resolver does not try those artifacts again.
+          deps="$HOME"
+          if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then deps="$RUNNER_TOOL_CACHE/vis-clojure-deps"; fi
+          for dir in .m2 .gitlibs; do
+            mkdir -p "$deps/$dir"
+            ln -s "$deps/$dir" "$RUNNER_TEMP/vis-ci-home/$dir"
+          done
+          find "$deps/.m2" \( -name '*.lastUpdated' -o -name resolver-status.properties \) -delete
       # Every workflow shares the self-hosted workspace. Git cannot unshallow a
       # treeless partial clone there, so start that workspace from a fresh clone.
       - name: Drop a partial clone from the shared workspace
@@ -73,14 +84,15 @@ jobs:
       # `.graalvm-version` — native-image and its metadata are version-bound.
       - uses: ./.github/actions/setup-graalvm-25
       - uses: ./.github/actions/setup-clojure
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
+        if: runner.environment == 'github-hosted'
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
       # Several unit tests resolve the provider router. Seed the machine-owned
       # YAML state store with a minimal provider; transport-facing tests mock IO.
       - name: Seed a minimal AI provider config + harness fixtures
@@ -222,6 +234,17 @@ jobs:
           echo "HOME=$RUNNER_TEMP/vis-ci-home" >> "$GITHUB_ENV"
           # The classpath resolver and execution JVM must use the same home.
           echo "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-ci-home" >> "$GITHUB_ENV"
+          # Keep Clojure dependencies outside the isolated home: where the cache
+          # restores them on a GitHub-hosted runner, and in a store that stays
+          # between jobs on a self-hosted runner. Remove recorded download failures,
+          # because the resolver does not try those artifacts again.
+          deps="$HOME"
+          if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then deps="$RUNNER_TOOL_CACHE/vis-clojure-deps"; fi
+          for dir in .m2 .gitlibs; do
+            mkdir -p "$deps/$dir"
+            ln -s "$deps/$dir" "$RUNNER_TEMP/vis-ci-home/$dir"
+          done
+          find "$deps/.m2" \( -name '*.lastUpdated' -o -name resolver-status.properties \) -delete
       # Every workflow shares the self-hosted workspace. Git cannot unshallow a
       # treeless partial clone there, so start that workspace from a fresh clone.
       - name: Drop a partial clone from the shared workspace
@@ -239,17 +262,55 @@ jobs:
       # `.graalvm-version` — native-image and its metadata are version-bound.
       - uses: ./.github/actions/setup-graalvm-25
       - uses: ./.github/actions/setup-clojure
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
+        if: runner.environment == 'github-hosted'
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
       - name: Run standalone TUI suite
         working-directory: apps/vis-tui
         run: clojure -X:deps prep && clojure -M:test
+
+  # The only job that saves the Clojure dependency cache. Other jobs only restore it,
+  # so a partial resolution or a recorded download failure cannot become the cache.
+  deps:
+    name: deps / cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-clojure
+      - id: deps
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          lookup-only: true
+      - if: steps.deps.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-graalvm-25
+      - name: Resolve every classpath that CI and the release workflows read
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          clojure -X:deps prep
+          for alias in test lint audit vis native test-native; do clojure -P -M:"$alias"; done
+          clojure -P -T:build
+          (cd apps/vis-tui && clojure -X:deps prep && clojure -P -M:test && clojure -P -T:build)
+          find ~/.m2 \( -name '*.lastUpdated' -o -name resolver-status.properties \) -delete
+      - if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: ${{ steps.deps.outputs.cache-primary-key }}
 
   # Every deps.edn project in the tree must resolve cleanly on its own — catches
   # a stale :local/root path or a missing sibling the aggregate run would mask.
@@ -267,14 +328,14 @@ jobs:
       # Install the pinned CE build toolchain directly.
       - uses: ./.github/actions/setup-graalvm-25
       - uses: ./.github/actions/setup-clojure
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
       - name: Resolve ${{ matrix.path }} classpath
         run: cd ${{ matrix.path }} && clojure -X:deps prep && clojure -Spath > /dev/null
 
@@ -289,14 +350,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-graalvm-25
       - uses: ./.github/actions/setup-clojure
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
       - name: Lint the whole tree
         run: clojure -X:deps prep && clojure -M:lint
   # The official MCP client conformance suite, against the MCP client of Vis with
@@ -315,14 +376,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
       - name: Run the MCP client conformance suite
         run: clojure -X:deps prep && bin/mcp-conformance
   # AOT gate: compile EVERY namespace (core + every extension) exactly as the
@@ -339,14 +400,14 @@ jobs:
       # Install the pinned CE build toolchain directly.
       - uses: ./.github/actions/setup-graalvm-25
       - uses: ./.github/actions/setup-clojure
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
       - name: AOT-compile all namespaces, refusing reflection or boxed math
         env:
           # The action above already installed the pinned CE. If build.clj still sees
