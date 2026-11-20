@@ -16,13 +16,17 @@ import 'prismjs/components/prism-yaml';
 // The code colours of the transcript and of a review: one Prism pass, one class per token.
 
 const languageAliases: Record<string, string> = {
+  cjs: 'javascript',
   clj: 'clojure',
   cljc: 'clojure',
   cljs: 'clojure',
+  cts: 'typescript',
   edn: 'clojure',
   js: 'javascript',
   jsx: 'jsx',
   md: 'markdown',
+  mjs: 'javascript',
+  mts: 'typescript',
   py: 'python',
   rs: 'rust',
   sh: 'bash',
