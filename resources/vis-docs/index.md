@@ -1,6 +1,13 @@
 Vis is an AI agent that works in your project. Give Vis a task and a project folder. Vis reads
 files, edits code, and runs commands and checks. **Activities** show each step that Vis takes.
 
+Most coding agents give the model a fixed list of tools, and the model calls one tool by its name
+in each step. Vis gives the model a [CPython interpreter](python-sandbox.md) instead. In each step,
+the model writes a short Python program that calls the tools as Python functions and uses their
+results. Extensions add more functions, and the model finds them with `apropos` when it needs them.
+The [process jail](jail.md) is off by default. With the jail on, commands run under Seatbelt on
+macOS or bubblewrap on Linux.
+
 The terminal, desktop, and phone apps connect to the computer that holds your project and show the
 same sessions.
 

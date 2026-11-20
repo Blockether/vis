@@ -4,28 +4,10 @@ Vis explores a project, changes code, and runs checks. On this page, you install
 task, and connect the desktop app or the phone app.
 
 <nav class="quick-links" aria-label="Quickstart">
-  <a href="#how-vis-differs-from-other-agents">How Vis differs</a>
   <a href="#install">Install</a>
   <a href="#first-session">Try a task</a>
   <a href="#connect-an-app">Connect an app</a>
 </nav>
-
-## How Vis differs from other agents
-
-Most coding agents give the model a fixed list of tools, and the model calls one tool by its name
-in each step. Vis gives the model a CPython interpreter. In each step, the model writes a short
-Python program. The program calls the tools of Vis as Python functions, reads their results, and
-can call more tools in the same step. [Rationale](rationale.md#python-connects-the-steps) gives
-the reasons.
-
-The interpreter is ordinary CPython with its standard library. You can
-[install packages with `pip`](python-sandbox.md#install-shared-packages) for the agent to use.
-Extensions add their tools as Python functions. The model finds a tool with `apropos` when it needs
-the tool, so the prompt does not list every tool.
-
-The [process jail](jail.md) is off by default, so the code of the agent has the permissions of your
-user account. With the jail on, commands run under Seatbelt on macOS or bubblewrap on Linux. Vis
-also limits the files, processes, and network access of the Python code.
 
 ## Install
 
