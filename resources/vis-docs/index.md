@@ -63,10 +63,7 @@ Keep token authentication on when a phone or another computer connects. Read
 [Running a gateway](gateway-service.md) before you open a gateway to a network. To report a problem
 without exposing private data, read [Reporting a bug](reporting-bugs.md).
 
-## See Vis in action
-
-All images show one demo project, `fieldnotes`, after real tasks: a project tour, a bug fix with a
-regression test, and a release preparation.
+## Gallery
 
 <section class="screenshot-gallery" id="screenshot-gallery" data-screenshot-gallery role="region" aria-roledescription="carousel" aria-label="Vis screenshots">
   <div class="screenshot-gallery__track" id="screenshot-slides" tabindex="0" aria-label="Vis screenshots; use Left and Right arrow keys to browse">

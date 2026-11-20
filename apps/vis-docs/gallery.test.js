@@ -36,8 +36,7 @@ test('one gallery combines all nine screenshots', async () => {
   expect(window.document.querySelectorAll('[data-screenshot-gallery]')).toHaveLength(1);
   expect(gallery.getAttribute('aria-label')).toBe('Vis screenshots');
   expect(gallery.id).toBe('screenshot-gallery');
-  expect(gallery.previousElementSibling.tagName).toBe('P');
-  expect(gallery.previousElementSibling.previousElementSibling.tagName).toBe('H2');
+  expect(gallery.previousElementSibling.tagName).toBe('H2');
   const ids = [...window.document.querySelectorAll('[id]')].map((node) => node.id);
   expect(new Set(ids).size).toBe(ids.length);
   expect(track.tabIndex).toBe(0);
