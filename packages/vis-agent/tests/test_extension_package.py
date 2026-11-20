@@ -1,6 +1,7 @@
 """GitHub and local project admission share one inert manifest contract."""
 
 import contextlib
+import errno
 import fcntl
 import io
 import json
@@ -1321,8 +1322,8 @@ def test_frozen_sync_keeps_an_installed_latest_package_without_the_catalog(
     [
         (package.URLError(TimeoutError("timed out")), "(TimeoutError)"),
         (
-            package.URLError(OSError(61, "refused by /private/proxy")),
-            "(ConnectionRefusedError 61)",
+            package.URLError(OSError(errno.ECONNREFUSED, "refused by /private/proxy")),
+            f"(ConnectionRefusedError {errno.ECONNREFUSED})",
         ),
         (package.HTTPError(package.CATALOG, 503, "Unavailable", {}, None), "HTTP 503"),
     ],
