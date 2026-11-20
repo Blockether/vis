@@ -21,9 +21,15 @@ config:
     noteBkgColor: "#f8f8f8"
     noteTextColor: "#1e1e1e"
     noteBorderColor: "#505050"
+    edgeLabelBackground: "#ffffff"
+  themeCSS: ".edgeLabel rect, .labelBkg { opacity: 1; fill: #ffffff; } .edgeLabel text { paint-order: stroke; }"
   flowchart:
     htmlLabels: false
     curve: linear
+    padding: 12
+    subGraphTitleMargin:
+      top: 12
+      bottom: 8
 ---
 flowchart BT
     accTitle: How Vis runs a task and turns repeated work into tools
