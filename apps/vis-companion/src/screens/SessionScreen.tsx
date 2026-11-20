@@ -122,6 +122,7 @@ import {
   type PromptRecall,
 } from '../lib/prompt-history';
 import { isLayerUp } from '../lib/edge-back';
+import { shellHost } from '../lib/host';
 import {
   GatewayError,
   mergeQueueBacklog,
@@ -1610,9 +1611,11 @@ export function SessionScreen({
   }, [sid, fresh, draftMessageId]);
 
   // A session the person just made opens ready to type in. Only where a keyboard
-  // is already on screen: on a phone, the focus raises the virtual keyboard.
+  // is already on screen: on a phone, the focus raises the virtual keyboard. The
+  // Android and iOS apps never focus: a mouse or a trackpad can make them report a
+  // fine pointer.
   useEffect(() => {
-    if (!fresh || window.matchMedia?.('(pointer: coarse)').matches) return;
+    if (!fresh || shellHost() === 'native' || window.matchMedia?.('(pointer: coarse)').matches) return;
     composerRef.current?.focus({ preventScroll: true });
   }, [sid, fresh]);
 

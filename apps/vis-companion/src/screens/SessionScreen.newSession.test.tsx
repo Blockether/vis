@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { Capacitor } from '@capacitor/core';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderSessionScreen, sessionFixture } from './session-screen-harness';
@@ -24,6 +25,20 @@ describe('a new session', () => {
     renderSessionScreen({ fresh: true });
     const composer = await screen.findByLabelText('Message Vis');
     await waitFor(() => expect(composer).toHaveFocus());
+  });
+
+  // User request: the Android and iOS apps must not raise the keyboard by themselves,
+  // also when a mouse or a trackpad makes the pointer fine.
+  it('keeps the keyboard down in the Android and iOS apps', async () => {
+    const native = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    try {
+      renderSessionScreen({ fresh: true });
+      const composer = await screen.findByLabelText('Message Vis');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(composer).not.toHaveFocus();
+    } finally {
+      native.mockRestore();
+    }
   });
 });
 
