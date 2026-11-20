@@ -1090,7 +1090,13 @@
 (defn- printable?
   "True for text without control characters and without bytes that are not UTF-8."
   [^String s]
-  (not (re-find #"[\x00-\x08\x0E-\x1F\x7F\uFFFD]" s)))
+  (let [n (.length s)]
+    ;; A loop, because a regex search for each short text is slow.
+    (loop [i 0]
+      (or (== i n)
+          (let [c (int (.charAt s i))]
+            (and (not (or (< c 9) (and (< 13 c) (< c 32)) (== c 127) (== c 0xFFFD)))
+                 (recur (inc i))))))))
 
 (defn- basic-credential?
   "True when `token` is the base64 of a `user:password` pair."
@@ -1107,15 +1113,26 @@
    when the text after the lines is not the end of base64."
   #"(?:(?:[A-Za-z0-9+/]{76}|[A-Za-z0-9+/]{64})\r?\n)++([A-Za-z0-9+/]*+={0,2}(?![A-Za-z0-9+/_=-]))?")
 
-(def ^:private ^"[Z" base64-chars
-  "True at the code of each base64 and base64url character."
+(defn- char-table
+  "A table that is true at the code of each of the ASCII `chars`, for [[in-table?]]."
+  ^booleans [chars]
   (let [table (boolean-array 128)]
-    (doseq [c "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/_-"]
+    (doseq [c chars]
       (aset table (int c) true))
     table))
 
-(defmacro ^:private base64-at?
-  "True when the character at `i` in `s` is in `table`, which is [[base64-chars]]."
+(def ^:private alphanumeric
+  "The ASCII letters and digits, each as one character. The regex engine tests the single
+   characters of a class with one table, and each range of a class with one more call."
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+
+(def ^:private ^"[Z" base64-chars
+  "The base64 and base64url characters."
+  (char-table (str alphanumeric "+/_-")))
+
+(defmacro ^:private in-table?
+  "True when the character at `i` in `s` is in `table`, which is of [[char-table]]. A
+   macro, because a function call for each character of a text is slow."
   [table s i]
   `(let [c# (int (.charAt ~s ~i))]
      (and (< c# 128) (aget ~table c#))))
@@ -1130,7 +1147,7 @@
         base64-chars]
 
     (loop [j i]
-      (if (and (< j n) (base64-at? table s j)) (recur (inc j)) j))))
+      (if (and (< j n) (in-table? table s j)) (recur (inc j)) j))))
 
 (defn- padded-end
   "The index after the `=` signs of the base64 run whose characters stop at `end` in `s`.
@@ -1166,9 +1183,9 @@
         (if (>= probe n)
           -1
           (let [start (long (loop [i probe]
-                              (if (and (>= i low) (base64-at? table s i)) (recur (dec i)) (inc i))))
+                              (if (and (>= i low) (in-table? table s i)) (recur (dec i)) (inc i))))
                 end (long (loop [j (max start (inc probe))]
-                            (if (and (< j n) (< (- j start) minimum) (base64-at? table s j))
+                            (if (and (< j n) (< (- j start) minimum) (in-table? table s j))
                               (recur (inc j))
                               j)))]
 
@@ -1241,7 +1258,7 @@
 
 (def ^:private authorization-credential
   "The credential after the scheme of an `Authorization` value."
-  (authorization-value "(bearer|basic|token|bot)" "[A-Za-z0-9._~+/=-]{4,}+"))
+  (authorization-value "(bearer|basic|token|bot)" (str "[" alphanumeric "._~+/=-]{4,}+")))
 
 (def ^:private digest-credential
   "The parameters of a `Digest` value that prove the credential."
@@ -1251,9 +1268,19 @@
   "True for a token with a digit, a base64 sign, or an upper case letter after a lower
    case letter, so that a word of prose stays."
   [^String token]
-  (or (boolean (re-find #"[0-9+/=]" token))
-      (let [m (re-matcher #"[a-z]" token)]
-        (and (.find m) (boolean (re-find #"[A-Z]" (subs token (.start m))))))))
+  (let [n (.length token)]
+    ;; A loop, because a regex search for each token is slow.
+    (loop [i 0
+           lower? false]
+
+      (and (< i n)
+           (let [c (int (.charAt token i))]
+             (or (and (<= 48 c) (<= c 57))
+                 (== c 43)
+                 (== c 47)
+                 (== c 61)
+                 (and lower? (<= 65 c) (<= c 90))
+                 (recur (inc i) (or lower? (and (<= 97 c) (<= c 122))))))))))
 
 (def ^:private cookie-value
   "A `Cookie` or `Set-Cookie` value up to the end of the line or the quote."
@@ -1376,45 +1403,114 @@
 (def ^:private url-form
   {:pattern url-credential
    :start scheme-start
-   :replacement (fn [[_ scheme]]
-                  (str scheme redacted "@"))})
+   :replacement (fn [^Matcher m]
+                  (str (.group m 1) redacted "@"))})
 
 (def ^:private authorization-form
   {:pattern authorization-credential
    :start (word-start "authorization" "proxy-")
-   :replacement (fn [[match prefix ^String scheme token]]
-                  (if (or (and (<= 8 (count token)) (credential-like? token))
-                          (and (.equalsIgnoreCase "basic" scheme) (basic-credential? token)))
-                    (str prefix redacted)
-                    match))})
+   :replacement (fn [^Matcher m]
+                  (let [token (.group m 3)]
+                    (when (or (and (<= 8 (count token)) (credential-like? token))
+                              (and (.equalsIgnoreCase "basic" (.group m 2))
+                                   (basic-credential? token)))
+                      (str (.group m 1) redacted))))})
 
 (def ^:private digest-form
   {:pattern digest-credential
    :start (word-start "authorization" "proxy-")
-   :replacement (fn [[_ prefix params]]
-                  (str prefix
-                       (str/replace params
+   :replacement (fn [^Matcher m]
+                  (str (.group m 1)
+                       (str/replace (.group m 2)
                                     #"(?i)\b(response|cnonce|nonce|opaque)=(\"?)[^\",\s]*+"
                                     (str "$1=$2" (Matcher/quoteReplacement redacted)))))})
+
+(def ^:private ^"[Z" cookie-name-chars
+  "The characters of the name of a cookie."
+  (char-table (str alphanumeric "_.-")))
+
+(def ^:private ^"[Z" cookie-value-ends
+  "The characters after the value of a cookie: `;` and white space."
+  (char-table "; \t\n\u000B\f\r"))
+
+(defn- redact-cookie-values
+  "Replace in the cookie text `value` each value of 8 or more characters. A `name=value`
+   pair starts at the start of the text or after a `;` and blanks. This is the regex
+   `(^|;[ \\t]*)([\\w.-]+)=[^;\\s]{8,}` as a loop, because a regex search in each header
+   is slow."
+  [^String value]
+  (let [n
+        (.length value)
+
+        ^booleans names
+        cookie-name-chars
+
+        ^booleans ends
+        cookie-value-ends]
+
+    (loop [;; The index where a name can start.
+           start
+           0
+
+           from
+           0
+
+           out
+           nil]
+
+      (let [name-end
+            (long (loop [i start]
+                    (if (and (< i n) (in-table? names value i)) (recur (inc i)) i)))
+
+            value-end
+            (long (if (and (< start name-end) (< name-end n) (= \= (.charAt value name-end)))
+                    (loop [i (inc name-end)]
+                      (if (and (< i n) (not (in-table? ends value i))) (recur (inc i)) i))
+                    -1))
+
+            ;; The regex counts code points, and a pair of surrogates is one code point.
+            secret?
+            (and (<= 8 (- value-end (inc name-end)))
+                 (<= 8 (.codePointCount value (int (inc name-end)) (int value-end))))
+
+            next-pair
+            (.indexOf value (int \;) (int (if secret? value-end start)))
+
+            out
+            (if secret?
+              (doto ^StringBuilder (or out (StringBuilder. n))
+                (.append value (int from) (int (inc name-end)))
+                (.append ^String redacted))
+              out)
+
+            from
+            (long (if secret? value-end from))]
+
+        (if (neg? next-pair)
+          (if out (str (.append ^StringBuilder out value (int from) n)) value)
+          (recur (long (loop [i (inc next-pair)]
+                         (if (and (< i n) (#{\space \tab} (.charAt value i))) (recur (inc i)) i)))
+                 from
+                 out))))))
 
 (def ^:private cookie-form
   {:pattern cookie-value
    :start (word-start "cookie" "set-")
-   :replacement (fn [[_ prefix value]]
-                  (str prefix
-                       (str/replace value
-                                    #"(^|;[ \t]*)([\w.-]+)=[^;\s]{8,}"
-                                    (str "$1$2=" (Matcher/quoteReplacement redacted)))))})
+   :replacement (fn [^Matcher m]
+                  (str (.group m 1) (redact-cookie-values (.group m 2))))})
 
 (def ^:private token-form
   {:pattern token-format
    :start #(next-literal token-index %1 (long %2))
-   :replacement #(if (or (not (str/starts-with? % "eyJ")) (jwt? %)) redacted %)})
+   :replacement (fn [^Matcher m]
+                  (let [token (.group m)]
+                    (when (or (not (str/starts-with? token "eyJ")) (jwt? token)) redacted)))})
 
 (defn- form-scan
   "The `[next-start span]` pair of `form` on `s` for [[replace-spans]]. It replaces each
-   match of the regex `:pattern` with `(replacement groups)`, as `str/replace` does, but
-   the regex runs only at some indexes, because a regex scan of each index is slow.
+   match of the regex `:pattern` with `(replacement matcher)`, or keeps the match when
+   that is nil. The regex runs only at some indexes, because a regex scan of each index
+   is slow.
    - `(start s from)` gives the first index from `from` where a match can start, or -1.
      It must not miss a start.
    - `(end s)` gives the index where the last end of a match starts. Thus no match
@@ -1437,7 +1533,7 @@
        start)
      (fn [_ i]
        (let [^Matcher m @matcher]
-         (when (.lookingAt (.region m (int i) n)) [(.end m) (replacement (re-groups m))])))]))
+         (when (.lookingAt (.region m (int i) n)) [(.end m) (replacement m)])))]))
 
 (defn- replace-form
   "Replace in `s` each credential of `form`. See [[form-scan]]."
@@ -1505,7 +1601,9 @@
                 (replace-form url-form))
       (str/includes? lower "authorization")
       (-> (replace-form authorization-form)
-          (replace-form digest-form))
+          (cond->
+            (str/includes? lower "digest")
+            (replace-form digest-form)))
 
       (str/includes? lower "cookie")
       (replace-form cookie-form)
