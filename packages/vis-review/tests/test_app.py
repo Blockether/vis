@@ -249,11 +249,33 @@ def test_sent_comments_go_to_the_session_and_answer_the_submission(tmp_path, rec
                 "message_id": "m1",
                 "body": "Why 2?",
                 "anchor": {"path": "a.py", "side": "new", "line": 1},
-            }
+            },
+            {
+                "node_id": "diff",
+                "thread_id": "t2",
+                "message_id": "m2",
+                "body": "Join these.",
+                "anchor": {"path": "a.py", "side": "new", "start_line": 1, "line": 2},
+            },
+            {
+                "node_id": "diff",
+                "thread_id": "t3",
+                "message_id": "m3",
+                "body": "Keep the old one.",
+                "anchor": {
+                    "path": "a.py",
+                    "side": "new",
+                    "start_side": "old",
+                    "start_line": 1,
+                    "line": 1,
+                },
+            },
         ],
     )
     assert wait_for(lambda: sent)
     assert "- a.py:1: Why 2?" in sent[0]
+    assert "- a.py:1-2: Join these." in sent[0]
+    assert "- a.py:old 1 to new 1: Keep the old one." in sent[0]
 
 
 def test_controls_that_need_a_door_feature_are_off_without_it(tmp_path, recorder):
