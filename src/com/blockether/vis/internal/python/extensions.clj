@@ -3566,8 +3566,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 (defn sync-packages!
   "Explicitly reconcile YAML package scopes and prepare their uv environments.
    Never imports package entrypoints or reloads a live gateway. Dry-run is inert.
+   `:frozen` keeps each installed package and reads no catalog for it (#493).
    A prepared result names its environment's `site_packages` for the loader to reuse."
-  [{:keys [trust refresh prune dry-run project global]}]
+  [{:keys [trust refresh prune dry-run project global frozen]}]
   (when (and project global)
     (throw (ex-info "Choose --project or --global, not both" {:vis/user-error true})))
   (let [scopes (cond->> (config/extension-package-scopes)
@@ -3599,6 +3600,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                     :refresh (boolean refresh)
                                     :prune (boolean prune)
                                     :dry_run (boolean dry-run)
+                                    :frozen (boolean frozen)
                                     :vis_version (package-version)})))
         (filter #(or prune (seq (:packages %)) (.isFile (io/file (:directory %) ".sync.json")))
                 scopes)))))
@@ -4900,13 +4902,16 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
 (defn- prepare-scope-packages!
   "Prepare declared packages independently. Return their environments and failures;
-   a failed package never prevents the rest of the catalog from loading."
+   a failed package never prevents the rest of the catalog from loading. A load never
+   updates an installed package: only an explicit sync looks for a newer release (#493)."
   [scope project-root]
   (let [directory
         (first (:dirs scope))
 
         results
-        (try (sync-packages! (assoc (select-keys scope [:global :project]) :trust true))
+        (try (sync-packages! (assoc (select-keys scope [:global :project])
+                               :trust true
+                               :frozen true))
              (catch Exception error
                ;; A scope failure must also leave doctor and /reload available.
                (mapv (fn [^File file]

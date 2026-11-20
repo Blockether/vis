@@ -39,7 +39,8 @@
 
 ;; A cold CPython initialization exceeded 40 seconds on the reported WSL host. The
 ;; catalog request runs off the UI thread, but its transport must survive that first load.
-(def ^:private slash-catalog-timeout-ms 120000)
+;; A session create waits for the same first load of the extensions of its project (#493).
+(def ^:private cold-load-timeout-ms 120000)
 
 (def ^:private occupied-port-registry-wait-ms 3000)
 
@@ -1404,7 +1405,13 @@
   [id]
   (send-json! "POST" "/v1/settings" {:id id :action "cycle"}))
 
-(defn create-session! [opts] (send-json! "POST" "/v1/sessions" opts))
+(defn create-session!
+  "POST a new session. The gateway may load the extensions of its project for the first
+   time before it answers, so the request uses the cold-load timeout (#493)."
+  [opts]
+  (let [entry (ensure-gateway!)]
+    (ensure-client! entry)
+    (send-json-with-entry! entry "POST" "/v1/sessions" opts {:timeout-ms cold-load-timeout-ms})))
 
 (defn session-slashes
   "GET the gateway-owned slash catalog for `sid` and `channel`. The first call may
@@ -1418,7 +1425,7 @@
          (str "/v1/sessions/" (enc sid) "/slashes?channel=" (enc (name channel)))]
 
      (ensure-client! entry)
-     (vec (get (send-json-with-entry! entry "GET" path nil {:timeout-ms slash-catalog-timeout-ms})
+     (vec (get (send-json-with-entry! entry "GET" path nil {:timeout-ms cold-load-timeout-ms})
                "commands")))))
 
 (defn soul

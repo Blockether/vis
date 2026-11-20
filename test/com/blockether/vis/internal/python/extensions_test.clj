@@ -1001,9 +1001,10 @@
               (expect (zero? (:failed (pyx/reload-python-extensions!)))))
             (expect (= [] (pyx/load-failures root)))
             (expect (false? (:changed? (pyx/prepare-project! root))))
-            (expect (= [{:global true :trust true} {:project true :trust true}
-                        {:global true :trust true} {:project true :trust true}]
-                       @calls))))))
+            (expect
+              (= [{:global true :trust true :frozen true} {:project true :trust true :frozen true}
+                  {:global true :trust true :frozen true} {:project true :trust true :frozen true}]
+                 @calls))))))
   (it "reports a scope preparation exception without blocking project admission"
       (let [root
             (.getCanonicalPath (temp-dir))
@@ -1082,10 +1083,12 @@
         (fn []
           (binding [workspace/*workspace-root* nil]
             (pyx/ensure-python-extensions-loaded!))
-          (expect (= [{:global true :trust true}] @calls))
+          (expect (= [{:global true :trust true :frozen true}] @calls))
           (expect (= [[nil true] [root false]] @loads))
           (pyx/prepare-project! root)
-          (expect (= [{:global true :trust true} {:project true :trust true}] @calls))
+          (expect (= [{:global true :trust true :frozen true}
+                      {:project true :trust true :frozen true}]
+                     @calls))
           (expect (= [root true] (last @loads)))
           (pyx/prepare-project! root)
           (expect (= 2 (count @calls))))))))
@@ -1128,10 +1131,12 @@
           (fn []
             (binding [workspace/*workspace-root* nil]
               (pyx/ensure-python-extensions-loaded! {:global-only? true}))
-            (expect (= [{:global true :trust true}] @calls))
+            (expect (= [{:global true :trust true :frozen true}] @calls))
             (expect (= [[nil true]] @loads))
             (pyx/prepare-project! root)
-            (expect (= [{:global true :trust true} {:project true :trust true}] @calls))
+            (expect (= [{:global true :trust true :frozen true}
+                        {:project true :trust true :frozen true}]
+                       @calls))
             (expect (= [[nil true] [root true]] @loads) "one prepared load, no reload"))))))
 
 (defn- write-project-package!

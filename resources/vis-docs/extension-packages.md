@@ -168,7 +168,8 @@ uv.
   downgrade on purpose.
 - **`version: latest`.** Every sync checks the catalog and installs a new approved stable release
   without `--refresh`. It never selects a prerelease. `sync --dry-run` reports `would-sync`, because
-  a dry run makes no network calls.
+  a dry run makes no network calls. A start of Vis and `/reload` keep the installed release and do
+  not check the catalog.
 
 ### Remove packages and old versions
 

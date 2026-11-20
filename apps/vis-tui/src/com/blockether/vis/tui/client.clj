@@ -39,7 +39,8 @@
 
 (def ^:private channel-read-timeout-ms 5000)
 
-(def ^:private slash-catalog-timeout-ms 120000)
+;; The gateway may load the extensions of a project for the first time before it answers.
+(def ^:private cold-load-timeout-ms 120000)
 
 (def ^:private activity-export-timeout-ms
   "A whole retained Activity history arrives as ONE streamed text body. The
@@ -617,7 +618,13 @@
                             (or target {:scope "global"})
                             {:timeout-ms 120000}))))
 
-(defn create-session! [opts] (send-json! "POST" "/v1/sessions" opts))
+(defn create-session!
+  "POST a new session. The gateway may load the extensions of its project for the first
+   time before it answers, so the request uses the cold-load timeout (#493)."
+  [opts]
+  (let [entry (target!)]
+    (ensure-client! entry)
+    (send-json-with-entry! entry "POST" "/v1/sessions" opts {:timeout-ms cold-load-timeout-ms})))
 
 (defn session-slashes
   "GET the gateway-owned slash catalog for `sid` and `channel`. The first call may
@@ -631,7 +638,7 @@
          (str "/v1/sessions/" (enc sid) "/slashes?channel=" (enc (name channel)))]
 
      (ensure-client! entry)
-     (vec (get (send-json-with-entry! entry "GET" path nil {:timeout-ms slash-catalog-timeout-ms})
+     (vec (get (send-json-with-entry! entry "GET" path nil {:timeout-ms cold-load-timeout-ms})
                "commands")))))
 
 (defn session-keybindings

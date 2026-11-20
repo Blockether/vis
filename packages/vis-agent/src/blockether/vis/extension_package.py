@@ -1440,7 +1440,7 @@ def _prune_snapshots(directory, name, dry_run, removing=False):
     return results
 
 
-def _sync_one(name, spec, directory, current, refresh, vis_version):
+def _sync_one(name, spec, directory, current, refresh, vis_version, frozen=False):
     destination = _destination(directory, name)
     exists = os.path.lexists(destination)
     tracking = _tracks_latest(spec)
@@ -1449,7 +1449,12 @@ def _sync_one(name, spec, directory, current, refresh, vis_version):
             "Existing extension is not owned by sync or was changed externally; no files replaced. "
             f"Keep any local edits, remove {destination.parent} and run sync again"
         )
-    if exists and current["spec"] == spec and not refresh and not tracking:
+    if (
+        exists
+        and current["spec"] == spec
+        and not refresh
+        and (frozen or not tracking)
+    ):
         metadata = inspect_source(
             destination, vis_version, ".".join(map(str, sys.version_info[:3]))
         )
@@ -1542,10 +1547,13 @@ def sync(
     prune=False,
     dry_run=False,
     vis_version=None,
+    frozen=False,
 ):
     """Reconcile one YAML scope. Reuse pins until refresh, and prune only owned packages.
 
-    A `latest` version follows the newest approved stable release on every sync.
+    A `latest` version follows the newest approved stable release on every sync. A frozen
+    sync is the exception: it keeps each installed package and does not read the catalog
+    for it. It still installs a missing package and applies a changed declaration.
     Receipts and pointers are atomic. Prune unlinks orphaned packages and removes old Git
     snapshots that no live process claims; local source always stays on disk. A
     failed package is reported, and its previous source and other packages stay. Dry-run
@@ -1606,7 +1614,7 @@ def sync(
                     }
                 else:
                     result = _sync_one(
-                        name, spec, directory, current, refresh, vis_version
+                        name, spec, directory, current, refresh, vis_version, frozen
                     )
                     record = {
                         "spec": spec,

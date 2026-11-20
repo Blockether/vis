@@ -1290,6 +1290,31 @@ def test_sync_latest_tracks_approved_stable_releases(releases):
     assert (updated["status"], updated["version"]) == ("updated", "1.1.0")
 
 
+# Issue #493: a load installs a missing package but never looks for a newer release.
+def test_frozen_sync_keeps_an_installed_latest_package_without_the_catalog(
+    releases, monkeypatch
+):
+    metadata, target, commands = releases
+    newer = metadata.pop(1)
+    configured = {
+        "vis-greeter": {
+            "source": REPOSITORY,
+            "subdirectory": "plugins/greeting",
+            "version": "latest",
+        }
+    }
+    installed = package.sync(configured, target, trust=True, frozen=True)[0]
+    assert (installed["status"], installed["version"]) == ("installed", "1.0.0")
+    fetched = list(commands)
+    metadata.append(newer)
+    monkeypatch.setattr(
+        package, "_catalog", lambda *_: pytest.fail("frozen sync consulted catalog")
+    )
+    kept = package.sync(configured, target, trust=True, frozen=True)[0]
+    assert (kept["status"], kept["version"]) == ("cached", "1.0.0")
+    assert commands == fetched
+
+
 def test_sync_dry_run_and_invalid_inputs_are_inert(tmp_path, monkeypatch):
     target = tmp_path / "extensions"
     monkeypatch.setattr(
