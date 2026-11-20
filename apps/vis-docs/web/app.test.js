@@ -380,6 +380,32 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   expect(names()).toHaveLength(6);
 });
 
+test('README code blocks are highlighted, including TOML and YAML', async () => {
+  (0, eval)(readFileSync('../../resources/vis-transcript/prism.min.js', 'utf8'));
+  const readme = [
+    '```toml\n[project]\nname = "greeting"\n```',
+    '```yaml\nextensions:\n  - greeting\n```',
+    '```bash\nvis-agent extension list --global\n```',
+  ].join('\n\n');
+  setup(
+    vi.fn(async (path) => ({
+      ok: true,
+      json: async () =>
+        path === '/api/extensions'
+          ? { extensions: fixtures }
+          : { ...item, readme, readme_format: 'md' },
+    })),
+  );
+  try {
+    await tick();
+    $(`[data-name="${item.repository.toLowerCase()}"] .card-main`).click();
+    await tick();
+    for (const language of ['toml', 'yaml', 'bash'])
+      expect($(`.package-readme code.language-${language} .token`)).not.toBeNull();
+  } finally {
+    delete window.Prism;
+  }
+});
 test('install choices render highlighted multiline shell commands and reset copy feedback', async () => {
   setup();
   await tick();

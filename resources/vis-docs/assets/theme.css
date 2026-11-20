@@ -678,8 +678,15 @@ button.primary:hover {
   color: #505050;
 }
 .token.builtin,
-.token.decorator {
+.token.decorator,
+.token.key,
+.token.property,
+.token.attr-name {
   color: #1e5ab4;
+}
+.token.table,
+.token.variable {
+  color: #7846aa;
 }
 /* brand logo: the Companion app bar mark and wordmark */
 .top .brand .logo {
