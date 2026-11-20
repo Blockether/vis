@@ -380,9 +380,7 @@ export function AppSurface({
     if (!view) return undefined;
     return {
       isReadOnly,
-      submissions: view.submissions ?? [],
       draft: (nodeId, target) => act(draftAction(view, nodeId, target)),
-      send: (nodeId, key) => act(sendAction(view, nodeId, key)),
     };
   }, [view, isReadOnly, act]);
 

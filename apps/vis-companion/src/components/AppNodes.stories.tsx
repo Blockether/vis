@@ -11,7 +11,7 @@ import type { LiveDiffNode } from '../lib/live-view';
 
 /**
  * An app attachment for code review (issue #421): a diff with a thread on a line,
- * a saved draft, Send and its receipts. The widths are the phone widths of the
+ * and a saved draft that the next message of the session adds. The widths are the phone widths of the
  * issue and a desktop width.
  */
 function review(): LiveView {
@@ -55,24 +55,6 @@ function review(): LiveView {
         ],
       },
     ],
-    submissions: [
-      {
-        id: 's1',
-        idempotency_key: 'k1',
-        node_id: 'review',
-        status: 'answered',
-        created_at: 1,
-        updated_at: 2,
-        comments: [
-          {
-            node_id: 'review',
-            thread_id: 't1',
-            message_id: 'm0',
-            body: 'Earlier',
-          },
-        ],
-      },
-    ],
   });
   if (!view) throw new Error('the review fixture must be paintable');
   return view;
@@ -80,9 +62,7 @@ function review(): LiveView {
 
 const app: AppNodeActions = {
   isReadOnly: false,
-  submissions: review().submissions ?? [],
   draft: fn(async () => ({ status: 'saved' as const, seq: 4 })),
-  send: fn(async () => ({ status: 'saved' as const, seq: 5 })),
 };
 
 const meta = {
@@ -193,7 +173,7 @@ function manyFiles(): LiveView {
 /** Two files, a hunk separator, word tints and a folded file on a press of its band. */
 export const ManyFiles: Story = {
   decorators: width('64rem'),
-  args: { view: manyFiles(), app: { ...app, submissions: [] } },
+  args: { view: manyFiles(), app },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.getByText('7 unmodified lines')).toBeVisible();
@@ -207,7 +187,7 @@ export const ManyFiles: Story = {
 
 /** Split keeps old lines on the left and new lines on the right. */
 export const Split: Story = {
-  args: { view: manyFiles(), app: { ...app, submissions: [] } },
+  args: { view: manyFiles(), app },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Split' }));
@@ -236,7 +216,7 @@ export const WrapOff: Story = {
 
 /** The tree opens a folded file before it scrolls to that file. */
 export const FileTree: Story = {
-  args: { view: manyFiles(), app: { ...app, submissions: [] } },
+  args: { view: manyFiles(), app },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Files' }));
@@ -252,7 +232,7 @@ export const FileTree: Story = {
 
 /** Report: phone gutter targets overlapped and opened comments on the next line. */
 export const LineTargets: Story = {
-  args: { view: manyFiles(), app: { ...app, submissions: [] } },
+  args: { view: manyFiles(), app },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const names = [...canvasElement.querySelectorAll<HTMLButtonElement>('.diff-line-button')].map(
@@ -281,7 +261,7 @@ export const ReviewPanel: Story = {
   render: () => <ReviewPanelFixture />,
   args: {
     view: { ...review(), nodes: [{ id: 'review', type: 'diff', patch: REVIEW_PATCH, threads: [] }] },
-    app: { ...app, submissions: [] },
+    app,
   },
 };
 
@@ -335,7 +315,7 @@ const REVIEW_TOOLBAR: LiveDiffNode['children'] = [
   },
 ];
 
-/** An interactive review fixture: save a draft, send it, and keep its anchored card. */
+/** An interactive review fixture: save a draft and keep its anchored card. A null body removes it. */
 function ReviewPanelFixture() {
   const [node, setNode] = useState<LiveDiffNode>({
     id: 'review',
@@ -346,38 +326,25 @@ function ReviewPanelFixture() {
   });
   const actions: AppNodeActions = {
     isReadOnly: false,
-    submissions: [],
     draft: async (_nodeId, target) => {
       const id = crypto.randomUUID();
       setNode((held) => {
         const existing = held.threads.find((t) =>
           target.threadId ? t.id === target.threadId : sameAnchor(t.anchor, target.anchor),
         );
+        // Blank text keeps an empty draft only on a thread with messages, like the host.
+        const isKept = target.body !== null && (target.body.trim() !== '' || Boolean(existing?.messages.length));
+        const body = isKept ? (target.body ?? undefined) : undefined;
         const threads = existing
-          ? held.threads.map((t) => (t.id === existing.id ? { ...t, draft: target.body } : t))
-          : [...held.threads, { id, anchor: target.anchor, messages: [], draft: target.body }];
+          ? held.threads
+              .map((t) => (t.id === existing.id ? { ...t, draft: body } : t))
+              .filter((t) => t.messages.length > 0 || t.draft !== undefined)
+          : body
+            ? [...held.threads, { id, anchor: target.anchor, messages: [], draft: body }]
+            : held.threads;
         return { ...held, threads };
       });
       return { status: 'saved', seq: 4 };
-    },
-    send: async () => {
-      const id = crypto.randomUUID();
-      setNode((held) => ({
-        ...held,
-        threads: held.threads.map((t) =>
-          t.draft
-            ? {
-                ...t,
-                draft: '',
-                messages: [
-                  ...t.messages,
-                  { id: `${id}-${t.id}`, body: t.draft, author: { kind: 'human' }, created_at: Date.now() },
-                ],
-              }
-            : t,
-        ),
-      }));
-      return { status: 'saved', seq: 5 };
     },
   };
   return <DiffNodeView node={node} actions={actions} commands={{ onActivate: () => {}, isSettled: false }} />;

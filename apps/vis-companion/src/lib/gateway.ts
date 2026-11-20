@@ -74,6 +74,7 @@ import type {
   SseEvent,
   SubmittedTurn,
   Toggle,
+  TurnComment,
   TranscriptAttachment,
   TranscriptIteration,
   TranscriptTurn,
@@ -5897,6 +5898,8 @@ export class GatewayClient {
       turnFeatures?: Record<string, boolean>;
       /** Reuse the key of an earlier attempt, so the gateway takes a retry as the same turn. */
       idempotencyKey?: string;
+      /** Saved app drafts that the turn adds. The gateway removes them when it accepts the turn. */
+      comments?: TurnComment[];
     } = {},
   ): Promise<SubmittedTurn> {
     const clientId = options.idempotencyKey ?? `companion:${randomUuid()}`;
@@ -5936,6 +5939,7 @@ export class GatewayClient {
       extra_body: options.extraBody,
       turn_features: options.turnFeatures,
       idempotency_key: clientId,
+      ...(options.comments?.length ? { comments: options.comments } : {}),
     });
     for (const listener of turnSubmissionListeners) listener(sid);
     return submitted;

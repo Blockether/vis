@@ -1,7 +1,7 @@
 /**
  * The review nodes of an app attachment: a `diff` with threads on its lines, and
  * a `thread` of its own. Both read the same host state and save through the same
- * `draft` and `submit` actions. Without an app the threads are read only.
+ * `draft` action. Without an app the threads are read only.
  */
 
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
@@ -9,7 +9,6 @@ import { createPortal } from 'react-dom';
 
 import {
   APP_ACTION_WORDS,
-  SendKeys,
   isRetryable,
   type AppActionResult,
   type AppActionStatus,
@@ -42,7 +41,6 @@ import {
   type LiveMessage,
   type LiveNode,
   type LiveShortcut,
-  type LiveSubmission,
   type LiveThread,
   type LiveThreadNode,
 } from '../lib/live-view';
@@ -73,15 +71,14 @@ import { CODE_DEFAULT_CLASS, highlightSegments, languageOfPath, type SyntaxSegme
 
 /** What an app gives its review nodes. Absent, the nodes are read only. */
 export interface AppNodeActions {
-  /** Save the draft of one thread, or start a thread on `anchor`. */
+  /**
+   * Save the draft of one thread, or start a thread on `anchor`. The next message
+   * of the session adds each saved draft. A null body removes the draft.
+   */
   draft: (
     nodeId: string,
-    target: { threadId?: string; anchor?: ViewAnchor; body: string },
+    target: { threadId?: string; anchor?: ViewAnchor; body: string | null },
   ) => Promise<AppActionResult>;
-  /** Send every saved draft of the node with this idempotency key. */
-  send: (nodeId: string, idempotencyKey: string) => Promise<AppActionResult>;
-  /** The newest receipts of the app, oldest first. */
-  submissions: readonly LiveSubmission[];
   /** The app is closed or its owner is not connected: show, do not act. */
   isReadOnly: boolean;
 }
@@ -156,16 +153,28 @@ interface DraftEditorProps {
   saved: string;
   memoryId: string;
   submitLabel?: string;
+  placeholder?: string;
+  /** Blank text saves an empty draft: a finding added without a note. */
+  isBlankAllowed?: boolean;
   onSave: (body: string) => Promise<AppActionResult>;
   onClose: () => void;
 }
 
 /**
- * The editor of one draft. Save keeps the draft on the host; Cancel closes the
- * editor and keeps the history and the saved draft. A blank Save on a new line
- * creates nothing.
+ * The editor of one draft. Save keeps the draft on the host, and the next message
+ * of the session adds it. Cancel closes the editor and keeps the saved draft. A
+ * blank Save on a new line creates nothing.
  */
-function DraftEditor({ label, saved, memoryId, submitLabel = 'Save', onSave, onClose }: DraftEditorProps) {
+function DraftEditor({
+  label,
+  saved,
+  memoryId,
+  submitLabel = 'Save',
+  placeholder = 'Add a comment…',
+  isBlankAllowed = false,
+  onSave,
+  onClose,
+}: DraftEditorProps) {
   const [text, setText] = useReviewState(`${memoryId}:text`, saved);
   const close = () => {
     setText(saved);
@@ -174,21 +183,19 @@ function DraftEditor({ label, saved, memoryId, submitLabel = 'Save', onSave, onC
   const [status, setStatus] = useState<AppActionStatus>('idle');
   const isBusy = status === 'saving';
   const saving = useRef(false);
+  const isBlank = text.trim() === '';
   const save = async () => {
     if (saving.current) return;
-    if (text.trim() === '' && saved === '') {
+    if (isBlank && saved === '' && !isBlankAllowed) {
       onClose();
       return;
     }
     saving.current = true;
     setStatus('saving');
     try {
-      const result = await onSave(text.trim() === '' ? '' : text);
+      const result = await onSave(isBlank ? '' : text);
       setStatus(result.status);
-      if (result.status === 'saved' && (text.trim() === '' || submitLabel === 'Comment')) {
-        setText('');
-        onClose();
-      }
+      if (result.status === 'saved') close();
     } catch {
       setStatus('failed');
     } finally {
@@ -213,7 +220,7 @@ function DraftEditor({ label, saved, memoryId, submitLabel = 'Save', onSave, onC
       <textarea
         autoFocus
         rows={3}
-        placeholder="Add a comment…"
+        placeholder={placeholder}
         className={TEXTAREA}
         value={text}
         maxLength={LIVE_MESSAGE_CHARS}
@@ -229,7 +236,7 @@ function DraftEditor({ label, saved, memoryId, submitLabel = 'Save', onSave, onC
             !event.nativeEvent.isComposing && event.keyCode !== 229 &&
             event.key === 'Enter' &&
             (event.metaKey || event.ctrlKey) &&
-            text.trim() !== '' &&
+            (!isBlank || isBlankAllowed) &&
             !saving.current
           ) {
             event.preventDefault();
@@ -238,14 +245,14 @@ function DraftEditor({ label, saved, memoryId, submitLabel = 'Save', onSave, onC
         }}
       />
       <div className="diff-draft-actions flex flex-wrap items-center gap-2">
-        <span className="diff-submit-hint">⌘/Ctrl Enter to send</span>
+        <span className="diff-submit-hint">⌘/Ctrl Enter to save</span>
         <Button type="button" variant="secondary" onClick={close}>
           Cancel
         </Button>
         <Button
           type="submit"
           variant="primary"
-          disabled={isBusy || (submitLabel === 'Comment' && text.trim() === '')}
+          disabled={isBusy || (submitLabel === 'Comment' && isBlank)}
         >
           {isRetryable(status) ? 'Retry' : submitLabel}
         </Button>
@@ -262,11 +269,24 @@ interface ThreadBlockProps {
   title?: string;
 }
 
-/** One thread: its history, its saved draft and a way to edit the draft. */
+/**
+ * One thread. A thread without messages is a comment of the human, and the next
+ * message of the session adds its draft. A thread with messages is a finding: its
+ * messages stay as text, and "Add to message" adds them, with an optional note.
+ */
 function ThreadBlock({ thread, nodeId, actions, title }: ThreadBlockProps) {
   const [isEditing, setEditing] = useReviewState(`${nodeId}:${thread.id}:editing`, false);
+  const [status, setStatus] = useState<AppActionStatus>('idle');
+  const isFinding = thread.messages.length > 0;
+  const isAdded = thread.draft !== undefined;
   const draft = thread.draft ?? '';
   const canEdit = Boolean(actions) && !actions?.isReadOnly;
+  const remove = async () => {
+    if (!actions) return;
+    setStatus('saving');
+    const result = await actions.draft(nodeId, { threadId: thread.id, body: null });
+    setStatus(result.status === 'saved' ? 'idle' : result.status);
+  };
   return (
     <section
       className="min-w-0 space-y-2 border-l-2 border-dialog-edge bg-panel-2 px-3 py-2"
@@ -274,120 +294,51 @@ function ThreadBlock({ thread, nodeId, actions, title }: ThreadBlockProps) {
       data-thread-id={thread.id}
     >
       <Messages messages={thread.messages} />
-      {draft !== '' && !isEditing && (
+      {isAdded && !isEditing && (
         <div className="min-w-0">
-          <span className="block font-mono text-ui text-dialog-hint">Draft</span>
-          <p className="whitespace-pre-wrap font-mono text-body text-dialog-foreground [overflow-wrap:anywhere]">
-            {draft}
-          </p>
+          <span className="block font-mono text-ui text-dialog-hint">
+            {isFinding ? 'In the next message' : 'Comment · in the next message'}
+          </span>
+          {draft !== '' && (
+            <p className="whitespace-pre-wrap font-mono text-body text-dialog-foreground [overflow-wrap:anywhere]">
+              {draft}
+            </p>
+          )}
         </div>
       )}
       {isEditing && actions ? (
         <DraftEditor
-          memoryId={`${nodeId}:${thread.id}`}
-          label={draft === '' ? 'Reply' : 'Edit draft'}
+          memoryId={`${nodeId}:${thread.id}:${draft}`}
+          label={isFinding ? 'Note' : 'Edit comment'}
           saved={draft}
+          placeholder={isFinding ? 'Add a note (optional)…' : undefined}
+          submitLabel={isFinding && !isAdded ? 'Add to message' : 'Save'}
+          isBlankAllowed={isFinding}
           onSave={(body) => actions.draft(nodeId, { threadId: thread.id, body })}
           onClose={() => setEditing(false)}
         />
       ) : (
         canEdit && (
-          <Button variant="secondary" density="compact" onClick={() => setEditing(true)}>
-            {draft === '' ? 'Reply' : 'Edit draft'}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" density="compact" onClick={() => setEditing(true)}>
+              {!isAdded ? 'Add to message' : isFinding ? 'Edit note' : 'Edit'}
+            </Button>
+            {isAdded && (
+              <Button
+                variant="secondary"
+                density="compact"
+                disabled={status === 'saving'}
+                onClick={() => void remove()}
+              >
+                Remove
+              </Button>
+            )}
+            <ActionStatus status={status} />
+          </div>
         )
       )}
     </section>
   );
-}
-
-const RECEIPT_WORDS: Record<LiveSubmission['status'], string> = {
-  accepted: 'Accepted',
-  delivered: 'Delivered',
-  processing: 'Processing',
-  answered: 'Answered',
-  failed: 'Failed',
-};
-
-const RECEIPT_TONES: Record<LiveSubmission['status'], string> = {
-  accepted: 'text-dialog-hint',
-  delivered: 'text-dialog-hint',
-  processing: 'text-dialog-hint',
-  answered: 'text-ok',
-  failed: 'text-err',
-};
-
-/** The words of the Send button: a retry, or the number of drafts that it sends. */
-function sendLabel(status: AppActionStatus, drafts: number): string {
-  if (isRetryable(status)) return 'Retry send';
-  return drafts > 1 ? `Send ${drafts}` : 'Send';
-}
-
-interface SendBarProps {
-  nodeId: string;
-  drafts: number;
-  actions: AppNodeActions;
-  label: string;
-  /** Position only: the inset of the node that holds the bar. */
-  className?: string;
-}
-
-/** The Send control of a node and the receipts of its earlier Sends. */
-function SendBar({ nodeId, drafts, actions, label, className = '' }: SendBarProps) {
-  const keys = useRef(new SendKeys());
-  const [status, setStatus] = useState<AppActionStatus>('idle');
-  const [isRetryPending, setRetryPending] = useState(false);
-  const receipts = actions.submissions.filter((one) => one.node_id === nodeId).slice(-3);
-  const send = async () => {
-    setStatus('saving');
-    const result = await actions.send(nodeId, keys.current.next());
-    keys.current.settle(result);
-    setRetryPending(isRetryable(result.status));
-    setStatus(result.status);
-  };
-  const isBusy = status === 'saving';
-  // Send shows only when it has work: a saved draft, a send in progress or a retry.
-  const hasWork = drafts > 0 || isBusy || isRetryPending;
-  if (!hasWork && receipts.length === 0) return null;
-  return (
-    <div className={`space-y-1 ${className}`}>
-      {hasWork && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="primary"
-            density="compact"
-            disabled={actions.isReadOnly || isBusy}
-            aria-label={label}
-            onClick={() => void send()}
-          >
-            {sendLabel(status, drafts)}
-          </Button>
-          {status !== 'saved' && <ActionStatus status={status} />}
-        </div>
-      )}
-      {receipts.length > 0 && (
-        <ul aria-label="Receipts" className="space-y-0.5">
-          {receipts.map((receipt) => (
-            <li
-              key={receipt.id}
-              data-submission-id={receipt.id}
-              className={`font-mono text-ui ${RECEIPT_TONES[receipt.status]}`}
-            >
-              {RECEIPT_WORDS[receipt.status]}
-              {receipt.comments && receipt.comments.length > 0
-                ? ` · ${receipt.comments.length} ${receipt.comments.length === 1 ? 'comment' : 'comments'}`
-                : ''}
-              {receipt.note ? ` · ${receipt.note}` : ''}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function savedDrafts(threads: readonly LiveThread[]): number {
-  return threads.filter((thread) => (thread.draft ?? '').trim() !== '').length;
 }
 
 interface ThreadNodeViewProps {
@@ -395,7 +346,7 @@ interface ThreadNodeViewProps {
   actions?: AppNodeActions;
 }
 
-/** A thread node: one discussion with its own Send. */
+/** A thread node: one discussion. */
 export function ThreadNodeView({ node, actions }: ThreadNodeViewProps) {
   const thread: LiveThread = {
     id: node.id,
@@ -403,16 +354,8 @@ export function ThreadNodeView({ node, actions }: ThreadNodeViewProps) {
     ...(node.draft === undefined ? {} : { draft: node.draft }),
   };
   return (
-    <div className="min-w-0 space-y-2">
+    <div className="min-w-0">
       <ThreadBlock thread={thread} nodeId={node.id} actions={actions} title={node.label} />
-      {actions && (
-        <SendBar
-          nodeId={node.id}
-          drafts={savedDrafts([thread])}
-          actions={actions}
-          label={`Send ${node.label ?? 'thread'}`}
-        />
-      )}
     </div>
   );
 }
@@ -1330,15 +1273,6 @@ export function DiffNodeView({ node, actions, commands }: DiffNodeViewProps) {
             <ThreadBlock key={thread.id} thread={thread} nodeId={node.id} actions={actions} />
           ))}
         </div>
-      )}
-      {actions && (
-        <SendBar
-          nodeId={node.id}
-          drafts={savedDrafts(node.threads)}
-          actions={actions}
-          label={`Send ${node.label ?? 'review'}`}
-          className="px-2 pb-2"
-        />
       )}
     </div>
   );

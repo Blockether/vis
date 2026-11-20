@@ -1,4 +1,5 @@
 import type { PendingAttachment } from '../lib/attachments';
+import type { ComposerComment } from '../lib/composer-comments';
 import { isAudioMediaType, isVideoMediaType } from '../lib/attachments';
 import { artifactMedia } from '../lib/artifacts';
 import { keepKeyboard } from '../lib/keyboard';
@@ -13,20 +14,49 @@ export type ComposerPayloadCommands = {
   removePaste: (id: number) => void;
   editAttachment: (id: string, edited: Blob) => void | Promise<void>;
   removeAttachment: (id: string) => void;
+  removeComment?: (comment: ComposerComment) => void;
 };
 
 /** The staged content that will accompany the composer's text. */
 export function ComposerPayloadShelf({
   pastes,
   attachments,
+  comments = [],
   commands,
 }: {
   pastes: readonly ComposerPaste[];
   attachments: readonly PendingAttachment[];
+  /** The saved app comments that the next message adds. */
+  comments?: readonly ComposerComment[];
   commands: ComposerPayloadCommands;
 }) {
   return (
     <>
+      {comments.length > 0 && (
+        <div
+          aria-label="Comments"
+          className="flex gap-1 overflow-x-auto overscroll-x-contain border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]"
+        >
+          {comments.map((comment) => (
+            <span
+              key={comment.key}
+              title={comment.detail ? `${comment.label}: ${comment.detail}` : comment.label}
+              className="inline-flex min-h-7 max-w-[min(18rem,100%)] shrink-0 items-center gap-1 overflow-hidden rounded-none border border-code-edge bg-code pl-1.5 font-mono text-chip"
+            >
+              <span className="min-w-0 shrink truncate text-dialog-foreground">{comment.reference}</span>
+              {comment.detail && (
+                <span className="min-w-0 flex-1 truncate text-dialog-hint">{comment.detail}</span>
+              )}
+              <CloseButton
+                label={`Remove comment on ${comment.label}`}
+                onMouseDown={keepKeyboard}
+                onClick={() => commands.removeComment?.(comment)}
+              />
+            </span>
+          ))}
+        </div>
+      )}
+
       {pastes.length > 0 && (
         <div className="flex gap-1 overflow-x-auto overscroll-x-contain border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]">
           {pastes.map((paste) => (

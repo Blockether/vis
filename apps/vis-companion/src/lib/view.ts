@@ -124,8 +124,12 @@ export type ViewAction =
       node_id: string;
       thread_id?: string;
       anchor?: ViewAnchor;
-      /** Blank text removes the draft; a blank draft on a new anchor creates nothing. */
-      body: string;
+      /**
+       * Null removes the draft. Blank text removes the draft of a thread without
+       * messages and creates no new thread; on a thread with messages it adds them
+       * to the next message of the session without a note.
+       */
+      body: string | null;
       base_seq?: number;
       revision?: string;
     }

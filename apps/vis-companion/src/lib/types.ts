@@ -1645,6 +1645,15 @@ export interface TranscriptTurn {
   [key: string]: unknown;
 }
 
+/** A saved app draft that a turn adds (`comments` of the turn request). */
+export interface TurnComment {
+  view_id: string;
+  node_id: string;
+  thread_id: string;
+  /** The marker of the comment in the turn text, when the text holds it. */
+  reference?: string;
+}
+
 export interface SubmittedTurn {
   turn_id: string;
   request?: string;

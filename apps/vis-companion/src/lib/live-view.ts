@@ -640,6 +640,18 @@ export interface LiveView {
    * its nodes, log and Send receipts. The opened app reads its own body.
    */
   is_summary?: true;
+  /** The saved drafts of a list entry: the comments that the next message of the session adds. */
+  drafts?: LiveDraft[];
+}
+
+/** One saved draft of an app (view.json `draft_entry`). */
+export interface LiveDraft {
+  node_id: string;
+  thread_id: string;
+  body: string;
+  anchor?: ViewAnchor;
+  /** The messages of the thread, when the draft adds a finding. */
+  quote?: string;
 }
 
 /**
@@ -953,18 +965,24 @@ function messageFromWire(raw: Record<string, unknown>): LiveMessage | null {
   };
 }
 
-/** A saved draft is never blank, so blank text is no draft. */
-function draftFromWire(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+/**
+ * A saved draft. Blank text is no draft, except on a thread with messages: there
+ * an empty draft adds the messages to the next message of the session without a note.
+ */
+function draftFromWire(value: unknown, hasMessages: boolean): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  if (value.trim() !== '') return value;
+  return hasMessages ? '' : undefined;
 }
 
 /** The thread fields that a thread node and a diff thread share. */
 function threadPartsFromWire(raw: Record<string, unknown>): Omit<LiveThread, 'id'> {
   const anchor = anchorFromWire(raw.anchor);
-  const draft = draftFromWire(raw.draft);
+  const messages = keyed(raw.messages, messageFromWire);
+  const draft = draftFromWire(raw.draft, messages.length > 0);
   return {
     ...(anchor ? { anchor } : {}),
-    messages: keyed(raw.messages, messageFromWire),
+    messages,
     ...(draft === undefined ? {} : { draft }),
     ...(raw.is_resolved === undefined ? {} : { is_resolved: raw.is_resolved === true }),
   };
@@ -1470,7 +1488,59 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     ...(typeof view.settings_key === 'string' ? { settings_key: view.settings_key } : {}),
     ...(Array.isArray(view.log) ? { log: keyed(view.log, logEntryFromWire) } : {}),
     ...(isSummary ? { is_summary: true as const } : {}),
+    ...(isSummary && Array.isArray(view.drafts) ? { drafts: draftsFromWire(view.drafts) } : {}),
   };
+}
+
+function draftsFromWire(raw: unknown[]): LiveDraft[] {
+  return rows(raw).flatMap((entry) => {
+    const nodeId = text(entry.node_id);
+    const threadId = text(entry.thread_id);
+    if (nodeId === '' || threadId === '' || typeof entry.body !== 'string') return [];
+    const anchor = anchorFromWire(entry.anchor);
+    const quote = optionalText(entry.quote);
+    return [
+      {
+        node_id: nodeId,
+        thread_id: threadId,
+        body: entry.body,
+        ...(anchor ? { anchor } : {}),
+        ...(quote ? { quote } : {}),
+      },
+    ];
+  });
+}
+
+/** The saved drafts of the thread nodes in `nodes`, in reading order (`app/drafts`). */
+export function liveDrafts(nodes: readonly LiveNode[]): LiveDraft[] {
+  return nodes.flatMap((node): LiveDraft[] => [
+    ...(node.type === 'diff' ? threadDrafts(node.id, node.threads) : []),
+    ...(node.type === 'thread' ? threadDrafts(node.id, [node]) : []),
+    ...liveDrafts(nestedLiveNodes(node)),
+  ]);
+}
+
+function threadDrafts(nodeId: string, threads: readonly (LiveThread | LiveThreadNode)[]): LiveDraft[] {
+  return threads.flatMap((thread) =>
+    thread.draft === undefined
+      ? []
+      : [
+          {
+            node_id: nodeId,
+            thread_id: thread.id,
+            body: thread.draft,
+            ...(thread.anchor ? { anchor: thread.anchor } : {}),
+            ...(thread.messages.length
+              ? { quote: thread.messages.map((message) => message.body).join('\n\n') }
+              : {}),
+          },
+        ],
+  );
+}
+
+/** The drafts of `view`: those of its list entry, or those of its nodes. */
+export function viewDrafts(view: LiveView): LiveDraft[] {
+  return view.is_summary ? (view.drafts ?? []) : liveDrafts(view.nodes);
 }
 
 /**
@@ -1481,7 +1551,7 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
 export function appSummary(view: LiveView): LiveView {
   if (view.placement !== 'attachment' || view.is_summary) return view;
   const { log: _log, submissions: _submissions, ...entry } = view;
-  return { ...entry, nodes: [], is_summary: true };
+  return { ...entry, nodes: [], is_summary: true, drafts: liveDrafts(view.nodes) };
 }
 
 /** Every view the snapshot holds, oldest first, unpaintable ones dropped. */
@@ -2231,8 +2301,8 @@ function splicedOps(view: LiveView, ops: readonly unknown[], splices: readonly u
  * fit the view makes it stale.
  */
 export function applyLivePatch(view: LiveView, frame: unknown): LiveView {
-  if (view.is_summary) return view;
   const envelope = record(frame);
+  if (view.is_summary) return touchesDrafts(view, envelope) ? { ...view, is_stale: true } : view;
   if (envelope?.is_elided === true) {
     return count(envelope.last_seq, 0) > view.seq ? { ...view, is_stale: true } : view;
   }
@@ -2247,6 +2317,21 @@ export function applyLivePatch(view: LiveView, frame: unknown): LiveView {
   const resolved = splices.length ? splicedOps(view, ops, splices) : ops;
   if (resolved === null) return { ...view, is_stale: true };
   return { ...resolved.reduce<LiveView>(applyOp, view), seq };
+}
+
+/** The ops that can change the drafts of an app. */
+const DRAFT_OPS = new Set(['thread', 'remove', 'remove-node', 'replace', 'clear', 'add-node']);
+
+/** True when a patch can change the drafts that the list entry `view` holds. */
+function touchesDrafts(view: LiveView, envelope: Record<string, unknown> | null): boolean {
+  if (envelope?.is_elided === true) return (view.drafts?.length ?? 0) > 0;
+  const ops = Array.isArray(record(envelope?.patch)?.ops) ? (record(envelope?.patch)?.ops as unknown[]) : [];
+  const held = new Set((view.drafts ?? []).map((draft) => draft.node_id));
+  return ops.some((raw) => {
+    const op = record(raw);
+    const name = text(op?.op);
+    return name === 'thread' || (DRAFT_OPS.has(name) && held.has(text(op?.node_id)));
+  });
 }
 
 /** Where `view` stands. A view without a placement is inline. */

@@ -67,7 +67,7 @@ export function reviewedRevision(view: LiveView, nodeId: string): string | undef
 export function draftAction(
   view: LiveView,
   nodeId: string,
-  target: { threadId?: string; anchor?: ViewAnchor; body: string },
+  target: { threadId?: string; anchor?: ViewAnchor; body: string | null },
 ): ViewAction {
   const revision = reviewedRevision(view, nodeId);
   return {

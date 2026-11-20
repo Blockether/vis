@@ -82,7 +82,13 @@ import { QueuedTurnsTray } from '../components/QueuedTurnsTray';
 import { useLiveViews } from '../components/LiveView';
 import { LivePanel, ResizablePanel } from '../components/LivePanel';
 import { useMediaMatch } from '../lib/fit-rows';
-import { livePlacement } from '../lib/live-view';
+import { livePlacement, type LiveView } from '../lib/live-view';
+import {
+  composerComments,
+  dropCommentReference,
+  insertCommentReferences,
+  type ComposerComment,
+} from '../lib/composer-comments';
 import { reduceRunningTurnEvent, withStoredSteps, type RunningTurn } from '../lib/running-turn';
 import { eventString, sessionEventBatch } from '../lib/session-stream';
 import { speechOutput } from '../lib/speech';
@@ -4146,7 +4152,32 @@ export function SessionScreen({
     removePaste,
     editAttachment: applyAttachmentEdit,
     removeAttachment,
+    removeComment,
   };
+
+  /** Hide `comments` until the list of apps changes: the gateway removes them. */
+  function hideComments(comments: readonly ComposerComment[]) {
+    setHiddenComments({
+      views: sessionLiveViews,
+      keys: new Set(comments.map((comment) => comment.key)),
+    });
+  }
+
+  function removeComment(comment: ComposerComment) {
+    hideComments([comment]);
+    setPrompt(dropCommentReference(composerRef.current?.value ?? prompt, comment));
+    client
+      .viewAction(sid, comment.view_id, {
+        action: 'draft',
+        node_id: comment.node_id,
+        thread_id: comment.thread_id,
+        body: null,
+      })
+      .catch((cause: unknown) => {
+        setHiddenComments(null);
+        setError((cause as Error).message);
+      });
+  }
 
   function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
     // Media paste (screenshots, copied pictures, a clip) — works on web and in
@@ -4288,7 +4319,15 @@ export function SessionScreen({
     // The fallback exists only to give the model a non-blank turn. The transcript
     // shows what the human actually authored: for attachment-only turns, the media.
     const displayRequest = collapsePastePlaceholders(authoredRequest, pastes);
-    if (!request || voicePhase !== 'idle') return;
+    // Saved app comments go with the message, and may be all that it holds.
+    const comments = pendingComments;
+    const sentComments = comments.map(({ view_id, node_id, thread_id, reference }) => ({
+      view_id,
+      node_id,
+      thread_id,
+      ...(authoredRequest.includes(reference) ? { reference } : {}),
+    }));
+    if ((!request && !comments.length) || voicePhase !== 'idle') return;
 
     const [command = '', ...argParts] = authoredRequest.split(/\s+/);
     const args = argParts.join(' ');
@@ -4370,7 +4409,9 @@ export function SessionScreen({
         const submitted = await client.submitTurn(sid, request, {
           displayRequest,
           attachments: sent,
+          comments: sentComments,
         });
+        if (comments.length) hideComments(comments);
         const queuedId = submitted.turn_id;
         rememberSent(queuedId, sent);
         // Keep the AUTHORED shape (raw text, pastes, image bytes) so a cancel can
@@ -4457,7 +4498,9 @@ export function SessionScreen({
       const submitted = await client.submitTurn(sid, request, {
         displayRequest,
         attachments: sent,
+        comments: sentComments,
       });
+      if (comments.length) hideComments(comments);
       const submittedId = submitted.turn_id;
       rememberSent(submittedId, sent);
       if (isQueuedSubmission(submitted)) {
@@ -5026,6 +5069,33 @@ export function SessionScreen({
     [loadTranscript],
   );
   const sessionLiveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
+  // Comments that were sent or removed stay hidden until the gateway's list shows the change.
+  const [hiddenComments, setHiddenComments] = useState<{
+    views: readonly LiveView[];
+    keys: ReadonlySet<string>;
+  } | null>(null);
+  const pendingComments = useMemo(() => {
+    const all = composerComments(sessionLiveViews);
+    return hiddenComments?.views === sessionLiveViews
+      ? all.filter((comment) => !hiddenComments.keys.has(comment.key))
+      : all;
+  }, [sessionLiveViews, hiddenComments]);
+  // A new comment puts its marker at the caret of the message, so the human can
+  // place it in the text. A marker that is already there stays.
+  const placedCommentsRef = useRef(new Set<string>());
+  useEffect(() => {
+    const placed = placedCommentsRef.current;
+    const editor = composerRef.current;
+    const current = editor?.value ?? prompt;
+    const fresh = pendingComments.filter(
+      (comment) => !placed.has(comment.key) && !current.includes(comment.reference),
+    );
+    for (const comment of pendingComments) placed.add(comment.key);
+    if (!fresh.length) return;
+    const staged = insertCommentReferences(current, editor?.selectionStart ?? current.length, fresh);
+    setPrompt(staged.text);
+    editor?.setSelectionRange(staged.caret, staged.caret);
+  }, [pendingComments, prompt, setPrompt]);
   // An inline view stands in its turn. A panel view stands beside the transcript.
   const liveViews = useMemo(
     () => sessionLiveViews.filter((view) => livePlacement(view) === 'inline'),
@@ -6271,6 +6341,7 @@ export function SessionScreen({
                 <ComposerPayloadShelf
                   pastes={activePastes}
                   attachments={attachments}
+                  comments={pendingComments}
                   commands={payloadCommands}
                 />
 
