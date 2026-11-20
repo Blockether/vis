@@ -36,7 +36,7 @@ import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { IterationAttachment, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
 import { ActionStatus, type AppNodeActions } from './AppNodes';
-import { ReviewMemoryContext, useReviewScroll, useVisitState } from '../lib/review-memory';
+import { ReviewMemoryContext, ReviewPrefsContext, useReviewScroll, useVisitState } from '../lib/review-memory';
 import { LiveViewPanel, RunDialog } from './LiveView';
 import { AppLogButton, AppLogPanel } from './AppLog';
 import { AppIcon, ChevronIcon, FullScreenIcon } from './icons';
@@ -363,6 +363,8 @@ export function AppSurface({
   const [lit, setLit] = useState<string | null>(null);
   const surface = useRef<HTMLDivElement | null>(null);
   const memoryKey = JSON.stringify([client.base, sid, viewId]);
+  // A view id is new at each open; the app key names the same app again.
+  const prefsKey = view?.key ? JSON.stringify([client.base, sid, view.key]) : null;
   const rememberScroll = useReviewScroll(memoryKey, surface, view !== null);
   const keyQueue = useRef<{ tail: Promise<unknown>; waiting: number }>({ tail: Promise.resolve(), waiting: 0 });
   const isReadOnly = !view || view.is_closed === true || view.is_disconnected === true;
@@ -559,28 +561,30 @@ export function AppSurface({
       }}
     >
       <ReviewMemoryContext value={memoryKey}>
-        {view ? (
-          <LiveViewPanel
-            view={view}
-            inDialog
-            isSettled={view.is_closed === true}
-            app={actions}
-            errors={fieldErrors}
-            onActivate={isReadOnly ? undefined : onActivate}
-            onSelect={isReadOnly ? undefined : onSelect}
-            onChange={isReadOnly ? undefined : onChange}
-            onSubmit={isReadOnly ? undefined : onSubmit}
-            load={
-              sid === null
-                ? undefined
-                : (nodeId, from, limit, query) => client.liveViewLog(sid, viewId, nodeId, from, limit, query)
-            }
-          />
-        ) : (
-          <p role="status" className="p-4 font-mono text-meta text-dialog-hint">
-            {isMissing ? 'This app could not be read.' : 'Loading…'}
-          </p>
-        )}
+        <ReviewPrefsContext value={prefsKey}>
+          {view ? (
+            <LiveViewPanel
+              view={view}
+              inDialog
+              isSettled={view.is_closed === true}
+              app={actions}
+              errors={fieldErrors}
+              onActivate={isReadOnly ? undefined : onActivate}
+              onSelect={isReadOnly ? undefined : onSelect}
+              onChange={isReadOnly ? undefined : onChange}
+              onSubmit={isReadOnly ? undefined : onSubmit}
+              load={
+                sid === null
+                  ? undefined
+                  : (nodeId, from, limit, query) => client.liveViewLog(sid, viewId, nodeId, from, limit, query)
+              }
+            />
+          ) : (
+            <p role="status" className="p-4 font-mono text-meta text-dialog-hint">
+              {isMissing ? 'This app could not be read.' : 'Loading…'}
+            </p>
+          )}
+        </ReviewPrefsContext>
       </ReviewMemoryContext>
     </div>
   );

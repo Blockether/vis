@@ -1,7 +1,9 @@
 /** Review work survives navigation, scoped to one gateway, session and app. */
-import { createContext, useContext, useLayoutEffect, useMemo, useState, useSyncExternalStore, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useState, useSyncExternalStore, type Dispatch, type RefObject, type SetStateAction } from 'react';
 
 export const ReviewMemoryContext = createContext<string | null>(null);
+/** The identity of an app that outlives its view: gateway, session and app key. */
+export const ReviewPrefsContext = createContext<string | null>(null);
 
 interface Cell<T> {
   read: () => T;
@@ -54,6 +56,49 @@ export function useVisitState<T>(key: string | null, initial: T | (() => T)) {
 export function useReviewState<T>(name: string, initial: T | (() => T)) {
   const identity = useContext(ReviewMemoryContext);
   return useVisitState(identity === null ? null : JSON.stringify([identity, name]), initial);
+}
+
+// View choices, such as hidden test files, are kept on this device after a reload.
+const PREFS_KEY = 'vis.reviewPrefs';
+// The oldest choice goes first, so throwaway sessions cannot grow the entry without bound.
+const KEEP_PREFS = 200;
+
+function readPrefs(): Record<string, boolean> {
+  try {
+    const parsed: unknown = JSON.parse(globalThis.localStorage?.getItem(PREFS_KEY) ?? 'null');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === 'boolean'));
+  } catch {
+    return {};
+  }
+}
+
+function writePref(key: string, value: boolean): void {
+  const prefs = readPrefs();
+  delete prefs[key];
+  prefs[key] = value;
+  const keys = Object.keys(prefs);
+  for (const stale of keys.slice(0, Math.max(0, keys.length - KEEP_PREFS))) delete prefs[stale];
+  try {
+    globalThis.localStorage?.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // Private mode or quota: the choice then lasts for this visit only.
+  }
+}
+
+/** A node's view choice for this visit, which also survives a reload of the page. */
+export function useReviewPref(name: string, initial: boolean) {
+  const lasting = useContext(ReviewPrefsContext);
+  const key = lasting === null ? null : JSON.stringify([lasting, name]);
+  const [value, write] = useReviewState(name, () => (key === null ? undefined : readPrefs()[key]) ?? initial);
+  const choose = useCallback(
+    (next: boolean) => {
+      write(next);
+      if (key !== null) writePref(key, next);
+    },
+    [write, key],
+  );
+  return [value, choose] as const;
 }
 
 const scrolls = new Map<string, number>();

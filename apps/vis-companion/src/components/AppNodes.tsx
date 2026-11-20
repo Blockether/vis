@@ -63,7 +63,7 @@ import { DiffSearch, useDiffSearch } from './AppDiffSearch';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { ariaShortcut } from '../lib/app-shortcuts';
 import { Button, CopyChip } from './ui';
-import { useReviewState } from '../lib/review-memory';
+import { useReviewPref, useReviewState } from '../lib/review-memory';
 import { CODE_DEFAULT_CLASS, highlightSegments, languageOfPath, type SyntaxSegment } from '../lib/syntax';
 
 /** What an app gives its review nodes. Absent, the nodes are read only. */
@@ -943,13 +943,13 @@ export function DiffNodeView({
   const [opened, setOpened] = useReviewState<ViewAnchor | null>(`${node.id}:opened`, null);
   const [selected, setSelected] = useReviewState<ViewAnchor | null>(`${node.id}:selected`, null);
   const [folded, setFolded] = useReviewState<ReadonlySet<string>>(`${node.id}:folded`, () => new Set());
-  const [split, setSplit] = useReviewState(`${node.id}:split`, false);
-  const [wrap, setWrap] = useReviewState(`${node.id}:wrap`, false);
-  const [tree, setTree] = useReviewState(`${node.id}:tree`, false);
+  const [split, setSplit] = useReviewPref(`${node.id}:split`, false);
+  const [wrap, setWrap] = useReviewPref(`${node.id}:wrap`, false);
+  const [tree, setTree] = useReviewPref(`${node.id}:tree`, false);
   const [pickedFile, setPickedFile] = useReviewState<string | null>(`${node.id}:pickedFile`, null);
   const [treeFolded, setTreeFolded] = useReviewState<ReadonlySet<string>>(`${node.id}:treeFolded`, () => new Set());
-  const [hideTests, setHideTests] = useReviewState(`${node.id}:hideTests`, false);
-  const [hideWhitespace, setHideWhitespace] = useReviewState(`${node.id}:hideWhitespace`, false);
+  const [hideTests, setHideTests] = useReviewPref(`${node.id}:hideTests`, false);
+  const [hideWhitespace, setHideWhitespace] = useReviewPref(`${node.id}:hideWhitespace`, false);
   const files = useMemo(
     () => filterDiffFiles(sourceFiles, hideTests, hideWhitespace),
     [sourceFiles, hideTests, hideWhitespace],
