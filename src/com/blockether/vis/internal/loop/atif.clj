@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.session.atif
+(ns com.blockether.vis.internal.loop.atif
   "ATIF export of the saved turns and tool calls of a session."
   (:require [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop.trajectory :as trajectory]

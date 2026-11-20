@@ -3,7 +3,6 @@
             [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
-            [com.blockether.vis.internal.gateway.server.instance :as instance]
             [com.blockether.vis.internal.loop.trajectory :as trajectory]
             [com.blockether.vis.internal.provider.credential-command :as cred]
             [lazytest.core :refer [defdescribe expect it]])
@@ -413,11 +412,9 @@
       (let [file (.toFile (.resolve (temp-dir) "gateway.token"))]
         (spit file "gateway-token-12345678\n")
         (with-redefs [discovery/default-token-file (constantly file)
-                      cred/cached-tokens (constantly ["command-key 12345678"])
-                      instance/server-state (atom {:token "custom-file-token-12345678"})]
+                      cred/cached-tokens (constantly ["command-key 12345678"])]
           (let [secrets (set (trajectory/run-secrets))]
             (expect (contains? secrets "gateway-token-12345678"))
-            (expect (contains? secrets "custom-file-token-12345678"))
             (expect (contains? secrets "command-key 12345678"))
             (expect (contains? secrets "command-key+12345678"))
             (expect (contains? secrets "command-key%2012345678")))))))

@@ -5,6 +5,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
+            [com.blockether.vis.internal.gateway.server.instance :as instance]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
@@ -249,6 +250,20 @@
                                                    (state/export-atif sid))
                                                  "ss-0123456789"))))
                    (finally (toggles/unregister-toggle! id)))))))
+    (it "replaces the token of this gateway server in both exports"
+        (with-store
+          (fn [store]
+            (let [secret "server-token-0123456789"
+                  sid (session! store "Server token")
+                  tid (turn! store sid "Run" :success)]
+              (ps/db-store-iteration! store {:session-turn-id tid :code secret :forms [{:src secret :stdout secret}]})
+              (with-redefs [trajectory/run-secrets (constantly [])
+                            instance/server-state (atom {:token secret})]
+                (let [tree (:tree (snapshot/decode (state/export-session sid)))]
+                  (expect (not (str/includes? (pr-str (walk/postwalk #(if (bytes? %) (try (nippy/thaw %) (catch Exception _ %)) %)
+                                                                     (dissoc tree :blobs)))
+                                              secret)))
+                  (expect (not (str/includes? (state/export-atif sid) secret)))))))))
     (it "replaces credentials from the .env of the session workspace in both exports"
         (with-store
           (fn [store]

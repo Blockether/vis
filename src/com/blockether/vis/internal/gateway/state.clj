@@ -57,7 +57,8 @@
     [com.blockether.vis.internal.foundation.shell-log :as shell-log]
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.gateway.runtime :as runtime]
-    [com.blockether.vis.internal.session.atif :as atif]
+    [com.blockether.vis.internal.gateway.server.instance :as instance]
+    [com.blockether.vis.internal.loop.atif :as atif]
     [com.blockether.vis.internal.session.atif-import :as atif-import]
     [com.blockether.vis.internal.session.snapshot :as snapshot]
     [com.blockether.vis.internal.workspace.core :as workspace]
@@ -8724,12 +8725,14 @@
 
 (defn- session-secrets
   "The credentials that an export of session `sid` must not carry: those of this process,
-   of the `.env` and `environment:` of the workspace of `sid`, and its secret settings."
+   of the `.env` and `environment:` of the workspace of `sid`, its secret settings and the
+   token of this gateway server, also from another token file."
   [db sid]
   (binding [workspace/*workspace-root* (or (some-> (resolve-workspace db sid) :root)
                                            workspace/*workspace-root*)]
     (into (trajectory/run-secrets)
-          (trajectory/setting-secrets (persistance/db-scoped-settings db "session" sid)))))
+          (concat (trajectory/setting-secrets (persistance/db-scoped-settings db "session" sid))
+                  (keep not-empty [(:token @instance/server-state)])))))
 
 (defn export-session
   "The redacted `.vissnap` snapshot bytes of `sid` and its managed children (#405). Answers nil for

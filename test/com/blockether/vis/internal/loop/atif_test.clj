@@ -1,8 +1,8 @@
-(ns com.blockether.vis.internal.session.atif-test
+(ns com.blockether.vis.internal.loop.atif-test
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.persistance.sqlite.core :as db]
-            [com.blockether.vis.internal.session.atif :as atif]
+            [com.blockether.vis.internal.loop.atif :as atif]
             [com.blockether.vis.test-temp :as temp]
             [lazytest.core :refer [defdescribe expect it]]
             [next.jdbc :as jdbc]))

@@ -45,7 +45,6 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
-            [com.blockether.vis.internal.gateway.server.instance :as instance]
             [com.blockether.vis.internal.provider.credential-command :as cred]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.error :as error]
@@ -808,13 +807,10 @@
         :else nil))
 
 (defn- gateway-tokens
-  "The bearer tokens of the local gateway: the one this server uses, also from another
-   token file, and the one in the default token file."
+  "The bearer token in the default token file of the local gateway."
   []
   (let [file (discovery/default-token-file)]
-    (keep not-empty
-          [(:token @instance/server-state)
-           (when (.isFile file) (try (str/trim (slurp file)) (catch Exception _ nil)))])))
+    (keep not-empty [(when (.isFile file) (try (str/trim (slurp file)) (catch Exception _ nil)))])))
 
 (defn run-secrets
   "The known credentials of this process and of the bound workspace, also JSON-escaped:
@@ -876,9 +872,13 @@
 (defn- base64-text
   "The UTF-8 text that the base64 or base64url `run` encodes, or nil."
   [^String run]
-  (let [body (str/replace run #"=+$|\r|\n" "")]
+  (let [body (cond-> run
+               (or (str/includes? run "=") (str/includes? run "\n")) (str/replace #"=+$|\r|\n" ""))]
     (when-not (= 1 (mod (count body) 4))
-      (try (String. (.decode (if (re-find #"[_-]" body) (Base64/getUrlDecoder) (Base64/getDecoder)) body)
+      (try (String. (.decode (if (or (str/includes? body "_") (str/includes? body "-"))
+                               (Base64/getUrlDecoder)
+                               (Base64/getDecoder))
+                             ^String body)
                     StandardCharsets/UTF_8)
            (catch IllegalArgumentException _ nil)))))
 
@@ -896,13 +896,65 @@
   "A run of base64 or base64url text, also wrapped in lines of 64 or 76 characters."
   #"(?<![A-Za-z0-9+/_-])(?:(?:(?:[A-Za-z0-9+/]{76}|[A-Za-z0-9+/]{64})\r?\n)++[A-Za-z0-9+/]*+|[A-Za-z0-9+/_-]{11,}+)={0,2}(?![A-Za-z0-9+/_=-])")
 
+(def ^:private ^"[Z" base64-chars
+  "True at the code of each base64 and base64url character."
+  (let [table (boolean-array 128)]
+    (doseq [c "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/_-"]
+      (aset table (int c) true))
+    table))
+
+(defn- base64-end
+  "The index after the base64 characters that start at `i` in `s`."
+  ^long [^String s ^long i]
+  (let [n (.length s)
+        ^booleans table base64-chars]
+    (loop [j i]
+      (if (< j n)
+        (let [c (int (.charAt s j))]
+          (if (and (< c 128) (aget table c)) (recur (inc j)) j))
+        j))))
+
+(defn- replace-base64
+  "Replace in `s` each [[base64-run]] for which `hidden?` is true. A loop over the
+   characters finds the runs, because a regex scan of each position is slow."
+  [^String s hidden?]
+  (let [n (.length s)
+        m (doto (re-matcher base64-run s) (.useTransparentBounds true) (.useAnchoringBounds false))]
+    (loop [i 0, from 0, out nil]
+      (if (>= i n)
+        (if out (str (.append ^StringBuilder out s (int from) (int n))) s)
+        (let [end (base64-end s i)
+              len (- end i)]
+          (if (< len 11)
+            (recur (max end (inc i)) from out)
+            ;; Only a line of 64 or 76 characters can start wrapped base64.
+            (let [e (if (and (or (= len 64) (= len 76))
+                             (< end n)
+                             (#{\return \newline} (.charAt s end)))
+                      (when (.lookingAt (.region m (int i) (int n))) (.end m))
+                      (let [e (loop [e end]
+                                (if (and (< e n) (< (- e end) 2) (= \= (.charAt s e))) (recur (inc e)) e))]
+                        (when-not (and (< e n) (or (= \= (.charAt s e)) (< e (base64-end s e)))) e)))]
+              (cond (nil? e) (recur end from out)
+                    (hidden? (subs s i e))
+                    (recur (long e) (long e) (doto ^StringBuilder (or out (StringBuilder. n))
+                                 (.append s (int from) (int i))
+                                 (.append ^String redacted)))
+                    :else (recur (long e) from out)))))))))
+
 (defn- base64-candidate?
   "True for a run long enough to hold a credential of 8 bytes, with a digit or with both
    letter cases."
   [^String run]
-  (and (<= 11 (count run))
-       (or (boolean (re-find #"[0-9]" run))
-           (and (boolean (re-find #"[a-z]" run)) (boolean (re-find #"[A-Z]" run))))))
+  (and (<= 11 (.length run))
+       (loop [i 0, lower false, upper false]
+         (if (< i (.length run))
+           (let [c (.charAt run i)]
+             (cond (Character/isDigit c) true
+                   (Character/isLowerCase c) (if upper true (recur (inc i) true upper))
+                   (Character/isUpperCase c) (if lower true (recur (inc i) lower true))
+                   :else (recur (inc i) lower upper)))
+           false))))
 
 (def ^:private authorization-credential
   "The credential after the scheme of an `Authorization` value, also in JSON or code."
@@ -969,21 +1021,76 @@
       (some #(str/includes? s %) token-markers)
       (str/replace token-format #(if (or (not (str/starts-with? % "eyJ")) (jwt? %)) redacted %)))))
 
+(defn- pair-code
+  "A code of the two characters at `i` in `s`, from 0 to 65535."
+  ^long [^String s ^long i]
+  (bit-or (bit-shift-left (bit-and (int (.charAt s i)) 0xFF) 8)
+          (bit-and (int (.charAt s (inc i))) 0xFF)))
+
+(defn- secret-index
+  "`secrets` in a table by the [[pair-code]] of their start, longest first. Nil when a
+   secret has less than two characters."
+  [secrets]
+  (when (every? #(<= 2 (count %)) secrets)
+    (let [table (object-array 65536)]
+      (doseq [^String secret (sort-by count > (distinct secrets))]
+        (let [k (pair-code secret 0)]
+          (aset table k (conj (or (aget table k) []) secret))))
+      table)))
+
+(defn- secret-at
+  "The longest secret of `table` that starts at `i` in `s`, or nil."
+  [^objects table ^String s ^long i]
+  (when (< (inc i) (.length s))
+    (when-let [secrets (aget table (pair-code s i))]
+      (some (fn [^String secret] (when (.startsWith s secret (int i)) secret)) secrets))))
+
+(defn- replace-secrets
+  "Replace in `s` each secret of `table`, from the left, the longest first. This is one
+   scan of `s`, while a regex of all secrets tries each secret at each position."
+  [^objects table ^String s]
+  (let [n (.length s)
+        last (dec n)]
+    (loop [i 0, from 0, out nil]
+      (if (>= i last)
+        (if out (str (.append ^StringBuilder out s (int from) (int n))) s)
+        (if-let [^String secret (when (aget table (bit-or (bit-shift-left (bit-and (int (.charAt s i)) 0xFF) 8)
+                                                          (bit-and (int (.charAt s (inc i))) 0xFF)))
+                                  (secret-at table s i))]
+          (let [e (+ i (.length secret))]
+            (recur e e (doto ^StringBuilder (or out (StringBuilder. n))
+                         (.append s (int from) (int i))
+                         (.append ^String redacted))))
+          (recur (inc i) from out))))))
+
+(defn- has-secret?
+  "True when `s` holds a secret of `table`."
+  [^objects table ^String s]
+  (loop [i 0]
+    (cond (>= i (.length s)) false
+          (secret-at table s i) true
+          :else (recur (inc i)))))
+
 (defn redactor
   "Compile the credential pattern once for all values in an export. Each of `secrets`,
    and each credential that its form shows, becomes `[REDACTED]`."
   [secrets]
-  (let [known (when (seq secrets)
+  (let [index (when (seq secrets) (secret-index secrets))
+        known (when (and (seq secrets) (not index))
                 (re-pattern (str/join "|" (map #(Pattern/quote %) (sort-by count > secrets)))))
+        replace-known (cond index #(replace-secrets index %)
+                            known #(str/replace % known redacted)
+                            :else identity)
+        known? (cond index #(has-secret? index %)
+                     known #(boolean (re-find known %))
+                     :else (constantly false))
         ;; A base64 run hides a credential when its text holds a known value or a
         ;; credential form. The whole run goes, as the parts of base64 do not split.
         hidden? (fn [^String run]
                   (when-let [text (when (base64-candidate? run) (base64-text run))]
-                    (or (and known (re-find known text))
+                    (or (known? text)
                         (and (printable? text) (not= text (redact-forms text))))))
-        text (fn [s]
-               (let [s (if known (str/replace s known redacted) s)]
-                 (redact-forms (str/replace s base64-run #(if (hidden? %) redacted %)))))]
+        text (fn [s] (redact-forms (replace-base64 (replace-known s) hidden?)))]
     (fn walk [x]
       (cond (string? x) (text x)
             (map? x) (into {}
