@@ -96,6 +96,10 @@ label input {
   justify-content: space-between;
   gap: 0.5rem;
 }
+/* Each filter group is its own nav, so its heading is a first child: keep the manual's section gap. */
+#catalog-filters .nav + .nav .nav-sec {
+  margin-top: 1.6rem;
+}
 #catalog-filters .filter-label {
   min-width: 0;
   overflow-wrap: anywhere;

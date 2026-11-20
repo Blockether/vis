@@ -325,6 +325,19 @@ test('extension detail spacing overrides prose margins without changing README t
   expect($('.detail-heading .tag')).toBeNull();
   expect($('#source-link').href).toBe(item.source_url);
 });
+test('the Tags heading keeps the section gap below the Extensions filters', () => {
+  document.body.innerHTML = shellHTML({ items: fixtures });
+  const style = document.createElement('style');
+  style.textContent =
+    readFileSync('../../resources/vis-docs/assets/theme.css', 'utf8') +
+    '\n' +
+    readFileSync('web/style.css', 'utf8');
+  document.body.append(style);
+  const headings = document.querySelectorAll('#catalog-filters .nav-sec');
+  expect([...headings].map((node) => node.textContent)).toEqual(['Extensions', 'Tags']);
+  expect(window.getComputedStyle(headings[0]).marginTop).toBe('0px');
+  expect(window.getComputedStyle(headings[1]).marginTop).toBe('1.6rem');
+});
 test('repository anti-spam check is separated from the review button', () => {
   const style = document.createElement('style');
   style.textContent = readFileSync('web/style.css', 'utf8');
