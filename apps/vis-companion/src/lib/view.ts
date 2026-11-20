@@ -95,10 +95,14 @@ export const VIEW_ACTIONS = [
 ] as const;
 export type ViewActionName = (typeof VIEW_ACTIONS)[number];
 
-/** A diff line that a thread belongs to: the file, the old or new side and the line. */
+/** The diff lines that a thread belongs to: the file, the old or new side and the line. */
 export interface ViewAnchor {
   path: string;
   side: 'old' | 'new';
+  /** The side of the first line of a range, when it is not `side`. */
+  start_side?: 'old' | 'new';
+  /** The first line of a range. `line` is then the last line. */
+  start_line?: number;
   line: number;
 }
 

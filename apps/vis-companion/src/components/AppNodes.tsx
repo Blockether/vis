@@ -4,7 +4,7 @@
  * `draft` and `submit` actions. Without an app the threads are read only.
  */
 
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
@@ -16,6 +16,11 @@ import {
 } from '../lib/app-actions';
 import {
   anchorKey,
+  anchorLines,
+  anchorRange,
+  lineOrders,
+  startOf,
+  inSpan,
   fileChange,
   filterDiffFiles,
   type DiffSearchMatch,
@@ -98,11 +103,16 @@ const STATUS_INK: Record<AppActionStatus, string> = {
   failed: 'text-err',
 };
 
+interface ActionStatusProps {
+  status: AppActionStatus;
+  isOnBand?: boolean;
+}
+
 /**
  * The state word of a Save or a Send. Nothing shows while it is idle. On a dialog
  * band the word takes the band's ink: a warning amber on the amber band is unreadable.
  */
-export function ActionStatus({ status, isOnBand = false }: { status: AppActionStatus; isOnBand?: boolean }) {
+export function ActionStatus({ status, isOnBand = false }: ActionStatusProps) {
   if (status === 'idle') return null;
   return (
     <span
@@ -119,7 +129,11 @@ function authorWord(message: LiveMessage): string {
   return { human: 'Human', agent: 'Agent', extension: 'Extension' }[message.author.kind];
 }
 
-function Messages({ messages }: { messages: readonly LiveMessage[] }) {
+interface MessagesProps {
+  messages: readonly LiveMessage[];
+}
+
+function Messages({ messages }: MessagesProps) {
   if (messages.length === 0) return null;
   return (
     <ol className="space-y-2">
@@ -137,26 +151,21 @@ function Messages({ messages }: { messages: readonly LiveMessage[] }) {
   );
 }
 
-/**
- * The editor of one draft. Save keeps the draft on the host; Cancel closes the
- * editor and keeps the history and the saved draft. A blank Save on a new line
- * creates nothing.
- */
-function DraftEditor({
-  label,
-  saved,
-  memoryId,
-  submitLabel = 'Save',
-  onSave,
-  onClose,
-}: {
+interface DraftEditorProps {
   label: string;
   saved: string;
   memoryId: string;
   submitLabel?: string;
   onSave: (body: string) => Promise<AppActionResult>;
   onClose: () => void;
-}) {
+}
+
+/**
+ * The editor of one draft. Save keeps the draft on the host; Cancel closes the
+ * editor and keeps the history and the saved draft. A blank Save on a new line
+ * creates nothing.
+ */
+function DraftEditor({ label, saved, memoryId, submitLabel = 'Save', onSave, onClose }: DraftEditorProps) {
   const [text, setText] = useReviewState(`${memoryId}:text`, saved);
   const close = () => {
     setText(saved);
@@ -246,18 +255,15 @@ function DraftEditor({
   );
 }
 
-/** One thread: its history, its saved draft and a way to edit the draft. */
-function ThreadBlock({
-  thread,
-  nodeId,
-  actions,
-  title,
-}: {
+interface ThreadBlockProps {
   thread: LiveThread;
   nodeId: string;
   actions?: AppNodeActions;
   title?: string;
-}) {
+}
+
+/** One thread: its history, its saved draft and a way to edit the draft. */
+function ThreadBlock({ thread, nodeId, actions, title }: ThreadBlockProps) {
   const [isEditing, setEditing] = useReviewState(`${nodeId}:${thread.id}:editing`, false);
   const draft = thread.draft ?? '';
   const canEdit = Boolean(actions) && !actions?.isReadOnly;
@@ -303,21 +309,31 @@ const RECEIPT_WORDS: Record<LiveSubmission['status'], string> = {
   failed: 'Failed',
 };
 
-/** The Send control of a node and the receipts of its earlier Sends. */
-function SendBar({
-  nodeId,
-  drafts,
-  actions,
-  label,
-  className = '',
-}: {
+const RECEIPT_TONES: Record<LiveSubmission['status'], string> = {
+  accepted: 'text-dialog-hint',
+  delivered: 'text-dialog-hint',
+  processing: 'text-dialog-hint',
+  answered: 'text-ok',
+  failed: 'text-err',
+};
+
+/** The words of the Send button: a retry, or the number of drafts that it sends. */
+function sendLabel(status: AppActionStatus, drafts: number): string {
+  if (isRetryable(status)) return 'Retry send';
+  return drafts > 1 ? `Send ${drafts}` : 'Send';
+}
+
+interface SendBarProps {
   nodeId: string;
   drafts: number;
   actions: AppNodeActions;
   label: string;
   /** Position only: the inset of the node that holds the bar. */
   className?: string;
-}) {
+}
+
+/** The Send control of a node and the receipts of its earlier Sends. */
+function SendBar({ nodeId, drafts, actions, label, className = '' }: SendBarProps) {
   const keys = useRef(new SendKeys());
   const [status, setStatus] = useState<AppActionStatus>('idle');
   const [isRetryPending, setRetryPending] = useState(false);
@@ -344,7 +360,7 @@ function SendBar({
             aria-label={label}
             onClick={() => void send()}
           >
-            {isRetryable(status) ? 'Retry send' : drafts > 1 ? `Send ${drafts}` : 'Send'}
+            {sendLabel(status, drafts)}
           </Button>
           {status !== 'saved' && <ActionStatus status={status} />}
         </div>
@@ -355,13 +371,7 @@ function SendBar({
             <li
               key={receipt.id}
               data-submission-id={receipt.id}
-              className={`font-mono text-ui ${
-                receipt.status === 'failed'
-                  ? 'text-err'
-                  : receipt.status === 'answered'
-                    ? 'text-ok'
-                    : 'text-dialog-hint'
-              }`}
+              className={`font-mono text-ui ${RECEIPT_TONES[receipt.status]}`}
             >
               {RECEIPT_WORDS[receipt.status]}
               {receipt.comments && receipt.comments.length > 0
@@ -380,8 +390,13 @@ function savedDrafts(threads: readonly LiveThread[]): number {
   return threads.filter((thread) => (thread.draft ?? '').trim() !== '').length;
 }
 
+interface ThreadNodeViewProps {
+  node: LiveThreadNode;
+  actions?: AppNodeActions;
+}
+
 /** A thread node: one discussion with its own Send. */
-export function ThreadNodeView({ node, actions }: { node: LiveThreadNode; actions?: AppNodeActions }) {
+export function ThreadNodeView({ node, actions }: ThreadNodeViewProps) {
   const thread: LiveThread = {
     id: node.id,
     messages: node.messages,
@@ -410,6 +425,49 @@ function numberWidth(digits: number): number {
   return digits === 1 ? 41.11 : Math.max(48.94, (digits + 3.25) * 7.83);
 }
 
+/** One pointer drag over the diff lines. A `comment` drag opens an editor on its lines when it ends. */
+interface LineDrag {
+  kind: 'select' | 'comment';
+  pointerId: number;
+  pivot: ViewAnchor;
+  current: ViewAnchor;
+}
+
+/**
+ * The line under the pointer, in the file of the drag. Like `@pierre/diffs`, the point
+ * decides, so the code of a row and the gutter of a row both count. A split row has two
+ * lines: the column under the pointer gives the side.
+ */
+function lineAt(event: PointerEvent, drag: LineDrag): ViewAnchor | null {
+  const hit =
+    document.elementFromPoint?.(event.clientX, event.clientY) ??
+    (event.target instanceof Element ? event.target : null);
+  const cells = [...(hit?.closest('tr')?.querySelectorAll<HTMLElement>('[data-line-number]') ?? [])].filter(
+    (cell) => cell.dataset.linePath === drag.pivot.path,
+  );
+  const cell = [...cells].reverse().find((one) => one.getBoundingClientRect().left <= event.clientX) ?? cells[0];
+  if (!cell) return null;
+  const side = cell.dataset.lineSide === 'old' ? 'old' : 'new';
+  return { path: drag.pivot.path, side, line: Number(cell.dataset.lineNumber) };
+}
+
+interface GutterProps {
+  line: AppDiffLine;
+  digits: number;
+  canComment: boolean;
+  path: string;
+  /** `isExtended` is a Shift click: it selects the lines from the last picked line. */
+  onActivate: (line: AppDiffLine, isExtended: boolean) => void;
+  /** A pointer press on the number or on the control starts a drag over the lines. */
+  onPress: (line: AppDiffLine, kind: LineDrag['kind'], event: ReactPointerEvent) => void;
+  side?: 'old' | 'new';
+  /** The line is the last line of the selection. It holds the Add comment control. */
+  selected: boolean;
+  /** An editor is open in this diff. Like T3 Code, the hover control then stays away. */
+  isDrafting: boolean;
+  onComment: (line: AppDiffLine) => void;
+}
+
 /** The number stays visible while the file scrolls sideways. */
 function Gutter({
   line,
@@ -417,27 +475,30 @@ function Gutter({
   canComment,
   path,
   onActivate,
+  onPress,
   side = 'new',
   selected,
+  isDrafting,
   onComment,
-}: {
-  line: AppDiffLine;
-  digits: number;
-  canComment: boolean;
-  path: string;
-  onActivate: (line: AppDiffLine) => void;
-  side?: 'old' | 'new';
-  selected: boolean;
-  onComment: (line: AppDiffLine) => void;
-}) {
+}: GutterProps) {
   return (
-    <td data-kind={line.kind} className="diff-gutter" style={{ width: numberWidth(digits) }}>
+    <td
+      data-kind={line.kind}
+      className="diff-gutter"
+      style={{ width: numberWidth(digits) }}
+      data-line-path={line.anchor.path}
+      data-line-side={line.anchor.side}
+      data-line-number={line.anchor.line}
+    >
       {canComment ? (
         <button
           type="button"
           className="diff-line-button app-focus-ring"
           aria-label={`Comment on ${path} ${line.anchor.side === 'old' ? 'old ' : ''}line ${line.anchor.line}`}
-          onClick={() => onActivate(line)}
+          onClick={(event) => onActivate(line, event.shiftKey)}
+          onPointerDown={(event) => {
+            if (event.button === 0 && !event.shiftKey && event.pointerType !== 'touch') onPress(line, 'select', event);
+          }}
         >
           {side === 'old' ? line.old_line : line.anchor.line}
         </button>
@@ -446,12 +507,17 @@ function Gutter({
       ) : (
         line.anchor.line
       )}
-      {selected && canComment && (
+      {/* A pointer gets the control on the line under it. The keyboard and a touch
+          screen select the line first, through its number, and then get the control. */}
+      {canComment && (selected || !isDrafting) && (
         <button
           type="button"
           className="diff-add-comment app-focus-ring"
-          aria-label="Add comment"
+          {...(selected ? { 'aria-label': 'Add comment' } : { 'aria-hidden': true, tabIndex: -1, 'data-hover-only': '' })}
           onClick={() => onComment(line)}
+          onPointerDown={(event) => {
+            if (event.button === 0) onPress(line, 'comment', event);
+          }}
         >
           <PlusIcon className="size-3" />
         </button>
@@ -460,8 +526,14 @@ function Gutter({
   );
 }
 
+interface SearchTextProps {
+  text: string;
+  offset: number;
+  match?: DiffSearchMatch;
+}
+
 /** The current search occurrence does not erase a changed word's tint. */
-function SearchText({ text, offset, match }: { text: string; offset: number; match?: DiffSearchMatch }) {
+function SearchText({ text, offset, match }: SearchTextProps) {
   if (!match || match.end <= offset || match.start >= offset + text.length) return text;
   const start = Math.max(0, match.start - offset);
   const end = Math.min(text.length, match.end - offset);
@@ -512,19 +584,16 @@ function paintedRuns(
   });
 }
 
-/** Changed words and code colours retain the same line box as the surrounding code. */
-function LineCode({
-  line,
-  words,
-  match,
-  language,
-}: {
+interface LineCodeProps {
   line: AppDiffLine;
   words?: readonly DiffSpan[];
   match?: DiffSearchMatch;
   /** The Prism language of the file; '' draws the code in one colour. */
   language: string;
-}) {
+}
+
+/** Changed words and code colours retain the same line box as the surrounding code. */
+function LineCode({ line, words, match, language }: LineCodeProps) {
   const parts = words ?? [{ text: line.text, isChanged: false }];
   const colours = language ? highlightSegments(line.text, language) : [];
   return (
@@ -570,15 +639,25 @@ interface HunkProps {
   searchMatch: DiffSearchMatch | undefined;
   onComment: (line: AppDiffLine) => void;
   actions?: AppNodeActions;
-  onActivate: (line: AppDiffLine) => void;
+  onActivate: (line: AppDiffLine, isExtended: boolean) => void;
+  onPress: (line: AppDiffLine, kind: LineDrag['kind'], event: ReactPointerEvent) => void;
+  /** The position of each line in its file, for the rows of a range. */
+  orders: ReadonlyMap<string, number>;
   onClose: () => void;
 }
 
+interface LineThreadsProps {
+  lines: AppDiffLine[];
+  model: HunkProps;
+}
+
 /** A thread occupies the file width, rather than the code's scroll width. */
-function LineThreads({ lines, model }: { lines: AppDiffLine[]; model: HunkProps }) {
+function LineThreads({ lines, model }: LineThreadsProps) {
   const threads = lines.flatMap((line) => model.byAnchor.get(anchorKey(line.anchor)) ?? []);
-  const selected = lines.find((line) => model.opened && anchorKey(line.anchor) === anchorKey(model.opened));
-  if (!threads.length && !selected) return null;
+  const opened = lines.some((line) => model.opened && anchorKey(line.anchor) === anchorKey(model.opened))
+    ? model.opened
+    : null;
+  if (!threads.length && !opened) return null;
   return (
     <tr>
       <td colSpan={model.split ? 4 : 2} className="p-0">
@@ -589,18 +668,18 @@ function LineThreads({ lines, model }: { lines: AppDiffLine[]; model: HunkProps 
               thread={thread}
               nodeId={model.nodeId}
               actions={model.actions}
-              title={`Thread on ${model.file.path} line ${thread.anchor?.line}`}
+              title={`Thread on ${model.file.path} ${thread.anchor ? anchorLines(thread.anchor) : 'line'}`}
             />
           ))}
-          {selected && model.actions && (
+          {opened && model.actions && (
             <DraftEditor
-              memoryId={`${model.nodeId}:${anchorKey(selected.anchor)}`}
-              label={`Comment on ${model.file.path} line ${selected.anchor.line}`}
+              memoryId={`${model.nodeId}:${anchorKey(startOf(opened))}:${anchorKey(opened)}`}
+              label={`Comment on ${model.file.path} ${anchorLines(opened)}`}
               saved=""
               submitLabel="Comment"
               onSave={(body) =>
                 model.actions!.draft(model.nodeId, {
-                  anchor: selected.anchor,
+                  anchor: opened,
                   body,
                 })
               }
@@ -627,8 +706,10 @@ function HunkView(model: HunkProps) {
           path={model.file.path}
           canComment={Boolean(model.actions) && !model.actions?.isReadOnly}
           onActivate={model.onActivate}
+          onPress={model.onPress}
           side={side}
           selected={Boolean(model.selected && anchorKey(line.anchor) === anchorKey(model.selected))}
+          isDrafting={model.opened !== null}
           onComment={model.onComment}
         />
         <LineCode
@@ -695,32 +776,25 @@ function HunkView(model: HunkProps) {
   );
 }
 
-function DiffRow({
-  old,
-  next,
-  split,
-  lines,
-  model,
-  cell,
-}: {
+interface DiffRowProps {
   old?: AppDiffLine;
   next?: AppDiffLine;
   split: boolean;
   lines: AppDiffLine[];
   model: HunkProps;
   cell: (line: AppDiffLine | undefined, side: 'old' | 'new') => ReactNode;
-}) {
+}
+
+function DiffRow({ old, next, split, lines, model, cell }: DiffRowProps) {
+  const isSelected = lines.some((line) => inSpan(model.selected, line.anchor, model.orders));
+  const selection = model.selected?.start_line === undefined ? 'single' : 'range';
   return (
     <>
       <tr
         data-anchor={next ? anchorKey(next.anchor) : undefined}
         data-search-current={lines.some((line) => anchorKey(line.anchor) === model.searchAnchor) || undefined}
         data-line-kind={!split ? next?.kind : undefined}
-        data-selected-line={
-          lines.some((line) => model.selected && anchorKey(line.anchor) === anchorKey(model.selected))
-            ? 'single'
-            : undefined
-        }
+        data-selected-line={isSelected ? selection : undefined}
       >
         {split && cell(old, 'old')}
         {cell(next, 'new')}
@@ -737,11 +811,17 @@ const CHANGE_MARK: Record<ReturnType<typeof fileChange>, { letter: string; word:
   modified: { letter: 'M', word: 'Modified', ink: 'text-link-fg' },
 };
 
+interface DiffStatProps {
+  additions: number;
+  deletions: number;
+  isFile?: boolean;
+}
+
 /**
  * The +N and -N of a file or a diff: removals first. A file hides a zero side, like
  * T3 Code. A binary file has no lines to count, so it shows no counts.
  */
-function DiffStat({ additions, deletions, isFile = false }: { additions: number; deletions: number; isFile?: boolean }) {
+function DiffStat({ additions, deletions, isFile = false }: DiffStatProps) {
   const both = !isFile || additions === deletions || (additions > 0 && deletions > 0);
   return (
     <span className="diff-stat flex shrink-0 items-center gap-1 font-mono tabular-nums">
@@ -751,19 +831,17 @@ function DiffStat({ additions, deletions, isFile = false }: { additions: number;
   );
 }
 
+interface FileHeaderProps {
+  file: AppDiffFile;
+  isOpen: boolean;
+  onToggle: () => void;
+}
+
 /**
  * The band of one file: chevron, change mark, path, copy and the line counts. It
  * stays at the top while its lines scroll by, and a press folds the file.
  */
-function FileHeader({
-  file,
-  isOpen,
-  onToggle,
-}: {
-  file: AppDiffFile;
-  isOpen: boolean;
-  onToggle: () => void;
-}) {
+function FileHeader({ file, isOpen, onToggle }: FileHeaderProps) {
   const kind = fileChange(file);
   const change = CHANGE_MARK[kind];
   const renamed = file.old_path && file.new_path && file.old_path !== file.new_path;
@@ -802,18 +880,30 @@ function FileHeader({
   );
 }
 
+interface HunkSeparatorProps {
+  hunks: readonly AppDiffHunk[];
+  at: number;
+}
+
 /** The quiet bar between two hunks: how many unchanged lines the diff leaves out. */
-function HunkSeparator({ hunks, at }: { hunks: readonly AppDiffHunk[]; at: number }) {
+function HunkSeparator({ hunks, at }: HunkSeparatorProps) {
   const hidden = hiddenLinesBefore(hunks, at);
   if (hidden === 0) return null;
   const header = hunks[at].header;
+  const unit = hidden === 1 ? 'line' : 'lines';
   return (
     <ContextBand
       reach={at === 0 ? 'up' : 'both'}
       title={`${header}; source context is not included in this patch`}
-      label={hidden === null ? header : `${hidden} unmodified ${hidden === 1 ? 'line' : 'lines'}`}
+      label={hidden === null ? header : `${hidden} unmodified ${unit}`}
     />
   );
+}
+
+interface ContextBandProps {
+  label: string;
+  title: string;
+  reach: 'up' | 'down' | 'both';
 }
 
 /**
@@ -821,7 +911,7 @@ function HunkSeparator({ hunks, at }: { hunks: readonly AppDiffHunk[]; at: numbe
  * where the left-out lines are, as in T3 Code: up above the first hunk, both ways
  * between two hunks, down after the last.
  */
-function ContextBand({ label, title, reach }: { label: string; title: string; reach: 'up' | 'down' | 'both' }) {
+function ContextBand({ label, title, reach }: ContextBandProps) {
   return (
     <div className="diff-context" title={title}>
       <span className="diff-context-marker" aria-hidden>
@@ -922,17 +1012,15 @@ function useNearFiles(files: readonly AppDiffFile[], sections: { current: Map<st
   };
 }
 
-/** Unified and split diffs share anchored comments, file controls and one scroller per file. */
-export function DiffNodeView({
-  node,
-  actions,
-  commands,
-}: {
+interface DiffNodeViewProps {
   node: LiveDiffNode;
   actions?: AppNodeActions;
   /** The click and keys of the toolbar buttons. Absent, they are read only. */
   commands?: DiffCommandActions;
-}) {
+}
+
+/** Unified and split diffs share anchored comments, file controls and one scroller per file. */
+export function DiffNodeView({ node, actions, commands }: DiffNodeViewProps) {
   const {
     files: sourceFiles,
     words,
@@ -940,8 +1028,66 @@ export function DiffNodeView({
     total,
     elsewhere,
   } = useMemo(() => diffModel(node.patch, node.threads), [node.patch, node.threads]);
+
   const [opened, setOpened] = useReviewState<ViewAnchor | null>(`${node.id}:opened`, null);
   const [selected, setSelected] = useReviewState<ViewAnchor | null>(`${node.id}:selected`, null);
+  const orders = useMemo(() => lineOrders(sourceFiles), [sourceFiles]);
+
+  // The line where a Shift click starts its range.
+  const pivot = useRef<ViewAnchor | null>(null);
+  const drag = useRef<LineDrag | null>(null);
+  // The click that follows a press is part of the drag, not a second action.
+  const isClickSkipped = useRef(false);
+  const [isDragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const move = (event: PointerEvent) => {
+      const held = drag.current;
+      if (!held || event.pointerId !== held.pointerId) return;
+      event.preventDefault();
+      const at = lineAt(event, held);
+      if (!at || anchorKey(at) === anchorKey(held.current)) return;
+      held.current = at;
+      setSelected(anchorRange(held.pivot, at, orders));
+    };
+    const end = (event: PointerEvent) => {
+      const held = drag.current;
+      if (!held || event.pointerId !== held.pointerId) return;
+      drag.current = null;
+      setDragging(false);
+      if (event.type === 'pointercancel') return;
+      const range = anchorRange(held.pivot, lineAt(event, held) ?? held.current, orders);
+      setSelected(range);
+      if (held.kind === 'comment') setOpened(range);
+      isClickSkipped.current = true;
+      setTimeout(() => {
+        isClickSkipped.current = false;
+      });
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
+    return () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', end);
+      document.removeEventListener('pointercancel', end);
+    };
+  }, [isDragging, setSelected, setOpened, orders]);
+
+  const press = (line: AppDiffLine, kind: LineDrag['kind'], event: ReactPointerEvent) => {
+    event.preventDefault();
+    // The control on a line of the selection drags the end of the selection, as in T3 Code.
+    const held = kind === 'comment' && selected && inSpan(selected, line.anchor, orders) ? selected : null;
+    const start = held ? startOf(held) : line.anchor;
+    const current = held ? { path: held.path, side: held.side, line: held.line } : line.anchor;
+    drag.current = { kind, pointerId: event.pointerId, pivot: start, current };
+    pivot.current = start;
+    setSelected(anchorRange(start, current, orders));
+    setOpened(null);
+    setDragging(true);
+  };
+
   const [folded, setFolded] = useReviewState<ReadonlySet<string>>(`${node.id}:folded`, () => new Set());
   const [split, setSplit] = useReviewPref(`${node.id}:split`, false);
   const [wrap, setWrap] = useReviewPref(`${node.id}:wrap`, false);
@@ -950,12 +1096,15 @@ export function DiffNodeView({
   const [treeFolded, setTreeFolded] = useReviewState<ReadonlySet<string>>(`${node.id}:treeFolded`, () => new Set());
   const [hideTests, setHideTests] = useReviewPref(`${node.id}:hideTests`, false);
   const [hideWhitespace, setHideWhitespace] = useReviewPref(`${node.id}:hideWhitespace`, false);
+
   const files = useMemo(
     () => filterDiffFiles(sourceFiles, hideTests, hideWhitespace),
     [sourceFiles, hideTests, hideWhitespace],
   );
+
   const refs = useRef(new Map<string, HTMLElement>());
   const container = useRef<HTMLDivElement>(null);
+
   const search = useDiffSearch(files, container, (line) => {
     if (line)
       setFolded((held) => {
@@ -964,11 +1113,14 @@ export function DiffNodeView({
         return next;
       });
   });
+
   const { searchAnchor, currentResult } = search;
   const nearFiles = useNearFiles(files, refs);
+
   // The open editor and the current match stay mounted wherever the scroll is.
   const hasRows = (path: string) =>
     nearFiles.isMounted(path) || opened?.path === path || currentResult?.line.anchor.path === path;
+
   const byAnchor = useMemo(() => {
     const map = new Map<string, LiveThread[]>();
     for (const thread of node.threads) {
@@ -978,6 +1130,7 @@ export function DiffNodeView({
     }
     return map;
   }, [node.threads]);
+
   const toggle = (path: string) =>
     setFolded((held) => {
       const next = new Set(held);
@@ -985,7 +1138,9 @@ export function DiffNodeView({
       else next.add(path);
       return next;
     });
+
   const allFolded = files.length > 0 && files.every((file) => folded.has(file.path));
+
   return (
     <div
       ref={container}
@@ -993,6 +1148,7 @@ export function DiffNodeView({
       className="app-diff min-w-0 space-y-3 app-focus-ring"
       data-wrap={wrap}
       data-split={split}
+      data-dragging={isDragging || undefined}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing || event.keyCode === 229 || event.altKey) return;
         if (event.key.toLowerCase() === 'f' && !event.shiftKey && (event.metaKey || event.ctrlKey)) {
@@ -1123,15 +1279,36 @@ export function DiffNodeView({
                       byAnchor={byAnchor}
                       opened={opened}
                       actions={actions}
-                      onActivate={(line) => {
-                        setSelected(line.anchor);
+                      onActivate={(line, isExtended) => {
+                        if (isClickSkipped.current) return;
+                        const from = pivot.current ?? (selected && startOf(selected));
+                        if (isExtended && from) {
+                          setSelected(anchorRange(from, line.anchor, orders));
+                        } else {
+                          pivot.current = line.anchor;
+                          setSelected(line.anchor);
+                        }
                         setOpened(null);
                       }}
+                      onPress={press}
+                      orders={orders}
                       selected={selected}
                       searchAnchor={searchAnchor}
                       searchMatch={currentResult}
-                      onComment={(line) => setOpened(line.anchor)}
-                      onClose={() => setOpened(null)}
+                      onComment={(line) => {
+                        if (isClickSkipped.current) return;
+                        // The control on a line of the selection comments on all its lines.
+                        const anchor = selected && inSpan(selected, line.anchor, orders) ? selected : line.anchor;
+                        if (anchor === line.anchor) pivot.current = line.anchor;
+                        setSelected(anchor);
+                        setOpened(anchor);
+                      }}
+                      onClose={() => {
+                        // A closed editor ends the comment, so its lines are no longer selected.
+                        setOpened(null);
+                        setSelected(null);
+                        pivot.current = null;
+                      }}
                     />
                   ))}
                   {fileChange(file) === 'modified' && (
@@ -1213,16 +1390,14 @@ type DiffCommandState = ReturnType<typeof useDiffCommands>;
 
 const COMMAND_ICONS = { refresh: RefreshIcon, more: MoreIcon } as const;
 
-/** One toolbar command: a text menu, an icon menu, a text action or an icon action. */
-function DiffCommand({
-  node,
-  state,
-  keys,
-}: {
+interface DiffCommandProps {
   node: LiveNode;
   state: DiffCommandState;
   keys?: ReadonlyMap<string, LiveShortcut>;
-}) {
+}
+
+/** One toolbar command: a text menu, an icon menu, a text action or an icon action. */
+function DiffCommand({ node, state, keys }: DiffCommandProps) {
   if (node.type !== 'group' && node.type !== 'button') return null;
   const Icon = node.icon ? COMMAND_ICONS[node.icon] : undefined;
   if (node.type === 'group') {
@@ -1279,8 +1454,14 @@ function DiffCommand({
   );
 }
 
+interface OpenDiffMenuProps {
+  nodes: readonly LiveNode[];
+  state: DiffCommandState;
+  keys?: ReadonlyMap<string, LiveShortcut>;
+}
+
 /** The menu that a toolbar group opened, if any. */
-function OpenDiffMenu({ nodes, state, keys }: { nodes: readonly LiveNode[]; state: DiffCommandState; keys?: ReadonlyMap<string, LiveShortcut> }) {
+function OpenDiffMenu({ nodes, state, keys }: OpenDiffMenuProps) {
   const open = state.menu ? nodes.find((node) => node.id === state.menu?.id) : undefined;
   if (open?.type !== 'group' || !state.menu) return null;
   return (
@@ -1308,7 +1489,7 @@ function diffMenuAt(trigger: HTMLElement): MenuPosition | null {
  * Where a submenu opens: to the right of its row, or to the left when the screen
  * ends first. Its first row lines up with the row that opened it.
  */
-export function diffSubmenuAt(
+function diffSubmenuAt(
   row: { top: number; left: number; right: number },
   screen: { width: number; height: number },
   height: number,
@@ -1321,20 +1502,16 @@ export function diffSubmenuAt(
   return { left: Math.round(left), top: Math.round(top) };
 }
 
-/** The rows of one menu panel; a group row opens its submenu. */
-function DiffMenuRows({
-  items,
-  keys,
-  openSub,
-  onPress,
-  onOpenSub,
-}: {
+interface DiffMenuRowsProps {
   items: readonly LiveNode[];
   keys?: ReadonlyMap<string, LiveShortcut>;
   openSub?: string;
   onPress: (id: string) => void;
   onOpenSub?: (id: string, row: HTMLElement, focus: boolean) => void;
-}) {
+}
+
+/** The rows of one menu panel; a group row opens its submenu. */
+function DiffMenuRows({ items, keys, openSub, onPress, onOpenSub }: DiffMenuRowsProps) {
   return items.map((item) => {
     if (item.type === 'group' && onOpenSub) {
       return (
@@ -1394,25 +1571,20 @@ function moveMenuFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
   rows[(at + step + rows.length) % rows.length].focus();
 }
 
-/**
- * The compact popover of a toolbar menu. It is drawn like the rest of the review
- * surface, not like the app menus around it.
- */
-function DiffMenu({
-  label,
-  at,
-  items,
-  keys,
-  onPress,
-  onDismiss,
-}: {
+interface DiffMenuProps {
   label: string;
   at: MenuPosition;
   items: readonly LiveNode[];
   keys?: ReadonlyMap<string, LiveShortcut>;
   onPress: (id: string) => void;
   onDismiss: () => void;
-}) {
+}
+
+/**
+ * The compact popover of a toolbar menu. It is drawn like the rest of the review
+ * surface, not like the app menus around it.
+ */
+function DiffMenu({ label, at, items, keys, onPress, onDismiss }: DiffMenuProps) {
   const panel = useRef<HTMLDivElement>(null);
   const subPanel = useRef<HTMLDivElement>(null);
   const [sub, setSub] = useState<{ id: string; left: number; top: number; focus: boolean } | null>(null);
@@ -1472,6 +1644,29 @@ function DiffMenu({
   );
 }
 
+interface DiffToolbarProps {
+  /** The app's own commands (`view.json` `diff` `children`). */
+  nodes: readonly LiveNode[];
+  commands?: DiffCommandActions;
+  onFind: () => void;
+  split: boolean;
+  wrap: boolean;
+  tree: boolean;
+  allFolded: boolean;
+  count: number;
+  total: { additions: number; deletions: number };
+  /** The revision that the diff compares against, if the producer names it. */
+  base?: string;
+  onSplit: (split: boolean) => void;
+  onWrap: () => void;
+  onTree: () => void;
+  onFold: () => void;
+  hideTests: boolean;
+  hideWhitespace: boolean;
+  onTests: () => void;
+  onWhitespace: () => void;
+}
+
 /**
  * The header row of a diff, laid out like the T3 Code review panel: the app's
  * menus, the base it compares against and the line counts on the left; the app's
@@ -1496,28 +1691,7 @@ function DiffToolbar({
   hideWhitespace,
   onTests,
   onWhitespace,
-}: {
-  /** The app's own commands (`view.json` `diff` `children`). */
-  nodes: readonly LiveNode[];
-  commands?: DiffCommandActions;
-  onFind: () => void;
-  split: boolean;
-  wrap: boolean;
-  tree: boolean;
-  allFolded: boolean;
-  count: number;
-  total: { additions: number; deletions: number };
-  /** The revision that the diff compares against, if the producer names it. */
-  base?: string;
-  onSplit: (split: boolean) => void;
-  onWrap: () => void;
-  onTree: () => void;
-  onFold: () => void;
-  hideTests: boolean;
-  hideWhitespace: boolean;
-  onTests: () => void;
-  onWhitespace: () => void;
-}) {
+}: DiffToolbarProps) {
   const state = useDiffCommands({ isSettled: commands?.isSettled ?? true, onActivate: commands?.onActivate });
   const keys = commands?.keys;
   const icon = (node: LiveNode) => (node.type === 'group' || node.type === 'button' ? node.icon : undefined);

@@ -920,7 +920,16 @@ function anchorFromWire(value: unknown): ViewAnchor | undefined {
   const line = raw ? optionalNumber(raw.line) : undefined;
   if (!raw || !path || line === undefined || line < 1) return undefined;
   if (raw.side !== 'old' && raw.side !== 'new') return undefined;
-  return { path, side: raw.side, line: Math.trunc(line) };
+  const start = optionalNumber(raw.start_line);
+  const startSide = raw.start_side === 'old' || raw.start_side === 'new' ? raw.start_side : raw.side;
+  const isRange = start !== undefined && start >= 1 && (startSide !== raw.side || start < line);
+  return {
+    path,
+    side: raw.side,
+    ...(isRange && startSide !== raw.side ? { start_side: startSide } : {}),
+    ...(isRange ? { start_line: Math.trunc(start) } : {}),
+    line: Math.trunc(line),
+  };
 }
 
 function authorFromWire(value: unknown): LiveAuthor {

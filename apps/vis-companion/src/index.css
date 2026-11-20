@@ -1101,6 +1101,10 @@ ol.markdown-list > li::before {
 .diff-table td {
   height: var(--text-body--line-height);
 }
+/* A drag over the line numbers selects lines, not text. */
+.app-diff[data-dragging] {
+  user-select: none;
+}
 .diff-table tr[data-selected-line] > td {
   background-color: var(--color-accent-surface);
 }
@@ -1111,6 +1115,8 @@ ol.markdown-list > li::before {
 /* A square accent block in the middle of the seam between the number and the code:
    3.75px free on each side, so it covers neither. */
 .diff-add-comment {
+  /* A drag from the control selects lines, also on a touch screen. */
+  touch-action: none;
   position: absolute;
   right: -4.08px;
   top: calc((var(--text-body--line-height) - 16px) / 2);
@@ -1127,6 +1133,16 @@ ol.markdown-list > li::before {
   content: '';
   position: absolute;
   inset: -2px -3.75px;
+}
+/* On other lines the control shows only under a pointer, on the number or the code. */
+.diff-add-comment[data-hover-only] {
+  visibility: hidden;
+}
+@media (hover: hover) and (pointer: fine) {
+  .diff-gutter:hover > .diff-add-comment[data-hover-only],
+  .diff-gutter:has(+ .diff-code:hover) > .diff-add-comment[data-hover-only] {
+    visibility: visible;
+  }
 }
 .diff-file-header {
   display: flex;

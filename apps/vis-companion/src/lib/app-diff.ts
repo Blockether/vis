@@ -158,9 +158,71 @@ export function anchorKey(anchor: ViewAnchor): string {
   return `${anchor.side}:${anchor.line}:${anchor.path}`;
 }
 
-/** True when two anchors name the same line. */
+/** True when two anchors name the same lines. */
 export function sameAnchor(a: ViewAnchor | undefined, b: ViewAnchor | undefined): boolean {
-  return Boolean(a && b && a.path === b.path && a.side === b.side && a.line === b.line);
+  return Boolean(a && b && anchorKey(a) === anchorKey(b) && anchorKey(startOf(a)) === anchorKey(startOf(b)));
+}
+
+/** The first line of an anchor, on its own side: `start_side` and `start_line`, or the line itself. */
+export function startOf(anchor: ViewAnchor): ViewAnchor {
+  return { path: anchor.path, side: anchor.start_side ?? anchor.side, line: anchor.start_line ?? anchor.line };
+}
+
+/**
+ * The position of each line in its file, from top to bottom, by `anchorKey`. A
+ * context line has one position for its old and its new number. A range of lines
+ * holds the rows between its two ends, as in GitHub and `@pierre/diffs`, so it can
+ * start on a removed line and end on an added line.
+ */
+export function lineOrders(files: AppDiffFile[]): ReadonlyMap<string, number> {
+  const orders = new Map<string, number>();
+  for (const file of files) {
+    let at = 0;
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) {
+        orders.set(anchorKey(line.anchor), at);
+        if (line.kind === 'context' && line.old_line !== undefined) {
+          orders.set(anchorKey({ ...line.anchor, side: 'old', line: line.old_line }), at);
+        }
+        at += 1;
+      }
+    }
+  }
+  return orders;
+}
+
+/** True when the row of `line` is between the two ends of `range`. */
+export function inSpan(range: ViewAnchor | null, line: ViewAnchor, orders: ReadonlyMap<string, number>): boolean {
+  if (!range || range.path !== line.path) return false;
+  const at = orders.get(anchorKey(line));
+  const first = orders.get(anchorKey(startOf(range)));
+  const last = orders.get(anchorKey(range));
+  if (at === undefined || first === undefined || last === undefined) return anchorKey(range) === anchorKey(line);
+  return first <= at && at <= last;
+}
+
+/** The anchor over the rows from `pivot` to `line`. It ends on the lower row; one row is one line. */
+export function anchorRange(pivot: ViewAnchor, line: ViewAnchor, orders: ReadonlyMap<string, number>): ViewAnchor {
+  const from = orders.get(anchorKey(pivot));
+  const to = orders.get(anchorKey(line));
+  if (pivot.path !== line.path || from === undefined || to === undefined || from === to) return line;
+  const [top, bottom] = from < to ? [pivot, line] : [line, pivot];
+  return {
+    path: line.path,
+    side: bottom.side,
+    ...(top.side !== bottom.side ? { start_side: top.side } : {}),
+    start_line: top.line,
+    line: bottom.line,
+  };
+}
+
+/** The lines of an anchor as text: `line 4`, `lines 2–4`, or `lines -97 to +96` across the sides. */
+export function anchorLines(anchor: ViewAnchor): string {
+  if (anchor.start_line === undefined) return `line ${anchor.line}`;
+  const start = startOf(anchor);
+  if (start.side === anchor.side) return `lines ${start.line}–${anchor.line}`;
+  const marked = (end: ViewAnchor) => `${end.side === 'old' ? '-' : '+'}${end.line}`;
+  return `lines ${marked(start)} to ${marked(anchor)}`;
 }
 
 /** The line ranges of a hunk header: `@@ -12,7 +12,9 @@`. A missing count is 1. */
