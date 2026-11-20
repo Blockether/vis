@@ -101,7 +101,10 @@
   :companion-themes {:exec-fn com.blockether.vis.dev.companion-themes/write! :extra-paths ["dev"]}
   ;; The static-analysis gate CI runs. :replace-deps keeps the project's classpath out; clj-kondo
   ;; reads sources and `.clj-kondo` from disk. Command-line paths append to the defaults.
-  :lint {:main-opts ["-m" "clj-kondo.main" "--lint" "src" "test" "dev"]
+  ;; The package sources are in the list. A namespace that the gate does not read keeps its
+  ;; old entry in the local cache, and a caller of its new var then gets a false warning.
+  :lint {:main-opts ["-m" "clj-kondo.main" "--lint" "src" "test" "dev" "packages/vis-contract/src"
+                     "packages/vis-presentation/src"]
          :replace-deps {clj-kondo/clj-kondo {:mvn/version "2026.08.04"}}}
   :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}
   ;; The whole-repo suite. :extra-paths is the classpath, the bare paths after `lazytest.main` are
