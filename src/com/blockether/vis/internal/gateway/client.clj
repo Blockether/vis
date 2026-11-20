@@ -40,7 +40,7 @@
 ;; A cold CPython initialization exceeded 40 seconds on the reported WSL host. The
 ;; catalog request runs off the UI thread, but its transport must survive that first load.
 ;; A session create waits for the same first load of the extensions of its project (#493).
-(def ^:private cold-load-timeout-ms 120000)
+(def cold-load-timeout-ms 120000)
 
 (def ^:private occupied-port-registry-wait-ms 3000)
 

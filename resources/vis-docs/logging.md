@@ -19,6 +19,8 @@ the date of its capture.
 - **You want to attach logs to a bug report.** [Review them first](#review-before-sharing).
 - **You know a session, turn, or request ID and need every line about it.**
   [Search the logs](#search-the-logs).
+- **A new session or `/reload` takes a long time.**
+  [Find the slow step](#find-the-slow-step-of-a-session-start).
 - **You want to know how long Vis keeps logs.** Read
   [Rotation and retention](#rotation-and-retention).
 
@@ -72,6 +74,33 @@ line and a `ctx:` line can follow. The `ctx:` line holds the session and turn ID
 prints the first two lines of the entry.
 
 To read one compressed part, run `zless <file>.gz`.
+
+## Find the slow step of a session start
+
+A new session waits while Vis loads the extensions of its project. One load runs at a time, so a
+session can also wait for the load of another project. To print each record of these loads with its
+`data:` line:
+
+```bash
+zgrep -h -A 1 -E 'slow-request|reload-phases|load-lock-wait|package-preparation-failed|project-installing' \
+  ~/.vis/logs/*/gateway-*.log*
+```
+
+| Signal | Meaning |
+| --- | --- |
+| `slow-request` | A gateway request took 250 ms or more. `:uri` names the request and `:ms` gives its time. |
+| `reload-phases` | One extension load ended. `:phases` lists each step with its milliseconds, and `:background?` is true for a load that no session started. |
+| `load-lock-wait` | A load waited 10 more seconds for another load. `:holder` names the project and the running step of that other load. |
+| `package-preparation-failed` | One declared package failed. `:error` gives the cause, such as a timeout of Extension Center. |
+| `project-installing` | uv started to install the dependencies of one package. |
+
+Read the steps of `reload-phases` as follows:
+
+- `:lock-wait` is the time behind another load. Its `:holder` names that load.
+- `:package-source` is the source check of the package in `:detail`. `:catalog-ms` is the time of the
+  Extension Center request, and `:git-ms` is the time of Git.
+- `:package-environment` is the dependency preparation of the package in `:detail`.
+- `:packages` is the total for all declared packages of one scope.
 
 ## Find a provider error
 

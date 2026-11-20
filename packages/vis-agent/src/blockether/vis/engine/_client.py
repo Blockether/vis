@@ -753,6 +753,8 @@ class EngineClient(ABC):
                 group and in the project of the group. A `root` option still sets
                 the folder that the session works in.
             timeout: Optional timeout in seconds for this creation request.
+                Without it, the request waits at least 120 seconds: the first
+                session of a project loads the extensions of that project.
             **options: Session creation fields from the gateway contract. For a
                 project path, pass `**client.session_options(project)`. This
                 applies local and gateway path rules and channel defaults
@@ -776,8 +778,8 @@ class EngineClient(ABC):
         return self.session(_field(data, "id", str))
 
     def _session_create_timeout(self, timeout: float | None) -> float | None:
-        """Return the timeout of a session creation request."""
-        return timeout
+        """Wait for the first extension load of a project, which a fast request outlives."""
+        return max(self.timeout, 120) if timeout is None else timeout
 
     def groups(
         self,

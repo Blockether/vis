@@ -4,6 +4,7 @@ For building, distributing and installing packages, use the
 [extension package guide](https://vis.blockether.com/extension-packages.html).
 """
 
+import contextvars
 import fcntl
 import hashlib
 import json
@@ -42,6 +43,8 @@ LATEST = "latest"
 # A sync can fetch several packages; a second start waits for it this long.
 LOCK_WAIT_S = 300
 MAX_METADATA = 128 * 1024
+# The milliseconds of the slow steps of the package that one `sync` call handles now.
+_steps = contextvars.ContextVar("extension_package_steps", default=None)
 _EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", ".DS_Store"}
 # `.env*` holds secrets. `.venv-*` is an environment that Vis prepares for one interpreter.
 _EXCLUDED_PREFIXES = (".env", ".venv-")
@@ -278,7 +281,15 @@ def inspect_source(directory, vis_version=None, python_version=None):
     return metadata
 
 
+def _step(name, started):
+    """Add the time since `started` to step `name` of the package that `sync` handles."""
+    steps = _steps.get()
+    if steps is not None:
+        steps[name] = steps.get(name, 0) + round((time.monotonic() - started) * 1000)
+
+
 def _git(*args):
+    started = time.monotonic()
     env = {
         **os.environ,
         "GIT_CONFIG_NOSYSTEM": "1",
@@ -321,10 +332,18 @@ def _git(*args):
         ).stdout.strip()
     except FileNotFoundError as exc:
         raise ValueError("Install Git and make it available on PATH") from exc
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired as exc:
         raise ValueError(
-            "Could not fetch the GitHub repository or revision; check the URL and connection"
+            "Could not fetch the GitHub repository or revision (no answer in 120 seconds);"
+            " check the URL and connection"
         ) from exc
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(
+            f"Could not fetch the GitHub repository or revision (git exit {exc.returncode});"
+            " check the URL and connection"
+        ) from exc
+    finally:
+        _step("git_ms", started)
 
 
 def _checkout(repository, directory, revision):
@@ -392,6 +411,7 @@ def _catalog(repository, subdirectory):
         CATALOG + "/api/extensions/" + _catalog_identity(repository, subdirectory),
         headers={"Accept": "application/json", "User-Agent": "Vis-Extension-Installer"},
     )
+    started = time.monotonic()
     try:
         with build_opener(_NoRedirect()).open(request, timeout=20) as response:
             body = response.read(4 * 1024 * 1024 + 1)
@@ -404,12 +424,20 @@ def _catalog(repository, subdirectory):
                 "No approved releases for this repository and project folder"
             ) from exc
         raise ValueError(
-            "Extension Center is unavailable; no code was changed"
+            f"Extension Center is unavailable (HTTP {exc.code}); no code was changed"
         ) from exc
     except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        # The message of a network error can hold a path or a proxy address: name its kind only.
+        cause = (
+            exc.reason if isinstance(getattr(exc, "reason", None), Exception) else exc
+        )
+        number = getattr(cause, "errno", None)
+        kind = type(cause).__name__ + (f" {number}" if isinstance(number, int) else "")
         raise ValueError(
-            "Extension Center is unavailable; no code was changed"
+            f"Extension Center is unavailable ({kind}); no code was changed"
         ) from exc
+    finally:
+        _step("catalog_ms", started)
 
 
 def _count_download(repository, subdirectory):
@@ -1449,12 +1477,7 @@ def _sync_one(name, spec, directory, current, refresh, vis_version, frozen=False
             "Existing extension is not owned by sync or was changed externally; no files replaced. "
             f"Keep any local edits, remove {destination.parent} and run sync again"
         )
-    if (
-        exists
-        and current["spec"] == spec
-        and not refresh
-        and (frozen or not tracking)
-    ):
+    if exists and current["spec"] == spec and not refresh and (frozen or not tracking):
         metadata = inspect_source(
             destination, vis_version, ".".join(map(str, sys.version_info[:3]))
         )
@@ -1573,7 +1596,21 @@ def sync(
     if not dry_run:
         directory.mkdir(parents=True, exist_ok=True)
     lock = directory / ".sync-lock"
+    started = time.monotonic()
     fd = None if dry_run else _acquire(lock)
+    lock_wait_ms = round((time.monotonic() - started) * 1000)
+
+    def timed(result, started):
+        """Add to a row where its package spent time. The saved record does not keep it."""
+        result["timing"] = {
+            "ms": round((time.monotonic() - started) * 1000),
+            "lock_wait_ms": lock_wait_ms,
+            **steps,
+        }
+        return result
+
+    steps = {}
+    scope = _steps.set(steps)
     try:
         records = _sync_records(directory)
         if prune and not dry_run:
@@ -1581,6 +1618,8 @@ def sync(
         results = []
         for name in sorted(set(specs) | set(records)):
             spec, current = specs.get(name), records.get(name)
+            steps.clear()
+            started = time.monotonic()
             try:
                 destination = _destination(directory, name)
                 relocated = _relocated(destination, current)
@@ -1624,16 +1663,20 @@ def sync(
                     if records.get(name) != record:
                         records[name] = record
                         _save_sync_records(directory, records)
-                results.append(result)
+                results.append(timed(result, started))
                 if prune:
                     results.extend(
                         _prune_snapshots(directory, name, dry_run, spec is None)
                     )
             except (ValueError, OSError) as error:
                 results.append(
-                    {"name": name, "status": "failed", "error": str(error)[:1024]}
+                    timed(
+                        {"name": name, "status": "failed", "error": str(error)[:1024]},
+                        started,
+                    )
                 )
         return results
     finally:
+        _steps.reset(scope)
         if not dry_run:
             _release(lock, fd)

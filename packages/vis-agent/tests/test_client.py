@@ -553,6 +553,19 @@ def test_timeout_is_not_a_second_post():
             release.set()
 
 
+# Issue #493: the first session of a project waits for the load of its extensions.
+def test_session_creation_outlives_the_request_timeout_of_the_client():
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if method == "POST" and path == "/v1/sessions":
+            threading.Event().wait(0.6)
+        return 200, {"id": "session-one"}
+
+    with endpoint(respond) as (url, _), GatewayClient(url, timeout=0.2) as client:
+        assert client.create_session(title="cold").id == "session-one"
+
+
 @pytest.mark.parametrize(
     "url",
     ["file:///tmp/vis", "https://name:password@example.com", "http://127.0.0.1?q=1"],

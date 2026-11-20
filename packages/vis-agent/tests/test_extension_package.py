@@ -1315,6 +1315,48 @@ def test_frozen_sync_keeps_an_installed_latest_package_without_the_catalog(
     assert commands == fetched
 
 
+# Issue #493: the log of a slow load must name the package, its step and the cause.
+@pytest.mark.parametrize(
+    "error, cause",
+    [
+        (package.URLError(TimeoutError("timed out")), "(TimeoutError)"),
+        (
+            package.URLError(OSError(61, "refused by /private/proxy")),
+            "(ConnectionRefusedError 61)",
+        ),
+        (package.HTTPError(package.CATALOG, 503, "Unavailable", {}, None), "HTTP 503"),
+    ],
+)
+def test_failed_sync_row_names_the_cause_and_its_time(
+    tmp_path, monkeypatch, error, cause
+):
+    def fail(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(package, "build_opener", lambda *_: SimpleNamespace(open=fail))
+    row = package.sync(
+        {"vis-greeter": {"source": REPOSITORY, "version": "latest"}},
+        tmp_path / "extensions",
+        trust=True,
+        frozen=True,
+    )[0]
+    assert row["status"] == "failed" and cause in row["error"]
+    assert "/private/proxy" not in row["error"]
+    assert set(row["timing"]) == {"ms", "lock_wait_ms", "catalog_ms"}
+
+
+def test_sync_row_timing_stays_out_of_the_saved_record(releases):
+    _, target, _ = releases
+    configured = {
+        "vis-greeter": {"source": REPOSITORY, "subdirectory": "plugins/greeting"}
+    }
+    installed = package.sync(configured, target, trust=True)[0]
+    assert {"ms", "lock_wait_ms", "git_ms"} <= set(installed["timing"])
+    saved = package.json.loads((target / ".sync.json").read_text())
+    assert "timing" not in saved["vis-greeter"]["result"]
+    assert package.sync(configured, target, trust=True)[0]["status"] == "cached"
+
+
 def test_sync_dry_run_and_invalid_inputs_are_inert(tmp_path, monkeypatch):
     target = tmp_path / "extensions"
     monkeypatch.setattr(

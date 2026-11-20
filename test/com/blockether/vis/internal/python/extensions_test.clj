@@ -7151,7 +7151,100 @@ vis.register_extension(vis.Extension(
                ;; A load behind another thread's load showed a total with no phase for the wait.
                (expect (= :lock-wait (:phase (first phases))))
                (expect (some #(= {:phase :register :detail "first"} (dissoc % :ms)) phases)))
-             (finally (reset! live-load nil) (pyx/reload-python-extensions! {:dirs []}))))))
+             (finally (reset! live-load nil) (pyx/reload-python-extensions! {:dirs []})))))
+  ;; #493: a load spent 67 s in `:packages`, and the log named no package, step or cause.
+  (it
+    "logs each package's time and each preparation failure of a load"
+    (let [root
+          (.getCanonicalPath (temp-dir))
+
+          home
+          (temp-dir)
+
+          error
+          "Extension Center is unavailable (TimeoutError); no code was changed"]
+
+      (with-redefs-fn {#'pyx/last-fingerprint (atom {})
+                       #'pyx/prepared-scopes (atom #{})
+                       #'pyx/failures (atom [])
+                       #'pyx/default-extension-dirs (fn []
+                                                      [(io/file home "extensions")
+                                                       (io/file root ".vis/extensions")])
+                       #'pyx/sync-packages! (fn [opts]
+                                              (if (:project opts)
+                                                [{"name" "slow"
+                                                  "status" "failed"
+                                                  "error" error
+                                                  "timing"
+                                                  {"ms" 20000 "lock_wait_ms" 0 "catalog_ms" 20000}}]
+                                                []))}
+        (fn []
+          (let [{:keys [signals]}
+                (tel/with-signals (pyx/prepare-project! root))
+
+                phases
+                (some #(when (= ::pyx/reload-phases (:id %)) (:phases (:data %))) signals)
+
+                failure
+                (some #(when (= ::pyx/package-preparation-failed (:id %)) (:data %)) signals)]
+
+            (expect (some #(= {:phase :package-source
+                               :detail "slow"
+                               :ms 20000
+                               :status "failed"
+                               :catalog-ms 20000}
+                              %)
+                          phases)
+                    (pr-str phases))
+            (expect (= ["slow" error] [(:extension failure) (:error failure)])))))))
+  ;; #493: seven calls waited up to 70 s for the load lock, and no line named its holder.
+  (it
+    "names the load and the phase that a waiting load waits for"
+    (let [entered
+          (promise)
+
+          release
+          (promise)
+
+          holder
+          (future (with-bindings {#'workspace/*workspace-root* "/holder"
+                                  #'pyx/*background-load?* true
+                                  #'pyx/*reload-phases* (atom [])}
+                    (#'pyx/with-load-lock
+                     #(#'pyx/timed-phase
+                        :packages
+                        "project"
+                        (fn []
+                          (deliver entered true)
+                          @release)))))]
+
+      (try @entered
+           (future (while (zero? (.get ^java.util.concurrent.atomic.AtomicLong
+                                       @#'pyx/foreground-loads))
+                     (Thread/sleep 5))
+                   (Thread/sleep 300)
+                   (deliver release true))
+           (with-redefs-fn {#'pyx/load-lock-report-ms 10}
+             (fn []
+               (let [{:keys [signals]}
+                     (tel/with-signals (binding [workspace/*workspace-root* "/waiter"]
+                                         (#'pyx/with-phased-load-lock (constantly nil))))
+
+                     waiting
+                     (some #(when (= ::pyx/load-lock-wait (:id %)) (:data %)) signals)
+
+                     wait
+                     (some #(when (= ::pyx/reload-phases (:id %)) (first (:phases (:data %))))
+                           signals)]
+
+                 (expect
+                   (= {:project-root "/holder" :background? true :phase :packages :detail "project"}
+                      (select-keys (:holder waiting) [:project-root :background? :phase :detail]))
+                   (pr-str waiting))
+                 (expect (= "/waiter" (:project-root waiting)))
+                 (expect (= [:lock-wait "/holder"] [(:phase wait) (:project-root (:holder wait))])
+                         (pr-str wait)))))
+           (finally (deliver release true) @holder)))))
 
 ;; Input Views — `vis.ask` blocks the extension until a channel answers
 (defn- answer-pending!

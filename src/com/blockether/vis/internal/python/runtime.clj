@@ -951,6 +951,10 @@
   [^File project stage]
   (let [name (project-display-name project)]
     (swap! preparation assoc name {:name name :stage stage})
+    ;; An installation can take minutes. Its start in the log names the package that runs (#493).
+    (when (= "installing" stage)
+      (tel/log! {:level :info :id ::project-installing :data {:name name}}
+                "installing extension dependencies"))
     (when (= "failed" stage)
       (.println config/original-stderr (str "[vis extensions] " name ": " stage))
       (.flush config/original-stderr))))

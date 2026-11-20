@@ -55,8 +55,11 @@
 (defn- create-session!
   "Create the Vis session for workspace `cwd` and answer its id."
   [cwd]
-  (let [response
-        (gateway-client/request! :post "/v1/sessions" {:body {"root" cwd "title" "MCP client"}})]
+  (let [response (gateway-client/request! :post
+                                          "/v1/sessions"
+                                          {:body {"root" cwd "title" "MCP client"}
+                                           ;; The first session of a project loads its extensions (#493).
+                                           :timeout-ms gateway-client/cold-load-timeout-ms})]
     (if (<= 200 (long (:status response)) 299)
       (get (answer-body response) "id")
       (throw (ex-info (str "Vis could not create a session: " (gateway-failure response))

@@ -74,6 +74,7 @@
   (:import [java.io File]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
+           [java.util.concurrent TimeUnit]
            [java.util.concurrent.atomic AtomicLong]
            [java.util.concurrent.locks Condition ReentrantLock]))
 
@@ -3584,14 +3585,18 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                   (let [result (assoc result "scope" scope)]
                     (if (and (not dry-run)
                              (contains? #{"installed" "updated" "cached"} (get result "status")))
-                      (try (let [package-dir (io/file (get result "path"))]
-                             (assoc result
-                               "prepared" true
-                               "site_packages" (str (python-runtime/ensure-project! package-dir))))
-                           (catch Exception error
-                             (assoc result
-                               "status" "failed"
-                               "error" (.getMessage error))))
+                      (let [started (System/nanoTime)]
+                        (-> (try (let [package-dir (io/file (get result "path"))]
+                                   (assoc result
+                                     "prepared" true
+                                     "site_packages"
+                                     (str (python-runtime/ensure-project! package-dir))))
+                                 (catch Exception error
+                                   (assoc result
+                                     "status" "failed"
+                                     "error" (.getMessage error))))
+                            (assoc-in ["timing" "environment_ms"]
+                                      (quot (- (System/nanoTime) started) 1000000))))
                       result)))
                 (package-operation "sync"
                                    {:configured packages
@@ -3982,21 +3987,63 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   "Nil, or an atom of the timed phases of one reload (#422)."
   nil)
 
-(defn- record-phase!
-  "During a reload, record `phase` with its `detail` and the milliseconds since `started`."
-  [phase detail started]
+(def ^:private ^:dynamic *background-load?*
+  "True while this thread prepares a project that no session waits for."
+  false)
+
+(defonce ^:private load-holder
+  ;; Nil, or the load that holds the load lock now, with the phase that it runs (#493).
+  (atom nil))
+
+(defn- holder-view
+  "The load that holds the load lock and its running phase, for the log of a load that waits."
+  []
+  (when-let [{:keys [since phase-since] :as holder} @load-holder]
+    (let [now (System/nanoTime)]
+      (cond-> (assoc (select-keys holder [:project-root :session-id :background? :phase :detail])
+                :held-ms (quot (- now (long since)) 1000000))
+        phase-since
+        (assoc :phase-ms (quot (- now (long phase-since)) 1000000))))))
+
+(defn- holder-phase!
+  "When this thread holds the load lock, replace its running phase with `phase`, a map
+   of `:phase`, `:detail` and `:phase-since`. Return the phase that ran before."
+  [phase]
+  (let [thread (Thread/currentThread)
+        [before _] (swap-vals! load-holder
+                               (fn [holder]
+                                 (if (identical? thread (:thread holder))
+                                   (merge (dissoc holder :phase :detail :phase-since) phase)
+                                   holder)))]
+
+    (select-keys before [:phase :detail :phase-since])))
+
+(defn- note-phase!
+  "During a reload, record `phase` with its `detail`, its milliseconds and `extra` facts."
+  [phase detail ms extra]
   (when-let [phases *reload-phases*]
     (swap! phases conj
-      (cond-> {:phase phase :ms (quot (- (System/nanoTime) (long started)) 1000000)}
+      (cond-> (merge {:phase phase :ms ms} extra)
         detail
         (assoc :detail detail)))))
 
+(defn- record-phase!
+  "During a reload, record `phase` with its `detail` and the milliseconds since `started`."
+  ([phase detail started] (record-phase! phase detail started nil))
+  ([phase detail started extra]
+   (note-phase! phase detail (quot (- (System/nanoTime) (long started)) 1000000) extra)))
+
 (defn- timed-phase
-  "Call `f`. During a reload, record how long `phase` took, also when `f` throws."
+  "Call `f`. During a reload, record how long `phase` took, also when `f` throws.
+   A load that waits for this one can then log the phase that runs now."
   [phase detail f]
   (if *reload-phases*
-    (let [started (System/nanoTime)]
-      (try (f) (finally (record-phase! phase detail started))))
+    (let [started (System/nanoTime)
+          before (holder-phase! (cond-> {:phase phase :phase-since started}
+                                  detail
+                                  (assoc :detail detail)))]
+
+      (try (f) (finally (holder-phase! before) (record-phase! phase detail started))))
     (f)))
 
 (defn- with-reload-phases
@@ -4011,6 +4058,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                  :id ::reload-phases
                                  :data {:project-root workspace/*workspace-root*
                                         :session-id (:session-id extension/*current-environment*)
+                                        :background? *background-load?*
                                         :total-ms (quot (- (System/nanoTime) started) 1000000)
                                         :phases @*reload-phases*}})))))))
 
@@ -4855,9 +4903,41 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   (try (when (zero? (.decrementAndGet ^AtomicLong foreground-loads)) (.signalAll foreground-done))
        (finally (.unlock foreground-gate))))
 
-(def ^:private ^:dynamic *background-load?*
-  "True while this thread prepares a project that no session waits for."
-  false)
+(def ^:private load-lock-report-ms
+  "A load that waits for the load lock logs the holder each time this much time passes."
+  10000)
+
+(defn- lock-load!
+  "Take the load lock as `.lock` does. While the wait lasts, log at intervals the load
+   that holds the lock and its running phase: a slow load is then visible before it ends (#493)."
+  []
+  (let [requested (System/nanoTime)]
+    (loop [interrupted? false]
+      (let [outcome (try (.tryLock ensure-load-lock (long load-lock-report-ms) TimeUnit/MILLISECONDS)
+                         (catch InterruptedException _ ::interrupted))]
+        (cond (true? outcome) (when interrupted? (.interrupt (Thread/currentThread)))
+              (= ::interrupted outcome) (recur true)
+              :else (do (tel/log! {:level :warn
+                                   :id ::load-lock-wait
+                                   :data {:project-root workspace/*workspace-root*
+                                          :session-id (:session-id extension/*current-environment*)
+                                          :background? *background-load?*
+                                          :waited-ms (quot (- (System/nanoTime) requested) 1000000)
+                                          :holder (holder-view)}}
+                                  "extension load waits for another load")
+                        (recur interrupted?)))))))
+
+(defn- holding-load-lock
+  "Call `f` as the named holder of the load lock that this thread took, then release the lock."
+  [f]
+  (try (reset! load-holder
+               {:thread (Thread/currentThread)
+                :project-root workspace/*workspace-root*
+                :session-id (:session-id extension/*current-environment*)
+                :background? *background-load?*
+                :since (System/nanoTime)})
+       (f)
+       (finally (reset! load-holder nil) (.unlock ensure-load-lock))))
 
 (defn- with-load-lock
   "Call `f` while this thread holds the load lock. A background load lets each waiting
@@ -4869,31 +4949,67 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
           (loop []
 
             (await-foreground-loads!)
-            (.lock ensure-load-lock)
+            (lock-load!)
             (when (pos? (.get ^AtomicLong foreground-loads)) (.unlock ensure-load-lock) (recur)))
           (do (.incrementAndGet ^AtomicLong foreground-loads)
-              (try (.lock ensure-load-lock) (finally (end-foreground-wait!)))))
-        (try (f) (finally (.unlock ensure-load-lock))))))
+              (try (lock-load!) (finally (end-foreground-wait!)))))
+        (holding-load-lock f))))
 
 (defn- retire-stale-workers-soon!
   "Restart the stale trusted workers now, or after the load that runs now."
   []
-  (cond (.isHeldByCurrentThread ensure-load-lock) nil
-        (.tryLock ensure-load-lock) (try (retire-stale-workers!)
-                                         (finally (.unlock ensure-load-lock)))
-        :else (future (with-load-lock retire-stale-workers!))))
+  (let [retire (fn []
+                 ;; A load that waits for this restart reads its name in the log.
+                 (holder-phase! {:phase :retire-workers :phase-since (System/nanoTime)})
+                 (retire-stale-workers!))]
+    (cond (.isHeldByCurrentThread ensure-load-lock) nil
+          (.tryLock ensure-load-lock) (holding-load-lock retire)
+          :else (future (with-load-lock retire)))))
 
 (defn- with-phased-load-lock
   "[[with-load-lock]] inside one phase record, logged once by the outermost call.
-   A wait for another thread's load is the `:lock-wait` phase."
+   A wait for another thread's load is the `:lock-wait` phase. It names the load that
+   held the lock when the wait started."
   [f]
   (with-reload-phases (fn []
                         (if (.isHeldByCurrentThread ensure-load-lock)
                           (f)
-                          (let [requested (System/nanoTime)]
+                          (let [requested (System/nanoTime)
+                                holder (holder-view)]
+
                             (with-load-lock (fn []
-                                              (record-phase! :lock-wait nil requested)
+                                              (record-phase! :lock-wait
+                                                             nil
+                                                             requested
+                                                             (when holder {:holder holder}))
                                               (f))))))))
+
+(defn- note-package-results!
+  "Record where the preparation of each declared package spent its time, and log each
+   failure. The log of a slow load then names the package, its step and the cause (#493)."
+  [results]
+  (when-let [wait (some #(get-in % ["timing" "lock_wait_ms"]) results)]
+    (when (pos? (long wait)) (note-phase! :package-lock-wait nil wait nil)))
+  (doseq [result results
+          :let [name (get result "name")
+                {:strs [ms catalog_ms git_ms environment_ms] :as timing} (get result "timing")]]
+
+    (when ms
+      (note-phase! :package-source
+                   name
+                   ms
+                   (cond-> {:status (get result "status")}
+                     catalog_ms (assoc :catalog-ms catalog_ms)
+                     git_ms (assoc :git-ms git_ms))))
+    (when environment_ms (note-phase! :package-environment name environment_ms nil))
+    (when (= "failed" (get result "status"))
+      (tel/log! {:level :warn
+                 :id ::package-preparation-failed
+                 :data {:extension name
+                        :file (get result "file")
+                        :error (get result "error")
+                        :timing timing}}
+                "extension package preparation failed"))))
 
 ;; Scopes (nil = global) whose declared packages this process prepared. A project
 ;; first loaded through the process-directory fallback is prepared once a session
@@ -4924,6 +5040,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         failed
         (filter #(= "failed" (get % "status")) results)]
 
+    (note-package-results! results)
     ;; Admission is complete even with failures. Only /reload retries preparation.
     (swap! prepared-scopes conj project-root)
     {:site-packages (into {}
@@ -5150,9 +5267,14 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   ([opts]
    (with-reload-phases
      (fn []
-       (let [requested (System/nanoTime)]
+       (let [requested (System/nanoTime)
+             holder (holder-view)]
+
          (with-load-lock (fn []
-                           (record-phase! :lock-wait nil requested)
+                           (record-phase! :lock-wait
+                                          nil
+                                          requested
+                                          (when holder {:holder holder}))
                            (when (pyext/worker-live? pyext/shared-key)
                              (timed-phase :package-paths
                                           nil
@@ -5191,6 +5313,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    :lock-wait "wait for another reload"
    :package-paths "package paths"
    :packages "declared packages"
+   :package-lock-wait "wait for another package sync"
+   :package-source "package sources"
+   :package-environment "package environments"
    :plans "extension metadata"
    :fingerprint "change check"
    :snapshot "source snapshots"
