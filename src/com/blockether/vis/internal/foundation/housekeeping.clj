@@ -6,15 +6,16 @@
    killed writes. `scan` is pure observation (no mutation, never throws) and
    `purge!` is the explicit operator action behind `vis-agent doctor --purge`.
 
-   SELF-DELETING (`sweep-stale!`, once per process at startup): diagnostic logs,
-   the gateway journals, the display caches and old downloaded
-   Python archives. Those are DERIVED — a log of a process that exited, the wire
-   replay of a turn the DB already owns, a picture whose bytes are already DB-owned
-   — so they carry a window instead of a report. `sweep-targets` is the one list
-   of them. Diagnostic
-   logs also sweep hourly while the process runs; the other targets remain startup-only.
-   The logs and the bytecode store are the large walks, so a shared stamp lets one
-   process per interval walk them (`claim-sweep!`).
+   SELF-DELETING (`sweeps`): diagnostic logs, the gateway journals, the display
+   caches and old downloaded Python archives. Those are DERIVED — a log of a
+   process that exited, the wire replay of a turn the DB already owns, a picture
+   whose bytes are already DB-owned — so they carry a window instead of a report.
+   `sweep-targets` is the one list of them. Each sweep has its own interval, and
+   the stamp of a root holds that interval for the whole machine (`claim-sweep!`),
+   so one process walks a root in each interval. No sweep has its own thread:
+   `tasks` gives each sweep to `internal.janitor`, the one maintenance worker of a
+   process, and the worker repeats it while the process runs. `sweep-stale!` runs
+   the same sweeps one time on the calling thread.
    Journals also self-sweep inside the tailer loop (`gateway.bus/sweep!`) after a
    single idle day, but that is a LIVENESS rule and it only runs while a daemon
    does — journals from crashed or never-restarted daemons used to stay forever.
@@ -47,6 +48,8 @@
 (def default-stale-days "Age past which unattended state is worth mentioning: two weeks." 14)
 
 (def ^:const day-ms 86400000)
+
+(def ^:private ^:const hour-ms 3600000)
 
 (defn- ms->days ^long [^long ms] (long (quot ms (long day-ms))))
 
@@ -211,10 +214,12 @@
 
 (defn- cache-dir ^File [^String sub] (io/file (home-dir *cache-home* ["cache"]) sub))
 
-(defn- python-dir
-  "`<vis-home>/python/<sub>`, the tree of the runtime's `com.blockether.vispython.Locations`."
-  ^File [^String sub]
-  (io/file (or *python-home* (io/file (paths/vis-home) "python")) sub))
+(defn- python-home
+  "`<vis-home>/python`, the tree of the runtime's `com.blockether.vispython.Locations`."
+  ^File []
+  (io/file (or *python-home* (io/file (paths/vis-home) "python"))))
+
+(defn- python-dir ^File [^String sub] (io/file (python-home) sub))
 
 (defn- delete-quietly!
   "Delete one path, answering true when this call removed it. A directory that
@@ -310,7 +315,7 @@
    Returns `{:is-dry-run true :runtime-version :targets}`, with `:latest-version`,
    `:retained` and `:candidates` for each runtime/source store. Candidates are NOT
    safe-to-delete findings: this preview tests no claim and changes no file. The
-   startup sweep reclaims a candidate only once its in-use claim is free — or, for
+   sweep reclaims a candidate only once its in-use claim is free — or, for
    a tree from a build before claims existed, only after the retention window.
 
    Numeric three-part releases are ordered numerically, not by mtime or string.
@@ -458,11 +463,18 @@
 
     (or (contains? names (str stem ".py")) (contains? names (str stem ".pyw")))))
 
+(defn- stamps-dir ^File [] (cache-dir "housekeeping"))
+
 (defn- sweep-stamp
-  "The file whose timestamp records the last walk of the root named `id`. Stamps
-   live outside the roots they describe, so a sweep never counts or lists one."
-  ^File [^String id]
-  (io/file (cache-dir "housekeeping") (str id ".stamp")))
+  "The file whose timestamp records the last walk of `root` by the sweep `id`.
+
+   The name holds a digest of the root, so two processes share a stamp only when
+   they sweep the same directory. A process with its own `vis.logs.dir` and the
+   Vis home of another process thus never holds the logs of that process back.
+   Stamps live in their own folder, outside the roots they describe, so no other
+   sweep counts or lists one."
+  ^File [^String id ^File root]
+  (io/file (stamps-dir) (str id "-" (subs (util/sha256-hex (canonical root)) 0 12) ".stamp")))
 
 (def ^:private ^:const sweep-lease-ms
   "How long a claimed walk keeps other processes off its root. A walk of a large
@@ -473,9 +485,9 @@
 (defn- claim-sweep!
   "Whether this process walks the root of `stamp` now, leasing it when it does.
 
-   Every Vis process sweeps at startup, and a live store holds hundreds of
+   Every Vis process queues the sweeps, and a live store holds hundreds of
    thousands of entries. The stamp is shared, so a machine walks each root once
-   per `interval-ms`, not once per process start. The claim holds the root for
+   per `interval-ms`, not once per process. The claim holds the root for
    `sweep-lease-ms` only; [[finish-sweep!]] stamps the full interval when the walk
    ends. A stamp from the future counts as stale, so a clock moved back cannot
    stop the sweep."
@@ -589,22 +601,34 @@
    the one list, so a new producer is bounded by being added here rather than by
    a second sweep somewhere else.
 
-   `:mode` `:files` deletes stale FILES anywhere below the root and then the
-   directories they emptied. `:budget-bytes` additionally caps what survives the
-   age pass."
-  [{:id :logs :dir logs-dir :retention-days default-retention-days}
-   {:id :gateway-events :dir events-dir :retention-days default-retention-days}
+   A sweep deletes stale FILES anywhere below the root and then the directories
+   they emptied. `:budget-bytes` additionally caps what survives the age pass.
+   `:every-ms` is the least time between two sweeps of the root. A byte budget
+   holds only as often as its sweep runs, so the two caches run each hour, like
+   the logs. The other roots run each day."
+  [{:id :logs
+    :dir logs-dir
+    :retention-days default-retention-days
+    :every-ms default-log-sweep-interval-ms}
+   {:id :gateway-events :dir events-dir :retention-days default-retention-days :every-ms day-ms}
    {:id :display
     :dir #(cache-dir "display")
     :retention-days default-retention-days
-    :budget-bytes default-cache-budget-bytes}
+    :budget-bytes default-cache-budget-bytes
+    :every-ms hour-ms}
    {:id :tui-attachments
     :dir #(cache-dir "tui-attachments")
     :retention-days default-retention-days
-    :budget-bytes default-cache-budget-bytes}
+    :budget-bytes default-cache-budget-bytes
+    :every-ms hour-ms}
    ;; Releases before 0.4 kept the downloaded platform archive beside the tree
    ;; it was unpacked into; today's fetch deletes its archive once unpacked.
-   {:id :python-archives :dir #(python-dir "archives") :retention-days default-retention-days}])
+   {:id :python-archives
+    :dir #(python-dir "archives")
+    :retention-days default-retention-days
+    :every-ms day-ms}
+   ;; Each sweep keeps one stamp for each root. The stamp of a root that is gone ages out.
+   {:id :sweep-stamps :dir stamps-dir :retention-days default-retention-days :every-ms day-ms}])
 
 (defn- sandbox-dir ^File [] (io/file (or *sandbox-home* (paths/sandbox-defs-dir))))
 
@@ -649,172 +673,165 @@
             (sandbox-temps root))
     {:deleted 0 :bytes 0}))
 
-(defn sweep-stale!
-  "Delete the aged-out derived state of every `sweep-targets` entry, then the
-   Python store trees no process claims any more. Returns
-   `{:targets [{:id :root :days :cutoff-ms :file-count :deleted :bytes
-   :dirs-removed :over-budget-deleted}…] :deleted :bytes}` — `:deleted` counts
-   entries actually removed and `:bytes` the space reclaimed. The claim-based
-   rows are `:python-guest`, `:python-runtime` and `:python-sources`;
-   `:python-pycache` answers to the source a bytecode entry mirrors, not to age.
+(defn- sweep-window
+  "The age window of one pass as `{:days :cutoff-ms}`: `retention-days`, or the
+   `:days` of the pass."
+  [{:keys [now days]} retention-days]
+  (let [days (long (or days retention-days))]
+    {:days days :cutoff-ms (- (long now) (* days (long day-ms)))}))
 
-   Never throws: a missing directory is zero work, and a permission-denied
-   subtree is skipped rather than allowed to take startup down.
-
-   Options, all for tests: `:days` (overrides every target's window),
-   `:budget-bytes` (overrides every byte budget), `:interval-ms` (the least time
-   between two walks of the logs) and `:now-ms`."
-  ([] (sweep-stale! nil))
-  ([{:keys [days now-ms interval-ms] budget-override :budget-bytes}]
-   (let [now
-         (long (or now-ms (util/now-ms)))
-
-         log-interval
-         (long (or interval-ms default-log-sweep-interval-ms))
-
-         store-window
-         (long (or days default-retention-days))
-
-         store-cutoff
-         (- now (* store-window (long day-ms)))
-
-         reports
-         (mapv
-           (fn [{:keys [id dir retention-days budget-bytes]}]
-             (let [^File d
-                   (dir)
-
-                   window
-                   (long (or days retention-days))
-
-                   cutoff
-                   (- now (* window (long day-ms)))
-
-                   base
-                   {:id id :root (canonical d) :days window :cutoff-ms cutoff}]
-
-               (if-not (and (.isDirectory d)
-                            (or (not= :logs id)
-                                (claim-sweep! (sweep-stamp "logs") now log-interval)))
-                 (merge base {:file-count 0 :deleted 0 :bytes 0 :dirs-removed 0})
-                 (let [canon
-                       (canonical d)
-
-                       swept
-                       (sweep-files! d canon cutoff)
-
-                       trimmed
-                       (when budget-bytes
-                         (trim-to-budget! d canon (long (or budget-override budget-bytes))))]
-
-                   (cond->> (merge base
-                                   swept
-                                   (when trimmed
-                                     {:deleted (+ (long (:deleted swept)) (long (:deleted trimmed)))
-                                      :bytes (+ (long (:bytes swept)) (long (:bytes trimmed)))
-                                      :over-budget-deleted (:deleted trimmed)}))
-                     (= :logs id)
-                     (finish-sweep! (sweep-stamp "logs") now))))))
-           sweep-targets)
-
-         ^File guest-root
-         (python-dir "vis-guest")
-
-         guest
-         (merge {:id :python-guest
-                 :root (canonical guest-root)
-                 :days store-window
-                 :cutoff-ms store-cutoff}
-                (if (.isDirectory guest-root)
-                  (sweep-guest-store! guest-root (canonical guest-root) store-cutoff)
-                  {:deleted 0 :bytes 0}))
-
-         ^File pycache-root
-         (python-dir "pycache")
-
-         pycache
-         (merge {:id :python-pycache :root (canonical pycache-root)}
-                (if (and (.isDirectory pycache-root)
-                         (claim-sweep! (sweep-stamp "pycache") now day-ms))
-                  (finish-sweep! (sweep-stamp "pycache")
-                                 now
-                                 (sweep-pycache! pycache-root (canonical pycache-root)))
-                  {:deleted 0 :bytes 0}))
-
-         versions
-         (mapv #(merge {:days store-window :cutoff-ms store-cutoff} %)
-               (prune-version-stores! store-cutoff))
-
-         ^File sandbox-root
-         (sandbox-dir)
-
-         sandbox-temps
-         (merge {:id :sandbox-temp
-                 :root (canonical sandbox-root)
-                 :days store-window
-                 :cutoff-ms store-cutoff}
-                (if (and (.isDirectory sandbox-root)
-                         (claim-sweep! (sweep-stamp "sandbox") now day-ms))
-                  (finish-sweep! (sweep-stamp "sandbox")
-                                 now
-                                 (sweep-sandbox-temps! sandbox-root store-cutoff))
-                  {:deleted 0 :bytes 0}))
-
-         all
-         (into (conj reports guest pycache sandbox-temps) versions)]
-
-     {:targets all :deleted (reduce + 0 (map :deleted all)) :bytes (reduce + 0 (map :bytes all))})))
-
-(defn- sweep-logs!
-  "Repeat only diagnostic retention; other derived-state rules remain startup-only."
-  [{:keys [days now-ms interval-ms]}]
-  (let [dir
-        (logs-dir)
-
-        now
-        (long (or now-ms (util/now-ms)))
+(defn- sweep-target!
+  "Sweep the `sweep-targets` entry `target` at `dir`: the files past the age
+   window, then the oldest files over the byte budget."
+  [{:keys [id retention-days budget-bytes]} ^File dir {budget-override :budget-bytes :as pass}]
+  (let [canon
+        (canonical dir)
 
         window
-        (long (or days default-retention-days))]
+        (sweep-window pass retention-days)
 
-    (if (claim-sweep! (sweep-stamp "logs")
-                      now
-                      (long (or interval-ms default-log-sweep-interval-ms)))
-      (finish-sweep! (sweep-stamp "logs")
-                     now
-                     (sweep-files! dir (canonical dir) (- now (* window (long day-ms)))))
-      {:file-count 0 :deleted 0 :bytes 0 :dirs-removed 0})))
+        swept
+        (sweep-files! dir canon (:cutoff-ms window))
 
-(defn sweep-stale-async!
-  "Start the stale-state sweep on a lowest-priority daemon thread, then repeat
-   diagnostic-log cleanup hourly for this process's lifetime. Other targets are
-   swept only at startup. All passes are best-effort and off the first-paint path;
-   a short-lived CLI may exit before its initial pass finishes.
+        trimmed
+        (when budget-bytes (trim-to-budget! dir canon (long (or budget-override budget-bytes))))]
 
-   Called once per process. Returns the thread; interrupt it to stop. `:interval-ms`
-   overrides the hourly delay for tests. The body is a `bound-fn` so ALL home seams
-   convey to every pass rather than falling back to the operator's real `~/.vis`."
-  ([] (sweep-stale-async! nil))
-  ([opts]
-   (let [interval-ms
-         (long (or (:interval-ms opts) default-log-sweep-interval-ms))
+    [(merge {:id id :root canon}
+            window
+            swept
+            (when trimmed
+              (assoc (add-counts swept trimmed) :over-budget-deleted (:deleted trimmed))))]))
 
-         ^Runnable body
-         (bound-fn []
-                   (try (loop [initial? true]
-                          (when-not (.isInterrupted (Thread/currentThread))
-                            (try (if initial? (sweep-stale! opts) (sweep-logs! opts))
-                                 (catch InterruptedException e (throw e))
-                                 (catch Throwable e
-                                   (tel/log! {:level :warn :id ::sweep-failed :error e})))
-                            (Thread/sleep interval-ms)
-                            (recur false)))
-                        (catch InterruptedException _ (.interrupt (Thread/currentThread)))))]
+(def ^:private sweeps
+  "Every self-deleting sweep, in report order. This is the ONE list: `sweep-stale!`
+   runs it and `tasks` gives it to the janitor.
 
-     (doto (Thread. body "vis-stale-sweep")
-       (.setDaemon true)
-       (.setPriority Thread/MIN_PRIORITY)
-       (.start)))))
+   `:every-ms` is the least time between two runs of a sweep on one root.
+   `:rows` names its report rows. `:root` answers the directory that the sweep
+   walks: without that directory there is no work. `:run` takes the directory and
+   the pass, `{:now :days :budget-bytes}`, and answers the rows."
+  (into
+    (mapv (fn [{:keys [id dir every-ms] :as target}]
+            {:id id
+             :every-ms every-ms
+             :rows [id]
+             :root dir
+             :run (fn [dir pass]
+                    (sweep-target! target dir pass))})
+          sweep-targets)
+    [{:id :python-guest
+      :every-ms day-ms
+      :rows [:python-guest]
+      :root #(python-dir "vis-guest")
+      :run (fn [^File dir pass]
+             (let [canon
+                   (canonical dir)
+
+                   window
+                   (sweep-window pass default-retention-days)]
+
+               [(merge {:id :python-guest :root canon}
+                       window
+                       (sweep-guest-store! dir canon (:cutoff-ms window)))]))}
+     {:id :python-pycache
+      :every-ms day-ms
+      :rows [:python-pycache]
+      :root #(python-dir "pycache")
+      :run (fn [^File dir _pass]
+             (let [canon (canonical dir)]
+               [(merge {:id :python-pycache :root canon} (sweep-pycache! dir canon))]))}
+     {:id :sandbox-temp
+      :every-ms day-ms
+      :rows [:sandbox-temp]
+      :root sandbox-dir
+      :run (fn [^File dir pass]
+             (let [window (sweep-window pass default-retention-days)]
+               [(merge {:id :sandbox-temp :root (canonical dir)}
+                       window
+                       (sweep-sandbox-temps! dir (:cutoff-ms window)))]))}
+     {:id :python-versions
+      :every-ms day-ms
+      :rows [:python-runtime :python-sources]
+      :root python-home
+      :run (fn [_dir pass]
+             (let [window (sweep-window pass default-retention-days)]
+               (mapv #(merge window %) (prune-version-stores! (:cutoff-ms window)))))}]))
+
+(defn- run-sweep!
+  "Run `sweep` when its directory exists and its interval is over, and answer its
+   report rows. Answer nil when there is no work. The stamp is claimed last, so a
+   store that does not exist takes no stamp."
+  [{:keys [id every-ms root run]} {:keys [now] :as pass}]
+  (let [^File dir (root)]
+    (when (.isDirectory dir)
+      (let [stamp (sweep-stamp (name id) dir)]
+        (when (claim-sweep! stamp (long now) (long every-ms))
+          (finish-sweep! stamp (long now) (run dir pass)))))))
+
+(defn- totals
+  "The entries and bytes that the report `rows` removed."
+  [rows]
+  {:deleted (reduce + 0 (map :deleted rows)) :bytes (reduce + 0 (map :bytes rows))})
+
+(defn sweep-stale!
+  "Run each sweep of `sweeps` that is due, in order, on the calling thread. Returns
+   `{:targets [row…] :deleted :bytes}` — `:deleted` counts entries actually
+   removed and `:bytes` the space reclaimed. A sweep that ran gives its full rows:
+   for a `sweep-targets` entry `{:id :root :days :cutoff-ms :file-count :deleted
+   :bytes :dirs-removed :over-budget-deleted}`. A sweep with no work gives
+   `{:id :deleted 0 :bytes 0}`. The claim-based rows are `:python-guest`,
+   `:python-runtime` and `:python-sources`; `:python-pycache` answers to the source
+   a bytecode entry mirrors, not to age.
+
+   A missing directory is zero work, and a permission-denied subtree is skipped
+   rather than allowed to stop the pass.
+
+   Options, all for tests: `:days` (overrides every window), `:budget-bytes`
+   (overrides every byte budget) and `:now-ms`."
+  ([] (sweep-stale! nil))
+  ([{:keys [now-ms] :as opts}]
+   (let [pass
+         (assoc (select-keys opts [:days :budget-bytes]) :now (long (or now-ms (util/now-ms))))
+
+         all
+         (into []
+               (mapcat (fn [sweep]
+                         (or (run-sweep! sweep pass)
+                             (map (fn [id]
+                                    {:id id :deleted 0 :bytes 0})
+                                  (:rows sweep)))))
+               sweeps)]
+
+     (assoc (totals all) :targets all))))
+
+(def ^:private ^:const settle-ms
+  "The time a process runs before its first sweep. A short command ends before
+   that, so it walks nothing and its start pays nothing."
+  30000)
+
+(defn tasks
+  "The sweeps as tasks for `internal.janitor/submit!`: one task for each sweep, in
+   report order.
+
+   Each sweep has its own interval, `:every-ms` in `sweeps`, and the stamp of its
+   root holds that interval for the whole machine. A task asks four times in each
+   interval, and at least each hour, whether its sweep is due. A timer and a file
+   time never agree to the millisecond, so a task that asked only one time in each
+   interval would run its sweep in each second interval. A walk that a stopped
+   process left unfinished starts again at the next question. A task that is not
+   due answers nil, and the janitor writes no line for it. A task that walked
+   answers `{:deleted :bytes}`.
+
+   A task keeps the dynamic bindings of the caller, so the home seams of a test
+   reach the worker thread."
+  []
+  (mapv (fn [{:keys [id every-ms] :as sweep}]
+          {:id (keyword "housekeeping" (name id))
+           :delay-ms settle-ms
+           :every-ms (min (quot (long every-ms) 4) (long hour-ms))
+           :run (bound-fn* #(some-> (run-sweep! sweep {:now (util/now-ms)})
+                                    totals))})
+        sweeps))
 
 ;; Gateway journals
 

@@ -9,6 +9,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
+            [com.blockether.vis.internal.janitor :as janitor]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as p]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -341,23 +342,27 @@
         (expect (.exists fresh))
         (expect (.isDirectory logs))))
   (it "sweeps every diagnostic format by file age and prunes only empty date directories"
-      (doseq [sweep! [#(target (housekeeping/sweep-stale! nil) :logs)
-                      #(#'housekeeping/sweep-logs! nil)]]
-        (let [logs (tmp-dir "vis-hk-dated-logs")
-              stale (mapv #(touch! logs (str "2026-08-01/" %) 40 "old")
-                          ["gateway.log" "gateway.log.1.gz" "gateway-boot.log" "vis-nrepl.log"
-                           "shell/session/build.log" "outside/shell-run.log"
-                           "pyext-worker/worker.log" "pyext-worker/jvm-crash-1.log"
-                           "pyext-worker/jvm-heap.hprof" "gateway-hang-1/report.json"
-                           "gateway-hang-1/threads.json" "vis-gateway.jfr"])
-              live-log (touch! logs "2026-08-02/gateway-live.log" 0 "still running")
-              report (with-homes {:logs logs} sweep!)]
+      (let [logs
+            (tmp-dir "vis-hk-dated-logs")
 
-          (expect (= (inc (count stale)) (:file-count report)))
-          (expect (= (count stale) (:deleted report)))
-          (expect (every? #(not (.exists ^File %)) stale))
-          (expect (not (.exists (io/file logs "2026-08-01"))))
-          (expect (.exists live-log)))))
+            stale
+            (mapv #(touch! logs (str "2026-08-01/" %) 40 "old")
+                  ["gateway.log" "gateway.log.1.gz" "gateway-boot.log" "vis-nrepl.log"
+                   "shell/session/build.log" "outside/shell-run.log" "pyext-worker/worker.log"
+                   "pyext-worker/jvm-crash-1.log" "pyext-worker/jvm-heap.hprof"
+                   "gateway-hang-1/report.json" "gateway-hang-1/threads.json" "vis-gateway.jfr"])
+
+            live-log
+            (touch! logs "2026-08-02/gateway-live.log" 0 "still running")
+
+            report
+            (target (with-homes {:logs logs} #(housekeeping/sweep-stale! nil)) :logs)]
+
+        (expect (= (inc (count stale)) (:file-count report)))
+        (expect (= (count stale) (:deleted report)))
+        (expect (every? #(not (.exists ^File %)) stale))
+        (expect (not (.exists (io/file logs "2026-08-01"))))
+        (expect (.exists live-log))))
   (it "honours an explicit :days window"
       (let [logs (tmp-dir "vis-hk-logs-days")]
         (touch! logs "a.log" 5 "a")
@@ -369,17 +374,21 @@
         (expect (zero? (count (.listFiles logs))))))
   (it "preserves a new writer's empty directory but prunes abandoned empty directories"
       ;; A periodic sweep can run between a writer's mkdir and its first file open.
-      (doseq [sweep! [#(housekeeping/sweep-stale! nil) #(#'housekeeping/sweep-logs! nil)]]
-        (let [logs (tmp-dir "vis-hk-empty-logs")
-              fresh (io/file logs "2026-09-14/pyext-new")
-              stale (io/file logs "2026-08-01/pyext-abandoned")]
+      (let [logs
+            (tmp-dir "vis-hk-empty-logs")
 
-          (.mkdirs fresh)
-          (.mkdirs stale)
-          (.setLastModified stale (long (age-ms 40)))
-          (with-homes {:logs logs} sweep!)
-          (expect (.isDirectory fresh))
-          (expect (not (.exists (.getParentFile stale)))))))
+            fresh
+            (io/file logs "2026-09-14/pyext-new")
+
+            stale
+            (io/file logs "2026-08-01/pyext-abandoned")]
+
+        (.mkdirs fresh)
+        (.mkdirs stale)
+        (.setLastModified stale (long (age-ms 40)))
+        (with-homes {:logs logs} #(housekeeping/sweep-stale! nil))
+        (expect (.isDirectory fresh))
+        (expect (not (.exists (.getParentFile stale))))))
   (it "never follows or deletes a symlink, so a link out of the root costs nothing"
       (let [logs
             (tmp-dir "vis-hk-logs-link")
@@ -441,90 +450,86 @@
                                #(housekeeping/sweep-stale! nil))]
         (expect (zero? (:deleted report)))
         (expect (zero? (:bytes report)))
-        (expect (= [:logs :gateway-events :display :tui-attachments :python-archives :python-guest
-                    :python-pycache :sandbox-temp :python-runtime :python-sources]
+        (expect (= [:logs :gateway-events :display :tui-attachments :python-archives :sweep-stamps
+                    :python-guest :python-pycache :sandbox-temp :python-runtime :python-sources]
                    (mapv :id (:targets report))))))
-  (it "sweeps at startup and then repeats only diagnostic cleanup with bindings conveyed"
-      ;; A startup-only sweep leaves logs behind when the daemon runs for weeks.
+  ;; A startup-only sweep leaves logs behind when the daemon runs for weeks.
+  (it
+    "sweeps on the janitor with the homes of the caller, and again when a store is due"
+    (let [logs
+          (tmp-dir "vis-hk-logs-janitor")
+
+          cache
+          (tmp-dir "vis-hk-cache-janitor")
+
+          gone?
+          (fn [^File f]
+            (loop [tries 250]
+              (cond (not (.exists f)) true
+                    (zero? tries) false
+                    :else (do (Thread/sleep 20) (recur (dec tries))))))
+
+          old
+          (touch! logs "old.log" 60 "old")
+
+          kept
+          (touch! logs "new.log" 1 "new")
+
+          ;; Without the bindings of the caller, these tasks would sweep the real ~/.vis.
+          ids
+          (with-homes {:logs logs :cache cache}
+                      #(mapv (fn [task]
+                               (janitor/submit! (assoc task
+                                                  :delay-ms 0
+                                                  :every-ms 20)))
+                             (housekeeping/tasks)))]
+
+      (try (expect (gone? old))
+           (expect (.exists kept))
+           (let [stale (touch! logs "2026-08-01/pyext-worker/worker.log" 60 "old worker")]
+             ;; The task asks again each 20 ms, but the stamp holds the store for its hour.
+             (Thread/sleep 200)
+             (expect (.exists stale))
+             (.setLastModified ^File
+                               (first (filter #(.startsWith (.getName ^File %) "logs-")
+                                              (.listFiles (io/file cache "housekeeping"))))
+                               (- (System/currentTimeMillis)
+                                  (long housekeeping/default-log-sweep-interval-ms)))
+             (expect (gone? stale))
+             (expect (.exists kept)))
+           (finally (run! janitor/cancel! ids)))))
+  ;; Regression, user report in this Vis session: only the logs were swept again while a
+  ;; process ran, and each other store only at a process start.
+  (it "sweeps each store again when its own interval is over"
       (let [logs
-            (tmp-dir "vis-hk-logs-async")
+            (tmp-dir "vis-hk-own-logs")
 
             events
-            (tmp-dir "vis-hk-events-async")
+            (tmp-dir "vis-hk-own-events")
 
             cache
-            (tmp-dir "vis-hk-cache-async")
+            (tmp-dir "vis-hk-own-cache")
 
-            python
-            (tmp-dir "vis-hk-python-async")
+            now
+            (System/currentTimeMillis)
 
-            started
-            (promise)
+            sweep!
+            (fn [at]
+              (with-homes {:logs logs :events events :cache cache}
+                          #(housekeeping/sweep-stale! {:now-ms at})))]
 
-            repeated
-            (promise)
+        (sweep! now)
+        (let [log
+              (touch! logs "old.log" 60 "old")
 
-            startup!
-            housekeeping/sweep-stale!
+              journal
+              (touch! events "old.ndjson" 60 "session replay")]
 
-            files!
-            @#'housekeeping/sweep-files!]
-
-        (touch! logs "old.log" 60 "old")
-        (touch! logs "new.log" 1 "new")
-        (with-redefs-fn {#'housekeeping/sweep-stale! (fn [opts]
-                                                       (deliver started (startup! opts)))
-                         #'housekeeping/sweep-files!
-                         (fn [dir canon ^long cutoff]
-                           (let [report (files! dir canon cutoff)]
-                             (when (and (= dir logs) (realized? started) (pos? (:deleted report)))
-                               (deliver repeated report))
-                             report))}
-          (fn []
-            ;; Without bound-fn*, these seams would resolve to the real ~/.vis.
-            (let [^Thread thread (with-homes {:logs logs :events events :cache cache :python python}
-                                             #(housekeeping/sweep-stale-async! {:interval-ms 20}))]
-              (try (expect (map? (deref started 5000 nil)))
-                   (expect (.isDaemon thread))
-                   (expect (= Thread/MIN_PRIORITY (.getPriority thread)))
-                   (expect (= ["new.log"] (mapv #(.getName ^File %) (.listFiles logs))))
-                   (let [journal (touch! events "keep.ndjson" 60 "session replay")
-                         picture (touch! cache "display/keep.png" 60 "picture")
-                         runtime-file (touch! python "runtime/old/keep.py" 60 "runtime")
-                         stale (touch! logs "2026-08-01/pyext-worker/worker.log" 60 "old worker")]
-
-                     (.setLastModified (.getParentFile runtime-file) (age-ms 60))
-                     (expect (map? (deref repeated 5000 nil)))
-                     (expect (not (.exists stale)))
-                     (expect (.exists (io/file logs "new.log")))
-                     (expect (every? #(.exists ^File %) [journal picture runtime-file])))
-                   (finally (.interrupt thread) (.join thread 5000)))
-              (expect (not (.isAlive thread))))))))
-  (it "retries failed startup and periodic passes without keeping the process alive"
-      (let [startup-calls
-            (atom 0)
-
-            log-calls
-            (atom 0)
-
-            recovered
-            (promise)]
-
-        (with-redefs-fn {#'housekeeping/sweep-stale! (fn [_]
-                                                       (swap! startup-calls inc)
-                                                       (throw (ex-info "Initial sweep failed" {})))
-                         #'housekeeping/sweep-logs! (fn [_]
-                                                      (if (= 1 (swap! log-calls inc))
-                                                        (throw (ex-info "Periodic sweep failed" {}))
-                                                        (deliver recovered true)))}
-          (fn []
-            (let [^Thread thread (with-homes {}
-                                             #(housekeeping/sweep-stale-async! {:interval-ms 20}))]
-              (try (expect (true? (deref recovered 5000 nil)))
-                   (expect (= 1 @startup-calls))
-                   (expect (>= @log-calls 2))
-                   (finally (.interrupt thread) (.join thread 5000)))
-              (expect (not (.isAlive thread))))))))
+          (sweep! (+ now (long housekeeping/default-log-sweep-interval-ms)))
+          (expect (not (.exists log)))
+          (expect (.exists journal))
+          (sweep! (+ now (long housekeeping/day-ms)))
+          (expect (not (.exists journal))))))
   (it
     "reclaims a stale unclaimed version while keeping the pinned, newest, recent and unrecognized stores"
     (let [python
@@ -777,6 +782,23 @@
           (expect (zero? (long (swept (+ now 60000)))))
           (expect (.isFile kept)))
         (expect (= 1 (swept (+ now (long housekeeping/default-log-sweep-interval-ms)))))))
+  ;; Regression: the gateway of the Python SDK has its own `vis.logs.dir` and the Vis home
+  ;; of the user. One stamp for both log folders let the first gateway hold the other back.
+  (it "sweeps the log folder of each process that shares one Vis home"
+      (let [cache
+            (tmp-dir "vis-hk-two-roots-cache")
+
+            now
+            (System/currentTimeMillis)
+
+            swept
+            (fn [logs at]
+              (touch! logs "old.log" 60 "old")
+              (with-homes {:logs logs :cache cache}
+                          #(:deleted (target (housekeeping/sweep-stale! {:now-ms at}) :logs))))]
+
+        (expect (= 1 (swept (tmp-dir "vis-hk-two-roots-main") now)))
+        (expect (= 1 (swept (tmp-dir "vis-hk-two-roots-sdk") (+ now 60000))))))
   ;; Every process start walked the whole store: on a live machine 304,215 entries,
   ;; about 1.7 GB of allocation and 20 s of CPU per start of any `vis-agent` command.
   (it

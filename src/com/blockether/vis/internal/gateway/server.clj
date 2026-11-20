@@ -66,6 +66,7 @@
     [com.blockether.vis.internal.gateway.stdio :as stdio]
     [com.blockether.vis.internal.python.runtime :as python-runtime]
     [com.blockether.vis.internal.paths :as paths]
+    [com.blockether.vis.internal.janitor :as janitor]
     [com.blockether.vis.internal.config.toggles :as toggles]
     [com.blockether.vis.internal.config.scoped :as scoped]
     [com.blockether.vis.internal.util :as util]
@@ -2408,16 +2409,9 @@
 
          ;; Turn states of archived and long sessions are pruned off the start path.
          _
-         (doto (Thread. ^Runnable
-                        (fn []
-                          (try (state/sweep-turn-states!)
-                               (catch Throwable t
-                                 (tel/log! :warn
-                                           ["gateway: turn state sweep failed" (ex-message t)]))))
-                        "vis-turn-state-sweep")
-           (.setDaemon true)
-           (.setPriority Thread/MIN_PRIORITY)
-           (.start))
+         (janitor/submit! {:id :gateway/turn-states
+                           :run (fn []
+                                  {:deleted (state/sweep-turn-states!)})})
 
          ;; Hydrate persisted toggles + install the state.yml save
          ;; listener so web/gateway-driven flips survive restarts.

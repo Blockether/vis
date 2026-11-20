@@ -15,20 +15,23 @@
 
    VACUUM takes SQLite's exclusive lock and rewrites the whole file (measured:
    15 s and 2.4 GB -> 2.0 GB on a real store), so it runs OFF the open path —
-   `vacuum-async!` on a lowest-priority daemon thread after a settling delay,
-   never inside a transaction. Readers and writers in this process or another
-   one block for its duration and then continue, which the 30 s busy timeout and
-   the write-retry ladder in `core` absorb. A process that exits first, or a
-   `db-close!` that aborts the lease mid-rewrite, simply leaves the store due at
-   the next start: the rewrite is transactional, so an interrupted VACUUM rolls
-   back rather than damaging anything.
+   `vacuum-async!` gives it to `internal.janitor`, the one maintenance worker of
+   a process, after a settling delay, never inside a transaction. Readers and
+   writers in this process or another one block for its duration and then
+   continue, which the 30 s busy timeout and the write-retry ladder in `core`
+   absorb. A process that exits first, or a `db-close!` that aborts the lease
+   mid-rewrite, simply leaves the store due at the next start: the rewrite is
+   transactional, so an interrupted VACUUM rolls back rather than damaging
+   anything.
 
    The `vis.db.vacuum` marker beside the store is BOTH the clock (its mtime is
    the last successful vacuum) and the cross-process mutex (an exclusive
    `FileLock` held for the rewrite). It is created only when a vacuum is
    actually attempted and deleted again when one fails, so a store that never
    needed reclaiming carries no marker and stays due."
-  (:require [com.blockether.vis.internal.util :as util])
+  (:require [com.blockether.vis.internal.janitor :as janitor]
+            [com.blockether.vis.internal.util :as util]
+            [taoensso.telemere :as tel])
   (:import (java.io File RandomAccessFile)
            (java.nio.channels FileLock OverlappingFileLockException)
            (javax.sql DataSource)))
@@ -191,21 +194,36 @@
         (catch Throwable t {:is-vacuumed false :reason :failed :error (ex-message t)}))))
 
 (defn vacuum-async!
-  "Fire-and-forget `maybe-vacuum!` for the store at `db-file`, on a
-   lowest-priority daemon thread that first sleeps `:delay-ms` so the rewrite is
-   not what a starting process waits on. A `:before` function runs on the same
-   thread first, so a data rewrite frees its pages before the reclaim checks
-   them. Returns the thread. Called once per store per process, from the pool
-   that just opened it."
+  "Give `maybe-vacuum!` for the store at `db-file` to the janitor, which runs it
+   after `:delay-ms`, so the rewrite is not what a starting process waits on. A
+   `:before` function runs first in the same task, so a data rewrite frees its
+   pages before the reclaim checks them. `:open?` answers whether the store is
+   still open: a store that closed in the delay is due at its next open. Called
+   once per store per process, from the pool that just opened it. A second call
+   for one store replaces a task that still waits.
+
+   The janitor writes the report of a vacuum that ran or that another process
+   holds. A store with nothing to reclaim leaves no line, and a failed vacuum is a
+   warning."
   ([ds db-file] (vacuum-async! ds db-file nil))
-  ([ds db-file {:keys [delay-ms before] :as opts}]
-   (doto (Thread. ^Runnable
-                  (fn []
-                    (try (Thread/sleep (long (or delay-ms vacuum-start-delay-ms)))
-                         (when before (try (before) (catch Exception _ nil)))
-                         (maybe-vacuum! ds db-file opts)
-                         (catch Throwable _ nil)))
-                  "vis-sqlite-vacuum")
-     (.setDaemon true)
-     (.setPriority Thread/MIN_PRIORITY)
-     (.start))))
+  ([ds db-file {:keys [delay-ms before open?] :as opts}]
+   (janitor/submit!
+     {:id [:sqlite-vacuum db-file]
+      :delay-ms (long (or delay-ms vacuum-start-delay-ms))
+      :run
+      (fn []
+        (when (or (nil? open?) (open?))
+          (when before
+            (try (before)
+                 (catch Exception e
+                   (tel/log!
+                     {:level :warn :id ::store-rewrite-failed :data {:db-file db-file} :error e}))))
+          (let [{:keys [reason] :as report} (maybe-vacuum! ds db-file opts)]
+            (case reason
+              (:recent :compact)
+              nil
+
+              :failed
+              (throw (ex-info "The SQLite vacuum failed" report))
+
+              report))))})))

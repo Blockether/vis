@@ -877,7 +877,7 @@
 
 (defn- open-disk-pool!
   "Fresh pool over `file`, schema installed under the cross-process migration
-   lock, then the fortnightly space reclaim handed to its own thread
+   lock, then the fortnightly space reclaim handed to the janitor
    (`maintenance/vacuum-async!` — off the open path, since VACUUM rewrites the
    whole file). Closes the pool if the migration fails so a failed open leaks
    nothing."
@@ -889,7 +889,10 @@
         (pooled-datasource raw (str "vis-rlm-disk-" (.incrementAndGet ^AtomicLong pool-counter)))]
 
     (try (with-migration-lock! path #(install-schema! pool {:shared? (claim-store! path)}))
-         (maintenance/vacuum-async! pool file {:before #(rewrite-older-store! pool)})
+         (maintenance/vacuum-async! pool
+                                    file
+                                    {:before #(rewrite-older-store! pool)
+                                     :open? #(not (.isClosed pool))})
          pool
          (catch Throwable t (try (.close pool) (catch Throwable _ nil)) (throw t)))))
 

@@ -192,10 +192,13 @@ or timed out. When the JVM has accepted a dump, a stop of the helper does not ca
 
 ## Rotation and retention
 
-- **Age.** At engine start, and each hour while the engine runs, Vis removes diagnostic files that
-  last changed more than 14 days ago. Then it removes empty directories. The cleanup covers the
-  full log tree: shell and Python worker output, rotated logs, hang reports, JFR recordings, and
-  heap dumps. It uses the age of a file, not the date of its folder.
+- **Age.** Vis removes diagnostic files that last changed more than 14 days ago. Then it removes
+  empty directories. The cleanup covers the full log tree: shell and Python worker output, rotated
+  logs, hang reports, JFR recordings, and heap dumps. It uses the age of a file, not the date of
+  its folder.
+- **Cleanup times.** The log cleanup does not run in the first 30 seconds of an engine. After
+  that, Vis cleans the log directory about each hour while an engine runs. Engines with the same
+  Vis home and the same log directory share one record of the last cleanup.
 - **Process logs and problem logs.** They rotate each day, and also at 8,000,000 bytes. The
   handler keeps eight gzip parts for each day, and 14 days.
 - **Hang reports.** After a report completes, cleanup keeps the ten newest completed reports
@@ -211,8 +214,9 @@ logs share `~/.vis/logs/`. `VIS_OUTSIDE_HOME` moves them to
 `<VIS_OUTSIDE_HOME>/logs/YYYY-MM-DD/outside/`, with the same cleanup.
 
 Cleanup needs a running process. A short CLI or Python process can exit before its first
-background pass completes, and expired logs then stay until a later run. To keep a diagnostic file
-for longer, copy it out of the log tree.
+background pass completes, and expired logs then stay until a later run. The engine writes one
+entry to its own log for each cleanup that it does. To find these entries, search that log for
+`janitor`. To keep a diagnostic file for longer, copy it out of the log tree.
 
 ## Review before sharing
 

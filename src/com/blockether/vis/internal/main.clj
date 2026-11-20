@@ -53,6 +53,7 @@
     [com.blockether.vis.internal.workspace.cli :as workspace-cli]
     [com.blockether.vis.internal.workspace.core :as workspace]
     [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
+    [com.blockether.vis.internal.janitor :as janitor]
     [com.blockether.vis.internal.native-libs :as native-libs]
     [com.blockether.vis.internal.context.prompt :as prompt]
     [com.blockether.vis-python-runtime :as pyrt]
@@ -3815,12 +3816,14 @@
       ;; spam - the user only sees logs when they pass --debug / --verbose / -v
       ;; (or set VIS_DEBUG=1).
       (timed-startup! measure? "configure-logging" #(configure-logging! run-args))
-      ;; Stale-state sweep: `~/.vis/logs` gains a file per nrepl/JFR start and a
-      ;; directory per `shell` command, the display caches a file per rendered
-      ;; picture, `~/.vis/rewind` a store per session — and nothing ever removed
-      ;; one. Off-thread and best-effort — see `housekeeping/sweep-stale!` for
-      ;; the windows and the guards.
-      (try (housekeeping/sweep-stale-async!) (catch Throwable _ nil))
+      ;; Stale-state sweeps: `~/.vis/logs` gains a file per nrepl/JFR start and a
+      ;; directory per `shell` command, and the display caches a file per rendered
+      ;; picture. Each store has its own sweep and its own interval — see
+      ;; `housekeeping/tasks`. The janitor runs them one after another, off this
+      ;; thread, and the first one only after the start is over.
+      (try (doseq [task (housekeeping/tasks)]
+             (janitor/submit! task))
+           (catch Throwable t (tel/log! {:level :warn :id ::housekeeping-not-queued :error t})))
       ;; A fresh temp copy of a bundled dylib costs about 1 s at its first dlopen on macOS.
       (timed-startup! measure? "stage-native-libs" native-libs/stage-resolver-libs!)
       ;; The first token count of a turn otherwise waits for the tokenizer ranks.
