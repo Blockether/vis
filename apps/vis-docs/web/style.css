@@ -352,7 +352,7 @@ button.quiet {
   width: 100%;
 }
 .install-controls select {
-  height: 2.75rem;
+  height: var(--field-height);
   font-size: var(--text-small);
   border: 1px solid var(--line);
 }
@@ -519,7 +519,7 @@ dialog form label {
   min-width: 0;
   max-width: 100%;
   width: 16rem;
-  height: 2.75rem;
+  height: var(--field-height);
   padding: 0 0.5rem;
   font: inherit;
   color: var(--fg);

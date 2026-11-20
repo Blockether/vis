@@ -34,6 +34,8 @@
   --font: 'JetBrains Mono', monospace;
   --text-body: 0.9375rem;
   --text-small: 0.8125rem;
+  /* One height for dropdowns, equal to a text input; touch screens raise it to 2.75rem. */
+  --field-height: 2.375rem;
   --text-heading: 1.125rem;
   --text-title: 1.75rem;
   --shadow: 0 1px 2px rgba(30, 30, 30, 0.05);
@@ -444,7 +446,7 @@ button:disabled {
 }
 .vis-select__trigger {
   width: 100%;
-  min-height: 2.75rem;
+  min-height: var(--field-height);
   justify-content: space-between;
   border: 1px solid var(--line);
   background: var(--bg);
@@ -906,6 +908,9 @@ button.primary:hover {
   color: var(--dim);
 }
 @media (pointer: coarse) {
+  :root {
+    --field-height: 2.75rem;
+  }
   .vis-select__option {
     min-height: 2.75rem;
   }

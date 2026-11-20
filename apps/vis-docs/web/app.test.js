@@ -288,7 +288,7 @@ test('release controls retain pointer and touch targets, including native no-JS 
   const rules = [...style.sheet.cssRules],
     touch = [...rules.find((rule) => rule.conditionText === '(pointer: coarse)').cssRules];
   for (const [selector, property, value] of [
-    ['.version-picker select', 'height', '2.75rem'],
+    ['.version-picker select', 'height', 'var(--field-height)'],
     ['.release-history a', 'min-height', '1.75rem'],
     ['.install-section summary', 'min-height', '1.75rem'],
   ])
@@ -298,7 +298,17 @@ test('release controls retain pointer and touch targets, including native no-JS 
   for (const selector of ['.release-history a', '.install-section summary'])
     expect(
       touch.find((rule) => rule.selectorText === selector).style.getPropertyValue('min-height'),
-    ).toBe('2.75rem');
+    ).toBe('2.75rem');  // Dropdowns are short on desktop, but a touch screen keeps the 44 px target.
+  const theme = document.createElement('style');
+  theme.textContent = readFileSync('../../resources/vis-docs/assets/theme.css', 'utf8');
+  document.body.append(theme);
+  const themeRules = [...theme.sheet.cssRules],
+    height = (list) =>
+      list.find((rule) => rule.selectorText === ':root').style.getPropertyValue('--field-height');
+  expect(height(themeRules)).toBe('2.375rem');
+  expect(
+    height([...themeRules.find((rule) => rule.conditionText === '(pointer: coarse)').cssRules]),
+  ).toBe('2.75rem');
 });
 test('extension detail spacing overrides prose margins without changing README typography', () => {
   document.body.innerHTML = shellHTML({
