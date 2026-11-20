@@ -2208,6 +2208,29 @@
             (expect (= "Rename y"
                        (get-in (app-node (app-view sid view-id) "change") ["threads" 0 "draft"])))
             (expect (= (get ack "seq") (seq-now)))))))
+  ;; User report: a comment on several lines failed with "Failed" in the app.
+  (it "saves a draft on a range of lines and keeps its first line"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (open-app! sid)
+
+                lines
+                {"path" "src/a.py" "side" "new" "start_line" 1 "line" 2}
+
+                ack
+                (json-body (view-action-response
+                             sid
+                             view-id
+                             {"action" "draft" "node_id" "change" "anchor" lines "body" "Join"}))]
+
+            (expect (true? (get ack "is_accepted")))
+            (expect (= lines
+                       (get-in (app-node (app-view sid view-id) "change")
+                               ["threads" 0 "anchor"])))))))
   (it "restores the value of each input type after a restart"
       ;; #421: a replayed record kept the field type as text. A saved value then
       ;; failed its domain check, and the app list of the session threw.

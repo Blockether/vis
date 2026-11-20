@@ -1289,6 +1289,45 @@
       }
     },
     {
+      "name": "a diff thread over lines that end before they start is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": [
+              {
+                "id": "t1",
+                "anchor": {
+                  "path": "a.py",
+                  "side": "new",
+                  "start_line": 4,
+                  "line": 2
+                },
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "d"
+        ],
+        "text": [
+          "node d /threads/0/anchor - the range of lines ends before it starts (anchor)"
+        ]
+      }
+    },
+    {
       "name": "two diff threads with one id are a node fault",
       "view": {
         "title": "Checks",
@@ -4358,6 +4397,131 @@
       ],
       "expect": {
         "refusal": "Invalid live-view patch: node d /threads/0 - a diff thread needs an anchor (anchor)"
+      }
+    },
+    {
+      "name": "a thread op keeps the range of lines of its anchor",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": []
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "d",
+          "thread": {
+            "id": "t1",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "start_line": 2,
+              "line": 4
+            },
+            "messages": []
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          "0",
+          "threads",
+          "0",
+          "anchor"
+        ],
+        "value": {
+          "path": "a.py",
+          "side": "new",
+          "start_line": 2,
+          "line": 4
+        }
+      }
+    },
+    {
+      "name": "a thread op keeps a range of lines that starts on the other side",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": []
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "d",
+          "thread": {
+            "id": "t1",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "start_side": "old",
+              "start_line": 5,
+              "line": 3
+            },
+            "messages": []
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          "0",
+          "threads",
+          "0",
+          "anchor"
+        ],
+        "value": {
+          "path": "a.py",
+          "side": "new",
+          "start_side": "old",
+          "start_line": 5,
+          "line": 3
+        }
+      }
+    },
+    {
+      "name": "a thread op over lines that end before they start is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "",
+            "threads": []
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "d",
+          "thread": {
+            "id": "t1",
+            "anchor": {
+              "path": "a.py",
+              "side": "new",
+              "start_line": 4,
+              "line": 2
+            },
+            "messages": []
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node d /threads/0/anchor - the range of lines ends before it starts (anchor)"
       }
     },
     {
