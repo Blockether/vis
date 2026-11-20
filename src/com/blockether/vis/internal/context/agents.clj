@@ -14,7 +14,9 @@
                     primary workspace — no ancestor walk)
 
    Per DIRECTORY precedence is strict: AGENTS.md wins; CLAUDE.md is
-   only consulted when AGENTS.md is absent in that directory. Across
+   only consulted when AGENTS.md is absent in that directory. A local file,
+   AGENTS.local.md or else CLAUDE.local.md, follows the main file of its
+   directory, so a person's own uncommitted rules override it. Across
    directories nothing is dropped — nearer files are rendered LATER so
    they positionally override outer rules on conflict.
 
@@ -144,6 +146,25 @@
           (.isFile c) {:source :claude-md :file c}
           :else nil)))
 
+(defn- local-candidate
+  "Pick the local guidance file for one directory: AGENTS.local.md wins,
+   CLAUDE.local.md is the fallback. Returns `{:source :file}` or nil."
+  [^java.io.File dir]
+  (let [a
+        (java.io.File. dir "AGENTS.local.md")
+
+        c
+        (java.io.File. dir "CLAUDE.local.md")]
+
+    (cond (.isFile a) {:source :agents-local-md :file a}
+          (.isFile c) {:source :claude-local-md :file c}
+          :else nil)))
+
+(defn- dir-candidates
+  "The guidance files of one directory in render order: the main file, then the local file."
+  [dir]
+  (keep identity [(guidance-candidate dir) (local-candidate dir)]))
+
 (defn- ancestor-chain
   "Canonical directory chain from the filesystem root DOWN TO `root`
    inclusive — outermost first, so render order = precedence order
@@ -168,17 +189,28 @@
                :bytes total-bytes
                :content (->utf8-string bytes total-bytes)}})))
 
+(defn source-file-name
+  "The file name of a guidance `source`."
+  [source]
+  (case source
+    :agents-md
+    "AGENTS.md"
+
+    :claude-md
+    "CLAUDE.md"
+
+    :agents-local-md
+    "AGENTS.local.md"
+
+    :claude-local-md
+    "CLAUDE.local.md"
+
+    (str source)))
+
 (defn origin-label
   "Human label for a stacked-file entry: file name + scope qualifier."
   [{:keys [scope source]}]
-  (str (case source
-         :agents-md
-         "AGENTS.md"
-
-         :claude-md
-         "CLAUDE.md"
-
-         (str source))
+  (str (source-file-name source)
        (case scope
          :global
          " (user-global)"
@@ -240,7 +272,7 @@
 
      present: {:found? true
                :files  [{:scope :global|:ancestor|:project|:extra-root
-                         :source :agents-md|:claude-md
+                         :source :agents-md|:claude-md|:agents-local-md|:claude-local-md
                          :path \"…\" :bytes N :content \"…\"} …]
                ;; legacy single-file view (innermost file + combined content)
                :source <legacy kw> :path \"…\" :bytes <total> :content \"…\"}
@@ -285,17 +317,13 @@
              (let [[scope ^java.io.File d]
                    (first ds)
 
-                   cand
-                   (guidance-candidate d)
+                   cands
+                   (remove #(contains? seen (.getAbsolutePath ^java.io.File (:file %)))
+                     (dir-candidates d))]
 
-                   path
-                   (some-> cand
-                           ^java.io.File (:file)
-                           .getAbsolutePath)]
-
-               (if (and cand (not (contains? seen path)))
-                 (recur (rest ds) (conj seen path) (conj acc (read-guidance-entry scope cand)))
-                 (recur (rest ds) seen acc)))))
+               (recur (rest ds)
+                      (into seen (map #(.getAbsolutePath ^java.io.File (:file %))) cands)
+                      (into acc (map #(read-guidance-entry scope %)) cands)))))
 
          entries
          (vec (keep :entry reads))
@@ -341,11 +369,12 @@
    reading file contents. Each row is `{:root path :path guidance-path :source}`."
   []
   (into []
-        (keep (fn [^java.io.File root]
-                (when-let [{:keys [source ^java.io.File file]} (guidance-candidate root)]
-                  {:root (try (.getCanonicalPath root) (catch Throwable _ (.getAbsolutePath root)))
-                   :path (.getAbsolutePath file)
-                   :source source})))
+        (mapcat (fn [^java.io.File root]
+                  (for [{:keys [source ^java.io.File file]} (dir-candidates root)]
+                    {:root (try (.getCanonicalPath root)
+                                (catch Throwable _ (.getAbsolutePath root)))
+                     :path (.getAbsolutePath file)
+                     :source source})))
         (extra-root-dirs)))
 
 (defn extension-project-guidance-index
@@ -356,10 +385,10 @@
   [project-paths]
   (if-let [^java.io.File root (project-guidance-root)]
     (into []
-          (keep (fn [project-path]
-                  (let [dir (java.io.File. root ^String project-path)]
-                    (when-let [{:keys [source ^java.io.File file]} (guidance-candidate dir)]
-                      {:root (.getPath dir) :path (.getPath file) :source source}))))
+          (mapcat (fn [project-path]
+                    (let [dir (java.io.File. root ^String project-path)]
+                      (for [{:keys [source ^java.io.File file]} (dir-candidates dir)]
+                        {:root (.getPath dir) :path (.getPath file) :source source}))))
           (distinct (remove str/blank? project-paths)))
     []))
 
@@ -387,7 +416,8 @@
 
 (defn- dir-marker
   [^java.io.File d]
-  [(file-marker (java.io.File. d "AGENTS.md")) (file-marker (java.io.File. d "CLAUDE.md"))])
+  (mapv #(file-marker (java.io.File. d ^String %))
+        ["AGENTS.md" "CLAUDE.md" "AGENTS.local.md" "CLAUDE.local.md"]))
 
 (defn- guidance-marker
   []

@@ -594,9 +594,8 @@
                                               (keep identity
                                                     [header primary-body added-body nested-body])))
              :parts (cond-> (mapv (fn [f]
-                                    {:label
-                                     (str (if (= :project (:scope f)) "Main " "Workspace ")
-                                          (if (= :claude-md (:source f)) "CLAUDE.md" "AGENTS.md"))
+                                    {:label (str (if (= :project (:scope f)) "Main " "Workspace ")
+                                                 (agents/source-file-name (:source f)))
                                      :path (paths/abbreviate-home (:path f))
                                      :content (:content f)})
                                   files)

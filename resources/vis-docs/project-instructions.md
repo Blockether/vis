@@ -6,6 +6,7 @@ templates into slash commands. A change to a file applies on the next turn, with
 | File | Purpose |
 |---|---|
 | `AGENTS.md` or `CLAUDE.md` | Rules for work in a project |
+| `AGENTS.local.md` or `CLAUDE.local.md` | Your own rules for a project, outside Git |
 | `.vis/SYSTEM.md`, `.vis/APPEND_SYSTEM.md` | Replace or extend the system prompt |
 | `.vis/prompts/*.md` | Reusable prompts that you run with `/name` |
 
@@ -44,6 +45,11 @@ Several files can apply at once, in this order:
 
 A nearer file comes later and wins on a conflict. Vis reads `CLAUDE.md` only where no `AGENTS.md`
 exists.
+
+To keep your own rules for a project out of Git, write them in `AGENTS.local.md` in the same
+directory as `AGENTS.md`. Vis reads the local file after the `AGENTS.md` of that directory, so the
+local file wins on a conflict. Vis reads `CLAUDE.local.md` only where no `AGENTS.local.md` exists.
+Add the file name to `.git/info/exclude`, and Git does not show the file.
 
 ## System prompt files
 
