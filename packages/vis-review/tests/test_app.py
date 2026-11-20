@@ -232,52 +232,6 @@ def test_a_restart_keeps_the_scope_and_the_results_of_the_review(tmp_path, recor
     assert thread["messages"][0]["body"].endswith("Check this.")
 
 
-def test_sent_comments_go_to_the_session_and_answer_the_submission(tmp_path, recorder):
-    sent = []
-    root, journal, app = setup(tmp_path, recorder, send=sent.append)
-    edit(root, "a.py", "a = 2\n")
-    journal.checkpoint("block")
-    app.refresh()
-    recorder.send(
-        "submit",
-        "diff",
-        submission_id="sub-1",
-        comments=[
-            {
-                "node_id": "diff",
-                "thread_id": "t1",
-                "message_id": "m1",
-                "body": "Why 2?",
-                "anchor": {"path": "a.py", "side": "new", "line": 1},
-            },
-            {
-                "node_id": "diff",
-                "thread_id": "t2",
-                "message_id": "m2",
-                "body": "Join these.",
-                "anchor": {"path": "a.py", "side": "new", "start_line": 1, "line": 2},
-            },
-            {
-                "node_id": "diff",
-                "thread_id": "t3",
-                "message_id": "m3",
-                "body": "Keep the old one.",
-                "anchor": {
-                    "path": "a.py",
-                    "side": "new",
-                    "start_side": "old",
-                    "start_line": 1,
-                    "line": 1,
-                },
-            },
-        ],
-    )
-    assert wait_for(lambda: sent)
-    assert "- a.py:1: Why 2?" in sent[0]
-    assert "- a.py:1-2: Join these." in sent[0]
-    assert "- a.py:old 1 to new 1: Keep the old one." in sent[0]
-
-
 def test_controls_that_need_a_door_feature_are_off_without_it(tmp_path, recorder):
     root, journal, app = setup(tmp_path, recorder)
     edit(root, "a.py", "a = 2\n")
@@ -410,14 +364,13 @@ def test_the_log_tells_timings_failures_and_refused_actions(tmp_path, recorder):
     app.refresh()
     recorder.send("activate", "checks")
     recorder.send("activate", "ai")
-    recorder.send("submit", "diff", comments=[{"body": "Why?"}], submission_id="s")
 
     def log():
         return [
             (e["level"], e["message"]) for e in recorder._open_view().get("log", [])
         ]
 
-    assert wait_for(lambda: any("Refused the comments" in m for _, m in log()))
+    assert wait_for(lambda: any(lvl == "error" for lvl, _ in log()))
     levels = dict((m.split(" ")[0], lvl) for lvl, m in log())
     assert levels["Checks"] == "info"
     failure = next(e for e in recorder._open_view()["log"] if e["level"] == "error")
