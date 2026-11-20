@@ -17,6 +17,16 @@ async function runNewSession(text: string) {
   fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 }
 
+// Regression, user report: after New session, the person had to click the composer
+// before they could type.
+describe('a new session', () => {
+  it('opens with the composer focused', async () => {
+    renderSessionScreen({ fresh: true });
+    const composer = await screen.findByLabelText('Message Vis');
+    await waitFor(() => expect(composer).toHaveFocus());
+  });
+});
+
 // Regression, user report, Vis session 2692dc5c-b2fd-4502-b7fa-5fe440a16c1d (paraphrased:
 // with two projects added, a new session took its prompt to the first project):
 // `/new-session` sent no root, so the gateway started the session in its own launch folder.

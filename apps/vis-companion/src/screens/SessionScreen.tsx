@@ -1609,6 +1609,13 @@ export function SessionScreen({
     commitModelPref(client.cachedSessionModel(sid));
   }, [sid, fresh, draftMessageId]);
 
+  // A session the person just made opens ready to type in. Only where a keyboard
+  // is already on screen: on a phone, the focus raises the virtual keyboard.
+  useEffect(() => {
+    if (!fresh || window.matchMedia?.('(pointer: coarse)').matches) return;
+    composerRef.current?.focus({ preventScroll: true });
+  }, [sid, fresh]);
+
   // Reasoning effort is the other per-turn dial you change mid-session, so it
   // rides the composer footer right next to the model chip — it is the ONLY
   // control for it (the model picker deliberately has none). The gateway keeps
