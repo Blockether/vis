@@ -19,7 +19,7 @@
      * Under the H1 comes a LEAD paragraph, before the first `##`: what this page
        covers, so a reader who stops there still knows what they found.
      * The `:nav` of `vis-docs/site.edn` is the reading order: `Get started`,
-       `Guides`, and `Reference`. Only `Get started` has `:intro?`. `Guides` has
+       `Guides`, `Reference`, and `Contributing`. Only `Get started` has `:intro?`. `Guides` has
        the groups `Use Vis`, `Run Vis`, `Customize Vis`, and `Build on Vis`.
        Extension guides and SDK basics belong to `Build on Vis`. A feature page `X`
        that a program can drive has one page `X-api` in the `Feature APIs` group

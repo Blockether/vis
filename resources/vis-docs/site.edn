@@ -12,11 +12,7 @@
     {:blurb
      "Why Vis exists: tools that replace reminders, Python that connects the steps, Activities that show the work, and one gateway for every device."
      :page "rationale"
-     :title "Rationale"}
-    {:blurb
-     "Report a problem with useful evidence, and keep credentials and private code out of the report."
-     :page "reporting-bugs"
-     :title "Reporting a bug"}]
+     :title "Rationale"}]
    :section "Get started"}
   {:groups
    [{:group "Use Vis"
@@ -218,7 +214,14 @@
        :label "Configuration"
        :page "configuration-api"
        :title "Configuration API"}]}]
-   :section "Reference"}]
+   :section "Reference"}
+  {:groups
+   [{:pages
+     [{:blurb
+       "Report a problem with useful evidence, and keep credentials and private code out of the report."
+       :page "reporting-bugs"
+       :title "Reporting a bug"}]}]
+   :section "Contributing"}]
  :site {:extension-center {:section "Guides" :title "Extension Center"}
         :repo "https://github.com/Blockether/vis"
         :title "Vis"}}

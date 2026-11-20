@@ -64,13 +64,14 @@ Do not write these:
 
 Keep the modules of `resources/vis-docs/site.edn` in this order:
 
-1. **Get started**: Overview, Quickstart, Rationale, and Reporting a bug.
+1. **Get started**: Overview, Quickstart, and Rationale.
 2. **Guides**: four groups that the sidebar shows as collapsed lists.
    - **Use Vis**: app workflows and shared session features.
    - **Run Vis**: installation, updates, the gateway, and access policy.
    - **Customize Vis**: settings, project instructions, skills, extension packages, and the brand.
    - **Build on Vis**: extension guides, the Python SDK, and the HTTP API.
 3. **Reference**: lookup pages, then the **Feature APIs** group.
+4. **Contributing**: Reporting a bug.
 
 - Keep each shared workflow on one page. Link to it from the other client section.
 - Give each concept `X` that a program can use one page `X-api.md` in **Feature APIs**.
