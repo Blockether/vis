@@ -1,5 +1,14 @@
 Vis is an AI agent that works in your project. Give Vis a task and a project folder. Vis reads
-files, edits code, and runs commands and checks. **Activities** show each step that Vis takes.
+files, edits code, and runs commands and checks.
+
+**Activities** show each step of Vis as a view of that step, not as raw tool output. For example, a
+database query shows as formatted SQL, and its result shows as a table. Each tool can have its own
+view. To give your tool a view, read [Show a CI report without hiding failures](extension-design.md#show-a-ci-report-without-hiding-failures).
+
+Vis works through a Python runtime that stays alive for the whole session. The functions that Vis
+writes stay available in later steps. In a long session, Vis builds helpers for your problem, and it
+uses them again instead of the same commands each time. To learn what the runtime keeps, read
+[Sandbox state after a restart](python-sandbox.md#sandbox-state-after-a-restart).
 
 Most coding agents give the model a fixed list of tools, and the model calls one tool by its name
 in each step. Vis gives the model a [CPython interpreter](python-sandbox.md) instead. In each step,
