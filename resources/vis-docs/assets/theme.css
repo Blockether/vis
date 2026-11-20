@@ -599,6 +599,10 @@ button.primary:hover {
 .content tr:last-child td {
   border-bottom: none;
 }
+.content th:not(:last-child),
+.content td:not(:last-child) {
+  border-right: 1px solid var(--line-soft);
+}
 .content tr:hover td {
   background: var(--bg-soft);
 }
