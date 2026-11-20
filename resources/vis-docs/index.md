@@ -14,6 +14,7 @@ If Vis is already installed, choose what you want to do:
 - [Continue, stop, fork, or find your work](sessions.md) in saved sessions.
 - [Choose a provider and a model](configuration.md#providers-and-models), or use a local model.
 - [Connect the desktop app or a phone](quickstart.md#connect-an-app) to the sessions on your computer.
+- [Use your phone away from home with Tailscale](gateway-service.md#access-from-anywhere-with-tailscale). Vis finds the Tailscale address by itself.
 - [Ask another session for help](council.md) or for a second review.
 - [Learn how Vis keeps a long conversation usable](context-management.md).
 - [Read why Vis works this way](rationale.md).

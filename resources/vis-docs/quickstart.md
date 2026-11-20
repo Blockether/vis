@@ -160,11 +160,16 @@ Keep token authentication on for remote access. A pairing link and a QR code eac
 Treat them as passwords, and do not share them in public. Use a trusted network, a VPN, or HTTPS
 for remote connections.
 
-On the computer that runs Vis, replace `10.0.0.5` with the network address of that computer:
+On the computer that runs Vis, start a gateway for pairing:
 
 ```bash
-vis-agent gateway start --host 10.0.0.5 --require-token --pair
+vis-agent gateway start --require-token --pair
 ```
+
+Without `--host`, the gateway listens on all network interfaces. The pairing link lists the
+addresses of the computer. If the computer uses [Tailscale](gateway-service.md#access-from-anywhere-with-tailscale),
+its Tailscale address comes first, so the phone also connects away from home. To listen on one
+address only, add `--host` with that address.
 
 Keep that terminal open. In **Add a machine**, scan the QR code or paste the pairing link. The app
 then opens the projects and sessions of that computer.

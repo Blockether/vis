@@ -149,11 +149,16 @@ read [Pair a phone](quickstart.md#pair-a-phone).
 
 ### Access from anywhere with Tailscale
 
-Put both devices on a [Tailscale](https://tailscale.com) tailnet. Start the gateway on the
-Tailscale address of the computer, then pair the app. The pairing link puts that address before a
-local network address.
+Put both devices on a [Tailscale](https://tailscale.com) tailnet. Vis finds the Tailscale address
+of the computer by itself, so you do not enter it. Start the gateway with `--pair` and without
+`--host`, then pair the app. The pairing link puts the Tailscale address before the local network
+addresses.
 
-`--host 0.0.0.0` listens on all IPv4 interfaces, public ones included. The pairing link then
+The app prefers the Tailscale address to a local network address, because the Tailscale address
+works on any network. A MagicDNS name that ends in `.ts.net` counts as a Tailscale address.
+
+Without `--host`, or with `--host 0.0.0.0`, the gateway listens on all IPv4 interfaces, public ones
+included. The pairing link then
 includes the other addresses on which the gateway can answer. The app tries them in order, so it
 can change networks without a new pairing link.
 
