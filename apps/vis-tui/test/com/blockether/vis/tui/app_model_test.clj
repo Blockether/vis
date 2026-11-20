@@ -65,7 +65,20 @@
                        (first (filter #(= :file (:kind %)) rows))]
 
                    (expect (:is-folded file))
-                   (expect (not-any? #(#{:add :del :ctx :hunk} (:kind %)) rows)))))
+                   (expect (not-any? #(#{:add :del :ctx :hunk} (:kind %)) rows))))
+             ;; The app loop asks for the rows in every frame; a long patch takes tens of ms.
+             (it "lays out an unchanged diff once and a changed thread again"
+                 (let [rows
+                       (model/diff-rows diff-node 60 #{})
+
+                       answered
+                       (update-in diff-node
+                                  [:threads 0 :messages]
+                                  conj
+                                  {:id "m3" :author {:kind "agent"} :body "Done" :created-at 3})]
+
+                   (expect (identical? rows (model/diff-rows (into {} diff-node) 60 #{})))
+                   (expect (not= rows (model/diff-rows answered 60 #{}))))))
 
 (defdescribe
   actions

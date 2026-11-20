@@ -8,7 +8,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.tui.primitives :as p])
-  (:import [java.io ByteArrayOutputStream]
+  (:import [com.blockether.vis.render BoundedCache]
+           [java.io ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]
            [java.util UUID]))
 
@@ -590,40 +591,51 @@
   ^long [width]
   (max 1 (- (quot (+ (long width) 3) 2) 3)))
 
+(defn- layout-diff-rows
+  [node width folded {:keys [unified? wrap? files?] :as opts}]
+  (let [node
+        (visible-diff-node node opts)
+
+        layout
+        (diff-layout width unified?)
+
+        lines
+        (context-boundaries (diff-shape (visible-patch (parse-patch (:patch node)) opts)))
+
+        [head & body]
+        (diff-rows* node width folded lines)
+
+        files
+        (when (not= false files?) (map #(assoc % :node-id (:id node)) (file-list lines)))
+
+        empty-row
+        (when-not (some #(= :file (:kind %)) lines)
+          [{:kind :diff-empty :node-id (:id node) :text "No net changes in this selection."}])
+
+        rows
+        (into [head] (concat files empty-row body))]
+
+    (cond-> rows
+      (= :split layout)
+      (split-rows (split-side-w width))
+
+      wrap?
+      (wrap-rows width))))
+
+;; The app loop asks for the rows of a diff in every frame, also when nothing changed,
+;; and a long patch takes tens of milliseconds to parse and lay out. The rows are a pure
+;; function of the arguments, so the key is the content and a hit cannot be stale.
+(defonce ^:private ^BoundedCache diff-rows-cache (BoundedCache. 4))
+
 (defn diff-rows
   "Rows of diff node `node`, `width` columns wide for thread text. A folded file in
    `folded` (a set of paths) shows only its file row. Threads paint under their
    anchor line; a thread whose anchor is not in the patch paints at the end."
   ([node width folded] (diff-rows node width folded nil))
-  ([node width folded {:keys [unified? wrap? files?] :as opts}]
-   (let [node
-         (visible-diff-node node opts)
-
-         layout
-         (diff-layout width unified?)
-
-         lines
-         (context-boundaries (diff-shape (visible-patch (parse-patch (:patch node)) opts)))
-
-         [head & body]
-         (diff-rows* node width folded lines)
-
-         files
-         (when (not= false files?) (map #(assoc % :node-id (:id node)) (file-list lines)))
-
-         empty-row
-         (when-not (some #(= :file (:kind %)) lines)
-           [{:kind :diff-empty :node-id (:id node) :text "No net changes in this selection."}])
-
-         rows
-         (into [head] (concat files empty-row body))]
-
-     (cond-> rows
-       (= :split layout)
-       (split-rows (split-side-w width))
-
-       wrap?
-       (wrap-rows width)))))
+  ([node width folded opts]
+   (let [k [node width folded opts]]
+     (or (.get ^BoundedCache diff-rows-cache k)
+         (.put ^BoundedCache diff-rows-cache k (layout-diff-rows node width folded opts))))))
 
 (defn- thread-summary
   [thread]
