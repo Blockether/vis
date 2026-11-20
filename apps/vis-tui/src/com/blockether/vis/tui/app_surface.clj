@@ -660,10 +660,12 @@
     state))
 
 (defn- send-key-action
+  "Send the saved comments with a new turn of the session, or else Send the app."
   [state {:keys [view]} effects]
-  (if (model/read-only? view)
-    (assoc state :save {:state :closed})
-    (send-app state view nil effects)))
+  (cond (model/read-only? view) (assoc state :save {:state :closed})
+        (and (:comment! effects) (seq (app/drafts (:nodes view))))
+        (do ((:comment! effects)) (assoc state :notice "Sending the comments to the session"))
+        :else (send-app state view nil effects)))
 
 (defn- fold-all-files
   [state rows]
@@ -857,7 +859,7 @@
 
 (defn handle-key
   "The next surface state for `key`. `geom` holds `:rows`, `:view` and `:list-h`;
-   `effects` holds `:save!`, `:send!`, `:activate!`, `:select!`, `:edit!`,
+   `effects` holds `:save!`, `:send!`, `:comment!`, `:activate!`, `:select!`, `:edit!`,
    `:shortcut!` and `:reload!`. Answers `{::dlg/done nil}` to close.
 
    App shortcuts come before the surface keys. Escape, Tab and every Ctrl key keep
@@ -2065,6 +2067,31 @@
                  (assoc :node-id node-id))
                send-outcome))
 
+(defn- comment-refs
+  "The refs of the saved drafts of `view`: what a new turn of the session adds."
+  [view-id view]
+  (mapv #(assoc (select-keys % [:node-id :thread-id]) :view-id view-id) (app/drafts (:nodes view))))
+
+(defn- comment-effect!
+  "Send the saved drafts of the app with a new turn of the session. The gateway
+   removes the drafts when it accepts the turn."
+  [box session-id view-id]
+  (vis/worker-future "vis-app-comments"
+                     (fn []
+                       (let [notice
+                             (try (if (:turn (vis/gateway-submit-turn!
+                                               session-id
+                                               {:request ""
+                                                :comments (comment-refs view-id @(:view box))}))
+                                    "Comments sent to the session"
+                                    "Comments not sent")
+                                  (catch Throwable t (str "Comments not sent: " (ex-message t))))]
+                         (swap! (:outcomes box) conj
+                           [(fn [st _]
+                              (assoc st :notice notice)) nil])
+                         ((:on-change box))
+                         (read-view! box session-id view-id)))))
+
 (defn- notice-effect!
   [box notice]
   (swap! (:outcomes box) conj
@@ -2104,6 +2131,7 @@
   [box session-id view-id screen modal! open-picture! current]
   {:save! (partial save-effect! box session-id view-id)
    :send! (partial send-effect! box session-id view-id)
+   :comment! (when session-id (partial comment-effect! box session-id view-id))
    :activate! (fn [action]
                 (run-action! box session-id view-id action noticed))
    :select! (fn [action]
