@@ -764,8 +764,81 @@
    stays whole, because a transcript shows it in place."
   [view]
   (if (app/app? view)
-    (assoc (apply dissoc view view-spec/live-summary-omitted-keys) :is-summary true)
+    (let [drafts (when-not (:is-closed view) (app/drafts (:nodes view)))]
+      (cond-> (assoc (apply dissoc view view-spec/live-summary-omitted-keys) :is-summary true)
+        (seq drafts)
+        (assoc :drafts (vec (take 200 drafts)))))
     view))
+
+(defn- anchor-text
+  "Where the anchor `anchor` of a draft points: a path and a line, a line range, or a
+   range across the two sides of a diff."
+  [{:keys [path line start-line side start-side]}]
+  (str path
+       ":"
+       (cond (and start-line start-side (not= start-side side))
+             (str start-side " " start-line " to " side " " line)
+             (and start-line (not= start-line line)) (str start-line "-" line)
+             :else line)))
+
+(defn- comment-line
+  "Draft `draft` as one list item of the comments of a turn. A `reference` is the
+   marker of the comment in the turn text."
+  [{:keys [anchor body reference] about :quote}]
+  (let [indent
+        #(str/replace (str/trim %) "\n" "\n  ")
+
+        where
+        (str (when reference (str reference " ")) (if anchor (anchor-text anchor) "the thread"))]
+
+    (cond (str/blank? about) (str "- " where ": " (indent body))
+          (str/blank? body) (str "- " where ": " (indent about))
+          :else (str "- " where ": " (indent body) "\n  About: " (indent about)))))
+
+(defn turn-comments
+  "The saved drafts of the open apps of session `sid` that the comment refs `refs`
+   of a new turn name, as `{:text :drafts}`, or nil when none is there. A ref is a
+   wire map of `view_id`, `node_id`, `thread_id` and an optional `reference`, the
+   marker of the comment in the turn text. A ref to a missing draft gives
+   nothing, so a retry after the drafts are gone adds no text."
+  [sid refs]
+  (let [found (vec (for [[view-id refs] (group-by #(get % "view_id") (filter map? (take 200 refs)))
+                         :let [view (view/app-view sid view-id)
+                               wanted (into {}
+                                            (map (juxt (juxt #(get % "node_id") #(get % "thread_id"))
+                                                       identity))
+                                            refs)]
+                         :when (and view (not (:is-closed view)))
+                         draft (app/drafts (:nodes view))
+                         :let [ref (wanted [(:node-id draft) (:thread-id draft)])]
+                         :when ref]
+
+                     (cond-> (assoc draft
+                               :view-id view-id
+                               :title (:title view))
+                       (string? (get ref "reference")) (assoc :reference (get ref "reference")))))]
+    (when (seq found)
+      {:drafts found
+       :text (str/join "\n\n"
+                       (for [drafts (partition-by :view-id found)]
+                         (str "Comments in " (:title (first drafts))
+                              ":\n" (str/join "\n" (map comment-line drafts)))))})))
+
+(defn clear-comments!
+  "Remove the drafts `drafts` of session `sid` that [[turn-comments]] gave to a turn.
+   A draft that the human changed since then stays."
+  [sid drafts]
+  (doseq [{:keys [view-id node-id thread-id body]}
+          drafts
+
+          :let [now
+                (some->> (view/app-view sid view-id)
+                         :nodes
+                         app/drafts
+                         (some #(when (= [node-id thread-id] [(:node-id %) (:thread-id %)]) %)))]
+          :when (= body (:body now))]
+
+    (view/action! view-id {:action :draft :node-id node-id :thread-id thread-id :body nil})))
 
 (defn live-views
   "The live views of session `sid`, oldest first — the resync a client reads after

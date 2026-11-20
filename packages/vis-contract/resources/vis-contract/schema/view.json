@@ -150,8 +150,11 @@
               "$ref": "#/$defs/anchor"
             },
             "body": {
-              "description": "The new draft. Blank text removes the draft, and a new blank thread is not created.",
-              "type": "string",
+              "description": "The new draft. Null removes the draft. Blank text removes the draft of a thread without messages, and a new blank thread is not created. On a thread with messages, blank text saves an empty draft: the messages go into the next message of the session without a note.",
+              "type": [
+                "string",
+                "null"
+              ],
               "maxLength": 20000
             },
             "base_seq": {
@@ -1026,7 +1029,7 @@
       ]
     },
     "thread": {
-      "description": "A discussion with stable message ids. `draft` is the saved, unsent text of the human.",
+      "description": "A discussion with stable message ids. `draft` is the saved, unsent text of the human. The next message of the session takes each draft and its thread messages, and then the draft is removed. An empty draft adds the messages without a note.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1045,7 +1048,6 @@
         },
         "draft": {
           "type": "string",
-          "minLength": 1,
           "maxLength": 20000
         },
         "is_resolved": {
@@ -2196,7 +2198,6 @@
             },
             "draft": {
               "type": "string",
-              "minLength": 1,
               "maxLength": 20000
             },
             "is_resolved": {
@@ -3198,12 +3199,48 @@
       "x-vis-max-nodes": 64,
       "x-vis-max-picture-bytes": 8388608
     },
+    "draft_entry": {
+      "description": "One saved thread draft of an app. `quote` holds the messages of the thread, such as a finding of a check.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "thread_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor"
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "quote": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "thread_id",
+        "body"
+      ]
+    },
     "live_view_summary": {
       "description": "An app in a list that asked for `summary=true`, or in a `view.open` event of a stream that asked for `app_opens=summary`: the live view of the app without its body. The properties with the schema `false` are the keys that a summary leaves out. Read the view to get them.",
       "type": "object",
       "properties": {
         "is_summary": {
           "const": true
+        },
+        "drafts": {
+          "description": "The saved thread drafts of the app, which the composer shows. The summary leaves this out when the app has no draft.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/draft_entry"
+          },
+          "maxItems": 200
         },
         "nodes": false,
         "log": false,

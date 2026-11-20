@@ -1672,8 +1672,10 @@ def _live_message(message: Any, author: dict[str, Any], at: int) -> Any:
 
 
 def _live_thread(thread: Any, author: dict[str, Any], at: int) -> Any:
-    """Thread `thread` of a thread op as the host keeps it. A blank draft is no
-    draft; a value that does not fit stays, so the node check refuses it."""
+    """Thread `thread` of a thread op as the host keeps it. A blank draft of a
+    thread with messages is an empty draft: the human adds the messages without a
+    note. Another blank draft is no draft. A value that does not fit stays, so the
+    node check refuses it."""
     if not isinstance(thread, dict):
         return thread
     kept = {k: v for k, v in thread.items() if k != "draft"}
@@ -1689,6 +1691,8 @@ def _live_thread(thread: Any, author: dict[str, Any], at: int) -> Any:
     draft = thread.get("draft")
     if _trimmed(draft) or not isinstance(draft, (str, type(None))):
         kept["draft"] = draft
+    elif isinstance(draft, str) and isinstance(messages, list) and messages:
+        kept["draft"] = ""
     return kept
 
 

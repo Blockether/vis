@@ -1097,8 +1097,10 @@
 
 (defn- app-thread
   "One thread: a stable id, an optional anchor, its messages and the saved draft
-   of the human. A blank draft is no draft. A value that does not fit stays as it
-   is, so the node check refuses it with the rule of the table."
+   of the human. A blank draft of a thread with messages is an empty draft: the
+   human adds the messages without a note. Another blank draft is no draft. A
+   value that does not fit stays as it is, so the node check refuses it with the
+   rule of the table."
   [thread]
   (if-not (map? thread)
     thread
@@ -1121,6 +1123,9 @@
 
         (or (util/non-blank-string? draft) (and (some? draft) (not (string? draft))))
         (assoc :draft draft)
+
+        (and (string? draft) (str/blank? draft) (sequential? messages) (seq messages))
+        (assoc :draft "")
 
         (some? is-resolved)
         (assoc :is-resolved (schema-bool is-resolved))))))
@@ -4227,7 +4232,7 @@
             anchor
             (:anchor raw)]
 
-        (when-not (string? body) (fail! "draft body must be text"))
+        (when-not (or (nil? body) (string? body)) (fail! "draft body must be text or null"))
         (when (> (count body) (long (:body app/bounds)))
           (fail! (str "a draft holds at most " (:body app/bounds) " characters")))
         (cond-> {:action action

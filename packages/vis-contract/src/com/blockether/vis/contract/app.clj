@@ -278,10 +278,20 @@
 (defn draft-op
   "The patch operation that saves `body` as the draft of a thread in `node`, or
    nil when nothing changes. `action` holds `:thread-id`, `:anchor` and `:body`.
-   A new thread takes `new-id`. Blank text removes a draft, and a new blank thread
-   is never created."
+   A new thread takes `new-id`. A nil body removes a draft. Blank text removes the
+   draft of a thread without messages, and a new blank thread is never created. On
+   a thread with messages, blank text saves an empty draft: the human adds the
+   messages to the next message of the session without a note."
   [node {:keys [thread-id anchor body]} new-id]
-  (let [text (when-not (blank-text? body) (str body))]
+  (let [text
+        (when-not (blank-text? body) (str body))
+
+        saved
+        (fn [thread]
+          (cond text (assoc thread :draft text)
+                (and (some? body) (seq (:messages thread))) (assoc thread :draft "")
+                (contains? thread :draft) (dissoc thread :draft)))]
+
     (when (and text (> (count text) (long (:body bounds))))
       (refuse! (:id node) (str "a draft holds at most " (:body bounds) " characters")))
     (case (:type node)
@@ -289,17 +299,20 @@
       (let [thread (first (threads node))]
         (when (and thread-id (not= thread-id (:id node)))
           (refuse! (:id node) "a thread node has only its own thread"))
-        (cond text {:op :thread :node-id (:id node) :thread (assoc thread :draft text)}
-              (:draft thread) {:op :thread :node-id (:id node) :thread (dissoc thread :draft)}))
+        (when-let [after (saved thread)]
+          (when (not= after thread) {:op :thread :node-id (:id node) :thread after})))
 
       :diff
       (if thread-id
-        (let [thread (or (find-thread node thread-id) (refuse! (:id node) "no such thread"))]
-          (cond text {:op :thread :node-id (:id node) :thread (assoc thread :draft text)}
-                (seq (:messages thread))
-                (when (:draft thread)
-                  {:op :thread :node-id (:id node) :thread (dissoc thread :draft)})
-                :else {:op :remove :node-id (:id node) :item-ids [thread-id]}))
+        (let [thread
+              (or (find-thread node thread-id) (refuse! (:id node) "no such thread"))
+
+              after
+              (saved thread)]
+
+          (cond (and (nil? text) (empty? (:messages thread)))
+                {:op :remove :node-id (:id node) :item-ids [thread-id]}
+                (and after (not= after thread)) {:op :thread :node-id (:id node) :thread after}))
         (when text
           (when-not (map? anchor) (refuse! (:id node) "a new diff thread needs an anchor"))
           {:op :thread
@@ -307,6 +320,28 @@
            :thread {:id new-id :anchor anchor :messages [] :draft text}}))
 
       (refuse! (:id node) "only a diff or a thread node takes a draft"))))
+
+(defn drafts
+  "The saved drafts of the thread nodes in the component tree `nodes`: what the
+   human adds to the next message of the session. A draft names its node, its
+   thread and its anchor, and a thread with messages gives them as `:quote`."
+  [nodes]
+  (into []
+        (for [node
+              (rest (tree-seq #(seq (:children %)) :children {:children nodes}))
+
+              :when (thread-types (:type node))
+              thread
+              (threads node)
+
+              :when (string? (:draft thread))]
+
+          (cond-> {:node-id (:id node) :thread-id (:id thread) :body (:draft thread)}
+            (:anchor thread)
+            (assoc :anchor (:anchor thread))
+
+            (seq (:messages thread))
+            (assoc :quote (str/join "\n\n" (map :body (:messages thread))))))))
 
 (defn post-drafts
   "Post every saved draft of the thread nodes in `nodes` as a message. `post`

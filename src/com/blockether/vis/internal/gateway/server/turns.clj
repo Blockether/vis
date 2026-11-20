@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.gateway.server.fs :as fs-api]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.view :as gw-view]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.util :as util]
@@ -132,7 +133,16 @@
 
 (defn- path-tid [request] (get-in request [:path-params :tid]))
 
+(defn- with-comments
+  "Text `text` of a turn followed by the comments `comments`."
+  [text comments]
+  (cond (str/blank? comments) text
+        (str/blank? text) comments
+        :else (str text "\n\n" comments)))
+
 (defn- submit-turn-handler
+  "POST a turn. The `comments` refs name saved app drafts: the turn text takes
+   them, and the drafts are removed when the turn is accepted."
   [request]
   (let [sid
         (http/path-sid request)
@@ -155,10 +165,15 @@
             missing-upload?
             (some nil? attachments)
 
+            comments
+            (when-not (or archived? missing-upload?)
+              (let [refs (get body "comments")]
+                (when (sequential? refs) (gw-view/turn-comments sid refs))))
+
             result
             (when-not (or archived? missing-upload?)
               (state/submit-turn! sid
-                                  {:request (get body "request")
+                                  {:request (with-comments (get body "request") (:text comments))
                                    :idempotency-key (get body "idempotency_key")
                                    :provider (get body "provider")
                                    :model (get body "model")
@@ -169,8 +184,10 @@
                                    :attachments attachments
                                    ;; The submitter's own pre-expansion prose. Dropping it here
                                    ;; is what made a queued image render as a raw /var/folders path.
-                                   :display-request (get body "display_request")}))]
+                                   :display-request (some-> (get body "display_request")
+                                                            (with-comments (:text comments)))}))]
 
+        (when (:turn result) (gw-view/clear-comments! sid (:drafts comments)))
         (cond archived? (http/session-archived-409 sid)
               missing-upload?
               (http/error-response 400 :invalid-upload "attachment upload is missing or expired")
