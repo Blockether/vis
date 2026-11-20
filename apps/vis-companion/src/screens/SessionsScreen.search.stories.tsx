@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { fn } from 'storybook/test';
 
-import { sidebarRailClass } from '../App';
+import { sidebarRailClass } from '../lib/sidebar';
 import {
   STORY_FLEET_CONNS,
   STORY_FLEET_PROJECTS,

@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 import { useState } from 'react';
 
-import { sidebarRailClass } from './App';
+import { sidebarRailClass } from './lib/sidebar';
 import { STORY_FLEET_CONNS, storyFleetFetch } from './dev/story-data';
 import { EmptyPane } from './screens/EmptyPane';
 import { SessionsScreen } from './screens/SessionsScreen';
