@@ -5304,8 +5304,8 @@
                         (assoc :user_input (->blob (:user-input opts)))
 
                         (and (:request-health opts)
-                              (or (pos? (long (or (get tokens "input") 0)))
-                                  (seq (get-in opts [:request-health :cache-warms]))))
+                             (or (pos? (long (or (get tokens "input") 0)))
+                                 (seq (get-in opts [:request-health :cache-warms]))))
                         (assoc :request_health (->blob (:request-health opts)))
 
                         (seq routing)
@@ -6606,7 +6606,9 @@
                                              :imported_from (->json (cond-> (assoc imported-from
                                                                               "session_id" old-sid)
                                                                       atif-imported-model
-                                                                       (assoc "atif_model_name" atif-imported-model)
+                                                                      (assoc "atif_model_name"
+                                                                        atif-imported-model)
+
                                                                       (and key (= old-sid root-old))
                                                                       (assoc "key" key)))}
                                       parent-id

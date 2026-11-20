@@ -298,7 +298,8 @@
    in an owner-only file. The config never holds it. Sign-out does not delete it."
   [server-name secret]
   (when-not (util/non-blank-string? secret)
-    (throw (ex-info "The MCP client secret is empty" {:type :mcp/invalid-secret :server server-name})))
+    (throw (ex-info "The MCP client secret is empty"
+                    {:type :mcp/invalid-secret :server server-name})))
   (paths/spit-private! (secret-file server-name) (util/content-str {:client-secret secret}))
   nil)
 
@@ -321,8 +322,7 @@
    the kept secret of `server-name`. Nil without `auth.client_id`: a secret belongs
    to the configured client, never to a client that registration made."
   [server-name auth-hint]
-  (when (:client-id auth-hint)
-    (or (:client-secret auth-hint) (stored-client-secret server-name))))
+  (when (:client-id auth-hint) (or (:client-secret auth-hint) (stored-client-secret server-name))))
 
 (defn- tokens-for
   "The saved tokens of `server-name` when they are for the origin of `server-url`,
@@ -1046,7 +1046,8 @@
             :refresh-token :refresh-token
             :exchange! #(refresh-exchange! server-name
                                            (saved)
-                                           (or client-secret (client-secret-of server-name auth-hint))
+                                           (or client-secret
+                                               (client-secret-of server-name auth-hint))
                                            %)
             :persist! #(write-tokens! server-name (assoc % :server-origin (origin-of server-url)))
             :on-rejected! (fn [_]
@@ -1210,25 +1211,21 @@
                       (:callback-port auth-hint)
 
                       transport
-                      (auth-flow/callback-transport! callback-mode
-                                                     (cond (= "app" callback-mode)
-                                                           auth-flow/app-callback-uri
-                                                           port
-                                                           (str "http://localhost:" port "/callback")
-                                                           :else
-                                                           "http://127.0.0.1:0/mcp-callback")
-                                                     (:state ctx)
-                                                     600000)]
+                      (auth-flow/callback-transport!
+                        callback-mode
+                        (cond (= "app" callback-mode) auth-flow/app-callback-uri
+                              port (str "http://localhost:" port "/callback")
+                              :else "http://127.0.0.1:0/mcp-callback")
+                        (:state ctx)
+                        600000)]
 
                   ;; A pre-registered redirect URI names this port: no other port can work.
                   (when (and port (not= "app" callback-mode) (nil? (:callback transport)))
                     (throw (oauth-failure :mcp/oauth-error server-name
                                           "authorize"
-                                          (str "the callback port "
-                                               port
+                                          (str "the callback port " port
                                                " is in use. Stop the program that uses it, "
                                                "or set another auth.callback_port."))))
-
                   (try (let [{:keys [url client-id registered-secret]}
                              (authorize-url ctx auth-hint (:redirect-uri transport))]
                          (merge transport

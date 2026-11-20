@@ -157,8 +157,7 @@
                         ["id" "goal"])
                 shape)
         (expect (= {"$ref" "#/components/schemas/session_goal"}
-                   (get-in @encoded
-                           ["components" "schemas" shape "properties" "goal" "anyOf" 1]))
+                   (get-in @encoded ["components" "schemas" shape "properties" "goal" "anyOf" 1]))
                 shape))
       (expect (= (set (keys contract/session-goal-labels))
                  (set (map #(get % "const")

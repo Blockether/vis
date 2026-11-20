@@ -758,15 +758,15 @@
         (expect (= :openrouter (:id active)))
         (expect (= "gpt-oss-120b" (:name (first (:models active))))))))
 
-(defdescribe
-  toggle-name-parsing-test
-  (it "rejects leading-colon, kebab-case, and namespaced aliases"
-      (doseq [input [":main_test_flag=true" "main-test-flag=true" "vis/reasoning_level=deep"]]
-        (try (#'main/parse-toggle-overrides input)
-             (expect false)
-             (catch clojure.lang.ExceptionInfo e
-               (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
-               (expect (true? (:vis/user-error (ex-data e)))))))))
+(defdescribe toggle-name-parsing-test
+             (it "rejects leading-colon, kebab-case, and namespaced aliases"
+                 (doseq [input [":main_test_flag=true" "main-test-flag=true"
+                                "vis/reasoning_level=deep"]]
+                   (try (#'main/parse-toggle-overrides input)
+                        (expect false)
+                        (catch clojure.lang.ExceptionInfo e
+                          (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
+                          (expect (true? (:vis/user-error (ex-data e)))))))))
 
 (defdescribe
   decision-models-command-test

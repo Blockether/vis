@@ -4115,7 +4115,9 @@
          content
          (not-empty (if (= "failed" status)
                       (vec (:content turn))
-                      (filterv #(or (contains? #{"prose" "speech" "conversation" "visual" "silence" "notice"} (get % "type"))
+                      (filterv #(or (contains? #{"prose" "speech" "conversation" "visual" "silence"
+                                                 "notice"}
+                                               (get % "type"))
                                     (content/leader-cancel-notice? %))
                         (:content turn))))
 
@@ -8728,7 +8730,8 @@
    of the `.env` and `environment:` of the workspace of `sid`, its secret settings and the
    token of this gateway server, also from another token file."
   [db sid]
-  (binding [workspace/*workspace-root* (or (some-> (resolve-workspace db sid) :root)
+  (binding [workspace/*workspace-root* (or (some-> (resolve-workspace db sid)
+                                                   :root)
                                            workspace/*workspace-root*)]
     (into (trajectory/run-secrets)
           (concat (trajectory/setting-secrets (persistance/db-scoped-settings db "session" sid))
@@ -8742,14 +8745,17 @@
   (let [db (lp/db-info)]
     (when-let [tree (persistance/db-export-session-tree db sid)]
       ;; Each known credential becomes `[REDACTED]`, as in an ATIF export.
-      (let [secrets (into [] (comp (mapcat #(session-secrets db (:id (:soul %)))) (distinct)) (:sessions tree))]
+      (let [secrets (into []
+                          (comp (mapcat #(session-secrets db (:id (:soul %)))) (distinct))
+                          (:sessions tree))]
         (snapshot/encode (snapshot/redact tree (trajectory/redactor secrets))
                          {:vis-version (runtime/release-version) :now (util/now-ms)})))))
 
 (defn export-atif
   "The ATIF JSON of `sid` and its managed children, or nil for an unknown session."
   [sid]
-  (let [db (lp/db-info)] (atif/export-json db sid (partial session-secrets db))))
+  (let [db (lp/db-info)]
+    (atif/export-json db sid (partial session-secrets db))))
 
 (defn import-session!
   "Restore the snapshot or ATIF JSON `data` as a new session tree and answer the wire `soul` of its new

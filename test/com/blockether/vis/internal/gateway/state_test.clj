@@ -109,7 +109,6 @@
                (expect (nil? (voice/snapshot-for sid (str (random-uuid)))))))
            (finally (sqlite/db-close! store))))))
 
-
 (defdescribe
   create-session-in-project-group-test
   (it
@@ -6696,7 +6695,7 @@
                          events)))))
   (it "carries a presentation only on an iteration that has one"
       (let [payload #(#'state/iteration-final-payload
-                      {:done? true :assistant-prose "Hello" :presentation-content %})]
+                       {:done? true :assistant-prose "Hello" :presentation-content %})]
         (expect (not (contains? (payload nil) :presentation-content)))
         (expect (= [] (:presentation-content (payload [])))))))
 

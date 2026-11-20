@@ -2846,10 +2846,10 @@
                          :spawn
                          {:task "Check elsewhere" :key "other" :provider "p" :model "small"}))
                     "The list refuses a task model outside it")
-            (expect
-              (= [{:provider "p" :model "large"} {:provider "q" :model "mid"} {:provider "q" :model "big"}]
-                 (:allowed_models (agents/info db child)))
-              "The list limits the child")
+            (expect (= [{:provider "p" :model "large"} {:provider "q" :model "mid"}
+                        {:provider "q" :model "big"}]
+                       (:allowed_models (agents/info db child)))
+                    "The list limits the child")
             (swap! project-toggles assoc "subagent_models" [])
             (let [free (spawn! {:task "Check anywhere" :key "free" :provider "p" :model "small"})]
               (expect (= {:provider "p" :model "small"} (smodel/model-of db free))

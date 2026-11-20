@@ -589,26 +589,26 @@
        :ext/author "Blockether"
        :ext/owner "vis"
        :ext/license "Apache-2.0"
-       :ext/providers
-       [{:provider/id :anthropic
-         :provider/label "Anthropic (API Key)"
-         :provider/preset {:default-models (svar/provider-default-models :anthropic)}
-         :provider/policy {:preset-rank 1}}
-        {:provider/id :anthropic-coding-plan
-         :provider/label "Anthropic (Claude Subscription)"
-         :provider/preset {:base-url (svar/provider-base-url :anthropic-coding-plan)
-                           :api-style :anthropic
-                           :default-models (svar/provider-default-models :anthropic-coding-plan)}
-         ;; A flat-fee subscription: a titling choice after the cheaper plans.
-         :provider/policy {:preset-rank 2 :title-rank 3}
-         :provider/status-fn #'status
-         :provider/logout-fn #'logout!
-         :provider/detect-fn #'detect-credentials
-         :provider/auth-fn #'login!
-         :provider/auth-start-fn #'auth-start
-         :provider/auth-complete-fn #'auth-complete
-         :provider/auth-prompt-fn #'auth-instruction-lines
-         :provider/get-token-fn #'get-anthropic-token!
-         :provider/refresh-token-fn #'force-refresh-token!
-         :provider/limits-fn #'fetch-limits-report
-         :provider/limits-cache-ms usage-cache-ms}]})))
+       :ext/providers [{:provider/id :anthropic
+                        :provider/label "Anthropic (API Key)"
+                        :provider/preset {:default-models (svar/provider-default-models :anthropic)}
+                        :provider/policy {:preset-rank 1}}
+                       {:provider/id :anthropic-coding-plan
+                        :provider/label "Anthropic (Claude Subscription)"
+                        :provider/preset {:base-url (svar/provider-base-url :anthropic-coding-plan)
+                                          :api-style :anthropic
+                                          :default-models (svar/provider-default-models
+                                                            :anthropic-coding-plan)}
+                        ;; A flat-fee subscription: a titling choice after the cheaper plans.
+                        :provider/policy {:preset-rank 2 :title-rank 3}
+                        :provider/status-fn #'status
+                        :provider/logout-fn #'logout!
+                        :provider/detect-fn #'detect-credentials
+                        :provider/auth-fn #'login!
+                        :provider/auth-start-fn #'auth-start
+                        :provider/auth-complete-fn #'auth-complete
+                        :provider/auth-prompt-fn #'auth-instruction-lines
+                        :provider/get-token-fn #'get-anthropic-token!
+                        :provider/refresh-token-fn #'force-refresh-token!
+                        :provider/limits-fn #'fetch-limits-report
+                        :provider/limits-cache-ms usage-cache-ms}]})))

@@ -3692,7 +3692,7 @@
                        :presentation-status (:presentation-status iteration-result)
                        :presentation-repair (:presentation-repair iteration-result)
                        :request-health (cond-> (assoc (:request-health iteration-result)
-                                                  :cache-warms cache-warms
+                                                 :cache-warms cache-warms
                                                  :budget-tokens budget
                                                  :reminder-tokens
                                                  (long (Math/ceil (* 0.75 (double budget)))))

@@ -591,8 +591,8 @@
              (expect (= "n1" (get (client/import-session! file {:group-id "g 1"}) "id")))
              (client/import-session! json-file {:root "/code/my shop" :key "k1"})
              (expect (= [["POST" "/v1/sessions/actions/import?group_id=g+1" "VISSNAP-bytes" true]
-                         ["POST" "/v1/sessions/actions/import?root=%2Fcode%2Fmy+shop&key=k1"
-                          atif true]]
+                         ["POST" "/v1/sessions/actions/import?root=%2Fcode%2Fmy+shop&key=k1" atif
+                          true]]
                         @asked))
              (reset! answer
                {:status 400
@@ -601,9 +601,7 @@
              (expect (= "Not a snapshot."
                         (try (client/import-session! file {:root "/code"})
                              (catch clojure.lang.ExceptionInfo e (ex-message e)))))))
-        (finally
-           (.delete file)
-           (.delete json-file))))))
+        (finally (.delete file) (.delete json-file))))))
 
 (defdescribe router-refresh-failure-keeps-data-and-backs-off
              (it "router refresh failure keeps data and backs off"

@@ -399,15 +399,14 @@
                                                                            "status" "disconnected"
                                                                            "is_managed" false
                                                                            "tools" 0}]})
-                       #'mcp-core/save-gateway-server!
-                       (fn [name spec]
-                         (reset! saved [name spec])
-                         {"name" name
-                          "transport" "stdio"
-                          "enabled" true
-                          "is_connected" false
-                          "status" "disconnected"
-                          "is_managed" true})
+                       #'mcp-core/save-gateway-server! (fn [name spec]
+                                                         (reset! saved [name spec])
+                                                         {"name" name
+                                                          "transport" "stdio"
+                                                          "enabled" true
+                                                          "is_connected" false
+                                                          "status" "disconnected"
+                                                          "is_managed" true})
                        #'mcp-core/set-gateway-server-enabled! (fn [name value]
                                                                 (reset! enabled [name value])
                                                                 {"name" name
@@ -477,7 +476,8 @@
                    (with-redefs-fn {#'gw-http/body-json (constantly body)
                                     #'state/submit-turn! (fn [actual opts]
                                                            (reset! submitted [actual opts])
-                                                           {:turn (fixture/turn {:turn_id "turn-1"})})}
+                                                           {:turn (fixture/turn {:turn_id
+                                                                                 "turn-1"})})}
                      #(let [response
                             (#'turns-api/submit-turn-handler {:path-params {:sid (str sid)}})]
                         (expect (= 202 (:status response))) (expect (= sid (first @submitted)))
@@ -860,7 +860,8 @@
                        {:path-params {:sid (str sid)} :query-params {"status" "queued"}}]
 
                    (with-redefs-fn {#'state/soul (constantly (fixture/soul {:id sid}))
-                                    #'state/list-queued-turns (constantly [(fixture/turn {:turn_id "waiting"})])
+                                    #'state/list-queued-turns (constantly [(fixture/turn
+                                                                             {:turn_id "waiting"})])
                                     #'state/queue-paused-info (constantly {:reason "turn_failed"
                                                                            :held 1})}
                      #(let [body (:body (#'turns-api/list-turns-handler request))]
@@ -3414,9 +3415,10 @@
                        #'providers/configured-providers-cached (constantly [{:id :zai-coding-plan}])
                        #'state/set-session-model! (fn [_sid p m]
                                                     (reset! wrote [p m]))
-                       #'state/session-model (fn [_sid]
-                                               (let [[provider model] (when (vector? @wrote) @wrote)]
-                                                 (when provider {:provider provider :model model})))}
+                       #'state/session-model
+                       (fn [_sid]
+                         (let [[provider model] (when (vector? @wrote) @wrote)]
+                           (when provider {:provider provider :model model})))}
         (fn []
           ;; a configured provider is accepted
           (let [resp (#'sessions-api/set-session-model-handler
@@ -5030,22 +5032,18 @@
                       :body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str body)
                                                                       "UTF-8"))}))]
 
-      (with-redefs-fn {#'state/update-project!
-                       (fn [p opts]
-                         (swap! calls conj [p opts])
-                         (case (:workspace-root opts)
-                           "/missing"
-                           (throw (ex-info "Not a directory: /missing"
-                                           {:type :project/not-a-directory}))
+      (with-redefs-fn
+        {#'state/update-project!
+         (fn [p opts]
+           (swap! calls conj [p opts])
+           (case (:workspace-root opts)
+             "/missing"
+             (throw (ex-info "Not a directory: /missing" {:type :project/not-a-directory}))
 
-                           "/taken"
-                           (throw (ex-info "Another project already uses /taken"
-                                           {:type :project/root-taken}))
+             "/taken"
+             (throw (ex-info "Another project already uses /taken" {:type :project/root-taken}))
 
-                           {"id" (str pid)
-                            "name" "vis"
-                            "workspace_root" (:workspace-root opts)
-                            "created_at" 1}))}
+             {"id" (str pid) "name" "vis" "workspace_root" (:workspace-root opts) "created_at" 1}))}
         (fn []
           (let [response (patch! {"workspace_root" "/new/vis"})]
             (expect (= 200 (:status response)))
@@ -5097,43 +5095,41 @@
           group-views
           (atom [])]
 
-      (with-redefs-fn {#'state/get-project-by-root (fn [_owner root]
-                                                     (when (= "/repo" root) {"id" (str pid)}))
-                       #'state/ensure-project-for-root! (fn [_owner _root _name]
-                                                          {"id" (str pid)})
-                       #'state/list-session-groups (fn [p opts]
-                                                     (swap! group-views conj (:archived opts))
-                                                     (if (= pid p) [group] []))
-                       #'state/get-session-group (fn [g]
-                                                   (when (= gid g) group))
-                       #'state/create-session-group! (fn [p opts]
-                                                       (swap! created conj [p opts])
-                                                       (if (= "Gateway" (:name opts))
-                                                         (throw (ex-info "duplicate name" {}))
-                                                         group))
-                       #'state/delete-session-group! (fn [g]
+      (with-redefs-fn
+        {#'state/get-project-by-root (fn [_owner root]
+                                       (when (= "/repo" root) {"id" (str pid)}))
+         #'state/ensure-project-for-root! (fn [_owner _root _name]
+                                            {"id" (str pid)})
+         #'state/list-session-groups (fn [p opts]
+                                       (swap! group-views conj (:archived opts))
+                                       (if (= pid p) [group] []))
+         #'state/get-session-group (fn [g]
+                                     (when (= gid g) group))
+         #'state/create-session-group!
+         (fn [p opts]
+           (swap! created conj [p opts])
+           (if (= "Gateway" (:name opts)) (throw (ex-info "duplicate name" {})) group))
+         #'state/delete-session-group! (fn [g]
+                                         {:group_id (str g)
+                                          :scattered_session_ids [(str sid)]
+                                          :deleted_session_ids []
+                                          :session_count 1})
+         #'state/delete-session-group-with-sessions! (fn [g]
+                                                       (swap! destroyed conj g)
                                                        {:group_id (str g)
-                                                        :scattered_session_ids [(str sid)]
-                                                        :deleted_session_ids []
+                                                        :scattered_session_ids []
+                                                        :deleted_session_ids [(str sid)]
                                                         :session_count 1})
-                       #'state/delete-session-group-with-sessions! (fn [g]
-                                                                     (swap! destroyed conj g)
-                                                                     {:group_id (str g)
-                                                                      :scattered_session_ids []
-                                                                      :deleted_session_ids [(str
-                                                                                              sid)]
-                                                                      :session_count 1})
-                       #'state/soul (fn [s]
-                                      (fixture/soul {"id" (str s)}))
-                       #'state/assign-session-group! (fn [s g]
-                                                       (swap! assigned conj [s g])
-                                                       (fixture/soul {"id" (str s) "group_id" (when g (str g))}))
-                       #'state/create-session! (fn [opts]
-                                                 (swap! minted conj opts)
-                                                 (fixture/created-session
-                                                   {"id" (str sid)
-                                                    "group_id" (some-> (:group-id opts)
-                                                                       str)}))}
+         #'state/soul (fn [s]
+                        (fixture/soul {"id" (str s)}))
+         #'state/assign-session-group! (fn [s g]
+                                         (swap! assigned conj [s g])
+                                         (fixture/soul {"id" (str s) "group_id" (when g (str g))}))
+         #'state/create-session! (fn [opts]
+                                   (swap! minted conj opts)
+                                   (fixture/created-session {"id" (str sid)
+                                                             "group_id" (some-> (:group-id opts)
+                                                                                str)}))}
         (fn []
           (let [list-groups
                 #'projects-api/list-session-groups-handler
@@ -5601,7 +5597,8 @@
       (let [answer
             (fn [awaiting]
               (with-redefs [state/list-sessions-page (fn [_ _]
-                                                       {:sessions [(fixture/session-row {"id" "a" "server_time_ms" 1})]
+                                                       {:sessions [(fixture/session-row
+                                                                     {"id" "a" "server_time_ms" 1})]
                                                         :awaiting awaiting
                                                         :total 1
                                                         :limit 20
@@ -5632,7 +5629,8 @@
     (let [seen (atom nil)]
       (with-redefs [state/list-sessions-page (fn [channel opts]
                                                (reset! seen [channel opts])
-                                               {:sessions [(fixture/session-row {"id" "b" "server_time_ms" 1})]
+                                               {:sessions [(fixture/session-row
+                                                             {"id" "b" "server_time_ms" 1})]
                                                 :awaiting []
                                                 :total 9
                                                 :limit 20
@@ -5691,8 +5689,8 @@
                                             (swap! seen conj [channel opts])
                                             {:query (:query opts)
                                              :sessions [(fixture/session-row
-                                                         {"id" "b"
-                                                          "match" {"rank" 0 "is_in_title" true}})]
+                                                          {"id" "b"
+                                                           "match" {"rank" 0 "is_in_title" true}})]
                                              :total 3
                                              :limit 50
                                              :next-cursor "0:-3000:b"
@@ -7169,10 +7167,9 @@
                        #'state/busy-session-in-group
                        (fn [& _]
                          (throw (ex-info "asked about work while unarchiving" {})))
-                       #'state/update-session-group! (fn [_g _opts]
-                                                       {"id" (str gid)
-                                                        "name" "Release apps"
-                                                        "archived_at" nil})}
+                       #'state/update-session-group!
+                       (fn [_g _opts]
+                         {"id" (str gid) "name" "Release apps" "archived_at" nil})}
         (fn []
           (expect (= 200 (:status (patch-group {:archived false})))))))))
 

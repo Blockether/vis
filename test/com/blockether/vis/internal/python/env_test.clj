@@ -1108,12 +1108,11 @@
           (expect (str/includes? (:message err) "ValueError: probe-degraded"))
           (expect (not (str/includes? (:message err) "host call returned null")))))))
 
-(defdescribe
-  canonical-python-bindings-test
-  (it "maps every tool to one canonical Python name"
-      (expect (= "grep" (ep/sym->py-name 'grep)))
-      (expect (= "shell" (ep/sym->py-name 'shell)))
-      (expect (= "_shell_logs" (ep/sym->py-name '_shell-logs)))))
+(defdescribe canonical-python-bindings-test
+             (it "maps every tool to one canonical Python name"
+                 (expect (= "grep" (ep/sym->py-name 'grep)))
+                 (expect (= "shell" (ep/sym->py-name 'shell)))
+                 (expect (= "_shell_logs" (ep/sym->py-name '_shell-logs)))))
 
 (defdescribe inline-tool-text-concat-test
              (it "settles cat and grep text results inside string concatenation"

@@ -428,9 +428,7 @@
   [agent]
   (peek (turns-of agent)))
 
-(defn- in-turn?
-  [turn-id agent]
-  (boolean (some #{turn-id} (turns-of agent))))
+(defn- in-turn? [turn-id agent] (boolean (some #{turn-id} (turns-of agent))))
 
 (defn turn-rows
   "The rows of the agents that worked in turn `turn-id` (see `turns-of`), in start order."
@@ -888,19 +886,19 @@
   "The cells of table line `line`. A leader row has no title, so its newest line takes the title
    cell and the detail cell, with no rail between them."
   [{:keys [kind row]} columns]
-  (let [columns (vec columns)
-        i (first (keep-indexed #(when (= :label (:key %2)) %1) columns))]
-    (cond (not (and i (= :row kind) (leader? row)))
-          columns
+  (let [columns
+        (vec columns)
 
+        i
+        (first (keep-indexed #(when (= :label (:key %2)) %1) columns))]
+
+    (cond (not (and i (= :row kind) (leader? row))) columns
           (= :now (:key (get columns (inc (long i)))))
           (-> (subvec columns 0 i)
               (conj {:key :now
                      :w (+ (long (:w (columns i))) 3 (long (:w (columns (inc (long i))))))})
               (into (subvec columns (+ (long i) 2))))
-
-          :else
-          (assoc-in columns [i :key] :now))))
+          :else (assoc-in columns [i :key] :now))))
 
 (defn- rule-text
   "The rule between two table rows across `columns`. `leader` is `:below` or `:above` when the
@@ -925,8 +923,12 @@
   "The painted parts of one table line: `[col text part]` vectors. `part` is `:chrome` for
    the grid, `:head` for a title, `:more` for the hidden count, else the column key."
   [{:keys [kind] :as line} columns now-ms]
-  (let [columns (line-columns line columns)
-        widths (map #(+ 2 (long (:w %))) columns)]
+  (let [columns
+        (line-columns line columns)
+
+        widths
+        (map #(+ 2 (long (:w %))) columns)]
+
     (case kind
       :top
       [[0 (p/boxed-horiz-line widths \┌ \┬ \┐) :chrome]]
@@ -939,20 +941,29 @@
 
       (first
         (reduce (fn [[out col] {column-key :key w :w}]
-                  (let [w (long w)
-                        text (p/ellipsize (cell-text line column-key now-ms) w)
-                        text-w (long (p/display-width text))
-                        at (if (and (= :time column-key) (not= :head kind))
-                             (+ (long col) 2 (- w text-w))
-                             (+ (long col) 2))
-                        part (case kind
-                               :head
-                               :head
+                  (let [w
+                        (long w)
 
-                               :more
-                               :more
+                        text
+                        (p/ellipsize (cell-text line column-key now-ms) w)
 
-                               column-key)]
+                        text-w
+                        (long (p/display-width text))
+
+                        at
+                        (if (and (= :time column-key) (not= :head kind))
+                          (+ (long col) 2 (- w text-w))
+                          (+ (long col) 2))
+
+                        part
+                        (case kind
+                          :head
+                          :head
+
+                          :more
+                          :more
+
+                          column-key)]
 
                     [(cond-> (conj out [(+ (long col) w 3) "│" :chrome])
                        (seq text)
@@ -1049,8 +1060,12 @@
 (defn- paint-card-head!
   "Paint the head line of a team block. A click on it folds or unfolds the table."
   [^TextGraphics g left row width viewport-top {:keys [team-head session-id node-id collapsed?]}]
-  (let [bg t/code-block-bg
-        y (long row)]
+  (let [bg
+        t/code-block-bg
+
+        y
+        (long row)]
+
     (doseq [[col text part]
             (card-head-segments team-head)
 
@@ -1058,8 +1073,12 @@
                   (- (long width) (long col))]
             :when (pos? room)]
 
-      (let [x (+ (long left) (long col))
-            text (p/ellipsize (str text) room)]
+      (let [x
+            (+ (long left) (long col))
+
+            text
+            (p/ellipsize (str text) room)]
+
         (case part
           :head
           (do (p/set-colors! g t/code-block-fg bg) (p/styled g [p/BOLD] (p/put-str! g x y text)))
@@ -1174,10 +1193,9 @@
    the running turn `running-turn`, also the agents that it pinged, and each team with an agent
    that still works or waits."
   [agents running-turn]
-  (into
-    (if (and running-turn (some #(= running-turn (current-turn %)) agents)) #{running-turn} #{})
-    (comp (filter active?) (keep current-turn))
-    agents))
+  (into (if (and running-turn (some #(= running-turn (current-turn %)) agents)) #{running-turn} #{})
+        (comp (filter active?) (keep current-turn))
+        agents))
 
 (defonce ^:private ^java.util.IdentityHashMap decorated-memo (java.util.IdentityHashMap. 64))
 
@@ -1204,7 +1222,8 @@
   ([messages sid] (decorate-messages messages sid nil))
   ([messages sid running-turn] (decorate-messages messages sid running-turn (constantly false)))
   ([messages sid running-turn open?]
-   (let [agents (merge-agents (merge-agents [] (mapcat :session-agents messages)) (:agents (summary sid)))]
+   (let [agents (merge-agents (merge-agents [] (mapcat :session-agents messages))
+                              (:agents (summary sid)))]
      (if (or (empty? agents) (empty? messages))
        messages
        (let [docked (dock-team-ids agents running-turn)
@@ -1226,7 +1245,9 @@
                                             :session-id (str sid)
                                             :node-id node-id
                                             :expanded? (boolean (open? node-id))
-                                            :span (team-span (filter #(in-turn? team-id %) agents)))]
+                                            :span (team-span (filter #(in-turn? team-id %)
+                                                                     agents)))]
+
                             (assoc out i (decorate (nth out i) team-card)))
                           out))
                       (vec messages)

@@ -167,7 +167,8 @@
 
 (def voice-job-event "Transcription job stream event name." (:transcribe job-events))
 
-(def ^:private notification-properties (get-in @source ["$defs" "notification_payload" "properties"]))
+(def ^:private notification-properties
+  (get-in @source ["$defs" "notification_payload" "properties"]))
 
 (def notification-levels
   "Levels of a `notification` toast, in schema order."

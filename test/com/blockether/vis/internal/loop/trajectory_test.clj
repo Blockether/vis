@@ -283,14 +283,25 @@
 (defdescribe
   saved-json-test
   (it "exports the project path and the session times for saved trajectories"
-      (let [root {:session-id "session-1" :cwd "/work/project" :created-at 900}
-            child-record (dissoc child :turns)
-            turns {"session-1" [{"created_at" 1000
-                                "trace" [{"created_at" 1100 "finished_at" 1150}]}]
-                   "child-1" (:turns child)}
-            document (wire/parse-json (trajectory/saved-json root [child-record grandchild] turns))
-            sub (get-in document ["subagent_trajectories" 0])
-            nested (get-in sub ["subagent_trajectories" 0])]
+      (let [root
+            {:session-id "session-1" :cwd "/work/project" :created-at 900}
+
+            child-record
+            (dissoc child :turns)
+
+            turns
+            {"session-1" [{"created_at" 1000 "trace" [{"created_at" 1100 "finished_at" 1150}]}]
+             "child-1" (:turns child)}
+
+            document
+            (wire/parse-json (trajectory/saved-json root [child-record grandchild] turns))
+
+            sub
+            (get-in document ["subagent_trajectories" 0])
+
+            nested
+            (get-in sub ["subagent_trajectories" 0])]
+
         (expect (= {"cwd" "/work/project"
                     "started_at" "1970-01-01T00:00:00.900Z"
                     "last_activity_at" "1970-01-01T00:00:01.150Z"}
@@ -300,19 +311,30 @@
         (expect (not (contains? (get sub "extra") "cwd")))
         (expect (not (contains? (get nested "extra") "last_activity_at")))))
   (it "uses distinct call ids across turns and children and pairs each result"
-      (let [turn (fn [position]
-                   {"position" position
-                    "trace" [{"position" 1
-                              "forms" [{"src" "print(1)" "tool_call_id" "call_1"}
-                                       {"src" "print(2)"}]}]})
-            turns {"session-1" [(turn 1) (turn 2)] "child-1" [(turn 1)]}
-            document (wire/parse-json
-                       (trajectory/saved-json {:session-id "session-1"} [child] turns))
-            steps (concat (get document "steps")
-                          (get-in document ["subagent_trajectories" 0 "steps"]))
-            calls (mapcat #(get % "tool_calls") steps)
-            results (mapcat #(get-in % ["observation" "results"]) steps)
-            ids (mapv #(get % "tool_call_id") calls)]
+      (let [turn
+            (fn [position]
+              {"position" position
+               "trace" [{"position" 1
+                         "forms" [{"src" "print(1)" "tool_call_id" "call_1"} {"src" "print(2)"}]}]})
+
+            turns
+            {"session-1" [(turn 1) (turn 2)] "child-1" [(turn 1)]}
+
+            document
+            (wire/parse-json (trajectory/saved-json {:session-id "session-1"} [child] turns))
+
+            steps
+            (concat (get document "steps") (get-in document ["subagent_trajectories" 0 "steps"]))
+
+            calls
+            (mapcat #(get % "tool_calls") steps)
+
+            results
+            (mapcat #(get-in % ["observation" "results"]) steps)
+
+            ids
+            (mapv #(get % "tool_call_id") calls)]
+
         (expect (= 6 (count (distinct ids))))
         (expect (= ids (mapv #(get % "source_call_id") results))))))
 
@@ -396,98 +418,105 @@
                  (trajectory/known-secrets {:settings ["kb-token-12345678" "short"]}))))
   (it "takes keychain and command values under any name, other sources only under a credential name"
       (expect (= #{"kc-value-12345678" "cmd-value-12345678" "dotenv-key-12345678"}
-                 (set (trajectory/known-secrets
-                        {:environment [["GH_PAT" :keychain "kc-value-12345678"]
-                                       ["DEPLOY_HOOK" :command "cmd-value-12345678"]
-                                       ["SERVICE_API_KEY" :dotenv "dotenv-key-12345678"]
-                                       ["RUST_LOG" :dotenv "debug-everything"]
-                                       ["BUILD_DIR" :env "/var/build/output"]]})))))
+                 (set (trajectory/known-secrets {:environment
+                                                 [["GH_PAT" :keychain "kc-value-12345678"]
+                                                  ["DEPLOY_HOOK" :command "cmd-value-12345678"]
+                                                  ["SERVICE_API_KEY" :dotenv "dotenv-key-12345678"]
+                                                  ["RUST_LOG" :dotenv "debug-everything"]
+                                                  ["BUILD_DIR" :env "/var/build/output"]]})))))
   (it "ignores a credential file that is not JSON"
       (let [file (.toFile (.resolve (temp-dir) "broken-auth.json"))]
         (spit file "not json")
         (expect (= [] (trajectory/known-secrets {:files [file]}))))))
 
 (defdescribe run-secrets-test
-  (it "takes the gateway token and the provider keys that a command gave"
-      (let [file (.toFile (.resolve (temp-dir) "gateway.token"))]
-        (spit file "gateway-token-12345678\n")
-        (with-redefs [discovery/default-token-file (constantly file)
-                      cred/cached-tokens (constantly ["command-key 12345678"])]
-          (let [secrets (set (trajectory/run-secrets))]
-            (expect (contains? secrets "gateway-token-12345678"))
-            (expect (contains? secrets "command-key 12345678"))
-            (expect (contains? secrets "command-key+12345678"))
-            (expect (contains? secrets "command-key%2012345678")))))))
+             (it "takes the gateway token and the provider keys that a command gave"
+                 (let [file (.toFile (.resolve (temp-dir) "gateway.token"))]
+                   (spit file "gateway-token-12345678\n")
+                   (with-redefs [discovery/default-token-file (constantly file)
+                                 cred/cached-tokens (constantly ["command-key 12345678"])]
 
-(defdescribe credential-format-test
-  (it "replaces credentials that their form shows and keeps the syntax around them"
-      (expect (= ["key [REDACTED] end"
-                  "GH=[REDACTED]"
-                  "[REDACTED]"
-                  "token [REDACTED]"
-                  "postgres://[REDACTED]@db:5432/x"
-                  "curl -H 'Authorization: Basic [REDACTED]' https://example.org"
-                  "{\"Authorization\": \"Bearer [REDACTED]\"}"
-                  "{\"Cookie\":\"session=[REDACTED]; theme=dark\"}"
-                  "key: [REDACTED]"
-                  "Authorization: Digest username=\"Mufasa\", nonce=\"[REDACTED]\", response=\"[REDACTED]\""
-                  "[REDACTED]"]
-                 (trajectory/redact ["key sk-proj-abcdefghijklmnopqrstuvwxyz0123456789AB end"
-                                     "GH=ghp_abcdefghijklmnopqrstuvwxyz0123456789"
-                                     "AKIAABCDEFGHIJKLMNOP"
-                                     "token eyJhbGciOiJub25lIn0.e30."
-                                     "postgres://admin:hunter22@db:5432/x"
-                                     "curl -H 'Authorization: Basic dXNlcjpwYXNzMTIz' https://example.org"
-                                     "{\"Authorization\": \"Bearer abcDEF123456789xyz\"}"
-                                     "{\"Cookie\":\"session=abcdef123456789; theme=dark\"}"
-                                     "key: -----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU=\n-----END OPENSSH PRIVATE KEY-----"
-                                     "Authorization: Digest username=\"Mufasa\", nonce=\"dcd98b7102dd2f0e\", response=\"6629fae49393a053\""
-                                     "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..aXYxMjM0NTY.Y2lwaGVy.dGFn"]
-                                    []))))
-  (it "keeps code and prose that only look near a credential"
-      (let [text ["def f(cookie: str, max_tokens: int = 4096) -> str: return cookie"
-                  "const req = { authorization: name, cookie: value, cache: false };"
-                  "const config = { validateAuthorization: true, secureCookie: true };"
-                  "- Authorization: Only team members can edit projects.\n- Cookie: enable in browser settings."
-                  "Authorization: Basic authentication is used"
-                  "headers = {\"Authorization\": f\"Bearer {token}\"}"
-                  "https://example.org:443?email=me@local.example"
-                  "Put a line containing -----BEGIN PRIVATE KEY----- at the start of the file."
-                  "sk-model-config-for-sandbox-kubernetes"
-                  "fixtures/eyJplaceholderName.abc.png"
-                  "task-sk-abcdefghijklmnopqrstuvwxyz0123456789"
-                  "git@github.com:org/repo.git" "https://example.com/a:b" "ghp_short"
-                  "3fa85f64-5717-4562-b3fc-2c963f66afa6"]]
-        (expect (= text (trajectory/redact text []))))))
+                     (let [secrets (set (trajectory/run-secrets))]
+                       (expect (contains? secrets "gateway-token-12345678"))
+                       (expect (contains? secrets "command-key 12345678"))
+                       (expect (contains? secrets "command-key+12345678"))
+                       (expect (contains? secrets "command-key%2012345678")))))))
+
+(defdescribe
+  credential-format-test
+  (it
+    "replaces credentials that their form shows and keeps the syntax around them"
+    (expect
+      (=
+        ["key [REDACTED] end" "GH=[REDACTED]" "[REDACTED]" "token [REDACTED]"
+         "postgres://[REDACTED]@db:5432/x"
+         "curl -H 'Authorization: Basic [REDACTED]' https://example.org"
+         "{\"Authorization\": \"Bearer [REDACTED]\"}"
+         "{\"Cookie\":\"session=[REDACTED]; theme=dark\"}" "key: [REDACTED]"
+         "Authorization: Digest username=\"Mufasa\", nonce=\"[REDACTED]\", response=\"[REDACTED]\""
+         "[REDACTED]"]
+        (trajectory/redact
+          ["key sk-proj-abcdefghijklmnopqrstuvwxyz0123456789AB end"
+           "GH=ghp_abcdefghijklmnopqrstuvwxyz0123456789" "AKIAABCDEFGHIJKLMNOP"
+           "token eyJhbGciOiJub25lIn0.e30." "postgres://admin:hunter22@db:5432/x"
+           "curl -H 'Authorization: Basic dXNlcjpwYXNzMTIz' https://example.org"
+           "{\"Authorization\": \"Bearer abcDEF123456789xyz\"}"
+           "{\"Cookie\":\"session=abcdef123456789; theme=dark\"}"
+           "key: -----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU=\n-----END OPENSSH PRIVATE KEY-----"
+           "Authorization: Digest username=\"Mufasa\", nonce=\"dcd98b7102dd2f0e\", response=\"6629fae49393a053\""
+           "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..aXYxMjM0NTY.Y2lwaGVy.dGFn"]
+          []))))
+  (it
+    "keeps code and prose that only look near a credential"
+    (let
+      [text
+       ["def f(cookie: str, max_tokens: int = 4096) -> str: return cookie"
+        "const req = { authorization: name, cookie: value, cache: false };"
+        "const config = { validateAuthorization: true, secureCookie: true };"
+        "- Authorization: Only team members can edit projects.\n- Cookie: enable in browser settings."
+        "Authorization: Basic authentication is used"
+        "headers = {\"Authorization\": f\"Bearer {token}\"}"
+        "https://example.org:443?email=me@local.example"
+        "Put a line containing -----BEGIN PRIVATE KEY----- at the start of the file."
+        "sk-model-config-for-sandbox-kubernetes" "fixtures/eyJplaceholderName.abc.png"
+        "task-sk-abcdefghijklmnopqrstuvwxyz0123456789" "git@github.com:org/repo.git"
+        "https://example.com/a:b" "ghp_short" "3fa85f64-5717-4562-b3fc-2c963f66afa6"]]
+      (expect (= text (trajectory/redact text []))))))
 
 (defn- base64 [^String s] (.encodeToString (java.util.Base64/getEncoder) (.getBytes s "UTF-8")))
 
-(defdescribe base64-credential-test
+(defdescribe
+  base64-credential-test
   (it "replaces base64 text that holds a known value or a credential form"
-      (expect (= ["data:\n  password: [REDACTED]" "auth=[REDACTED]" "url: [REDACTED]"
-                  "Authorization: Basic [REDACTED]" "password: [REDACTED]" "blob:\n[REDACTED]\nnext line"]
-                 (trajectory/redact [(str "data:\n  password: " (base64 "my-known-secret-42"))
-                                     (str "auth=" (base64 "{\"auth\":\"my-known-secret-42\"}"))
-                                     (str "url: " (base64 "postgres://admin:hunter22@db/x"))
-                                     "Authorization: Basic YTpi"
-                                     (str "password: " (base64 "s3cr3t8!"))
-                                     (str "blob:\n"
-                                          (.encodeToString (java.util.Base64/getMimeEncoder)
-                                                           (.getBytes (str (apply str (repeat 50 "x"))
-                                                                           "my-known-secret-42"
-                                                                           (apply str (repeat 100 "y")))
-                                                                      "UTF-8"))
-                                          "\nnext line")]
-                                    ["my-known-secret-42" "s3cr3t8!"]))))
+      (expect
+        (= ["data:\n  password: [REDACTED]" "auth=[REDACTED]" "url: [REDACTED]"
+            "Authorization: Basic [REDACTED]" "password: [REDACTED]" "blob:\n[REDACTED]\nnext line"]
+           (trajectory/redact [(str "data:\n  password: " (base64 "my-known-secret-42"))
+                               (str "auth=" (base64 "{\"auth\":\"my-known-secret-42\"}"))
+                               (str "url: " (base64 "postgres://admin:hunter22@db/x"))
+                               "Authorization: Basic YTpi" (str "password: " (base64 "s3cr3t8!"))
+                               (str "blob:\n"
+                                    (.encodeToString (java.util.Base64/getMimeEncoder)
+                                                     (.getBytes (str (apply str (repeat 50 "x"))
+                                                                     "my-known-secret-42"
+                                                                     (apply str (repeat 100 "y")))
+                                                                "UTF-8"))
+                                    "\nnext line")]
+                              ["my-known-secret-42" "s3cr3t8!"]))))
   (it "keeps base64 data, paths and names without a credential"
-      (let [image (.encodeToString (java.util.Base64/getEncoder)
-                                   (let [bytes (byte-array 3000)] (.nextBytes (java.util.Random. 7) bytes) bytes))
-            text [(str "data:image/png;base64," image)
-                  (base64 "hello world, this is plain text")
-                  "Authorization: Basic authentication is used"
-                  "src/com/blockether/vis/internal/loop/trajectory.clj"
-                  "camelCaseIdentifierName and SomeLongClassName2"
-                  "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"]]
+      (let [image
+            (.encodeToString (java.util.Base64/getEncoder)
+                             (let [bytes (byte-array 3000)]
+                               (.nextBytes (java.util.Random. 7) bytes)
+                               bytes))
+
+            text
+            [(str "data:image/png;base64," image) (base64 "hello world, this is plain text")
+             "Authorization: Basic authentication is used"
+             "src/com/blockether/vis/internal/loop/trajectory.clj"
+             "camelCaseIdentifierName and SomeLongClassName2"
+             "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"]]
+
         (expect (= text (trajectory/redact text ["my-known-secret-42"]))))))
 
 (defdescribe redact-test

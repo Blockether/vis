@@ -490,6 +490,7 @@
       (let [files (into [] (comp (map safe-path) (distinct)) paths)
             {found true gone false} (group-by #(.exists ^File %) files)
             roots (vec found)]
+
         {:roots roots
          :searched-paths (mapv rel-path roots)
          :missing (mapv (fn [^File f]
@@ -1919,8 +1920,7 @@
 
                     (str path
                          "  (" (get counts path (count runs))
-                         ")\n" (str/join "\n…\n"
-                                         (map #(version/render-numbered-block %) runs)))))
+                         ")\n" (str/join "\n…\n" (map #(version/render-numbered-block %) runs)))))
                 matches))
 
         name-rows
@@ -2031,23 +2031,21 @@
         (when nearest (get (list-dir nearest {:depth 1}) "entries"))
 
         names
-        (map #(cond-> (get % "name")
-                (= "dir" (get % "type"))
-                (str "/"))
-             entries)
+        (map #(cond-> (get % "name") (= "dir" (get % "type")) (str "/")) entries)
 
         more
         (- (count entries) (long missing-path-listing-limit))]
 
-    (str "`" path "` does not exist, so grep did not search it."
+    (str "`" path
+         "` does not exist, so grep did not search it."
          (when nearest
-           (str " `" (rel-path nearest) "/` "
-                (if (empty? entries)
-                  "is empty."
-                  (str "contains: "
-                       (str/join " " (take missing-path-listing-limit names))
-                       (when (pos? more) (str " … (" more " more)"))
-                       ".")))))))
+           (str " `" (rel-path nearest)
+                "/` " (if (empty? entries)
+                        "is empty."
+                        (str "contains: "
+                             (str/join " " (take missing-path-listing-limit names))
+                             (when (pos? more) (str " … (" more " more)"))
+                             ".")))))))
 
 (defn- grep-data
   "grep's ORDERED DATA — the tested pure core. `grep-tool` is now only its

@@ -149,11 +149,13 @@
                                     (:provider request)))]
 
     (when cost
-      (swap! warmer update :pending-costs conj
-             (assoc cost
-               :created-at started-ms
-               :model (or (:llm-model api-usage) (:model request))
-               :provider (or (:llm-provider api-usage) (:provider request)))))
+      (swap! warmer update
+        :pending-costs
+        conj
+        (assoc cost
+          :created-at started-ms
+          :model (or (:llm-model api-usage) (:model request))
+          :provider (or (:llm-provider api-usage) (:provider request)))))
     (when result
       (tel/log! {:level :info
                  :id ::warmed
@@ -275,8 +277,12 @@
   "Adds the costs of finished warms to a turn and returns their usage records."
   [warmer accounting-atom]
   (when warmer
-    (let [[old] (swap-vals! warmer assoc :pending-costs [])
-          costs (:pending-costs old)]
+    (let [[old]
+          (swap-vals! warmer assoc :pending-costs [])
+
+          costs
+          (:pending-costs old)]
+
       (doseq [cost costs]
         (swap! accounting-atom accounting/add-cost cost))
       (mapv #(dissoc % :cost-map) costs))))

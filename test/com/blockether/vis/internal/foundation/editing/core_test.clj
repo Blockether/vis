@@ -1010,19 +1010,34 @@
         (expect (= 3 (count rows)))
         (expect (every? #(re-matches #"\d+│ .*" %) rows))))
   (it "keeps phrase boundaries in a multi-term search"
-      (let [render (private-fn "render-grep-text")
-            head (first (string/split-lines
-                          (render {"query" ["alpha beta" "gamma delta"]
-                                   "matches" {} "paths" [] "hit_count" 0 "file_count" 0})))]
+      (let [render
+            (private-fn "render-grep-text")
+
+            head
+            (first (string/split-lines (render {"query" ["alpha beta" "gamma delta"]
+                                                "matches" {}
+                                                "paths" []
+                                                "hit_count" 0
+                                                "file_count" 0})))]
+
         (expect (string/starts-with? head "grep 'alpha beta' | 'gamma delta'  "))))
   (it "shows one context line on each side unless more are requested"
-      (let [d (temp-dir-path "grep-default-context")
-            _ (write-temp! "grep-default-context/a.txt" "a\nb\nZZDEFAULTZZ\nd\ne\n")
-            grep (grep-data-fn)
-            spec {"query" "ZZDEFAULTZZ" "paths" [d]}
-            tuples (fn [out]
-                     ((private-fn "grep-hit-tuples")
-                       (first (vals (get (:result out) "matches")))))]
+      (let [d
+            (temp-dir-path "grep-default-context")
+
+            _
+            (write-temp! "grep-default-context/a.txt" "a\nb\nZZDEFAULTZZ\nd\ne\n")
+
+            grep
+            (grep-data-fn)
+
+            spec
+            {"query" "ZZDEFAULTZZ" "paths" [d]}
+
+            tuples
+            (fn [out]
+              ((private-fn "grep-hit-tuples") (first (vals (get (:result out) "matches")))))]
+
         (expect (= [2 3 4] (mapv first (tuples (grep spec)))))
         (expect (= [1 2 3 4 5] (mapv first (tuples (grep (assoc spec "context" 2))))))))
   (it "clips default context safely at a one-line file"
@@ -1268,23 +1283,24 @@
             (expect (= 2 (get-in r [:result "hit_count"])))))) ;; Keymap + keystroke
     ;; Regression, session 42f1f324-3b0e-4f4d-abb5-4e93343c44ac: a missing scope climbed
     ;; to its parent; `/root/lanterna` became `/root`, and the index failed there.
-    (it "a MISSING path is skipped: the other paths are searched and the hint lists the nearest directory"
-        (let [d
-              (temp-dir-path "rgp")
+    (it
+      "a MISSING path is skipped: the other paths are searched and the hint lists the nearest directory"
+      (let [d
+            (temp-dir-path "rgp")
 
-              ghost
-              (str (temp-root) "/rgp/nope.edn")
+            ghost
+            (str (temp-root) "/rgp/nope.edn")
 
-              _
-              (write-temp! "rgp/a.clj" "needle here\n")
+            _
+            (write-temp! "rgp/a.clj" "needle here\n")
 
-              r
-              (:result (rg {"query" "needle" "paths" [d ghost]}))]
+            r
+            (:result (rg {"query" "needle" "paths" [d ghost]}))]
 
-          (expect (= 1 (get r "hit_count")))
-          (expect (clojure.string/includes? (get r "hint") "nope.edn` does not exist"))
-          (expect (clojure.string/includes? (get r "hint") "rgp/` contains: a.clj"))
-          (expect (not (re-find #"(?i)\b(rg|fff)\b" (get r "hint"))))))
+        (expect (= 1 (get r "hit_count")))
+        (expect (clojure.string/includes? (get r "hint") "nope.edn` does not exist"))
+        (expect (clojure.string/includes? (get r "hint") "rgp/` contains: a.clj"))
+        (expect (not (re-find #"(?i)\b(rg|fff)\b" (get r "hint"))))))
     (it
       "a BLANK/nil paths entry means \"everything\" — widens like \".\", never throws (`[\".github\" \"\"]` case)"
       (let [rsr
@@ -1859,35 +1875,52 @@
 ;; A capped grep had no way to ask for the NEXT page: the only way past the
 ;; limit was to re-run the same search with a bigger `limit` and pay for the
 ;; first page all over again.
-(defdescribe
-  grep-compact-output-test
-  (it "does not page through unrelated names after a content match"
-      (let [dir (temp-dir-path "grep-name-filter")
-            _ (doseq [i (range 4)]
-                (write-temp! (str "grep-name-filter/shared_" i ".txt")
-                             (if (zero? i) "shared phrase\n" "unrelated\n")))
-            out (:result ((grep-data-fn)
-                           {"query" ["shared phrase" "extra word"]
-                            "paths" [dir] "limit" 2}))]
-        (expect (= 1 (get out "hit_count")))
-        (expect (= [] (get out "paths")))
-        (expect (= "end_of_results" (get out "truncated_by")))
-        (expect (nil? (get out "next_offset")))))
-  (it "filters names before paging and does not page past the final exact-sized page"
-      (let [dir (temp-dir-path "grep-name-page")
-            _ (doseq [name ["shared_a" "shared_b" "needle_a" "needle_b"]]
-                (write-temp! (str "grep-name-page/" name ".txt") "unrelated\n"))
-            spec {"query" ["shared" "needle"] "paths" [dir] "limit" 1}
-            search (private-fn "find-search")
-            first-page (search [spec] ["needle"])
-            last-page (search [(assoc spec "offset" 1)] ["needle"])]
-        (expect (= 1 (count (get first-page "paths"))))
-        (expect (= 1 (count (get last-page "paths"))))
-        (expect (every? #(string/includes? % "needle_")
-                        (concat (get first-page "paths") (get last-page "paths"))))
-        (expect (not= (get first-page "paths") (get last-page "paths")))
-        (expect (= "limit" (get first-page "truncated_by")))
-        (expect (= "end_of_results" (get last-page "truncated_by"))))))
+(defdescribe grep-compact-output-test
+             (it "does not page through unrelated names after a content match"
+                 (let [dir
+                       (temp-dir-path "grep-name-filter")
+
+                       _
+                       (doseq [i (range 4)]
+                         (write-temp! (str "grep-name-filter/shared_" i ".txt")
+                                      (if (zero? i) "shared phrase\n" "unrelated\n")))
+
+                       out
+                       (:result
+                         ((grep-data-fn)
+                           {"query" ["shared phrase" "extra word"] "paths" [dir] "limit" 2}))]
+
+                   (expect (= 1 (get out "hit_count")))
+                   (expect (= [] (get out "paths")))
+                   (expect (= "end_of_results" (get out "truncated_by")))
+                   (expect (nil? (get out "next_offset")))))
+             (it "filters names before paging and does not page past the final exact-sized page"
+                 (let [dir
+                       (temp-dir-path "grep-name-page")
+
+                       _
+                       (doseq [name ["shared_a" "shared_b" "needle_a" "needle_b"]]
+                         (write-temp! (str "grep-name-page/" name ".txt") "unrelated\n"))
+
+                       spec
+                       {"query" ["shared" "needle"] "paths" [dir] "limit" 1}
+
+                       search
+                       (private-fn "find-search")
+
+                       first-page
+                       (search [spec] ["needle"])
+
+                       last-page
+                       (search [(assoc spec "offset" 1)] ["needle"])]
+
+                   (expect (= 1 (count (get first-page "paths"))))
+                   (expect (= 1 (count (get last-page "paths"))))
+                   (expect (every? #(string/includes? % "needle_")
+                                   (concat (get first-page "paths") (get last-page "paths"))))
+                   (expect (not= (get first-page "paths") (get last-page "paths")))
+                   (expect (= "limit" (get first-page "truncated_by")))
+                   (expect (= "end_of_results" (get last-page "truncated_by"))))))
 
 (defdescribe
   grep-paging-test
@@ -3025,15 +3058,16 @@
                                    (into #{} (map #(get % "name")) (get (row spec) "entries")))
                            root-names (names "/")]
 
-            (expect (contains? root-names "usr"))
-            (expect (contains? root-names "etc"))
-            ;; dotfiles still need `is_hidden`, exactly as under fff
-            (expect (not-any? #(string/starts-with? % ".") root-names))
-            ;; The root has no dotfiles on a clean Linux runner, but every home does
-            ;; (.bashrc/.profile on Linux, .zshrc/.zshenv on macOS).
-            (expect (some #(string/starts-with? % ".") (names {"path" home "is_hidden" true})))
-            ;; a home directory is refused for the same reason and must list too
-            (expect (= "dir" (get (row home) "type"))))))))
+                       (expect (contains? root-names "usr"))
+                       (expect (contains? root-names "etc"))
+                       ;; dotfiles still need `is_hidden`, exactly as under fff
+                       (expect (not-any? #(string/starts-with? % ".") root-names))
+                       ;; The root has no dotfiles on a clean Linux runner, but every home does
+                       ;; (.bashrc/.profile on Linux, .zshrc/.zshenv on macOS).
+                       (expect (some #(string/starts-with? % ".")
+                                     (names {"path" home "is_hidden" true})))
+                       ;; a home directory is refused for the same reason and must list too
+                       (expect (= "dir" (get (row home) "type"))))))))
 
 (defdescribe
   ls-cold-listing-test
@@ -3599,27 +3633,28 @@
                  (let [safe-path
                        (private-fn "safe-path")
 
-            root
-            (mk-tmp-dir "vis-held")
-
-            shm
-            (str root "/vis.db-shm")]
-
-        (spit (java.io.File. ^String root "notes.txt") "NOTES")
-        (spit (java.io.File. ^String shm) "")
-        (paths/hold-files! ::held-shm [shm])
-        (try (binding [workspace/*workspace-root*
                        root
+                       (mk-tmp-dir "vis-held")
+
+                       shm
+                       (str root "/vis.db-shm")]
+
+                   (spit (java.io.File. ^String root "notes.txt") "NOTES")
+                   (spit (java.io.File. ^String shm) "")
+                   (paths/hold-files! ::held-shm [shm])
+                   (try (binding [workspace/*workspace-root*
+                                  root
 
                                   workspace/*filesystem-roots*
                                   [{:root root}]]
 
-               (expect (= "NOTES" (slurp (safe-path (str root "/notes.txt")))))
-               (let [data
-                     (try (safe-path shm) nil (catch clojure.lang.ExceptionInfo e (ex-data e)))]
-                 (expect (= :ext.foundation.editing/path-denied (:type data)))
-                 (expect (= :held-lock (:reason data)))))
-             (finally (paths/release-held-files! ::held-shm))))))
+                          (expect (= "NOTES" (slurp (safe-path (str root "/notes.txt")))))
+                          (let [data (try (safe-path shm)
+                                          nil
+                                          (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                            (expect (= :ext.foundation.editing/path-denied (:type data)))
+                            (expect (= :held-lock (:reason data)))))
+                        (finally (paths/release-held-files! ::held-shm))))))
 
 (defdescribe
   grep-files-only-public-test

@@ -628,9 +628,8 @@
               ;; Check the servers at the same time, and print them in order. A
               ;; failed future gives its own error, not a wrapped one.
               (doseq [line (mapv (fn [[name spec]]
-                                   (future (str name
-                                                ": " (target-text spec)
-                                                " - " (health name spec))))
+                                   (future
+                                     (str name ": " (target-text spec) " - " (health name spec))))
                                  servers)]
                 (commandline/stdout! (try @line
                                           (catch java.util.concurrent.ExecutionException e

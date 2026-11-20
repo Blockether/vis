@@ -55,7 +55,6 @@
                    (touch! events "live.ndjson" 0 "{}\n")
                    (touch! events "notes.txt" 30 "not a journal")
                    (binding [housekeeping/*events-home* (.getPath events)]
-
                      (let [report (housekeeping/scan {:days 14})
                            journals (:journals report)]
 

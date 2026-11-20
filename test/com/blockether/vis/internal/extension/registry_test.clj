@@ -10,17 +10,17 @@
   [policy]
   {:provider/id :policy-test :provider/label "Policy Test" :provider/policy policy})
 
-(defdescribe
-  provider-policy-validation-test
-  (it "accepts every policy the first-party providers declare"
-      (doseq [[id policy] policies/first-party]
-        (expect (registry/provider? (descriptor policy)) (str id))))
-  (it "rejects a malformed policy before registration"
-      (doseq [policy [[:preset-rank 1] {:preset-rank "1"} {:title-rank 1.5} {:initiator-header ""}
-                      {:adaptive-reasoning-models "(unclosed"}
-                      {:fast-mode {:turn-feature ""}} {:fast-mode "fast"}]]
-        (expect (not (registry/provider? (descriptor policy))) (pr-str policy))
-        (expect (throws? clojure.lang.ExceptionInfo #(registry/provider (descriptor policy)))))))
+(defdescribe provider-policy-validation-test
+             (it "accepts every policy the first-party providers declare"
+                 (doseq [[id policy] policies/first-party]
+                   (expect (registry/provider? (descriptor policy)) (str id))))
+             (it "rejects a malformed policy before registration"
+                 (doseq [policy [[:preset-rank 1] {:preset-rank "1"} {:title-rank 1.5}
+                                 {:initiator-header ""} {:adaptive-reasoning-models "(unclosed"}
+                                 {:fast-mode {:turn-feature ""}} {:fast-mode "fast"}]]
+                   (expect (not (registry/provider? (descriptor policy))) (pr-str policy))
+                   (expect (throws? clojure.lang.ExceptionInfo
+                                    #(registry/provider (descriptor policy)))))))
 
 ;; Issue #410: a machine request binds no project. Machine sign-in then answered
 ;; unknown-provider for a provider that a project extension registers.

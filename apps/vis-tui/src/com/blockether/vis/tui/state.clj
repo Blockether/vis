@@ -1655,23 +1655,20 @@
                 (if-not (verbosity-configurable? db)
                   {:db db}
                   ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
-                  {:db db
-                   :fx [[:cycle-toggle (get-in db [:session :id]) "verbosity"]]})))
+                  {:db db :fx [[:cycle-toggle (get-in db [:session :id]) "verbosity"]]})))
 
-(reg-event-fx
-  :toggle-codex-fast-mode
-  (fn [db _]
-    (if-not (codex-session? db)
-      {:db db}
-      {:db db :fx [[:toggle-boolean (get-in db [:session :id]) "codex_fast_mode"]]})))
+(reg-event-fx :toggle-codex-fast-mode
+              (fn [db _]
+                (if-not (codex-session? db)
+                  {:db db}
+                  {:db db :fx [[:toggle-boolean (get-in db [:session :id]) "codex_fast_mode"]]})))
 
 (reg-event-fx :toggle-thinking-summary
               (fn [db _]
                 (if-not (thinking-summary-configurable? db)
                   {:db db}
                   ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
-                  {:db db
-                   :fx [[:toggle-boolean (get-in db [:session :id]) "thinking_summary"]]})))
+                  {:db db :fx [[:toggle-boolean (get-in db [:session :id]) "thinking_summary"]]})))
 
 (reg-event-fx :cycle-model
               ;; Ctrl+T cycles the ACTIVE SESSION's model preference — the SAME unified,
@@ -1721,22 +1718,21 @@
                           {:db (assoc db :session-model-pref pref)
                            :fx [[:set-session-model sid pid (:model next-e)]]})))))
 
-(reg-event-fx
-  :set-model
-  ;; Per-session model PICKER (C-x o / palette "Choose Model…"):
-  ;; sets the ACTIVE SESSION's model to an EXPLICIT provider+model,
-  ;; or — with both nil (the "* router default" row) — CLEARS the
-  ;; per-session override. Writes the SAME persisted per-session
-  ;; pref the cycle (C-x m) and the web footer picker set, so the
-  ;; footer display follows. `db` reflects the current tab.
-  (fn [db [_ provider model]]
-    (let [sid (get-in db [:session :id])]
-      (cond (nil? sid) {:db db}
-            (and provider model)
-            {:db (assoc db :session-model-pref {:provider provider :model model})
-             :fx [[:set-session-model sid provider model]]}
-            :else {:db (dissoc db :session-model-pref)
-                   :fx [[:set-session-model sid nil nil]]}))))
+(reg-event-fx :set-model
+              ;; Per-session model PICKER (C-x o / palette "Choose Model…"):
+              ;; sets the ACTIVE SESSION's model to an EXPLICIT provider+model,
+              ;; or — with both nil (the "* router default" row) — CLEARS the
+              ;; per-session override. Writes the SAME persisted per-session
+              ;; pref the cycle (C-x m) and the web footer picker set, so the
+              ;; footer display follows. `db` reflects the current tab.
+              (fn [db [_ provider model]]
+                (let [sid (get-in db [:session :id])]
+                  (cond (nil? sid) {:db db}
+                        (and provider model)
+                        {:db (assoc db :session-model-pref {:provider provider :model model})
+                         :fx [[:set-session-model sid provider model]]}
+                        :else {:db (dissoc db :session-model-pref)
+                               :fx [[:set-session-model sid nil nil]]}))))
 
 (reg-event-db :clear-session-model-pref
               ;; A failed asynchronous PATCH only rolls back its own choice, even if the
@@ -5498,54 +5494,54 @@
                   staged-recordings
                   (recordings/staged-recordings attachments)]
 
-              {:db (update-tab db
-                               workspace-id
-                               (fn [w]
-                                 (-> w
-                                     (update :messages
-                                             conj
-                                             (cond-> (assoc (chat/user-message visible-preview-text)
-                                                       :client-turn-id client-turn-id)
-                                               (seq staged-recordings)
-                                               (assoc :recordings staged-recordings)))
-                                     (update :messages
-                                             conj
-                                             (assoc (pending-assistant-for text)
-                                               :client-turn-id client-turn-id))
-                                     (remember-input full-text)
-                                     ;; Sending re-pins to the bottom: one atomic FOLLOW
-                                     ;; reset replaces the whole `:scroll` value, so no
-                                     ;; in-flight animation target can dangle and flash the
-                                     ;; view to the top of the freshly-appended message.
-                                     (assoc :scroll scroll/follow
-                                            :loading? true
-                                            :cancel-token token
-                                            :cancelling? false
-                                            ;; Do NOT clear `:cancel-awaiting-client-id` here. A rapid
-                                            ;; cancel/resubmit must retain the old submit's identity until
-                                            ;; its delayed turn.started either arrives or is proven absent.
-                                            :progress {:iterations []}
-                                            :turn-start-ms (System/currentTimeMillis)
-                                            ;; Identity of the turn this tab launched DIRECTLY: the
-                                            ;; correlation id we sent as the gateway idempotency key. A
-                                            ;; queue event echoing OUR OWN submit back (the gateway was
-                                            ;; still tearing down a just-cancelled turn and parked it) is
-                                            ;; recognised by that id — never by request text — instead of
-                                            ;; being painted as a second "Queued" row.
-                                            :live-turn-client-id client-turn-id
-                                            ;; A bare send never refills the editor on a failure:
-                                            ;; the draft there is the human's own text.
-                                            :submitted-input
-                                            {:text text
-                                             :pastes (:pastes source-db)
-                                             :paste-counter (:paste-counter source-db)
-                                             :image-counter (:image-counter source-db)
-                                             :attachments attachments
-                                             :is-bare (boolean (:is-bare opts))}
-                                            :input-history-index nil
-                                            :input-history-draft nil
-                                            :slash-command-index 0
-                                            :slash-command-hidden? false))))
+              {:db (update-tab
+                     db
+                     workspace-id
+                     (fn [w]
+                       (-> w
+                           (update :messages
+                                   conj
+                                   (cond-> (assoc (chat/user-message visible-preview-text)
+                                             :client-turn-id client-turn-id)
+                                     (seq staged-recordings)
+                                     (assoc :recordings staged-recordings)))
+                           (update :messages
+                                   conj
+                                   (assoc (pending-assistant-for text)
+                                     :client-turn-id client-turn-id))
+                           (remember-input full-text)
+                           ;; Sending re-pins to the bottom: one atomic FOLLOW
+                           ;; reset replaces the whole `:scroll` value, so no
+                           ;; in-flight animation target can dangle and flash the
+                           ;; view to the top of the freshly-appended message.
+                           (assoc :scroll scroll/follow
+                                  :loading? true
+                                  :cancel-token token
+                                  :cancelling? false
+                                  ;; Do NOT clear `:cancel-awaiting-client-id` here. A rapid
+                                  ;; cancel/resubmit must retain the old submit's identity until
+                                  ;; its delayed turn.started either arrives or is proven absent.
+                                  :progress {:iterations []}
+                                  :turn-start-ms (System/currentTimeMillis)
+                                  ;; Identity of the turn this tab launched DIRECTLY: the
+                                  ;; correlation id we sent as the gateway idempotency key. A
+                                  ;; queue event echoing OUR OWN submit back (the gateway was
+                                  ;; still tearing down a just-cancelled turn and parked it) is
+                                  ;; recognised by that id — never by request text — instead of
+                                  ;; being painted as a second "Queued" row.
+                                  :live-turn-client-id client-turn-id
+                                  ;; A bare send never refills the editor on a failure:
+                                  ;; the draft there is the human's own text.
+                                  :submitted-input {:text text
+                                                    :pastes (:pastes source-db)
+                                                    :paste-counter (:paste-counter source-db)
+                                                    :image-counter (:image-counter source-db)
+                                                    :attachments attachments
+                                                    :is-bare (boolean (:is-bare opts))}
+                                  :input-history-index nil
+                                  :input-history-draft nil
+                                  :slash-command-index 0
+                                  :slash-command-hidden? false))))
                ;; `agent-text` (LLM-facing, with `@path` expanded into a
                ;; `[Attached File: ...]` directive) drives the model.
                ;; `preview-text` (un-expanded `@path` token, plus a fenced
@@ -7520,17 +7516,16 @@
   ([sid id action] (change-session-setting! sid id action nil))
   ([sid id action value]
    (when sid
-     (gateway-queue-io!
-       #(try (let [target {:scope "session" :target-id (str sid)}]
-               (if (some? value)
-                 (vis/change-setting! id action target value)
-                 (vis/change-setting! id action target))
-               (refresh-session-settings! sid))
-             (catch Exception e
-               (tel/log! {:level :error
-                          :id ::session-setting-change-failed
-                          :error e
-                          :data {:session-id (str sid) :setting id}})))))))
+     (gateway-queue-io! #(try (let [target {:scope "session" :target-id (str sid)}]
+                                (if (some? value)
+                                  (vis/change-setting! id action target value)
+                                  (vis/change-setting! id action target))
+                                (refresh-session-settings! sid))
+                              (catch Exception e
+                                (tel/log! {:level :error
+                                           :id ::session-setting-change-failed
+                                           :error e
+                                           :data {:session-id (str sid) :setting id}})))))))
 
 (reg-fx :cycle-toggle
         (fn [sid id]

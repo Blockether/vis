@@ -153,7 +153,8 @@
                                                       (get block "is_timeout")))
                              :activity (block-activity block)
                              :stdout-chars (or (get block "atif_stdout_chars")
-                                                (some-> (get block "stdout") code-points))
+                                               (some-> (get block "stdout")
+                                                       code-points))
                              :error (get block "error")
                              :repaired-source (get block "repaired_source")})}
      :result {:source-call-id call-id :content (observation-text block)}}))
@@ -291,12 +292,13 @@
              :message (or answer (get iteration "assistant_prose") "")
              :extra (compact {:iteration position
                               :is-final (if (get iteration "atif_imported_step")
-                                            (get iteration "atif_final")
-                                            (some? answer))
+                                          (get iteration "atif_final")
+                                          (some? answer))
                               :provider (text-value (or (get iteration "llm_actual_provider")
                                                         (get iteration "provider")))
                               :finished-at-ms (or (epoch-ms (get iteration "finished_at")) created)
-                              :error (or (get iteration "atif_step_error") (error-text (get iteration "error")))
+                              :error (or (get iteration "atif_step_error")
+                                         (error-text (get iteration "error")))
                               :attachments (not-empty (get iteration "attachments"))})}
       created
       (assoc :timestamp (iso-time created))
@@ -315,14 +317,16 @@
         (mapv :call calls) :observation
         {:results (mapv :result calls)}))))
 
-(defn- unattributed-cost-step [step-id cost]
+(defn- unattributed-cost-step
+  [step-id cost]
   {:step-id step-id
    :source "agent"
    :message ""
    :metrics {:cost-usd cost}
    :extra {:is-unattributed-cost true}})
 
-(defn- iteration-step [step-id turn-position iteration answer]
+(defn- iteration-step
+  [step-id turn-position iteration answer]
   (if (get iteration "atif_unattributed_cost")
     (unattributed-cost-step step-id (get iteration "cost_usd"))
     (model-iteration-step step-id turn-position iteration answer)))
@@ -333,7 +337,8 @@
     (compact {:step-id step-id
               :source "agent"
               :message ""
-              :timestamp (some-> (epoch-ms (get warm "created_at")) iso-time)
+              :timestamp (some-> (epoch-ms (get warm "created_at"))
+                                 iso-time)
               :model-name (get warm "model")
               :metrics (compact {:prompt-tokens (get tokens "input")
                                  :completion-tokens (get tokens "output")
@@ -346,9 +351,15 @@
 (defn- with-unattributed-cost
   "Keep saved costs that have no call record, including warms in older sessions."
   [steps first-id turn project-step]
-  (let [saved (double (or (get-in turn ["cost" "total_cost"]) 0))
-        exported (reduce + 0.0 (keep #(get-in % [:metrics :cost-usd]) steps))
-        difference (- saved (double exported))]
+  (let [saved
+        (double (or (get-in turn ["cost" "total_cost"]) 0))
+
+        exported
+        (reduce + 0.0 (keep #(get-in % [:metrics :cost-usd]) steps))
+
+        difference
+        (- saved (double exported))]
+
     (if (> difference 1.0e-10)
       (conj steps (project-step (unattributed-cost-step (+ first-id (count steps)) difference)))
       steps)))
@@ -384,20 +395,28 @@
                             (assoc-in [:extra :attachments] attachments)))]]
 
       (if (seq remaining)
-        (let [more (next remaining)
-              iteration (first remaining)
-              steps (reduce (fn [out warm]
-                              (conj out (project-step (cache-warm-step (+ first-id (count out)) warm))))
-                            steps
-                            (get iteration "cache_warms"))]
+        (let [more
+              (next remaining)
+
+              iteration
+              (first remaining)
+
+              steps
+              (reduce (fn [out warm]
+                        (conj out (project-step (cache-warm-step (+ first-id (count out)) warm))))
+                      steps
+                      (get iteration "cache_warms"))]
+
           (recur more
                  (cond-> steps
                    (not (get iteration "atif_omit_step"))
                    (conj (project-step (iteration-step (+ first-id (count steps))
-                                                      (get turn "position")
-                                                      iteration
-                                                      (when (and (not more) (not (get iteration "atif_imported_step")))
-                                                        answer)))))))
+                                                       (get turn "position")
+                                                       iteration
+                                                       (when (and (not more)
+                                                                  (not (get iteration
+                                                                            "atif_imported_step")))
+                                                         answer)))))))
         (with-unattributed-cost steps first-id turn project-step)))))
 
 (defn- child-steps
@@ -425,9 +444,9 @@
   [steps created-ms]
   (let [indexes (keep-indexed (fn [i step]
                                 (when (and (= "agent" (:source step))
-                                            (not (get-in step [:extra :is-cache-warm]))
-                                            (not (get-in step [:extra :is-unattributed-cost])))
-                                   i))
+                                           (not (get-in step [:extra :is-cache-warm]))
+                                           (not (get-in step [:extra :is-unattributed-cost])))
+                                  i))
                               steps)]
     (or (when created-ms
           (some (fn [i]
@@ -525,16 +544,16 @@
 (defn- saved-extra
   "The session metadata and the end time of its last dated step."
   [record steps]
-  (not-empty
-    (compact {:status (text-value (get record "status"))
-              :title (text-value (get record "title"))
-              :cwd (text-value (get record "cwd"))
-              :started-at (some-> (or (epoch-ms (get record "started_at"))
-                                       (epoch-ms (get record "created_at")))
-                                   iso-time)
-              :last-activity-at (some->> (rseq steps)
-                                         (some #(or (step-end-ms %) (epoch-ms (:timestamp %))))
-                                         iso-time)})))
+  (not-empty (compact {:status (text-value (get record "status"))
+                       :title (text-value (get record "title"))
+                       :cwd (text-value (get record "cwd"))
+                       :started-at (some-> (or (epoch-ms (get record "started_at"))
+                                               (epoch-ms (get record "created_at")))
+                                           iso-time)
+                       :last-activity-at (some->> (rseq steps)
+                                                  (some #(or (step-end-ms %)
+                                                             (epoch-ms (:timestamp %))))
+                                                  iso-time)})))
 
 (defn- persisted-trajectory
   "The ATIF trajectory of one saved session. `children` maps a
@@ -560,27 +579,27 @@
         (or (text-value (get record "provider")) (some #(get-in % [:extra :provider]) steps))
 
         trajectory
-        (with-subagents
-          {:schema-version schema-version
-           :session-id sid
-           :trajectory-id sid
-           :agent (compact
-                    {:name "vis"
-                     :version (runtime/release-version)
-                     :model-name (or (text-value (get record "atif_model"))
-                                      (text-value (get record "model"))
-                                      (some :model-name steps))
-                     :extra (not-empty (compact {:provider provider
-                                                 :parent-session-id (some-> (get record "parent_id")
-                                                                            str)
-                                                 :depth (get record "depth")}))})
-           :steps steps
-            :extra (saved-extra record steps)}
-          (remove #(contains? seen (str (get % "session_id"))) (get children sid))
-          #(persisted-trajectory
-             {:children children :read-turns read-turns :project-step project-step}
-             seen
-             %))]
+        (with-subagents {:schema-version schema-version
+                         :session-id sid
+                         :trajectory-id sid
+                         :agent (compact {:name "vis"
+                                          :version (runtime/release-version)
+                                          :model-name (or (text-value (get record "atif_model"))
+                                                          (text-value (get record "model"))
+                                                          (some :model-name steps))
+                                          :extra (not-empty (compact
+                                                              {:provider provider
+                                                               :parent-session-id
+                                                               (some-> (get record "parent_id")
+                                                                       str)
+                                                               :depth (get record "depth")}))})
+                         :steps steps
+                         :extra (saved-extra record steps)}
+                        (remove #(contains? seen (str (get % "session_id"))) (get children sid))
+                        #(persisted-trajectory
+                           {:children children :read-turns read-turns :project-step project-step}
+                           seen
+                           %))]
 
     (assoc trajectory :final-metrics (child-metrics record trajectory))))
 
@@ -755,7 +774,8 @@
                (secret-leaves providers)
                settings
                (keep (fn [[k source v]]
-                       (when (or (#{:keychain :command} source) (re-find secret-env-name (str k))) v))
+                       (when (or (#{:keychain :command} source) (re-find secret-env-name (str k)))
+                         v))
                      environment))
        (filter #(and (string? %) (<= (long min-secret-length) (count %))))
        distinct
@@ -773,31 +793,48 @@
   "`[[name source value]]` of the variables that Vis gives to child processes in the
    bound workspace."
   []
-  (try (into [] cat [(for [name (config/declared-environment-names)
-                           :let [{:keys [source value]} (config/extension-env-status name)]
-                           :when (and value (not= :literal source))]
-                       [name source value])
-                     (for [[name value] (config/workspace-environment-values)]
-                       [name :dotenv value])])
+  (try (into []
+             cat
+             [(for [name
+                    (config/declared-environment-names)
+
+                    :let [{:keys [source value]}
+                          (config/extension-env-status name)]
+                    :when (and value (not= :literal source))]
+
+                [name source value])
+              (for [[name value] (config/workspace-environment-values)]
+                [name :dotenv value])])
        (catch Exception _ nil)))
 
 (defn- json-escaped
   "`s` as it shows inside a JSON string."
   [s]
-  (let [encoded (wire/json-str s)] (subs encoded 1 (dec (count encoded)))))
+  (let [encoded (wire/json-str s)]
+    (subs encoded 1 (dec (count encoded)))))
 
 (defn- url-encoded
   "`s` as `URLEncoder` and `encodeURIComponent` encode it, with upper and lower hex."
   [^String s]
-  (let [form (URLEncoder/encode s StandardCharsets/UTF_8)
-        spaces (str/replace form "+" "%20")]
-    (distinct (mapcat (fn [x] [x (str/replace x #"%[0-9A-F]{2}" str/lower-case)]) [form spaces]))))
+  (let [form
+        (URLEncoder/encode s StandardCharsets/UTF_8)
+
+        spaces
+        (str/replace form "+" "%20")]
+
+    (distinct (mapcat (fn [x]
+                        [x (str/replace x #"%[0-9A-F]{2}" str/lower-case)])
+                      [form spaces]))))
 
 (defn- with-escaped
   "`secrets` and their JSON-escaped and URL-encoded forms, longest first, because text
    can hold JSON and URLs."
   [secrets]
-  (->> secrets (mapcat #(list* % (json-escaped %) (url-encoded %))) distinct (sort-by count >) vec))
+  (->> secrets
+       (mapcat #(list* % (json-escaped %) (url-encoded %)))
+       distinct
+       (sort-by count >)
+       vec))
 
 (defn- string-leaves
   [data]
@@ -816,20 +853,23 @@
   "The known credentials of this process and of the bound workspace, also JSON-escaped:
    also the gateway token and the provider keys that `api_key_command` gave."
   []
-  (with-escaped (known-secrets {:env (System/getenv)
-                                :files (credential-files)
-                                :providers (try (:providers (config/current-config)) (catch Exception _ nil))
-                                :settings (concat (toggles/secret-values)
-                                                  (cred/cached-tokens)
-                                                  (gateway-tokens))
-                                :environment (environment)})))
+  (with-escaped (known-secrets
+                  {:env (System/getenv)
+                   :files (credential-files)
+                   :providers (try (:providers (config/current-config)) (catch Exception _ nil))
+                   :settings (concat (toggles/secret-values) (cred/cached-tokens) (gateway-tokens))
+                   :environment (environment)})))
 
 (defn setting-secrets
   "The values of the secret settings in `settings`, `{setting-id value}`, also JSON-escaped."
   [settings]
-  (with-escaped (known-secrets {:settings (for [[id value] settings
+  (with-escaped (known-secrets {:settings (for [[id value]
+                                                settings
+
                                                 :when (toggles/secret-setting? id)
-                                                leaf (string-leaves value)]
+                                                leaf
+                                                (string-leaves value)]
+
                                             leaf)})))
 
 (def ^:private token-format
@@ -838,18 +878,14 @@
    Hugging Face, and JSON Web Tokens, also encrypted ones."
   (re-pattern
     (str "(?<![A-Za-z0-9_-])(?:"
-         (str/join "|"
-                   ["sk-(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{30,}"
-                    "(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{20,}"
-                    "gh[pousr]_[A-Za-z0-9]{36,}"
-                    "github_pat_[A-Za-z0-9_]{50,}"
-                    "gl(?:pat|dt|ptt|rt)-[A-Za-z0-9_-]{20,}"
-                    "xox[abposr]-[A-Za-z0-9-]{10,}"
-                    "(?:AKIA|ASIA)[A-Z0-9]{16}"
-                    "AIza[0-9A-Za-z_-]{35}"
-                    "npm_[A-Za-z0-9]{36}"
-                    "hf_[A-Za-z0-9]{30,}"
-                    "eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]*\\.[A-Za-z0-9_-]*(?:\\.[A-Za-z0-9_-]+){0,2}"])
+         (str/join
+           "|"
+           ["sk-(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{30,}"
+            "(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{20,}" "gh[pousr]_[A-Za-z0-9]{36,}"
+            "github_pat_[A-Za-z0-9_]{50,}" "gl(?:pat|dt|ptt|rt)-[A-Za-z0-9_-]{20,}"
+            "xox[abposr]-[A-Za-z0-9-]{10,}" "(?:AKIA|ASIA)[A-Z0-9]{16}" "AIza[0-9A-Za-z_-]{35}"
+            "npm_[A-Za-z0-9]{36}" "hf_[A-Za-z0-9]{30,}"
+            "eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]*\\.[A-Za-z0-9_-]*(?:\\.[A-Za-z0-9_-]+){0,2}"])
          ")(?![A-Za-z0-9_-])")))
 
 (def ^:private token-markers
@@ -873,7 +909,8 @@
   "The UTF-8 text that the base64 or base64url `run` encodes, or nil."
   [^String run]
   (let [body (cond-> run
-               (or (str/includes? run "=") (str/includes? run "\n")) (str/replace #"=+$|\r|\n" ""))]
+               (or (str/includes? run "=") (str/includes? run "\n"))
+               (str/replace #"=+$|\r|\n" ""))]
     (when-not (= 1 (mod (count body) 4))
       (try (String. (.decode (if (or (str/includes? body "_") (str/includes? body "-"))
                                (Base64/getUrlDecoder)
@@ -890,7 +927,8 @@
 (defn- basic-credential?
   "True when `token` is the base64 of a `user:password` pair."
   [^String token]
-  (boolean (when-let [text (base64-text token)] (and (printable? text) (str/includes? text ":")))))
+  (boolean (when-let [text (base64-text token)]
+             (and (printable? text) (str/includes? text ":")))))
 
 (def ^:private base64-run
   "A run of base64 or base64url text, also wrapped in lines of 64 or 76 characters."
@@ -906,8 +944,12 @@
 (defn- base64-end
   "The index after the base64 characters that start at `i` in `s`."
   ^long [^String s ^long i]
-  (let [n (.length s)
-        ^booleans table base64-chars]
+  (let [n
+        (.length s)
+
+        ^booleans table
+        base64-chars]
+
     (loop [j i]
       (if (< j n)
         (let [c (int (.charAt s j))]
@@ -918,13 +960,29 @@
   "Replace in `s` each [[base64-run]] for which `hidden?` is true. A loop over the
    characters finds the runs, because a regex scan of each position is slow."
   [^String s hidden?]
-  (let [n (.length s)
-        m (doto (re-matcher base64-run s) (.useTransparentBounds true) (.useAnchoringBounds false))]
-    (loop [i 0, from 0, out nil]
+  (let [n
+        (.length s)
+
+        m
+        (doto (re-matcher base64-run s) (.useTransparentBounds true) (.useAnchoringBounds false))]
+
+    (loop [i
+           0
+
+           from
+           0
+
+           out
+           nil]
+
       (if (>= i n)
         (if out (str (.append ^StringBuilder out s (int from) (int n))) s)
-        (let [end (base64-end s i)
-              len (- end i)]
+        (let [end
+              (base64-end s i)
+
+              len
+              (- end i)]
+
           (if (< len 11)
             (recur (max end (inc i)) from out)
             ;; Only a line of 64 or 76 characters can start wrapped base64.
@@ -933,13 +991,17 @@
                              (#{\return \newline} (.charAt s end)))
                       (when (.lookingAt (.region m (int i) (int n))) (.end m))
                       (let [e (loop [e end]
-                                (if (and (< e n) (< (- e end) 2) (= \= (.charAt s e))) (recur (inc e)) e))]
-                        (when-not (and (< e n) (or (= \= (.charAt s e)) (< e (base64-end s e)))) e)))]
+                                (if (and (< e n) (< (- e end) 2) (= \= (.charAt s e)))
+                                  (recur (inc e))
+                                  e))]
+                        (when-not (and (< e n) (or (= \= (.charAt s e)) (< e (base64-end s e))))
+                          e)))]
               (cond (nil? e) (recur end from out)
-                    (hidden? (subs s i e))
-                    (recur (long e) (long e) (doto ^StringBuilder (or out (StringBuilder. n))
-                                 (.append s (int from) (int i))
-                                 (.append ^String redacted)))
+                    (hidden? (subs s i e)) (recur (long e)
+                                                  (long e)
+                                                  (doto ^StringBuilder (or out (StringBuilder. n))
+                                                    (.append s (int from) (int i))
+                                                    (.append ^String redacted)))
                     :else (recur (long e) from out)))))))))
 
 (defn- base64-candidate?
@@ -947,7 +1009,15 @@
    letter cases."
   [^String run]
   (and (<= 11 (.length run))
-       (loop [i 0, lower false, upper false]
+       (loop [i
+              0
+
+              lower
+              false
+
+              upper
+              false]
+
          (if (< i (.length run))
            (let [c (.charAt run i)]
              (cond (Character/isDigit c) true
@@ -979,7 +1049,9 @@
 (defn- jwt?
   "True when the first part of `token` is a JSON header with an `alg` field."
   [^String token]
-  (boolean (some->> (first (str/split token #"\." 2)) base64-text (re-find #"\"alg\""))))
+  (boolean (some->> (first (str/split token #"\." 2))
+                    base64-text
+                    (re-find #"\"alg\""))))
 
 (defn- redact-forms
   "Replace in `s` each credential that its form shows. Each pattern runs only when its
@@ -994,13 +1066,16 @@
       (str/replace private-key-format redacted)
 
       (str/includes? s "://")
-      (str/replace url-credential (fn [[_ scheme]] (str scheme redacted "@")))
+      (str/replace url-credential
+                   (fn [[_ scheme]]
+                     (str scheme redacted "@")))
 
       (str/includes? lower "authorization")
       (-> (str/replace authorization-credential
                        (fn [[match prefix scheme token]]
                          (if (or (and (<= 8 (count token)) (credential-like? token))
-                                 (and (= "basic" (str/lower-case scheme)) (basic-credential? token)))
+                                 (and (= "basic" (str/lower-case scheme))
+                                      (basic-credential? token)))
                            (str prefix redacted)
                            match)))
           (str/replace digest-credential
@@ -1008,7 +1083,8 @@
                          (str prefix
                               (str/replace params
                                            #"(?i)\b(response|cnonce|nonce|opaque)=(\"?)[^\",\s]*+"
-                                           (fn [[_ k q]] (str k "=" q redacted)))))))
+                                           (fn [[_ k q]]
+                                             (str k "=" q redacted)))))))
 
       (str/includes? lower "cookie")
       (str/replace cookie-value
@@ -1016,7 +1092,8 @@
                      (str prefix
                           (str/replace value
                                        #"(^|;[ \t]*)([\w.-]+)=([^;\s]{8,})"
-                                       (fn [[_ start name]] (str start name "=" redacted))))))
+                                       (fn [[_ start name]]
+                                         (str start name "=" redacted))))))
 
       (some #(str/includes? s %) token-markers)
       (str/replace token-format #(if (or (not (str/starts-with? % "eyJ")) (jwt? %)) redacted %)))))
@@ -1043,24 +1120,42 @@
   [^objects table ^String s ^long i]
   (when (< (inc i) (.length s))
     (when-let [secrets (aget table (pair-code s i))]
-      (some (fn [^String secret] (when (.startsWith s secret (int i)) secret)) secrets))))
+      (some (fn [^String secret]
+              (when (.startsWith s secret (int i)) secret))
+            secrets))))
 
 (defn- replace-secrets
   "Replace in `s` each secret of `table`, from the left, the longest first. This is one
    scan of `s`, while a regex of all secrets tries each secret at each position."
   [^objects table ^String s]
-  (let [n (.length s)
-        last (dec n)]
-    (loop [i 0, from 0, out nil]
+  (let [n
+        (.length s)
+
+        last
+        (dec n)]
+
+    (loop [i
+           0
+
+           from
+           0
+
+           out
+           nil]
+
       (if (>= i last)
         (if out (str (.append ^StringBuilder out s (int from) (int n))) s)
-        (if-let [^String secret (when (aget table (bit-or (bit-shift-left (bit-and (int (.charAt s i)) 0xFF) 8)
-                                                          (bit-and (int (.charAt s (inc i))) 0xFF)))
+        (if-let [^String secret (when (aget table
+                                            (bit-or
+                                              (bit-shift-left (bit-and (int (.charAt s i)) 0xFF) 8)
+                                              (bit-and (int (.charAt s (inc i))) 0xFF)))
                                   (secret-at table s i))]
           (let [e (+ i (.length secret))]
-            (recur e e (doto ^StringBuilder (or out (StringBuilder. n))
-                         (.append s (int from) (int i))
-                         (.append ^String redacted))))
+            (recur e
+                   e
+                   (doto ^StringBuilder (or out (StringBuilder. n))
+                     (.append s (int from) (int i))
+                     (.append ^String redacted))))
           (recur (inc i) from out))))))
 
 (defn- has-secret?
@@ -1075,22 +1170,34 @@
   "Compile the credential pattern once for all values in an export. Each of `secrets`,
    and each credential that its form shows, becomes `[REDACTED]`."
   [secrets]
-  (let [index (when (seq secrets) (secret-index secrets))
-        known (when (and (seq secrets) (not index))
-                (re-pattern (str/join "|" (map #(Pattern/quote %) (sort-by count > secrets)))))
-        replace-known (cond index #(replace-secrets index %)
-                            known #(str/replace % known redacted)
-                            :else identity)
-        known? (cond index #(has-secret? index %)
-                     known #(boolean (re-find known %))
-                     :else (constantly false))
+  (let [index
+        (when (seq secrets) (secret-index secrets))
+
+        known
+        (when (and (seq secrets) (not index))
+          (re-pattern (str/join "|" (map #(Pattern/quote %) (sort-by count > secrets)))))
+
+        replace-known
+        (cond index #(replace-secrets index %)
+              known #(str/replace % known redacted)
+              :else identity)
+
+        known?
+        (cond index #(has-secret? index %)
+              known #(boolean (re-find known %))
+              :else (constantly false))
+
         ;; A base64 run hides a credential when its text holds a known value or a
         ;; credential form. The whole run goes, as the parts of base64 do not split.
-        hidden? (fn [^String run]
-                  (when-let [text (when (base64-candidate? run) (base64-text run))]
-                    (or (known? text)
-                        (and (printable? text) (not= text (redact-forms text))))))
-        text (fn [s] (redact-forms (replace-base64 (replace-known s) hidden?)))]
+        hidden?
+        (fn [^String run]
+          (when-let [text (when (base64-candidate? run) (base64-text run))]
+            (or (known? text) (and (printable? text) (not= text (redact-forms text))))))
+
+        text
+        (fn [s]
+          (redact-forms (replace-base64 (replace-known s) hidden?)))]
+
     (fn walk [x]
       (cond (string? x) (text x)
             (map? x) (into {}
@@ -1153,26 +1260,25 @@
    [[run-secrets]], becomes `[REDACTED]`."
   ([root records read-turns] (saved-json root records read-turns (run-secrets)))
   ([root records read-turns secrets]
-  (let [root
-        (wire/canonical root)
+   (let [root
+         (wire/canonical root)
 
-        sid
-        (get root "session_id")
+         sid
+         (get root "session_id")
 
-        redact-value
-        (redactor secrets)
-
-        children
-        (children-by-parent sid records)]
-
-    (->> (persisted-trajectory {:children children
-                                :read-turns read-turns
-                                :project-step #(clip-step (redact-value %))}
-                               #{}
-                               root)
          redact-value
-         unique-call-ids
-         wire/json-str))))
+         (redactor secrets)
+
+         children
+         (children-by-parent sid records)]
+
+     (->> (persisted-trajectory
+            {:children children :read-turns read-turns :project-step #(clip-step (redact-value %))}
+            #{}
+            root)
+          redact-value
+          unique-call-ids
+          wire/json-str))))
 
 (def ^:private owner-only (PosixFilePermissions/fromString "rw-------"))
 

@@ -31,7 +31,8 @@
 
 (defn- delete-tree!
   [^File dir]
-  (doseq [^File f (reverse (file-seq dir))] (io/delete-file f true)))
+  (doseq [^File f (reverse (file-seq dir))]
+    (io/delete-file f true)))
 
 (defn- request
   [method uri body]
@@ -46,70 +47,90 @@
 (defn- answer
   "The status and the parsed body of the answer of `handler` to one request."
   [handler method uri body]
-  (let [response (handler (request method uri body))
-        body (:body response)]
+  (let [response
+        (handler (request method uri body))
+
+        body
+        (:body response)]
+
     [(:status response) (wire/parse-json (if (string? body) body (slurp body)))]))
 
 (defn- with-gateway
   "Call `f` with a router handler, over an empty in-memory store and a server state
    that knows the client `owner`."
   [f]
-  (let [store (ps/db-open! :memory)
-        before @instance/server-state
-        now (util/now-ms)]
-    (reset! instance/server-state
-            {:require-token? false
-             :managed? false
-             :clients {"owner" {:connected-at now :last-seen-at now}}})
-    (try (with-redefs [lp/db-info (constantly store)] (f store (#'server/app "" [])))
+  (let [store
+        (ps/db-open! :memory)
+
+        before
+        @instance/server-state
+
+        now
+        (util/now-ms)]
+
+    (reset! instance/server-state {:require-token? false
+                                   :managed? false
+                                   :clients {"owner" {:connected-at now :last-seen-at now}}})
+    (try (with-redefs [lp/db-info (constantly store)]
+           (f store (#'server/app "" [])))
          (finally (reset! instance/server-state before) (ps/db-close! store)))))
 
-(defdescribe
-  admin-routes-answer-their-schema
-  (it
-    "status, client lease, devices and decision models answer their schema"
-    (let [push-home (temp-dir "vis-live-push")
-          previous (System/getProperty "vis.push.home")]
-      (System/setProperty "vis.push.home" (str push-home))
-      (push/reload-devices!)
-      (try
-        (with-gateway
-          (fn [_ handler]
-            (let [[status body] (answer handler :get "/v1/admin/status" {})]
-              (expect (= 200 status))
-              (expect (= "running" (get body "status"))))
-            (let [[status body] (answer handler :post "/v1/clients" {"kind" "test" "pid" 1})]
-              (expect (= 200 status))
-              (expect (string? (get body "client_id"))))
-            (let [[status body] (answer handler :get "/v1/devices" {})]
-              (expect (= 200 status))
-              (expect (= [] (get body "devices"))))
-            (let [[status body] (answer handler :get "/v1/decisions/models" {})]
-              (expect (= 200 status))
-              (expect (seq (get body "models"))))))
-        (finally (if previous
-                   (System/setProperty "vis.push.home" previous)
-                   (System/clearProperty "vis.push.home"))
-                 (push/reload-devices!)
-                 (delete-tree! push-home))))))
+(defdescribe admin-routes-answer-their-schema
+             (it "status, client lease, devices and decision models answer their schema"
+                 (let [push-home
+                       (temp-dir "vis-live-push")
+
+                       previous
+                       (System/getProperty "vis.push.home")]
+
+                   (System/setProperty "vis.push.home" (str push-home))
+                   (push/reload-devices!)
+                   (try (with-gateway
+                          (fn [_ handler]
+                            (let [[status body] (answer handler :get "/v1/admin/status" {})]
+                              (expect (= 200 status))
+                              (expect (= "running" (get body "status"))))
+                            (let [[status body]
+                                  (answer handler :post "/v1/clients" {"kind" "test" "pid" 1})]
+                              (expect (= 200 status))
+                              (expect (string? (get body "client_id"))))
+                            (let [[status body] (answer handler :get "/v1/devices" {})]
+                              (expect (= 200 status))
+                              (expect (= [] (get body "devices"))))
+                            (let [[status body] (answer handler :get "/v1/decisions/models" {})]
+                              (expect (= 200 status))
+                              (expect (seq (get body "models"))))))
+                        (finally (if previous
+                                   (System/setProperty "vis.push.home" previous)
+                                   (System/clearProperty "vis.push.home"))
+                                 (push/reload-devices!)
+                                 (delete-tree! push-home))))))
 
 (defdescribe
   session-and-project-routes-answer-their-schema
   (it
     "project ensure and order, session resources, queue, fork and root change answer their schema"
-    (let [project-root (temp-dir "vis-live-project")
-          other-root (temp-dir "vis-live-other")]
+    (let [project-root
+          (temp-dir "vis-live-project")
+
+          other-root
+          (temp-dir "vis-live-other")]
+
       (try
         (with-gateway
           (fn [store handler]
-            (let [sid (str (h/store-session! store {:channel :api :title "Talk"}))
-                  base (str "/v1/sessions/" sid)
-                  [status project] (answer handler
-                                           :post
-                                           "/v1/projects/actions/ensure"
-                                           {"root" (str project-root)})]
-              (ps/db-store-session-turn! store
-                                         {:parent-session-id sid :user-request "ask" :status :success})
+            (let [sid
+                  (str (h/store-session! store {:channel :api :title "Talk"}))
+
+                  base
+                  (str "/v1/sessions/" sid)
+
+                  [status project]
+                  (answer handler :post "/v1/projects/actions/ensure" {"root" (str project-root)})]
+
+              (ps/db-store-session-turn!
+                store
+                {:parent-session-id sid :user-request "ask" :status :success})
               (expect (= 200 status))
               (expect (= (str project-root) (get project "workspace_root")))
               (expect (= [200 {"resources" []}] (answer handler :get (str base "/resources") {})))
@@ -118,10 +139,8 @@
               (let [[status body] (answer handler :post (str base "/forks") {})]
                 (expect (= 200 status))
                 (expect (not= sid (get-in body ["session" "id"]))))
-              (let [[status body] (answer handler
-                                          :patch
-                                          (str base "/workspace/root")
-                                          {"path" (str other-root)})]
+              (let [[status body]
+                    (answer handler :patch (str base "/workspace/root") {"path" (str other-root)})]
                 (expect (= 200 status))
                 (expect (= (str other-root) (get-in body ["workspace" "root"]))))
               (expect (= [200 {"project_id" (get project "id") "count" 1}]
@@ -131,36 +150,40 @@
                                  {"order" [sid]}))))))
         (finally (delete-tree! project-root) (delete-tree! other-root))))))
 
-(defdescribe
-  provider-routes-answer-their-schema
-  (it
-    "provider status and the provider model list answer their schema"
-    ;; The live catalog is a network call; the stub gives its model ids.
-    (with-redefs [providers/refresh-models-async! (fn [& _] nil)
-                  providers/fetch-models (constantly ["model-b" "model-a"])]
-      (with-gateway
-        (fn [_ handler]
-          (let [[status body] (answer handler :get "/v1/providers/openai/status" {})]
-            (expect (= 200 status))
-            (expect (boolean? (get-in body ["status" "is_authenticated"]))))
-          (let [[status body] (answer handler :get "/v1/providers/openai/models" {})]
-            (expect (= 200 status))
-            (expect (every? string? (get body "models")))))))))
+(defdescribe provider-routes-answer-their-schema
+             (it "provider status and the provider model list answer their schema"
+                 ;; The live catalog is a network call; the stub gives its model ids.
+                 (with-redefs [providers/refresh-models-async!
+                               (fn [& _]
+                                 nil)
 
-(defdescribe
-  speech-model-routes-answer-their-schema
-  (it
-    "the voice and speech model state answers its schema"
-    ;; A local speech model is the outside boundary; the stub engine is ready.
-    (with-redefs [speech/engines (fn [direction]
-                                   [{:id (if (= :synthesize direction) :speaker :listener)
-                                     :label "Local"
-                                     :voices (constantly [{:id :alba :label "Alba" :language :en-GB}])
-                                     :model-state (constantly {:state :ready})}])
-                  speech/env-engine-id (constantly nil)]
-      (with-gateway
-        (fn [_ handler]
-          (expect (= [200 {"status" "ready" "engine" "listener"}]
-                     (answer handler :get "/v1/voice/model" {})))
-          (expect (= [200 {"status" "ready" "engine" "speaker"}]
-                     (answer handler :get "/v1/speech/model" {}))))))))
+                               providers/fetch-models
+                               (constantly ["model-b" "model-a"])]
+
+                   (with-gateway
+                     (fn [_ handler]
+                       (let [[status body] (answer handler :get "/v1/providers/openai/status" {})]
+                         (expect (= 200 status))
+                         (expect (boolean? (get-in body ["status" "is_authenticated"]))))
+                       (let [[status body] (answer handler :get "/v1/providers/openai/models" {})]
+                         (expect (= 200 status))
+                         (expect (every? string? (get body "models")))))))))
+
+(defdescribe speech-model-routes-answer-their-schema
+             (it "the voice and speech model state answers its schema"
+                 ;; A local speech model is the outside boundary; the stub engine is ready.
+                 (with-redefs [speech/engines
+                               (fn [direction]
+                                 [{:id (if (= :synthesize direction) :speaker :listener)
+                                   :label "Local"
+                                   :voices (constantly [{:id :alba :label "Alba" :language :en-GB}])
+                                   :model-state (constantly {:state :ready})}])
+
+                               speech/env-engine-id
+                               (constantly nil)]
+
+                   (with-gateway (fn [_ handler]
+                                   (expect (= [200 {"status" "ready" "engine" "listener"}]
+                                              (answer handler :get "/v1/voice/model" {})))
+                                   (expect (= [200 {"status" "ready" "engine" "speaker"}]
+                                              (answer handler :get "/v1/speech/model" {}))))))))

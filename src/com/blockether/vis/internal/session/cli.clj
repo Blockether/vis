@@ -467,7 +467,9 @@
     (when (and root (not (.isDirectory (io/file root))))
       (refuse! (str "No folder at " (paths/abbreviate-home root))))
     (let [restored
-          (import-session-file! path {:root root :group group :key key} (System/getProperty "user.dir"))
+          (import-session-file! path
+                                {:root root :group group :key key}
+                                (System/getProperty "user.dir"))
 
           id
           (get restored "id")]
@@ -671,8 +673,7 @@
                 :kind :flag
                 :type :string
                 :doc "Restore once: a second import with the same KEY returns the first session."}]
-    :cmd/examples ["vis-agent sessions import work.vissnap"
-                   "vis-agent sessions import session.json"
+    :cmd/examples ["vis-agent sessions import work.vissnap" "vis-agent sessions import session.json"
                    "vis-agent sessions import work.vissnap --root ~/code/shop --key shop-1"]
     :cmd/run-fn cli-import-session!}
    {:cmd/name "search"

@@ -113,16 +113,16 @@
                  (expect (not (.exists (java.io.File. ^String (store/auth-file flat-book)))))
                  (finally (run! #(.delete ^java.io.File %) (.listFiles dir)) (.delete dir))))))))
 
-(defdescribe
-  single-credential-message-test
-  ;; Nothing is redefined here: neither book's env var, config entry or file
-  ;; exists, so the real lookup runs and really fails.
-  (it "names no plan in the message a single-credential user sees"
-      (let [thrown
-            (try (store/token-envelope flat-book :solo) nil (catch clojure.lang.ExceptionInfo e e))]
-        (expect (= :vis/solo-not-authenticated (:type (ex-data thrown))))
-        (expect (re-find #"No Solo API key\. Run" (ex-message thrown)))
-        (expect (nil? (re-find #"for plan" (ex-message thrown)))))))
+(defdescribe single-credential-message-test
+             ;; Nothing is redefined here: neither book's env var, config entry or file
+             ;; exists, so the real lookup runs and really fails.
+             (it "names no plan in the message a single-credential user sees"
+                 (let [thrown (try (store/token-envelope flat-book :solo)
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e e))]
+                   (expect (= :vis/solo-not-authenticated (:type (ex-data thrown))))
+                   (expect (re-find #"No Solo API key\. Run" (ex-message thrown)))
+                   (expect (nil? (re-find #"for plan" (ex-message thrown)))))))
 
 (defdescribe provider-entries-test
              ;; A book's credential is a static key the user pastes, and the entry DECLARES that:

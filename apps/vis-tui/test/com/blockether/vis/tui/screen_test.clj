@@ -717,35 +717,35 @@
                      ((deref #'screen/export-session!) nil "s1")
                      (expect (= ["No turns to export yet"] @calls))))))
 
-(defdescribe
-  export-atif-test
-  (it "saves the ATIF selected in the export menu as a JSON file"
-      (let [dir
-            (.toFile (java.nio.file.Files/createTempDirectory
-                       "vis-export-atif" (make-array java.nio.file.attribute.FileAttribute 0)))
+(defdescribe export-atif-test
+             (it "saves the ATIF selected in the export menu as a JSON file"
+                 (let [dir
+                       (.toFile (java.nio.file.Files/createTempDirectory
+                                  "vis-export-atif"
+                                  (make-array java.nio.file.attribute.FileAttribute 0)))
 
-            file
-            (io/file dir "shop-12345678.json")
+                       file
+                       (io/file dir "shop-12345678.json")
 
-            atif
-            "{\"schema_version\":\"ATIF-v1.8\"}"]
+                       atif
+                       "{\"schema_version\":\"ATIF-v1.8\"}"]
 
-        (try
-          (with-redefs-fn {#'screen/with-dialog-lock (fn [f] (f))
+                   (try (with-redefs-fn
+                          {#'screen/with-dialog-lock (fn [f]
+                                                       (f))
                            #'dlg/select-dialog! (fn [_ _ items _]
                                                   (some #(when (= :atif (:id %)) %) items))
                            #'vis/gateway-soul (constantly {"title" "Shop" "turn_count" 1})
                            #'artifact-inspector/saved-artifacts-dir (constantly dir)
-                           #'vis/worker-future (fn [_ f] (f))
+                           #'vis/worker-future (fn [_ f]
+                                                 (f))
                            #'vis/session-export (fn [_ fmt]
                                                   (when (= :atif fmt)
                                                     (.getBytes atif StandardCharsets/UTF_8)))
                            #'vis/notify! (constantly nil)}
-            #((deref #'screen/export-session!) nil "123456789"))
-          (expect (and (.isFile file) (= atif (slurp file))))
-          (finally
-            (.delete file)
-            (.delete dir))))))
+                          #((deref #'screen/export-session!) nil "123456789"))
+                        (expect (and (.isFile file) (= atif (slurp file))))
+                        (finally (.delete file) (.delete dir))))))
 
 ;; User request: import a session file into a group or into the sessions of a project.
 (defdescribe
@@ -2345,7 +2345,8 @@ therapy line 2"
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
                                                    (deliver copied text)
                                                    true)
-                         #'vis/notify! (fn [text & _] (swap! notified conj text))}
+                         #'vis/notify! (fn [text & _]
+                                         (swap! notified conj text))}
           (fn []
             (let [done (copy-session-id! "123e4567-e89b-12d3-a456-426614174000")]
               ;; The MARKED id lands on the clipboard: a bare UUID pasted

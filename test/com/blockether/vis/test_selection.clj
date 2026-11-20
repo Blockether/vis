@@ -83,10 +83,8 @@
   (or (str/blank? part)
       (let [wanted (str/split part #",")]
         (when-let [unknown (seq (remove (set part-names) wanted))]
-          (throw (ex-info (str "VIS_TEST_PART must name parts of "
-                               (str/join ", " part-names)
-                               ", not "
-                               (pr-str part))
+          (throw (ex-info (str "VIS_TEST_PART must name parts of " (str/join ", " part-names)
+                               ", not " (pr-str part))
                           {:part part :unknown unknown})))
         (boolean (some #{(part-of n)} wanted)))))
 
@@ -94,39 +92,34 @@
   "The namespaces of `all` that the run has: those of `part`, without
    `release-bundle-test` when `skip-release?`."
   [all part skip-release?]
-  (into []
-        (comp (filter #(in-part? part %))
-              (remove #(and skip-release? (= release-ns %))))
-        all))
+  (into [] (comp (filter #(in-part? part %)) (remove #(and skip-release? (= release-ns %)))) all))
 
 (hooks/defhook selection
                "Select the namespaces of the run before Lazytest loads them."
-               (config [config _]
-                       (if (or (seq (:ns-filter config)) (seq (:var-filter config)))
-                         config
-                         (let [all
-                               (into []
-                                     (mapcat #(find/find-namespaces-in-dir (io/file %)))
-                                     (or (:dirs config) ["test"]))
+               (config
+                 [config _]
+                 (if (or (seq (:ns-filter config)) (seq (:var-filter config)))
+                   config
+                   (let [all
+                         (into []
+                               (mapcat #(find/find-namespaces-in-dir (io/file %)))
+                               (or (:dirs config) ["test"]))
 
-                               part
-                               (System/getenv "VIS_TEST_PART")
+                         part
+                         (System/getenv "VIS_TEST_PART")
 
-                               skip?
-                               (and (some #{release-ns} (selected all part false))
-                                    (skip-release? (System/getenv)
-                                                   (changed-paths (System/getenv
-                                                                    "VIS_TEST_BASE"))))
+                         skip?
+                         (and (some #{release-ns} (selected all part false))
+                              (skip-release? (System/getenv)
+                                             (changed-paths (System/getenv "VIS_TEST_BASE"))))
 
-                               run
-                               (selected all part skip?)]
+                         run
+                         (selected all part skip?)]
 
-                           (when skip?
-                             (println (str "Skipped "
-                                           release-ns
-                                           ": no change under bin/, .github/, installer/, "
-                                           "build.clj, VIS_VERSION or deps.edn. "
-                                           "VIS_TEST_ALL=1 runs it.")))
-                           (if (= (count run) (count all))
-                             config
-                             (assoc config :ns-filter (set run)))))))
+                     (when skip?
+                       (println (str "Skipped "
+                                     release-ns
+                                     ": no change under bin/, .github/, installer/, "
+                                     "build.clj, VIS_VERSION or deps.edn. "
+                                     "VIS_TEST_ALL=1 runs it.")))
+                     (if (= (count run) (count all)) config (assoc config :ns-filter (set run)))))))

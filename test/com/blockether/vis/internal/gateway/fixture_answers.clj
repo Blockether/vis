@@ -35,6 +35,12 @@
   "A complete `POST /v1/sessions` answer with the fields of `overrides`."
   ([] (created-session {}))
   ([overrides]
-   (merge {"id" "s1" "channel" "api" "title" nil "goal" nil "external_id" nil
-           "workspace_id" nil "group_id" nil "origin" nil}
+   (merge {"id" "s1"
+           "channel" "api"
+           "title" nil
+           "goal" nil
+           "external_id" nil
+           "workspace_id" nil
+           "group_id" nil
+           "origin" nil}
           (wire/canonical overrides))))

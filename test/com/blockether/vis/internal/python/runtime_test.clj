@@ -24,16 +24,14 @@
   ^java.io.File [prefix]
   (.toFile (Files/createTempDirectory prefix (make-array FileAttribute 0))))
 
-(set-ns-context!
-  [(around [f]
-           ;; Preparation copies the interpreter to a stable store. Keep it out of `~/.vis`.
-           (let [store (temp-dir "vis-interpreter-store")]
-             (try (with-redefs-fn {#'python-runtime/interpreter-store (constantly
-                                                                        (io/file store
-                                                                                 "interpreters"))
-                                   #'python-runtime/base-pythons (atom {})}
-                    f)
-                  (finally (#'python-runtime/delete-tree! store)))))])
+(set-ns-context! [(around [f]
+                          ;; Preparation copies the interpreter to a stable store. Keep it out of `~/.vis`.
+                          (let [store (temp-dir "vis-interpreter-store")]
+                            (try (with-redefs-fn {#'python-runtime/interpreter-store
+                                                  (constantly (io/file store "interpreters"))
+                                                  #'python-runtime/base-pythons (atom {})}
+                                   f)
+                                 (finally (#'python-runtime/delete-tree! store)))))])
 
 (defn- sample-archive
   "A tar.gz shaped like a platform release: a library, an executable under
@@ -472,8 +470,7 @@
                  (doseq [args @calls]
                    (expect (.isAbsolute (io/file (first args))))
                    (expect (= ["sync" "--check" "--offline" "--python"
-                               (#'python-runtime/base-python)
-                               "--no-python-downloads"]
+                               (#'python-runtime/base-python) "--no-python-downloads"]
                               (vec (rest args)))))
                  (expect (= "cached"
                             (:stage (first (filter #(= (.getName project) (:name %))
@@ -481,39 +478,37 @@
              (finally (doseq [file (reverse (file-seq project))]
                         (io/delete-file file true)))))))
 
-(defdescribe
-  automatic-project-preparation-falls-back-after-an-offline-miss
-  (it "automatic project preparation falls back after an offline miss"
-      (python-runtime/ensure-library!)
-      (let [project
-            (temp-dir "vis-cold-project")
+(defdescribe automatic-project-preparation-falls-back-after-an-offline-miss
+             (it "automatic project preparation falls back after an offline miss"
+                 (python-runtime/ensure-library!)
+                 (let [project
+                       (temp-dir "vis-cold-project")
 
-            calls
-            (atom [])]
+                       calls
+                       (atom [])]
 
-        (try (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
-                                                         (swap! calls conj (vec (rest args)))
-                                                         (when (= 1 (count @calls))
-                                                           (throw (ex-info "Environment needs sync"
-                                                                           {}))))
-                              #'python-runtime/shared-project? (constantly false)
-                              #'python-runtime/remove-environment-shell! (constantly nil)
-                              #'python-runtime/runtime-environment? (constantly true)
-                              #'python-runtime/project-packages (constantly project)}
-               (fn []
-                 (expect (= project (python-runtime/ensure-project! project)))
-                 (expect (= [["sync" "--check" "--offline" "--python"
-                              (#'python-runtime/base-python)
-                              "--no-python-downloads"]
-                             ["sync" "--python"
-                              (#'python-runtime/base-python)
-                              "--no-python-downloads"]]
-                            @calls))
-                 (expect (= "ready"
-                            (:stage (first (filter #(= (.getName project) (:name %))
-                                                   (python-runtime/preparation-status))))))))
-             (finally (doseq [file (reverse (file-seq project))]
-                        (io/delete-file file true)))))))
+                   (try (with-redefs-fn {#'python-runtime/run-uv!
+                                         (fn [_ args]
+                                           (swap! calls conj (vec (rest args)))
+                                           (when (= 1 (count @calls))
+                                             (throw (ex-info "Environment needs sync" {}))))
+                                         #'python-runtime/shared-project? (constantly false)
+                                         #'python-runtime/remove-environment-shell! (constantly nil)
+                                         #'python-runtime/runtime-environment? (constantly true)
+                                         #'python-runtime/project-packages (constantly project)}
+                          (fn []
+                            (expect (= project (python-runtime/ensure-project! project)))
+                            (expect (= [["sync" "--check" "--offline" "--python"
+                                         (#'python-runtime/base-python) "--no-python-downloads"]
+                                        ["sync" "--python" (#'python-runtime/base-python)
+                                         "--no-python-downloads"]]
+                                       @calls))
+                            (expect (= "ready"
+                                       (:stage (first (filter
+                                                        #(= (.getName project) (:name %))
+                                                        (python-runtime/preparation-status))))))))
+                        (finally (doseq [file (reverse (file-seq project))]
+                                   (io/delete-file file true)))))))
 
 ;; Issue #407: a verified preparation skips uv until the project, lock or environment changes.
 (defdescribe
@@ -721,31 +716,29 @@
             start
             (java.util.concurrent.CountDownLatch. 1)]
 
-        (try (with-redefs-fn {#'python-runtime/interpreter-store (constantly store)
-                              #'python-runtime/base-pythons (atom {})}
-               (fn []
-                 (let [callers
-                       (doall (repeatedly 8
-                                          #(future (.await start)
-                                                   (#'python-runtime/base-python))))
+        (try
+          (with-redefs-fn {#'python-runtime/interpreter-store (constantly store)
+                           #'python-runtime/base-pythons (atom {})}
+            (fn []
+              (let [callers
+                    (doall (repeatedly 8 #(future (.await start) (#'python-runtime/base-python))))
 
-                       _
-                       (.countDown start)
+                    _
+                    (.countDown start)
 
-                       bases
-                       (set (map deref callers))
+                    bases
+                    (set (map deref callers))
 
-                       copy
-                       (io/file store (subs (#'python-runtime/interpreter-identity python) 0 12))]
+                    copy
+                    (io/file store (subs (#'python-runtime/interpreter-identity python) 0 12))]
 
-                   (expect (= 1 (count bases)) (str "different bases: " bases))
-                   (expect (str/starts-with? (first bases) (.getPath store))
-                           "a caller did not get the stable copy")
-                   (expect (= (files home) (files copy)) "the copy is not the interpreter tree")
-                   (expect (= [(.getName copy)]
-                              (vec (remove #(str/starts-with? % ".") (.list store))))
-                           "staging directories stay in the store"))))
-             (finally (#'python-runtime/delete-tree! root))))))
+                (expect (= 1 (count bases)) (str "different bases: " bases))
+                (expect (str/starts-with? (first bases) (.getPath store))
+                        "a caller did not get the stable copy")
+                (expect (= (files home) (files copy)) "the copy is not the interpreter tree")
+                (expect (= [(.getName copy)] (vec (remove #(str/starts-with? % ".") (.list store))))
+                        "staging directories stay in the store"))))
+          (finally (#'python-runtime/delete-tree! root))))))
 
 ;; Verifier report on #486: a copy with an intact executable and a deleted `os.py` passed the
 ;; digest check, so environments used an interpreter that could not start.
@@ -753,17 +746,30 @@
   interpreter-copy-with-damaged-library-test
   (it "replaces a copy whose standard library is damaged"
       (python-runtime/ensure-library!)
-      (let [root (temp-dir "vis-interpreter-damage")
-            store (io/file root "interpreters")
-            python (Interpreter/pythonExecutable)]
+      (let [root
+            (temp-dir "vis-interpreter-damage")
+
+            store
+            (io/file root "interpreters")
+
+            python
+            (Interpreter/pythonExecutable)]
+
         (try (with-redefs-fn {#'python-runtime/interpreter-store (constantly store)
                               #'python-runtime/base-pythons (atom {})}
                (fn []
-                 (let [base (#'python-runtime/base-python)
-                       copy (io/file store (subs (#'python-runtime/interpreter-identity python) 0 12))
-                       os-py (first (filter #(and (= "os.py" (.getName ^java.io.File %))
-                                                  (re-find #"/lib/python3\.\d+/os\.py$" (.getPath ^java.io.File %)))
-                                            (file-seq copy)))]
+                 (let [base
+                       (#'python-runtime/base-python)
+
+                       copy
+                       (io/file store (subs (#'python-runtime/interpreter-identity python) 0 12))
+
+                       os-py
+                       (first (filter #(and (= "os.py" (.getName ^java.io.File %))
+                                            (re-find #"/lib/python3\.\d+/os\.py$"
+                                                     (.getPath ^java.io.File %)))
+                                      (file-seq copy)))]
+
                    (expect (some? os-py) "the copy has no standard library os.py")
                    (io/delete-file os-py)
                    (reset! @#'python-runtime/base-pythons {})
@@ -776,85 +782,83 @@
 ;; first session of each new engine copy prepared every installed extension again (41-53 s).
 (defdescribe
   automatic-environment-per-interpreter-build-test
-  (it "shares one environment between installs of one build and runs uv only for the first"
-      (let [root
-            (temp-dir "vis-interpreter-builds")
+  (it
+    "shares one environment between installs of one build and runs uv only for the first"
+    (let [root
+          (temp-dir "vis-interpreter-builds")
 
-            install!
-            (fn [dir build]
-              (let [bin (io/file root dir "python" "bin")]
-                (.mkdirs bin)
-                (spit (io/file bin "python3") build)
-                (spit (io/file bin "uv") "uv 1")
-                (.getPath (io/file bin "python3"))))
+          install!
+          (fn [dir build]
+            (let [bin (io/file root dir "python" "bin")]
+              (.mkdirs bin)
+              (spit (io/file bin "python3") build)
+              (spit (io/file bin "uv") "uv 1")
+              (.getPath (io/file bin "python3"))))
 
-            first-install
-            (install! "release-a" "build 1")
+          first-install
+          (install! "release-a" "build 1")
 
-            second-install
-            (install! "release-b" "build 1")
+          second-install
+          (install! "release-b" "build 1")
 
-            other-build
-            (install! "release-c" "build 2")
+          other-build
+          (install! "release-c" "build 2")
 
-            store
-            (io/file root "state" "interpreters")
+          store
+          (io/file root "state" "interpreters")
 
-            project
-            (io/file root "extension")
+          project
+          (io/file root "extension")
 
-            python
-            (atom first-install)
+          python
+          (atom first-install)
 
-            syncs
-            (atom [])
+          syncs
+          (atom [])
 
-            environment
-            #(io/file project (#'python-runtime/automatic-environment))
+          environment
+          #(io/file project (#'python-runtime/automatic-environment))
 
-            site
-            #(io/file (environment) "lib" "site-packages")]
+          site
+          #(io/file (environment) "lib" "site-packages")]
 
-        (try
-          (expect (= (#'python-runtime/environment-name first-install)
-                     (#'python-runtime/environment-name second-install)))
-          (expect (not= (#'python-runtime/environment-name first-install)
-                        (#'python-runtime/environment-name other-build)))
-          (.mkdirs project)
-          (spit (io/file project "pyproject.toml") "[project]\nname = \"shared\"\n")
-          (with-redefs-fn
-            {#'python-runtime/embedded-executable (fn [] @python)
-             #'python-runtime/interpreter-store (constantly store)
-             ;; The fake builds are text files, not programs.
-             #'python-runtime/interpreter-starts? (constantly true)
-             #'python-runtime/shared-project? (constantly false)
-             #'python-runtime/compile-bytecode! (fn [_ _])
-             #'python-runtime/project-packages (fn [_] (.getCanonicalFile ^java.io.File (site)))
-             #'python-runtime/run-uv!
-             (fn [_ args]
-               (let [base (second (drop-while #(not= "--python" %) args))]
-                 (cond
-                   (some #{"workspace"} args)
-                   (.getCanonicalPath project)
-
-                   (some #{"--check"} args)
-                   (when-not (.isFile (io/file (environment) "pyvenv.cfg"))
-                     (throw (ex-info "not ready" {})))
-                   :else
-                   (do (swap! syncs conj base)
-                       (.mkdirs ^java.io.File (site))
-                       (spit (io/file (environment) "pyvenv.cfg")
-                             (str "home = " (.getParent (io/file base)) "\n"))))))}
-            (fn []
-              (python-runtime/ensure-project! project)
-              (reset! python second-install)
-              (python-runtime/ensure-project! project)))
-          (expect (= 1 (count @syncs)) (str "uv sync runs: " (pr-str @syncs)))
-          (expect (str/starts-with? (first @syncs) (.getPath store))
-                  "the environment does not use the stable copy of the interpreter")
-          (expect (not (str/includes? (first @syncs) "release-a"))
-                  "the environment depends on the first install")
-          (finally (#'python-runtime/delete-tree! root))))))
+      (try (expect (= (#'python-runtime/environment-name first-install)
+                      (#'python-runtime/environment-name second-install)))
+           (expect (not= (#'python-runtime/environment-name first-install)
+                         (#'python-runtime/environment-name other-build)))
+           (.mkdirs project)
+           (spit (io/file project "pyproject.toml") "[project]\nname = \"shared\"\n")
+           (with-redefs-fn
+             {#'python-runtime/embedded-executable (fn []
+                                                     @python)
+              #'python-runtime/interpreter-store (constantly store)
+              ;; The fake builds are text files, not programs.
+              #'python-runtime/interpreter-starts? (constantly true)
+              #'python-runtime/shared-project? (constantly false)
+              #'python-runtime/compile-bytecode! (fn [_ _])
+              #'python-runtime/project-packages (fn [_]
+                                                  (.getCanonicalFile ^java.io.File (site)))
+              #'python-runtime/run-uv!
+              (fn [_ args]
+                (let [base (second (drop-while #(not= "--python" %) args))]
+                  (cond (some #{"workspace"} args) (.getCanonicalPath project)
+                        (some #{"--check"} args) (when-not (.isFile (io/file (environment)
+                                                                             "pyvenv.cfg"))
+                                                   (throw (ex-info "not ready" {})))
+                        :else (do (swap! syncs conj base)
+                                  (.mkdirs ^java.io.File (site))
+                                  (spit (io/file (environment) "pyvenv.cfg")
+                                        (str "home = " (.getParent (io/file base)) "\n"))))))}
+             (fn []
+               (python-runtime/ensure-project! project)
+               (reset! python second-install)
+               (python-runtime/ensure-project! project)))
+           (expect (= 1 (count @syncs)) (str "uv sync runs: " (pr-str @syncs)))
+           (expect (str/starts-with? (first @syncs) (.getPath store))
+                   "the environment does not use the stable copy of the interpreter")
+           (expect (not (str/includes? (first @syncs) "release-a"))
+                   "the environment depends on the first install")
+           (finally (#'python-runtime/delete-tree! root))))))
 
 ;; kate140, 2026-11-05: each native release has its own interpreter path, so each release
 ;; prepared a new `.venv-<hash>` in every extension and none was removed: 21 GB of venvs.
@@ -948,8 +952,7 @@
                               #'python-runtime/project-packages (constantly project)}
                (fn []
                  (expect (= project (python-runtime/ensure-project! project)))
-                 (expect (= [["sync" "--python"
-                              (#'python-runtime/base-python)
+                 (expect (= [["sync" "--python" (#'python-runtime/base-python)
                               "--no-python-downloads"]]
                             @calls))
                  (expect (= "ready"

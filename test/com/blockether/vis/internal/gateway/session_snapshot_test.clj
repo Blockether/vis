@@ -161,133 +161,195 @@
     (it "answers nil for an unknown session"
         (with-store (fn [_store]
                       (expect (nil? (state/export-session (str (random-uuid))))))))
-    (it "replaces known credentials in rows, BLOB columns, Council entries and text files"
-        (with-store
-          (fn [store]
-            (let [secret
-                  "sk-test-0123456789abcdef"
+    (it
+      "replaces known credentials in rows, BLOB columns, Council entries and text files"
+      (with-store
+        (fn [store]
+          (let [secret
+                "sk-test-0123456789abcdef"
 
-                  sid
-                  (session! store (str "Deploy with " secret))
+                sid
+                (session! store (str "Deploy with " secret))
 
-                  tid
-                  (turn! store sid (str "Use the key " secret) :success)
+                tid
+                (turn! store sid (str "Use the key " secret) :success)
 
-                  image
-                  (.getBytes (str "png " secret) "UTF-8")
+                image
+                (.getBytes (str "png " secret) "UTF-8")
 
-                  thawed
-                  (fn [tree]
-                    (pr-str (walk/postwalk #(if (and (bytes? %) (pos? (alength ^bytes %)))
-                                              (try (nippy/thaw %) (catch Exception _ %))
-                                              %)
-                                           (dissoc tree :blobs))))]
+                thawed
+                (fn [tree]
+                  (pr-str (walk/postwalk #(if (and (bytes? %) (pos? (alength ^bytes %)))
+                                            (try (nippy/thaw %) (catch Exception _ %))
+                                            %)
+                                         (dissoc tree :blobs))))]
 
-              (ps/db-store-iteration! store
-                                      {:session-turn-id tid
-                                       :code (str "print('" secret "')")
-                                       :forms [{:src (str "print('" secret "')") :stdout secret}]})
-              (attach! store tid image)
-              (jdbc/execute!
-                (:datasource store)
-                ["INSERT INTO session_attachment (id, session_turn_soul_id, position, media_type, filename, size_bytes, bytes, created_at) VALUES (?,?,?,?,?,?,?,?)"
-                 (str (random-uuid)) tid 1 "application/vnd.vis+json" ".env" 30
-                 (.getBytes (str "TOKEN=" secret) "UTF-8") 1])
-              ;; The same bytes as an image are binary and keep their content.
-              (jdbc/execute!
-                (:datasource store)
-                ["INSERT INTO session_attachment (id, session_turn_soul_id, position, media_type, filename, size_bytes, bytes, created_at) VALUES (?,?,?,?,?,?,?,?)"
-                 (str (random-uuid)) tid 2 "image/png" "same.png" 30
-                 (.getBytes (str "TOKEN=" secret) "UTF-8") 1])
-              (entry! store sid sid)
-              (jdbc/execute! (:datasource store) ["UPDATE council_entry SET content = ?" secret])
-              (let [plain
-                    (state/export-session sid)
+            (ps/db-store-iteration! store
+                                    {:session-turn-id tid
+                                     :code (str "print('" secret "')")
+                                     :forms [{:src (str "print('" secret "')") :stdout secret}]})
+            (attach! store tid image)
+            (jdbc/execute!
+              (:datasource store)
+              ["INSERT INTO session_attachment (id, session_turn_soul_id, position, media_type, filename, size_bytes, bytes, created_at) VALUES (?,?,?,?,?,?,?,?)"
+               (str (random-uuid)) tid 1 "application/vnd.vis+json" ".env" 30
+               (.getBytes (str "TOKEN=" secret) "UTF-8") 1])
+            ;; The same bytes as an image are binary and keep their content.
+            (jdbc/execute!
+              (:datasource store)
+              ["INSERT INTO session_attachment (id, session_turn_soul_id, position, media_type, filename, size_bytes, bytes, created_at) VALUES (?,?,?,?,?,?,?,?)"
+               (str (random-uuid)) tid 2 "image/png" "same.png" 30
+               (.getBytes (str "TOKEN=" secret) "UTF-8") 1])
+            (entry! store sid sid)
+            (jdbc/execute! (:datasource store) ["UPDATE council_entry SET content = ?" secret])
+            (let
+              [plain
+               (state/export-session sid)
 
-                    data
-                    (with-redefs [trajectory/run-secrets (constantly [secret])]
-                      (state/export-session sid))
+               data
+               (with-redefs [trajectory/run-secrets (constantly [secret])]
+                 (state/export-session sid))
 
-                    new-id
-                    (get (state/import-session! data {}) "id")
+               new-id
+               (get (state/import-session! data {}) "id")
 
-                    files
-                    (rows
-                      store
-                      ["SELECT a.media_type, a.size_bytes, a.bytes FROM session_attachment a JOIN session_turn_soul t ON t.id = a.session_turn_soul_id JOIN session_state s ON s.id = t.session_state_id WHERE s.session_soul_id = ? ORDER BY a.position"
-                       new-id])]
+               files
+               (rows
+                 store
+                 ["SELECT a.media_type, a.size_bytes, a.bytes FROM session_attachment a JOIN session_turn_soul t ON t.id = a.session_turn_soul_id JOIN session_state s ON s.id = t.session_state_id WHERE s.session_soul_id = ? ORDER BY a.position"
+                  new-id])]
 
-                (expect (str/includes? (thawed (:tree (snapshot/decode plain))) secret))
-                (expect (not (str/includes? (thawed (:tree (snapshot/decode data))) secret)))
-                (expect (= "Deploy with [REDACTED]" (get-in (snapshot/info data) ["sessions" 0 "title"])))
-                (expect (= ["Use the key [REDACTED]"]
-                           (mapv :user-request (ps/db-list-session-turns store new-id))))
-                (expect (= (seq image) (seq (:bytes (first files)))))
-                (expect (= "TOKEN=[REDACTED]" (String. ^bytes (:bytes (second files)) "UTF-8")))
-                (expect (= 16 (:size_bytes (second files))))
-                (expect (= (str "TOKEN=" secret) (String. ^bytes (:bytes (nth files 2)) "UTF-8"))))))))
-    (it "replaces the secret settings of the session, also in JSON text"
-        (with-store
-          (fn [store]
-            (let [id "snapshot_test_token"
-                  secret "pa\"ss-0123456789"
-                  sid (session! store "Settings")
-                  tid (turn! store sid "Run" :success)]
-              (toggles/register-toggle! {:id id :label "Token" :type :string :default "" :secret? true})
-              (try (ps/db-set-scoped-setting! store "session" sid id secret)
-                   (ps/db-store-iteration! store
-                                           {:session-turn-id tid
-                                            :code (wire/json-str {:token secret})
-                                            :forms [{:src (wire/json-str {:token secret}) :stdout secret}]})
-                   (let [tree (:tree (snapshot/decode (with-redefs [trajectory/run-secrets (constantly [])]
-                                                        (state/export-session sid))))]
-                     (expect (not (str/includes? (pr-str (walk/postwalk #(if (bytes? %) (try (nippy/thaw %) (catch Exception _ %)) %)
-                                                                        (dissoc tree :blobs)))
-                                                 "ss-0123456789")))
-                     (expect (= [{:setting_id id :value (wire/json-str "[REDACTED]")}]
-                                (:settings (first (:sessions tree)))))
-                     (expect (not (str/includes? (with-redefs [trajectory/run-secrets (constantly [])]
-                                                   (state/export-atif sid))
-                                                 "ss-0123456789"))))
-                   (finally (toggles/unregister-toggle! id)))))))
+              (expect (str/includes? (thawed (:tree (snapshot/decode plain))) secret))
+              (expect (not (str/includes? (thawed (:tree (snapshot/decode data))) secret)))
+              (expect (= "Deploy with [REDACTED]"
+                         (get-in (snapshot/info data) ["sessions" 0 "title"])))
+              (expect (= ["Use the key [REDACTED]"]
+                         (mapv :user-request (ps/db-list-session-turns store new-id))))
+              (expect (= (seq image) (seq (:bytes (first files)))))
+              (expect (= "TOKEN=[REDACTED]" (String. ^bytes (:bytes (second files)) "UTF-8")))
+              (expect (= 16 (:size_bytes (second files))))
+              (expect (= (str "TOKEN=" secret)
+                         (String. ^bytes (:bytes (nth files 2)) "UTF-8"))))))))
+    (it
+      "replaces the secret settings of the session, also in JSON text"
+      (with-store
+        (fn [store]
+          (let [id
+                "snapshot_test_token"
+
+                secret
+                "pa\"ss-0123456789"
+
+                sid
+                (session! store "Settings")
+
+                tid
+                (turn! store sid "Run" :success)]
+
+            (toggles/register-toggle!
+              {:id id :label "Token" :type :string :default "" :secret? true})
+            (try (ps/db-set-scoped-setting! store "session" sid id secret)
+                 (ps/db-store-iteration! store
+                                         {:session-turn-id tid
+                                          :code (wire/json-str {:token secret})
+                                          :forms [{:src (wire/json-str {:token secret})
+                                                   :stdout secret}]})
+                 (let [tree (:tree (snapshot/decode (with-redefs [trajectory/run-secrets (constantly
+                                                                                           [])]
+                                                      (state/export-session sid))))]
+                   (expect (not (str/includes? (pr-str (walk/postwalk #(if (bytes? %)
+                                                                         (try (nippy/thaw %)
+                                                                              (catch Exception _ %))
+                                                                         %)
+                                                                      (dissoc tree :blobs)))
+                                               "ss-0123456789")))
+                   (expect (= [{:setting_id id :value (wire/json-str "[REDACTED]")}]
+                              (:settings (first (:sessions tree)))))
+                   (expect (not (str/includes? (with-redefs [trajectory/run-secrets (constantly [])]
+                                                 (state/export-atif sid))
+                                               "ss-0123456789"))))
+                 (finally (toggles/unregister-toggle! id)))))))
     (it "replaces the token of this gateway server in both exports"
         (with-store
           (fn [store]
-            (let [secret "server-token-0123456789"
-                  sid (session! store "Server token")
-                  tid (turn! store sid "Run" :success)]
-              (ps/db-store-iteration! store {:session-turn-id tid :code secret :forms [{:src secret :stdout secret}]})
-              (with-redefs [trajectory/run-secrets (constantly [])
-                            instance/server-state (atom {:token secret})]
+            (let [secret
+                  "server-token-0123456789"
+
+                  sid
+                  (session! store "Server token")
+
+                  tid
+                  (turn! store sid "Run" :success)]
+
+              (ps/db-store-iteration!
+                store
+                {:session-turn-id tid :code secret :forms [{:src secret :stdout secret}]})
+              (with-redefs [trajectory/run-secrets
+                            (constantly [])
+
+                            instance/server-state
+                            (atom {:token secret})]
+
                 (let [tree (:tree (snapshot/decode (state/export-session sid)))]
-                  (expect (not (str/includes? (pr-str (walk/postwalk #(if (bytes? %) (try (nippy/thaw %) (catch Exception _ %)) %)
+                  (expect (not (str/includes? (pr-str (walk/postwalk #(if (bytes? %)
+                                                                        (try (nippy/thaw %)
+                                                                             (catch Exception _ %))
+                                                                        %)
                                                                      (dissoc tree :blobs)))
                                               secret)))
                   (expect (not (str/includes? (state/export-atif sid) secret)))))))))
-    (it "replaces credentials from the .env of the session workspace in both exports"
-        (with-store
-          (fn [store]
-            (let [secret "dotenv-0123456789abcdef"
-                  sid (session! store "Env")
-                  root (:root (first (rows store
-                                           ["SELECT w.root FROM workspace w JOIN session_state s ON s.workspace_id = w.id WHERE s.session_soul_id = ?"
-                                            sid])))
-                  tid (turn! store sid (str "Run" " plain-value-0123") :success)]
-              (spit (io/file root ".env") (str "API_KEY=" secret "\nNOTE=plain-value-0123\n"))
-              (ps/db-store-iteration! store {:session-turn-id tid :code "print(env)" :forms [{:src "print(env)" :stdout secret}]})
-              (let [snapshot-text (pr-str (walk/postwalk #(if (bytes? %) (try (nippy/thaw %) (catch Exception _ %)) %)
-                                                         (dissoc (:tree (snapshot/decode (state/export-session sid))) :blobs)))
-                    atif-text (state/export-atif sid)]
-                (expect (not (str/includes? snapshot-text secret)))
-                (expect (str/includes? snapshot-text "plain-value-0123"))
-                (expect (not (str/includes? atif-text secret)))
-                (expect (str/includes? atif-text "plain-value-0123")))))))
+    (it
+      "replaces credentials from the .env of the session workspace in both exports"
+      (with-store
+        (fn [store]
+          (let
+            [secret
+             "dotenv-0123456789abcdef"
+
+             sid
+             (session! store "Env")
+
+             root
+             (:root
+               (first
+                 (rows
+                   store
+                   ["SELECT w.root FROM workspace w JOIN session_state s ON s.workspace_id = w.id WHERE s.session_soul_id = ?"
+                    sid])))
+
+             tid
+             (turn! store sid (str "Run" " plain-value-0123") :success)]
+
+            (spit (io/file root ".env") (str "API_KEY=" secret "\nNOTE=plain-value-0123\n"))
+            (ps/db-store-iteration!
+              store
+              {:session-turn-id tid :code "print(env)" :forms [{:src "print(env)" :stdout secret}]})
+            (let [snapshot-text
+                  (pr-str (walk/postwalk
+                            #(if (bytes? %) (try (nippy/thaw %) (catch Exception _ %)) %)
+                            (dissoc (:tree (snapshot/decode (state/export-session sid))) :blobs)))
+
+                  atif-text
+                  (state/export-atif sid)]
+
+              (expect (not (str/includes? snapshot-text secret)))
+              (expect (str/includes? snapshot-text "plain-value-0123"))
+              (expect (not (str/includes? atif-text secret)))
+              (expect (str/includes? atif-text "plain-value-0123")))))))
     (it "replaces credentials in the metadata of a saved record"
-        (let [secret "sk-test-0123456789abcdef"
-              blob (nippy/freeze [(with-meta {:message "safe"} {:security {:key secret}})])
-              tree (snapshot/redact {:sessions [{:record blob}] :council [] :blobs {}}
-                                    (trajectory/redactor [secret]))
-              value (nippy/thaw (:record (first (:sessions tree))))]
+        (let [secret
+              "sk-test-0123456789abcdef"
+
+              blob
+              (nippy/freeze [(with-meta {:message "safe"} {:security {:key secret}})])
+
+              tree
+              (snapshot/redact {:sessions [{:record blob}] :council [] :blobs {}}
+                               (trajectory/redactor [secret]))
+
+              value
+              (nippy/thaw (:record (first (:sessions tree))))]
+
           (expect (= [{:message "safe"}] value))
           (expect (= {:security {:key "[REDACTED]"}} (meta (first value)))))))
   (describe
@@ -787,16 +849,18 @@
                  (on there
                      (fn []
                        (let [opts {:root project :key "move-1"}
-                             restored ((cli-fn 'import-session-file!) (.getPath file) opts "/elsewhere")
+                             restored
+                             ((cli-fn 'import-session-file!) (.getPath file) opts "/elsewhere")
                              new-id (get restored "id")]
 
                          (expect (= ["first ask"]
                                     (mapv :user-request (ps/db-list-session-turns there new-id))))
                          (expect (= project (get-in restored ["workspace" "root"])))
-                         (expect (= new-id
-                                    (get
-                                      ((cli-fn 'import-session-file!) (.getPath file) opts "/elsewhere")
-                                      "id")))))))))
+                         (expect
+                           (= new-id
+                              (get
+                                ((cli-fn 'import-session-file!) (.getPath file) opts "/elsewhere")
+                                "id")))))))))
            (finally (ps/db-close! here) (ps/db-close! there)))))
   (it "stops with the gateway message for a file that is not a snapshot"
       (with-store (fn [_store]
@@ -819,147 +883,238 @@
         (expect (= "?root=%2Ftmp%2Fmy+shop+%26+co&key=k%3D1"
                    (query {:root "/tmp/my shop & co" :key "k=1"} "/home/ana/shop"))))))
 
-
 (defdescribe
   atif-round-trip-test
-  (it "keeps conversation records, warm costs, and child trajectories through HTTP import"
-      (with-store
-        (fn [store]
-          (through-router
-            (fn []
-              (let [sid (session! store "ATIF talk")
-                    tid (turn! store sid "Check the seed" :success)
-                    cid (child! store sid tid "completed")
-                    ctid (turn! store cid "Read the seed" :success)
-                    _ (ps/db-store-iteration! store {:session-turn-id ctid :code ""
-                                                     :assistant-prose "The seed is ready."
-                                                     :cost-usd 0.125})
-                    _ (ps/db-store-iteration!
-                        store {:session-turn-id tid :code "print(value)"
-                               :thinking "Check the value."
-                               :assistant-prose "The check did not finish."
-                               :tokens {"input" 10 "output" 2}
-                               :cost-usd 0.25
-                               :forms [{:src "print(value)" :stdout "partial"
-                                        :error {:message "Test failure"}}]
-                               :request-health {:cache-warms [{:model "warm-model" :provider "test"
-                                                               :created-at 2 :cost-usd 0.0625
-                                                               :tokens {"input" 10 "output" 1
-                                                                        "cached" 9 "cache_created" 1}}]}})
-                    exported (gateway-client/export-atif! sid)
-                    original (wire/parse-json (:body exported))
-                    path "/v1/sessions/actions/import?key=atif-round-trip"
-                    restore #(gateway-client/request! :post path {:body (.getBytes ^String (:body exported) "UTF-8")})
-                    response (restore)
-                    new-id (get (wire/parse-json (:body response)) "id")
-                    copied (wire/parse-json (:body (gateway-client/export-atif! new-id)))
-                    [user warm agent] (get copied "steps")
-                    child (first (get copied "subagent_trajectories"))]
-                (expect (= 200 (:status exported)))
-                (expect (= (state/export-atif sid) (:body exported)))
-                (expect (= "application/json" (get-in exported [:headers "Content-Type"])))
-                (expect (= 201 (:status response)))
-                (expect (not= sid new-id))
-                (expect (= new-id (get (wire/parse-json (:body (restore))) "id")))
-                (expect (= "Check the seed" (get user "message")))
-                (expect (= {"prompt_tokens" 10 "completion_tokens" 1 "cached_tokens" 9
-                            "cost_usd" 0.0625 "extra" {"cache_creation_tokens" 1}}
-                           (get warm "metrics")))
-                (expect (= "warm-model" (get warm "model_name")))
-                (expect (= {"is_cache_warm" true "provider" "test"} (get warm "extra")))
-                (expect (= "Check the value." (get agent "reasoning_content")))
-                (expect (= "The check did not finish." (get agent "message")))
-                (expect (= "print(value)" (get-in agent ["tool_calls" 0 "arguments" "code"])))
-                (expect (= "Test failure" (get-in agent ["tool_calls" 0 "extra" "error" "message"])))
-                (expect (= (get-in original ["steps" 2 "observation" "results" 0 "content"])
-                           (get-in agent ["observation" "results" 0 "content"])))
-                (expect (= ["Read the seed" "The seed is ready."] (mapv #(get % "message") (get child "steps"))))
-                (expect (= 0.4375 (get-in copied ["final_metrics" "total_cost_usd"])
-                           (reduce + (keep #(get-in % ["metrics" "cost_usd"])
-                                           (concat (get copied "steps") (get child "steps"))))))))))))
-  (it "rejects bad ATIF and imports a foreign tool without running it"
-      (with-store
-        (fn [_]
-          (through-router
-            (fn []
-              (let [import! #(gateway-client/request! :post "/v1/sessions/actions/import"
-                                                      {:body (.getBytes ^String % "UTF-8")})
-                    bad (import! "{\"schema_version\":\"ATIF-v1.8\", ")
-                    invalid (import! "{\"schema_version\":\"ATIF-v1.8\",\"steps\":[]}")
-                    imported (import! (wire/json-str {:schema-version "ATIF-v1.8"
-                                                       :agent {:name "harbor"}
-                                                       :steps [{:step-id 1 :source "user" :message "Check it"}
-                                                               {:step-id 2 :source "agent" :message "Done"
-                                                                :tool-calls [{:tool-call-id "call-1"
-                                                                              :function-name "read_file"
-                                                                              :arguments {"name" "seed.txt"}}]
-                                                                :observation {:results [{:source-call-id "call-1"
-                                                                                         :content "Seed"}]}}]}))
-                    sid (get (wire/parse-json (:body imported)) "id")
-                    agent (get-in (wire/parse-json (state/export-atif sid)) ["steps" 1])]
-                (expect (= 400 (:status bad) (:status invalid)))
-                (expect (str/includes? (:body bad) "not valid JSON"))
-                (expect (= 404 (:status (gateway-client/export-atif! (str (random-uuid))))))
-                (expect (= 201 (:status imported)))
-                (expect (= "read_file" (get-in agent ["tool_calls" 0 "function_name"])))
-                (expect (= "read_file {\"name\":\"seed.txt\"}" (get-in agent ["tool_calls" 0 "arguments" "code"])))
-                (expect (= "Seed" (get-in agent ["observation" "results" 0 "content"]))))))))))
+  (it
+    "keeps conversation records, warm costs, and child trajectories through HTTP import"
+    (with-store
+      (fn [store]
+        (through-router
+          (fn []
+            (let [sid
+                  (session! store "ATIF talk")
 
+                  tid
+                  (turn! store sid "Check the seed" :success)
+
+                  cid
+                  (child! store sid tid "completed")
+
+                  ctid
+                  (turn! store cid "Read the seed" :success)
+
+                  _
+                  (ps/db-store-iteration! store
+                                          {:session-turn-id ctid
+                                           :code ""
+                                           :assistant-prose "The seed is ready."
+                                           :cost-usd 0.125})
+
+                  _
+                  (ps/db-store-iteration!
+                    store
+                    {:session-turn-id tid
+                     :code "print(value)"
+                     :thinking "Check the value."
+                     :assistant-prose "The check did not finish."
+                     :tokens {"input" 10 "output" 2}
+                     :cost-usd 0.25
+                     :forms
+                     [{:src "print(value)" :stdout "partial" :error {:message "Test failure"}}]
+                     :request-health {:cache-warms
+                                      [{:model "warm-model"
+                                        :provider "test"
+                                        :created-at 2
+                                        :cost-usd 0.0625
+                                        :tokens
+                                        {"input" 10 "output" 1 "cached" 9 "cache_created" 1}}]}})
+
+                  exported
+                  (gateway-client/export-atif! sid)
+
+                  original
+                  (wire/parse-json (:body exported))
+
+                  path
+                  "/v1/sessions/actions/import?key=atif-round-trip"
+
+                  restore
+                  #(gateway-client/request! :post
+                                            path
+                                            {:body (.getBytes ^String (:body exported) "UTF-8")})
+
+                  response
+                  (restore)
+
+                  new-id
+                  (get (wire/parse-json (:body response)) "id")
+
+                  copied
+                  (wire/parse-json (:body (gateway-client/export-atif! new-id)))
+
+                  [user warm agent]
+                  (get copied "steps")
+
+                  child
+                  (first (get copied "subagent_trajectories"))]
+
+              (expect (= 200 (:status exported)))
+              (expect (= (state/export-atif sid) (:body exported)))
+              (expect (= "application/json" (get-in exported [:headers "Content-Type"])))
+              (expect (= 201 (:status response)))
+              (expect (not= sid new-id))
+              (expect (= new-id (get (wire/parse-json (:body (restore))) "id")))
+              (expect (= "Check the seed" (get user "message")))
+              (expect (= {"prompt_tokens" 10
+                          "completion_tokens" 1
+                          "cached_tokens" 9
+                          "cost_usd" 0.0625
+                          "extra" {"cache_creation_tokens" 1}}
+                         (get warm "metrics")))
+              (expect (= "warm-model" (get warm "model_name")))
+              (expect (= {"is_cache_warm" true "provider" "test"} (get warm "extra")))
+              (expect (= "Check the value." (get agent "reasoning_content")))
+              (expect (= "The check did not finish." (get agent "message")))
+              (expect (= "print(value)" (get-in agent ["tool_calls" 0 "arguments" "code"])))
+              (expect (= "Test failure" (get-in agent ["tool_calls" 0 "extra" "error" "message"])))
+              (expect (= (get-in original ["steps" 2 "observation" "results" 0 "content"])
+                         (get-in agent ["observation" "results" 0 "content"])))
+              (expect (= ["Read the seed" "The seed is ready."]
+                         (mapv #(get % "message") (get child "steps"))))
+              (expect (= 0.4375
+                         (get-in copied ["final_metrics" "total_cost_usd"])
+                         (reduce +
+                                 (keep #(get-in % ["metrics" "cost_usd"])
+                                       (concat (get copied "steps") (get child "steps"))))))))))))
+  (it
+    "rejects bad ATIF and imports a foreign tool without running it"
+    (with-store
+      (fn [_]
+        (through-router
+          (fn []
+            (let [import!
+                  #(gateway-client/request! :post
+                                            "/v1/sessions/actions/import"
+                                            {:body (.getBytes ^String % "UTF-8")})
+
+                  bad
+                  (import! "{\"schema_version\":\"ATIF-v1.8\", ")
+
+                  invalid
+                  (import! "{\"schema_version\":\"ATIF-v1.8\",\"steps\":[]}")
+
+                  imported
+                  (import! (wire/json-str {:schema-version "ATIF-v1.8"
+                                           :agent {:name "harbor"}
+                                           :steps [{:step-id 1 :source "user" :message "Check it"}
+                                                   {:step-id 2
+                                                    :source "agent"
+                                                    :message "Done"
+                                                    :tool-calls [{:tool-call-id "call-1"
+                                                                  :function-name "read_file"
+                                                                  :arguments {"name" "seed.txt"}}]
+                                                    :observation {:results [{:source-call-id
+                                                                             "call-1"
+                                                                             :content "Seed"}]}}]}))
+
+                  sid
+                  (get (wire/parse-json (:body imported)) "id")
+
+                  agent
+                  (get-in (wire/parse-json (state/export-atif sid)) ["steps" 1])]
+
+              (expect (= 400 (:status bad) (:status invalid)))
+              (expect (str/includes? (:body bad) "not valid JSON"))
+              (expect (= 404 (:status (gateway-client/export-atif! (str (random-uuid))))))
+              (expect (= 201 (:status imported)))
+              (expect (= "read_file" (get-in agent ["tool_calls" 0 "function_name"])))
+              (expect (= "read_file {\"name\":\"seed.txt\"}"
+                         (get-in agent ["tool_calls" 0 "arguments" "code"])))
+              (expect (= "Seed" (get-in agent ["observation" "results" 0 "content"]))))))))))
 
 (defdescribe
   atif-legacy-cost-test
   (it "keeps costs that older Vis exports recorded only in the final total"
       (with-store
         (fn [_]
-          (let [old {:schema-version "ATIF-v1.8"
-                     :agent {:name "vis"}
-                     :steps [{:step-id 1 :source "user" :message "Check it"}
-                             {:step-id 2 :source "agent" :message "Done" :metrics {:cost-usd 0.125}}]
-                     :final-metrics {:total-cost-usd 0.1875}}
-                restored (state/import-session! (.getBytes (wire/json-str old) "UTF-8") {})
-                exported (wire/parse-json (state/export-atif (get restored "id")))
-                second-import (state/import-session! (.getBytes (wire/json-str exported) "UTF-8") {})
-                exported-again (wire/parse-json (state/export-atif (get second-import "id")))]
+          (let [old
+                {:schema-version "ATIF-v1.8"
+                 :agent {:name "vis"}
+                 :steps [{:step-id 1 :source "user" :message "Check it"}
+                         {:step-id 2 :source "agent" :message "Done" :metrics {:cost-usd 0.125}}]
+                 :final-metrics {:total-cost-usd 0.1875}}
+
+                restored
+                (state/import-session! (.getBytes (wire/json-str old) "UTF-8") {})
+
+                exported
+                (wire/parse-json (state/export-atif (get restored "id")))
+
+                second-import
+                (state/import-session! (.getBytes (wire/json-str exported) "UTF-8") {})
+
+                exported-again
+                (wire/parse-json (state/export-atif (get second-import "id")))]
+
             (expect (= (get-in exported ["steps" 2]) (get-in exported-again ["steps" 2])))
             (expect (= 0.1875 (get-in exported ["final_metrics" "total_cost_usd"])))
             (expect (= 0.0625 (get-in exported ["steps" 2 "metrics" "cost_usd"])))
             (expect (true? (get-in exported ["steps" 2 "extra" "is_unattributed_cost"]))))))))
 
-
 (defdescribe
   atif-restored-metadata-test
-  (it "keeps exported text and metadata stable across repeated imports"
-      (with-store
-        (fn [_]
-          (let [attachment {:filename "report.txt" :media-type "text/plain" :size-bytes 50}
-                clipped (str (apply str (repeat 20000 "x")) "\n… [123 more characters cut]")
-                data {:schema-version "ATIF-v1.8"
-                      :agent {:name "vis" :model-name "session-model"}
-                      :steps [{:step-id 1 :source "user" :message "Check it"
-                               :extra {:attachments [attachment]}}
-                              {:step-id 2 :source "agent" :message "Done" :model-name "step-model"
-                               :reasoning-content clipped
-                               :extra {:is-final true :attachments [attachment]}
-                               :tool-calls [{:tool-call-id "first" :function-name "python_execution"
-                                             :arguments {:code clipped} :extra {:stdout-chars 20123}}]
-                               :observation {:results [{:source-call-id "first" :content clipped}]}}
-                              {:step-id 3 :source "agent" :message "" :extra {:is-final false}}]}
-                round-trip (fn [doc]
-                             (let [restored (state/import-session! (.getBytes (wire/json-str doc) "UTF-8") {})]
-                               (wire/parse-json (state/export-atif (get restored "id")))))
-                restored (round-trip data)
-                [user a b] (get restored "steps")
-                [next-user next-a next-b] (get (round-trip restored) "steps")
-                select-step #(dissoc % "timestamp")]
-            (expect (= ["session-model" [(wire/->wire attachment)] [(wire/->wire attachment)]
-                         true false clipped clipped 20123 clipped]
-                       [(get-in restored ["agent" "model_name"])
-                        (get-in user ["extra" "attachments"])
-                        (get-in a ["extra" "attachments"])
-                        (get-in a ["extra" "is_final"])
-                        (get-in b ["extra" "is_final"])
-                        (get a "reasoning_content")
-                        (get-in a ["tool_calls" 0 "arguments" "code"])
-                        (get-in a ["tool_calls" 0 "extra" "stdout_chars"])
-                        (get-in a ["observation" "results" 0 "content"])]))
-            (expect (= (mapv select-step [user a b]) (mapv select-step [next-user next-a next-b]))))))))
+  (it
+    "keeps exported text and metadata stable across repeated imports"
+    (with-store
+      (fn [_]
+        (let [attachment
+              {:filename "report.txt" :media-type "text/plain" :size-bytes 50}
+
+              clipped
+              (str (apply str (repeat 20000 "x")) "\n… [123 more characters cut]")
+
+              data
+              {:schema-version "ATIF-v1.8"
+               :agent {:name "vis" :model-name "session-model"}
+               :steps
+               [{:step-id 1 :source "user" :message "Check it" :extra {:attachments [attachment]}}
+                {:step-id 2
+                 :source "agent"
+                 :message "Done"
+                 :model-name "step-model"
+                 :reasoning-content clipped
+                 :extra {:is-final true :attachments [attachment]}
+                 :tool-calls [{:tool-call-id "first"
+                               :function-name "python_execution"
+                               :arguments {:code clipped}
+                               :extra {:stdout-chars 20123}}]
+                 :observation {:results [{:source-call-id "first" :content clipped}]}}
+                {:step-id 3 :source "agent" :message "" :extra {:is-final false}}]}
+
+              round-trip
+              (fn [doc]
+                (let [restored (state/import-session! (.getBytes (wire/json-str doc) "UTF-8") {})]
+                  (wire/parse-json (state/export-atif (get restored "id")))))
+
+              restored
+              (round-trip data)
+
+              [user a b]
+              (get restored "steps")
+
+              [next-user next-a next-b]
+              (get (round-trip restored) "steps")
+
+              select-step
+              #(dissoc % "timestamp")]
+
+          (expect (= ["session-model" [(wire/->wire attachment)] [(wire/->wire attachment)] true
+                      false clipped clipped 20123 clipped]
+                     [(get-in restored ["agent" "model_name"]) (get-in user ["extra" "attachments"])
+                      (get-in a ["extra" "attachments"]) (get-in a ["extra" "is_final"])
+                      (get-in b ["extra" "is_final"]) (get a "reasoning_content")
+                      (get-in a ["tool_calls" 0 "arguments" "code"])
+                      (get-in a ["tool_calls" 0 "extra" "stdout_chars"])
+                      (get-in a ["observation" "results" 0 "content"])]))
+          (expect (= (mapv select-step [user a b])
+                     (mapv select-step [next-user next-a next-b]))))))))

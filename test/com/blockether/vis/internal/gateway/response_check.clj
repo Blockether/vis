@@ -41,15 +41,12 @@
    does not match its response schema. Record the operation when it matches."
   [[method path] response]
   (let [{:keys [response-schema] :as operation} (gateway-contract/operation method path)]
-    (if (and response-schema (= :json (:response operation)) (map? response) (json-answer? response))
+    (if
+      (and response-schema (= :json (:response operation)) (map? response) (json-answer? response))
       (let [[response text]
             (if (string? (:body response)) [response (:body response)] (buffered response))
-
-            body
-            (wire/parse-json text)
-
-            errors
-            (document/explain-json "gateway" (name response-schema) body)]
+            body (wire/parse-json text)
+            errors (document/explain-json "gateway" (name response-schema) body)]
 
         (when errors
           (throw (ex-info (str "The answer of " (str/upper-case (name method))
@@ -85,17 +82,22 @@
    reason. Only an operation that needs an outside service can be here. This map can
    only get smaller: the run fails when an entry gets a checked answer."
   {[:delete "/v1/devices/:token"] "needs the push relay and a paired device"
-   [:delete "/v1/sessions/:sid/speech/jobs/:job-id"] "needs a local speech or voice model and a running job"
+   [:delete "/v1/sessions/:sid/speech/jobs/:job-id"]
+   "needs a local speech or voice model and a running job"
    [:delete "/v1/sessions/:sid/turns/:tid"] "needs a running engine turn in the registry"
-   [:delete "/v1/sessions/:sid/voice/jobs/:job-id"] "needs a local speech or voice model and a running job"
+   [:delete "/v1/sessions/:sid/voice/jobs/:job-id"]
+   "needs a local speech or voice model and a running job"
    [:get "/v1/automations/runs/:run-id"] "needs a saved automation and an engine run"
    [:get "/v1/decisions/aliases/:alias"] "needs an installed decision model"
    [:get "/v1/decisions/models/:model-ref"] "needs an installed decision model"
    [:get "/v1/sessions/:sid/agents/:child-id/timeline"] "needs a running engine turn with subagents"
-   [:get "/v1/sessions/:sid/client-calls"] "needs a registered client extension with a pending engine call"
+   [:get "/v1/sessions/:sid/client-calls"]
+   "needs a registered client extension with a pending engine call"
    [:get "/v1/sessions/:sid/context"] "needs a live engine session context"
-   [:get "/v1/sessions/:sid/speech/jobs/:job-id"] "needs a local speech or voice model and a running job"
-   [:get "/v1/sessions/:sid/voice/jobs/:job-id"] "needs a local speech or voice model and a running job"
+   [:get "/v1/sessions/:sid/speech/jobs/:job-id"]
+   "needs a local speech or voice model and a running job"
+   [:get "/v1/sessions/:sid/voice/jobs/:job-id"]
+   "needs a local speech or voice model and a running job"
    [:get "/v1/speech/jobs/:job-id"] "needs a local speech or voice model and a running job"
    [:get "/v1/voice/jobs/:job-id"] "needs a local speech or voice model and a running job"
    [:patch "/v1/speech/voices/:voice-id"] "needs a local speech or voice model and a running job"
@@ -110,8 +112,10 @@
    [:post "/v1/mcp/servers/:name/actions/start"] "needs a running MCP server process"
    [:post "/v1/mcp/servers/:name/auth/logout"] "needs a running MCP server process"
    [:post "/v1/mcp/servers/actions/test"] "needs a running MCP server process"
-   [:post "/v1/providers/:provider-id/auth/complete"] "needs a provider sign-in flow with an outside service"
-   [:post "/v1/providers/:provider-id/logout"] "needs a provider sign-in flow with an outside service"
+   [:post "/v1/providers/:provider-id/auth/complete"]
+   "needs a provider sign-in flow with an outside service"
+   [:post "/v1/providers/:provider-id/logout"]
+   "needs a provider sign-in flow with an outside service"
    [:post "/v1/sessions/:sid/agents"] "needs a running engine turn with subagents"
    [:post "/v1/sessions/:sid/agents/answer"] "needs a running engine turn with subagents"
    [:post "/v1/sessions/:sid/agents/deny"] "needs a running engine turn with subagents"
@@ -119,8 +123,10 @@
    [:post "/v1/sessions/:sid/agents/grant"] "needs a running engine turn with subagents"
    [:post "/v1/sessions/:sid/agents/run"] "needs a running engine turn with subagents"
    [:post "/v1/sessions/:sid/cancel-current"] "needs a running engine turn in the registry"
-   [:post "/v1/sessions/:sid/client-calls/:call_id/activity"] "needs a registered client extension with a pending engine call"
-   [:post "/v1/sessions/:sid/client-calls/:call_id/result"] "needs a registered client extension with a pending engine call"
+   [:post "/v1/sessions/:sid/client-calls/:call_id/activity"]
+   "needs a registered client extension with a pending engine call"
+   [:post "/v1/sessions/:sid/client-calls/:call_id/result"]
+   "needs a registered client extension with a pending engine call"
    [:post "/v1/sessions/:sid/speech"] "needs a local speech or voice model and a running job"
    [:post "/v1/sessions/:sid/turns/:tid/cancel"] "needs a running engine turn in the registry"
    [:post "/v1/sessions/:sid/voice"] "needs a local speech or voice model and a running job"
@@ -161,12 +167,17 @@
   "A handler that checks the synchronous JSON answer of `handler`, which serves
    `operations`."
   [operations handler]
-  (fn
-    ([request]
-     (let [response (handler request)
-           operation (when @active? (request-operation request operations))]
-       (if operation (check-operation! operation response) response)))
-    ([request respond raise] (handler request respond raise))))
+  (fn ([request] (let [response
+                       (handler request)
+
+                       operation
+                       (when @active? (request-operation request operations))]
+
+                   (if operation (check-operation! operation response) response))) ([request respond
+                                                                                     raise]
+                                                                                    (handler request
+                                                                                      respond
+                                                                                      raise))))
 
 (defn- handler-map-vars
   "The vars of the handler maps that the built-in router binds."
@@ -187,46 +198,74 @@
    so a test that compares a var with a router entry still sees one function."
   []
   (when-not @originals
-    (let [route-var (requiring-resolve
-                      'com.blockether.vis.internal.gateway.server/route-handlers)
-          map-vars (handler-map-vars)
-          served (reduce (fn [acc [operation handler]] (update acc handler (fnil conj []) operation))
-                         {}
-                         (mapcat deref map-vars))
-          wrapped (into {} (for [[handler operations] served]
-                             [handler (wrap-handler operations handler)]))
-          saved (atom {route-var @route-var})]
-      (doseq [map-var map-vars
-              [_ v] (ns-interns (:ns (meta map-var)))
+    (let [route-var
+          (requiring-resolve 'com.blockether.vis.internal.gateway.server/route-handlers)
+
+          map-vars
+          (handler-map-vars)
+
+          served
+          (reduce (fn [acc [operation handler]]
+                    (update acc handler (fnil conj []) operation))
+                  {}
+                  (mapcat deref map-vars))
+
+          wrapped
+          (into {}
+                (for [[handler operations] served]
+                  [handler (wrap-handler operations handler)]))
+
+          saved
+          (atom {route-var @route-var})]
+
+      (doseq [map-var
+              map-vars
+
+              [_ v]
+              (ns-interns (:ns (meta map-var)))
+
               :when (and (bound? v) (contains? wrapped @v) (not (contains? @saved v)))]
+
         (swap! saved assoc v @v)
         (alter-var-root v (constantly (get wrapped @v))))
       (doseq [map-var map-vars]
         (swap! saved assoc map-var @map-var)
-        (alter-var-root map-var (fn [m] (update-vals m wrapped))))
+        (alter-var-root map-var
+                        (fn [m]
+                          (update-vals m wrapped))))
       (alter-var-root route-var (constantly (mapv deref map-vars)))
       (reset! originals @saved))))
 
 (defn- uninstall!
   []
-  (doseq [[v root] @originals] (alter-var-root v (constantly root)))
+  (doseq [[v root] @originals]
+    (alter-var-root v (constantly root)))
   (reset! originals nil))
 
 (defn- fixture-operations
   "The `[method path]` operations that `fixtures/gateway-answers.json` has an answer for."
   []
-  (set (for [k (keys (get (wire/parse-json (slurp (io/resource
-                                                    "vis-contract/fixtures/gateway-answers.json")))
-                          "answers"))
-             :let [[method path] (str/split k #" " 2)]]
+  (set (for [k
+             (keys (get (wire/parse-json (slurp (io/resource
+                                                  "vis-contract/fixtures/gateway-answers.json")))
+                        "answers"))
+
+             :let [[method path]
+                   (str/split k #" " 2)]]
+
          [(keyword (str/lower-case method)) path])))
 
 (defn- json-operations
   "The `[method path]` operations of the contract that answer JSON."
   []
-  (set (for [{:keys [path operations]} gateway-contract/route-table
-             [method {:keys [response]}] operations
+  (set (for [{:keys [path operations]}
+             gateway-contract/route-table
+
+             [method {:keys [response]}]
+             operations
+
              :when (= :json response)]
+
          [method path])))
 
 (defn uncovered-operations
@@ -244,11 +283,19 @@
 (defn- test-namespaces-on-disk
   "The names of the gateway test namespaces under `test/`."
   []
-  (let [dir (io/file "test/com/blockether/vis/internal/gateway")
-        root (.toPath dir)]
-    (set (for [^java.io.File f (file-seq dir)
-               :let [path (str (.relativize root (.toPath f)))]
+  (let [dir
+        (io/file "test/com/blockether/vis/internal/gateway")
+
+        root
+        (.toPath dir)]
+
+    (set (for [^java.io.File f
+               (file-seq dir)
+
+               :let [path
+                     (str (.relativize root (.toPath f)))]
                :when (str/ends-with? path "_test.clj")]
+
            (str gateway-test-prefix
                 (-> (subs path 0 (- (count path) (count ".clj")))
                     (str/replace "/" ".")
@@ -265,15 +312,24 @@
   "A message when the operation set `actual` and the keys of the list `listed` do not
    agree, or nil."
   [list-name actual listed missing-text]
-  (let [listed (set (keys listed))
-        missing (sort (remove listed actual))
-        stale (sort (remove actual listed))]
+  (let [listed
+        (set (keys listed))
+
+        missing
+        (sort (remove listed actual))
+
+        stale
+        (sort (remove actual listed))]
+
     (when (or (seq missing) (seq stale))
-      (str "Gateway answer coverage (#487) does not agree with `" list-name "`."
+      (str "Gateway answer coverage (#487) does not agree with `"
+           list-name
+           "`."
            (when (seq missing) (str " " missing-text ": " (pr-str (vec missing)) "."))
            (when (seq stale)
              (str " These listed operations have a checked answer now; remove them: "
-                  (pr-str (vec stale)) "."))))))
+                  (pr-str (vec stale))
+                  "."))))))
 
 (defn coverage-failure
   "A message when the checked operations do not agree with the lists
@@ -301,11 +357,10 @@
   "Check the JSON answers of the gateway in the gateway and contract test namespaces.
    After a run with each gateway test namespace, fail the run when the answer
    coverage does not agree with `unchecked-operations`."
-  (pre-test-run [_config m]
-                (when (some checked-namespace? (:children m))
-                  (reset! checked-operations #{})
-                  (install!))
-                m)
+  (pre-test-run
+    [_config m]
+    (when (some checked-namespace? (:children m)) (reset! checked-operations #{}) (install!))
+    m)
   (pre-test-suite [_config suite]
                   (when (= :lazytest/ns (:type suite))
                     (reset! active? (boolean (checked-namespace? suite))))
@@ -324,7 +379,9 @@
                                  conj
                                  (test-case/test-case-result
                                    :fail
-                                   (test-case/test-case {:doc "gateway answer coverage"
-                                                         :ns (the-ns 'com.blockether.vis.internal.gateway.response-check)})
+                                   (test-case/test-case
+                                     {:doc "gateway answer coverage"
+                                      :ns (the-ns
+                                            'com.blockether.vis.internal.gateway.response-check)})
                                    (ex-info message {}))))
                      results))))

@@ -232,8 +232,7 @@
 
         (let [response
               (#'turns-api/turn-attachments-handler
-               {:path-params {:sid (str sid) :tid (str tid)}
-                :query-params {"id" id}})
+               {:path-params {:sid (str sid) :tid (str tid)} :query-params {"id" id}})
 
               rows
               (get (wire/parse-json (:body response)) "attachments")]

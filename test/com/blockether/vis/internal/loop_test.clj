@@ -13467,23 +13467,25 @@
           observed
           (atom [])]
 
-      (try (with-redefs [svar/ask-code!
-                         (fn [_ opts]
-                           (let [request (str/join "\n"
-                                                   (filter string?
-                                                           (tree-seq coll? seq (:messages opts))))
-                                 live? (str/includes? request "Each final reply must contain an answer conversation")]
-                             (swap! observed conj
-                               [live? (str/includes? request "Each complete record is immutable")])
-                             {:stop-reason :end
-                              :tool-calls []
-                              :content (if live?
-                                         "{\"type\":\"conversation\",\"text\":\"I am here.\",\"phase\":\"answer\"}\n"
-                                         "I am here.")
-                              :routed/provider-id :lmstudio
-                              :routed/model "model"
-                              :api-usage {:input-tokens 100 :output-tokens 4}
-                              :tokens {}}))]
+      (try (with-redefs
+             [svar/ask-code!
+              (fn [_ opts]
+                (let [request (str/join "\n" (filter string? (tree-seq coll? seq (:messages opts))))
+                      live? (str/includes? request
+                                           "Each final reply must contain an answer conversation")]
+
+                  (swap! observed conj
+                    [live? (str/includes? request "Each complete record is immutable")])
+                  {:stop-reason :end
+                   :tool-calls []
+                   :content
+                   (if live?
+                     "{\"type\":\"conversation\",\"text\":\"I am here.\",\"phase\":\"answer\"}\n"
+                     "I am here.")
+                   :routed/provider-id :lmstudio
+                   :routed/model "model"
+                   :api-usage {:input-tokens 100 :output-tokens 4}
+                   :tokens {}}))]
              (doseq [enabled? [false true true false]]
                (let [request "Testing one two three."
                      tid (persistance/db-store-session-turn!
@@ -13498,17 +13500,16 @@
            (expect (= [[false false] [true true] [true true] [false false]] @observed))
            (finally (loop-env/dispose-environment! environment))))))
 
-(defdescribe
-  voice-projection-prompt-test
-  ;; Regression: session a853a9c9-6296-42f9-ab32-67ee83447023 omitted the spoken outcome.
-  (it "changes the system prompt only for a live voice turn"
-      (expect (not= "base"
-                    (#'iteration/voice-system-prompt
-                     "base"
-                     {"voice_projection" true "voice_segments" true})))
-      (doseq [features [{} {"voice_segments" true} {"voice_projection" true}
-                        {:voice_projection true :voice_segments true}]]
-        (expect (= "base" (#'iteration/voice-system-prompt "base" features))))))
+(defdescribe voice-projection-prompt-test
+             ;; Regression: session a853a9c9-6296-42f9-ab32-67ee83447023 omitted the spoken outcome.
+             (it "changes the system prompt only for a live voice turn"
+                 (expect (not= "base"
+                               (#'iteration/voice-system-prompt
+                                "base"
+                                {"voice_projection" true "voice_segments" true})))
+                 (doseq [features [{} {"voice_segments" true} {"voice_projection" true}
+                                   {:voice_projection true :voice_segments true}]]
+                   (expect (= "base" (#'iteration/voice-system-prompt "base" features))))))
 
 (def ^:private failed-turn-outcome
   "A finished turn's terminal payload: content, structured error, counters, CTX."

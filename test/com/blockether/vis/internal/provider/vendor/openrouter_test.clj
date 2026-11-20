@@ -8,18 +8,18 @@
             [com.blockether.vis.internal.provider.vendor.openrouter :as openrouter]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe
-  key-store-book-test
-  ;; The lookup ORDER, the file layout and the token envelope belong to the
-  ;; shared key store (`provider-key-store-test`); what this pack owns is the
-  ;; book it declares.
-  (it "detects the TUI/config API key used by runtime model calls"
-      (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
-      (with-redefs-fn {#'config/current-config (constantly {:providers [{:id :openrouter
+(defdescribe key-store-book-test
+             ;; The lookup ORDER, the file layout and the token envelope belong to the
+             ;; shared key store (`provider-key-store-test`); what this pack owns is the
+             ;; book it declares.
+             (it "detects the TUI/config API key used by runtime model calls"
+                 (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
+                 (with-redefs-fn {#'config/current-config (constantly {:providers
+                                                                       [{:id :openrouter
                                                                          :api-key "config-key"}]})}
-        (fn []
-          (expect (= {:api-key "config-key" :source :config}
-                     ((:provider/detect-fn (registry/provider-by-id :openrouter)))))))))
+                   (fn []
+                     (expect (= {:api-key "config-key" :source :config}
+                                ((:provider/detect-fn (registry/provider-by-id :openrouter)))))))))
 
 (defdescribe get-token-test
              (it "answers the router token envelope from the resolved key"

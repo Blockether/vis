@@ -24,18 +24,18 @@
                 (expect (nil? (app-surfaces/session-target (app "a" "A" {:session "off"}))))
                 (expect (= :sidebar
                            (app-surfaces/session-target (app "a" "A" {:session "floating"}))))))
-  (describe "the session apps picker"
-            (it "lists open apps by title and leaves out off, closed and disconnected apps"
-                (let [views {"1" {:view (app "1" "zeta" {:session "chat"})}
-                             "2" {:view (app "2" "Alpha" nil)}
-                             "3" {:view (app "3" "Hidden" {:session "off"})}
-                             "4" {:view (app "4" "Done" nil :is-closed true)}
-                             "5" {:view (app "5" "Gone" nil :is-stale true)}}]
-                  (expect (= ["2" "1"] (mapv :id (app-surfaces/session-apps views))))
-                  (expect (true? (keymap/verb-available? {:app-views views}
-                                                         {:show-when :has-apps})))
-                  (expect (false? (keymap/verb-available? {:app-views (select-keys views ["3" "4" "5"])}
-                                                          {:show-when :has-apps}))))))
+  (describe
+    "the session apps picker"
+    (it "lists open apps by title and leaves out off, closed and disconnected apps"
+        (let [views {"1" {:view (app "1" "zeta" {:session "chat"})}
+                     "2" {:view (app "2" "Alpha" nil)}
+                     "3" {:view (app "3" "Hidden" {:session "off"})}
+                     "4" {:view (app "4" "Done" nil :is-closed true)}
+                     "5" {:view (app "5" "Gone" nil :is-stale true)}}]
+          (expect (= ["2" "1"] (mapv :id (app-surfaces/session-apps views))))
+          (expect (true? (keymap/verb-available? {:app-views views} {:show-when :has-apps})))
+          (expect (false? (keymap/verb-available? {:app-views (select-keys views ["3" "4" "5"])}
+                                                  {:show-when :has-apps}))))))
   (describe
     "an app in its turn"
     (it "shows its frame and a Full screen button unless its inline surface is off"

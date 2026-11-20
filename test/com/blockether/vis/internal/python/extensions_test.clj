@@ -92,14 +92,12 @@
 (set-ns-context! [(around [f]
                           ;; Preparation copies the interpreter to a stable store. Keep it
                           ;; out of `~/.vis` (#486).
-                          (let [store (.toFile (Files/createTempDirectory
-                                                 "vis-interpreter-store"
-                                                 (make-array FileAttribute 0)))]
+                          (let [store (.toFile (Files/createTempDirectory "vis-interpreter-store"
+                                                                          (make-array FileAttribute
+                                                                                      0)))]
                             (try (with-redefs-fn {#'python-runtime/interpreter-store
                                                   (constantly (io/file store "interpreters"))
-
-                                                  #'python-runtime/base-pythons
-                                                  (atom {})}
+                                                  #'python-runtime/base-pythons (atom {})}
                                    f)
                                  (finally (fs/delete-tree store)))))
                   (around-each [f]

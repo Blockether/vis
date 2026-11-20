@@ -3098,9 +3098,10 @@
                          (-> ask-opts
                              (dissoc :messages)
                              (assoc :conversation (vec (:messages ask-opts))
-                                    :prompt-cache-options
-                                    {:session-scoped? session-context-message?})
+                                    :prompt-cache-options {:session-scoped?
+                                                           session-context-message?})
                              (pin-session-route provider model)))]
+
           (when (= :refusal (:stop-reason result))
             (throw (ex-info (or (get-in result [:stop-details "explanation"])
                                 "The model declined this request.")

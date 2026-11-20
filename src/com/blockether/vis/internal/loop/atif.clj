@@ -18,9 +18,9 @@
                     :input-cache-write-tokens :output-reasoning-tokens :cost-usd :forms])
       (assoc :attachments (into (mapv attachment-descriptor attachments)
                                 (get-in iteration [:request-health :atif-attachments]))
-              :atif-user-attachments (get-in iteration [:request-health :atif-user-attachments])
-              :atif-imported-step (get-in iteration [:request-health :atif-imported-step])
-              :atif-final (get-in iteration [:request-health :atif-final])
+             :atif-user-attachments (get-in iteration [:request-health :atif-user-attachments])
+             :atif-imported-step (get-in iteration [:request-health :atif-imported-step])
+             :atif-final (get-in iteration [:request-health :atif-final])
              :cache-warms (get-in iteration [:request-health :cache-warms])
              :atif-omit-step (get-in iteration [:request-health :atif-omit-step])
              :atif-step-error (get-in iteration [:request-health :atif-step-error])
@@ -29,7 +29,8 @@
               (fn [forms]
                 (mapv #(select-keys %
                                     [:src :code :stdout :error :tool-name :tool-call-id :envelope
-                                     :repaired? :timeout? :repaired-source :atif-output :atif-stdout-chars])
+                                     :repaired? :timeout? :repaired-source :atif-output
+                                     :atif-stdout-chars])
                       forms)))
       wire/->wire))
 
@@ -103,7 +104,7 @@
 (defn- session-metadata
   [store session]
   {:started-at (:created-at session)
-    :atif-model (get-in session [:imported-from "atif_model_name"])
+   :atif-model (get-in session [:imported-from "atif_model_name"])
    :cwd (some->> (:project-id session)
                  (db/db-get-project store)
                  :workspace-root)})
@@ -111,19 +112,26 @@
 (defn export-json
   "Read and encode a saved session without loading its attachment bytes. `session-secrets`
    gives the credentials of one session id; by default those of this process."
-  ([store sid] (export-json store sid (fn [_] (trajectory/run-secrets))))
+  ([store sid]
+   (export-json store
+                sid
+                (fn [_]
+                  (trajectory/run-secrets))))
   ([store sid session-secrets]
-  (when-let [session (db/db-get-session store sid)]
-    (let [sid (str sid)
-          root (merge (select-keys session [:title :provider :model])
-                      {:session-id sid}
-                      (session-metadata store session))
-          children (mapv (fn [record]
-                           (merge record
-                                  (session-metadata store (db/db-get-session store (:session_id record)))))
-                         (child-records store sid))]
-      (trajectory/saved-json root
-                             children
-                             #(read-turns store %)
-                             (into [] (comp (mapcat session-secrets) (distinct))
-                                   (cons sid (map :session_id children))))))))
+   (when-let [session (db/db-get-session store sid)]
+     (let [sid (str sid)
+           root (merge (select-keys session [:title :provider :model])
+                       {:session-id sid}
+                       (session-metadata store session))
+           children
+           (mapv (fn [record]
+                   (merge record
+                          (session-metadata store (db/db-get-session store (:session_id record)))))
+                 (child-records store sid))]
+
+       (trajectory/saved-json root
+                              children
+                              #(read-turns store %)
+                              (into []
+                                    (comp (mapcat session-secrets) (distinct))
+                                    (cons sid (map :session_id children))))))))

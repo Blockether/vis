@@ -128,7 +128,9 @@
   (let [f (io/file file)]
     (when (.isFile f)
       (let [attrs ^BasicFileAttributes
-                  (Files/readAttributes (.toPath f) BasicFileAttributes ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))]
+                  (Files/readAttributes (.toPath f)
+                                        BasicFileAttributes
+                                        ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))]
         [file (.to (.lastModifiedTime attrs) TimeUnit/NANOSECONDS) (.size attrs)]))))
 
 (defn- load-servers

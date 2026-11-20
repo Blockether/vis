@@ -314,19 +314,19 @@
                             :data {:type :svar.llm/empty-content :empty-reply-resends 2}}]
                    (expect (= :empty-content (perr/provider-error-kind err))))))
 
-(defdescribe
-  refusal-kind-test
-  (it "typed :svar.llm/refusal → 'declined' card with category, not an empty-stall"
-      (let [err {:message "The model declined this request."
-                 :data {:type :svar.llm/refusal
-                        :stop-details {"type" "refusal"
-                                       "category" "cyber"
-                                       "explanation" "Declined: could enable cyber harm."}}}]
-        (expect (= :refusal (perr/provider-error-kind err)))
-        ;; distinct from empty-content: never presented as a stall
-        (expect (not= :empty-content (perr/provider-error-kind err)))
-        ;; deterministic — never advertised as retryable
-        (expect (false? (perr/provider-error-retryable? err))))))
+(defdescribe refusal-kind-test
+             (it "typed :svar.llm/refusal → 'declined' card with category, not an empty-stall"
+                 (let [err {:message "The model declined this request."
+                            :data {:type :svar.llm/refusal
+                                   :stop-details {"type" "refusal"
+                                                  "category" "cyber"
+                                                  "explanation"
+                                                  "Declined: could enable cyber harm."}}}]
+                   (expect (= :refusal (perr/provider-error-kind err)))
+                   ;; distinct from empty-content: never presented as a stall
+                   (expect (not= :empty-content (perr/provider-error-kind err)))
+                   ;; deterministic — never advertised as retryable
+                   (expect (false? (perr/provider-error-retryable? err))))))
 
 (defdescribe
   content-filter-kind-test

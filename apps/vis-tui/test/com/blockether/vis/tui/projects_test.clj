@@ -901,27 +901,41 @@
 
 ;; User report: in long sessions the input caret disappeared. It was hidden while the
 ;; transcript was parked above its bottom, also when the bottom was in view.
-(defdescribe composer-caret-while-scrolled-test
-             (it "keeps the composer caret while the transcript is parked, also on a scroll frame"
-                 (with-redefs [timg/images-protocol (constantly nil)
-                               vis/get-router (constantly nil)]
-                   (let [db (-> (fixture-db)
-                                (assoc-in [:project-sidebar :focused?] false)
-                                (assoc :scroll {:mode :at :offset 0}))
-                         capture (cap/capture!
-                                   {:cols 120
-                                    :rows 24
-                                    :paint! (fn [{:keys [^TerminalScreen screen]}]
-                                              (#'screen/render-frame! screen 120 24 db 1000)
-                                              (let [full (.getCursorPosition screen)]
-                                                (#'screen/render-scroll-frame!
-                                                 screen 120 24 (assoc db :scroll {:mode :at :offset 1})
-                                                 1000 nil)
-                                                [full (.getCursorPosition screen)]))})
-                         [full scrolled] (:ret capture)]
-                     (expect (nil? (:error capture)))
-                     (expect (some? full))
-                     (expect (= full scrolled))))))
+(defdescribe
+  composer-caret-while-scrolled-test
+  (it "keeps the composer caret while the transcript is parked, also on a scroll frame"
+      (with-redefs [timg/images-protocol
+                    (constantly nil)
+
+                    vis/get-router
+                    (constantly nil)]
+
+        (let [db
+              (-> (fixture-db)
+                  (assoc-in [:project-sidebar :focused?] false)
+                  (assoc :scroll {:mode :at :offset 0}))
+
+              capture
+              (cap/capture! {:cols 120
+                             :rows 24
+                             :paint! (fn [{:keys [^TerminalScreen screen]}]
+                                       (#'screen/render-frame! screen 120 24 db 1000)
+                                       (let [full (.getCursorPosition screen)]
+                                         (#'screen/render-scroll-frame!
+                                          screen
+                                          120
+                                          24
+                                          (assoc db :scroll {:mode :at :offset 1})
+                                          1000
+                                          nil)
+                                         [full (.getCursorPosition screen)]))})
+
+              [full scrolled]
+              (:ret capture)]
+
+          (expect (nil? (:error capture)))
+          (expect (some? full))
+          (expect (= full scrolled))))))
 
 (defdescribe
   project-rail-caret-in-the-render-frame-test

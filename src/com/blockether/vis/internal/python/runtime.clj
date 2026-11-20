@@ -414,10 +414,12 @@
   (let [digest (util/sha256-digest)]
     (doseq [^File part [file (io/file (.getParentFile file) "uv")]
             :when (.isFile part)]
+
       (.update digest (util/utf8 (str (.getName part) ":" (.length part) ":")))
       (with-open [in (io/input-stream part)]
         (let [buffer (byte-array 65536)]
           (loop []
+
             (let [n (.read in buffer)]
               (when (pos? n) (.update digest buffer 0 n) (recur)))))))
     (util/bytes->hex (.digest digest))))
@@ -431,8 +433,12 @@
    and of the bundled uv beside it. Two installs of one build give the same value. Without
    an executable file, the canonical path is the identity."
   ^String [python]
-  (let [file (.getCanonicalFile (io/file (str python)))
-        path (.getPath file)]
+  (let [file
+        (.getCanonicalFile (io/file (str python)))
+
+        path
+        (.getPath file)]
+
     (or (get @interpreter-identities path)
         (let [identity (if (.isFile file) (build-digest file) (util/sha256-hex path))]
           (swap! interpreter-identities assoc path identity)
@@ -469,21 +475,28 @@
   [^File store f]
   (locking copy-lock
     (.mkdirs store)
-    (with-open [channel (FileChannel/open (.toPath (io/file store ".vis-copy.lock"))
-                                          (into-array OpenOption
-                                                      [StandardOpenOption/CREATE
-                                                       StandardOpenOption/WRITE]))
-                _lock (.lock channel)]
+    (with-open [channel
+                (FileChannel/open (.toPath (io/file store ".vis-copy.lock"))
+                                  (into-array OpenOption
+                                              [StandardOpenOption/CREATE StandardOpenOption/WRITE]))
+
+                _lock
+                (.lock channel)]
+
       (f))))
 
 (defn- interpreter-starts?
   "True when the interpreter `python` starts and imports its standard library. A copy with
    an intact executable but a damaged library tree cannot serve an environment."
   [^File python]
-  (try (let [^java.util.List command [(.getPath python) "-I" "-c" "import encodings, os, site"]
-             process (.start (doto (ProcessBuilder. command)
-                               (.redirectErrorStream true)
-                               (.redirectOutput ProcessBuilder$Redirect/DISCARD)))]
+  (try (let [^java.util.List command
+             [(.getPath python) "-I" "-c" "import encodings, os, site"]
+
+             process
+             (.start (doto (ProcessBuilder. command)
+                       (.redirectErrorStream true)
+                       (.redirectOutput ProcessBuilder$Redirect/DISCARD)))]
+
          (if (.waitFor process 30 TimeUnit/SECONDS)
            (zero? (.exitValue process))
            (do (.destroyForcibly process) false)))
@@ -507,40 +520,48 @@
   (with-copy-lock
     store
     (fn []
-      (or (copy-valid? (io/file target relative) identity)
-          (do (doseq [^File stale (or (.listFiles store) (make-array File 0))
-                      :when (str/includes? (.getName stale) ".tmp.")]
-                (delete-environment! stale))
-              (let [staging (.toFile (Files/createTempDirectory (.toPath store)
-                                                                (str (.getName target) ".tmp.")
-                                                                (make-array FileAttribute 0)))
-                    tree (io/file staging "python")]
-                (try (let [^java.util.List command
-                           ["cp" "-Rp" (.getPath home) (.getPath tree)]
+      (or
+        (copy-valid? (io/file target relative) identity)
+        (do
+          (doseq [^File stale
+                  (or (.listFiles store) (make-array File 0))
 
-                           process
-                           (.start (doto (ProcessBuilder. command)
-                                     (.redirectErrorStream true)
-                                     (.redirectOutput ProcessBuilder$Redirect/DISCARD)))]
+                  :when (str/includes? (.getName stale) ".tmp.")]
 
-                       (when (and (zero? (.waitFor process))
-                                  (copy-valid? (io/file tree relative) identity))
-                         (let [packages (io/file tree "lib" "vis-sdk-packages")]
-                           (when (.isDirectory packages) (delete-environment! packages)))
-                         ;; A broken copy cannot serve an environment, so it is replaced.
-                         (when (Files/exists (.toPath target) no-follow)
-                           (delete-environment! target))
-                         (Files/move (.toPath tree)
-                                     (.toPath target)
-                                     (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
-                         (copy-valid? (io/file target relative) identity)))
-                     (catch Exception e
-                       (tel/log! {:level :warn
-                                  :id ::interpreter-copy-failed
-                                  :data {:target (.getPath target)}
-                                  :error e})
-                       false)
-                     (finally (when (.exists staging) (delete-environment! staging))))))))))
+            (delete-environment! stale))
+          (let [staging
+                (.toFile (Files/createTempDirectory (.toPath store)
+                                                    (str (.getName target) ".tmp.")
+                                                    (make-array FileAttribute 0)))
+
+                tree
+                (io/file staging "python")]
+
+            (try (let [^java.util.List command
+                       ["cp" "-Rp" (.getPath home) (.getPath tree)]
+
+                       process
+                       (.start (doto (ProcessBuilder. command)
+                                 (.redirectErrorStream true)
+                                 (.redirectOutput ProcessBuilder$Redirect/DISCARD)))]
+
+                   (when (and (zero? (.waitFor process))
+                              (copy-valid? (io/file tree relative) identity))
+                     (let [packages (io/file tree "lib" "vis-sdk-packages")]
+                       (when (.isDirectory packages) (delete-environment! packages)))
+                     ;; A broken copy cannot serve an environment, so it is replaced.
+                     (when (Files/exists (.toPath target) no-follow) (delete-environment! target))
+                     (Files/move (.toPath tree)
+                                 (.toPath target)
+                                 (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
+                     (copy-valid? (io/file target relative) identity)))
+                 (catch Exception e
+                   (tel/log! {:level :warn
+                              :id ::interpreter-copy-failed
+                              :data {:target (.getPath target)}
+                              :error e})
+                   false)
+                 (finally (when (.exists staging) (delete-environment! staging))))))))))
 
 (def ^:private installs-file
   "The file in a stable interpreter copy that lists the install executables of its build."
@@ -549,20 +570,28 @@
 (defn- record-install!
   "Add the install executable `python` to the install list of the copy `target`."
   [^File store ^File target ^String python]
-  (paths/with-claim-lock
-    store
-    (fn []
-      (let [file (io/file target installs-file)
-            known (if (.isFile file) (set (str/split-lines (slurp file))) #{})]
-        (when-not (contains? known python)
-          (spit file (str python "\n") :append true))))))
+  (paths/with-claim-lock store
+                         (fn []
+                           (let [file
+                                 (io/file target installs-file)
+
+                                 known
+                                 (if (.isFile file) (set (str/split-lines (slurp file))) #{})]
+
+                             (when-not (contains? known python)
+                               (spit file (str python "\n") :append true))))))
 
 (defn- copy-in-use?
   "True when the stable copy `home` still serves an install: an install in its list exists,
    or a process holds its claim. A copy without a list is not one of ours, so it stays."
   [^File store ^File home]
-  (let [target (paths/nearest-ancestor #(= store (.getParentFile ^File %)) home)
-        file (some-> target (io/file installs-file))]
+  (let [target
+        (paths/nearest-ancestor #(= store (.getParentFile ^File %)) home)
+
+        file
+        (some-> target
+                (io/file installs-file))]
+
     (or (nil? file)
         (not (.isFile file))
         (= :held (paths/claim-state target))
@@ -572,7 +601,8 @@
   "True when the base interpreter directory `home` of an environment can still serve it:
    it exists and, for a stable copy, an install of its build still exists."
   [^File home]
-  (let [store (some-> (interpreter-store) .getCanonicalFile)]
+  (let [store (some-> (interpreter-store)
+                      .getCanonicalFile)]
     (and (.exists home)
          (or (nil? store)
              (not (.startsWith (.toPath (.getCanonicalFile home)) (.toPath store)))
@@ -582,14 +612,19 @@
   "Delete the stable interpreter copies, other than `own`, that no install uses any more.
    Their environments are then orphans, and preparation removes them."
   [^File store ^File own]
-  (doseq [^File copy (or (.listFiles store) (make-array File 0))
+  (doseq [^File copy
+          (or (.listFiles store) (make-array File 0))
+
           :when (and (re-matches #"[0-9a-f]{12}" (.getName copy))
                      (not= (.getName own) (.getName copy))
                      (Files/isDirectory (.toPath copy) no-follow))]
+
     (try (paths/with-claim-lock store
                                 #(when-not (copy-in-use? store copy) (delete-environment! copy)))
          (catch Exception e
-           (tel/log! {:level :warn :id ::interpreter-copy-not-removed :data {:copy (.getPath copy)}
+           (tel/log! {:level :warn
+                      :id ::interpreter-copy-not-removed
+                      :data {:copy (.getPath copy)}
                       :error e})))))
 
 (defonce ^:private base-pythons
@@ -606,22 +641,22 @@
   ^String []
   (let [python (embedded-executable)]
     (or (get @base-pythons python)
-        (let [base
-              (or (when-let [store (when python (interpreter-store))]
-                    (let [file (.getCanonicalFile (io/file python))
-                          home (interpreter-home file)
-                          identity (interpreter-identity python)
-                          target (io/file store (subs identity 0 12))
-                          relative (str (.relativize (.toPath home) (.toPath file)))
-                          copy (io/file target relative)]
-                      (when (and (.isFile file)
-                                 (or (copy-valid? copy identity)
-                                     (copy-interpreter! store home target relative identity)))
-                        (record-install! store target (.getPath file))
-                        (paths/claim-dir! target)
-                        (remove-unused-copies! store target)
-                        (.getPath copy))))
-                  python)]
+        (let [base (or (when-let [store (when python (interpreter-store))]
+                         (let [file (.getCanonicalFile (io/file python))
+                               home (interpreter-home file)
+                               identity (interpreter-identity python)
+                               target (io/file store (subs identity 0 12))
+                               relative (str (.relativize (.toPath home) (.toPath file)))
+                               copy (io/file target relative)]
+
+                           (when (and (.isFile file)
+                                      (or (copy-valid? copy identity)
+                                          (copy-interpreter! store home target relative identity)))
+                             (record-install! store target (.getPath file))
+                             (paths/claim-dir! target)
+                             (remove-unused-copies! store target)
+                             (.getPath copy))))
+                       python)]
           (swap! base-pythons assoc python base)
           base))))
 

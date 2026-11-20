@@ -101,25 +101,34 @@
    does not change keeps its bytes."
   [rows redact-text]
   ;; `=` ignores metadata, so `changed` records each string that changes, also in metadata.
-  (letfn [(clean [changed x]
-            (cond (string? x) (let [y (redact-text x)]
-                                (when (not= x y) (vreset! changed true))
-                                y)
-                  (nippy-blob? x) (let [value (try (nippy/thaw x)
-                                                   (catch Exception e
-                                                     (throw (ex-info "A saved record is not readable"
-                                                                     {:type :session/snapshot-incomplete}
-                                                                     e))))
-                                        blob-changed (volatile! false)
-                                        cleaned (clean blob-changed value)]
-                                    (if @blob-changed
-                                      (do (vreset! changed true)
-                                          (nippy/freeze cleaned {:compressor nippy/zstd-compressor}))
-                                      x))
-                  (coll? x) (let [y (walk/walk (partial clean changed) identity x)]
-                              (if-let [m (meta x)] (with-meta y (clean changed m)) y))
-                  (and (symbol? x) (meta x)) (with-meta x (clean changed (meta x)))
-                  :else x))]
+  (letfn
+    [(clean [changed x]
+       (cond (string? x) (let [y (redact-text x)]
+                           (when (not= x y) (vreset! changed true))
+                           y)
+             (nippy-blob? x) (let [value
+                                   (try (nippy/thaw x)
+                                        (catch Exception e
+                                          (throw (ex-info "A saved record is not readable"
+                                                          {:type :session/snapshot-incomplete}
+                                                          e))))
+
+                                   blob-changed
+                                   (volatile! false)
+
+                                   cleaned
+                                   (clean blob-changed value)]
+
+                               (if @blob-changed
+                                 (do (vreset! changed true)
+                                     (nippy/freeze cleaned {:compressor nippy/zstd-compressor}))
+                                 x))
+             (coll? x) (let [y (walk/walk (partial clean changed) identity x)]
+                         (if-let [m (meta x)]
+                           (with-meta y (clean changed m))
+                           y))
+             (and (symbol? x) (meta x)) (with-meta x (clean changed (meta x)))
+             :else x))]
     (clean (volatile! false) rows)))
 
 (defn redact
@@ -130,29 +139,45 @@
    so its titles are clean too."
   [tree redact-text]
   (let [text?
-        (fn [att] (and (:bytes_sha256 att) (not (binary-media? (:media_type att)))))
+        (fn [att]
+          (and (:bytes_sha256 att) (not (binary-media? (:media_type att)))))
 
         cleaned
-        (into {}
-              (for [sha (into #{}
-                              (comp (mapcat :turns) (mapcat :attachments) (filter text?) (map :bytes_sha256))
-                              (:sessions tree))
-                    :let [text (some-> (get-in tree [:blobs sha]) utf-8-text)
-                          clean (some-> text redact-text)]
-                    :when (and text (not= text clean))
-                    :let [data (.getBytes ^String clean StandardCharsets/UTF_8)]]
-                [sha {:sha (util/sha256-hex data) :data data}]))
+        (into
+          {}
+          (for [sha
+                (into
+                  #{}
+                  (comp (mapcat :turns) (mapcat :attachments) (filter text?) (map :bytes_sha256))
+                  (:sessions tree))
+
+                :let [text
+                      (some-> (get-in tree [:blobs sha])
+                              utf-8-text)
+
+                      clean
+                      (some-> text
+                              redact-text)]
+                :when (and text (not= text clean))
+                :let [data
+                      (.getBytes ^String clean StandardCharsets/UTF_8)]]
+
+            [sha {:sha (util/sha256-hex data) :data data}]))
 
         rename
         (fn [att]
           (if-let [{:keys [sha ^bytes data]} (when (text? att) (get cleaned (:bytes_sha256 att)))]
-            (assoc att :bytes_sha256 sha :size_bytes (alength data))
+            (assoc att
+              :bytes_sha256 sha
+              :size_bytes (alength data))
             att))
 
         sessions
         (mapv (fn [session]
-                (update session :turns
-                        (fn [turns] (mapv #(update % :attachments (partial mapv rename)) turns))))
+                (update session
+                        :turns
+                        (fn [turns]
+                          (mapv #(update % :attachments (partial mapv rename)) turns))))
               (:sessions tree))
 
         used
@@ -162,7 +187,8 @@
       :sessions (redact-rows sessions redact-text)
       :council (redact-rows (:council tree) redact-text)
       :blobs (into (select-keys (:blobs tree) used)
-                   (map (fn [{:keys [sha data]}] [sha data]))
+                   (map (fn [{:keys [sha data]}]
+                          [sha data]))
                    (vals cleaned)))))
 
 (defn encode

@@ -395,7 +395,8 @@
   "True when the registered or project setting `id` holds a secret."
   [id]
   (boolean (or (:secret? (toggle-spec id))
-               (some (fn [{:keys [specs]}] (some #(and (= id (:id %)) (:secret? %)) specs))
+               (some (fn [{:keys [specs]}]
+                       (some #(and (= id (:id %)) (:secret? %)) specs))
                      (vals @project-registry)))))
 
 (defn object-problem
@@ -926,17 +927,15 @@
                        :persist? true})
     ;; Subagents run on Council messages, so the row stands under Council. With Council off,
     ;; `agents/enabled?` is false whatever this value says.
-    (register-toggle!
-      {:id "subagents"
-       :label "Subagents"
-       :description
-       "Let an agent start helper agents. Off stops all of them."
-       :default true
-       :scopes toggle-contract/scopes
-       :owner :vis
-       :group :council
-       :parent "council"
-       :persist? true})
+    (register-toggle! {:id "subagents"
+                       :label "Subagents"
+                       :description "Let an agent start helper agents. Off stops all of them."
+                       :default true
+                       :scopes toggle-contract/scopes
+                       :owner :vis
+                       :group :council
+                       :parent "council"
+                       :persist? true})
     ;; A new subagent runs on the model of its task, else on the first `subagent_models`
     ;; entry, else on the model of its parent (`gateway.state/agent-spawn`). A list that is
     ;; not empty is also the allowlist, and its next model is the first fallback of the child
@@ -955,7 +954,7 @@
        :group :council
        :parent "subagents"
        :persist? true})
-        ;; Live apps declare where they show; these two turn a surface off for every app.
+    ;; Live apps declare where they show; these two turn a surface off for every app.
     ;; Each app with a key adds its own settings under them (`view.app-surfaces`).
     (register-toggle! {:id "apps_inline"
                        :label "Apps in the chat"

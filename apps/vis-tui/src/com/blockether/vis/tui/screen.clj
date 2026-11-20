@@ -615,9 +615,7 @@
    about what it addresses; the marker tells whoever it is pasted to — a person,
    an issue, another agent — that it names a Vis session."
   [text]
-  (copy-text-async! "vis-tui-copy-session-id"
-                    (vis-header/marked-session-id text)
-                    nil))
+  (copy-text-async! "vis-tui-copy-session-id" (vis-header/marked-session-id text) nil))
 
 (defn- copy-selection!
   ([text] (copy-selection! text :transcript))
@@ -8276,10 +8274,9 @@
    starts with `title`, the current title."
   [screen sid title]
   (when sid
-    (when-let [entered (with-dialog-lock
-                         #(dlg/text-input-dialog! screen
-                                                  "Rename session" "Session name"
-                                                  :initial (str (or title ""))))]
+    (when-let [entered (with-dialog-lock #(dlg/text-input-dialog! screen
+                                                                  "Rename session" "Session name"
+                                                                  :initial (str (or title ""))))]
       (if (str/blank? (str entered))
         (vis/notify! "A session name cannot be empty" :level :warn :ttl-ms copy-success-ttl-ms)
         (when (not= (str/trim (str entered)) (str/trim (str title)))
@@ -12158,56 +12155,57 @@
                        ;; while a dialog or local warm-up is settling the session.
                        (vreset! startup-task ::settling)
                        (let [{:keys [session workspace title error]} @task]
-                         (cond
-                           session
-                           (let [{:keys [id history] :as startup-session} session]
-                             (state/dispatch [:bind-built-session startup-build-id
-                                              (select-keys startup-session tab-session-keys)
-                                              history workspace])
-                             (when title (state/dispatch [:set-title title id]))
-                             (ensure-session-live! id)
-                             (state/dispatch [:attach-running-turn
-                                              (state/tab-id-for-session @state/app-db id)
-                                              startup-session])
-                             (warm-session-render! startup-session)
-                             (mark-startup! :bound)
-                             (tel/log! {:level :info
-                                        :id ::startup-phases
-                                        :data {:phases @startup-marks
-                                               :session-id (str id)
-                                               :history (count history)}}
-                                       (str "TUI startup bound its session at "
-                                            (second (peek @startup-marks))
-                                            " ms"))
-                             ;; The UI is fully bound now. All follow-up work is either
-                             ;; local or already asynchronous.
-                             (vreset! startup-task ::settled)
-                             (when-not (contains? @launch-member-ids* (str id)) (persist-tabs!))
-                             (vreset! gateway-slash-load (start-deferred-gateway-slash-load! id))
-                             (when (and (:resume opts) (not (:dialog-open? @state/app-db)))
-                               (show-sessions!)))
-                           (and error (vis-config/no-provider-ex error))
-                           (if (compare-and-set! startup-retried? false true)
-                             (do
-                               ;; The dialog must own input on THIS thread. Once it saves,
-                               ;; re-arm the same deferred worker exactly once.
-                               (with-dialog-lock #(open-settings-modal! screen "Providers"))
-                               (rearm-startup!))
-                             ;; Still no usable provider. Startup stops here instead of
-                             ;; taking the application down: the screen stays open so the
-                             ;; user can configure a provider and get a session afterwards.
-                             (do (vreset! startup-task ::no-provider)
-                                 (vis/notify!
-                                   (str "No provider is configured yet. Press " (keymap/label-for
-                                                                                  :providers)
-                                        " to add "
-                                        "one, and this session starts right after you save it.")
-                                   :level :warn
-                                   :ttl-ms nil)))
-                           :else (do (vreset! startup-task ::settled)
-                                     (throw (or error
-                                                (ex-info "TUI startup worker returned no session"
-                                                         {})))))))))
+                         (cond session
+                               (let [{:keys [id history] :as startup-session} session]
+                                 (state/dispatch [:bind-built-session startup-build-id
+                                                  (select-keys startup-session tab-session-keys)
+                                                  history workspace])
+                                 (when title (state/dispatch [:set-title title id]))
+                                 (ensure-session-live! id)
+                                 (state/dispatch [:attach-running-turn
+                                                  (state/tab-id-for-session @state/app-db id)
+                                                  startup-session])
+                                 (warm-session-render! startup-session)
+                                 (mark-startup! :bound)
+                                 (tel/log! {:level :info
+                                            :id ::startup-phases
+                                            :data {:phases @startup-marks
+                                                   :session-id (str id)
+                                                   :history (count history)}}
+                                           (str "TUI startup bound its session at "
+                                                (second (peek @startup-marks))
+                                                " ms"))
+                                 ;; The UI is fully bound now. All follow-up work is either
+                                 ;; local or already asynchronous.
+                                 (vreset! startup-task ::settled)
+                                 (when-not (contains? @launch-member-ids* (str id)) (persist-tabs!))
+                                 (vreset! gateway-slash-load
+                                          (start-deferred-gateway-slash-load! id))
+                                 (when (and (:resume opts) (not (:dialog-open? @state/app-db)))
+                                   (show-sessions!)))
+                               (and error (vis-config/no-provider-ex error))
+                               (if (compare-and-set! startup-retried? false true)
+                                 (do
+                                   ;; The dialog must own input on THIS thread. Once it saves,
+                                   ;; re-arm the same deferred worker exactly once.
+                                   (with-dialog-lock #(open-settings-modal! screen "Providers"))
+                                   (rearm-startup!))
+                                 ;; Still no usable provider. Startup stops here instead of
+                                 ;; taking the application down: the screen stays open so the
+                                 ;; user can configure a provider and get a session afterwards.
+                                 (do (vreset! startup-task ::no-provider)
+                                     (vis/notify!
+                                       (str "No provider is configured yet. Press "
+                                            (keymap/label-for :providers)
+                                            " to add "
+                                            "one, and this session starts right after you save it.")
+                                       :level :warn
+                                       :ttl-ms nil)))
+                               :else (do (vreset! startup-task ::settled)
+                                         (throw (or error
+                                                    (ex-info
+                                                      "TUI startup worker returned no session"
+                                                      {})))))))))
                  retry-startup!
                  (fn []
                    ;; Runs after a provider dialog closes. Only a startup that gave up on a

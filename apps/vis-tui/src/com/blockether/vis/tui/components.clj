@@ -323,9 +323,9 @@
        ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
        [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
        [(keymap/label-for :session-metrics) "Session metrics — context health, totals and cache"]
-       [(keymap/label-for :export-session)
-        "Export session — HTML, Markdown, ATIF or a snapshot"]
-       [(keymap/label-for :import-session) "Import session — a snapshot or ATIF file as a new session"]]}
+       [(keymap/label-for :export-session) "Export session — HTML, Markdown, ATIF or a snapshot"]
+       [(keymap/label-for :import-session)
+        "Import session — a snapshot or ATIF file as a new session"]]}
      {:title "Subagents"
       :rows [[(keymap/label-for :toggle-agent-dock) "Show or hide the agent table of the dock"]
              [(str (keymap/group-chord :agents) " 1-9") "Open the subagent with that number"]

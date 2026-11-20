@@ -620,13 +620,11 @@
                        :owner :vis
                        :group :provider
                        :persist? true})
-    (register-toggle!
-      {:id "subagents"
-       :label "Subagents"
-       :description
-       "Let an agent start helper agents. Off stops all of them."
-       :default true
-       :owner :vis
-       :group :council
-       :persist? true})
+    (register-toggle! {:id "subagents"
+                       :label "Subagents"
+                       :description "Let an agent start helper agents. Off stops all of them."
+                       :default true
+                       :owner :vis
+                       :group :council
+                       :persist? true})
     true))

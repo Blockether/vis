@@ -5820,7 +5820,8 @@
             {:name name
              :label (if path label (str label " · Unavailable"))
              :target (when path
-                       {:doc {:path path :mime mime :name name :size-label size-label :title name}})})
+                       {:doc
+                        {:path path :mime mime :name name :size-label size-label :title name}})})
           (map (comp image-view-entry image-block-parts) nodes))
     {}))
 
@@ -6379,9 +6380,10 @@
                    ;; Adjacent pictures share one image table card.
                    (mapcat (fn [nodes]
                              (if (image-code-block? (first nodes))
-                               [[:card (if (timg/graphical-terminal?)
-                                         (image-table-entries nodes content-w opts)
-                                         (image-attachment-entries nodes))]]
+                               [[:card
+                                 (if (timg/graphical-terminal?)
+                                   (image-table-entries nodes content-w opts)
+                                   (image-attachment-entries nodes))]]
                                (map (fn [node]
                                       (cond (table-code-block? node)
                                             [:card (table-disclosure-entries node content-w opts)]

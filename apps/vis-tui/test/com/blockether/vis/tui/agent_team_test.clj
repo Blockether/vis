@@ -515,15 +515,20 @@
 
 ;; User report 2026-11-17: a task that waited for an earlier task opened an empty session, and
 ;; its row named each task of its after, also the completed ones.
-(defdescribe pending-agent-test
+(defdescribe
+  pending-agent-test
   (it "opens no session for a task that did not start, and names the tasks that it waits for"
-      (let [agents [(agent-row 1 "completed" "id" "a1")
-                    (agent-row 2 "running" "id" "a2")
-                    (agent-row 3 "waiting" "id" "a3" "after" ["a1" "a2"])]
-            blocked (assoc-in agents [2 "status"] "blocked")]
+      (let [agents
+            [(agent-row 1 "completed" "id" "a1") (agent-row 2 "running" "id" "a2")
+             (agent-row 3 "waiting" "id" "a3" "after" ["a1" "a2"])]
+
+            blocked
+            (assoc-in agents [2 "status"] "blocked")]
+
         (expect (= "waiting for a2" (:now (last (team/team-rows "turn-1" agents)))))
         (expect (= "a2 did not complete" (:now (last (team/team-rows "turn-1" blocked)))))
-        (expect (nil? (:agent-id (last (team/items agents nil)))) "Enter in the team modal opens nothing")
+        (expect (nil? (:agent-id (last (team/items agents nil))))
+                "Enter in the team modal opens nothing")
         (with-redefs [team/summary (constantly {:agents agents})]
           (expect (nil? (team/dock-agent-id "leader" "turn-1" 3)) "C-x t 3 opens nothing")
           (expect (= "s2" (team/dock-agent-id "leader" "turn-1" 2)))
@@ -611,61 +616,79 @@
 
 (defdescribe
   team-card-test
-  (it "keeps the final state of the team in the turn after the turn ends"
-      (with-redefs [team/summary (constantly {:agents (filterv #(not (contains? #{"queued"
-                                                                                  "running"}
-                                                                                (get % "status")))
-                                                        every-state)})]
-        (let [messages [{:role :user :session-turn-id "turn-1" :text "go"}
-                        {:role :assistant :session-turn-id "turn-1" :text "ok"}
-                        {:role :assistant :session-turn-id "turn-3" :text "other"}]
-              decorated (team/decorate-messages messages "leader")]
+  (it
+    "keeps the final state of the team in the turn after the turn ends"
+    (with-redefs [team/summary (constantly {:agents (filterv #(not (contains? #{"queued" "running"}
+                                                                              (get % "status")))
+                                                      every-state)})]
+      (let [messages [{:role :user :session-turn-id "turn-1" :text "go"}
+                      {:role :assistant :session-turn-id "turn-1" :text "ok"}
+                      {:role :assistant :session-turn-id "turn-3" :text "other"}]
+            decorated (team/decorate-messages messages "leader")]
 
-          (expect (= "turn-1" (get-in decorated [1 :agent-team-card :team-id])))
-          (expect (nil? (:agent-team-card (nth decorated 0))))
-          (expect (nil? (:agent-team-card (nth decorated 2))))
-          (expect (identical? (nth decorated 1) (nth (team/decorate-messages messages "leader") 1)))
-          (expect (= messages (team/decorate-messages messages "leader" "turn-1"))
-                  "The running turn shows its team in the dock, not in the transcript")
-          (let [project (fn [open?]
-                          (team/with-card-lines
-                            (assoc (nth (team/decorate-messages messages "leader" nil open?) 1)
-                              :prewrapped-lines ["ok"]
-                              :line-meta [nil])
-                            100))
-                projected (project #{"agent-team:turn-1"})
-                folded (project (constantly false))
-                head (some #(when (:team-head %) %) (:line-meta folded))]
-            (expect (= (count (:prewrapped-lines projected)) (count (:line-meta projected))))
-            (expect (some #(str/includes? % "All 120 tests pass") (:prewrapped-lines projected)))
-            (expect (some #(str/includes? % "▾ TEAM") (:prewrapped-lines projected)))
-            (expect (not-any? #(str/includes? % "Team ·") (:prewrapped-lines projected)))
-            ;; User request 2026-11-19: a team block starts folded; its head line unfolds it.
-            (expect (not-any? #(str/includes? % "All 120 tests pass") (:prewrapped-lines folded)))
-            (expect (some #(str/includes? % "▸ TEAM") (:prewrapped-lines folded)))
-            (expect (= {:session-id "leader" :node-id "agent-team:turn-1" :collapsed? true}
-                       (select-keys head [:session-id :node-id :collapsed?])))
-            (expect (= (- (count (:prewrapped-lines folded)) 1)
-                       (team/card-height (:agent-team-card (nth decorated 1)) 100)))))))
+        (expect (= "turn-1" (get-in decorated [1 :agent-team-card :team-id])))
+        (expect (nil? (:agent-team-card (nth decorated 0))))
+        (expect (nil? (:agent-team-card (nth decorated 2))))
+        (expect (identical? (nth decorated 1) (nth (team/decorate-messages messages "leader") 1)))
+        (expect (= messages (team/decorate-messages messages "leader" "turn-1"))
+                "The running turn shows its team in the dock, not in the transcript")
+        (let [project (fn [open?]
+                        (team/with-card-lines
+                          (assoc (nth (team/decorate-messages messages "leader" nil open?) 1)
+                            :prewrapped-lines ["ok"]
+                            :line-meta [nil])
+                          100))
+              projected (project #{"agent-team:turn-1"})
+              folded (project (constantly false))
+              head (some #(when (:team-head %) %) (:line-meta folded))]
+
+          (expect (= (count (:prewrapped-lines projected)) (count (:line-meta projected))))
+          (expect (some #(str/includes? % "All 120 tests pass") (:prewrapped-lines projected)))
+          (expect (some #(str/includes? % "▾ TEAM") (:prewrapped-lines projected)))
+          (expect (not-any? #(str/includes? % "Team ·") (:prewrapped-lines projected)))
+          ;; User request 2026-11-19: a team block starts folded; its head line unfolds it.
+          (expect (not-any? #(str/includes? % "All 120 tests pass") (:prewrapped-lines folded)))
+          (expect (some #(str/includes? % "▸ TEAM") (:prewrapped-lines folded)))
+          (expect (= {:session-id "leader" :node-id "agent-team:turn-1" :collapsed? true}
+                     (select-keys head [:session-id :node-id :collapsed?])))
+          (expect (= (- (count (:prewrapped-lines folded)) 1)
+                     (team/card-height (:agent-team-card (nth decorated 1)) 100)))))))
   ;; User report 2026-11-19: a turn that pinged its agents with a follow-up task showed no team.
-  (it "shows an agent in the turn that started it and in each turn that pinged it"
-      (let [pinged {"session_id" "a1" "parent_id" "leader" "team_id" "turn-1"
-                    "turn_ids" ["turn-1" "turn-3"] "status" "completed" "title" "Review"}
-            messages [{:role :assistant :session-turn-id "turn-1" :text "start" :session-agents [pinged]}
-                      {:role :assistant :session-turn-id "turn-2" :text "quiet"}
-                      {:role :assistant :session-turn-id "turn-3" :text "ping" :session-agents [pinged]}]
-            running (assoc pinged "status" "running")]
-        (with-redefs [team/summary (constantly {:agents []})]
-          (let [decorated (team/decorate-messages messages "leader")]
-            (expect (= ["turn-1" nil "turn-3"] (mapv #(get-in % [:agent-team-card :team-id]) decorated)))
-            (expect (= [1 1] (keep #(some-> % :agent-team-card :rows count) decorated))
-                    "The agent is one row in each card")))
-        (with-redefs [team/summary (constantly {:agents [running]})]
-          (expect (= #{"turn-3"} (team/dock-team-ids [running] "turn-3")))
-          (expect (= ["turn-1" nil nil]
-                     (mapv #(get-in % [:agent-team-card :team-id])
-                           (team/decorate-messages messages "leader" "turn-3")))
-                  "The pinging turn shows the agent in the dock while it runs"))))
+  (it
+    "shows an agent in the turn that started it and in each turn that pinged it"
+    (let [pinged
+          {"session_id" "a1"
+           "parent_id" "leader"
+           "team_id" "turn-1"
+           "turn_ids" ["turn-1" "turn-3"]
+           "status" "completed"
+           "title" "Review"}
+
+          messages
+          [{:role :assistant :session-turn-id "turn-1" :text "start" :session-agents [pinged]}
+           {:role :assistant :session-turn-id "turn-2" :text "quiet"}
+           {:role :assistant :session-turn-id "turn-3" :text "ping" :session-agents [pinged]}]
+
+          running
+          (assoc pinged "status" "running")]
+
+      (with-redefs [team/summary (constantly {:agents []})]
+        (let [decorated (team/decorate-messages messages "leader")]
+          (expect (= ["turn-1" nil "turn-3"]
+                     (mapv #(get-in % [:agent-team-card :team-id]) decorated)))
+          (expect (= [1 1]
+                     (keep #(some-> %
+                                    :agent-team-card
+                                    :rows
+                                    count)
+                           decorated))
+                  "The agent is one row in each card")))
+      (with-redefs [team/summary (constantly {:agents [running]})]
+        (expect (= #{"turn-3"} (team/dock-team-ids [running] "turn-3")))
+        (expect (= ["turn-1" nil nil]
+                   (mapv #(get-in % [:agent-team-card :team-id])
+                         (team/decorate-messages messages "leader" "turn-3")))
+                "The pinging turn shows the agent in the dock while it runs"))))
   (it "keeps a team with a working agent in the dock after its turn ends"
       (with-redefs [team/summary (constantly {:agents waiting-team})]
         (let [messages [{:role :assistant :session-turn-id "turn-1" :text "ok"}

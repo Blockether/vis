@@ -263,12 +263,11 @@
       (when-let [{:strs [base colors]} (get brand "theme")]
         (if-let [shipped (get theme/built-in-themes base)]
           (when-let [unknown (seq (remove (set (keys (theme/theme->web-css-vars shipped)))
-                                          (keys colors)))]
-            (str "theme.colors - the theme " base " has no variable " (str/join ", " (sort unknown))))
-          (str "theme.base - the web app ships no theme "
-               base
-               "; it ships "
-               (str/join ", " (sort (keys theme/built-in-themes))))))))
+                                    (keys colors)))]
+            (str "theme.colors - the theme " base
+                 " has no variable " (str/join ", " (sort unknown))))
+          (str "theme.base - the web app ships no theme " base
+               "; it ships " (str/join ", " (sort (keys theme/built-in-themes))))))))
 
 (defn brand
   "The saved brand of the web app as wire data, or `{}` when none is saved. A file

@@ -1247,7 +1247,8 @@
 (defn export-atif!
   "Fetch the ATIF JSON of a saved session. Answers the raw HTTP response."
   [sid]
-  (request! :get (str "/v1/sessions/" (enc sid) "/trajectory.json")
+  (request! :get
+            (str "/v1/sessions/" (enc sid) "/trajectory.json")
             {:as :string :timeout-ms 120000}))
 
 (defn run-tui!
