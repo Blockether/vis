@@ -868,13 +868,15 @@
                   leaf)))
 
 (defn- replace-spans
-  "Replace spans of `s` in one scan from the left. `(next-start s from)` gives the next
-   index from `from` where a span can start, or -1. `(span s i)` gives `[end text]` for
-   the span from `i` to `end` and its new text, `[end nil]` to keep the text to `end`, or
-   nil when no span starts at `i`. The result is `s` itself when no span has a new text."
-  [^String s next-start span]
+  "Replace spans of `s` in one scan. `start` is the first index where a span can start,
+   or -1 when `s` has no span.
+   `(next-start s from)` gives the next index from `from` where a span can start, or -1.
+   `(span s i)` gives `[end text]` for the span from `i` to `end` and its new text,
+   `[end nil]` to keep the text to `end`, or nil when no span starts at `i`. The result
+   is `s` itself when no span has a new text."
+  [^String s start next-start span]
   (loop [i
-         (long (next-start s 0))
+         (long start)
 
          from
          0
@@ -894,52 +896,146 @@
                              (.append ^String text))))))))
 
 (defmacro ^:private pair-code
-  "A code of the characters `a` and `b`, from 0 to 65535. A macro, because a function
+  "A code of the characters `a` and `b`, from 0 to 65535. With a `fold` of 0x20, an ASCII
+   letter has the same code in each case; else `fold` is 0. A macro, because a function
    call for each character of a text is slow."
-  [a b]
-  `(bit-or (bit-shift-left (bit-and (int ~a) 0xFF) 8) (bit-and (int ~b) 0xFF)))
+  [fold a b]
+  `(bit-or (bit-shift-left (bit-and (bit-or (int ~a) ~fold) 0xFF) 8)
+           (bit-and (bit-or (int ~b) ~fold) 0xFF)))
+
+(deftype LiteralIndex [^long width ^long fold ^bytes shifts ^objects groups])
 
 (defn- literal-index
-  "`literals` in a table by the [[pair-code]] of their first two characters, the longest
-   first. A literal of one character has no entry."
-  ^objects [literals]
-  (let [table (object-array 65536)]
-    (doseq [[k group] (->> (distinct literals)
-                           (filter #(<= 2 (count %)))
-                           (sort-by count >)
-                           (group-by (fn [^String literal]
-                                       (pair-code (.charAt literal 0) (.charAt literal 1)))))]
-      (aset table (int k) (into-array String group)))
-    table))
+  "An index of `literals` for a search that does not read each character of a text. A
+   window with the `width` of the shortest literal moves on the text. By the
+   [[pair-code]] of the last two characters of the window, `shifts` gives how far the
+   window moves before a literal can start in it. By the [[pair-code]] of their first
+   two characters, `groups` gives the literals, the longest first. A literal of one
+   character has no entry. When `fold-case?` is true, the literals are in lower case and
+   each letter case matches."
+  (^LiteralIndex [literals] (literal-index literals false))
+  (^LiteralIndex [literals fold-case?]
+   (let [literals
+         (->> (distinct literals)
+              (filter #(<= 2 (count %)))
+              (sort-by count >))
+
+         ;; A shift is a byte.
+         width
+         (long (apply min 128 (map count literals)))
+
+         fold
+         (if fold-case? 0x20 0)
+
+         shifts
+         (byte-array 65536 (byte (dec width)))
+
+         groups
+         (object-array 65536)]
+
+     ;; Only the first `width` characters of a literal are in the window.
+     (doseq [^String literal
+             literals
+
+             end
+             (range 1 width)]
+
+       (let [k (pair-code fold (.charAt literal (dec (long end))) (.charAt literal (long end)))]
+         (aset shifts k (byte (min (aget shifts k) (- width 1 (long end)))))))
+     (doseq [[k group] (group-by (fn [^String literal]
+                                   (pair-code fold (.charAt literal 0) (.charAt literal 1)))
+                                 literals)]
+       (aset groups (int k) (into-array String group)))
+     (LiteralIndex. width fold shifts groups))))
+
+(defmacro ^:private literals-at
+  "The literals of `groups` with the first two characters of `s` at `i`, or nil. `i` is
+   not the last index of `s`. A macro for the same reason as [[pair-code]]."
+  [groups fold s i]
+  `(aget ~groups (pair-code ~fold (.charAt ~s ~i) (.charAt ~s (inc ~i)))))
 
 (defn- literal-at
-  "The longest literal of `table` that starts at `i` in `s`, or nil."
-  [^objects table ^String s ^long i]
-  (when (< (inc i) (.length s))
-    (when-let [^objects literals (aget table (pair-code (.charAt s i) (.charAt s (inc i))))]
-      (loop [j 0]
-        (when (< j (alength literals))
-          (let [^String literal (aget literals j)]
-            (if (.startsWith s literal (int i)) literal (recur (inc j)))))))))
+  "The longest literal of `index` that starts at `i` in `s`, or nil."
+  [^LiteralIndex index ^String s ^long i]
+  (let [fold
+        (.-fold index)
 
-(defn- next-literal
-  "The first index from `from` in `s` where a literal of `table` starts, or -1. This is
-   one scan of `s`, while a regex of all literals tries each literal at each position."
-  ^long [^objects table ^String s ^long from]
-  (let [last (dec (.length s))]
+        ^objects groups
+        (.-groups index)]
+
+    (when (< (inc i) (.length s))
+      (when-let [^objects literals (literals-at groups fold s i)]
+        ;; One loop for each comparison, because a choice at each literal is slow.
+        (if (zero? fold)
+          (loop [j 0]
+            (when (< j (alength literals))
+              (let [^String literal (aget literals j)]
+                (if (.startsWith s literal (int i)) literal (recur (inc j))))))
+          (loop [j 0]
+            (when (< j (alength literals))
+              (let [^String literal (aget literals j)]
+                (if (.regionMatches s true (int i) literal 0 (.length literal))
+                  literal
+                  (recur (inc j)))))))))))
+
+(defn- literal-from
+  "The first index from `from` and before `stop` in `s` where a literal of `index` starts,
+   or -1. `stop` is at most the last index of `s`. This search tests each index."
+  ^long [^LiteralIndex index ^String s ^long from ^long stop]
+  (let [fold
+        (.-fold index)
+
+        ^objects groups
+        (.-groups index)]
+
     (loop [i from]
-      (cond (>= i last) -1
-            (and (aget table (pair-code (.charAt s i) (.charAt s (inc i)))) (literal-at table s i))
-            i
+      (cond (>= i stop) -1
+            (and (literals-at groups fold s i) (literal-at index s i)) i
             :else (recur (inc i))))))
 
+(defn- next-literal
+  "The first index from `from` in `s` where a literal of `index` starts, or -1. A regex of
+   all literals tries each literal at each index. This search reads the end of the
+   window and moves it by the shift of those characters."
+  ^long [^LiteralIndex index ^String s ^long from]
+  (let [n
+        (.length s)
+
+        width
+        (.-width index)
+
+        fold
+        (.-fold index)
+
+        ^bytes shifts
+        (.-shifts index)]
+
+    ;; A move waits for the read before it, so a move costs more than a test of one
+    ;; index. Thus a short window, which moves by few characters, tests each index.
+    (if (< width 6)
+      (literal-from index s from (dec n))
+      (loop [end (+ from (dec width))]
+        (if (>= end n)
+          -1
+          (let [shift (long (aget shifts (pair-code fold (.charAt s (dec end)) (.charAt s end))))]
+            (if (pos? shift)
+              (recur (+ end shift))
+              ;; A literal can start here. When it does not, the next shifts are often
+              ;; short too, so the search tests each index of one more window.
+              (let [start (- end (dec width))
+                    stop (min (dec n) (+ start width))
+                    i (literal-from index s start stop)]
+
+                (if (neg? i) (recur (+ stop (dec width))) i)))))))))
+
 (defn- replace-secrets
-  "Replace in `s` each secret of `table`, from the left, the longest first."
-  [^objects table ^String s]
+  "Replace in `s` each secret of `index`, from the left, the longest first."
+  [index ^String s]
   (replace-spans s
-                 #(next-literal table %1 (long %2))
+                 (next-literal index s 0)
+                 #(next-literal index %1 (long %2))
                  (fn [s i]
-                   [(+ (long i) (count (literal-at table s (long i)))) redacted])))
+                   [(+ (long i) (count (literal-at index s (long i)))) redacted])))
 
 (def ^:private token-format
   "Credentials that their form shows: provider API keys and access tokens of
@@ -970,19 +1066,24 @@
 
 (def ^:private url-credential
   "The user and password in the authority of a URL."
-  #"(?i)(?<![\w+.-])([a-z][a-z0-9+.-]*+://)[^\s/?#@:]++:[^\s/?#@]++@")
+  #"(?i)(?<![\w+.-])([a-z][a-z0-9+.-]*+://)(?-i)[^\s/?#@:]++:[^\s/?#@]++@")
 
 (defn- base64-text
   "The UTF-8 text that the base64 or base64url `run` encodes, or nil."
   [^String run]
-  (let [body (cond-> run
-               (or (str/includes? run "=") (str/includes? run "\n"))
-               (str/replace #"=+$|\r|\n" ""))]
-    (when-not (= 1 (mod (count body) 4))
-      (try (String. (.decode (if (or (str/includes? body "_") (str/includes? body "-"))
-                               (Base64/getUrlDecoder)
-                               (Base64/getDecoder))
-                             ^String body)
+  (let [body
+        (cond-> run
+          (or (str/includes? run "=") (str/includes? run "\n"))
+          (str/replace #"=+$|\r|\n" ""))
+
+        url?
+        (or (str/includes? body "_") (str/includes? body "-"))]
+
+    ;; A file path has the signs of the two alphabets. It is not base64, and the
+    ;; exception of the decoder is slow.
+    (when-not (or (= 1 (mod (count body) 4))
+                  (and url? (or (str/includes? body "/") (str/includes? body "+"))))
+      (try (String. (.decode (if url? (Base64/getUrlDecoder) (Base64/getDecoder)) ^String body)
                     StandardCharsets/UTF_8)
            (catch IllegalArgumentException _ nil)))))
 
@@ -1013,6 +1114,12 @@
       (aset table (int c) true))
     table))
 
+(defmacro ^:private base64-at?
+  "True when the character at `i` in `s` is in `table`, which is [[base64-chars]]."
+  [table s i]
+  `(let [c# (int (.charAt ~s ~i))]
+     (and (< c# 128) (aget ~table c#))))
+
 (defn- base64-end
   "The index after the base64 characters that start at `i` in `s`."
   ^long [^String s ^long i]
@@ -1023,10 +1130,7 @@
         base64-chars]
 
     (loop [j i]
-      (if (< j n)
-        (let [c (int (.charAt s j))]
-          (if (and (< c 128) (aget table c)) (recur (inc j)) j))
-        j))))
+      (if (and (< j n) (base64-at? table s j)) (recur (inc j)) j))))
 
 (defn- padded-end
   "The index after the `=` signs of the base64 run whose characters stop at `end` in `s`.
@@ -1043,52 +1147,67 @@
 
 (defn- base64-start
   "The first index from `from` in `s` where a base64 run starts that is long enough for a
-   credential, or -1. `from` is not in a run."
+   credential, or -1. A run that starts before `from` must not go on at `from`. Such a
+   run has the character that is `min-base64-length` after the last character out of a
+   run. Thus the search reads only that character and the run around it."
   [^String s from]
-  (let [n (.length s)]
-    (loop [i (long from)]
-      (if (>= i n)
-        -1
-        (let [end (base64-end s i)]
-          (if (< (- end i) (long min-base64-length)) (recur (max end (inc i))) i))))))
+  (let [n
+        (.length s)
+
+        minimum
+        (long min-base64-length)
+
+        ^booleans table
+        base64-chars]
+
+    ;; No run that is long enough starts before `low`, and no run goes on at `low`.
+    (loop [low (long from)]
+      (let [probe (+ low (dec minimum))]
+        (if (>= probe n)
+          -1
+          (let [start (long (loop [i probe]
+                              (if (and (>= i low) (base64-at? table s i)) (recur (dec i)) (inc i))))
+                end (long (loop [j (max start (inc probe))]
+                            (if (and (< j n) (< (- j start) minimum) (base64-at? table s j))
+                              (recur (inc j))
+                              j)))]
+
+            (if (< (- end start) minimum) (recur (inc end)) start)))))))
 
 (defn- replace-base64
   "Replace in `s` each base64 run for which `hidden?` is true."
   [^String s hidden?]
-  (let [n
-        (.length s)
-
-        wrapped
-        (delay (re-matcher wrapped-base64 s))
-
-        mask
-        (fn [run]
-          (when (hidden? run) redacted))]
-
-    (replace-spans
+  (let [start (long (base64-start s 0))]
+    (if (neg? start)
       s
-      base64-start
-      (fn [_ i]
-        (let [i
-              (long i)
+      (let [n (.length s)
+            wrapped (delay (re-matcher wrapped-base64 s))
+            mask (fn [run]
+                   (when (hidden? run) redacted))]
 
-              end
-              (base64-end s i)]
+        (replace-spans s
+                       start
+                       base64-start
+                       (fn [_ i]
+                         (let [i (long i)
+                               end (base64-end s i)]
 
-          ;; Only a line of 64 or 76 characters can start wrapped base64.
-          (if-let [^Matcher lines
-                   (when (and (#{64 76} (- end i)) (< end n) (#{\return \newline} (.charAt s end)))
-                     (let [^Matcher m @wrapped]
-                       (when (.lookingAt (.region m (int i) (int n))) m)))]
-            (let [block (subs s i (.end lines))]
-              [(.end lines)
-               (if (neg? (.start lines 1))
-                 ;; The lines do not end as base64, so each line is a run. All lines go
-                 ;; in this one span, because a new try at each line reads them all again.
-                 (str/replace block #"[^\r\n]+" #(or (mask %) %))
-                 (mask block))])
-            (let [e (padded-end s end)]
-              (if (neg? e) [end nil] [e (mask (subs s i e))]))))))))
+                           ;; Only a line of 64 or 76 characters can start wrapped base64.
+                           (if-let [^Matcher lines
+                                    (when (and (or (== 64 (- end i)) (== 76 (- end i)))
+                                               (< end n)
+                                               (#{\return \newline} (.charAt s end)))
+                                      (let [^Matcher m @wrapped]
+                                        (when (.lookingAt (.region m (int i) (int n))) m)))]
+                             (let [block (subs s i (.end lines))]
+                               [(.end lines)
+                                (if (neg? (.start lines 1))
+                                  ;; The lines do not end as base64, so each line is a run. All lines go
+                                  ;; in this one span, because a new try at each line reads them all again.
+                                  (str/replace block #"[^\r\n]+" #(or (mask %) %))
+                                  (mask block))])
+                             (let [e (padded-end s end)]
+                               (if (neg? e) [end nil] [e (mask (subs s i e))]))))))))))
 
 (defn- base64-candidate?
   "True for a run with a digit or with both letter cases."
@@ -1116,7 +1235,7 @@
   [scheme value]
   (re-pattern (str "(?i)(\\b(?:proxy-)?authorization[\"']?[ \\t]*[:=][ \\t]*[\"']?"
                    scheme
-                   "[ \\t]+)("
+                   "[ \\t]+)(?-i)("
                    value
                    ")")))
 
@@ -1138,7 +1257,7 @@
 
 (def ^:private cookie-value
   "A `Cookie` or `Set-Cookie` value up to the end of the line or the quote."
-  #"(?i)(\b(?:set-)?cookie[\"']?[ \t]*:[ \t]*[\"']?)([^\r\n\"']+)")
+  #"(?i)(\b(?:set-)?cookie[\"']?[ \t]*:[ \t]*[\"']?)(?-i)([^\r\n\"']+)")
 
 (defn- jwt?
   "True when the first part of `token` is a JSON header with an `alg` field."
@@ -1156,10 +1275,30 @@
 (defn- scheme-char?
   "True when the character with code `c` can be in the scheme of a URL."
   [^long c]
-  (or (<= 97 c 122) (<= 65 c 90) (<= 48 c 57) (== c 43) (== c 45) (== c 46)))
+  ;; A comparison of three numbers is a function call, and it is slow in a scan.
+  (or (and (<= 97 c) (<= c 122))
+      (and (<= 65 c) (<= c 90))
+      (and (<= 48 c) (<= c 57))
+      (== c 43)
+      (== c 45)
+      (== c 46)))
+
+(defn- user-part?
+  "True when an `@` is in the authority of a URL that starts at `i` in `s`. Only then can
+   a user and a password be there."
+  [^String s ^long i]
+  (let [n (.length s)]
+    (loop [j i]
+      (when (< j n)
+        (let [c (int (.charAt s j))]
+          ;; The authority stops at `/`, `?`, `#` or white space.
+          (cond (== c 64) true
+                (or (== c 47) (== c 63) (== c 35) (== c 32) (and (<= 9 c) (<= c 13))) false
+                :else (recur (inc j))))))))
 
 (defn- scheme-start
-  "The first index from `from` in `s` where the scheme of a URL starts, or -1."
+  "The first index from `from` in `s` where the scheme of a URL with a user part starts,
+   or -1."
   [^String s from]
   (loop [p (.indexOf s "://" (int from))]
     (if (neg? p)
@@ -1167,18 +1306,17 @@
       (let [q (long
                 (loop [q p]
                   (if (and (pos? q) (scheme-char? (int (.charAt s (dec q))))) (recur (dec q)) q)))]
-        (if (and (< q p) (<= (long from) q)) q (recur (.indexOf s "://" (inc p))))))))
+        (if (and (< q p) (<= (long from) q) (user-part? s (+ p 3)))
+          q
+          (recur (.indexOf s "://" (+ p 3))))))))
 
 (defn- word-start
   "A function that gives the first index from an index where `word` starts in a string, or
    where `prefix` starts when it is before the word; else -1. Each letter case matches.
    `word` and `prefix` are in lower case."
   [^String word ^String prefix]
-  (let [c
-        (int (.charAt word 0))
-
-        size
-        (.length word)
+  (let [index
+        (literal-index [word] true)
 
         before
         (.length prefix)]
@@ -1187,20 +1325,26 @@
       (let [from
             (long from)
 
-            last
-            (- (.length s) size)]
+            p
+            (next-literal index s from)
 
-        (loop [p from]
-          (cond (> p last) -1
-                (and (== c (bit-or (int (.charAt s p)) 0x20))
-                     (.regionMatches s true (int p) word 0 size))
-                (if (and (<= from (- p before))
-                         (.regionMatches s true (int (- p before)) prefix 0 before))
-                  (- p before)
-                  p)
-                :else (recur (inc p))))))))
+            q
+            (- p before)]
+
+        (if (and (<= from q) (.regionMatches s true (int q) prefix 0 before)) q p)))))
 
 (def ^:private token-index (literal-index token-markers))
+
+(defn- last-match
+  "A function that gives the index where the last match of `pattern` starts in a string,
+   or -1. Each match starts with `marker`, and the search goes back from the end."
+  [^String marker pattern]
+  (fn [^String s]
+    (let [m (re-matcher pattern s)]
+      (loop [i (.lastIndexOf s marker)]
+        (cond (neg? i) -1
+              (.lookingAt (.region m i (.length s))) i
+              :else (recur (.lastIndexOf s marker (dec i))))))))
 
 (def ^:private handle-form
   "A handle of a Vis secret."
@@ -1212,7 +1356,7 @@
   "A PEM block of a private key, to its end line."
   {:pattern (re-pattern (str private-key-start "[\\s\\S]*?" private-key-end))
    :start (index-of "-----BEGIN ")
-   :end private-key-end
+   :end (last-match "-----END " private-key-end)
    :replacement (constantly redacted)})
 
 (def ^:private cut-key-form
@@ -1226,15 +1370,12 @@
   "A PuTTY key file, to the value of its last line."
   {:pattern (re-pattern (str "(?s)PuTTY-User-Key-File-[0-9]+:.*?" putty-key-end))
    :start (index-of "PuTTY-User-Key-File-")
-   :end putty-key-end
+   :end (last-match "Private-MAC:" putty-key-end)
    :replacement (constantly redacted)})
 
 (def ^:private url-form
   {:pattern url-credential
    :start scheme-start
-   ;; The next scheme starts after the `://` of this one.
-   :skip (fn [^String s i]
-           (+ 3 (.indexOf s "://" (int i))))
    :replacement (fn [[_ scheme]]
                   (str scheme redacted "@"))})
 
@@ -1254,8 +1395,7 @@
                   (str prefix
                        (str/replace params
                                     #"(?i)\b(response|cnonce|nonce|opaque)=(\"?)[^\",\s]*+"
-                                    (fn [[_ k q]]
-                                      (str k "=" q redacted)))))})
+                                    (str "$1=$2" (Matcher/quoteReplacement redacted)))))})
 
 (def ^:private cookie-form
   {:pattern cookie-value
@@ -1263,21 +1403,13 @@
    :replacement (fn [[_ prefix value]]
                   (str prefix
                        (str/replace value
-                                    #"(^|;[ \t]*)([\w.-]+)=([^;\s]{8,})"
-                                    (fn [[_ start name]]
-                                      (str start name "=" redacted)))))})
+                                    #"(^|;[ \t]*)([\w.-]+)=[^;\s]{8,}"
+                                    (str "$1$2=" (Matcher/quoteReplacement redacted)))))})
 
 (def ^:private token-form
   {:pattern token-format
    :start #(next-literal token-index %1 (long %2))
    :replacement #(if (or (not (str/starts-with? % "eyJ")) (jwt? %)) redacted %)})
-
-(defn- last-start
-  "The index where the last match of `pattern` starts in `s`, or -1."
-  ^long [pattern ^String s]
-  (let [m (re-matcher pattern s)]
-    (loop [i -1]
-      (if (.find m) (recur (long (.start m))) i))))
 
 (defn- form-scan
   "The `[next-start span]` pair of `form` on `s` for [[replace-spans]]. It replaces each
@@ -1285,11 +1417,9 @@
    the regex runs only at some indexes, because a regex scan of each index is slow.
    - `(start s from)` gives the first index from `from` where a match can start, or -1.
      It must not miss a start.
-   - `:end` is a regex for the end of each match. Thus no match starts after the last
-     match of `:end`, and a try there reads the text to its end.
-   - `(skip s i)` gives the index to continue from when no match starts at `i`. No match
-     starts before it. Without `:skip`, this is the next index."
-  [^String s {:keys [pattern start end skip replacement]}]
+   - `(end s)` gives the index where the last end of a match starts. Thus no match
+     starts after it, and a try there reads the text to its end."
+  [^String s {:keys [pattern start end replacement]}]
   (let [n
         (.length s)
 
@@ -1298,7 +1428,7 @@
           (doto (re-matcher pattern s) (.useTransparentBounds true) (.useAnchoringBounds false)))
 
         limit
-        (delay (last-start end s))]
+        (delay (end s))]
 
     [(if end
        (fn [s from]
@@ -1307,19 +1437,21 @@
        start)
      (fn [_ i]
        (let [^Matcher m @matcher]
-         (cond (.lookingAt (.region m (int i) n)) [(.end m) (replacement (re-groups m))]
-               skip [(skip s i) nil])))]))
+         (when (.lookingAt (.region m (int i) n)) [(.end m) (replacement (re-groups m))])))]))
 
 (defn- replace-form
   "Replace in `s` each credential of `form`. See [[form-scan]]."
   [s form]
-  (let [[next-start span] (form-scan s form)]
-    (replace-spans s next-start span)))
+  ;; Most strings have no start, and the scan of a form costs more than this search.
+  (let [start (long ((:start form) s 0))]
+    (if (neg? start)
+      s
+      (let [[next-start span] (form-scan s form)]
+        (replace-spans s (next-start s start) next-start span)))))
 
 (defn- replace-first-form
   "Replace in `s` each credential of `forms` in one scan, as one regex of their patterns
-   does: the match that starts first, and at one index the first of `forms`. The forms
-   have no `:skip`."
+   does: the match that starts first, and at one index the first of `forms`."
   [^String s forms]
   (let [scans
         (map #(form-scan s %) forms)
@@ -1333,26 +1465,32 @@
         ;; The next start of each form, or -1. A form without a later start does not
         ;; read the text again.
         nexts
-        (long-array (map #(% s 0) starts))]
+        (long-array (map #(% s 0) starts))
 
-    (replace-spans
-      s
-      (fn [s from]
-        (let [from (long from)]
-          (loop [k 0
-                 least -1]
+        next-start
+        (fn [s from]
+          (let [from (long from)]
+            (loop [k 0
+                   least -1]
 
-            (if (< k (alength nexts))
-              (let [known (aget nexts k)
-                    ;; A start before `from` is old.
-                    i (long (if (< -1 known from) (aset nexts k (long ((starts k) s from))) known))]
+              (if (< k (alength nexts))
+                (let [known (aget nexts k)
+                      ;; A start before `from` is old.
+                      i (long (if (and (<= 0 known) (< known from))
+                                (aset nexts k (long ((starts k) s from)))
+                                known))]
 
-                (recur (inc k) (if (and (<= 0 i) (or (neg? least) (< i least))) i least)))
-              least))))
-      (fn [s i]
-        (loop [k 0]
-          (when (< k (alength nexts))
-            (or (when (== (long i) (aget nexts k)) ((spans k) s i)) (recur (inc k)))))))))
+                  (recur (inc k) (if (and (<= 0 i) (or (neg? least) (< i least))) i least)))
+                least))))]
+
+    (replace-spans s
+                   (next-start s 0)
+                   next-start
+                   (fn [s i]
+                     (loop [k 0]
+                       (when (< k (alength nexts))
+                         (or (when (== (long i) (aget nexts k)) ((spans k) s i))
+                             (recur (inc k)))))))))
 
 (defn- redact-forms
   "Replace in `s` each credential that its form shows."
