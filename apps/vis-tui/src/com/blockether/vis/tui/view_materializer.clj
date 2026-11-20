@@ -641,6 +641,15 @@
   (when (seq data)
     (str "<!-- vis:data " (str/replace (wire/json-str data) "-->" "--\\u003e") " -->")))
 
+(defn- anchor-lines
+  "The diff lines of a thread anchor as text: `4`, `2-4` for a range, or
+   `old 5 to new 3` for a range that starts on the other side."
+  [{:keys [start-line start-side side line]}]
+  (cond (and start-line start-side (not= (name start-side) (name side)))
+        (str (name start-side) " " start-line " to " (name side) " " line)
+        (and start-line (not= start-line line)) (str start-line "-" line)
+        :else (str line)))
+
 (defn- message-lines
   "One readable quote line for each thread message."
   [messages]
@@ -672,7 +681,7 @@
                                                                :body
                                                                (fn [body]
                                                                  (str (:path anchor)
-                                                                      ":" (:line anchor)
+                                                                      ":" (anchor-lines anchor)
                                                                       " " body)))
                                                       messages)))
                                 threads))))

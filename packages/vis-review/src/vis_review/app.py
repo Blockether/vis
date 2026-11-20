@@ -869,9 +869,13 @@ class ReviewApp:
         lines = []
         for comment in comments:
             anchor = comment.get("anchor") or {}
-            where = (
-                f"{anchor.get('path')}:{anchor.get('line')}" if anchor else "the change"
-            )
+            first, last = anchor.get("start_line"), anchor.get("line")
+            side, start_side = anchor.get("side"), anchor.get("start_side")
+            if first and start_side and start_side != side:
+                span = f"{start_side} {first} to {side} {last}"
+            else:
+                span = f"{first}-{last}" if first and first != last else f"{last}"
+            where = f"{anchor.get('path')}:{span}" if anchor else "the change"
             lines.append(f"- {where}: {str(comment.get('body', '')).strip()}")
         if not lines:
             return
