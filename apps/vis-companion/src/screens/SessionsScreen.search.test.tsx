@@ -560,6 +560,32 @@ describe('the search dialog opens on the recent sessions', () => {
     expect(within(pane).getByText('Three steps.')).toBeVisible();
   });
 
+  // Regression, user report (paraphrased: in C-x s s I must move between the sessions with
+  // the arrows, on desktop and web): the arrows did nothing, and a blank field dropped
+  // every pick.
+  it('moves the pick with the arrows and opens it with Enter', async () => {
+    const onOpen = vi.fn();
+    const view = renderSessionsScreen({ machines: recents([newer, older]), isSearchOpen: true, onOpen });
+    restore = view.restore;
+    await waitFor(() => expect(rowOrder('Recent sessions')).toEqual(['newer', 'older']));
+    const field = screen.getByRole('searchbox', { name: 'Search session titles and messages' });
+    const heading = () => within(screen.getByRole('region', { name: 'Matching messages' })).getByRole('heading');
+
+    fireEvent.keyDown(field, { key: 'ArrowDown' });
+    await waitFor(() => expect(heading()).toHaveTextContent('Older work'));
+    // The last row stays picked.
+    fireEvent.keyDown(field, { key: 'ArrowDown' });
+    expect(heading()).toHaveTextContent('Older work');
+    fireEvent.keyDown(field, { key: 'ArrowUp' });
+    await waitFor(() => expect(heading()).toHaveTextContent('Newer work'));
+    fireEvent.keyDown(field, { key: 'ArrowDown' });
+    await waitFor(() => expect(heading()).toHaveTextContent('Older work'));
+    expect(onOpen).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(field, { key: 'Enter' });
+    await waitFor(() => expect(onOpen.mock.calls.map((call) => call[1])).toEqual(['older']));
+  });
+
   it('asks for the query instead once typing rests, and for the recents again when cleared', async () => {
     const view = renderSessionsScreen({ machines: recents([newer, older]), isSearchOpen: true });
     restore = view.restore;

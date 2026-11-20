@@ -1933,23 +1933,36 @@ export function SessionsScreen({
   // have the pane too, because the dialog is always split, as the terminal switcher is. The
   // pane is never empty beside a list, and it starts where the switcher's cursor does: on
   // the session the reader is in.
+  // The arrow keys pick a row too, with or without a query, so the pick lasts until the
+  // dialog closes.
   const [previewPick, setPreviewPick] = useState<string | null>(null);
-  if (!searching && previewPick !== null) setPreviewPick(null);
-  const preview = useMemo(() => {
-    let open: { session: Session; conn: GatewayConn } | null = null;
-    let first: { session: Session; conn: GatewayConn } | null = null;
-    for (const { machine, groups } of foundSections) {
-      for (const group of groups) {
-        for (const session of group.sessions) {
-          if (session.id === previewPick) return { session, conn: machine.conn };
-          if (sessionRowKey(machine.conn, session.id) === openRow) open ??= { session, conn: machine.conn };
-          first ??= { session, conn: machine.conn };
-        }
-      }
-    }
-    return open ?? first;
-  }, [foundSections, previewPick, openRow]);
+  if (!isSearchOpen && previewPick !== null) setPreviewPick(null);
+  // The rows in the order the dialog paints them: flat, machine by machine.
+  const foundRows = useMemo(
+    () =>
+      foundSections.flatMap(({ machine, searchSessions }) =>
+        searchSessions.map((session) => ({ session, conn: machine.conn })),
+      ),
+    [foundSections],
+  );
+  const preview = useMemo(
+    () =>
+      foundRows.find(({ session }) => session.id === previewPick) ??
+      foundRows.find(({ session, conn }) => sessionRowKey(conn, session.id) === openRow) ??
+      foundRows[0] ??
+      null,
+    [foundRows, previewPick, openRow],
+  );
   const previewId = preview?.session.id ?? null;
+  // Up and Down move the pick one row, as in the terminal switcher; it stops at either end.
+  const movePreview = useCallback(
+    (step: 1 | -1) => {
+      const at = foundRows.findIndex(({ session }) => session.id === previewId);
+      const next = foundRows[Math.min(Math.max(at + step, 0), foundRows.length - 1)];
+      if (next) setPreviewPick(next.session.id);
+    },
+    [foundRows, previewId],
+  );
   const openPreview = useCallback(() => {
     if (!preview) return;
     rowCommands.read?.(preview.conn, preview.session);
@@ -2452,6 +2465,9 @@ export function SessionsScreen({
           query={query}
           onQuery={onQuery}
           onClose={onCloseSearch}
+          activeId={previewId}
+          onMove={movePreview}
+          onPick={openPreview}
           scope={<SessionSearchScopes scope={searchScope} machine={searchMachine} report={searchReport} />}
           results={searchResults}
           messages={

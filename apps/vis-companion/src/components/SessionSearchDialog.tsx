@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode, type RefObject } from 'react';
+import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { SearchIcon } from './icons';
 import { CloseButton, DialogFrame, Input, Modal } from './ui';
 
@@ -15,11 +15,16 @@ import { CloseButton, DialogFrame, Input, Modal } from './ui';
  * Clearing the query hides it again, so recent sessions use the full available height.
  * From 40rem of dialog width, sessions and messages stay side by side, even before you type.
  * Closing the dialog clears the query, so the next search starts from recent sessions.
+ * Up and Down move the picked session, in the field and in the list; Enter in the field
+ * opens it.
  */
 export function SessionSearchDialog({
   query,
   onQuery,
   onClose,
+  activeId = null,
+  onMove,
+  onPick,
   scope = null,
   results,
   messages = null,
@@ -29,6 +34,12 @@ export function SessionSearchDialog({
   onQuery: (next: string) => void;
   /** Leave the search. The shell clears the query with it. */
   onClose: () => void;
+  /** The session whose messages the pane shows. Its row stays in view. */
+  activeId?: string | null;
+  /** Pick the next (1) or the previous (-1) session in the list. */
+  onMove?: (step: 1 | -1) => void;
+  /** Open the picked session. */
+  onPick?: () => void;
   /** The band under the field: where the search looks and what came back. */
   scope?: ReactNode;
   /** The sessions the search found, or the state that stands in for them. */
@@ -53,11 +64,36 @@ export function SessionSearchDialog({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+  // Keep the picked row in view as the arrows move it.
+  const resultsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!activeId) return;
+    resultsRef.current
+      ?.querySelector(`[data-session-id="${CSS.escape(activeId)}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [activeId]);
+  const onArrow = (event: ReactKeyboardEvent) => {
+    if (!onMove || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.nativeEvent.isComposing || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
+    event.preventDefault();
+    onMove(event.key === 'ArrowDown' ? 1 : -1);
+  };
+  // A rename field or an open menu inside a row keeps its own arrows.
+  const onListKey = (event: ReactKeyboardEvent) => {
+    if (event.target instanceof Element && event.target.closest('input, textarea, [role="menu"]')) return;
+    onArrow(event);
+  };
+  const onFieldKey = (event: ReactKeyboardEvent) => {
+    onArrow(event);
+    if (event.key !== 'Enter' || !onPick || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    onPick();
+  };
   return (
     <Modal onDismiss={onClose} size="split">
       <DialogFrame title="Search sessions" onClose={onClose} closeLabel="Close search">
         <div className="shrink-0 border-b border-dialog-edge px-3 py-3 sm:px-4">
-          <SearchField inputRef={inputRef} value={query} onValue={onQuery} />
+          <SearchField inputRef={inputRef} value={query} onValue={onQuery} onKeyDown={onFieldKey} />
           {scope && <div className="mt-3">{scope}</div>}
         </div>
         <div className="@container/search flex min-h-0 flex-1 flex-col">
@@ -65,7 +101,9 @@ export function SessionSearchDialog({
             {/* Rows answer their width to the pane they stand in (`@container`), exactly as
                 they do in the list. */}
             <div
+              ref={resultsRef}
               role="region"
+              onKeyDown={onListKey}
               aria-label={query.trim() ? 'Matching sessions' : 'Recent sessions'}
               className="@container min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain bg-page pb-3 @min-[40rem]/search:w-[clamp(20rem,45%,30rem)] @min-[40rem]/search:flex-none"
             >
@@ -90,16 +128,19 @@ function SearchField({
   inputRef,
   value,
   onValue,
+  onKeyDown,
 }: {
   inputRef: RefObject<HTMLInputElement | null>;
   value: string;
   onValue: (value: string) => void;
+  onKeyDown: (event: ReactKeyboardEvent) => void;
 }) {
   return (
     <Input
       ref={inputRef}
       value={value}
       onChange={(event) => onValue(event.target.value)}
+      onKeyDown={onKeyDown}
       type="search"
       enterKeyHint="search"
       autoCorrect="off"
