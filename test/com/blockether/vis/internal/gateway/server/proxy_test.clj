@@ -3,6 +3,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.config.core :as config-core]
             [com.blockether.vis.internal.gateway.server.instance :as instance]
             [com.blockether.vis.internal.gateway.server.proxy :as proxy]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
@@ -112,6 +113,11 @@
               [status (read-line* in)])
           [status])))))
 
+(defn- proxy-answer
+  "The JSON answer of `GET /v1/proxy`."
+  []
+  (wire/parse-json (:body ((get proxy/handlers [:get "/v1/proxy"]) {:request-method :get}))))
+
 (defdescribe
   proxy-listener
   (it
@@ -142,6 +148,13 @@
             (let [port (proxy/sync!)]
               (expect (pos-int? port))
               (expect (= port (proxy/sync!)) "a repeated sync keeps the listener")
+              (expect (= {"is_enabled" true
+                          "port" port
+                          "allowed_domains" ["localhost"]
+                          "denied_domains" []
+                          "ports" [up gw]}
+                         (proxy-answer))
+                      "a client gets the port and the domains of the running listener")
               (expect (= ["407"] (connect! port (str "localhost:" up) nil)))
               (expect (= ["407"] (connect! port (str "localhost:" up) "wrong")))
               (expect (= ["200" "hello"] (connect! port (str "localhost:" up) "tok")))
@@ -149,9 +162,9 @@
               (expect (= ["403"] (connect! port (str "localhost:" gw) "tok")) "the gateway port")
               (expect (= ["403"] (connect! port (str "localhost:" port) "tok")) "the proxy port")
               (with-redefs-fn {#'proxy/global-settings real-global-settings
-                               #'com.blockether.vis.internal.config.core/load-global-config-raw
-                               (fn []
-                                 (throw (ex-info "broken YAML" {})))}
+                               #'config-core/load-global-config-raw (fn []
+                                                                      (throw (ex-info "broken YAML"
+                                                                                      {})))}
                 #(expect (= ["403"] (connect! port (str "localhost:" up) "tok"))
                          "an unreadable configuration refuses, never opens every host"))
               (swap! current assoc :denied-domains ["127.0.0.1"])
@@ -162,6 +175,13 @@
                       "a domain change applies to the next connection")
               (reset! current nil)
               (expect (nil? (proxy/sync!)))
+              (expect (= {"is_enabled" false
+                          "port" nil
+                          "allowed_domains" []
+                          "denied_domains" []
+                          "ports" []}
+                         (proxy-answer))
+                      "a client routes no link when the proxy is off")
               (expect (throws? ConnectException #(connect! port (str "localhost:" up) "tok"))
                       "the listener stops when the configuration turns the proxy off"))))
         (finally (proxy/stop!)
