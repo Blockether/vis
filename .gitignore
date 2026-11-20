@@ -76,6 +76,7 @@ jobs/
 .verification/
 # Claude Code local tooling state (machine-local settings + run locks).
 .claude/
+CLAUDE.local.md
 hs_err_pid*.log
 
 # python bytecode
