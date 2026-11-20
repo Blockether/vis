@@ -87,13 +87,11 @@ def _app(session_id, journal):
     """The review app of a session and a journal, made once and not yet open."""
     app = RECORDER.app(session_id, journal.root)
     if app is None:
-        session = vis.sessions.get(session_id)
         app = ReviewApp(
             journal,
             extension_opener,
             call=_call,
             ask=_ask,
-            send=session.send,
             is_session_scoped=True,
             key="review-" + hashlib.sha256(journal.root.encode()).hexdigest()[:8],
         )

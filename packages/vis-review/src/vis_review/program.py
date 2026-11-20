@@ -91,16 +91,14 @@ def serve(client, root, *, session_id=None, every=2.0, seconds=None, ready=None)
         return client.create_session(root=root).run(request, response_model=model)
 
     if session_id is None:
-        opener, send = global_opener(client), None
+        opener = global_opener(client)
     else:
-        session = client.session(session_id)
-        opener, send = session_opener(session), session.send
+        opener = session_opener(client.session(session_id))
     app = ReviewApp(
         journal,
         opener,
         call=local_call(root),
         ask=ask,
-        send=send,
         key="review-" + os.path.basename(root),
     ).open()
     recorder.keep(key, app)

@@ -2,8 +2,9 @@
 
 `ReviewApp` works the same at both doors. `opener(declaration, on_event)` opens
 the app (or adopts it by key) and answers its `vis.LiveAttachment` handle. The
-door also gives `call` for the language tools, `ask` for the AI review and `send`
-for the review comments that a person sends to the session.
+door also gives `call` for the language tools and `ask` for the AI review. A
+comment of a person stays a draft of the diff: the next message of the session
+takes it.
 
 Every paint renders the whole app and replaces only the nodes that changed. The
 first node never changes, so each node keeps its place.
@@ -42,7 +43,7 @@ FULL_CONTEXT = 1_000_000
 # Checkpoints and files that a toolbar menu lists, newest checkpoint first.
 MOST_MENU_ITEMS = 40
 _AUTHOR = {"kind": "extension", "name": "vis-review"}
-EVENT_FIELDS = ("type", "node_id", "values", "submission_id", "comments", "item_ids")
+EVENT_FIELDS = ("type", "node_id", "values", "item_ids")
 BUTTONS = (
     "session",
     "all",
@@ -140,7 +141,6 @@ class ReviewApp:
         *,
         call: Callable[..., object] | None = None,
         ask: Callable[..., object] | None = None,
-        send: Callable[[str], object] | None = None,
         key: str = "review",
         title: str = "Review",
         clock: Callable[[], float] = time.time,
@@ -150,7 +150,6 @@ class ReviewApp:
         self._opener = opener
         self._call = call
         self._ask = ask
-        self._send = send
         self.key = key
         self.title = title
         self._clock = clock
@@ -659,8 +658,6 @@ class ReviewApp:
                 self.refresh()
             elif kind == "activate" and node in BUTTONS:
                 getattr(self, "_" + node.replace("-", "_"))()
-            elif kind == "submit":
-                self._comments(event)
 
     def _choose_checkpoint(self, ids) -> None:
         seq = int(ids[0]) if ids else None
@@ -862,39 +859,6 @@ class ReviewApp:
         self.refresh(
             ("; ".join(parts) + (f" (#{done.entry.seq})" if done.entry else ""), tone)
         )
-
-    def _comments(self, event: dict) -> None:
-        comments = event.get("comments") or []
-        submission = event.get("submission_id")
-        lines = []
-        for comment in comments:
-            anchor = comment.get("anchor") or {}
-            first, last = anchor.get("start_line"), anchor.get("line")
-            side, start_side = anchor.get("side"), anchor.get("start_side")
-            if first and start_side and start_side != side:
-                span = f"{start_side} {first} to {side} {last}"
-            else:
-                span = f"{first}-{last}" if first and first != last else f"{last}"
-            where = f"{anchor.get('path')}:{span}" if anchor else "the change"
-            lines.append(f"- {where}: {str(comment.get('body', '')).strip()}")
-        if not lines:
-            return
-        end = self.end or self.journal.last
-        text = (
-            f"Review comments on checkpoints #{self.start}..#{end} under {self.journal.root}:\n"
-            + "\n".join(lines)
-        )
-        if self._send is None:
-            self.log("Refused the comments: this app cannot send to a session", "warn")
-            if submission:
-                self.view.set_status(
-                    submission, "failed", note="This app cannot send to a session."
-                )
-            return
-        self._send(text)
-        if submission:
-            self.view.set_status(submission, "answered", note="Sent to the session.")
-        self.refresh(("Sent the comments to the session", "ok"))
 
 
 def image_node(diff: FileDiff, blob: Callable[[str], bytes | None]) -> dict | None:
