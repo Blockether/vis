@@ -160,6 +160,41 @@ describe('deleting a project asks inside its own menu', () => {
   });
 });
 
+// Regression, user report: a project deleted from the desktop came back on every
+// refresh. Its folder still held archived sessions, the overview counted them, and
+// the purge walk read only the unarchived list, so it deleted nothing.
+describe('deleting a folder-only project', () => {
+  it('deletes its archived sessions too', async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: 'alpha',
+          sessions: [
+            listSession({ id: 'a1', title: 'First' }),
+            listSession({ id: 'a2', title: 'Put away', archived_at: 1 }),
+          ],
+        },
+      ],
+    });
+    restore = view.restore;
+    await screen.findByText('First');
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for project' }));
+    const sheet = await screen.findByRole('dialog', { name: 'project' });
+    view.requests.length = 0;
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Delete project' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete it and its sessions/ }));
+
+    await waitFor(() =>
+      expect(
+        view.requests
+          .filter((request) => request.method === 'DELETE')
+          .map((request) => request.path)
+          .sort(),
+      ).toEqual(['/v1/sessions/a1', '/v1/sessions/a2']),
+    );
+  });
+});
+
 // Regression, issue #2216: deleting ONE session re-read the WHOLE fleet's session
 // list — every paired machine, every window of it — although the app already knew
 // exactly which row had gone. On a few-hundred-session store that was ~315 KB
