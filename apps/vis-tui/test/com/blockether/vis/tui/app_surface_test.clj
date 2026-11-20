@@ -49,6 +49,8 @@
                   (swap! calls conj [:save action]))
          :send! (fn [action node-id]
                   (swap! calls conj [:send action node-id]))
+         :comment! (fn []
+                     (swap! calls conj [:comment]))
          :activate! (fn [action]
                       (swap! calls conj [:activate action]))
          :reload! (fn []
@@ -216,6 +218,16 @@
           (expect (= (first keys) (second keys)))
           (expect (not= (second keys) (nth keys 2)))
           (expect (= (nth keys 2) (get-in again [:send :key])))))
+    ;; The next turn of the session carries the saved comments, not an app Send.
+    (it "sends the saved comments with a turn of the session"
+        (let [commented
+              (assoc-in view [:nodes 0 :threads 0 :draft] "")
+
+              {:keys [press start calls]}
+              (harness commented)]
+
+          (press start (k \s false))
+          (expect (= [[:comment]] @calls))))
     ;; Issue #421: a wire view can keep the button action as a string.
     (it "sends only from a submit button, also when its action is a string"
         (doseq [[action expected] [[:submit [:send :submit "go"]] ["submit" [:send :submit "go"]]
