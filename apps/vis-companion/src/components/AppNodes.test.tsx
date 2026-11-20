@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Issue #421: the review nodes of an app attachment. A diff line opens a thread,
-// a draft saves only with the host acknowledgement, and Send reuses one
-// idempotency key until the host answers.
+// a draft saves only with the host acknowledgement, and the next message of the
+// session adds the saved drafts.
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -38,9 +38,7 @@ const DIFF: LiveDiffNode = {
 function actions(overrides: Partial<AppNodeActions> = {}): AppNodeActions {
   return {
     isReadOnly: false,
-    submissions: [],
     draft: vi.fn(async (): Promise<AppActionResult> => ({ status: 'saved', seq: 5 })),
-    send: vi.fn(async (): Promise<AppActionResult> => ({ status: 'saved', seq: 6 })),
     ...overrides,
   };
 }
@@ -85,8 +83,8 @@ describe('DiffNodeView', () => {
 
   it('keeps the history and the saved draft on Cancel', () => {
     render(<DiffNodeView node={DIFF} actions={actions()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Edit draft' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Edit draft' }), {
+    fireEvent.click(screen.getByRole('button', { name: 'Edit note' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Note' }), {
       target: { value: 'changed' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -264,11 +262,11 @@ describe('DiffNodeView', () => {
   it('is read only without app actions and when the app is closed', () => {
     const { unmount } = render(<DiffNodeView node={DIFF} />);
     expect(screen.queryByRole('button', { name: /Comment on/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Edit draft' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
     unmount();
     render(<DiffNodeView node={DIFF} actions={actions({ isReadOnly: true })} />);
     expect(screen.queryByRole('button', { name: /Comment on/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Send Review' })).toHaveProperty('disabled', true);
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
   });
 });
 
@@ -284,7 +282,7 @@ describe('Save states', () => {
       draft: vi.fn(() => new Promise<AppActionResult>((resolve) => (finish = resolve))),
     });
     render(<DiffNodeView node={DIFF} actions={app} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Edit draft' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit note' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText('Saving')).toBeInTheDocument();
     await act(async () => finish({ status }));
@@ -293,52 +291,25 @@ describe('Save states', () => {
   });
 });
 
-describe('Send', () => {
-  // User report: a Send with nothing to send stood under the diff, at the panel edge.
-  it('shows no Send without a saved draft', () => {
-    render(<DiffNodeView node={{ ...DIFF, threads: [] }} actions={actions()} />);
-    expect(screen.queryByRole('button', { name: 'Send Review' })).toBeNull();
+describe('comments for the next message', () => {
+  const finding = { ...DIFF.threads[0], draft: undefined };
+
+  it('adds a finding to the next message without a note', async () => {
+    const app = actions();
+    render(<DiffNodeView node={{ ...DIFF, threads: [finding] }} actions={app} />);
+    expect(screen.queryByRole('button', { name: /^Send/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to message' }));
+    // The editor replaces the button; its own submit button has the same name.
+    fireEvent.click(screen.getByRole('button', { name: 'Add to message' }));
+    await waitFor(() => expect(app.draft).toHaveBeenCalledWith('review', { threadId: 't1', body: '' }));
   });
 
-  it('reuses one idempotency key on retry and shows the receipts', async () => {
-    const results: AppActionResult[] = [{ status: 'offline' }, { status: 'saved', seq: 7 }];
-    const app = actions({
-      send: vi.fn(async (): Promise<AppActionResult> => results.shift() ?? { status: 'saved' }),
-    });
-    const { rerender } = render(<DiffNodeView node={DIFF} actions={app} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Send Review' }));
-    expect(await screen.findByText('Offline')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Send Review' }));
-    await waitFor(() => expect(app.send).toHaveBeenCalledTimes(2));
-    const [first, second] = vi.mocked(app.send).mock.calls;
-    expect(first[1]).toBe(second[1]);
-    rerender(
-      <DiffNodeView
-        node={DIFF}
-        actions={{
-          ...app,
-          submissions: [
-            {
-              id: 's1',
-              idempotency_key: first[1],
-              node_id: 'review',
-              status: 'answered',
-              created_at: 1,
-              updated_at: 2,
-              comments: [
-                {
-                  node_id: 'review',
-                  thread_id: 't1',
-                  message_id: 'm2',
-                  body: 'x',
-                },
-              ],
-            },
-          ],
-        }}
-      />,
-    );
-    expect(screen.getByRole('list', { name: 'Receipts' }).textContent).toContain('Answered · 1 comment');
+  it('removes a saved comment', async () => {
+    const app = actions();
+    render(<DiffNodeView node={DIFF} actions={app} />);
+    expect(screen.getByText('Looks fine')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(app.draft).toHaveBeenCalledWith('review', { threadId: 't1', body: null }));
   });
 });
 

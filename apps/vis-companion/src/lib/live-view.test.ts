@@ -460,6 +460,17 @@ describe('a patch frame', () => {
     expect(applyLivePatch(entry, frame(app, 1, [{ op: 'set', node_id: 'now', text: 'Scanning db-3' }]))).toBe(entry);
   });
 
+  // The composer shows the comments of a list entry. A patch that can change them
+  // makes the entry stale, so the list is read again.
+  it('reads a list entry again when a patch changes its comments', () => {
+    const entry = appSummary({ ...opened(), placement: 'attachment' });
+    const thread = { id: 't1', anchor: { path: 'a.txt', side: 'new', line: 2 }, messages: [], draft: 'Rename' };
+    expect(applyLivePatch(entry, frame(entry, 1, [{ op: 'thread', node_id: 'review', thread }])).is_stale).toBe(true);
+    const held = { ...entry, drafts: [{ node_id: 'review', thread_id: 't1', body: 'Rename' }] };
+    expect(applyLivePatch(held, frame(held, 1, [{ op: 'remove', node_id: 'review', item_ids: ['t1'] }])).is_stale).toBe(true);
+    expect(applyLivePatch(held, frame(held, 1, [{ op: 'set', node_id: 'now', text: 'x' }]))).toBe(held);
+  });
+
   // Report: an opened review read its whole view again after each change of one
   // file. A read with `since` now gives the long patch as edits of the held string.
   it('folds a frame with a splice into the long string that the view holds', () => {

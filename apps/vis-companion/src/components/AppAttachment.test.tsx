@@ -161,8 +161,8 @@ describe('AppSurface', () => {
       throw new GatewayError(409, 'conflict', { is_accepted: false, reason: 'conflict', seq: 5 });
     });
     open(client, hub);
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit draft' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Edit draft' }), { target: { value: 'Mine, edited' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit note' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Mine, edited' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText('Changed elsewhere')).toBeInTheDocument();
     expect(viewAction.mock.calls[0][2]).toEqual({
@@ -191,8 +191,8 @@ describe('AppSurface', () => {
     const { client } = fakeClient(disconnected ? [disconnected] : [], async () => ({}));
     open(client, null);
     expect(await screen.findByText('Disconnected')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Edit draft' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Send review' })).toHaveProperty('disabled', true);
+    expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
   });
 
   it('names a closed app once and never as Done', async () => {
