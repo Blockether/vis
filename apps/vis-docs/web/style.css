@@ -327,14 +327,26 @@ button.quiet {
 #copy-status:empty {
   display: none;
 }
-.install-scope {
-  display: grid;
-  gap: 0.5rem;
-  justify-self: start;
-  min-width: 12rem;
+.install-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 2rem;
 }
-.install-section > button {
-  justify-self: start;
+.install-scope {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  white-space: nowrap;
+}
+.install-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+.content .install-actions p {
+  margin: 0;
 }
 .detail-heading h1:focus {
   outline: none;
@@ -622,6 +634,11 @@ dialog form label {
   }
   .version-picker label {
     grid-column: 1 / -1;
+  }
+  .install-controls,
+  .install-scope {
+    display: grid;
+    gap: 0.5rem;
   }
   .version-picker .vis-select,
   .version-picker select {
