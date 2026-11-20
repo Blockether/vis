@@ -1,5 +1,6 @@
 import {
   type ComponentProps,
+  type CSSProperties,
   memo,
   type ReactNode,
   useCallback,
@@ -93,8 +94,8 @@ import { appIconName } from './lib/view';
 import { CommandSurface } from './components/CommandSurface';
 import { CommandProvider, CommandRegistry, useCommands, type CommandHandlers } from './lib/commands';
 import { AppIcon, AppsIcon, SearchIcon, SettingsIcon } from './components/icons';
-import { GlobalApps, useGlobalApps } from './components/GlobalApps';
-import { listedGlobalApps } from './lib/global-apps';
+import { GlobalApps } from './components/GlobalApps';
+import { listedGlobalApps, useGlobalApps } from './lib/global-apps';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
@@ -136,7 +137,7 @@ import {
   relayUrlFor,
   unregisterFromPush,
 } from './lib/relay';
-import { isShellChromeVisible, isShellSplit, shellScreen } from './lib/shell';
+import { isShellChromeVisible, isShellSplit, shellScreen, type ShellScreen } from './lib/shell';
 import { useZenMode } from './lib/transcript-display';
 import { useDeskRail } from './lib/fit-rows';
 import {
@@ -262,6 +263,35 @@ const PHONE_LIST_CLASS = 'isolate h-full';
  */
 const PARKED_LIST_CLASS =
   'absolute inset-0 -z-10 [content-visibility:hidden] not-supports-[content-visibility:hidden]:invisible';
+
+/** The phone page that a back stroke drags: the open session, or the list under it. A desk has none. */
+function edgePage(screen: ShellScreen, isDesk: boolean): 'pane' | 'under' | null {
+  if (isDesk) return null;
+  if (screen === 'session') return 'pane';
+  if (screen === 'sessions') return 'under';
+  return null;
+}
+
+interface SessionListState {
+  screen: ShellScreen;
+  isVisible: boolean;
+  canSplit: boolean;
+  isSplit: boolean;
+  width: number | null;
+}
+
+interface SessionListBox {
+  className: string;
+  style?: CSSProperties;
+}
+
+/** The box of the session list: the desk's rail, the phone's page, or parked out of view. */
+function sessionListBox({ screen, isVisible, canSplit, isSplit, width }: SessionListState): SessionListBox {
+  if (isVisible && isSplit) return { className: sidebarRailClass(true), style: sidebarRailStyle(true, width) };
+  if (isVisible) return { className: PHONE_LIST_CLASS };
+  if (canSplit) return { className: sidebarRailClass(false), style: sidebarRailStyle(false, width) };
+  return { className: screen === 'session' ? PHONE_LIST_CLASS : PARKED_LIST_CLASS };
+}
 /**
  * THE PHONE'S PANE IS A LAYER BEFORE A FINGER COMES DOWN. The edge swipe gives the
  * pane a `z-index` when a touch starts in the edge strip. That made the pane a
@@ -289,6 +319,15 @@ function SessionsList(props: ComponentProps<typeof SessionsScreen>) {
   return <MemoSessionsScreen {...props} isVisible={isVisible} openSession={openSession} />;
 }
 
+interface SessionPaneProps {
+  paneRef: (element: HTMLElement | null) => void;
+  className: string;
+  /** Closing now uncovers the phone's list: hold the pane for that list's first frame. */
+  isHeld: boolean;
+  /** The open session's screen; nothing once no session is open. */
+  children: ReactNode;
+}
+
 /**
  * THE TRANSCRIPT YOU LEAVE GOES AFTER THE LIST IS BACK ON THE GLASS. Unmounting it
  * tears down thousands of nodes with their effects and subscriptions, and in the
@@ -299,19 +338,7 @@ function SessionsList(props: ComponentProps<typeof SessionsScreen>) {
  * list is on screen takes it down. Anything else that closes the pane closes it at
  * once.
  */
-function SessionPane({
-  paneRef,
-  className,
-  isHeld,
-  children,
-}: {
-  paneRef: (element: HTMLElement | null) => void;
-  className: string;
-  /** Closing now uncovers the phone's list: hold the pane for that list's first frame. */
-  isHeld: boolean;
-  /** The open session's screen; nothing once no session is open. */
-  children: ReactNode;
-}) {
+function SessionPane({ paneRef, className, isHeld, children }: SessionPaneProps) {
   // The screen it last showed, kept the way React keeps a previous prop: the render
   // that closes the pane is the one that still needs it.
   const [held, setHeld] = useState<ReactNode>(null);
@@ -342,7 +369,11 @@ function SessionPane({
   );
 }
 
-export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
+interface AppProps {
+  launch?: WebLaunch | null;
+}
+
+export function App({ launch = null }: AppProps = {}) {
   // Warm the split screens once the shell is up — off the critical path, so the
   // launch frame stays the list and the first tap still opens instantly.
   useEffect(() => {
@@ -1426,7 +1457,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   // transcript off the same way (`edgeBack.leave`). Only the phone's two pages slide:
   // a session that opens from a cold start or from Machines has no list to slide over.
   const edgeBack = useEdgeBack(!isDesk && openTarget ? leaveSession : null, {
-    page: isDesk ? null : shellView === 'session' ? 'pane' : shellView === 'sessions' ? 'under' : null,
+    page: edgePage(shellView, isDesk),
   });
 
   useEffect(() => {
@@ -1483,6 +1514,13 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   const sessionsMounted = conns.length > 0 && !!active;
   const sessionsVisible =
     isSplit || edgeBack.isSwiping || (shellView === 'sessions' && (!isDesk || isSidebarShown));
+  const listBox = sessionListBox({
+    screen: shellView,
+    isVisible: sessionsVisible,
+    canSplit,
+    isSplit,
+    width: sidebarWidth,
+  });
 
   return (
     <CommandProvider registry={commandRegistry}>
@@ -1522,26 +1560,8 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
             {sessionsMounted && (
               <div
                 ref={edgeBack.under}
-                className={
-                  !sessionsVisible
-                    ? canSplit
-                      ? sidebarRailClass(false)
-                      : shellView === 'session'
-                        ? PHONE_LIST_CLASS
-                        : PARKED_LIST_CLASS
-                    : isSplit
-                      ? sidebarRailClass(true)
-                      : PHONE_LIST_CLASS
-                }
-                style={
-                  !sessionsVisible
-                    ? canSplit
-                      ? sidebarRailStyle(false, sidebarWidth)
-                      : undefined
-                    : isSplit
-                      ? sidebarRailStyle(true, sidebarWidth)
-                      : undefined
-                }
+                className={listBox.className}
+                style={listBox.style}
                 aria-hidden={!sessionsVisible || undefined}
               >
                 {isSplit && sessionsVisible && (
@@ -1677,23 +1697,25 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   );
 }
 
+interface ShellCommandsProps {
+  handlers: CommandHandlers;
+}
+
 /** Registers the shell's verbs inside the provider that the shell itself renders. */
-function ShellCommands({ handlers }: { handlers: CommandHandlers }) {
+function ShellCommands({ handlers }: ShellCommandsProps) {
   useCommands(handlers);
   return null;
 }
 
-export function Header({
-  onSearch,
-  onAppSettings,
-  globalApps,
-}: {
+interface HeaderProps {
   /** Open the search dialog. `null` while there is no session list to search. */
   onSearch: (() => void) | null;
   onAppSettings: () => void;
   /** The global apps button. Absent while no global app is listed. */
   globalApps?: { count: number; isOpen: boolean; onOpen: () => void };
-}) {
+}
+
+export function Header({ onSearch, onAppSettings, globalApps }: HeaderProps) {
   // `/` opens the search from anywhere on the shell except a field, where it is a
   // character someone is typing. From a field, C-x s s opens it, as in the TUI
   // (`CommandSurface`). A chord with a modifier is never this key. Another dialog
@@ -1842,7 +1864,11 @@ function Splash() {
   );
 }
 
-export function Shell({ children }: { children: ReactNode }) {
+interface ShellProps {
+  children: ReactNode;
+}
+
+export function Shell({ children }: ShellProps) {
   // Keep the shell in the page's layout layer: absolute positioning avoids the
   // lagging fixed WebKit layer during rotation. The viewport hook mutates only
   // this root's geometry synchronously, without a React render between focus

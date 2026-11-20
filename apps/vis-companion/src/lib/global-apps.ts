@@ -4,8 +4,13 @@
  * so a new or restored stream reads the list again.
  */
 
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { isAppSurfaceSetting } from './app-surfaces';
 import { appStateWord, foldAppEvent, newerAppView, type AppFold } from './app-view';
+import { onSettingChange, type GatewayClient } from './gateway';
 import { appSummary, liveViewFromWire, type LiveView } from './live-view';
+import type { SessionSubscriptionHub } from './subscriptions';
 import type { SseEvent } from './types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT } from './view';
 
@@ -77,4 +82,69 @@ export function listedGlobalApps(apps: readonly LiveView[]): LiveView[] {
 export function globalAppStateWord(view: Pick<LiveView, 'is_closed' | 'is_archived' | 'is_disconnected'>): string {
   const word = appStateWord(view);
   return word === 'Disconnected' ? 'Program not connected' : word;
+}
+
+/**
+ * The global apps of the gateway, oldest first. Empty until the gateway answers,
+ * and empty while the person turns global apps off.
+ *
+ * The list follows the fleet stream. A lost frame, a new stream and a saved app
+ * setting read the list again, because the fleet stream has no replay.
+ *
+ * It is not in `GlobalApps.tsx`: a module that the shell imports keeps only
+ * components, so a change below it refreshes in place.
+ */
+export function useGlobalApps(client: GatewayClient | null, hub: SessionSubscriptionHub | null): LiveView[] {
+  const [apps, setAppsState] = useState<LiveView[]>([]);
+  const held = useRef<LiveView[]>([]);
+  const [generation, setGeneration] = useState(0);
+  const setApps = useCallback((next: LiveView[]) => {
+    held.current = next;
+    setAppsState(next);
+  }, []);
+  const reread = useCallback(() => setGeneration((one) => one + 1), []);
+
+  useEffect(() => {
+    if (!client) return;
+    const controller = new AbortController();
+    client
+      .globalApps(controller.signal)
+      .then((views) => {
+        if (controller.signal.aborted) return;
+        // A slow list never undoes a patch that arrived while it was read.
+        const now = held.current;
+        setApps(views.map((read) => newerAppView(now.find((one) => one.id === read.id) ?? null, read)));
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) console.warn('global apps: list failed', error);
+      });
+    return () => controller.abort();
+  }, [client, generation, setApps]);
+
+  useEffect(() => {
+    if (!client) return;
+    return onSettingChange(client.base, (updated) => {
+      if (isAppSurfaceSetting(updated.id)) reread();
+    });
+  }, [client, reread]);
+
+  useEffect(() => {
+    if (!hub) return;
+    const offEvents = hub.subscribeFleet((event) => {
+      const folded = foldGlobalApps(held.current, event);
+      if (folded.apps !== held.current) setApps(folded.apps);
+      if (folded.isReread) reread();
+    });
+    let wasStreaming: boolean | null = null;
+    const offState = hub.subscribeFleetState((streaming) => {
+      if (streaming && wasStreaming === false) reread();
+      wasStreaming = streaming;
+    });
+    return () => {
+      offEvents();
+      offState();
+    };
+  }, [hub, setApps, reread]);
+
+  return client ? apps : [];
 }
