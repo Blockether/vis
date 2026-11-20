@@ -44,12 +44,13 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - name: Verify tag, main, and VIS_VERSION are identical
+      # A commit pushed to main after the tag does not stop the release.
+      - name: Verify the tag, VIS_VERSION and that main contains the tag
         run: |
           set -euo pipefail
           test "$RELEASE_TAG" = "v$(tr -d '[:space:]' < VIS_VERSION)"
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
-          test "$(git rev-parse origin/main)" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor HEAD origin/main
       - name: Prepare unpublished release
         run: |
           set -euo pipefail
