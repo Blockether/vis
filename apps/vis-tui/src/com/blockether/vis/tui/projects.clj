@@ -303,6 +303,7 @@
               [(merge {:kind :project-select
                        :project project
                        :label (project-label project)
+                       :selected? (contains? (:selected-projects sidebar) pid)
                        :tab-count (long (or (get project "session_count") 0))
                        :expanded? expanded?
                        :action [:toggle-project pid]}
@@ -476,71 +477,72 @@
   [db]
   (cond (get-in db [:project-sidebar :search]) (search-entries db)
         (contains? (:project-sidebar db) :pages) (saved-entries db)
-        :else (->>
-                (get-in db [:project-sidebar :items])
-                (mapcat
-                  (fn [project]
-                    (let [pid
-                          (str (get project "id"))
+        :else
+        (->>
+          (get-in db [:project-sidebar :items])
+          (mapcat
+            (fn [project]
+              (let [pid
+                    (str (get project "id"))
 
-                          tabs
-                          (filterv #(= pid (:project-id %)) (:tabs db))
+                    tabs
+                    (filterv #(= pid (:project-id %)) (:tabs db))
 
-                          waiting
-                          (filterv #(:human-input (tab-state db %)) tabs)
+                    waiting
+                    (filterv #(:human-input (tab-state db %)) tabs)
 
-                          unread
-                          (set (filter #(and (:unread? %) (not= (:id %) (:active-tab-id db))) tabs))
+                    unread
+                    (set (filter #(and (:unread? %) (not= (:id %) (:active-tab-id db))) tabs))
 
-                          running
-                          (count (filter #(let [local (tab-state db %)] (and (:loading? local)
-                                                                             (not (:human-input
-                                                                                    local))))
-                                         tabs))
+                    running
+                    (count (filter #(let [local (tab-state db %)] (and (:loading? local)
+                                                                       (not (:human-input local))))
+                                   tabs))
 
-                          counts
-                          (project-counts project running (count waiting) (count unread))]
+                    counts
+                    (project-counts project running (count waiting) (count unread))]
 
-                      (into
-                        [{:kind :project-select
-                          :project project
-                          :label (project-label project)
-                          :tab-count (if (seq tabs) (count tabs) (get project "session_count" 0))
-                          :running (:running counts)
-                          :needs-input (:needs-input counts)
-                          :stopped (:stopped counts)
-                          :unread (:unread counts)
-                          :action [:select project]}]
-                        (concat
-                          ;; Groups nest under their project: a group row is the project's
-                          ;; own structure, so it sits above the attention rows.
-                          (map (fn [group]
-                                 {:kind :project-group
-                                  :project project
-                                  :group group
-                                  :label (get group "name" "Untitled group")
-                                  :color (get group "color")
-                                  :group-count (long (or (get group "session_count") 0))
-                                  :action [:select project]})
-                               (get-in db [:project-sidebar :groups pid]))
-                          (map (fn [tab]
-                                 (let [local
-                                       (tab-state db tab)
+                (into
+                  [{:kind :project-select
+                    :project project
+                    :label (project-label project)
+                    :selected? (contains? (get-in db [:project-sidebar :selected-projects]) pid)
+                    :tab-count (if (seq tabs) (count tabs) (get project "session_count" 0))
+                    :running (:running counts)
+                    :needs-input (:needs-input counts)
+                    :stopped (:stopped counts)
+                    :unread (:unread counts)
+                    :action [:select project]}]
+                  (concat
+                    ;; Groups nest under their project: a group row is the project's
+                    ;; own structure, so it sits above the attention rows.
+                    (map (fn [group]
+                           {:kind :project-group
+                            :project project
+                            :group group
+                            :label (get group "name" "Untitled group")
+                            :color (get group "color")
+                            :group-count (long (or (get group "session_count") 0))
+                            :action [:select project]})
+                         (get-in db [:project-sidebar :groups pid]))
+                    (map (fn [tab]
+                           (let [local
+                                 (tab-state db tab)
 
-                                       session-id
-                                       (or (get-in local [:session :id])
-                                           (get-in local [:human-input :request :session-id]))]
+                                 session-id
+                                 (or (get-in local [:session :id])
+                                     (get-in local [:human-input :request :session-id]))]
 
-                                   {:kind (if (:human-input local) :project-input :project-unread)
-                                    :project project
-                                    :tab-id (:id tab)
-                                    :unread? (contains? unread tab)
-                                    :label (model/title-or-placeholder (:label tab))
-                                    :action [:session (str session-id)]}))
-                               (filter #(or (:human-input (tab-state db %)) (contains? unread %))
-                                       tabs)))))))
-                (map-indexed #(assoc %2 :index (inc (long %1))))
-                vec)))
+                             {:kind (if (:human-input local) :project-input :project-unread)
+                              :project project
+                              :tab-id (:id tab)
+                              :unread? (contains? unread tab)
+                              :label (model/title-or-placeholder (:label tab))
+                              :action [:session (str session-id)]}))
+                         (filter #(or (:human-input (tab-state db %)) (contains? unread %))
+                                 tabs)))))))
+          (map-indexed #(assoc %2 :index (inc (long %1))))
+          vec)))
 
 (defn- tab-entry-inputs
   "The fields of one tab state that sidebar rows read: its session, draft, queue and status."
@@ -1552,6 +1554,12 @@
         moving
         (long (if (contains? selected sid) (count selected) 1))
 
+        picked
+        (get-in db [:project-sidebar :selected-projects] #{})
+
+        removing
+        (long (if (contains? picked pid) (count picked) 1))
+
         archived-group?
         (some? (get group "archived_at"))]
 
@@ -1634,7 +1642,14 @@
              (menu-item :move-project "Change folder…" :change-folder)
              (menu-item :settings "Project settings…" :settings)
              (menu-item :refresh "Refresh projects" :refresh)
-             (menu-item :delete-project "Remove project and sessions…" :delete)])))
+             (menu-item :pick-project
+                        (if (contains? picked pid) "Deselect project" "Select project")
+                        :select)
+             (menu-item :delete-project
+                        (if (> removing 1)
+                          (str "Remove " removing " selected projects and sessions…")
+                          "Remove project and sessions…")
+                        :delete)])))
 
 (defn- archive-menu-items
   "The two archive switches of the project that holds `entry`, each with its key."
@@ -1723,6 +1738,12 @@
   "Row kinds that own row verbs."
   #{:project-select :project-group :project-set :project-session})
 
+(defn selected-projects
+  "The projects that the human selected in the rail, in rail order."
+  [db]
+  (let [picked (get-in db [:project-sidebar :selected-projects] #{})]
+    (filterv #(contains? picked (str (get % "id"))) (get-in db [:project-sidebar :items]))))
+
 (defn focused-entry
   "The entry under the sidebar cursor, or nil on the header row."
   [db]
@@ -1755,8 +1776,10 @@
         (when (menu-kinds (:kind entry)) (some #(when (= c (:key %)) %) (row-menu-items db entry)))]
 
     (cond (is? :search) [:search]
-          (is? :select)
-          (if session? [:toggle-session (str (get-in entry [:project "id"])) sid] [:noop])
+          (is? :select) (cond session? [:toggle-session (str (get-in entry [:project "id"])) sid]
+                              (= :project-select (:kind entry))
+                              [:pick-project (str (get-in entry [:project "id"]))]
+                              :else [:noop])
           (is? :details) (if session? [:details sid] [:noop])
           (is? :add-here) (if-let [choice (add-choice entry)]
                             [:menu (assoc entry :initial-action choice)]

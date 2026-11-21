@@ -500,7 +500,7 @@
    {:id :use-project :key \p :label "Use the project"}
    {:id :change-folder :key \F :label "Change the project folder"}
    {:id :settings :key \s :label "Open settings for the row"}
-   {:id :select :key \space :label "Select or clear a session"}
+   {:id :select :key \space :label "Select or clear a session or project"}
    {:id :move :key \m :label "Move sessions to a group"}
    {:id :ungroup :key \u :label "Take sessions out of a group"}
    {:id :details :key \d :label "Show session details"}

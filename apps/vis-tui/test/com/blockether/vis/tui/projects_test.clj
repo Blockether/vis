@@ -3781,16 +3781,16 @@
                     vis/notify!
                     (fn [& _])]
 
-        (#'screen/remove-project! nil project-a)
+        (#'screen/remove-projects! nil [project-a])
         (expect (empty? @calls) "Cancel sends no destructive request")
         (reset! answer true)
         (reset! failure true)
-        (#'screen/remove-project! nil project-a)
+        (#'screen/remove-projects! nil [project-a])
         (expect (= [[:delete "a" {:is-recursive? true}]] @calls))
         (expect (= "a2" (get-in @state/app-db [:project-sidebar :pages "a" :sessions 0 "id"])))
         (expect (some #(= :tab-2 (:id %)) (:tabs @state/app-db)))
         (reset! failure false)
-        (#'screen/remove-project! nil project-a)
+        (#'screen/remove-projects! nil [project-a])
         (expect (= [:refresh] (last @calls)))
         (expect (not-any? #(= :tab-2 (:id %)) (:tabs @state/app-db)))
         (expect (= "b" (:active-project-id @state/app-db))
@@ -3814,9 +3814,9 @@
                                  (fn [f]
                                    (f))
 
-                                 screen/remove-project!
-                                 (fn [_ project]
-                                   (swap! calls conj [:remove (get project "id")]))]
+                                 screen/remove-projects!
+                                 (fn [_ projects]
+                                   (swap! calls conj [:remove (get (first projects) "id")]))]
 
                      (#'screen/sidebar-row-menu!
                       nil
@@ -3968,6 +3968,74 @@
                      (expect (= "b" (:active-project-id @state/app-db)))
                      (expect (= (second @started) (:build-id (last (:tabs @state/app-db)))))))))
 
+(defn- pick-project!
+  "Put the rail cursor on the row of project `pid` and press the select key."
+  [pid]
+  (let [index (first (keep-indexed #(when (and (= :project-select (:kind %2))
+                                               (= pid (get-in %2 [:project "id"])))
+                                      %1)
+                                   (#'projects/sidebar-entries @state/app-db)))]
+    (swap! state/app-db assoc-in [:project-sidebar :index] (inc (long index)))
+    (let [[action value] (projects/char-action @state/app-db \space)]
+      (expect (= [:pick-project pid] [action value]))
+      (state/dispatch [:project-select-toggle value]))))
+
+;; User request: select many projects and remove them at once, as with sessions.
+(defdescribe
+  selected-projects-are-removed-after-one-confirm-test
+  (it
+    "removes every selected project after one confirm and keeps a refused one selected"
+    (let [confirms
+          (atom 0)
+
+          calls
+          (atom [])]
+
+      (with-redefs [state/app-db
+                    (atom (fixture-db))
+
+                    screen/with-dialog-lock
+                    (fn [f]
+                      (f))
+
+                    dlg/confirm-dialog!
+                    (fn [& _]
+                      (swap! confirms inc)
+                      true)
+
+                    vis/worker-future
+                    (fn [_ f]
+                      (f))
+
+                    vis/gateway-delete-project!
+                    (fn [pid _]
+                      (swap! calls conj pid)
+                      (when (= "b" pid) (throw (ex-info "busy" {})))
+                      {"deleted_session_ids" []})
+
+                    screen/refresh-projects!
+                    (fn [])
+
+                    vis/notify!
+                    (fn [& _])]
+
+        (pick-project! "a")
+        (pick-project! "b")
+        (expect (some #(= "Remove 2 selected projects and sessions…" (:label %))
+                      (#'projects/row-menu-items
+                       @state/app-db
+                       {:kind :project-select :project project-a})))
+        (#'screen/sidebar-row-menu!
+         nil
+         {:kind :project-select :project project-a :initial-action :delete-project}
+         nil)
+        (expect (= 1 @confirms))
+        (expect (= ["a" "b"] @calls))
+        (expect (= ["b"] (mapv #(get % "id") (get-in @state/app-db [:project-sidebar :items]))))
+        (expect (= #{"b"} (get-in @state/app-db [:project-sidebar :selected-projects])))
+        (expect (str/includes? (get-in @state/app-db [:project-sidebar :error])
+                               "1 of 2 projects"))))))
+
 (defdescribe project-removal-shows-progress-before-request-test
              (it "project removal shows progress before request"
                  (let [pending (atom nil)]
@@ -3979,7 +4047,7 @@
                                  vis/worker-future (fn [_ f]
                                                      (reset! pending f))]
 
-                     (#'screen/remove-project! nil project-a)
+                     (#'screen/remove-projects! nil [project-a])
                      (expect (= "a" (get-in @state/app-db [:project-sidebar :removing])))
                      (expect (fn? @pending))))))
 
@@ -4710,6 +4778,9 @@
 
                                   :toggle-session
                                   [:toggle-session "a" sid]
+
+                                  :pick-project
+                                  [:pick-project (get-in entry [:project "id"])]
 
                                   :refresh
                                   [:refresh]

@@ -2712,6 +2712,7 @@
                                           (update :groups dissoc pid)
                                           (update :group-total dissoc pid)
                                           (update :selected dissoc pid)
+                                          (update :selected-projects disj pid)
                                           (update :session-archived? dissoc pid)
                                           (update :group-archived? dissoc pid)
                                           (update :groups-folded? dissoc pid)
@@ -3322,6 +3323,13 @@
                            [:project-sidebar :selected pid]
                            (fn [selected]
                              ((if (contains? selected sid) disj conj) (or selected #{}) sid)))))
+
+(reg-event-db :project-select-toggle
+              (fn [db [_ pid]]
+                (update-in db
+                           [:project-sidebar :selected-projects]
+                           (fn [selected]
+                             ((if (contains? selected pid) disj conj) (or selected #{}) pid)))))
 
 (reg-event-db :project-sessions-moved
               (fn [db [_ pid succeeded]]

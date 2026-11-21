@@ -410,3 +410,56 @@ describe('archiving a Shift-selected batch of sessions', () => {
     expect(screen.getByText('Four')).toBeVisible();
   });
 });
+
+// User request: select many projects at once, as with sessions, and delete them together.
+describe('deleting a selected batch of projects', () => {
+  it('the Delete key asks once on the first project and deletes only the selected ones', async () => {
+    const matchMedia = window.matchMedia;
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      ...matchMedia(query),
+      matches: query === '(pointer: fine)',
+    }));
+    const at = (minute: number) => new Date(Date.UTC(2024, 4, 1, 10, minute)).toISOString();
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: 'alpha',
+          sessions: [
+            listSession({ id: 'o1', title: 'In one', modified_at: at(3), workspace: { root: '/Users/dev/one' } }),
+            listSession({ id: 't1', title: 'In two', modified_at: at(2), workspace: { root: '/Users/dev/two' } }),
+            listSession({ id: 'h1', title: 'In three', modified_at: at(1), workspace: { root: '/Users/dev/three' } }),
+          ],
+        },
+      ],
+    });
+    restore = () => {
+      view.restore();
+      vi.restoreAllMocks();
+    };
+    await screen.findByText('In one');
+    const header = (name: string) => screen.getByRole('button', { name: new RegExp(`^(Expand|Collapse) ${name}$`) });
+    fireEvent.click(header('two'), { ctrlKey: true });
+    fireEvent.click(header('one'), { ctrlKey: true });
+    expect(screen.getByRole('region', { name: 'one sessions, selected' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'two sessions, selected' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'three sessions' })).toBeInTheDocument();
+    view.requests.length = 0;
+
+    fireEvent.keyDown(window, { key: 'Delete' });
+    const sheet = await screen.findByRole('dialog', { name: 'one' });
+    expect(view.requests.some((request) => request.method === 'DELETE')).toBe(false);
+    fireEvent.click(within(sheet).getByRole('button', { name: /^Delete 2 projects and their sessions/ }));
+
+    await waitFor(() =>
+      expect(
+        view.requests
+          .filter((request) => request.method === 'DELETE')
+          .map((request) => request.path)
+          .sort(),
+      ).toEqual(['/v1/sessions/o1', '/v1/sessions/t1']),
+    );
+    await waitFor(() => expect(screen.queryByRole('region', { name: /^two sessions/ })).toBeNull());
+    expect(screen.queryByRole('region', { name: /^one sessions/ })).toBeNull();
+    expect(screen.getByRole('region', { name: 'three sessions' })).toBeInTheDocument();
+  });
+});

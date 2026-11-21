@@ -10,6 +10,7 @@ import {
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
+  type MouseEvent,
   type MouseEventHandler,
   type ReactNode,
   type Ref,
@@ -117,10 +118,13 @@ export const HEADER_COUNTS =
 export function SectionHeader({
   children,
   isExpanded = false,
+  isSelected = false,
   onContextMenu,
 }: {
   children: ReactNode;
   isExpanded?: boolean;
+  /** The project is in a Shift or Command selection. The band stays opaque, because it is sticky. */
+  isSelected?: boolean;
   /** A pointer's secondary click opens the band's own menu, the same one as its `⋯`. */
   onContextMenu?: MouseEventHandler<HTMLElement>;
 }) {
@@ -143,7 +147,9 @@ export function SectionHeader({
     <header
       ref={headerRef}
       className={`${HEADER_BAND} sticky top-0 flex ${
-        isExpanded
+        isSelected
+          ? 'bg-[color-mix(in_srgb,var(--color-accent)_15%,var(--color-project-header))] [--hover:color-mix(in_srgb,var(--color-accent)_20%,var(--color-project-header))]'
+          : isExpanded
           ? 'bg-project-header-active [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header-active))]'
           : 'bg-project-header [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))]'
       } mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
@@ -348,7 +354,8 @@ export function ProjectCrumb({
   /** The fold to expose, or null when this project has no session list. */
   disclosure: {
     isOpen: boolean;
-    onToggle: () => void;
+    /** Takes the click, so a Shift or Command click can select the project instead. */
+    onToggle: (event: MouseEvent<HTMLButtonElement>) => void;
     /** What the fold is called to a screen reader: `Collapse vis`. */
     label: string;
   } | null;

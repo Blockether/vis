@@ -670,6 +670,23 @@ export type ProjectActions = {
 };
 
 /**
+ * The projects of one machine that the reader selected, to delete them together. Shift
+ * and Command (Control off Apple) clicks on a project header select, as on session rows.
+ */
+export type ProjectPicking = {
+  /** Selected roots in list order; empty when nothing is selected. */
+  roots: readonly string[];
+  /** Every project of the machine in list order, so a range and a batch share one order. */
+  groups: readonly ProjectGroupView[];
+  /** Replace the selection; an empty list ends it. */
+  setRoots: (roots: string[]) => void;
+  /** The root that a Shift click extends from. */
+  anchor: { current: string | null };
+};
+
+const NO_ROOTS: readonly string[] = [];
+
+/**
  * Which plus is busy: one machine's project, and the band inside it when the reader
  * started the session on a group rather than on the project header.
  */
@@ -704,6 +721,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   creation,
   initiallyOpen,
   projectActions,
+  picking,
 }: {
   /** Canonical gateway-owned project identity, counts, and held preview rows. */
   group: ProjectGroupView;
@@ -716,6 +734,8 @@ export const ProjectGroup = memo(function ProjectGroup({
   initiallyOpen: boolean;
   /** The project's own verbs; without them its menu offers only its settings. */
   projectActions?: ProjectActions;
+  /** The machine's project selection; without it a header click only folds. */
+  picking?: ProjectPicking;
 }) {
   const { label: project, root, sessions, tally } = group;
   const { conn } = machine;
@@ -1475,6 +1495,18 @@ export const ProjectGroup = memo(function ProjectGroup({
     : [];
   const selectedSet = new Set(selectedIds);
   const latestDeleteSelection = useRef<() => boolean>(() => false);
+  // A project selection and a session selection never stand together, so one Delete key
+  // has one batch to ask about.
+  const pickedRoots = picking?.roots ?? NO_ROOTS;
+  const hasPicks = pickedRoots.length > 0;
+  const clearPicks = () => {
+    if (picking && picking.roots.length > 0) picking.setRoots([]);
+  };
+  useEffect(() => {
+    if (!hasPicks) return;
+    setSelection(null);
+    anchor.current = null;
+  }, [hasPicks]);
   useEffect(() => {
     if (selectedIds.length === 0) return;
     const onKey = (event: KeyboardEvent) => {
@@ -1512,6 +1544,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     // On Apple hardware Command selects; Control is the row's context-menu gesture.
     const isApple = isIosAppOnMac() || /Mac|iP(ad|hone|od)/.test(navigator.platform || navigator.userAgent);
     if (isApple && event.ctrlKey) return true;
+    if ((isApple ? event.metaKey : event.ctrlKey) || event.shiftKey) clearPicks();
     if ((isApple ? event.metaKey : event.ctrlKey) && !event.shiftKey) {
       event.preventDefault();
       anchor.current = { id, scope: selectionScope };
@@ -1710,6 +1743,89 @@ export const ProjectGroup = memo(function ProjectGroup({
       setIsBusy(false);
     }
   };
+  // SELECTING PROJECTS. Shift or Command (Control off Apple) on the header selects it like a
+  // session row; a plain click folds it and ends the selection. Delete asks once, on the
+  // header of the first selected project, for every selected project.
+  const isPicked = pickedRoots.includes(root);
+  const isPickLead = isPicked && pickedRoots[0] === root;
+  const batch =
+    isPicked && picking && pickedRoots.length > 1
+      ? picking.groups.filter((one) => pickedRoots.includes(one.root))
+      : null;
+  const onPickClick = (event: MouseEvent<HTMLButtonElement>): boolean => {
+    if (!picking || !projectActions || !hasHardwarePointer()) return false;
+    const isApple = isIosAppOnMac() || /Mac|iP(ad|hone|od)/.test(navigator.platform || navigator.userAgent);
+    if (isApple && event.ctrlKey) return true;
+    const order = picking.groups.map((one) => one.root);
+    if ((isApple ? event.metaKey : event.ctrlKey) && !event.shiftKey) {
+      event.preventDefault();
+      picking.anchor.current = root;
+      const next = new Set(picking.roots);
+      if (next.has(root)) next.delete(root);
+      else next.add(root);
+      picking.setRoots(order.filter((one) => next.has(one)));
+      return true;
+    }
+    if (event.shiftKey) {
+      event.preventDefault();
+      const end = order.indexOf(root);
+      if (end < 0) return true;
+      const start = picking.anchor.current ? order.indexOf(picking.anchor.current) : -1;
+      const from = start < 0 ? end : start;
+      if (start < 0) picking.anchor.current = root;
+      picking.setRoots(order.slice(Math.min(from, end), Math.max(from, end) + 1));
+      return true;
+    }
+    picking.anchor.current = root;
+    clearPicks();
+    return false;
+  };
+  // The confirm stands on this header, so this project goes last: a refusal keeps it,
+  // its note and the other refused projects selected, and Yes retries only those.
+  const removePicked = async (picked: readonly ProjectGroupView[]) => {
+    if (!projectActions || !picking) return;
+    const kept: string[] = [];
+    for (const other of picked.filter((one) => one.root !== root)) {
+      try {
+        await projectActions.remove(conn, other);
+      } catch {
+        kept.push(other.root);
+      }
+    }
+    if (kept.length > 0) {
+      picking.setRoots(picking.groups.map((one) => one.root).filter((one) => one === root || kept.includes(one)));
+      throw new Error(`${kept.length} of ${picked.length} projects could not be deleted.`);
+    }
+    await projectActions.remove(conn, group);
+    picking.setRoots([]);
+  };
+  const sectionRef = useRef<HTMLElement>(null);
+  const latestAskPicked = useRef<() => void>(() => {});
+  useLayoutEffect(() => {
+    latestAskPicked.current = () => {
+      const header = sectionRef.current?.querySelector<HTMLElement>('header');
+      if (header) openMenu(header, { kind: 'drop-project' });
+    };
+  });
+  useEffect(() => {
+    if (!isPickLead || !picking) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        picking.setRoots([]);
+        picking.anchor.current = null;
+        return;
+      }
+      // Delete, or the Mac delete key (Backspace). A key typed into a field still edits it.
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (isKeyboardInputElement(event.target as Element | null)) return;
+      event.preventDefault();
+      latestAskPicked.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isPickLead, picking]);
   // FILING A SESSION IS THE GATEWAY'S ANSWER, held here until the list catches up. The
   // call stands apart from the sheet that usually runs it, so a row's own verb can file
   // with no menu open and the list still holds what the machine answered.
@@ -2146,8 +2262,10 @@ export const ProjectGroup = memo(function ProjectGroup({
       {/* The rail's index finds this band by the two facts that identify it, and the
         only two a jump can be sure of: which machine, and which root. */}
       <section
+        ref={sectionRef}
         // Adjacent projects meet at the next header rule, without empty page between them.
-        aria-label={`${project} sessions`}
+        aria-label={`${project} sessions${isPicked ? ', selected' : ''}`}
+        data-selected={isPicked || undefined}
         data-machine={machineKey(conn)}
         data-project-root={root}
       >
@@ -2155,6 +2273,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             project, changed from this menu, never a second line under the name. */}
         <SectionHeader
           isExpanded={isShowing}
+          isSelected={isPicked}
           onContextMenu={(event) => {
             if (!hasHardwarePointer() || event.target instanceof HTMLInputElement) return;
             event.preventDefault();
@@ -2180,7 +2299,9 @@ export const ProjectGroup = memo(function ProjectGroup({
               counts={counts}
               disclosure={{
                 isOpen: isShowing,
-                onToggle: () => fold(!isShowing),
+                onToggle: (event) => {
+                  if (!onPickClick(event)) fold(!isShowing);
+                },
                 label: `${isShowing ? 'Collapse' : 'Expand'} ${project}`,
               }}
             />
@@ -2502,7 +2623,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                   <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'project', target_id: root, label: project }); }} />
                   {projectActions && (
                     <MenuItem
-                      title="Delete project"
+                      title={batch ? `Delete ${batch.length} projects` : 'Delete project'}
                       tone="danger"
                       icon={<TrashIcon className="size-3.5" />}
                       onSelect={() => goTo({ kind: 'drop-project' })}
@@ -2514,21 +2635,36 @@ export const ProjectGroup = memo(function ProjectGroup({
               return (
                 <>
                   <MenuItem
-                    title="Keep the project"
+                    title={batch ? 'Keep them' : 'Keep the project'}
                     icon={<ProjectsIcon className="size-3.5" />}
                     disabled={isBusy}
                     onSelect={() => goTo({ kind: 'project' })}
                   />
-                  {projectActions && (
-                    <MenuItem
-                      title={isBusy ? 'Deleting...' : 'Delete it and its sessions'}
-                      meta={`${tally.count} ${tally.count === 1 ? 'session' : 'sessions'}`}
-                      tone="danger"
-                      icon={<TrashIcon className="size-3.5" />}
-                      disabled={isBusy}
-                      onSelect={() => void runProject(() => projectActions.remove(conn, group))}
-                    />
-                  )}
+                  {projectActions && (() => {
+                    const count = batch
+                      ? batch.reduce((sum, one) => sum + one.tally.count, 0)
+                      : tally.count;
+                    return (
+                      <MenuItem
+                        title={
+                          isBusy
+                            ? 'Deleting...'
+                            : batch
+                              ? `Delete ${batch.length} projects and their sessions`
+                              : 'Delete it and its sessions'
+                        }
+                        meta={`${count} ${count === 1 ? 'session' : 'sessions'}`}
+                        tone="danger"
+                        icon={<TrashIcon className="size-3.5" />}
+                        disabled={isBusy}
+                        onSelect={() =>
+                          void runProject(() =>
+                            batch ? removePicked(batch) : projectActions.remove(conn, group),
+                          )
+                        }
+                      />
+                    );
+                  })()}
                   {failure && <MenuNote>{failure}</MenuNote>}
                 </>
               );

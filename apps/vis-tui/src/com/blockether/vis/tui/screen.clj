@@ -8451,43 +8451,81 @@
   [screen sid session]
   (when (and sid session) (with-dialog-lock #(dlg/session-metrics-dialog! screen sid session))))
 
-(defn- remove-project!
-  "Confirm the destructive gateway operation; only a successful answer drops local rows."
-  [screen project]
-  (when-let [pid (some-> (get project "id")
-                         str)]
-    (when (with-dialog-lock #(dlg/confirm-dialog!
-                               screen
-                               "Remove project"
-                               [(str "Remove "
-                                     (projects/project-label project)
-                                     " and its "
-                                     (long (or (get project "session_count") 0))
-                                     " saved sessions?")
-                                "This deletes their transcripts and cannot be undone."]))
+(defn- remove-projects!
+  "Confirm the destructive gateway operation, then remove each of `projects` in turn.
+   Only a successful answer drops the local rows of its project; a refusal keeps them."
+  [screen projects]
+  (let [projects
+        (filterv #(some? (get % "id")) projects)
+
+        many?
+        (< 1 (count projects))
+
+        sessions
+        (reduce + 0 (map #(long (or (get % "session_count") 0)) projects))]
+
+    (when
+      (and
+        (seq projects)
+        (with-dialog-lock
+          #(dlg/confirm-dialog!
+             screen
+             (if many? (str "Remove " (count projects) " projects") "Remove project")
+             [(if many?
+                (str "Remove " (count projects) " projects and their " sessions " saved sessions?")
+                (str "Remove "
+                     (projects/project-label (first projects))
+                     " and its "
+                     sessions
+                     " saved sessions?")) "This deletes their transcripts and cannot be undone."])))
       (when-not (get-in @state/app-db [:project-sidebar :removing])
-        (state/dispatch [:project-sidebar {:removing pid :progress "Removing…" :error nil}])
+        (state/dispatch
+          [:project-sidebar
+           {:removing (str (get (first projects) "id")) :progress "Removing…" :error nil}])
         (vis/worker-future
           "tui-project-remove"
           (fn []
-            (try (let [result (vis/gateway-delete-project! pid {:is-recursive? true})
-                       deleted (mapv str (get result "deleted_session_ids"))]
+            (try
+              (let [failures
+                    (into []
+                          (keep (fn [project]
+                                  (let [pid (str (get project "id"))]
+                                    (state/dispatch [:project-sidebar
+                                                     {:removing pid :progress "Removing…"}])
+                                    (try
+                                      (let [result
+                                            (vis/gateway-delete-project! pid {:is-recursive? true})
+                                            deleted (mapv str (get result "deleted_session_ids"))]
 
-                   (state/dispatch [:project-sidebar {:progress "Updating views…"}])
-                   (doseq [sid deleted]
-                     (state/dispatch [:session-deleted sid]))
-                   (state/dispatch [:project-removed pid])
-                   (refresh-projects!)
-                   (vis/notify! "Removed project and its saved sessions"
-                                :level :success
-                                :ttl-ms copy-success-ttl-ms))
-                 (catch Throwable error
-                   (state/dispatch [:project-sidebar
-                                    {:error (str "Remove failed · " (ex-message error))}])
-                   (vis/notify! (str "Could not remove project: " (ex-message error))
-                                :level :warn
-                                :ttl-ms copy-success-ttl-ms))
-                 (finally (state/dispatch [:project-sidebar {:removing nil :progress nil}])))))))))
+                                        (state/dispatch [:project-sidebar
+                                                         {:progress "Updating views…"}])
+                                        (doseq [sid deleted]
+                                          (state/dispatch [:session-deleted sid]))
+                                        (state/dispatch [:project-removed pid])
+                                        nil)
+                                      (catch Throwable error error)))))
+                          projects)
+
+                    message
+                    (when-let [error (first failures)]
+                      (str (when many? (str (count failures) " of " (count projects) " projects: "))
+                           (ex-message error)))]
+
+                (when (< (count failures) (count projects)) (refresh-projects!))
+                (if message
+                  (do (state/dispatch [:project-sidebar {:error (str "Remove failed · " message)}])
+                      (vis/notify! (str "Could not remove " (if many? "projects" "project")
+                                        ": " message)
+                                   :level :warn
+                                   :ttl-ms copy-success-ttl-ms))
+                  (vis/notify! (if many?
+                                 (str "Removed "
+                                      (count projects)
+                                      " projects and their saved sessions")
+                                 "Removed project and its saved sessions")
+                               :level :success
+                               :ttl-ms copy-success-ttl-ms)))
+              (finally (state/dispatch [:project-sidebar {:removing nil :progress nil}])))))))))
 
 (defn- rename-project!
   "Ask for a new project name, then store it on the gateway. The rail changes only
@@ -8558,7 +8596,14 @@
       (when choose! (choose! project))
 
       :delete-project
-      (remove-project! screen project)
+      (remove-projects! screen
+                        (if (contains? (get-in @state/app-db [:project-sidebar :selected-projects])
+                                       pid)
+                          (projects/selected-projects @state/app-db)
+                          [project]))
+
+      :pick-project
+      (when pid (state/dispatch [:project-select-toggle pid]))
 
       :rename-project
       (rename-project! screen project)
@@ -8950,6 +8995,9 @@
 
       :toggle-session
       (state/dispatch [:project-session-select-toggle value detail])
+
+      :pick-project
+      (state/dispatch [:project-select-toggle value])
 
       :search
       (state/dispatch [:project-search-open])

@@ -26,6 +26,7 @@ import {
   ProjectGroup,
   creationKey,
   type ProjectActions,
+  type ProjectPicking,
   type ProjectCreation,
   type ProjectGroupReading,
   type SessionRowsContext,
@@ -2583,6 +2584,26 @@ function MachineSections({
   /** What a machine with no project to show says instead. */
   note: (machine: FleetMachine) => string;
 }) {
+  // One machine holds the project selection at a time; its roots follow the list order.
+  const [picks, setPicks] = useState<{ machine: string; roots: string[] } | null>(null);
+  const pickAnchor = useRef<string | null>(null);
+  const pickings = new Map(
+    sections.map(({ machine, groups }): [string, ProjectPicking] => {
+      const key = machineKey(machine.conn);
+      return [
+        key,
+        {
+          roots:
+            picks?.machine === key
+              ? groups.filter((group) => picks.roots.includes(group.root)).map((group) => group.root)
+              : [],
+          groups,
+          setRoots: (roots) => setPicks(roots.length > 0 ? { machine: key, roots } : null),
+          anchor: pickAnchor,
+        },
+      ];
+    }),
+  );
   return (
     <div>
       {sections.map(({ machine, groups, reading, searchSessions }, sectionIndex) => {
@@ -2621,6 +2642,7 @@ function MachineSections({
                   reading={reading}
                   creation={creation}
                   projectActions={projectActions}
+                  picking={pickings.get(key)}
                   // The order already put the machine's live work on top; the
                   // project it lands on is the one that opens by itself.
                   initiallyOpen={groupIndex === 0}
