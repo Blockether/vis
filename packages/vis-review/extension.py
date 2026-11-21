@@ -4,12 +4,14 @@ Before each Python block, the journal records the changes made since the last
 block, by a person or another program. After each block and each patch, it
 records what that step changed. The first step of a session opens the app of that
 session: the checkpoints, the changed files and their diff, the checks, an AI
-review and undo. `/review` opens the app again after a person closed it.
+review and undo. `/review` opens the app again after a person closed it. After a
+reload, Vis asks `reopen` to connect the open app again.
 The logic lives in `vis_review`; the SDK program `python -m vis_review` uses it too.
 """
 
 import hashlib
 import logging
+import threading
 
 import blockether.vis.extension as vis
 
@@ -24,6 +26,8 @@ from vis_review.recorder import (
 
 LOG = logging.getLogger("vis_review")
 RECORDER = Recorder()
+# A block hook and `reopen` can ask for the app of one journal at the same time.
+_MAKING = threading.Lock()
 
 
 def _session_id():
@@ -83,20 +87,37 @@ def _ask(request, model):
     return vis.run(request, response_model=model)
 
 
+def _key(journal):
+    """The app key of a journal: one review app for each root of a session."""
+    return "review-" + hashlib.sha256(journal.root.encode()).hexdigest()[:8]
+
+
 def _app(session_id, journal):
     """The review app of a session and a journal, made once and not yet open."""
-    app = RECORDER.app(session_id, journal.root)
-    if app is None:
-        app = ReviewApp(
-            journal,
-            extension_opener,
-            call=_call,
-            ask=_ask,
-            is_session_scoped=True,
-            key="review-" + hashlib.sha256(journal.root.encode()).hexdigest()[:8],
-        )
-        RECORDER.keep(session_id, app)
-    return app
+    with _MAKING:
+        app = RECORDER.app(session_id, journal.root)
+        if app is None:
+            app = ReviewApp(
+                journal,
+                extension_opener,
+                call=_call,
+                ask=_ask,
+                is_session_scoped=True,
+                key=_key(journal),
+            )
+            RECORDER.keep(session_id, app)
+        return app
+
+
+def reopen(app):
+    """Connect the review app of a session again after a reload disconnected it."""
+    session_id = str(app.get("session_id") or "")
+    if not session_id:
+        return
+    journal = RECORDER.journal(session_id, vis.workspace_root())
+    # Another root of this session has another key, and its own app.
+    if app.get("key") == _key(journal):
+        _app(session_id, journal).open()
 
 
 def run_review(ctx):
@@ -133,6 +154,7 @@ vis.register_extension(
             )
         ],
         keybindings=[vis.Keybinding("R", command="/review", label="Review")],
+        reopen_app=reopen,
         op_hooks=[
             vis.OpHook(["python_execution"], before_block),
             vis.OpHook(["python_execution", "patch"], after_step, phase="after"),

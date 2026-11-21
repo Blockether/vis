@@ -28,7 +28,7 @@ Data is under `$VIS_HOME/review/`, else `~/.vis/review/`:
 
 ## The app
 
-The first Python block or patch of a session opens the app of that session, so the session apps always list it. `/review` (key `R`) opens it again after you closed it. The app shows:
+The first Python block or patch of a session opens the app of that session, so the session apps always list it. `/review` (key `R`) opens it again after you closed it. After `/reload`, the open app connects again by itself. The app shows:
 
 - The checkpoints. Pick one to see its changes, or pick **All changes**.
 - The changed files with their added and removed line counts. Pick one to see only its diff.
