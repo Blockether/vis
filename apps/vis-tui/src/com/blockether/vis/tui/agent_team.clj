@@ -1125,6 +1125,10 @@
         y
         (long row)]
 
+    ;; One background across the line, as a table line has, so no word wears its own.
+    (p/clear-styles! g)
+    (p/set-colors! g t/code-block-fg bg)
+    (p/fill-rect! g left y (max 1 (long width)) 1)
     (doseq [[col text part tone]
             (card-head-segments team-head)
 

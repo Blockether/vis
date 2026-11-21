@@ -734,6 +734,32 @@
                    (keep (fn [[_ _ part tone]]
                            (when (= :dot part) tone))
                          segments)))))
+  ;; User report 2026-11-21: the head line of a team block showed a second background under each
+  ;; word, and the row background in the gaps.
+  (it "paints the head line of a team block on one background across its width"
+      (let [card
+            (assoc (team/card "turn-1" (mapv #(agent-row % "completed") (range 1 6)))
+              :clock {"turn_id" "turn-1" "worked_ms" 60000}
+              :session-id "leader"
+              :node-id "agent-team:turn-1")
+
+            head
+            (:meta (second (team/card-entries card 40)))
+
+            screen
+            (doto (TerminalScreen. (DefaultVirtualTerminal. (TerminalSize. 40 1))) (.startScreen))
+
+            g
+            (.newTextGraphics screen)]
+
+        (try (p/set-colors! g theme/text-fg theme/terminal-bg)
+             (p/fill-rect! g 0 0 40 1)
+             ((:live-paint head) g 0 0 40 0 head)
+             (expect (= 1
+                        (count (set (map #(.getBackgroundColor (.getCharacter g (int %) 0))
+                                         (range 40)))))
+                     "One background across the head line")
+             (finally (.stopScreen screen)))))
   ;; User report 2026-11-19: a turn that pinged its agents with a follow-up task showed no team.
   (it
     "shows an agent in the turn that started it and in each turn that pinged it"
