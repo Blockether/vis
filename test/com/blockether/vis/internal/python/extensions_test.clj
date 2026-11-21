@@ -7849,6 +7849,102 @@ vis.register_extension(vis.Extension(name='lock-holder', description='Lock holde
                 (expect (= {"version" 3 "held" true} (probe)))
                 (finally (ep/dispose-python-context! a) (io/delete-file lock-path true)))))))))
 
+(defn- board-py
+  "An extension that opens the keyed app `board`. With `reopens?`, it declares
+   `reopen_app`. `version` changes the source, so a reload replaces the extension."
+  [version reopens?]
+  (str
+    "import blockether.vis.extension as vis
+
+VERSION = "
+    version
+    "
+
+def _open():
+    vis.attach(vis.ui.app('Board', vis.ui.thread('general'), key='board'),
+               on_event=lambda event: None)
+
+def open_board() -> str:
+    'Open the board of this session.'
+    _open()
+    return 'open'
+
+def reopen(app):
+    if app['key'] == 'board':
+        _open()
+
+vis.register_extension(vis.Extension(name='board', description='Board fixture.', alias='board',
+    symbols=[vis.Symbol(open_board)]"
+    (when reopens? ", reopen_app=reopen")
+    "))
+"))
+
+(defdescribe
+  extension-reload-reopens-app-test
+  ;; User report 2026-11-14: after `/reload`, the Review app stayed disconnected until
+  ;; the next block or `/review`.
+  (doseq [reopens? [true false]]
+    (it
+      (if reopens?
+        "asks an extension with reopen_app to open its app again after a reload"
+        "leaves the app of an extension without reopen_app disconnected after a reload")
+      (with-fresh-loaded
+        {"extension.py" (board-py 1 reopens?)}
+        (fn [loaded {:keys [ext-dir store]}]
+          (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+          (let [root (.getCanonicalPath ^java.io.File (temp-dir))
+                ws (ps/db-workspace-insert! store {:repo-id "board" :root root})
+                sid (ps/db-store-session! store
+                                          {:channel :tui :workspace-id (:id ws) :title "board"})
+                ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                env {:python-context ctx
+                     :db-info store
+                     :session-id sid
+                     :channel :tui
+                     :extensions (atom [(registered "board")])
+                     :active-extensions (atom [])
+                     :workspace-atom (atom ws)}
+                entry #(get @@#'human-input/pending %)
+                until (fn [done?]
+                        (loop [attempt 0]
+                          (or (done?)
+                              (when (< attempt 300) (Thread/sleep 100) (recur (inc attempt))))))]
+
+            (try
+              (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                               (constantly (io/file root "views"))
+                               #'loop-env/cache (atom {(loop-env/cache-key sid) {:environment
+                                                                                 env}})}
+                #(let [opened
+                       (binding [extension/*current-environment* env]
+                         ((symbol-fn (registered "board") 'open_board))) view-id
+                       (:id (first (human-input/session-apps (str sid)))) owner
+                       (:owner-context (entry view-id)) stale?
+                       (fn []
+                         (true? (:is-stale (human-input/app-view (str sid) view-id))))]
+                   (try (expect (:success? opened) (pr-str opened))
+                        (expect (some? owner))
+                        (write-ext! ext-dir "extension.py" (board-py 2 reopens?))
+                        (binding [extension/*current-environment* env]
+                          (expect (= 0
+                                     (:failed (pyx/reload-python-extensions! {:dirs
+                                                                              [(str ext-dir)]})))))
+                        (if reopens?
+                          (do (expect (until (fn []
+                                               (let [now (:owner-context (entry view-id))]
+                                                 (and now (not (identical? owner now))))))
+                                      "the reloaded extension owns the app")
+                              (expect (not (stale?))))
+                          (do (expect (until stale?) "the reload disconnected the app")
+                              (expect (nil? (#'loop-env/reconnect-app!
+                                             {:session-id (str sid)
+                                              :extension "board"
+                                              :key "board"
+                                              :view-id view-id})))
+                              (expect (stale?))))
+                        (finally (when view-id (human-input/close-live! view-id))))))
+              (finally (ep/dispose-python-context! ctx)))))))))
+
 (def ^:private stale-ctx-py
   "import blockether.vis.extension as vis
 

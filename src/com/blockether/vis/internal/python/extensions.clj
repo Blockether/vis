@@ -2252,6 +2252,25 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                      (assoc :slash/data (get res "data")))
         :else {:slash/status :ok :slash/title (pr-str res)}))
 
+(defn- reopen-app-adapter
+  "`:ext/reopen-app-fn` for a Python `vis.Extension(reopen_app=...)` callable. Vis calls
+   it in the session of an app of the extension that lost its owner. The callable
+   receives `{'key', 'view_id', 'session_id', 'workspace_root', 'project_root'}`, and
+   its return is ignored. An error goes to the caller."
+  [ext-name ctx pyfn]
+  (fn [env {:keys [key view-id]}]
+    (let [{:strs [workspace_root project_root session_id]} (slim-env env ctx)]
+      (call-py-ext ext-name
+                   env
+                   ctx
+                   pyfn
+                   [{"key" (str key)
+                     "view_id" (str view-id)
+                     "session_id" session_id
+                     "workspace_root" workspace_root
+                     "project_root" project_root}])
+      nil)))
+
 (defn- slash-adapter
   "`:slash/run-fn` for one `vis.SlashCommand(...)` entry. The Python callable
    receives `{'channel', 'args', 'raw', 'session_id', 'workspace_root',
@@ -3046,6 +3065,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         activation
         (get reg "activation")
 
+        reopen-app
+        (get reg "reopen_app")
+
         providers
         (mapv #(->provider-entry ext-name ctx %) (get reg "providers"))
 
@@ -3122,6 +3144,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
       (fn? ctx-fn)
       (assoc :ext/ctx-fn (ctx-adapter ext-name ctx ctx-fn))
+
+      (fn? reopen-app)
+      (assoc :ext/reopen-app-fn (reopen-app-adapter ext-name ctx reopen-app))
 
       (seq providers)
       (assoc :ext/providers providers)

@@ -1080,6 +1080,34 @@ app keeps its state, but its owner does not listen yet.
   that app.
 - An owner that opens an app again gets only the events after that open.
 
+### After a reload of your extension
+
+`/reload` restarts the worker that ran the old code of your extension. An app of that worker stays
+open, but it shows as disconnected, as after a gateway restart. To connect it again without a
+person, declare `reopen_app`:
+
+```python
+def reopen(app):
+    if app["key"] == "board":
+        vis.attach(vis.ui.app("Board", *nodes(), key="board"), on_event=on_event)
+
+vis.register_extension(
+    vis.Extension(name="board", description="A board.", reopen_app=reopen)
+)
+```
+
+- Vis calls `reopen_app` one time for each app of your extension that the reload disconnected. The
+  call runs the new code in the session of the app.
+- `app` is a dict with `key`, `view_id`, `session_id`, `workspace_root`, and `project_root`.
+- Open the app again with the same `key`. The module globals of the old worker are gone, so read
+  your data first.
+- An extension without `reopen_app` gets no call. Its app stays disconnected until the extension
+  opens the key again, for example in its next tool call.
+- Vis does not call `reopen_app` for an app without a key, or for an app that a person closed.
+- Vis calls `reopen_app` only while the Python sandbox of the session runs. After a gateway
+  restart, open the app at the next call of your extension.
+- An error in `reopen_app` goes to the gateway log, and the app stays disconnected.
+
 ### Keep app data apart from its picture
 
 Vis keeps the picture of an app, which is the nodes that people see and the Sends of people. It

@@ -118,6 +118,7 @@ SDK declarations and is stored as a tuple, not as a mutable registry.
 | `network_filters` | `()` | `vis.NetworkFilter` policy for requests and responses (see [network filters](jail.md#project-network-filters)) |
 | `providers` | `()` | `vis.Provider` declarations |
 | `ctx` | `None` | Optional `(env) -> dict`, merged into the model's session context |
+| `reopen_app` | `None` | Optional `(app) -> None`. Opens an app of this extension again after a reload disconnected it (see [after a reload](live-views.md#after-a-reload-of-your-extension)) |
 | `env` | `()` | Names of host environment variables that this entry may read |
 | `grants` | `()` | `vis.Grant` toolchain paths for this extension's jailed children (see [toolchain grants](#toolchain-grants)) |
 | `kind`, `version` | `None` | Display metadata. An installed package supplies its manifest metadata |
@@ -1955,7 +1956,8 @@ The restart ends the complete process:
 
 - Each extension in that worker loads again at its next call, without the values of its module
   globals.
-- Live views that those extensions drive close.
+- Live views that those extensions drive close. An app stays open and shows as disconnected.
+  Declare [`reopen_app`](live-views.md#after-a-reload-of-your-extension) to connect it again.
 - Processes that the old code started keep running.
 
 Keep data that a reload must not lose outside the process, for example in a file.

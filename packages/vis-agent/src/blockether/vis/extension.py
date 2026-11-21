@@ -1335,6 +1335,11 @@ class Extension:
             function of the extension and no model. Keys are unique.
         op_hooks: `OpHook` declarations for host lifecycle operations.
         ctx: Optional host context callback.
+        reopen_app: Optional callback that opens an app of this extension again.
+            After a reload disconnected the app, Vis calls it in the session of the
+            app with `{"key", "view_id", "session_id", "workspace_root",
+            "project_root"}`. Without it, the app stays disconnected until this
+            extension opens the key again.
         providers: `Provider` declarations.
         network_filters: `NetworkFilter` declarations.
         settings: Host-owned `Setting` declarations with explicit allowed scopes.
@@ -1367,6 +1372,7 @@ class Extension:
     automations: Sequence[Automation] = ()
     op_hooks: Sequence[OpHook] = ()
     ctx: Callable[..., Any] | None = None
+    reopen_app: Callable[..., Any] | None = None
     providers: Sequence[Provider] = ()
     network_filters: Sequence[NetworkFilter] = ()
     settings: Sequence[Setting] = ()
@@ -1387,7 +1393,7 @@ class Extension:
                 getattr(self, name), str
             ):
                 raise TypeError(f"vis.Extension {name} must be a string")
-        for name in ("ctx", "activation"):
+        for name in ("ctx", "activation", "reopen_app"):
             if getattr(self, name) is not None and not callable(getattr(self, name)):
                 raise ValueError(f"vis.Extension {name} must be a callable")
         if (

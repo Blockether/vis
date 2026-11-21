@@ -3613,6 +3613,30 @@
     (when (seq closed) (save-owned-soon!))
     closed))
 
+(defonce ^:private disconnect-listener
+  ;; What asks the owner of a disconnected app to open it again. The layer that owns
+  ;; the session environments installs it; this namespace cannot reach that layer.
+  (atom nil))
+
+(defn set-disconnect-listener!
+  "Install what hears that an app of a session lost its owner: called with
+   `{:session-id :extension :key :view-id}` on the thread that retires the owner,
+   so it must not block. An app without a key cannot come back and is not told."
+  [f]
+  (reset! disconnect-listener f))
+
+(defn- app-disconnected!
+  "Tell the listener that app `entry` of a session lost its owner. Never throws."
+  [entry]
+  (when-let [f @disconnect-listener]
+    (when-let [[session-id extension k] (:app-key entry)]
+      (when session-id
+        (try (f {:session-id session-id :extension extension :key k :view-id (:id entry)})
+             (catch Throwable t
+               (tel/log! {:level :warn
+                          :id ::disconnect-listener-failed
+                          :data {:view-id (:id entry) :error (ex-message t)}})))))))
+
 (defn close-owned-by!
   "Close each owned view that extension context `ctx` opened, because the
    extension unloads. Answers the closed view ids."
@@ -3642,7 +3666,8 @@
                   (get after id)]
             :when (and (released? entry) now (app-stale? now))]
 
-      (publish! (:channel-ids now) (lifecycle-event :view/open now {:view (app-picture now)}))))
+      (publish! (:channel-ids now) (lifecycle-event :view/open now {:view (app-picture now)}))
+      (app-disconnected! now)))
   (->> (vals @pending)
        (filter #(and (:owned-key %) (identical? ctx (:owner-context %))))
        (sort-by :created-at)

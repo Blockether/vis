@@ -113,6 +113,7 @@ class ClientExtensions:
                 for name in (
                     "activation",
                     "ctx",
+                    "reopen_app",
                     "env",
                     "providers",
                     "network_filters",
