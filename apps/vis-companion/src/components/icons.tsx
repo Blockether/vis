@@ -13,6 +13,7 @@ import {
   ListChecks,
   PanelsTopLeft,
   Activity,
+  ChartGantt,
   Clock,
   Mail,
   Users,
@@ -468,6 +469,11 @@ export function AppsIcon({ className }: { className?: string }) {
 /** Full screen: the app grows from its place to the whole session. */
 export function FullScreenIcon({ className }: { className?: string }) {
   return <Mark icon={Maximize2} className={className} />;
+}
+
+/** A timeline: one bar for each lane, each from its own start. */
+export function TimelineIcon({ className }: { className?: string }) {
+  return <Mark icon={ChartGantt} className={className} />;
 }
 
 /** The debug log of an app: lines of text with marks at their start. */

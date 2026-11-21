@@ -17,8 +17,8 @@ import { SessionEventsContext } from '../lib/session-events';
 import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/time-axis';
 export { axisMarks, formatAgentTime };
 import { Markdown } from './ChatContent';
-import { ChevronIcon, MARK_NUDGE } from './icons';
-import { Chip, HoverNote } from './ui';
+import { ChevronIcon, MARK_NUDGE, TimelineIcon } from './icons';
+import { HoverNote } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
 export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$defs.role.oneOf;
@@ -178,14 +178,40 @@ export function teamTime(agents: readonly Subagent[], now: number): number | und
   return total + to - from;
 }
 
-// A hairline between the parts of a team line.
-function Divider() {
-  return <span aria-hidden="true" className="h-3 w-px shrink-0 bg-dialog-edge" data-team-divider />;
+// The dot of a status word on the team line, in the ink of that word.
+const STATUS_DOT: Record<string, string> = {
+  waiting: 'bg-dialog-hint',
+  queued: 'bg-dialog-hint',
+  running: 'bg-accent-ink',
+  done: 'bg-ok-ink',
+  failed: 'bg-err-ink',
+  blocked: 'bg-err-ink',
+};
+
+// The most dots on a team line. `+N more` counts the other agents.
+const MAX_DOTS = 3;
+
+/** One status dot for each agent of a team in spawn order: three at most, then `+N more` (user decision). */
+function StatusDots({ agents }: { agents: readonly Subagent[] }) {
+  if (agents.length === 0) return null;
+  const rows = spawnOrder(agents);
+  const rest = rows.length - MAX_DOTS;
+  return (
+    <span className="flex shrink-0 items-center gap-1.5" data-team-dots>
+      <span role="img" aria-label={rows.map((agent) => `${agentLabel(agent, rows)} ${agentStatus(agent).text}`).join(', ')} className="flex items-center gap-1">
+        {rows.slice(0, MAX_DOTS).map((agent) => (
+          <span key={agent.session_id} className={`size-[7px] rounded-full ${STATUS_DOT[agentStatus(agent).text]}`} />
+        ))}
+      </span>
+      {rest > 0 && <span aria-hidden="true" className="whitespace-nowrap text-dialog-hint">+{rest} more</span>}
+    </span>
+  );
 }
 
 /**
- * A team on one line: its time: `TEAM | 3m 20s`. `action` stands at the end of the line. `labelId` names the word and
- * the time `${labelId}-team` and `${labelId}-time`, so a control can take them as its name.
+ * A team on one line: a status dot for each agent, then its time: `TEAM ●●● +2 more 3m 20s`. `action` stands at the
+ * end of the line. `labelId` names the word and the time `${labelId}-team` and `${labelId}-time`, so a control can
+ * take them as its name.
  */
 export function TeamLine({ agents, action, labelId }: { agents: readonly Subagent[]; action?: ReactNode; labelId?: string }) {
   const now = useNow(agents.some(isLive));
@@ -194,7 +220,7 @@ export function TeamLine({ agents, action, labelId }: { agents: readonly Subagen
     <span className="flex min-w-0 flex-1 items-center gap-x-3 sm:min-h-5" data-team-line>
       <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 max-sm:flex-nowrap">
         <span id={labelId && `${labelId}-team`} className="font-bold uppercase text-white">team</span>
-        {time !== undefined && <Divider />}
+        <StatusDots agents={agents} />
         {time !== undefined && (
           <span id={labelId && `${labelId}-time`} className="whitespace-nowrap text-dialog-hint tabular-nums" data-team-time>
             {formatAgentTime(time)}
@@ -215,14 +241,23 @@ export function hasTimeline(agents: readonly Subagent[], leader?: LeaderLane): b
 }
 
 /**
- * The control that swaps the notes of a team for its timeline, and back. It wears the amber of a
- * chosen chip while it opens the timeline, and the page ink while it closes it (user decision).
+ * The control that swaps the notes of a team for its timeline, and back: a quiet mark at the end of the team line,
+ * so the line reads as status first (user decision). It takes the page ink and an edge while the timeline shows.
  */
 export function TimelineToggle({ isOn, onToggle }: { isOn: boolean; onToggle: () => void }) {
   return (
-    <Chip isOn={!isOn} aria-pressed={isOn} onClick={onToggle} className={`pointer-events-auto -my-0.5 min-h-6! ${isOn ? 'text-white!' : ''}`}>
-      Timeline
-    </Chip>
+    <button
+      type="button"
+      aria-label="Timeline"
+      title="Timeline"
+      aria-pressed={isOn}
+      onClick={onToggle}
+      className={`pointer-events-auto relative -my-0.5 inline-flex min-h-6 min-w-6 shrink-0 items-center justify-center border after:absolute after:-inset-2 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 mouse:after:content-none ${
+        isOn ? 'border-edge-strong text-white' : 'border-transparent text-dialog-hint hover:text-white'
+      }`}
+    >
+      <TimelineIcon className="size-3.5" />
+    </button>
   );
 }
 

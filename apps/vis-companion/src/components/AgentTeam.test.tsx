@@ -368,6 +368,16 @@ describe('team line', () => {
     vi.useRealTimers();
   });
 
+  // User request 2026-11-21: the team line shows a status dot for each agent, three at most, then `+N more`.
+  it('shows three status dots on the team line and counts the other agents', () => {
+    const statuses = ['completed', 'running', 'failed', 'running', 'waiting'] as const;
+    render(<TurnAgents {...props} agents={statuses.map((status, n) => ({ ...child, session_id: `s${n}`, title: `Task ${n + 1}`, status, created_at: T0 + n }))} />);
+    const line = screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]')!;
+    expect(within(line as HTMLElement).getByRole('img')).toHaveAccessibleName('Task 1 done, Task 2 running, Task 3 failed, Task 4 running, Task 5 waiting');
+    expect(line.querySelectorAll('[role="img"] > span')).toHaveLength(3);
+    expect(line).toHaveTextContent(/^team\+2 more/);
+  });
+
 });
 
 describe('teams', () => {

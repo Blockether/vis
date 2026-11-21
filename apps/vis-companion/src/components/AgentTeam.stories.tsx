@@ -31,7 +31,8 @@ export const Dock: Story = {
     for (const control of [/Answer/, /Grant/, /Deny/, /Later/]) {
       await expect(within(dock).queryByRole('button', { name: control })).toBeNull();
     }
-    await expect(dock.querySelectorAll('svg')).toHaveLength(1);
+    // The rows carry words, not marks: the one mark outside the Timeline control is the fold chevron.
+    await expect([...dock.querySelectorAll('svg')].filter((mark) => !mark.closest('[aria-label="Timeline"]'))).toHaveLength(1);
   },
 };
 
