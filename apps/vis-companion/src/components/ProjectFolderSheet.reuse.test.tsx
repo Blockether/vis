@@ -262,7 +262,7 @@ describe('the chips and the sections', () => {
 
 // User report (paraphrased: the folder creation still annoys). A band cell opened a
 // second field, faded the rows, turned into an undo and changed the commit. The name
-// is now the field's own text, and one row creates it.
+// is now the field's own text, and one button in the field creates it.
 describe('creating a folder', () => {
   const field = () => screen.getByLabelText('Filter folders or type a path');
 
@@ -288,16 +288,27 @@ describe('creating a folder', () => {
     expect(onChoose).toHaveBeenCalledWith(`${CODE}/fresh`);
   });
 
-  it('lists the folders that match before the row that creates', async () => {
-    sheet();
+  it('creates a name that is part of a folder name, and the folder stays listed', async () => {
+    const { client } = sheet();
     await screen.findByRole('button', { name: /tools/ });
 
     await userEvent.type(field(), 'to');
-    const tools = screen.getByRole('button', { name: /^tools/ });
-    const create = screen.getByRole('button', { name: 'Create project ~/code/to' });
-    expect(tools.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
+    expect(screen.getByRole('button', { name: /^tools/ })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Create project ~/code/to' }));
+    expect(client.createDirectory).toHaveBeenCalledWith(CODE, 'to');
+  });
+
+  // User report: a `New folder…` row stood last in the list and only moved the caret.
+  it('lists folders only: neither an empty field nor a new name adds a row', async () => {
+    sheet();
+    const list = (await screen.findByRole('button', { name: /^tools/ })).parentElement!;
+    const rows = () => list.querySelectorAll('button').length;
+
+    // vis, demo, tools and notes; `scratch` is empty and hidden.
+    expect(rows()).toBe(4);
+    await userEvent.type(field(), 'o');
+    expect(screen.getByRole('button', { name: 'Create project ~/code/o' })).toBeInTheDocument();
+    expect(rows()).toBe(3);
   });
 
   it('never offers a name that a folder here already has, hidden ones included', async () => {

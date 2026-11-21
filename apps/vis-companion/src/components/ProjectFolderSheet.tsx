@@ -15,8 +15,8 @@
  * replaced a crumb bar over a separate search box, where the reader could not tell
  * which folder the search looked in.
  *
- * A new folder is the same text: a name that no folder here has offers one
- * `Create project` row. There is no separate mode, second field or undo for it.
+ * A new folder is the same text: a name that no folder here has shows one
+ * `Create` button in the field. There is no separate mode, second field or undo for it.
  *
  * NOTHING in here paints its own box. It is `AnchoredPanel` + `MenuHeading` +
  * `MenuItem`, so it stays the app's anchored dialog on every width, never a sheet
@@ -276,6 +276,8 @@ export function ProjectFolderSheet({
     isFolderName(createName) &&
     !(listing?.entries ?? []).some((entry) => entry.name.toLowerCase() === createName.toLowerCase());
   const createdPath = `${homeify(here, home).replace(/\/$/, '')}/${createName}`;
+  // Enter opens a folder before it creates one (see `onFieldKey`).
+  const isEnterCreate = isCreatable && (typedSplit !== null || rows.length === 0);
 
   const choose = useCallback(
     async (pick: () => Promise<string>) => {
@@ -430,6 +432,23 @@ export function ProjectFolderSheet({
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onFieldKey}
           />
+          {/* The new folder is the field's own text, so its verb stands in the field. It
+              wears the primary face when Enter creates too, and an exact name never
+              offers a copy. */}
+          {isCreatable && (
+            <Button
+              density="inline"
+              variant={isEnterCreate ? 'primary' : 'secondary'}
+              className="ml-1 shrink-0 gap-1"
+              aria-label={`${words.create} ${createdPath}`}
+              title={`${words.create} ${createdPath}`}
+              disabled={saving}
+              onClick={create}
+            >
+              <FolderPlusIcon className="size-3.5" />
+              Create
+            </Button>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Chip isOn={isGitOnly} onClick={() => setGitOnly(!isGitOnly)}>
@@ -493,27 +512,6 @@ export function ProjectFolderSheet({
                     ? 'No folder here matches that.'
                     : 'No folders match these filters.'}
               </MenuNote>
-            )}
-            {/* The new folder is the field's own text, offered last: the folders that
-                exist come first, and an exact name never offers a copy. */}
-            {isCreatable ? (
-              <MenuItem
-                icon={<FolderPlusIcon className="size-4 text-accent-ink" />}
-                title={`${words.create} ${createdPath}`}
-                disabled={saving}
-                onSelect={create}
-              />
-            ) : (
-              query === '' &&
-              !!listing &&
-              !knownRoots.has(here) && (
-                <MenuItem
-                  icon={<FolderPlusIcon className="size-4" />}
-                  title="New folder…"
-                  meta="type its name above"
-                  onSelect={() => fieldRef.current?.focus()}
-                />
-              )
             )}
           </div>
         )}
