@@ -1102,6 +1102,30 @@
                                           (Thread/sleep 80)
                                           (expect (zero? @stops)))))))))
 
+;; Regression (reported: the gateway stopped itself 42 minutes into a turn): the
+;; Companion app was closed, a block then ran 60 s without output, and a running
+;; block appends no event. The daemon took the turn for a ghost and cancelled it.
+(defdescribe a-turn-inside-a-running-block-keeps-the-daemon-alive
+             (it "a block that runs without output is work, not a stalled turn"
+                 (let [stops (atom 0)]
+                   (with-stop-stub! stops
+                                    {#'state/running-turn-count (constantly 1)
+                                     #'state/running-turn-progress (constantly
+                                                                     {:turns 1 :seq 7 :working 1})}
+                                    (fn []
+                                      (with-server-state!
+                                        {:managed? true
+                                         :saw-client? true
+                                         :started-at-ms (System/currentTimeMillis)
+                                         :clients {}
+                                         :sse-clients {}}
+                                        (fn []
+                                          ((rv 'note-turn-progress!))
+                                          (swap! @(rv 'turn-progress-watch) update :since - 120000)
+                                          ((rv 'maybe-stop-when-idle!))
+                                          (Thread/sleep 80)
+                                          (expect (zero? @stops)))))))))
+
 ;; Regression (reported: a gateway with no clients that never goes away): the reap
 ;; loop caught throws OUTSIDE the loop and cleared its own handle in `finally`, and
 ;; nothing re-armed it. One throw from any sweep therefore ended lease reaping, SSE

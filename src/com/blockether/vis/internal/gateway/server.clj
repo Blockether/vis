@@ -113,11 +113,11 @@
 (def ^:private STARTUP_IDLE_GRACE_MS 30000)
 
 (def ^:private STUCK_TURN_IDLE_MS
-  "How long a turn may show no progress at all - no new event on any ring -
-   before a managed daemon with NO client left treats it as a ghost rather than
-   as work. Long enough that a slow provider call, a long tool run or a paused
-   sandbox is never mistaken for one; short enough that a wedged daemon releases
-   the port while a human is still looking at it."
+  "How long a turn may show no progress at all - no new event on any ring, and
+   no block or tool that its worker runs - before a managed daemon with NO
+   client left treats it as a ghost rather than as work. A long tool run never
+   counts: `state/running-turn-progress` reports it as `:working`. Short enough
+   that a wedged daemon releases the port while a human is still looking at it."
   60000)
 
 (def ^:private CLIENT_LEASE_TOUCH_MS
@@ -468,7 +468,8 @@
 
 (defn- turns-stalled?
   "True when turns are still counted as running but nothing about them has moved
-   for `STUCK_TURN_IDLE_MS`. `running-turn-count` alone cannot end a daemon's
+   for `STUCK_TURN_IDLE_MS` and none of them is inside a block or a tool that
+   its worker runs. `running-turn-count` alone cannot end a daemon's
    life: a turn whose launch died before it could clear `:current-turn`, or whose
    worker is parked in uninterruptible code and ignored its cancel, keeps that
    entry forever - and the daemon then outlives every client of a turn that will
@@ -477,6 +478,7 @@
   (let [{:keys [marker since]} @turn-progress-watch]
     (boolean (and marker
                   (pos? (long (:turns marker)))
+                  (zero? (long (:working marker 0)))
                   (>= (- (util/now-ms) (long (or since 0))) (long STUCK_TURN_IDLE_MS))))))
 
 (defn- idle-shutdown-reason

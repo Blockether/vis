@@ -559,6 +559,19 @@
           (if live? (assoc-in entry [:turns tid ::cancel-disposer] dispose) entry))))
     (when-not @installed? (dispose))))
 
+(defn- install-turn-run!
+  "Record the stall state and the worker of the live run of `tid`, for
+   [[running-turn-progress]]. A run that already ended records nothing, and the
+   terminal of the turn drops the record."
+  [sid tid cancel-token stall worker]
+  (update-existing-session!
+    sid
+    (fn [entry]
+      (let [turn (get-in entry [:turns tid])]
+        (if (and turn (not (::run-key turn)) (identical? cancel-token (:cancel-token turn)))
+          (assoc-in entry [:turns tid ::run] {:stall stall :worker worker})
+          entry)))))
+
 (defn- put-session! [sid entry] (update-session! sid (constantly entry)))
 
 (defn council-runtime
@@ -1566,23 +1579,42 @@
                  (when (and tid (not (get-in entry [:turns tid ::parked?]))) tid))))
        count))
 
+(declare stall-exempt-phases)
+
+(defn- turn-working?
+  "True while the worker of the current turn `tid` of `sid` runs a block or a
+   tool: a phase of [[stall-exempt-phases]], in which minutes can pass with no
+   event. A turn whose worker ended, or whose session waits for a person, is not
+   working: with no client left, nothing moves it."
+  [sid entry tid]
+  (let [{:keys [stall worker]} (get-in entry [:turns tid ::run])]
+    (boolean (and stall
+                  (not (future-done? worker))
+                  (contains? stall-exempt-phases (:phase @stall))
+                  (not (bus/session-waiting? sid))
+                  (zero? (long (bus/raised-waiting-count sid)))))))
+
 (defn running-turn-progress
-  "How many turns this gateway still counts as running, and how far their event
-   rings have advanced. A turn that is really working moves `:seq` every few
-   hundred milliseconds; a GHOST turn - one whose worker died, was killed
-   mid-launch, or is parked on human input nobody will ever answer - keeps
-   `:current-turn` set forever while this marker stands still. The daemon
-   lifecycle gate reads exactly that difference, because `running-turn-count`
-   alone cannot tell the two apart."
+  "How many turns this gateway still counts as running, how far their event
+   rings have advanced, and how many of them are `:working` ([[turn-working?]]).
+   A turn that streams moves `:seq` every few hundred milliseconds. A turn inside
+   a block or a tool can append no event for minutes, and `:working` counts it.
+   A GHOST turn - one whose worker died, was killed mid-launch, or is parked on
+   human input nobody will ever answer - keeps `:current-turn` set forever while
+   `:seq` stands still and `:working` stays 0. The daemon lifecycle gate reads
+   exactly that difference, because `running-turn-count` alone cannot tell the
+   two apart."
   []
-  (reduce (fn [acc entry]
-            (if (:current-turn entry)
-              (-> acc
-                  (update :turns inc)
-                  (update :seq + (long (:next-seq entry 0))))
-              acc))
-          {:turns 0 :seq 0}
-          (vals @registry)))
+  (reduce-kv (fn [acc sid entry]
+               (if-let [tid (:current-turn entry)]
+                 (cond-> (-> acc
+                             (update :turns inc)
+                             (update :seq + (long (:next-seq entry 0))))
+                   (turn-working? sid entry tid)
+                   (update :working inc))
+                 acc))
+             {:turns 0 :seq 0 :working 0}
+             @registry))
 
 (defn session-busy?
   "True when `sid` still has work the daemon owns: a live `:current-turn`, or a
@@ -6166,6 +6198,7 @@
           ;; cannot prevent the next turn from beginning.
           (cancellation/worker-future (str "gateway-turn-" tid) worker {:platform? true})]
 
+      (install-turn-run! sid tid cancel-token stall fut)
       ;; Deliberately NOT `cancellation-set-future!`. That registers a bare
       ;; `.cancel(true)`, and a `FutureTask` cancelled BEFORE its thread enters
       ;; `run` never invokes the body at all — so a cancel racing the launch (or a

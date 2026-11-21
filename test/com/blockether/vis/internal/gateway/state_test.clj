@@ -5576,6 +5576,83 @@
           (expect (contains? snapshot k))))))
 
 (defdescribe
+  running-turn-progress-working-test
+  "The daemon lifecycle gate reads `:working` to tell a block that runs from a turn
+   that nobody runs. A running block appends no event, so the event count alone made
+   a managed daemon with no client stop a turn after 60 s inside one block."
+  (it
+    "counts a turn as working while its block runs, not while it waits for a person"
+    (let [registry
+          @#'state/registry
+
+          sid
+          (str "working-" (java.util.UUID/randomUUID))
+
+          ghost-sid
+          (str "ghost-" (java.util.UUID/randomUUID))
+
+          tid
+          "turn-1"
+
+          token
+          (cancellation/cancellation-token)
+
+          entered
+          (promise)
+
+          release
+          (promise)
+
+          returned
+          (promise)
+
+          waiting?
+          (atom false)
+
+          working
+          #(:working (state/running-turn-progress))
+
+          before
+          (working)
+
+          entry
+          (fn [turn]
+            {:next-seq 0
+             :events []
+             :subscribers {}
+             :current-turn tid
+             :turn-order [tid]
+             :turns {tid turn}})]
+
+      (try (swap! registry assoc
+             sid
+             (entry {:turn_id tid :status "running" :cancel-token token})
+             ;; A turn that no worker of this process runs.
+             ghost-sid
+             (entry {:turn_id tid :status "running"}))
+           (with-redefs-fn {#'state/append-event! (fn [& _]
+                                                    nil)
+                            #'state/run-turn! (fn [_sid _tid _request {:keys [stall]}]
+                                                (swap! stall #'state/advance-turn-stall-state
+                                                  {:phase :python}
+                                                  (System/currentTimeMillis))
+                                                (deliver entered true)
+                                                (deref release 5000 nil)
+                                                (deliver returned true))
+                            #'bus/waiting-requests (fn []
+                                                     (if @waiting? {sid [{"id" "ask-1"}]} {}))}
+             (fn []
+               (try (#'state/launch-turn-worker! sid tid "first" {:cancel-token token})
+                    (expect (= true (deref entered 2000 false)))
+                    (expect (= (inc (long before)) (working)))
+                    (reset! waiting? true)
+                    (expect (= before (working)))
+                    (finally (deliver release true)
+                             (expect (= true (deref returned 2000 false)))))))
+           (finally (swap! registry dissoc sid ghost-sid)
+                    (#'state/release-turn-terminal-claim! sid tid))))))
+
+(defdescribe
   queued-turn-correlation-id-test
   "ONE identity for a queued turn. The submitter's `idempotency_key` rides on the
    turn record AND on `turn.queued`, so a channel binds its optimistic \"Queued\"
