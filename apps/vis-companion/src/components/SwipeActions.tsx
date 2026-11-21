@@ -461,6 +461,8 @@ export function SwipeActions({
       onPointerDown={(event) => {
         if (event.pointerType === 'mouse' || !event.isPrimary) return;
         if (!hasVerbs) setHasVerbs(true);
+        // A text field in the row keeps its own drag for the caret and the selection.
+        if (event.target instanceof Element && event.target.closest('input, textarea')) return;
         const from = open ? trayWidth() : 0;
         slide.current = {
           pointerId: event.pointerId,

@@ -94,11 +94,10 @@ describe('session row inline rename', () => {
         name: `Show details for ${STORY_SESSION_ROW.title}`,
       }),
     ).toBeVisible();
+    // Regression, user report: the row's `⋯` menu disappeared while the title was edited.
     expect(
-      screen.queryByRole('group', {
-        name: `${STORY_SESSION_ROW.title} actions`,
-      }),
-    ).toBeNull();
+      screen.getByRole('button', { name: `Actions for ${STORY_SESSION_ROW.title}` }),
+    ).toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.clear(field);

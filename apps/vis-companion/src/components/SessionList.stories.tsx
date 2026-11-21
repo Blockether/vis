@@ -80,10 +80,8 @@ export const Renaming: Story = {
       }),
     ).toBeInTheDocument();
     await expect(
-      canvas.queryByRole('group', {
-        name: `${STORY_SESSION_ROW.title} actions`,
-      }),
-    ).not.toBeInTheDocument();
+      canvas.getByRole('button', { name: `Actions for ${STORY_SESSION_ROW.title}` }),
+    ).toBeInTheDocument();
     await expect(canvas.queryByRole('dialog')).not.toBeInTheDocument();
   },
 };

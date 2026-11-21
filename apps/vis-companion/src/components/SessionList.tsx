@@ -683,63 +683,59 @@ export const SessionRow = memo(function SessionRow({
           label={title}
           isCurrent={isOpen || isPreviewed}
           isSelected={isSelected}
-          actions={
-            renameDraft !== null
-              ? []
-              : [
-                  {
-                    key: 'favorite',
-                    label: isStarred ? 'Unstar' : 'Star',
-                    icon: <StarIcon filled={isStarred} className="size-4" />,
-                    // The favorite keeps its accent fill; the caption uses readable ink.
-                    tone: 'accent',
-                    onSelect: toggleFavorite,
-                  },
-                  {
-                    key: 'rename',
-                    label: 'Rename',
-                    icon: <PencilIcon className="size-4" />,
-                    onSelect: beginRename,
-                  },
-                  ...(commands.fork
-                    ? [
-                        {
-                          key: 'fork',
-                          label: forkBusy ? 'Forking...' : 'Fork',
-                          icon: <ForkIcon className="size-4" />,
-                          onSelect: () => void forkSession(),
-                        },
-                      ]
-                    : []),
-                  // A session without turns has nothing to export.
-                  ...(commands.exportSession && session.turn_count > 0
-                    ? [
-                        {
-                          key: 'export',
-                          label: 'Export',
-                          icon: <DownloadIcon className="size-4" />,
-                          onSelect: (anchor: HTMLElement) => commands.exportSession?.(session, conn, anchor),
-                        },
-                      ]
-                    : []),
-                  {
-                    key: 'copy-id',
-                    label: 'Copy ID',
-                    name: 'Copy session id',
-                    icon: <CopyIcon className="size-4" />,
-                    onSelect: () => void copySessionId(),
-                  },
-                  ...filing,
-                  ...archiving,
-                  {
-                    key: 'delete',
-                    label: 'Delete',
-                    icon: <TrashIcon className="size-4" />,
-                    tone: 'danger',
-                    onSelect: requestDelete,
-                  },
-                ]
-          }
+          actions={[
+              {
+                key: 'favorite',
+                label: isStarred ? 'Unstar' : 'Star',
+                icon: <StarIcon filled={isStarred} className="size-4" />,
+                // The favorite keeps its accent fill; the caption uses readable ink.
+                tone: 'accent',
+                onSelect: toggleFavorite,
+              },
+              {
+                key: 'rename',
+                label: 'Rename',
+                icon: <PencilIcon className="size-4" />,
+                onSelect: beginRename,
+              },
+              ...(commands.fork
+                ? [
+                    {
+                      key: 'fork',
+                      label: forkBusy ? 'Forking...' : 'Fork',
+                      icon: <ForkIcon className="size-4" />,
+                      onSelect: () => void forkSession(),
+                    },
+                  ]
+                : []),
+              // A session without turns has nothing to export.
+              ...(commands.exportSession && session.turn_count > 0
+                ? [
+                    {
+                      key: 'export',
+                      label: 'Export',
+                      icon: <DownloadIcon className="size-4" />,
+                      onSelect: (anchor: HTMLElement) => commands.exportSession?.(session, conn, anchor),
+                    },
+                  ]
+                : []),
+              {
+                key: 'copy-id',
+                label: 'Copy ID',
+                name: 'Copy session id',
+                icon: <CopyIcon className="size-4" />,
+                onSelect: () => void copySessionId(),
+              },
+              ...filing,
+              ...archiving,
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: <TrashIcon className="size-4" />,
+                tone: 'danger',
+                onSelect: requestDelete,
+              },
+          ]}
           trailing={
             <HeaderActions>
               <RowDisclosure
