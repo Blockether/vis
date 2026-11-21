@@ -2884,6 +2884,14 @@
           "items": {
             "$ref": "agents.json#/$defs/team_clock"
           }
+        },
+        "removed": {
+          "type": "array",
+          "description": "The session ids of the children that were deleted. A client removes the row of each such child from its team, also a row that it got with a transcript turn. team_clocks then has a clock for each leader turn of such a child: the stored clock, or a clock with worked_ms 0 when the team has no stored clock now. Absent when no child was deleted.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "required": [

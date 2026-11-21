@@ -3369,6 +3369,29 @@
                                                                       (= sid leader))))
                                                         recent)))))))))
 
+(defn- team-removed!
+  "Tell the stream of `leader` that its child `child` is deleted. `turns` are the leader turns in
+   which the child worked. The event names the child in `removed` and gives a clock for each of
+   those turns: the stored clock, or a clock without time when the team has none now. So the row
+   and a clock that ran for it stop at each client. It runs on the push thread, the one writer of
+   `session.team_updated` and of `team-cache`."
+  [leader child turns]
+  (run-team! #(do (swap! team-cache team-forget leader [child])
+                  (when (team-watched? leader)
+                    (let [stored (into {}
+                                       (map (juxt :turn_id identity))
+                                       (clock-rows (lp/db-info) leader (set turns)))]
+                      (append-event! leader
+                                     "session.team_updated"
+                                     {:team (team-wire (team-counts leader))
+                                      :agents []
+                                      :removed [child]
+                                      :team_clocks
+                                      (mapv (fn [turn]
+                                              (get stored turn {:turn_id turn :worked_ms 0}))
+                                            (sort turns))}
+                                     {:store? false}))))))
+
 (def ^:private team-event-types
   "Events of a child that change its row or the team summary of its leader. A model change also
    moves `routing_locked`."
@@ -10119,9 +10142,14 @@
   ;; The log bytes are on disk, outside the DB tree, so the delete has to name
   ;; them: a shell log dies with the session that produced it and nothing else.
   (shell-log/delete-session-logs! sid)
-  (persistance/db-delete-session-tree! (lp/db-info) sid)
-  (swap! team-leaders dissoc (str sid))
-  (team-dropped! sid)
+  (let [child (some->> (agents/info (lp/db-info) (str sid))
+                       (agent-view (lp/db-info)))]
+    (persistance/db-delete-session-tree! (lp/db-info) sid)
+    (swap! team-leaders dissoc (str sid))
+    (team-dropped! sid)
+    ;; The leader of a deleted child keeps its stream: its team lost a row, and maybe a clock.
+    (when-let [leader (:leader_id child)]
+      (team-removed! (str leader) (str sid) (mapv str (:turn_ids child)))))
   ;; Notify attached clients while their sinks still exist. Reconnects learn the
   ;; same verdict from the missing persisted session, not a deleted replay ring.
   (append-event! sid "session.deleted" {} {:store? false})

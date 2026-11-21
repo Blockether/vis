@@ -725,13 +725,18 @@
   [rewrite-activity-search-text! drop-stored-activity-rows! drop-log-table! drop-improve-tables!
    drop-council-machine-table! store-agent-teams! store-team-clocks!])
 
+(defn- rewrites-done
+  "The count of the store rewrites that this store has already done."
+  ^long [^DataSource ds]
+  (long (:user_version (jdbc/execute-one! ds
+                                          ["PRAGMA user_version"]
+                                          {:builder-fn rs/as-unqualified-lower-maps}))))
+
 (defn- rewrite-older-store!
   "Run each store rewrite that this store has not done yet, and record each one.
    Every rewrite is safe to repeat, so a stopped run starts again at the next open."
   [^DataSource ds]
-  (let [done (long (:user_version (jdbc/execute-one! ds
-                                                     ["PRAGMA user_version"]
-                                                     {:builder-fn rs/as-unqualified-lower-maps})))]
+  (let [done (rewrites-done ds)]
     (doseq [[n rewrite!] (map-indexed vector store-rewrites)
             :when (>= (long n) done)]
 
@@ -742,6 +747,10 @@
   ([ds] (install-schema! ds {}))
   ([^DataSource ds opts]
    (migration/migrate! ds MIGRATIONS opts)
+   ;; The store rewrites run later, in the janitor. A client reads the team clocks before that,
+   ;; so the open stores them again itself: no reader gets a clock that counts the queue.
+   (when (<= (rewrites-done ds) (.indexOf ^java.util.List store-rewrites store-team-clocks!))
+     (store-team-clocks! ds))
    ;; Projects show their name, never their path: rename the path-named ones once.
    (jdbc/execute! ds [project-folder-name-sql])))
 

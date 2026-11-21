@@ -603,4 +603,17 @@ describe('agent team reader', () => {
     stream.emit(ready([{ ...child, status: 'running' }]));
     expect(rowTexts()).toEqual([expect.stringMatching(/running$/)]);
   });
+
+  // Cross-check 2026-11-22: the delete of a child that worked left its row and its running clock
+  // in the app until the next connect.
+  it('drops the row of a deleted child, also the row that a transcript turn gave', () => {
+    const stream = streamHub();
+    hub = stream.hub;
+    render(<Team client={fakeClient()} sid="leader" stored={[child]} hub={hub} />);
+    stream.emit({ ...ready([child]), team_clocks: [{ turn_id: 'turn-1', worked_ms: 0, busy_since: T0 }] });
+    expect(rowTexts()).toEqual([expect.stringMatching(/running$/)]);
+    stream.emit({ type: 'session.team_updated', session_id: 'leader', team: { active: 0, total: 0 },
+      agents: [], removed: [child.session_id], team_clocks: [{ turn_id: 'turn-1', worked_ms: 0 }] });
+    expect(screen.queryByRole('button', { name: /^agent#1/ })).not.toBeInTheDocument();
+  });
 });

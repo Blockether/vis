@@ -568,7 +568,28 @@
                 "The team block of the turn shows the same stored time")
         (team/stream-ready! sid [ended] nil)
         (apply-work! sid)
-        (expect (= "Agents" (str/trim (subs (dock now-ms) 0 20))) "No clock gives no time")))))
+        (expect (= "Agents" (str/trim (subs (dock now-ms) 0 20))) "No clock gives no time")))
+    ;; Cross-check 2026-11-22: the delete of a child that worked left its row and its running
+    ;; clock in the TUI until the next connect.
+    (it "drops the row of a deleted child, also the row that a transcript turn gave"
+        (let [sid
+              "removed-leader"
+
+              turn
+              {:role :assistant :session-turn-id "turn-1" :text "ok" :session-agents [resumed]}]
+
+          (team/stream-ready!
+            sid
+            [resumed]
+            [{"turn_id" "turn-1" "worked_ms" 60000 "busy_since" (- now-ms 30000)}])
+          (apply-work! sid)
+          (team/team-updated! sid
+                              {:agents []
+                               :removed [(get resumed "session_id")]
+                               :team-clocks [{"turn_id" "turn-1" "worked_ms" 0}]})
+          (expect (empty? (:agents (apply-work! sid))))
+          (expect (nil? (:agent-team-card (peek (team/decorate-messages [turn] sid))))
+                  "The transcript row of the deleted child gives no team block")))))
 
 ;; User report: the titles of an AUDIT team and an IMPLEMENT team did not line up.
 (defdescribe

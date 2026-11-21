@@ -948,7 +948,8 @@ const NO_SUBSCRIPTION = () => () => {};
  * ready frame, the last team that this device knew stands in. The rows of the transcript turns
  * (`stored`) are under them, so a team of an older turn still shows. A newer source replaces
  * the row of an older one. `clocks` has the stored clock of each team by leader turn: the clocks
- * of the transcript turns (`storedTimes`), then the clocks of the stream over them.
+ * of the transcript turns (`storedTimes`), then the clocks of the stream over them. The row of a
+ * child that the stream reported as deleted shows from no source.
  */
 export function useAgentTeam(
   client: GatewayClient,
@@ -967,15 +968,17 @@ export function useAgentTeam(
     () => (streamedClocks?.size ? new Map([...storedTimes, ...streamedClocks]) : storedTimes),
     [storedTimes, streamedClocks],
   );
+  const gone = useSyncExternalStore(subscribe, () => hub?.teamGone(sid));
   const current = useMemo(() => {
+    const kept = gone?.size ? stored.filter((row) => !gone.has(row.session_id)) : stored;
     // The stream rows are newer than the transcript rows. The cached rows of an earlier visit are older.
     if (streamed) {
-      if (!streamed.length || !stored.length) return streamed.length ? streamed : stored;
-      return mergeAgents(stored, streamed);
+      if (!streamed.length || !kept.length) return streamed.length ? streamed : kept;
+      return mergeAgents(kept, streamed);
     }
     const cached = client.cachedAgents?.(sid);
-    return cached?.length ? mergeAgents(cached, stored) : stored;
-  }, [client, sid, stored, streamed]);
+    return cached?.length ? mergeAgents(cached, kept) : kept;
+  }, [client, sid, stored, streamed, gone]);
   // A person stops subagents only through their leader: the stop of a leader turn also stops them.
   return { agents: current, clocks };
 }

@@ -1641,15 +1641,17 @@
            (jdbc/execute! (:datasource s1) ["ALTER TABLE session_agent DROP COLUMN started_at"])
            (jdbc/execute! (:datasource s1) ["PRAGMA user_version = 6"])
            (persistance/db-dispose-connection! s1)
-           (let [s2 (persistance/db-create-connection! dir)]
+           ;; Cross-check 2026-11-22: a client read the old clock before the janitor ran the store
+           ;; rewrites. The open itself must store the clocks again, so no janitor runs here.
+           (let [s2 (with-redefs-fn
+                      {(requiring-resolve
+                         'com.blockether.vis.internal.persistance.sqlite.maintenance/vacuum-async!)
+                       (fn [& _])}
+                      #(persistance/db-create-connection! dir))]
              (try (expect (= 90000 (:worked_ms (persistance/db-agent-info s2 resumed))))
                   (expect (= 0 (:worked_ms (persistance/db-agent-info s2 running))))
                   (expect (= 1000 (:busy_since (persistance/db-agent-info s2 running)))
                           "A task of an older store started at its hand-off")
-                  ;; The janitor runs the store rewrites after the open.
-                  ((requiring-resolve
-                     'com.blockether.vis.internal.persistance.sqlite.core/rewrite-older-store!)
-                    (:datasource s2))
                   (expect (= #{"team"} (set (keys (persistance/db-team-clocks s2 (str leader)))))
                           "A team with only a queued agent has no clock")
                   (finally (persistance/db-dispose-connection! s2))))

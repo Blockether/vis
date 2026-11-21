@@ -2751,6 +2751,7 @@ class SessionTeamUpdatedData(TypedDict):
     agents: list[AgentsAgent]
     changes: NotRequired[list[TeamChange]]
     team_clocks: NotRequired[list[AgentsTeamClock]]
+    removed: NotRequired[list[str]]
     schema: int
     ts: int
 

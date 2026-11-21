@@ -1425,4 +1425,34 @@
                     "Two agents that worked at the same time count once")
             (expect (= done
                        (some #(when (= team (get % "turn_id")) (get % "team_clock"))
-                             (state/transcript leader))))))))))
+                             (state/transcript leader)))))))))
+  ;; Cross-check 2026-11-22: the delete of a working child removed its stored clock, and the open
+  ;; stream of the leader got nothing. The row and its clock ran on until the next connect.
+  (it
+    "tells the leader that a deleted child is gone and stops the clock of its team"
+    (with-team
+      {:statuses ["queued" "queued"] :watched? true}
+      (fn [{:keys [db leader children events]}]
+        (let [[working waiting]
+              children
+
+              team
+              (:team_id (ps/db-agent-info db working))]
+
+          (expect (ps/db-agent-claim-iteration! db working))
+          (expect (some #(get % "busy_since") (get (ready-frame leader) "team_clocks")))
+          (with-redefs-fn {#'state/teardown-session-async! (constantly nil)}
+            #(state/close-session! working))
+          (drain!)
+          (let [event (second (last @events))]
+            (expect (document/valid-json? "gateway"
+                                          "team_update"
+                                          (select-keys event
+                                                       ["team" "agents" "removed" "team_clocks"])))
+            (expect (= [working] (get event "removed")))
+            (expect (= {"active" 1 "total" 1} (get event "team")))
+            (expect
+              (= [{"turn_id" team "worked_ms" 0}] (get event "team_clocks"))
+              "Only a queued agent is left, so the clock of the team has no time and does not run")
+            (expect (= [waiting]
+                       (mapv #(get % "session_id") (get (ready-frame leader) "agents"))))))))))

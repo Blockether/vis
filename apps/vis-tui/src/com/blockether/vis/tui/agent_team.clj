@@ -23,8 +23,8 @@
   ;; Work for the refresh worker, by session id. Only the worker takes it.
   ;; `:rows` holds the `agents` of the newest `subscription.ready` and `:clocks` its
   ;; `team_clocks`: they replace the team.
-  ;; `:updates` holds the `session.team_updated` events after it as `{:agents :changes :clocks}`,
-  ;; in arrival order: a change needs the row before it. `:setting?` reads the Subagents setting
+  ;; `:updates` holds the `session.team_updated` events after it as
+  ;; `{:agents :changes :clocks :removed}`, in arrival order: a change needs the row before it. `:setting?` reads the Subagents setting
   ;; again, and `:lost?` marks a dropped event stream.
   (atom {}))
 
@@ -98,21 +98,31 @@
           (vec agents)
           changes))
 
+(defn- without-removed
+  "The team rows `agents` without the rows of the deleted children `removed`, a set of session ids."
+  [agents removed]
+  (if (seq removed) (into [] (remove #(contains? removed (get % "session_id"))) agents) agents))
+
 (defn apply-update
-  "Apply one `session.team_updated` update, `{:agents :changes}`, to the team rows `agents`: the
-   whole rows first, then the changes."
-  [team {:keys [agents changes]}]
+  "Apply one `session.team_updated` update, `{:agents :changes :removed}`, to the team rows
+   `agents`: the whole rows first, then the changes. The rows of the deleted children go away."
+  [team {:keys [agents changes removed]}]
   (-> (merge-agents team agents)
-      (apply-changes changes)))
+      (apply-changes changes)
+      (without-removed removed)))
 
 (defn team-updated!
   "Take the `session.team_updated` chunk of `sid`. Its `:agents` rows and then its `:changes`
    apply to the team after the rows of the last `subscription.ready`, and each clock of its
-   `:team-clocks` replaces the clock of the same leader turn. An event without usable rows,
-   changes or clocks changes nothing."
-  [sid {:keys [agents changes team-clocks]}]
+   `:team-clocks` replaces the clock of the same leader turn. The row of each deleted child of its
+   `:removed` goes away. An event without usable rows, changes, clocks or deleted children changes
+   nothing."
+  [sid {:keys [agents changes team-clocks removed]}]
   (let [rows
         (agent-rows agents)
+
+        removed
+        (if (sequential? removed) (into #{} (filter string?) removed) #{})
 
         changes
         (change-rows changes)
@@ -120,9 +130,12 @@
         clocks
         (clock-rows team-clocks)]
 
-    (when (or (seq rows) (seq changes) (seq clocks))
+    (when (or (seq rows) (seq changes) (seq clocks) (seq removed))
       (want! sid
-             #(update % :updates (fnil conj []) {:agents rows :changes changes :clocks clocks})))))
+             #(update %
+                      :updates
+                      (fnil conj [])
+                      {:agents rows :changes changes :clocks clocks :removed removed})))))
 
 (defn stream-lost!
   "Mark the team of `sid` stale: its event stream dropped, so events can be missing."
@@ -271,6 +284,8 @@
                                  (or (if ready? clocks (:clocks previous)) {})
                                  updates)
                  :agents (if enabled? team [])
+                 ;; The deleted children: a transcript turn can still hold their rows.
+                 :gone (into (or (:gone previous) #{}) (mapcat :removed) updates)
                  :enabled? enabled?
                  :checked-at (System/currentTimeMillis)}
           (or lost? (and (not ready?) (:stale? previous)))
@@ -1299,7 +1314,10 @@
   ([messages sid running-turn] (decorate-messages messages sid running-turn (constantly false)))
   ([messages sid running-turn open?]
    (let [agents
-         (merge-agents (merge-agents [] (mapcat :session-agents messages)) (:agents (summary sid)))
+         (merge-agents (merge-agents []
+                                     (without-removed (mapcat :session-agents messages)
+                                                      (:gone (summary sid))))
+                       (:agents (summary sid)))
 
          clocks
          (merge (clock-rows (keep :session-team-clock messages)) (:clocks (summary sid)))]

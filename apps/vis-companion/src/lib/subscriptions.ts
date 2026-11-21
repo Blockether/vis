@@ -91,6 +91,8 @@ export class SessionSubscriptionHub {
   private readonly teams = new Map<string, readonly Subagent[]>();
   // The stored clock of each team of each session, by leader turn, from the same frames.
   private readonly clocks = new Map<string, ReadonlyMap<string, TeamClock>>();
+  // The deleted children of each session, from the `removed` of its pushes.
+  private readonly gone = new Map<string, ReadonlySet<string>>();
   private readonly teamListeners = new Map<string, Set<TeamListener>>();
   private stopStream: (() => void) | null = null;
   private connected = false;
@@ -189,7 +191,15 @@ export class SessionSubscriptionHub {
     return this.clocks.get(sid);
   }
 
-  /** Call `listener` after each change of `team(sid)` or `teamClocks(sid)`. */
+  /**
+   * The deleted children of `sid` that this hub streamed, or undefined when it knows none. A
+   * transcript turn can still hold their rows. The value keeps its identity until a child is deleted.
+   */
+  teamGone(sid: string): ReadonlySet<string> | undefined {
+    return this.gone.get(sid);
+  }
+
+  /** Call `listener` after each change of `team(sid)`, `teamClocks(sid)` or `teamGone(sid)`. */
   subscribeTeam(sid: string, listener: TeamListener): () => void {
     let listeners = this.teamListeners.get(sid);
     if (!listeners) {
@@ -226,7 +236,8 @@ export class SessionSubscriptionHub {
    * `session_id` and adds the new ones at the end, then applies its `changes` to the known rows.
    * The gateway never replays a push, so a reconnect gets the team again only from its ready frame.
    * The `team_clocks` of the ready frame replace the clocks of `sid`, and each clock of a push
-   * replaces the clock of the same leader turn.
+   * replaces the clock of the same leader turn. The row of each deleted child in `removed` of a
+   * push goes away.
    */
   private noteTeam(sid: string, event: SseEvent): void {
     const clocks = teamClocksFromWire(event.team_clocks).map((clock): [string, TeamClock] => [clock.turn_id, clock]);
@@ -242,8 +253,12 @@ export class SessionSubscriptionHub {
     if (clocks.length) this.clocks.set(sid, new Map([...(this.clocks.get(sid) ?? []), ...clocks]));
     const changed = teamRowsFromWire(event.agents) ?? [];
     const changes = teamChangesFromWire(event.changes) ?? [];
-    if (changed.length || changes.length) this.setTeam(sid, applyAgentChanges(mergeAgents(base, changed), changes));
-    else if (clocks.length) this.teamChanged(sid);
+    const removed = new Set(Array.isArray(event.removed) ? event.removed.filter((id): id is string => typeof id === 'string') : []);
+    if (removed.size) this.gone.set(sid, new Set([...(this.gone.get(sid) ?? []), ...removed]));
+    if (changed.length || changes.length || removed.size) {
+      const rows = applyAgentChanges(mergeAgents(base, changed), changes);
+      this.setTeam(sid, removed.size ? rows.filter((row) => !removed.has(row.session_id)) : rows);
+    } else if (clocks.length) this.teamChanged(sid);
   }
 
   watchedSessionIds(): ReadonlySet<string> {
@@ -449,6 +464,7 @@ export class SessionSubscriptionHub {
     this.idle.clear();
     this.teams.clear();
     this.clocks.clear();
+    this.gone.clear();
     this.teamListeners.clear();
   }
 
@@ -600,6 +616,7 @@ export class SessionSubscriptionHub {
       this.forgetCoverage(sid);
       this.teams.delete(sid);
       this.clocks.delete(sid);
+      this.gone.delete(sid);
       this.teamChanged(sid);
       this.teamListeners.delete(sid);
       for (const listener of [...(this.sessionListeners.get(sid) ?? [])]) listener(event);
