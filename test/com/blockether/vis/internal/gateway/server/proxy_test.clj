@@ -1,16 +1,21 @@
 ;; Copyright (c) Blockether. All rights reserved.
 (ns com.blockether.vis.internal.gateway.server.proxy-test
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.core :as config-core]
             [com.blockether.vis.internal.gateway.server.instance :as instance]
             [com.blockether.vis.internal.gateway.server.proxy :as proxy]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
+            [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it throws?]])
   (:import (java.io InputStream)
            (java.net ConnectException InetSocketAddress ServerSocket Socket URI)
            (java.nio.charset StandardCharsets)
+           (java.nio.file Files)
+           (java.nio.file.attribute FileAttribute)
            (java.util Base64)))
 
 (def ^:private routes
@@ -187,4 +192,33 @@
         (finally (proxy/stop!)
                  (.close upstream)
                  (.close gateway)
-                 (reset! instance/server-state before))))))
+                 (reset! instance/server-state before)))))
+  ;; A stopped gateway kept its port reserved, and the next listener of the process
+  ;; published that port again for the other Vis processes.
+  (it "releases the gateway port when it stops"
+      (let [before
+            @instance/server-state
+
+            gateway
+            (ServerSocket. 0 50 (java.net.InetAddress/getByName "127.0.0.1"))
+
+            gw
+            (.getLocalPort gateway)
+
+            dir
+            (.toFile (Files/createTempDirectory "vis-live-ports" (make-array FileAttribute 0)))
+
+            published
+            #(let [file (io/file dir (process-jail/claim-owner!))] (when (.exists file)
+                                                                     (edn/read-string (slurp
+                                                                                        file))))]
+
+        (reset! instance/server-state {:host "127.0.0.1" :port gw :token "tok"})
+        (try (with-redefs-fn {#'proxy/global-settings (constantly nil)
+                              #'gateway-sandbox/live-ports-dir (constantly dir)}
+               (fn []
+                 (proxy/sync!)
+                 (expect (some #{gw} (published)) "a running gateway publishes its port")
+                 (proxy/stop!)
+                 (expect (not-any? #{gw} (published)))))
+             (finally (proxy/stop!) (.close gateway) (reset! instance/server-state before))))))

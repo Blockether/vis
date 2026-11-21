@@ -180,12 +180,13 @@
       (:port @listener))))
 
 (defn stop!
-  "Stop the listener. Idempotent."
+  "Stop the listener and release the ports that `sync!` reserved. Idempotent."
   []
   (locking listener
     (when-let [{:keys [stop!]} @listener]
       (stop!)
-      (reset! listener nil))))
+      (reset! listener nil))
+    (reserve-ports! nil nil)))
 
 (defn- proxy-handler
   "GET /v1/proxy — the proxy settings that a client uses to route a link."
