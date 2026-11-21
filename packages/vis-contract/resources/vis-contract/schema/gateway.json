@@ -3210,6 +3210,16 @@
               "type": "null"
             }
           ]
+        },
+        "worked_ms": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/worked_ms"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [

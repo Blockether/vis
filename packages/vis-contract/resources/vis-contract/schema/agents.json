@@ -555,6 +555,11 @@
             "minLength": 1
           }
         },
+        "worked_ms": {
+          "$comment": "The time in ms of the tasks of the agent that ended. The store adds the time of a task when the task ends. A client shows this value for an agent that does not work. For a queued or running agent, a client adds the time from the start of the current task (resumed_at, else created_at) to now. So a follow-up Council ping adds to the time, and the time stops while the agent does not work.",
+          "type": "integer",
+          "minimum": 0
+        },
         "runs": {
           "$comment": "The earlier tasks of the agent, oldest first. A follow-up Council ping adds the task that ended before it. The current task is not in the list. A client draws each run in the color of its status, so a failed run stays visible after a resume.",
           "type": "array",

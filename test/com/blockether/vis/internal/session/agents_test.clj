@@ -2341,6 +2341,38 @@
         (expect (= [{:start start :end (+ start 60000) :status "failed"}]
                    (:runs (agents/info db child)))
                 "An undone ping takes its task out of runs again"))))
+  ;; User report 2026-11-21: each client added the time of each task of a child at each paint.
+  (it
+    "stores the time of the ended tasks of a child, so a reader adds no earlier task"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {})
+
+          start
+          (:created_at (agents/info db child))
+
+          worked
+          #(:worked_ms (agents/info db child))]
+
+      (expect (= 0 (worked)))
+      (ps/db-agent-update! db child {:status "failed" :finished_at (+ start 60000)})
+      (expect (= 60000 (worked)))
+      (ps/db-agent-update! db child {:status "failed" :finished_at (+ start 70000)})
+      (expect (= 60000 (worked)) "A repeated end adds nothing")
+      (ps/db-agent-resume! db child 1 (+ start 90000))
+      (expect (= 60000 (worked)) "The time stops while the child does not work")
+      (ps/db-agent-update! db child {:status "completed" :finished_at (+ start 120000)})
+      (expect (= 90000 (worked)))
+      (expect (document/valid-json? "agents" "agent" (walk/stringify-keys (agents/info db child))))
+      (let [restore! (agents/queue-turn! db child)]
+        (restore!)
+        (expect (= [90000 (+ start 120000)] ((juxt :worked_ms :finished_at) (agents/info db child)))
+                "An undone ping adds nothing"))))
   (it
     "lists the turns, notes, messages and end of a child, oldest first"
     (let [db

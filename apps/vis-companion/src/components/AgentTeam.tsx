@@ -120,23 +120,19 @@ function startOf(agent: Subagent): number | undefined {
   return marks.length ? Math.max(...marks) : undefined;
 }
 
-// The time of the earlier tasks of an agent in ms.
-function pastTime(agent: Subagent): number {
-  return (agent.runs ?? []).reduce((sum, run) => sum + Math.max(0, run.end - run.start), 0);
-}
-
 /**
- * The time of an agent in ms: its earlier tasks plus its current task. The current task counts
- * to now while the agent runs, to its end after it. So a follow-up ping adds to the time, and
- * the time stops while the agent does not work. Undefined while queued without earlier work.
+ * The time of an agent in ms. The store keeps the time of the tasks that ended (`worked_ms`), so
+ * this adds no earlier task. An agent that runs shows that time plus its current task to now.
+ * An agent that does not run shows that time only, so the time stops. A gateway from before
+ * `worked_ms` gives the time of the current task only. Undefined while queued without earlier work.
  */
 export function agentTime(agent: Subagent, now: number): number | undefined {
   const start = startOf(agent);
-  const past = pastTime(agent);
-  const idle = past > 0 ? past : undefined;
-  if (start === undefined || agent.status === 'queued') return idle;
-  if (agent.status === 'running') return past + Math.max(0, now - start);
-  return agent.finished_at == null ? idle : past + Math.max(0, agent.finished_at - start);
+  const worked = agent.worked_ms ?? 0;
+  if (agent.status === 'running' && start !== undefined) return worked + Math.max(0, now - start);
+  if (worked > 0) return worked;
+  if (start === undefined || agent.status === 'queued' || agent.finished_at == null) return undefined;
+  return Math.max(0, agent.finished_at - start);
 }
 
 /**

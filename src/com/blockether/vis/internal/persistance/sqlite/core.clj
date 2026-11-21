@@ -5604,7 +5604,8 @@
 (def ^:private agent-columns
   [:session_id :parent_id :leader_id :team_id :task :role :status :iteration_budget :iterations_used
    :inherited_turns :allowed_models :fallback_model :files :spawn_key :spawn_fingerprint :created_at
-   :resumed_turns :resumed_at :title :result :outcome :finished_at :ordinal :after :runs])
+   :resumed_turns :resumed_at :title :result :outcome :finished_at :ordinal :after :runs
+   :worked_ms])
 
 (defn- agent-row
   [row]
@@ -5809,19 +5810,36 @@
                                     :where [:= :session_id (str sid)]}))))
 
 (defn db-agent-update!
+  "Change the row of child `sid`. The first end of a task adds its time to `worked_ms` in the
+   same write, so no reader adds the earlier tasks again. A change with its own `:worked_ms`
+   restores a row and adds nothing."
   [db sid changes]
-  (let [changes (cond-> (select-keys changes
-                                     [:status :resumed_turns :resumed_at :result :outcome
-                                      :finished_at])
-                  (contains? changes :files)
-                  (assoc :files
-                    (some-> (:files changes)
-                            ->json))
+  (let [end
+        (:finished_at changes)
 
-                  (contains? changes :runs)
-                  (assoc :runs
-                    (some-> (not-empty (:runs changes))
-                            ->json)))]
+        changes
+        (cond-> (select-keys changes
+                             [:status :resumed_turns :resumed_at :result :outcome :finished_at
+                              :worked_ms])
+          ;; SQLite reads the old row values: only a task without an end adds its time,
+          ;; so a repeated end adds nothing.
+          (and end (not (contains? changes :worked_ms)))
+          (assoc :worked_ms
+            [:+ :worked_ms
+             [:case [:= :finished_at nil]
+              [:max [:inline 0] [:- [:inline (long end)] [:coalesce :resumed_at :created_at]]] :else
+              [:inline 0]]])
+
+          (contains? changes :files)
+          (assoc :files
+            (some-> (:files changes)
+                    ->json))
+
+          (contains? changes :runs)
+          (assoc :runs
+            (some-> (not-empty (:runs changes))
+                    ->json)))]
+
     (when (seq changes)
       (execute! db {:update :session_agent :set changes :where [:= :session_id (str sid)]})))
   (db-agent-info db sid))
@@ -6676,7 +6694,14 @@
                                         :status (if (contains? #{"queued" "running"}
                                                                (:status agent))
                                                   "failed"
-                                                  (:status agent)))]})))
+                                                  (:status agent)))]})
+                  ;; A snapshot from before worked_ms: the row gets the time of its ended tasks.
+                  (when-not (contains? agent :worked_ms)
+                    (execute! tx-info
+                              {:update :session_agent
+                               :set {:worked_ms
+                                     [:raw (migration/column-fill "session_agent" "worked_ms")]}
+                               :where [:= :session_id (get ids (:id soul))]}))))
               {:root (get ids root-old) :sessions ids})))))))
 
 (defn- normalize-routing-event

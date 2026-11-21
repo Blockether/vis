@@ -1935,7 +1935,7 @@
                                 (merge {:result nil :outcome nil :finished_at nil :runs nil}
                                        (select-keys child
                                                     [:status :resumed_turns :resumed_at :result
-                                                     :outcome :finished_at :runs]))))))
+                                                     :outcome :finished_at :runs :worked_ms]))))))
 
 (defn task-request
   "The turn request of a Council wake from the parent of managed child `sid`, or nil for another

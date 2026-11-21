@@ -844,6 +844,7 @@ class AgentsAgent(TypedDict):
     resumed_at: NotRequired[int | None]
     finished_at: NotRequired[int]
     turn_ids: NotRequired[list[str]]
+    worked_ms: NotRequired[int]
     runs: NotRequired[list[AgentsAgentRunsItem]]
 
 
@@ -2726,6 +2727,7 @@ class TeamChange(TypedDict):
     finished_at: NotRequired[JSONValue]
     turn_ids: NotRequired[list[dict[str, JSONValue]] | None]
     runs: NotRequired[list[dict[str, JSONValue]] | None]
+    worked_ms: NotRequired[JSONValue]
 
 
 class SessionTeamUpdatedData(TypedDict):

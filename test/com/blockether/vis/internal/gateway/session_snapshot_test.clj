@@ -697,6 +697,45 @@
                            (rows store
                                  ["SELECT setting_id, value FROM session_setting WHERE owner_id = ?"
                                   new-id]))))))))
+    ;; A snapshot from before `session_agent.worked_ms` has the times of a child only in `runs`
+    ;; and `finished_at`. Without the fill, each ended child of the restored session shows no time.
+    (it
+      "gives a child of a snapshot from before worked_ms the time of its ended tasks"
+      (with-store
+        (fn [store]
+          (let [sid
+                (session! store "Leader")
+
+                team
+                (turn! store sid "spawn" :success)
+
+                cid
+                (child! store sid team "completed")]
+
+            (jdbc/execute!
+              (:datasource store)
+              ["UPDATE session_agent SET runs = ?, resumed_at = ?, finished_at = ? WHERE session_id = ?"
+               "[{\"start\":1,\"end\":60001,\"status\":\"failed\"}]" 90001 120001 cid])
+            (let [old
+                  (recoded (state/export-session sid)
+                           (fn [tree]
+                             (update tree
+                                     :sessions
+                                     (fn [ss]
+                                       (mapv #(update %
+                                                      :agent
+                                                      (fn [a]
+                                                        (some-> a
+                                                                (dissoc :worked_ms))))
+                                             ss)))))
+
+                  new-root
+                  (get (state/import-session! old {}) "id")]
+
+              (expect (= [{:worked_ms 90000}]
+                         (rows store
+                               ["SELECT worked_ms FROM session_agent WHERE parent_id = ?"
+                                new-root]))))))))
     (it "restores a child alone as an independent session"
         (with-store
           (fn [store]

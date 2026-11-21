@@ -277,6 +277,25 @@
     (with-open [rs (.executeQuery st)]
       (if (.next rs) (get (canonical-columns (or (.getString rs "sql") "")) table []) []))))
 
+(def ^:private column-fills
+  "The value of a column for the rows of a store from before that column, as
+   `{[table column] expression}`. The expression reads the other columns of the row.
+
+   `session_agent.worked_ms` is the time of the tasks that ended: each task in `runs`, then
+   the current task when it has an end."
+  {["session_agent" "worked_ms"]
+   (str "coalesce((SELECT sum(max(0, json_extract(run.value, '$.end')"
+        " - json_extract(run.value, '$.start')))"
+        " FROM json_each(coalesce(session_agent.runs, '[]')) AS run), 0)"
+        " + CASE WHEN finished_at IS NULL THEN 0"
+        " ELSE max(0, finished_at - coalesce(resumed_at, created_at)) END")})
+
+(defn column-fill
+  "The `column-fills` expression of `column` in `table`, or nil. An import of rows from before the
+   column uses it too."
+  [table column]
+  (get column-fills [(str/lower-case (str table)) (str/lower-case (str column))]))
+
 (defn- reconcile-canonical-columns!
   "Additively realign a database that was created by an EARLIER copy of the
    canonical V1 with the V1 shipped now.
@@ -289,7 +308,10 @@
    file - no schema DDL is written in Clojure. Fresh databases match already, so
    this is a no-op for them. Nullable foreign keys retain their REFERENCES
    constraints; keys, foreign keys with non-NULL defaults, and NOT NULL without
-   DEFAULT are left to a new schema generation."
+   DEFAULT are left to a new schema generation.
+
+   A column with a `column-fills` entry gets its values in the transaction that adds it, so
+   an interrupted open leaves the store without the column and the next open does both again."
   [^DataSource ds locations]
   (let [tables (reduce merge {} (map canonical-columns (migration-sql-texts locations)))]
     (when (seq tables)
@@ -304,9 +326,17 @@
           ;; Best effort: a racing process may have added it already, and a
           ;; definition SQLite still refuses must surface at its real use site
           ;; rather than making the whole store unopenable.
-          (try (with-open [st (.createStatement conn)]
-                 (.executeUpdate st (str "ALTER TABLE " table " ADD COLUMN " (:sql col))))
-               (catch Throwable _ nil)))))))
+          (let [fill (column-fill table (:name col))
+                auto (.getAutoCommit conn)]
+
+            (try (.setAutoCommit conn false)
+                 (with-open [st (.createStatement conn)]
+                   (.executeUpdate st (str "ALTER TABLE " table " ADD COLUMN " (:sql col)))
+                   (when fill
+                     (.executeUpdate st (str "UPDATE " table " SET " (:name col) " = " fill))))
+                 (.commit conn)
+                 (catch Throwable _ (try (.rollback conn) (catch Throwable _ nil)))
+                 (finally (try (.setAutoCommit conn auto) (catch Throwable _ nil))))))))))
 
 (def ^:private retired-columns
   "Columns DELETED from the canonical V1 after stores already existed, as

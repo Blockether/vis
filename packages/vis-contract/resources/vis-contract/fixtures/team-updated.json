@@ -91,7 +91,8 @@
               "end": 5000,
               "status": "failed"
             }
-          ]
+          ],
+          "worked_ms": 2000
         }
       ]
     },
@@ -178,7 +179,8 @@
               "end": 9000,
               "status": "completed"
             }
-          ]
+          ],
+          "worked_ms": 7000
         }
       ]
     },
@@ -218,7 +220,8 @@
               "end": 9000,
               "status": "completed"
             }
-          ]
+          ],
+          "worked_ms": 7000
         }
       ],
       "changes": [
@@ -259,7 +262,8 @@
           "end": 9000,
           "status": "completed"
         }
-      ]
+      ],
+      "worked_ms": 7000
     },
     {
       "session_id": "child-c",
@@ -278,7 +282,8 @@
           "end": 5000,
           "status": "failed"
         }
-      ]
+      ],
+      "worked_ms": 2000
     }
   ]
 }

@@ -1584,6 +1584,60 @@
             (finally (persistance/db-dispose-connection! s2))))
         (finally (fs/delete-tree root))))))
 
+;; A store from before `session_agent.worked_ms` has the times of a child only in `runs` and
+;; `finished_at`. Without the fill, each ended child of an old session shows no time.
+(defdescribe
+  migration-column-fill-test
+  (it
+    "a store from before worked_ms gets the time of the ended tasks of each child on reopen"
+    (let [root
+          (fs/create-temp-dir {:prefix "vis-fill-"})
+
+          dir
+          (str (fs/path root "store"))
+
+          s1
+          (persistance/db-create-connection! dir)
+
+          leader
+          (h/store-session! s1 {:channel :api})
+
+          agent
+          (fn [extra]
+            (let [child (str (h/store-session! s1 {:channel :api}))]
+              (sqlite-core/execute! s1
+                                    {:insert-into :session_agent
+                                     :values [(merge {:session_id child
+                                                      :parent_id (str leader)
+                                                      :leader_id (str leader)
+                                                      :team_id "team"
+                                                      :task "check"
+                                                      :depth 1
+                                                      :inherited_turns 0
+                                                      :spawn_key child
+                                                      :spawn_fingerprint "f"
+                                                      :checkpoint (byte-array 0)
+                                                      :created_at 1000}
+                                                     extra)]})
+              child))
+
+          resumed
+          (agent {:status "completed"
+                  :runs "[{\"start\":1000,\"end\":61000,\"status\":\"failed\"}]"
+                  :resumed_at 90000
+                  :finished_at 120000})
+
+          running
+          (agent {:status "running"})]
+
+      (try (jdbc/execute! (:datasource s1) ["ALTER TABLE session_agent DROP COLUMN worked_ms"])
+           (persistance/db-dispose-connection! s1)
+           (let [s2 (persistance/db-create-connection! dir)]
+             (try (expect (= 90000 (:worked_ms (persistance/db-agent-info s2 resumed))))
+                  (expect (= 0 (:worked_ms (persistance/db-agent-info s2 running))))
+                  (finally (persistance/db-dispose-connection! s2))))
+           (finally (fs/delete-tree root))))))
+
 (defn- activity-schema-names
   [store]
   (set (map :sqlite_master/name

@@ -71,11 +71,12 @@ describe('agent rows', () => {
   });
 
   // User report 2026-11-21: each follow-up Council ping reset the time of an agent.
-  it('adds the time of each task of an agent, and stops it while the agent does not work', () => {
-    const resumed = { ...child, runs: [{ start: T0, end: T0 + 60_000, status: 'completed' as const }], resumed_at: T0 + 170_000 };
+  // The store keeps the time of the ended tasks in worked_ms, so a row adds no earlier task.
+  it('adds the current task to the stored time of an agent, and stops it while the agent does not work', () => {
+    const resumed = { ...child, worked_ms: 60_000, resumed_at: T0 + 170_000 };
     expect(agentTime(resumed, T0 + 200_000)).toBe(90_000);
     expect(agentTime({ ...resumed, status: 'queued' }, T0 + 200_000)).toBe(60_000);
-    expect(agentTime({ ...resumed, status: 'completed', finished_at: T0 + 190_000 }, T0 + 999_000)).toBe(80_000);
+    expect(agentTime({ ...resumed, status: 'completed', worked_ms: 80_000, finished_at: T0 + 190_000 }, T0 + 999_000)).toBe(80_000);
   });
 
   it('times the current task: so far while it runs, its duration after, none while queued', () => {

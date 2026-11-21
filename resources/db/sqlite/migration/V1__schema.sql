@@ -210,6 +210,10 @@ CREATE TABLE session_agent (
   -- The earlier tasks, oldest first, as a JSON array of {start, end, status, outcome}. A resume
   -- adds the task that ended before it, so a failed task stays visible. NULL = no earlier task.
   runs             TEXT CHECK (runs IS NULL OR json_valid(runs)),
+  -- The time in ms of the tasks that ended. The write that ends a task adds its time, so a reader
+  -- adds only the time of a task that runs. A store from before this column gets it from runs and
+  -- finished_at (column-fills in migration.clj).
+  worked_ms        INTEGER NOT NULL DEFAULT 0 CHECK (worked_ms >= 0),
   UNIQUE (parent_id, spawn_key),
   CHECK (session_id <> parent_id AND session_id <> leader_id)
 );

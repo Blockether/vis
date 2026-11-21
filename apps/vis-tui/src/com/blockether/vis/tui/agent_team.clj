@@ -407,15 +407,6 @@
                   (when (and (number? start) (number? end)) [(long start) (long end)]))))
         (get agent "runs")))
 
-(defn- runs-ms
-  "The time of the earlier tasks of `agent` in ms."
-  ^long [agent]
-  (reduce +
-          0
-          (map (fn [[start end]]
-                 (max 0 (- (long end) (long start))))
-               (runs agent))))
-
 (defn team-row
   "The row data of agent `agent` with start order `n`. Plain data, so an unchanged agent
    compares equal across polls. The painter computes the running time. `agents` are the rows of
@@ -435,7 +426,7 @@
       :active? (active? agent)
       :pending? (pending? agent)
       :start (start-ms agent)
-      :past-ms (runs-ms agent)
+      :worked-ms (get agent "worked_ms")
       :end (when (and (not (active? agent)) (number? (get agent "finished_at")))
              (long (get agent "finished_at")))})))
 
@@ -571,18 +562,19 @@
     (str (duration-text total) " (waited " (duration-text (min total waited)) ")")))
 
 (defn row-time
-  "The time of a row: the time of its earlier tasks plus its current task. The current task
-   counts to now while the agent works or waits, to its end after it. So a follow-up ping adds
-   to the time, and the time stops while the agent does not work. Nil while queued without
-   earlier work, or without times. A leader row adds its wait."
-  [{:keys [start end active? status past-ms] :as row} now-ms]
-  (let [past (long (or past-ms 0))]
+  "The time of a row. The store keeps the time of the tasks that ended (`worked_ms`), so this
+   adds no earlier task. An agent that works shows that time plus its current task to now. An
+   agent that does not work shows that time only, so the time stops. A gateway from before
+   `worked_ms` gives the time of the current task only. Nil while queued without earlier work,
+   or without times. A leader row adds its wait."
+  [{:keys [start end active? status worked-ms] :as row} now-ms]
+  (let [worked (long (or worked-ms 0))]
     (cond (nil? start) nil
           (leader? row) (leader-time row now-ms)
-          end (duration-text (+ past (- (long end) (long start))))
-          (and active? (not= "QUEUED" status)) (duration-text (+ past
+          (and active? (not= "QUEUED" status)) (duration-text (+ worked
                                                                  (- (long now-ms) (long start))))
-          (pos? past) (duration-text past))))
+          (pos? worked) (duration-text worked)
+          end (duration-text (- (long end) (long start))))))
 
 (defn- widest [texts] (reduce max 0 (map #(long (p/display-width (str %))) texts)))
 

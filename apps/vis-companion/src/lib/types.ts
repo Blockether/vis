@@ -112,6 +112,8 @@ export interface Subagent {
   finished_at?: number;
   /** The earlier tasks, oldest first. A follow-up ping adds the task that ended before it. */
   runs?: AgentRun[];
+  /** The time in ms of the tasks that ended. The store adds a task when it ends. */
+  worked_ms?: number;
 }
 
 /** One earlier task of an agent, from the agents contract. */

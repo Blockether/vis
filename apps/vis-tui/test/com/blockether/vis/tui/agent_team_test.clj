@@ -500,23 +500,31 @@
               "finished_at" now-ms)])
 
 ;; User report 2026-11-21: each follow-up Council ping reset the time of an agent and of its team.
+;; The store keeps the time of the ended tasks in worked_ms, so a row adds no earlier task.
 (defdescribe
   cumulative-time-test
   (let [resumed
         (agent-row 1 "running"
                    "created_at" (- now-ms 200000)
                    "runs" [{"start" (- now-ms 200000) "end" (- now-ms 140000) "status" "completed"}]
+                   "worked_ms" 60000
                    "resumed_at" (- now-ms 30000))
 
         ended
         (assoc resumed
           "status" "completed"
+          "worked_ms" 80000
           "finished_at" (- now-ms 10000))]
 
-    (it "adds the time of each task of an agent"
+    (it "adds the current task to the stored time of an agent that works"
         (expect (= "1m 30s" (team/row-time (team/team-row 1 resumed) now-ms))))
-    (it "stops the time of an agent while it does not work"
-        (expect (= "1m 20s" (team/row-time (team/team-row 1 ended) (+ now-ms 600000)))))
+    (it "shows the stored time of an agent that does not work, so the time stops"
+        (expect (= "1m 20s" (team/row-time (team/team-row 1 ended) (+ now-ms 600000))))
+        (expect (= "1m 00s"
+                   (team/row-time (team/team-row 1 (assoc resumed "status" "queued")) now-ms))))
+    (it "shows the current task alone for a gateway from before worked_ms"
+        (expect (= "20s"
+                   (team/row-time (team/team-row 1 (dissoc ended "worked_ms")) (+ now-ms 600000)))))
     (it "counts the team time only while an agent works"
         (expect (= "1m 30s" (team/span-time (team/team-span [resumed]) now-ms true)))
         (expect (= "1m 20s" (team/span-time (team/team-span [ended]) (+ now-ms 600000) false))))))

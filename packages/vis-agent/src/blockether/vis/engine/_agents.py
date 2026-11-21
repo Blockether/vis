@@ -37,6 +37,7 @@ class Subagent:
     created_at: int | None = None
     resumed_at: int | None = None
     finished_at: int | None = None
+    worked_ms: int | None = None
 
     @classmethod
     def from_wire(cls, value: dict[str, Any]) -> Subagent:
