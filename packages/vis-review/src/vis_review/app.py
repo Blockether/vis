@@ -85,8 +85,8 @@ KEYS = {
 SLOW = ("checks", "tests", "ai")
 # Git scopes: the "Uncommitted" scope and the "Automatic" base branch.
 _AGAINST = {"HEAD": "uncommitted changes", "base": "changes against the base branch"}
-# Changed pictures the app shows at most.
-MOST_IMAGES = 8
+# Nodes that one view holds at most: the view bound.
+MOST_NODES = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
 # Decoded picture bytes that the app shows together, old and new: the view bound.
 MOST_PICTURE_BYTES = _contracts.definition("view", "live_view")[
     "x-vis-max-picture-bytes"
@@ -344,7 +344,6 @@ class ReviewApp:
         diffs = [d for d in diffs_all if self.path is None or d.path == self.path]
         findings = self.all_findings(diffs)
         end = self.end or self.journal.last
-        images = self.image_nodes(diffs)
         patch, cut = _patch_of(diffs)
         shown = {d.path for d in diffs if d.patch and d.path not in cut}
         newest = self.journal.entries[-1].at if self.journal.entries else 0
@@ -353,12 +352,17 @@ class ReviewApp:
         threads, left = _threads(findings, shown, self._found_at)
         notice = self._notice()
         notes = self._notes([*_left_out(cut, left), *_off_lines(findings, shown)])
-        return [
+        nodes = [
             self._diff(patch, threads, diffs, diffs_all, end),
             *([notice] if notice else []),
             *([notes] if notes else []),
-            *([ui.group("images", *images, label="Changed images")] if images else []),
         ]
+        # The group of the images is one node and each file row is two.
+        room = (MOST_NODES - len(list(_contracts._wire_tree(nodes))) - 1) // 2
+        images = self.image_nodes(diffs, room)
+        if images:
+            nodes.append(ui.group("images", *images, label="Changed images"))
+        return nodes
 
     def _context(self) -> int:
         return FULL_CONTEXT if self.is_full else CONTEXT_LINES
@@ -598,26 +602,19 @@ class ReviewApp:
             children=self._toolbar(diffs_all, bool(diffs)),
         )
 
-    def image_nodes(self, diffs: list[FileDiff]) -> list[dict]:
+    def image_nodes(self, diffs: list[FileDiff], most: int) -> list[dict]:
         """One folded file row for each changed picture: old and new side by side.
 
-        A row is closed until a person opens it, as a file of the diff is.
+        A row is closed until a person opens it, as a file of the diff is. The
+        view has room for `most` rows; the file list names each other picture.
         """
         nodes: list[dict] = []
         budget = MOST_PICTURE_BYTES
         for diff in diffs:
+            if len(nodes) >= most:
+                break
             if not diff.is_binary:
                 continue
-            if len(nodes) == MOST_IMAGES:
-                nodes.append(
-                    ui.status(
-                        "images-more",
-                        label="More images",
-                        text=f"Only the first {MOST_IMAGES} changed images show.",
-                        tone="idle",
-                    )
-                )
-                break
             node = self._image((diff.path, diff.before, diff.after), diff)
             if node is None:
                 continue

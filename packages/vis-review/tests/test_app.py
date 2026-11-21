@@ -476,6 +476,33 @@ def test_a_picture_without_preview_leaves_the_budget_to_smaller_ones(
     assert shown["+ b_small.png"]["type"] == "image"
 
 
+def node_count(nodes):
+    """The nodes of a view as the contract counts them: a group and its children."""
+    return sum(
+        1 + (node_count(n["children"]) if n["type"] == "group" else 0) for n in nodes
+    )
+
+
+def test_each_changed_picture_has_a_file_row_while_the_view_has_room(
+    tmp_path, recorder
+):
+    # A cap of 8 pictures put the others behind a "More images" note.
+    from blockether.vis import _contracts
+
+    root, journal, app = setup(tmp_path, recorder)
+    for index in range(40):
+        put(root, f"p{index:02}.png", png(1, 1))
+    journal.checkpoint("block")
+    app.refresh()
+    rows = image_files(recorder)
+    assert len(rows) > 8
+    assert {row["type"] for row in rows} == {"group"}
+    assert {node["type"] for node in images(recorder).values()} == {"image"}
+    # 40 rows are more than a view can hold: the app stays in the node bound.
+    most = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
+    assert node_count(recorder._open_view()["nodes"]) <= most
+
+
 def test_the_image_cache_keeps_only_the_newest_bytes(tmp_path, recorder, monkeypatch):
     # Audit L3: a long session with many pictures must not grow without a bound.
     import vis_review.app as review
