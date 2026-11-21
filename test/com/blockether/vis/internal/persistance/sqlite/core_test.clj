@@ -1813,7 +1813,7 @@
         (expect (= 0 (user-version s)))
         (rewrite-older-store! (:datasource s))
         (let [[text] (activity-search-texts s)]
-          (expect (= 5 (user-version s)))
+          (expect (= 6 (user-version s)))
           (expect (not= old-text text))
           (expect (str/includes? text "Disk quota reached"))
           (expect (<= (count text) 4096))
@@ -1923,7 +1923,7 @@
                      ["UPDATE session_turn_iteration SET tool_calls = ?" (nippy/freeze older)])
       (jdbc/execute! (:datasource s) ["PRAGMA user_version = 1"])
       (rewrite-older-store! (:datasource s))
-      (expect (= 5 (user-version s)))
+      (expect (= 6 (user-version s)))
       (expect (= [(dissoc snapshot :rows) orphan grouped] (stored-activities s)))
       (expect (= [snapshot orphan grouped]
                  (mapv :activity
@@ -4340,7 +4340,7 @@
         (jdbc/execute! ds ["CREATE INDEX idx_log_created ON log(created_at)"])
         (jdbc/execute! ds ["PRAGMA user_version = 2"])
         (rewrite-older-store! ds)
-        (expect (= 5 (user-version s)))
+        (expect (= 6 (user-version s)))
         (expect (= [] (log-schema-names s))))))
 
 (defn- improve-schema-names
@@ -4351,6 +4351,67 @@
                    {:select [:name]
                     :from :sqlite_master
                     :where [:in :tbl_name ["improve" "improve_record"]]})))
+
+;; Older stores kept neither the leader turns of a follow-up task nor a team clock. The gateway
+;; found the turns from the turn times at each read, and each client joined the work of the
+;; agents at each paint. Without the rewrite, an old team shows no time and an old follow-up task
+;; is missing in the block of its turn.
+(defdescribe
+  agent-teams-rewrite-test
+  (it
+    "gives the agents of an older store their leader turns, and each team its clock"
+    (let [s
+          (h/store)
+
+          leader
+          (str (h/store-session! s {:channel :api}))
+
+          turn!
+          (fn [at]
+            (let [turn (str (persistance/db-store-session-turn!
+                              s
+                              {:parent-session-id leader :user-request "Go" :status :done}))]
+              (sqlite-core/execute!
+                s
+                {:update :session_turn_soul :set {:created_at at} :where [:= :id turn]})
+              turn))
+
+          first-turn
+          (turn! 1000)
+
+          ping-turn
+          (turn! 100000)
+
+          child
+          (str (h/store-session! s {:channel :api}))]
+
+      (sqlite-core/execute! s
+                            {:insert-into :session_agent
+                             :values [{:session_id child
+                                       :parent_id leader
+                                       :leader_id leader
+                                       :team_id first-turn
+                                       :task "check"
+                                       :depth 1
+                                       :inherited_turns 0
+                                       :spawn_key child
+                                       :spawn_fingerprint "f"
+                                       :checkpoint (byte-array 0)
+                                       :created_at 2000
+                                       :status "completed"
+                                       :runs
+                                       "[{\"start\":2000,\"end\":62000,\"status\":\"failed\"}]"
+                                       :resumed_at 150000
+                                       :finished_at 180000}]})
+      (jdbc/execute! (:datasource s) ["PRAGMA user_version = 5"])
+      (rewrite-older-store! (:datasource s))
+      (expect (= [first-turn ping-turn] (:turn_ids (persistance/db-agent-info s child))))
+      (expect (= {first-turn {:worked_ms 90000} ping-turn {:worked_ms 90000}}
+                 (persistance/db-team-clocks s leader)))
+      (rewrite-older-store! (:datasource s))
+      (expect (= {first-turn {:worked_ms 90000} ping-turn {:worked_ms 90000}}
+                 (persistance/db-team-clocks s leader))
+              "A second open changes nothing"))))
 
 (defdescribe improve-table-drop-test
              (it "drops the Improve tables and their indexes that an older store kept"
@@ -4367,7 +4428,7 @@
                                         " entry_id INTEGER REFERENCES improve(entry_id))")])
                    (jdbc/execute! ds ["PRAGMA user_version = 3"])
                    (rewrite-older-store! ds)
-                   (expect (= 5 (user-version s)))
+                   (expect (= 6 (user-version s)))
                    (expect (= [] (improve-schema-names s))))))
 
 (defdescribe council-machine-table-drop-test
@@ -4384,7 +4445,7 @@
                    (jdbc/execute! ds ["INSERT INTO council_machine VALUES (1, 'desk', 0)"])
                    (jdbc/execute! ds ["PRAGMA user_version = 4"])
                    (rewrite-older-store! ds)
-                   (expect (= 5 (user-version s)))
+                   (expect (= 6 (user-version s)))
                    (expect (= []
                               (raw-query s
                                          {:select [:name]

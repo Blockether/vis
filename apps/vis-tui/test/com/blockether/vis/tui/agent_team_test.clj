@@ -525,9 +525,45 @@
     (it "shows the current task alone for a gateway from before worked_ms"
         (expect (= "20s"
                    (team/row-time (team/team-row 1 (dissoc ended "worked_ms")) (+ now-ms 600000)))))
-    (it "counts the team time only while an agent works"
-        (expect (= "1m 30s" (team/span-time (team/team-span [resumed]) now-ms true)))
-        (expect (= "1m 20s" (team/span-time (team/team-span [ended]) (+ now-ms 600000) false))))))
+    ;; Verifier report 2026-11-22: with the gateway clock ahead, the TUI subtracted from the
+    ;; stored time and showed 3s where the Companion showed 5s.
+    (it "subtracts nothing from the stored time when the start is after now"
+        (expect (= "5s"
+                   (team/row-time {:start 10000 :active? true :status "RUNNING" :worked-ms 5000}
+                                  8000))))
+    ;; User report 2026-11-22: the TUI joined the work of the agent rows for the team time. The
+    ;; gateway gives the stored clock of the team, so the TUI only adds the time to now.
+    (it
+      "shows the stored clock of the team: the ready frame, then each pushed clock"
+      (let [sid
+            "clock-leader"
+
+            dock
+            (fn [at]
+              (first (team/dock-text sid "turn-1" 120 at)))]
+
+        (team/stream-ready! sid
+                            [resumed]
+                            [{"turn_id" "turn-1" "worked_ms" 60000 "busy_since" (- now-ms 30000)}])
+        (apply-work! sid)
+        (expect (str/starts-with? (dock now-ms) "Agents   1m 30s   "))
+        (team/team-updated! sid
+                            {:agents [ended] :team-clocks [{"turn_id" "turn-1" "worked_ms" 80000}]})
+        (apply-work! sid)
+        (expect (str/starts-with? (dock (+ now-ms 600000)) "Agents   1m 20s   ")
+                "The time stops while no agent works")
+        (expect (= "1m 20s"
+                   (some (fn [[_ text part]]
+                           (when (= :time part) text))
+                         (team/card-head-segments
+                           (:agent-team-card
+                             (peek (team/decorate-messages
+                                     [{:role :assistant :session-turn-id "turn-1" :text "ok"}]
+                                     sid))))))
+                "The team block of the turn shows the same stored time")
+        (team/stream-ready! sid [ended] nil)
+        (apply-work! sid)
+        (expect (= "Agents" (str/trim (subs (dock now-ms) 0 20))) "No clock gives no time")))))
 
 ;; User report: the titles of an AUDIT team and an IMPLEMENT team did not line up.
 (defdescribe
@@ -779,14 +815,17 @@
 (defdescribe
   dock-test
   (it "shows one summary line, and the agent table only after C-x b a"
-      (with-redefs [team/summary (constantly {:agents every-state})]
+      (with-redefs [team/summary (constantly {:agents every-state
+                                              :clocks {"turn-1" {"turn_id" "turn-1"
+                                                                 "worked_ms" 0
+                                                                 "busy_since" (- now-ms 64000)}}})]
         (expect (not (team/dock-expanded? "leader")))
         (let [[line :as text] (team/dock-text "leader" "turn-1" 120 now-ms)]
           (expect (= 2 (count text)) "The dock is one line and a blank line")
           ;; User report 2026-10-31: the dock touched the C-g row under it.
           (expect (= "" (peek text)) "A blank line parts the dock from the row below")
           (expect (str/starts-with? line "Agents   "))
-          ;; The team time follows the head: from the first spawn to now while agents work.
+          ;; The team time follows the head: the stored clock of the team, to now while it works.
           (expect (str/starts-with? line "Agents   1m 04s   "))
           ;; User decision 2026-11-15: the team line shows no status counts, as in the Companion.
           (expect (not (re-find #"RUNNING|DONE|FAILED|•|■" line)))
@@ -803,7 +842,9 @@
         (expect (= 2 (team/dock-height "leader" "turn-1" 120)) "C-x b a again hides the table")
         (expect (= ["Agents" ""] (team/dock-text "leader" "turn-1" 6 now-ms))
                 "A narrow line drops the time and the hint"))
-      (with-redefs [team/summary (constantly {:agents (drop 4 every-state)})]
+      (with-redefs [team/summary (constantly {:agents (drop 4 every-state)
+                                              :clocks {"turn-1" {"turn_id" "turn-1"
+                                                                 "worked_ms" 64000}}})]
         (expect (zero? (team/dock-height "leader" nil 120)) "No dock after a finished team")
         (expect (= 2 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock")
         ;; A team without a working agent stops its time at the last end.

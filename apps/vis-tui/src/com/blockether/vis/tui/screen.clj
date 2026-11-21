@@ -7113,7 +7113,7 @@
                   ;; DAEMON is running for this session right now, before any replay.
                   ;; Disagreement with the turn painted here is proof of a gap.
                   :gateway-ready
-                  (do (agent-team/stream-ready! session-id (:agents chunk))
+                  (do (agent-team/stream-ready! session-id (:agents chunk) (:team-clocks chunk))
                       ;; A reconnect can hide a model change; read the pref again.
                       (vis/refresh-session-model! session-id)
                       ;; Read pending forms even when the replay misses an open or a close.

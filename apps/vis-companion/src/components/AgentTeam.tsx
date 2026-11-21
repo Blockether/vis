@@ -11,7 +11,7 @@ import {
 } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import { mergeAgents, type GatewayClient } from '../lib/gateway';
-import type { Subagent, TranscriptIteration, TranscriptTurn } from '../lib/types';
+import type { Subagent, TeamClock, TranscriptIteration, TranscriptTurn } from '../lib/types';
 import { councilLine, councilMarkdown } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
 import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/time-axis';
@@ -150,32 +150,23 @@ export function agentUpdate(agent: Subagent, agents: readonly Subagent[] = []): 
 
 const marks = (values: readonly (number | null | undefined)[]) => values.filter((mark): mark is number => typeof mark === 'number');
 
-// The work of an agent as [start, end] pairs: its earlier tasks, then its current task to now while it works or waits.
-function workSpans(agent: Subagent, now: number): [number, number][] {
-  const spans = (agent.runs ?? []).map((run): [number, number] => [run.start, run.end]);
-  const start = startOf(agent);
-  const end = isLive(agent) ? now : agent.finished_at;
-  if (start !== undefined && end != null) spans.push([start, Math.max(start, end)]);
-  return spans;
+/**
+ * The time of a team in ms at `now`, from its stored clock: the work that ended, plus the work
+ * that runs now. The store joins the work of the agents, so this reads no agent row. Undefined
+ * without a clock.
+ */
+export function teamClockTime(clock: TeamClock | undefined, now: number): number | undefined {
+  if (!clock) return undefined;
+  return clock.worked_ms + (clock.busy_since === undefined ? 0 : Math.max(0, now - clock.busy_since));
 }
 
-/**
- * The time of a team in ms: the time in which one of its agents worked or waited, to now while
- * one works. So the time stops while no agent works. Undefined without a task that has an end.
- */
-export function teamTime(agents: readonly Subagent[], now: number): number | undefined {
-  const spans = agents.flatMap((agent) => workSpans(agent, now)).sort((a, b) => a[0] - b[0]);
-  if (spans.length === 0) return undefined;
-  let total = 0;
-  let [from, to] = spans[0];
-  for (const [start, end] of spans.slice(1)) {
-    if (start > to) {
-      total += to - from;
-      from = start;
-    }
-    to = Math.max(to, end);
+/** The clock of several docked teams: the one with the longest time at `now`. Undefined without a clock. */
+export function longestClock(clocks: readonly (TeamClock | undefined)[], now: number): TeamClock | undefined {
+  let longest: TeamClock | undefined;
+  for (const clock of clocks) {
+    if (clock && (!longest || teamClockTime(clock, now)! > teamClockTime(longest, now)!)) longest = clock;
   }
-  return total + to - from;
+  return longest;
 }
 
 // The dot of a status word on the team line, in the ink of that word.
@@ -213,9 +204,9 @@ function StatusDots({ agents }: { agents: readonly Subagent[] }) {
  * end of the line. `labelId` names the word and the time `${labelId}-team` and `${labelId}-time`, so a control can
  * take them as its name.
  */
-export function TeamLine({ agents, action, labelId }: { agents: readonly Subagent[]; action?: ReactNode; labelId?: string }) {
-  const now = useNow(agents.some(isLive));
-  const time = teamTime(agents, now);
+export function TeamLine({ agents, clock, action, labelId }: { agents: readonly Subagent[]; clock?: TeamClock; action?: ReactNode; labelId?: string }) {
+  const now = useNow(clock?.busy_since !== undefined);
+  const time = teamClockTime(clock, now);
   return (
     <span className="flex min-w-0 flex-1 items-center gap-x-3 sm:min-h-5" data-team-line>
       <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 max-sm:flex-nowrap">
@@ -832,6 +823,8 @@ export interface TeamProps {
   onOpen: (sid: string) => void;
   /** The leader turn of the team, for the first row of its table and the first lane of its chart. */
   leader?: LeaderLane;
+  /** The stored clock of the team, for the time of its team line. */
+  clock?: TeamClock;
 }
 
 /**
@@ -840,7 +833,7 @@ export interface TeamProps {
  * leader answers it, so a row has no question and no control for one. In the transcript the frame starts folded to its team line (user decision);
  * the line opens the table, and Timeline opens it with the time bars.
  */
-export function TurnAgents({ agents, onOpen, leader, placement = 'transcript', isTimeline }: TeamProps & {
+export function TurnAgents({ agents, onOpen, leader, clock, placement = 'transcript', isTimeline }: TeamProps & {
   /** The dock above the composer while the team works, or the turn of the transcript after. */
   placement?: 'dock' | 'transcript';
   /** The dock owns the timeline switch of its teams; the transcript owns its own. */
@@ -882,7 +875,7 @@ export function TurnAgents({ agents, onOpen, leader, placement = 'transcript', i
         />
         <span className="pointer-events-none relative flex min-w-0 flex-1 items-baseline gap-2">
           <ChevronIcon open={isOpen} className={`size-3 shrink-0 text-dialog-hint ${MARK_NUDGE}`} />
-          <TeamLine agents={rows} action={toggle} labelId={line} />
+          <TeamLine agents={rows} clock={clock} action={toggle} labelId={line} />
         </span>
       </div>
       <div id={body} hidden={!isOpen} className="px-3 sm:px-0">{isOpen && table}</div>
@@ -896,6 +889,11 @@ export function TurnAgents({ agents, onOpen, leader, placement = 'transcript', i
  */
 export function storedAgents(turns: readonly TranscriptTurn[]): Subagent[] {
   return [...new Map(turns.flatMap((turn) => turn.agents ?? []).map((agent) => [agent.session_id, agent])).values()];
+}
+
+/** The team clocks that the transcript turns hold, by leader turn. */
+export function storedClocks(turns: readonly TranscriptTurn[]): ReadonlyMap<string, TeamClock> {
+  return new Map(turns.flatMap((turn): [string, TeamClock][] => (turn.team_clock ? [[turn.turn_id, turn.team_clock]] : [])));
 }
 
 /** The leader turns in which the agent worked, oldest first. A row without `turn_ids` worked only in the turn that started it. */
@@ -935,6 +933,9 @@ export function dockTeams(agents: readonly Subagent[], sid: string, runningTurnI
 /** No agents: one value, so a default argument keeps its identity. */
 const NO_AGENTS: readonly Subagent[] = [];
 
+/** No clocks: one value, so a default argument keeps its identity. */
+const NO_CLOCKS: ReadonlyMap<string, TeamClock> = new Map();
+
 const NO_SUBSCRIPTION = () => () => {};
 
 /**
@@ -943,15 +944,26 @@ const NO_SUBSCRIPTION = () => () => {};
  * `session.team_updated` after it changes rows; the session hub keeps both. Before the first
  * ready frame, the last team that this device knew stands in. The rows of the transcript turns
  * (`stored`) are under them, so a team of an older turn still shows. A newer source replaces
- * the row of an older one.
+ * the row of an older one. `clocks` has the stored clock of each team by leader turn: the clocks
+ * of the transcript turns (`storedTimes`), then the clocks of the stream over them.
  */
-export function useAgentTeam(client: GatewayClient, sid: string, stored: readonly Subagent[] = NO_AGENTS) {
+export function useAgentTeam(
+  client: GatewayClient,
+  sid: string,
+  stored: readonly Subagent[] = NO_AGENTS,
+  storedTimes: ReadonlyMap<string, TeamClock> = NO_CLOCKS,
+) {
   const hub = useContext(SessionEventsContext);
   const subscribe = useCallback(
     (changed: () => void) => (hub ? hub.subscribeTeam(sid, changed) : NO_SUBSCRIPTION()),
     [hub, sid],
   );
   const streamed = useSyncExternalStore(subscribe, () => hub?.team(sid));
+  const streamedClocks = useSyncExternalStore(subscribe, () => hub?.teamClocks(sid));
+  const clocks = useMemo(
+    () => (streamedClocks?.size ? new Map([...storedTimes, ...streamedClocks]) : storedTimes),
+    [storedTimes, streamedClocks],
+  );
   const current = useMemo(() => {
     // The stream rows are newer than the transcript rows. The cached rows of an earlier visit are older.
     if (streamed) {
@@ -962,7 +974,7 @@ export function useAgentTeam(client: GatewayClient, sid: string, stored: readonl
     return cached?.length ? mergeAgents(cached, stored) : stored;
   }, [client, sid, stored, streamed]);
   // A person stops subagents only through their leader: the stop of a leader turn also stops them.
-  return { agents: current };
+  return { agents: current, clocks };
 }
 
 /** What `useAgentTeam` gives its views. */

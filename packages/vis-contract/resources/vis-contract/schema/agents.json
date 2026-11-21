@@ -600,6 +600,29 @@
       ],
       "additionalProperties": true
     },
+    "team_clock": {
+      "$comment": "The stored time of one team: the agents that worked in one leader turn, with all their tasks. The store is the one writer. It joins the tasks of the agents, so two agents that work at the same time count once, and the time stops while no agent works. A client shows worked_ms, and while busy_since is present it adds the time from busy_since to now. A client never joins the times of the agent rows.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["turn_id", "worked_ms"],
+      "properties": {
+        "turn_id": {
+          "$comment": "The leader turn of the team: a value of turn_ids of its agents.",
+          "type": "string",
+          "minLength": 1
+        },
+        "worked_ms": {
+          "$comment": "The time in ms of the work of the team that ended.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "busy_since": {
+          "$comment": "Epoch ms when the work that runs now started. Absent while no agent of the team works.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
     "record": {
       "type": "object",
       "properties": {

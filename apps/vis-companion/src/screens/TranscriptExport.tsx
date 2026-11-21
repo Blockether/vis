@@ -231,6 +231,7 @@ function SessionTranscript({ data, client, top, onOpen }: {
                       agents={teams.get(turn.turn_id)!}
                       onOpen={(sid) => onOpen(sid, scrollRef.current?.scrollTop ?? 0)}
                       leader={storedLeaderLane(turn)}
+                      clock={turn.team_clock}
                     />
                   ) : undefined
                 }

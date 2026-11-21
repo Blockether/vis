@@ -918,6 +918,9 @@
                                       (seq (get q "agents"))
                                       (assoc :session-agents (vec (get q "agents")))
 
+                                      (map? (get q "team_clock"))
+                                      (assoc :session-team-clock (get q "team_clock"))
+
                                       (seq traces)
                                       (assoc :traces traces)
 
@@ -1493,14 +1496,15 @@
       "session.goal_updated"
       {:phase :goal-sync :session-id (event-get event :session-id) :goal (event-get event :goal)}
 
-      ;; `agents` holds the whole changed team rows and `changes` the row changes
-      ;; (gateway.json `team_update`).
+      ;; `agents` holds the whole changed team rows, `changes` the row changes and `team_clocks`
+      ;; the changed team clocks (gateway.json `team_update`).
       "session.team_updated"
       {:phase :team-sync
        :session-id (event-get event :session-id)
        :team (event-get event :team)
        :agents (event-get event :agents)
-       :changes (event-get event :changes)}
+       :changes (event-get event :changes)
+       :team-clocks (event-get event :team-clocks)}
 
       ;; Both capabilities cross the process boundary on one lifecycle. Internal
       ;; state remains specialized: input owns the keyboard; live preserves it.
@@ -1559,7 +1563,11 @@
         ;; The team rows of this session (gateway.json `subscription_ready`). They replace the
         ;; cached team, so the ready frame is the only team read.
         (some? (event-get event :agents))
-        (assoc :agents (event-get event :agents)))
+        (assoc :agents (event-get event :agents))
+
+        ;; The stored clock of each team of this session.
+        (some? (event-get event :team-clocks))
+        (assoc :team-clocks (event-get event :team-clocks)))
 
       nil)))
 

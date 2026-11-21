@@ -302,6 +302,11 @@
      is its turn count before the task. Answer the new row or nil.")
   (db-agent-team-counts [db-info leader-ids]
     "The `{:active :total}` child counts of each leader, keyed by string id, in one read.")
+  (db-agent-end-orphan! [db-info session-id]
+    "End the task of a child that a dead process left queued or running: the status is failed
+     and the end is the start of its last model iteration. Answer the new row.")
+  (db-team-clocks [db-info leader-id]
+    "The stored clock of each team of a leader, keyed by the id of its leader turn, in one read.")
   (db-latest-turn-prose [db-info session-turn-id]
     "The newest nonblank assistant prose in the latest state of one turn, or nil, in one read.")
   (db-turn-published-after [db-info session-turn-id position]

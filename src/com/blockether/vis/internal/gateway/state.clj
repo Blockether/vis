@@ -2876,7 +2876,7 @@
                     (persistance/db-agent-team-counts [sid])
                     (get (str sid)))))
 
-(declare agent-view agent-activity turn-ids)
+(declare agent-view agent-activity child-turns clock-rows)
 
 ;; Two seconds keeps the worst case (each child changes all the time) below the reads of the
 ;; old 3 s and 5 s client polls, and still shows a step sooner than those polls did.
@@ -3159,7 +3159,8 @@
    Activity change reuses the cached row and team summary, so it reads no store. A step or
    Activity change of a child whose last pushed row the clients still have goes as its change in
    `changes`. An urgent change, a child without such a row and a child whose last whole row is
-   `team-whole-ms` old go whole in `agents`."
+   `team-whole-ms` old go whole in `agents`. A push with a rebuilt row also has the stored clocks
+   of the leader turns of that row in `team_clocks`."
   [leader]
   (let [[old _]
         (swap-vals! team-queue team-take leader (util/now-ms))
@@ -3224,9 +3225,14 @@
 
                 ;; The clients have these rows and this team summary already.
                 same?
-                (and (empty? agents)
-                     (empty? changes)
-                     (= team (get-in @team-cache [:teams leader])))]
+                (and (empty? agents) (empty? changes) (= team (get-in @team-cache [:teams leader])))
+
+                ;; Only a rebuilt row can change a clock: the clocks of its leader turns.
+                clocks
+                (when (and (not same?) (seq built))
+                  (read-or {:read :team-clocks :session-id leader}
+                           []
+                           #(clock-rows db leader (into #{} (mapcat :turn_ids) built))))]
 
             (swap! team-cache #(-> (team-remember % leader children rows team)
                                    (team-sent leader epoch wire-rows agents team now)))
@@ -3236,6 +3242,9 @@
                              (cond-> {:team team :agents agents}
                                (seq changes)
                                (assoc :changes changes)
+
+                               (seq clocks)
+                               (assoc :team_clocks clocks)
 
                                (= 1 (count children))
                                (assoc :child_id (first children)))
@@ -3693,33 +3702,38 @@
 
 (defn- with-turn-agents
   "Put the team rows of each turn of `rows` (canonical transcript turns) into that turn as
-   `agents`, in the row shape of the `subscription.ready` frame. A child belongs to each turn in its
-   `turn_ids`: the turn that started it and the turn of each follow-up Council ping. So the
-   transcript shows the team with the rest of the turn, and a client does not wait for a second
-   read. A turn without subagents gets no key. One read lists the children of `sid`; only the
-   children of these turns are built."
+   `agents`, in the row shape of the `subscription.ready` frame, and the stored clock of that team
+   as `team_clock`. A child belongs to each turn in its `turn_ids`: the turn that started it and
+   the turn of each follow-up Council ping. So the transcript shows the team with the rest of the
+   turn, and a client does not wait for a second read. A turn without subagents gets no key. One
+   read lists the children of `sid` and one read its clocks; only the children of these turns are
+   built."
   [db sid rows]
   (let [ids
         (into #{} (map #(get % "turn_id")) rows)
 
-        turns
-        (delay (persistance/db-list-session-turns-meta db sid))
-
         views
         (->> (persistance/db-agent-list db sid)
              (keep (fn [child]
-                     (let [own (filterv ids (turn-ids turns child))]
-                       (when (seq own) [own (agent-view db child turns)]))))
+                     (let [own (filterv ids (child-turns child))]
+                       (when (seq own) [own (agent-view db child)]))))
              (reduce (fn [acc [own view]]
                        (reduce #(update %1 %2 (fnil conj []) view) acc own))
-                     {}))]
+                     {}))
+
+        clocks
+        (when (seq views)
+          (into {} (map (juxt :turn_id identity)) (clock-rows db sid (set (keys views)))))]
 
     (if (empty? views)
       rows
       (mapv (fn [row]
-              (if-let [team (get views (get row "turn_id"))]
-                (assoc row "agents" (wire/canonical team))
-                row))
+              (let [turn (get row "turn_id")]
+                (if-let [team (get views turn)]
+                  (cond-> (assoc row "agents" (wire/canonical team))
+                    (get clocks turn)
+                    (assoc "team_clock" (wire/canonical (get clocks turn))))
+                  row)))
             rows))))
 
 (defn transcript
@@ -7980,86 +7994,72 @@
                         line)))
             (reverse (seq (:events (session-entry sid))))))))
 
-(defn- turn-ids
-  "The leader turns in which `child` worked, oldest first: the turn that started it (`team_id`),
-   then the turn of each follow-up Council ping. A ping resumes a child only while its leader runs
-   a turn, so a task belongs to the last leader turn that started before the task. `turns` is a
-   delay of the leader's `db-list-session-turns-meta`: a child without a follow-up reads nothing."
-  [turns child]
-  (let [team
-        (str (:team_id child))
-
-        starts
-        (keep identity (conj (mapv :start (:runs child)) (:resumed_at child)))]
-
-    (if (empty? (rest starts))
-      [team]
-      (let [marks
-            (->> @turns
-                 (keep (fn [turn]
-                         (when-let [at (:created-at turn)]
-                           [(inst-ms at) (str (:id turn))])))
-                 (sort-by first))
-
-            turn-at
-            (fn [start]
-              (some->> marks
-                       (take-while #(<= (long (first %)) (long start)))
-                       last
-                       second))]
-
-        (into [team] (comp (keep turn-at) (remove #{team}) (distinct)) starts)))))
+(defn- child-turns
+  "The leader turns in which `child` worked, oldest first, as the store keeps them: the turn that
+   started it (`team_id`), then the turn of each follow-up Council ping."
+  [child]
+  (or (:turn_ids child) [(str (:team_id child))]))
 
 (defn- agent-view
   "One team row. `question` is the open question that the child asks its parent, with its
    `question_entry_id` and any budget or file request. `note` is the newest progress note of a
    queued or running child, and `activity` its latest Activity line. `turn_ids` names each leader
-   turn in which the child worked (see `turn-ids`); `turns` is a delay of the leader's turns."
-  ([db child]
-   (agent-view db child (delay (persistance/db-list-session-turns-meta db (:leader_id child)))))
-  ([db child turns]
-   (let [sid
-         (:session_id child)
+   turn in which the child worked (see `child-turns`)."
+  [db child]
+  (let [sid
+        (:session_id child)
 
-         request
-         (agents/open-request sid)
+        request
+        (agents/open-request sid)
 
-         live?
-         (contains? #{"queued" "running"} (:status child))
+        live?
+        (contains? #{"queued" "running"} (:status child))
 
-         note
-         (when live? (agents/latest-note db child (util/now-ms)))
+        note
+        (when live? (agents/latest-note db child (util/now-ms)))
 
-         activity
-         (when live? (agent-activity sid))
+        activity
+        (when live? (agent-activity sid))
 
-         ;; The leader session shows the forms of the child, so count by who asks.
-         pending
-         (bus/raised-waiting-count sid)]
+        ;; The leader session shows the forms of the child, so count by who asks.
+        pending
+        (bus/raised-waiting-count sid)]
 
-     (cond-> (merge (dissoc child :spawn_key :spawn_fingerprint)
-                    (smodel/model-of db sid)
-                    {:routing_locked (persistance/db-routing-locked? db sid)
-                     :pending_input (pos? pending)
-                     :pending_input_count pending
-                     :usage (session-usage-info sid)
-                     :turn_ids (turn-ids turns child)})
-       request
-       (assoc :question
-         (:question request) :question_entry_id
-         (:entry_id request))
+    (cond-> (merge (dissoc child :spawn_key :spawn_fingerprint)
+                   (smodel/model-of db sid)
+                   {:routing_locked (persistance/db-routing-locked? db sid)
+                    :pending_input (pos? pending)
+                    :pending_input_count pending
+                    :usage (session-usage-info sid)
+                    :turn_ids (child-turns child)})
+      request
+      (assoc :question
+        (:question request) :question_entry_id
+        (:entry_id request))
 
-       (:budget request)
-       (assoc :budget_request (:budget request))
+      (:budget request)
+      (assoc :budget_request (:budget request))
 
-       (:files request)
-       (assoc :files_request (:files request))
+      (:files request)
+      (assoc :files_request (:files request))
 
-       note
-       (assoc :note note)
+      note
+      (assoc :note note)
 
-       activity
-       (assoc :activity activity)))))
+      activity
+      (assoc :activity activity))))
+
+(defn- clock-rows
+  "The stored clocks of the teams of `leader` for the wire, as `[{:turn_id :worked_ms :busy_since}]`
+   in turn id order: the time of the work that ended, and the start of the work that runs now.
+   `turns` is the set of leader turns to give; nil gives each team. The store is the one writer of
+   a clock, so no reader joins the work of the agents."
+  [db leader turns]
+  (->> (persistance/db-team-clocks db leader)
+       (keep (fn [[turn clock]]
+               (when (or (nil? turns) (contains? turns turn)) (assoc clock :turn_id turn))))
+       (sort-by :turn_id)
+       vec))
 
 (defn agent-rows
   "The team rows of session `sid`: each child of a leader, or the team of a child. The
@@ -8082,6 +8082,20 @@
           (cond->> (persistance/db-agent-list db leader)
             child
             (filter #(= (:team_id child) (:team_id %)))))))
+
+(defn team-clocks
+  "The stored team clocks of session `sid`, for the `subscription.ready` frame: the clock of each
+   team of a leader, or the clock of the team of a child. A read of the store only."
+  [sid]
+  (let [db
+        (lp/db-info)
+
+        child
+        (agents/info db (str sid))]
+
+    (if child
+      (clock-rows db (:leader_id child) #{(str (:team_id child))})
+      (clock-rows db (str sid) nil))))
 
 (defn- agent-model!
   [router provider model]

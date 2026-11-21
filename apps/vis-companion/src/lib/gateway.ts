@@ -68,6 +68,7 @@ import type {
   Project,
   SessionUsage,
   Subagent,
+  TeamClock,
   SettingsResponse,
   SettingsTarget,
   SlashCommand,
@@ -1436,6 +1437,17 @@ export function teamRowsFromWire(raw: unknown): Subagent[] | null {
     return text(session_id) && text(team_id) && text(status);
   };
   return raw.every(isRow) ? (raw as Subagent[]) : null;
+}
+
+/** The team clocks of `subscription.ready` or `session.team_updated`; an item that is not a clock is left out. */
+export function teamClocksFromWire(raw: unknown): TeamClock[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is TeamClock => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+    const { turn_id, worked_ms, busy_since } = item as Record<string, unknown>;
+    return typeof turn_id === 'string' && turn_id.length > 0 && typeof worked_ms === 'number'
+      && (busy_since === undefined || typeof busy_since === 'number');
+  });
 }
 
 /**

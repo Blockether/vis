@@ -1363,3 +1363,59 @@
                   "A turn without a ping has no agents key")
           (expect (= [[team ping]] (mapv :turn_ids (state/agent-rows leader)))
                   "The live team rows name the same turns"))))))
+
+;; User report 2026-11-22: each client joined the work of the agent rows to get the time of a
+;; team. The store keeps that time, and the gateway only carries it.
+(defdescribe
+  team-clock-wire-test
+  (it
+    "gives the stored clock of a team in the ready frame, in the push of an end and in its turn"
+    (with-team
+      {:statuses ["running" "running"] :watched? true}
+      (fn [{:keys [db leader children events]}]
+        (let [[one two]
+              children
+
+              {team :team_id start :created_at}
+              (ps/db-agent-info db one)
+
+              end!
+              (fn [child after-ms]
+                (ps/db-agent-update! db
+                                     child
+                                     {:status "completed"
+                                      :finished_at (+ (long start) (long after-ms))})
+                (state/append-event! child "turn.completed" {:turn_id "t"})
+                (drain!)
+                (second (last @events)))
+
+              busy
+              {"turn_id" team "worked_ms" 0 "busy_since" start}
+
+              frame
+              (ready-frame leader)]
+
+          (expect (document/valid-json? "gateway" "subscription_ready" frame))
+          (expect (= [busy] (get frame "team_clocks")))
+          (expect (= [busy] (get (ready-frame one) "team_clocks"))
+                  "A subagent stream gets the clock of its team")
+          (doseq [child children]
+            (state/append-event! child "turn.started" {:turn_id "t"}))
+          (drain!)
+          (expect (= [busy] (get (end! one 4000) "team_clocks"))
+                  "The team works while one of its agents works")
+          (let [event
+                (end! two 9000)
+
+                done
+                {"turn_id" team "worked_ms" 9000}]
+
+            (expect (document/valid-json?
+                      "gateway"
+                      "team_update"
+                      (select-keys event ["team" "agents" "changes" "team_clocks" "child_id"])))
+            (expect (= [done] (get event "team_clocks"))
+                    "Two agents that worked at the same time count once")
+            (expect (= done
+                       (some #(when (= team (get % "turn_id")) (get % "team_clock"))
+                             (state/transcript leader))))))))))

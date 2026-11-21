@@ -2735,6 +2735,12 @@ class TeamChange(TypedDict):
     worked_ms: NotRequired[JSONValue]
 
 
+class AgentsTeamClock(TypedDict):
+    turn_id: str
+    worked_ms: int
+    busy_since: NotRequired[int]
+
+
 class SessionTeamUpdatedData(TypedDict):
     """The `data` of an event of type `session.team_updated`."""
 
@@ -2742,6 +2748,7 @@ class SessionTeamUpdatedData(TypedDict):
     child_id: NotRequired[str]
     agents: list[AgentsAgent]
     changes: NotRequired[list[TeamChange]]
+    team_clocks: NotRequired[list[AgentsTeamClock]]
     schema: int
     ts: int
 
@@ -2806,6 +2813,7 @@ class SubscriptionReadyData(TypedDict):
     agent_name: NotRequired[str]
     latest_iteration: NotRequired[int]
     agents: NotRequired[list[AgentsAgent]]
+    team_clocks: NotRequired[list[AgentsTeamClock]]
 
 
 class TurnCancelledData(TypedDict):

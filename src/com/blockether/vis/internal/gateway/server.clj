@@ -879,9 +879,10 @@
    flushed frame so a client paints iteration 420 immediately, then fills its
    details from the chronological replay without visibly counting 1…420.
 
-   `agents` is the team of the session ([[state/agent-rows]]). It is read after the sink is
-   registered, so each later change reaches the client as `session.team_updated` after this frame.
-   This frame is the only team read of a client.
+   `agents` is the team of the session ([[state/agent-rows]]) and `team_clocks` the stored clock
+   of each of its teams ([[state/team-clocks]]). They are read after the sink is registered, so
+   each later change reaches the client as `session.team_updated` after this frame. This frame is
+   the only team read of a client.
 
    `is_live` is the required canonical verdict; protocol negotiation rejects a client
    or daemon that cannot exchange it.
@@ -906,6 +907,7 @@
                                                     :goal (get session "goal")
                                                     :agent-name (get session "agent_name")
                                                     :agents (state/agent-rows sid)
+                                                    :team-clocks (state/team-clocks sid)
                                                     :latest-iteration (when (pos? latest-iteration)
                                                                         latest-iteration)})]
 

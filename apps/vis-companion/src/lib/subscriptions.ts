@@ -4,8 +4,8 @@ import { approxBytes, registerMemoryOwner, type MemoryCell } from './perf';
 import { bufferStreamEvent } from './session-stream';
 import { MAX_SUBSCRIBED_SESSIONS } from './storage';
 import { onAway, onWake } from './wake';
-import type { SseEvent, Subagent } from './types';
-import { applyAgentChanges, mergeAgents, REWIND_CURSOR, teamChangesFromWire, teamRowsFromWire } from './gateway';
+import type { SseEvent, Subagent, TeamClock } from './types';
+import { applyAgentChanges, mergeAgents, REWIND_CURSOR, teamChangesFromWire, teamClocksFromWire, teamRowsFromWire } from './gateway';
 
 type SessionListener = (event: SseEvent) => void;
 type FleetListener = (event: SseEvent) => void;
@@ -89,6 +89,8 @@ export class SessionSubscriptionHub {
   // The agent team of each session, from its last `subscription.ready` and the
   // `session.team_updated` pushes after it. The hub is the one writer.
   private readonly teams = new Map<string, readonly Subagent[]>();
+  // The stored clock of each team of each session, by leader turn, from the same frames.
+  private readonly clocks = new Map<string, ReadonlyMap<string, TeamClock>>();
   private readonly teamListeners = new Map<string, Set<TeamListener>>();
   private stopStream: (() => void) | null = null;
   private connected = false;
@@ -179,7 +181,15 @@ export class SessionSubscriptionHub {
     return this.teams.get(sid);
   }
 
-  /** Call `listener` after each change of `team(sid)`. */
+  /**
+   * The stored clock of each team of `sid` that this hub streamed, by leader turn, or undefined
+   * before the first `subscription.ready` of `sid`. The value keeps its identity until a clock changes.
+   */
+  teamClocks(sid: string): ReadonlyMap<string, TeamClock> | undefined {
+    return this.clocks.get(sid);
+  }
+
+  /** Call `listener` after each change of `team(sid)` or `teamClocks(sid)`. */
   subscribeTeam(sid: string, listener: TeamListener): () => void {
     let listeners = this.teamListeners.get(sid);
     if (!listeners) {
@@ -197,9 +207,16 @@ export class SessionSubscriptionHub {
   private setTeam(sid: string, rows: readonly Subagent[] | undefined): void {
     if (this.teams.get(sid) === rows) return;
     if (rows) this.teams.set(sid, rows);
-    else this.teams.delete(sid);
+    else {
+      this.teams.delete(sid);
+      this.clocks.delete(sid);
+    }
     // The device keeps the team for the next app start.
     if (rows) this.client.rememberAgents?.(sid, rows);
+    this.teamChanged(sid);
+  }
+
+  private teamChanged(sid: string): void {
     for (const listener of [...(this.teamListeners.get(sid) ?? [])]) listener();
   }
 
@@ -208,19 +225,25 @@ export class SessionSubscriptionHub {
    * `agents` means no team. A `session.team_updated` after it replaces the rows with the same
    * `session_id` and adds the new ones at the end, then applies its `changes` to the known rows.
    * The gateway never replays a push, so a reconnect gets the team again only from its ready frame.
+   * The `team_clocks` of the ready frame replace the clocks of `sid`, and each clock of a push
+   * replaces the clock of the same leader turn.
    */
   private noteTeam(sid: string, event: SseEvent): void {
+    const clocks = teamClocksFromWire(event.team_clocks).map((clock): [string, TeamClock] => [clock.turn_id, clock]);
     if (event.type === 'subscription.ready') {
+      this.clocks.set(sid, new Map(clocks));
       const rows = event.agents === undefined ? [] : teamRowsFromWire(event.agents);
       if (rows) this.setTeam(sid, rows);
+      else this.teamChanged(sid);
       return;
     }
     const base = this.teams.get(sid);
     if (!base) return;
+    if (clocks.length) this.clocks.set(sid, new Map([...(this.clocks.get(sid) ?? []), ...clocks]));
     const changed = teamRowsFromWire(event.agents) ?? [];
     const changes = teamChangesFromWire(event.changes) ?? [];
-    if (!changed.length && !changes.length) return;
-    this.setTeam(sid, applyAgentChanges(mergeAgents(base, changed), changes));
+    if (changed.length || changes.length) this.setTeam(sid, applyAgentChanges(mergeAgents(base, changed), changes));
+    else if (clocks.length) this.teamChanged(sid);
   }
 
   watchedSessionIds(): ReadonlySet<string> {
@@ -425,6 +448,7 @@ export class SessionSubscriptionHub {
     this.ended.clear();
     this.idle.clear();
     this.teams.clear();
+    this.clocks.clear();
     this.teamListeners.clear();
   }
 
@@ -575,7 +599,8 @@ export class SessionSubscriptionHub {
       this.ended.delete(sid);
       this.forgetCoverage(sid);
       this.teams.delete(sid);
-      for (const listener of [...(this.teamListeners.get(sid) ?? [])]) listener();
+      this.clocks.delete(sid);
+      this.teamChanged(sid);
       this.teamListeners.delete(sid);
       for (const listener of [...(this.sessionListeners.get(sid) ?? [])]) listener(event);
       this.sessionListeners.delete(sid);

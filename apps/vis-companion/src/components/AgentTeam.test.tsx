@@ -23,7 +23,7 @@ import {
   axisMarks,
   dockTeams,
   formatAgentTime,
-  teamTime,
+  teamClockTime,
   useAgentTeam,
 } from './AgentTeam';
 
@@ -328,16 +328,13 @@ describe('agent row notes', () => {
 });
 
 describe('team line', () => {
-  // User report 2026-11-21: the team time also counted the time in which no agent worked.
-  it('times the team while one of its agents works or waits, and stops it while none works', () => {
-    const ended = { ...child, status: 'completed' as const };
-    const resumed = { ...child, runs: [{ start: T0, end: T0 + 60_000, status: 'completed' as const }], resumed_at: T0 + 170_000 };
-    expect(teamTime([], T0)).toBeUndefined();
-    expect(teamTime([{ ...child, created_at: T0 + 5_000 }, { ...child, session_id: 'b', status: 'queued' }], T0 + 90_000)).toBe(90_000);
-    expect(teamTime([ended, { ...ended, session_id: 'b', finished_at: T0 + 40_000 }], T0 + 999_000)).toBe(40_000);
-    expect(teamTime([resumed, { ...ended, session_id: 'b', finished_at: T0 + 30_000 }], T0 + 200_000)).toBe(90_000);
-    expect(teamTime([{ ...resumed, status: 'completed', finished_at: T0 + 190_000 }], T0 + 999_000)).toBe(80_000);
-    expect(teamTime([ended], T0 + 999_000)).toBeUndefined();
+  // User report 2026-11-22: the app joined the work of the agent rows to get the team time. The
+  // store keeps the clock of each team, so the app adds only the time of the work that runs now.
+  it('shows the stored clock of the team, and adds only the time of the work that runs now', () => {
+    expect(teamClockTime(undefined, T0)).toBeUndefined();
+    expect(teamClockTime({ turn_id: 'turn-1', worked_ms: 60_000, busy_since: T0 }, T0 + 30_000)).toBe(90_000);
+    expect(teamClockTime({ turn_id: 'turn-1', worked_ms: 80_000 }, T0 + 999_000)).toBe(80_000);
+    expect(teamClockTime({ turn_id: 'turn-1', worked_ms: 5_000, busy_since: T0 + 10_000 }, T0)).toBe(5_000);
   });
 
   // User request 2026-11-19: a team in the transcript starts folded to its team line.
@@ -360,7 +357,7 @@ describe('team line', () => {
 
   it('ticks the team time on the team line while an agent runs', () => {
     vi.useFakeTimers({ now: T0 + 200_000 });
-    renderOpen(<TurnAgents {...props} agents={[{ ...child, role: 'research' }]} />);
+    renderOpen(<TurnAgents {...props} agents={[{ ...child, role: 'research' }]} clock={{ turn_id: 'turn-1', worked_ms: 0, busy_since: T0 }} />);
     const line = () => screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]');
     expect(line()).toHaveTextContent(/^team3m 20s$/);
     act(() => { vi.advanceTimersByTime(2000); });
@@ -534,6 +531,11 @@ function TeamView({ client, sid, stored }: { client: GatewayClient; sid: string;
   return <TurnAgents agents={team.agents} onOpen={vi.fn()} placement="dock" />;
 }
 
+function ClockView({ client, sid }: { client: GatewayClient; sid: string }) {
+  const team = useAgentTeam(client, sid);
+  return <TurnAgents agents={team.agents} clock={team.clocks.get('turn-1')} onOpen={vi.fn()} />;
+}
+
 function Team({ hub = null, ...props }: { client: GatewayClient; sid: string; stored?: Subagent[]; hub?: SessionSubscriptionHub | null }) {
   return <SessionEventsContext.Provider value={hub}><TeamView {...props} /></SessionEventsContext.Provider>;
 }
@@ -567,6 +569,23 @@ describe('agent team reader', () => {
     expect(remember).toHaveBeenLastCalledWith('leader', [{ ...child, status: 'completed' }]);
     stream.emit(ready());
     expect(screen.queryByRole('button', { name: /^agent#1/ })).not.toBeInTheDocument();
+  });
+
+  // User report 2026-11-22: the gateway gives the stored clock of each team. The ready frame
+  // replaces the clocks, and a push replaces the clock of its leader turn.
+  it('shows the team clock of the ready frame, then the clock of each push', () => {
+    vi.useFakeTimers({ now: T0 + 90_000 });
+    const stream = streamHub();
+    hub = stream.hub;
+    render(<SessionEventsContext.Provider value={hub}><ClockView client={fakeClient()} sid="leader" /></SessionEventsContext.Provider>);
+    const line = () => screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]');
+    stream.emit({ ...ready([child]), team_clocks: [{ turn_id: 'turn-1', worked_ms: 0, busy_since: T0 }] });
+    expect(line()).toHaveTextContent(`team${formatAgentTime(90_000)}`);
+    stream.emit({ type: 'session.team_updated', session_id: 'leader', team: { active: 0, total: 1 },
+      agents: [{ ...child, status: 'completed', finished_at: T0 + 60_000 }], team_clocks: [{ turn_id: 'turn-1', worked_ms: 60_000 }] });
+    expect(line()).toHaveTextContent(`team${formatAgentTime(60_000)}`);
+    stream.emit(ready([{ ...child, status: 'completed' }]));
+    expect(line()).toHaveTextContent(/^team$/);
   });
 
   // Before the first ready frame of this app run, the team of the last visit shows at once.

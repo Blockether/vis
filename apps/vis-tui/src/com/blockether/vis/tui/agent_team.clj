@@ -21,9 +21,10 @@
 
 (defonce ^:private pending
   ;; Work for the refresh worker, by session id. Only the worker takes it.
-  ;; `:rows` holds the `agents` of the newest `subscription.ready`: they replace the team.
-  ;; `:updates` holds the `session.team_updated` events after it as `{:agents :changes}`, in
-  ;; arrival order: a change needs the row before it. `:setting?` reads the Subagents setting
+  ;; `:rows` holds the `agents` of the newest `subscription.ready` and `:clocks` its
+  ;; `team_clocks`: they replace the team.
+  ;; `:updates` holds the `session.team_updated` events after it as `{:agents :changes :clocks}`,
+  ;; in arrival order: a change needs the row before it. `:setting?` reads the Subagents setting
   ;; again, and `:lost?` marks a dropped event stream.
   (atom {}))
 
@@ -44,6 +45,20 @@
   "The usable team rows of the wire value `agents`. A value that is not a list gives no rows."
   [agents]
   (if (sequential? agents) (filterv agent-row? agents) []))
+
+(defn- clock-rows
+  "The usable team clocks of the wire value `clocks`, keyed by the id of their leader turn. A
+   value that is not a list gives none."
+  [clocks]
+  (if (sequential? clocks)
+    (into {}
+          (keep (fn [clock]
+                  (when (and (map? clock)
+                             (string? (get clock "turn_id"))
+                             (number? (get clock "worked_ms")))
+                    [(get clock "turn_id") clock])))
+          clocks)
+    {}))
 
 (defn merge-agents
   "Apply the changed `rows` of one `session.team_updated` to the team rows `agents`. A row
@@ -92,17 +107,22 @@
 
 (defn team-updated!
   "Take the `session.team_updated` chunk of `sid`. Its `:agents` rows and then its `:changes`
-   apply to the team after the rows of the last `subscription.ready`. An event without usable
-   rows or changes changes nothing."
-  [sid {:keys [agents changes]}]
+   apply to the team after the rows of the last `subscription.ready`, and each clock of its
+   `:team-clocks` replaces the clock of the same leader turn. An event without usable rows,
+   changes or clocks changes nothing."
+  [sid {:keys [agents changes team-clocks]}]
   (let [rows
         (agent-rows agents)
 
         changes
-        (change-rows changes)]
+        (change-rows changes)
 
-    (when (or (seq rows) (seq changes))
-      (want! sid #(update % :updates (fnil conj []) {:agents rows :changes changes})))))
+        clocks
+        (clock-rows team-clocks)]
+
+    (when (or (seq rows) (seq changes) (seq clocks))
+      (want! sid
+             #(update % :updates (fnil conj []) {:agents rows :changes changes :clocks clocks})))))
 
 (defn stream-lost!
   "Mark the team of `sid` stale: its event stream dropped, so events can be missing."
@@ -110,15 +130,17 @@
   (want! sid #(assoc % :lost? true)))
 
 (defn stream-ready!
-  "Take the `agents` of `subscription.ready` of `sid`. The gateway sends this frame at each
-   connect and reconnect, so its rows replace the team of `sid`: no `agents` gives no rows.
-   Older `session.team_updated` rows do not apply after it."
-  [sid agents]
-  (want! sid
-         #(-> %
-              (assoc :rows (agent-rows agents)
-                     :updates [])
-              (dissoc :lost?))))
+  "Take the `agents` and the `team_clocks` of `subscription.ready` of `sid`. The gateway sends
+   this frame at each connect and reconnect, so its rows and clocks replace the team of `sid`: no
+   `agents` gives no rows. Older `session.team_updated` rows do not apply after it."
+  ([sid agents] (stream-ready! sid agents nil))
+  ([sid agents clocks]
+   (want! sid
+          #(-> %
+               (assoc :rows (agent-rows agents)
+                      :clocks (clock-rows clocks)
+                      :updates [])
+               (dissoc :lost?)))))
 
 (defn settings-changed!
   "Ask the refresh worker to read the Subagents setting of `sid` again, after Settings closes."
@@ -228,7 +250,7 @@
    The rows of `subscription.ready` replace the team, and the `session.team_updated` updates
    apply after them in arrival order. Nothing reads the team from the gateway. A failed setting
    read keeps the last Subagents state, so one error does not hide the dock."
-  [sid {:keys [rows updates setting? lost?] :as work}]
+  [sid {:keys [rows clocks updates setting? lost?] :as work}]
   (let [previous
         (summary sid)
 
@@ -245,6 +267,9 @@
 
         snapshot
         (cond-> {:rows team
+                 :clocks (reduce #(merge %1 (:clocks %2))
+                                 (or (if ready? clocks (:clocks previous)) {})
+                                 updates)
                  :agents (if enabled? team [])
                  :enabled? enabled?
                  :checked-at (System/currentTimeMillis)}
@@ -392,20 +417,6 @@
     (cond (and (number? created) (number? resumed)) (max (long created) (long resumed))
           (number? resumed) (long resumed)
           (number? created) (long created))))
-
-(defn- runs
-  "The earlier tasks of `agent` as `[start end]` pairs in epoch ms, oldest first."
-  [agent]
-  (into []
-        (keep (fn [run]
-                (let [start
-                      (get run "start")
-
-                      end
-                      (get run "end")]
-
-                  (when (and (number? start) (number? end)) [(long start) (long end)]))))
-        (get agent "runs")))
 
 (defn team-row
   "The row data of agent `agent` with start order `n`. Plain data, so an unchanged agent
@@ -571,8 +582,8 @@
   (let [worked (long (or worked-ms 0))]
     (cond (nil? start) nil
           (leader? row) (leader-time row now-ms)
-          (and active? (not= "QUEUED" status)) (duration-text (+ worked
-                                                                 (- (long now-ms) (long start))))
+          (and active? (not= "QUEUED" status)) (duration-text
+                                                 (+ worked (max 0 (- (long now-ms) (long start)))))
           (pos? worked) (duration-text worked)
           end (duration-text (- (long end) (long start))))))
 
@@ -1042,47 +1053,14 @@
     (when (= :row (:kind line))
       (register-row! (:row line) (+ (long viewport-top) (long row)) left width))))
 
-(defn- work-spans
-  "The work of `agent` as `[start end]` pairs in epoch ms: its earlier tasks, then its current
-   task. The current end is nil while the agent works or waits."
-  [agent]
-  (let [start
-        (start-ms agent)
-
-        end
-        (get agent "finished_at")]
-
-    (cond-> (runs agent)
-      (and start (active? agent))
-      (conj [start nil])
-
-      (and start (not (active? agent)) (number? end))
-      (conj [start (max (long start) (long end))]))))
-
-(defn team-span
-  "The work of the team of `agents`: `[start end]` pairs in epoch ms, oldest first, with each
-   overlap merged. The last end is nil while an agent works or waits. Nil without a spawn."
-  [agents]
-  (when-let [spans (seq (sort-by first (mapcat work-spans agents)))]
-    (reduce (fn [out [start end]]
-              (let [[from to :as last-span] (peek out)]
-                (if (and last-span (or (nil? to) (<= (long start) (long to))))
-                  (conj (pop out) [from (when (and to end) (max (long to) (long end)))])
-                  (conj out [start end]))))
-            []
-            spans)))
-
-(defn span-time
-  "The time of team span `span` at `now-ms`, such as `3m 20s`: the sum of its parts, so the time
-   stops while no agent works. An open part counts to now while the team works. Nil without a
-   span, or for an open span of a team that does not work."
-  [span now-ms active?]
-  (when (and (seq span) (or active? (some? (second (peek span)))))
-    (duration-text (reduce +
-                           0
-                           (map (fn [[start end]]
-                                  (- (long (or end now-ms)) (long start)))
-                                span)))))
+(defn clock-ms
+  "The time of the stored team clock `clock` at `now-ms`, in ms: the work that ended, plus the
+   work that runs now from `busy_since`. The store joins the work of the agents and the gateway
+   gives the clock, so this reads no agent row."
+  ^long [clock now-ms]
+  (let [busy (get clock "busy_since")]
+    (+ (long (get clock "worked_ms" 0))
+       (if (number? busy) (max 0 (- (long now-ms) (long busy))) 0))))
 
 (defn card-node-id
   "The fold node of the transcript block of team `team-id`. The block starts folded to its head
@@ -1127,9 +1105,9 @@
    `:mark`, `:head`, `:dot`, `:more` or `:time`, and a `:dot` vector ends with the status tone of
    its agent. The fold mark, the team, a status dot for each agent and the time, like the
    Companion team line: `▸ TEAM  ●●● +2 more  3m 20s`."
-  [{:keys [expanded? span rows]}]
+  [{:keys [expanded? clock rows]}]
   (let [time
-        (span-time span 0 false)
+        (when (and clock (not (get clock "busy_since"))) (duration-text (clock-ms clock 0)))
 
         [dots end]
         (card-dots rows 8)]
@@ -1179,7 +1157,7 @@
 (defn card
   "The team block data of team `team-id` from `agents`, or nil when the team has no agent. The
    row of the leader turn `leader` (see `leader-row`) comes first. `decorate-messages` adds the
-   fold state: `:session-id`, `:node-id`, `:expanded?` and the `:span` of the team."
+   fold state: `:session-id`, `:node-id`, `:expanded?` and the stored `:clock` of the team."
   ([team-id agents] (card team-id agents nil))
   ([team-id agents leader]
    (when-let [rows (seq (turn-rows team-id agents))]
@@ -1207,7 +1185,7 @@
         {:line (str marker (segments-text (card-head-segments team-card)))
          :meta {:kind :activity-live-entry
                 :live-paint paint-card-head!
-                :team-head (select-keys team-card [:expanded? :span :rows])
+                :team-head (select-keys team-card [:expanded? :clock :rows])
                 :session-id (str session-id)
                 :node-id node-id
                 :collapsed? (not expanded?)}}]
@@ -1294,8 +1272,9 @@
 
 (defn decorate-messages
   "Give the last assistant message of each turn in which a team worked its `:agent-team-card`.
-   The rows come from the transcript turns (`:session-agents`), and the cached snapshot of `sid`
-   replaces each row that it also has, so a card paints with its turn. A team in the dock gets
+   The rows and the clock of a team come from the transcript turns (`:session-agents`,
+   `:session-team-clock`), and the cached snapshot of `sid` replaces each row and clock that it
+   also has, so a card paints with its turn. A team in the dock gets
    no block: the turn `running-turn` still runs, or an agent still works. `open?` tells from the
    fold node of a card (`card-node-id`) whether the card shows its table; without it, each card
    is folded. Returns `messages` unchanged when no team is known. An unchanged team keeps the
@@ -1303,19 +1282,28 @@
   ([messages sid] (decorate-messages messages sid nil))
   ([messages sid running-turn] (decorate-messages messages sid running-turn (constantly false)))
   ([messages sid running-turn open?]
-   (let [agents (merge-agents (merge-agents [] (mapcat :session-agents messages))
-                              (:agents (summary sid)))]
+   (let [agents
+         (merge-agents (merge-agents [] (mapcat :session-agents messages)) (:agents (summary sid)))
+
+         clocks
+         (merge (clock-rows (keep :session-team-clock messages)) (:clocks (summary sid)))]
+
      (if (or (empty? agents) (empty? messages))
        messages
-       (let [docked (dock-team-ids agents running-turn)
-             teams (into #{} (comp (mapcat turns-of) (remove nil?) (remove docked)) agents)
-             last-index (reduce (fn [acc [i m]]
-                                  (let [turn (:session-turn-id m)]
-                                    (if (and (= :assistant (:role m)) (contains? teams turn))
-                                      (assoc acc turn i)
-                                      acc)))
-                                {}
-                                (map-indexed vector messages))]
+       (let [docked
+             (dock-team-ids agents running-turn)
+
+             teams
+             (into #{} (comp (mapcat turns-of) (remove nil?) (remove docked)) agents)
+
+             last-index
+             (reduce (fn [acc [i m]]
+                       (let [turn (:session-turn-id m)]
+                         (if (and (= :assistant (:role m)) (contains? teams turn))
+                           (assoc acc turn i)
+                           acc)))
+                     {}
+                     (map-indexed vector messages))]
 
          (if (empty? last-index)
            messages
@@ -1326,8 +1314,7 @@
                                             :session-id (str sid)
                                             :node-id node-id
                                             :expanded? (boolean (open? node-id))
-                                            :span (team-span (filter #(in-turn? team-id %)
-                                                                     agents)))]
+                                            :clock (get clocks team-id))]
 
                             (assoc out i (decorate (nth out i) team-card)))
                           out))
@@ -1348,9 +1335,10 @@
 
 (defn summary-segments
   "The painted parts of the dock summary line at `width` cells: `[col text part]` vectors.
-   `part` is `:head`, `:time` or `:hint`. The time of the team follows the head. A short line
-   drops the hint first, then the time."
-  [{:keys [expanded? span active?]} width now-ms]
+   `part` is `:head`, `:time` or `:hint`. The time of the team follows the head: the stored clock
+   of the docked team, or the longest one of several docked teams. A short line drops the hint
+   first, then the time."
+  [{:keys [expanded? clocks]} width now-ms]
   (let [width
         (long width)
 
@@ -1361,7 +1349,7 @@
         "Agents"
 
         time
-        (span-time span now-ms active?)
+        (when (seq clocks) (duration-text (reduce max (map #(clock-ms % now-ms) clocks))))
 
         time-col
         (+ (count head) 3)
@@ -1479,14 +1467,10 @@
              expanded?
              (dock-expanded? sid)
 
-             team
-             (filterv #(contains? docked (current-turn %)) agents)
-
              head
              {:line {:kind :summary
                      :expanded? expanded?
-                     :span (team-span team)
-                     :active? (boolean (some active? team))}}
+                     :clocks (vec (keep #(get (:clocks (summary sid)) %) (sort docked)))}}
 
              table
              (table-lines rows dock-max-rows (get @dock-offsets (str sid)))]

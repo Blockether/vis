@@ -455,8 +455,9 @@
                        (not (live (str (:leader_id %)))))
           (ps/db-agent-list db nil))]
 
+    ;; The process died at an unknown time: the store ends each task at its last iteration.
     (doseq [{sid :session_id} orphans]
-      (ps/db-agent-update! db sid {:status "failed" :finished_at (util/now-ms)}))
+      (ps/db-agent-end-orphan! db sid))
     (count orphans)))
 
 (defn controls?
@@ -1949,12 +1950,13 @@
     (cond (or (nil? child) (contains? #{"queued" "running"} (:status child))) (constantly nil)
           (not (resumable? child)) nil
           (ps/db-agent-resume! db sid (count (ps/db-list-session-turns db sid)) (util/now-ms))
-          #(ps/db-agent-update! db
-                                sid
-                                (merge {:result nil :outcome nil :finished_at nil :runs nil}
-                                       (select-keys child
-                                                    [:status :resumed_turns :resumed_at :result
-                                                     :outcome :finished_at :runs :worked_ms]))))))
+          #(ps/db-agent-update!
+             db
+             sid
+             (merge {:result nil :outcome nil :finished_at nil :runs nil :turn_ids nil}
+                    (select-keys child
+                                 [:status :resumed_turns :resumed_at :result :outcome :finished_at
+                                  :runs :worked_ms :turn_ids]))))))
 
 (defn task-request
   "The turn request of a Council wake from the parent of managed child `sid`, or nil for another

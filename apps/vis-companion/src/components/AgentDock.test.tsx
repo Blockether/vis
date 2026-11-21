@@ -33,6 +33,12 @@ describe('AgentDock', () => {
     expect(region().querySelectorAll('svg')).toHaveLength(1);
   });
 
+  it('shows the stored clock of its team, and the longest one of several docked teams', () => {
+    const clocks = new Map([['turn-1', { turn_id: 'turn-1', worked_ms: 5_000 }], ['turn-0', { turn_id: 'turn-0', worked_ms: 65_000 }]]);
+    render(<AgentDock agents={[base, { ...base, session_id: 'old', team_id: 'turn-0' }]} clocks={clocks} sid="lead" runningTurnId="turn-1" onOpen={vi.fn()} />);
+    expect(within(region()).getByRole('button', { expanded: false })).toHaveAccessibleName('team 1m 05s');
+  });
+
   it('keeps a team after its turn while one of its agents still works, and only that team', () => {
     dock([base, { ...base, session_id: 'old', team_id: 'turn-0', status: 'completed' }], 'turn-2');
     const line = within(region()).getByRole('button', { expanded: false });

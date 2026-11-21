@@ -214,8 +214,28 @@ CREATE TABLE session_agent (
   -- adds only the time of a task that runs. A store from before this column gets it from runs and
   -- finished_at (column-fills in migration.clj).
   worked_ms        INTEGER NOT NULL DEFAULT 0 CHECK (worked_ms >= 0),
+  -- The leader turns in which the agent worked, oldest first, as a JSON array of turn ids: the
+  -- turn that started it, then the turn of each follow-up task. NULL = only team_id.
+  turn_ids         TEXT CHECK (turn_ids IS NULL OR json_valid(turn_ids)),
+  -- When the agent last started a model iteration. The task of an agent that a dead process
+  -- left ends at this time, so the time without a process is not work.
+  claimed_at       INTEGER,
   UNIQUE (parent_id, spawn_key),
   CHECK (session_id <> parent_id AND session_id <> leader_id)
+);
+
+-- The clock of each team: the agents that worked in one turn of a leader. The write of an agent
+-- row stores it in the same transaction (refresh-teams! in sqlite/core.clj), so no reader adds
+-- the tasks of the agents again.
+CREATE TABLE session_team (
+  leader_id  TEXT NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
+  turn_id    TEXT NOT NULL,
+  -- The time in ms in which at least one agent of the team worked, without the time since
+  -- busy_since.
+  worked_ms  INTEGER NOT NULL DEFAULT 0 CHECK (worked_ms >= 0),
+  -- The start of the work that still continues. NULL = no agent of the team works.
+  busy_since INTEGER,
+  PRIMARY KEY (leader_id, turn_id)
 );
 
 CREATE INDEX idx_session_agent_team ON session_agent(team_id, created_at);

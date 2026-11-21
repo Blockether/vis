@@ -116,6 +116,19 @@ export interface Subagent {
   worked_ms?: number;
 }
 
+/**
+ * The stored time of one team: the agents that worked in one leader turn. The store joins their
+ * work and the gateway gives the result, so a client never joins the times of the agent rows.
+ */
+export interface TeamClock {
+  /** The leader turn of the team. */
+  turn_id: string;
+  /** The time in ms of the work that ended. */
+  worked_ms: number;
+  /** Epoch ms when the work that runs now started. Absent while no agent of the team works. */
+  busy_since?: number;
+}
+
 /** One earlier task of an agent, from the agents contract. */
 export interface AgentRun {
   start: number;
@@ -1609,6 +1622,8 @@ export interface TranscriptTurn {
   iterations_total?: number;
   /** The subagents that this turn started, in the row shape of the `subscription.ready` agents. Absent without subagents. */
   agents?: Subagent[];
+  /** The stored clock of the team of this turn. Absent without subagents. */
+  team_clock?: TeamClock;
   model?: string;
   provider?: string;
   created_at?: number;

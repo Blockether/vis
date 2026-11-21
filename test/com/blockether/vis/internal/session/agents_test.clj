@@ -9,6 +9,7 @@
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.gateway.state :as gateway]
@@ -1439,7 +1440,40 @@
       (expect (= "running" (:status (agents/info db live))) "A child with a live turn stays")
       (expect (= "running" (:status (agents/info db spared))) "A live leader still owns its team")
       (expect (= 0 (agents/reconcile-orphans! db [live other-leader]))
-              "A second sweep finds nothing"))))
+              "A second sweep finds nothing")))
+  ;; Cross-check 2026-11-22: a child that a stopped gateway left got the whole downtime as work.
+  (it "does not count the time without a process as the work of a child"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            queued
+            (child! db leader {})
+
+            running
+            (child! db leader {})
+
+            start
+            #(:created_at (agents/info db %))
+
+            last-iteration
+            (+ (long (start running)) 5000)]
+
+        (with-redefs [util/now-ms (fn ^long []
+                                    (long last-iteration))]
+          (ps/db-agent-claim-iteration! db running))
+        (with-redefs [util/now-ms (fn ^long []
+                                    (+ (long last-iteration) 86400000))]
+          (agents/reconcile-orphans! db []))
+        (expect (= [0 (start queued)] ((juxt :worked_ms :finished_at) (agents/info db queued)))
+                "A child that started no iteration did no work")
+        (expect (= [5000 last-iteration] ((juxt :worked_ms :finished_at) (agents/info db running)))
+                "A child ends at its last iteration")
+        (expect (= 5000
+                   (:worked_ms (get (ps/db-team-clocks db leader)
+                                    (:team_id (agents/info db running)))))))))
 
 ;; Regression (session 6866e0a0): after a gateway restart, the wait records of the ended
 ;; children were empty, and the leader rebuilt their work from git diff.
@@ -2404,6 +2438,8 @@
       (expect (= 60000 (worked)) "A repeated end adds nothing")
       (ps/db-agent-resume! db child 1 (+ start 90000))
       (expect (= 60000 (worked)) "The time stops while the child does not work")
+      (expect (= [(+ start 60000)] (mapv :end (:runs (agents/info db child))))
+              "A repeated end keeps the first end, so the earlier task keeps its time")
       (ps/db-agent-update! db child {:status "completed" :finished_at (+ start 120000)})
       (expect (= 90000 (worked)))
       (expect (document/valid-json? "agents" "agent" (walk/stringify-keys (agents/info db child))))
@@ -2411,6 +2447,54 @@
         (restore!)
         (expect (= [90000 (+ start 120000)] ((juxt :worked_ms :finished_at) (agents/info db child)))
                 "An undone ping adds nothing"))))
+  ;; User report 2026-11-22: each client joined the work of all agents of a team at each paint.
+  (it
+    "stores the clock of each team, so a reader joins no work of its agents"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          a
+          (child! db leader {})
+
+          team
+          (:team_id (agents/info db a))
+
+          start
+          (:created_at (agents/info db a))
+
+          clocks
+          #(ps/db-team-clocks db leader)]
+
+      (expect (= {team {:worked_ms 0 :busy_since start}} (clocks)))
+      (ps/db-agent-update! db a {:status "completed" :finished_at (+ start 60000)})
+      (expect (= {team {:worked_ms 60000}} (clocks)) "The time stops while no agent works")
+      (let [b (child! db leader {:team_id team :spawn_key "b"})]
+        (expect (= {team {:worked_ms 0 :busy_since start}} (clocks))
+                "An agent that started in the time of another continues that work")
+        (ps/db-agent-update! db b {:status "completed" :finished_at (+ start 30000)})
+        (expect (= {team {:worked_ms 60000}} (clocks)) "Work at the same time counts one time"))
+      (let [ping-turn
+            (str (ps/db-store-session-turn!
+                   db
+                   {:parent-session-id leader :user-request "Next" :status :running}))
+
+            restore!
+            (agents/queue-turn! db a)]
+
+        (restore!)
+        (expect (= {team {:worked_ms 60000}} (clocks)) "An undone ping changes no clock")
+        (expect (nil? (:turn_ids (agents/info db a))) "An undone ping adds no turn")
+        (ps/db-agent-resume! db a 1 (+ start 90000))
+        (expect (= [team ping-turn] (:turn_ids (agents/info db a)))
+                "A follow-up task joins the newest turn of the leader")
+        (expect (= {team {:worked_ms 60000 :busy_since (+ start 90000)}
+                    ping-turn {:worked_ms 60000 :busy_since (+ start 90000)}}
+                   (clocks)))
+        (ps/db-agent-update! db a {:status "completed" :finished_at (+ start 120000)})
+        (expect (= {team {:worked_ms 90000} ping-turn {:worked_ms 90000}} (clocks))))))
   (it
     "lists the turns, notes, messages and end of a child, oldest first"
     (let [db

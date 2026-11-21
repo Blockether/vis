@@ -27,7 +27,7 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { TurnAgents, agentsByTurn, currentTurn, dockTeams, leaderLane, storedAgents, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, currentTurn, dockTeams, leaderLane, storedAgents, storedClocks, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
@@ -5033,8 +5033,10 @@ export function SessionScreen({
   // Subagents belong to the turn that started them, so each turn shows its own. The transcript
   // turn holds its team, so the team paints with its turn. The stream gives the current team.
   const stored = useMemo(() => storedAgents(turns), [turns]);
-  const team = useAgentTeam(client, sid, stored);
+  const storedTimes = useMemo(() => storedClocks(turns), [turns]);
+  const team = useAgentTeam(client, sid, stored, storedTimes);
   const agents = team.agents;
+  const clocks = team.clocks;
   const teams = useMemo(() => agentsByTurn(agents), [agents]);
   // A team stands in the dock while its turn runs or an agent of it still works; then in its turn.
   const docked = useMemo(
@@ -5054,10 +5056,11 @@ export function SessionScreen({
           agents={members}
           onOpen={onOpenSession}
           leader={leader}
+          clock={clocks.get(turnId ?? '')}
         />
       ) : undefined;
     },
-    [teams, docked, onOpenSession],
+    [teams, clocks, docked, onOpenSession],
   );
   // Traffic between this leader and its own subagents stays out of its transcript:
   // the team rows show their work, and each child session keeps its own record.
@@ -6294,6 +6297,7 @@ export function SessionScreen({
             {/* The live team of this session, above the composer. */}
             <AgentDock
               agents={agents}
+              clocks={clocks}
               sid={sid}
               runningTurnId={runningTurnId}
               onOpen={onOpenSession}
