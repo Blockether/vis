@@ -129,9 +129,16 @@ class RawApp(vis.LiveAttachment):
         return dict(raw)
 
 
-def extension_opener(declaration: dict, on_event: Callable[[Any], None]) -> RawApp:
-    """Open the app through the extension host."""
-    return RawApp(declaration, flush_ms=0, on_event=on_event)
+def extension_opener(
+    declaration: dict,
+    on_event: Callable[[Any], None],
+    on_reload: Callable[[dict], None] | None = None,
+) -> RawApp:
+    """Open the app through the extension host.
+
+    `on_reload` is the hook that opens the app again after a reload of the extension.
+    """
+    return RawApp(declaration, flush_ms=0, on_event=on_event, on_reload=on_reload)
 
 
 class ReviewApp:

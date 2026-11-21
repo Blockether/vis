@@ -5,7 +5,7 @@ block, by a person or another program. After each block and each patch, it
 records what that step changed. The first step of a session opens the app of that
 session: the checkpoints, the changed files and their diff, the checks, an AI
 review and undo. `/review` opens the app again after a person closed it. After a
-reload, Vis asks `reopen` to connect the open app again.
+reload, the `on_reload` hook of the app connects it again.
 The logic lives in `vis_review`; the SDK program `python -m vis_review` uses it too.
 """
 
@@ -99,7 +99,7 @@ def _app(session_id, journal):
         if app is None:
             app = ReviewApp(
                 journal,
-                extension_opener,
+                _opener,
                 call=_call,
                 ask=_ask,
                 is_session_scoped=True,
@@ -109,8 +109,13 @@ def _app(session_id, journal):
         return app
 
 
+def _opener(declaration, on_event):
+    """Open the app with the hook that connects it again after a reload."""
+    return extension_opener(declaration, on_event, on_reload=reopen)
+
+
 def reopen(app):
-    """Connect the review app of a session again after a reload disconnected it."""
+    """The `on_reload` hook: connect the review app of a session again."""
     session_id = str(app.get("session_id") or "")
     if not session_id:
         return
@@ -154,7 +159,6 @@ vis.register_extension(
             )
         ],
         keybindings=[vis.Keybinding("R", command="/review", label="Review")],
-        reopen_app=reopen,
         op_hooks=[
             vis.OpHook(["python_execution"], before_block),
             vis.OpHook(["python_execution", "patch"], after_step, phase="after"),
