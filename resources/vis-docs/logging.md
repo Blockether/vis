@@ -90,7 +90,7 @@ zgrep -h -A 1 -E 'slow-request|reload-phases|load-lock-wait|package-preparation-
 | --- | --- |
 | `slow-request` | A gateway request took 250 ms or more. `:uri` names the request and `:ms` gives its time. |
 | `reload-phases` | One extension load ended. `:phases` lists each step with its milliseconds, and `:background?` is true for a load that no session started. |
-| `load-lock-wait` | A load waited 10 more seconds for another load. `:holder` names the project and the running step of that other load. |
+| `load-lock-wait` | A load waited 10 more seconds for another load. `:holder` names the project and the running step of that other load. `:package` and `:package-step` name the package that the other load handles: `source`, `catalog`, `git`, or `environment`. |
 | `package-preparation-failed` | One declared package failed. `:error` gives the cause, such as a timeout of Extension Center. |
 | `project-installing` | uv started to install the dependencies of one package. |
 

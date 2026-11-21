@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -47,6 +48,12 @@ MAX_METADATA = 128 * 1024
 _steps: contextvars.ContextVar[dict[str, int] | None] = contextvars.ContextVar(
     "extension_package_steps", default=None
 )
+# The lock file of one `sync` call, its descriptor and the package that the call handles now.
+_working: contextvars.ContextVar[tuple[Path, int, str] | None] = contextvars.ContextVar(
+    "extension_package_working", default=None
+)
+# The note of a lock file. The file is in the project folder: a reader repeats no other text.
+_WORK = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)* (?:source|catalog|git)")
 _EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", ".DS_Store"}
 # `.env*` holds secrets. `.venv-*` is an environment that Vis prepares for one interpreter.
 _EXCLUDED_PREFIXES = (".env", ".venv-")
@@ -290,7 +297,38 @@ def _step(name, started):
         steps[name] = steps.get(name, 0) + round((time.monotonic() - started) * 1000)
 
 
+def _note(lock, fd, text):
+    """Replace the text of the lock file that `fd` holds.
+
+    A lock path that is a link, or a file with a second name, gets no text: the write
+    would change a file that is not the lock.
+    """
+    try:
+        status = os.fstat(fd)
+        if (
+            stat.S_ISREG(status.st_mode)
+            and status.st_nlink == 1
+            and os.path.samestat(status, os.lstat(lock))
+        ):
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, text.encode(), 0)
+    except OSError:  # The note is advisory: an operation never fails for it.
+        pass
+
+
+def _report(step):
+    """Write the package and the step that `sync` starts into the lock file that it holds.
+
+    A sync or a load that waits for this one reads there what it waits for.
+    """
+    working = _working.get()
+    if working is not None:
+        lock, fd, name = working
+        _note(lock, fd, f"{name} {step}")
+
+
 def _git(*args):
+    _report("git")
     started = time.monotonic()
     env = {
         **os.environ,
@@ -346,6 +384,7 @@ def _git(*args):
         ) from exc
     finally:
         _step("git_ms", started)
+        _report("source")
 
 
 def _checkout(repository, directory, revision):
@@ -413,6 +452,7 @@ def _catalog(repository, subdirectory):
         CATALOG + "/api/extensions/" + _catalog_identity(repository, subdirectory),
         headers={"Accept": "application/json", "User-Agent": "Vis-Extension-Installer"},
     )
+    _report("catalog")
     started = time.monotonic()
     try:
         with build_opener(_NoRedirect()).open(request, timeout=20) as response:
@@ -439,6 +479,7 @@ def _catalog(repository, subdirectory):
         ) from exc
     finally:
         _step("catalog_ms", started)
+        _report("source")
 
 
 def _count_download(repository, subdirectory):
@@ -675,9 +716,17 @@ def _acquire(lock):
                     break
                 except BlockingIOError:
                     if time.monotonic() >= deadline:
+                        # A sync writes its package and step into its lock file.
+                        try:
+                            work = os.pread(fd, 201, 0).decode(errors="replace")
+                        except OSError:
+                            work = ""
+                        if len(work) > 200 or not _WORK.fullmatch(work):
+                            work = ""
                         raise TimeoutError(
                             f"{lock} is still held by another extension operation"
-                            f" after {LOCK_WAIT_S} seconds"
+                            + (f" ({work})" if work else "")
+                            + f" after {LOCK_WAIT_S} seconds"
                         ) from None
                     time.sleep(0.05)
             try:
@@ -685,6 +734,8 @@ def _acquire(lock):
             except FileNotFoundError:
                 same = False
             if same:
+                # A crashed sync can leave its note: it does not describe this holder.
+                _note(lock, fd, "")
                 return fd
         except BaseException:
             os.close(fd)
@@ -821,7 +872,11 @@ def _admit(
                 raise FileExistsError(
                     "Extension already exists; use extension update or rollback explicitly"
                 )
-            if exists and destination.resolve().parent == destination.parent:
+            if (
+                exists
+                and destination.exists()
+                and destination.resolve().parent == destination.parent
+            ):
                 previous = _version(os.readlink(destination))
             destination.parent.mkdir(parents=True, exist_ok=True)
             pointer = stage / "active"
@@ -1478,7 +1533,22 @@ def _sync_one(name, spec, directory, current, refresh, vis_version, frozen=False
             "Existing extension is not owned by sync or was changed externally; no files replaced. "
             f"Keep any local edits, remove {destination.parent} and run sync again"
         )
-    if exists and current["spec"] == spec and not refresh and (frozen or not tracking):
+    # A link that sync owns and whose directory is gone holds nothing: install again.
+    missing = exists and not destination.exists()
+    if missing and not spec["source"].startswith("https://"):
+        folder = Path(spec["source"]) / spec["subdirectory"]
+        if not folder.exists():
+            raise ValueError(
+                f"The source folder {folder} is missing."
+                " Restore it or change `source`, then run sync again"
+            )
+    if (
+        exists
+        and not missing
+        and current["spec"] == spec
+        and not refresh
+        and (frozen or not tracking)
+    ):
         metadata = inspect_source(
             destination, vis_version, ".".join(map(str, sys.version_info[:3]))
         )
@@ -1500,7 +1570,7 @@ def _sync_one(name, spec, directory, current, refresh, vis_version, frozen=False
                 _releases(source, folder), None if tracking else spec["version"]
             )
             revision = release["revision"]
-        if exists and current["result"]["mode"] == "github":
+        if exists and not missing and current["result"]["mode"] == "github":
             active, receipt = _managed(directory, name)
             if (
                 receipt["repository_url"].lower() == source.lower()
@@ -1531,7 +1601,7 @@ def _sync_one(name, spec, directory, current, refresh, vis_version, frozen=False
         expected_name=name,
         expected_target=current["target"] if exists and active is None else None,
     )
-    return {**result, "status": "updated" if exists else "installed"}
+    return {**result, "status": "updated" if exists and not missing else "installed"}
 
 
 def _sync_read_only(specs, directory):
@@ -1578,6 +1648,7 @@ def sync(
     A `latest` version follows the newest approved stable release on every sync. A frozen
     sync is the exception: it keeps each installed package and does not read the catalog
     for it. It still installs a missing package and applies a changed declaration.
+    A package whose version directory is gone installs again.
     Receipts and pointers are atomic. Prune unlinks orphaned packages and removes old Git
     snapshots that no live process claims; local source always stays on disk. A
     failed package is reported, and its previous source and other packages stay. Dry-run
@@ -1612,6 +1683,7 @@ def sync(
 
     steps = {}
     scope = _steps.set(steps)
+    working = _working.set(None)
     try:
         records = _sync_records(directory)
         if prune and not dry_run:
@@ -1621,6 +1693,9 @@ def sync(
             spec, current = specs.get(name), records.get(name)
             steps.clear()
             started = time.monotonic()
+            if fd is not None:
+                _working.set((lock, fd, name))
+                _report("source")
             try:
                 destination = _destination(directory, name)
                 relocated = _relocated(destination, current)
@@ -1679,5 +1754,6 @@ def sync(
         return results
     finally:
         _steps.reset(scope)
+        _working.reset(working)
         if not dry_run:
             _release(lock, fd)

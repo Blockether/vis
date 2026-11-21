@@ -3564,6 +3564,72 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                       :version version
                       :vis_version (package-version)}))
 
+(def ^:private ^:dynamic *background-load?*
+  "True while this thread prepares a project that no session waits for."
+  false)
+
+(defonce ^:private load-holder
+  ;; Nil, or the load that holds the load lock now, with the phase that it runs (#493).
+  (atom nil))
+
+(defn- sync-progress
+  "The package and the step that the package sync of `lock-file` handles now, or nil.
+   `extension_package.py` writes them into the lock file that its sync holds. The note of
+   a crashed sync can show until the next sync locks the file and clears it."
+  [^File lock-file]
+  ;; The file is in the project folder: read a plain file only, and repeat no other text.
+  (try (when (Files/isRegularFile (.toPath lock-file)
+                                  (into-array java.nio.file.LinkOption
+                                              [java.nio.file.LinkOption/NOFOLLOW_LINKS]))
+         (with-open [in (java.io.FileInputStream. lock-file)]
+           (let [note (.readNBytes in 201)]
+             (when-let [[_ package step]
+                        (when (<= (alength note) 200)
+                          (re-matches #"([a-z0-9]+(?:-[a-z0-9]+)*) (source|catalog|git)"
+                                      (String. note java.nio.charset.StandardCharsets/UTF_8)))]
+               {:package package :package-step step}))))
+       (catch java.io.IOException _ nil)))
+
+(defn- holder-view
+  "The load that holds the load lock, its running phase and the package that it handles,
+   for the log of a load that waits."
+  []
+  (when-let [{:keys [since phase-since sync-lock] :as holder} @load-holder]
+    (let [now (System/nanoTime)]
+      (cond-> (assoc (select-keys holder
+                                  [:project-root :session-id :background? :phase :detail :package
+                                   :package-step])
+                :held-ms (quot (- now (long since)) 1000000))
+        phase-since
+        (assoc :phase-ms (quot (- now (long phase-since)) 1000000))
+
+        sync-lock
+        (merge (sync-progress sync-lock))))))
+
+(defn- holder-phase!
+  "When this thread holds the load lock, replace its running phase with `phase`, a map
+   of `:phase`, `:detail` and `:phase-since`. Return the phase that ran before."
+  [phase]
+  (let [thread (Thread/currentThread)
+        [before _] (swap-vals! load-holder
+                               (fn [holder]
+                                 (if (identical? thread (:thread holder))
+                                   (merge (dissoc holder :phase :detail :phase-since) phase)
+                                   holder)))]
+
+    (select-keys before [:phase :detail :phase-since])))
+
+(defn- with-holder-note
+  "Call `f`. When this thread holds the load lock, a load that waits reads `note` in
+   that time: the package that this load handles, or the lock file of its package sync."
+  [note f]
+  (let [thread (Thread/currentThread)
+        change (fn [g]
+                 (swap! load-holder #(if (identical? thread (:thread %)) (g %) %)))]
+
+    (change #(merge % note))
+    (try (f) (finally (change #(apply dissoc % (keys note)))))))
+
 (defn sync-packages!
   "Explicitly reconcile YAML package scopes and prepare their uv environments.
    Never imports package entrypoints or reloads a live gateway. Dry-run is inert.
@@ -3590,7 +3656,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                    (assoc result
                                      "prepared" true
                                      "site_packages"
-                                     (str (python-runtime/ensure-project! package-dir))))
+                                     (str (with-holder-note
+                                            {:package (get result "name")
+                                             :package-step "environment"}
+                                            #(python-runtime/ensure-project! package-dir)))))
                                  (catch Exception error
                                    (assoc result
                                      "status" "failed"
@@ -3598,15 +3667,17 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                             (assoc-in ["timing" "environment_ms"]
                                       (quot (- (System/nanoTime) started) 1000000))))
                       result)))
-                (package-operation "sync"
-                                   {:configured packages
-                                    :directory directory
-                                    :trust (boolean trust)
-                                    :refresh (boolean refresh)
-                                    :prune (boolean prune)
-                                    :dry_run (boolean dry-run)
-                                    :frozen (boolean frozen)
-                                    :vis_version (package-version)})))
+                (with-holder-note
+                  {:sync-lock (io/file directory ".sync-lock")}
+                  #(package-operation "sync"
+                                      {:configured packages
+                                       :directory directory
+                                       :trust (boolean trust)
+                                       :refresh (boolean refresh)
+                                       :prune (boolean prune)
+                                       :dry_run (boolean dry-run)
+                                       :frozen (boolean frozen)
+                                       :vis_version (package-version)}))))
         (filter #(or prune (seq (:packages %)) (.isFile (io/file (:directory %) ".sync.json")))
                 scopes)))))
 
@@ -3986,37 +4057,6 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 (def ^:private ^:dynamic *reload-phases*
   "Nil, or an atom of the timed phases of one reload (#422)."
   nil)
-
-(def ^:private ^:dynamic *background-load?*
-  "True while this thread prepares a project that no session waits for."
-  false)
-
-(defonce ^:private load-holder
-  ;; Nil, or the load that holds the load lock now, with the phase that it runs (#493).
-  (atom nil))
-
-(defn- holder-view
-  "The load that holds the load lock and its running phase, for the log of a load that waits."
-  []
-  (when-let [{:keys [since phase-since] :as holder} @load-holder]
-    (let [now (System/nanoTime)]
-      (cond-> (assoc (select-keys holder [:project-root :session-id :background? :phase :detail])
-                :held-ms (quot (- now (long since)) 1000000))
-        phase-since
-        (assoc :phase-ms (quot (- now (long phase-since)) 1000000))))))
-
-(defn- holder-phase!
-  "When this thread holds the load lock, replace its running phase with `phase`, a map
-   of `:phase`, `:detail` and `:phase-since`. Return the phase that ran before."
-  [phase]
-  (let [thread (Thread/currentThread)
-        [before _] (swap-vals! load-holder
-                               (fn [holder]
-                                 (if (identical? thread (:thread holder))
-                                   (merge (dissoc holder :phase :detail :phase-since) phase)
-                                   holder)))]
-
-    (select-keys before [:phase :detail :phase-since])))
 
 (defn- note-phase!
   "During a reload, record `phase` with its `detail`, its milliseconds and `extra` facts."

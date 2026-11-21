@@ -1358,6 +1358,101 @@ def test_sync_row_timing_stays_out_of_the_saved_record(releases):
     assert package.sync(configured, target, trust=True)[0]["status"] == "cached"
 
 
+# Issue #493: a load or a second sync that waits must learn the package that it waits for.
+def test_sync_names_the_package_and_the_step_that_run_in_its_lock_file(
+    tmp_path, monkeypatch
+):
+    target, seen = tmp_path / "extensions", []
+
+    def hang(*_args, **_kwargs):
+        seen.append((target / ".sync-lock").read_text())
+        monkeypatch.setattr(package, "LOCK_WAIT_S", 0.1)
+        with pytest.raises(TimeoutError, match=r"\(vis-greeter catalog\)"):
+            package.sync({}, target, trust=True)
+        raise package.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(package, "build_opener", lambda *_: SimpleNamespace(open=hang))
+    row = package.sync(
+        {"vis-greeter": {"source": REPOSITORY, "version": "latest"}}, target, trust=True
+    )[0]
+    assert (seen, row["status"]) == (["vis-greeter catalog"], "failed")
+
+
+# A deleted version directory left a link that every later sync failed on with ENOENT.
+@pytest.mark.parametrize("frozen", [True, False])
+def test_sync_installs_again_a_package_whose_version_directory_is_gone(
+    releases, frozen
+):
+    _, target, _ = releases
+    configured = {
+        "vis-greeter": {
+            "source": REPOSITORY,
+            "subdirectory": "plugins/greeting",
+            "version": "latest",
+        }
+    }
+    first = package.sync(configured, target, trust=True)[0]
+    shutil.rmtree(target / "vis-greeter" / first["version"])
+    repaired = package.sync(configured, target, trust=True, frozen=frozen)[0]
+    assert (repaired["status"], repaired["version"]) == ("installed", first["version"])
+    assert (target / "vis-greeter/current/extension.py").is_file()
+    assert package.sync(configured, target, trust=True)[0]["status"] == "cached"
+
+
+def test_sync_names_a_local_source_folder_that_is_gone(tmp_path):
+    source, target = tmp_path / "source", tmp_path / "extensions"
+    project(source)
+    configured = {"vis-greeter": {"source": str(source)}}
+    assert package.sync(configured, target, trust=True)[0]["status"] == "installed"
+    shutil.move(source, tmp_path / "moved")
+    row = package.sync(configured, target, trust=True, frozen=True)[0]
+    assert row["status"] == "failed"
+    assert f"The source folder {source.resolve()} is missing" in row["error"]
+    shutil.move(tmp_path / "moved", source)
+    assert package.sync(configured, target, trust=True)[0]["status"] == "cached"
+    # The error says to change `source`: a moved folder with a new `source` installs.
+    shutil.move(source, tmp_path / "moved")
+    moved = {"vis-greeter": {"source": str(tmp_path / "moved")}}
+    assert package.sync(moved, target, trust=True)[0]["status"] == "installed"
+    assert (target / "vis-greeter/current/extension.py").is_file()
+    assert package.sync(moved, target, trust=True)[0]["status"] == "cached"
+
+
+# The lock file is in the project folder: a reader repeats only the note of a sync.
+def test_a_held_lock_file_with_other_text_gives_no_text_to_the_error(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "extensions"
+    target.mkdir()
+    lock = target / ".sync-lock"
+    monkeypatch.setattr(package, "LOCK_WAIT_S", 0.1)
+    for text in ("vis-demo FAKE-PROBE private-words", "v" * 196 + " git private"):
+        with running_operation(lock):
+            lock.write_text(text)
+            with pytest.raises(TimeoutError) as error:
+                package.sync({}, target, trust=True)
+        assert text[:8] not in str(error.value)
+    # A crashed sync left its note. The note does not describe the next holder.
+    lock.write_text("vis-old git")
+    fd = package._acquire(lock)
+    try:
+        assert lock.read_text() == ""
+    finally:
+        package._release(lock, fd)
+
+
+# A project can carry a link in place of the lock file: the note must not change its target.
+def test_sync_writes_no_note_through_a_lock_file_that_is_a_link(tmp_path):
+    target, other = tmp_path / "extensions", tmp_path / "other"
+    target.mkdir()
+    other.write_text("original")
+    (target / ".sync-lock").symlink_to(other)
+    assert (
+        sync_greeter(project(tmp_path / "source"), target)[0]["status"] == "installed"
+    )
+    assert other.read_text() == "original"
+
+
 def test_sync_dry_run_and_invalid_inputs_are_inert(tmp_path, monkeypatch):
     target = tmp_path / "extensions"
     monkeypatch.setattr(

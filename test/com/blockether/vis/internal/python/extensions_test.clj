@@ -7199,8 +7199,11 @@ vis.register_extension(vis.Extension(
             (expect (= ["slow" error] [(:extension failure) (:error failure)])))))))
   ;; #493: seven calls waited up to 70 s for the load lock, and no line named its holder.
   (it
-    "names the load and the phase that a waiting load waits for"
-    (let [entered
+    "names the load, the phase and the package that a waiting load waits for"
+    (let [sync-lock
+          (doto (io/file (temp-dir) ".sync-lock") (spit "vis-notes catalog"))
+
+          entered
           (promise)
 
           release
@@ -7215,8 +7218,11 @@ vis.register_extension(vis.Extension(
                         :packages
                         "project"
                         (fn []
-                          (deliver entered true)
-                          @release)))))]
+                          (#'pyx/with-holder-note
+                           {:sync-lock sync-lock}
+                           (fn []
+                             (deliver entered true)
+                             @release)))))))]
 
       (try @entered
            (future (while (zero? (.get ^java.util.concurrent.atomic.AtomicLong
@@ -7237,14 +7243,27 @@ vis.register_extension(vis.Extension(
                      (some #(when (= ::pyx/reload-phases (:id %)) (first (:phases (:data %))))
                            signals)]
 
-                 (expect
-                   (= {:project-root "/holder" :background? true :phase :packages :detail "project"}
-                      (select-keys (:holder waiting) [:project-root :background? :phase :detail]))
-                   (pr-str waiting))
+                 (expect (= {:project-root "/holder"
+                             :background? true
+                             :phase :packages
+                             :detail "project"
+                             :package "vis-notes"
+                             :package-step "catalog"}
+                            (dissoc (:holder waiting) :session-id :held-ms :phase-ms))
+                         (pr-str waiting))
                  (expect (= "/waiter" (:project-root waiting)))
                  (expect (= [:lock-wait "/holder"] [(:phase wait) (:project-root (:holder wait))])
                          (pr-str wait)))))
-           (finally (deliver release true) @holder)))))
+           (finally (deliver release true) @holder))))
+  ;; The lock file is in the project folder: a waiting load repeats only the note of a sync.
+  (it "repeats no text of a lock file that is not the note of a sync"
+      (let [sync-lock (io/file (temp-dir) ".sync-lock")]
+        (doseq [text ["vis-demo FAKE-PROBE private-words"
+                      (str (str/join (repeat 196 "v")) " git private")]]
+          (spit sync-lock text)
+          (expect (nil? (#'pyx/sync-progress sync-lock))))
+        (spit sync-lock "vis-demo git")
+        (expect (= {:package "vis-demo" :package-step "git"} (#'pyx/sync-progress sync-lock))))))
 
 ;; Input Views — `vis.ask` blocks the extension until a channel answers
 (defn- answer-pending!

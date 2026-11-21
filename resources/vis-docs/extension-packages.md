@@ -190,6 +190,10 @@ When you copy or move a project, sync reuses the unchanged GitHub versions in it
 directory. If sync refuses a package, the error names the package directory. Keep your local edits
 from that directory, remove it, and run sync again.
 
+If the version directory of an installed GitHub package is gone, sync installs the package again.
+If the folder of a local `source` is gone, the error names that folder. Restore the folder or
+change `source`, then run sync again.
+
 ## Load extensions from nested projects
 
 A workspace can hold several repositories, and each can keep its own extensions in
