@@ -2453,6 +2453,34 @@
             (expect (= "Rename y"
                        (get-in (app-node (app-view sid view-id) "change") ["threads" 0 "draft"])))
             (expect (= (get ack "seq") (seq-now)))))))
+  ;; User report: the status of an app could not end when a person answered a comment.
+  (it
+    "gives the owner one draft event for each draft that changed a thread"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (open-app! sid)
+
+              draft!
+              #(json-body
+                 (view-action-response sid view-id (merge {"action" "draft" "node_id" "change"} %)))
+
+              thread-id
+              (get (draft! {"anchor" app-line "body" "Rename y"}) "thread_id")
+
+              ;; The same text changes nothing, so the owner hears nothing.
+              _
+              (draft! {"thread_id" thread-id "body" "Rename y"})
+
+              events
+              (get (app-op! {"op" "events" "view_id" view-id "after" 0 "timeout_ms" 0}) "events")]
+
+          (expect (= [["draft" "change" thread-id]]
+                     (mapv (juxt #(get % "type") #(get % "node_id") #(get % "thread_id"))
+                           events)))))))
   ;; User report: a comment on several lines failed with "Failed" in the app.
   (it "saves a draft on a range of lines and keeps its first line"
       (recorded
@@ -2653,35 +2681,38 @@
                        (mapv #(get % "id")
                              (get-in (json-body (app-view sid view-id))
                                      ["view" "submissions"]))))))))
-  (it
-    "gives the owner one Send event with its receipt id and its comments"
-    (recorded
-      (fn []
-        (let [sid
-              (str (random-uuid))
+  (it "gives the owner one Send event with its receipt id and its comments"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
 
-              view-id
-              (open-app! sid)
+                view-id
+                (open-app! sid)
 
-              _
-              (view-action-response sid
-                                    view-id
-                                    {"action" "draft" "node_id" "general" "body" "Ship it?"})
+                _
+                (view-action-response sid
+                                      view-id
+                                      {"action" "draft" "node_id" "general" "body" "Ship it?"})
 
-              receipt-id
-              (get-in (json-body (view-action-response
-                                   sid
-                                   view-id
-                                   {"action" "submit" "values" {} "idempotency_key" "send-event"}))
-                      ["submission" "id"])
+                receipt-id
+                (get-in (json-body (view-action-response sid
+                                                         view-id
+                                                         {"action" "submit"
+                                                          "values" {}
+                                                          "idempotency_key" "send-event"}))
+                        ["submission" "id"])
 
-              events
-              (get (app-op! {"op" "events" "view_id" view-id "after" 0 "timeout_ms" 0}) "events")]
+                events
+                (get (app-op! {"op" "events" "view_id" view-id "after" 0 "timeout_ms" 0}) "events")
 
-          (expect (= [receipt-id] (mapv #(get % "submission_id") events)))
-          (expect (= [["general" "Ship it?"]]
-                     (mapv (juxt #(get % "node_id") #(get % "body"))
-                           (get (first events) "comments"))))))))
+                sends
+                (filterv #(= "submit" (get % "type")) events)]
+
+            (expect (= [receipt-id] (mapv #(get % "submission_id") sends)))
+            (expect (= [["general" "Ship it?"]]
+                       (mapv (juxt #(get % "node_id") #(get % "body"))
+                             (get (first sends) "comments"))))))))
   (it "hands a Send of a sandbox app to its session as one bounded turn"
       ;; #421: nothing told the agent that a person pressed Send in its app.
       (gw-hi/install!)

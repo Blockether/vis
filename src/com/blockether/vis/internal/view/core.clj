@@ -4032,7 +4032,8 @@
 (defn- app-draft!
   "Save the draft of the human in a thread of node `node-id` of open app `entry`.
    Answers the seq of the app after the write, or a refusal when the client
-   edited an older state."
+   edited an older state. A draft that changed a thread gives the owner one
+   `draft` event."
   [entry view-id {:keys [node-id thread-id] :as action}]
   (app-locked entry
               view-id
@@ -4051,14 +4052,21 @@
                                          #(app/draft-op node action (str (random-uuid))))
 
                             thread-id
-                            (or (get-in op [:thread :id]) thread-id)]
+                            (or (get-in op [:thread :id]) thread-id)
 
-                        (cond-> {:is-accepted true
-                                 :node-id node-id
-                                 :seq (if op
-                                        (:seq (binding [*host-patch* true]
-                                                (patch-live! view-id [op])))
-                                        (:seq view))}
+                            seq-now
+                            (if op
+                              (:seq (binding [*host-patch* true]
+                                      (patch-live! view-id [op])))
+                              (:seq view))]
+
+                        ;; The owner hears each draft that changed a thread, as it hears a press.
+                        (when (and op (not (app-stale? current)))
+                          (push-live-event! current
+                                            (cond-> {:type :draft :node-id node-id}
+                                              thread-id
+                                              (assoc :thread-id thread-id))))
+                        (cond-> {:is-accepted true :node-id node-id :seq seq-now}
                           thread-id
                           (assoc :thread-id thread-id))))))))
 

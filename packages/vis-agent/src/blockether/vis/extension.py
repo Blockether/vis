@@ -5497,7 +5497,7 @@ class Interrupted(Exception):
 
 @dataclass(frozen=True)
 class LiveEvent:
-    """One human action on a live view: `change`, `submit`, `activate`, `select` or `shortcut`.
+    """One human action on a live view: `change`, `submit`, `activate`, `select`, `shortcut` or `draft`.
 
     `value` is the new value of a changed input; a secret input gives only
     `is_set`. `values` holds every input that a submit button collected.
@@ -5509,6 +5509,8 @@ class LiveEvent:
     `key`, the key that the person pressed. A shortcut that names a node gives an
     `activate` event of that node instead.
     A selection in a selectable table gives `item_ids`, the selected row ids.
+    A draft that a person changed in a thread of an app gives `thread_id`. The event
+    has no text: read the draft from `state()` of the app.
     """
 
     type: str
@@ -5522,6 +5524,7 @@ class LiveEvent:
     action: str | None = None
     key: str | None = None
     item_ids: list[str] | None = None
+    thread_id: str | None = None
 
     @classmethod
     def _from_wire(cls, raw):
@@ -5537,6 +5540,7 @@ class LiveEvent:
             action=raw.get("action"),
             key=raw.get("key"),
             item_ids=None if raw.get("item_ids") is None else list(raw["item_ids"]),
+            thread_id=raw.get("thread_id"),
         )
 
 

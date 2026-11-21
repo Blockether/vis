@@ -860,6 +860,9 @@ send from the Companion app. A Send posts the drafts as messages and sends the v
 inputs. Vis gives each Send one receipt, also when a client repeats it after a network error. An
 app keeps its newest 50 receipts, and Vis matches a retry only to a Send in that list.
 
+Each draft that a person changes gives your code one `draft` event with `node_id` and `thread_id`.
+The event has no text. Read the draft from `app.state()`.
+
 ### Answer a Send
 
 Each Send gives your code one `submit` event. `event.submission_id` names its receipt, and
