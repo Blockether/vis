@@ -468,6 +468,13 @@ def _wrapped(prefix, kind, indent):
         inner += "    "
         rows = "".join(f"{inner}{value},\n" for value in values.split(", "))
         return f"{indent}{prefix}NotRequired[\n{indent}    Literal[\n{rows}{indent}    ]\n{indent}]\n"
+    if head == "NotRequired[list[" and tail == "] | None]":
+        inner += "        "
+        rows = "".join(f"{inner}{value},\n" for value in values.split(", "))
+        return (
+            f"{indent}{prefix}NotRequired[\n{indent}    list[\n{indent}        Literal[\n"
+            f"{rows}{indent}        ]\n{indent}    ]\n{indent}    | None\n{indent}]\n"
+        )
     rows = "".join(f"{inner}{value},\n" for value in values.split(", "))
     return f"{indent}{prefix}{head}Literal[\n{rows}{indent}]{tail}\n"
 

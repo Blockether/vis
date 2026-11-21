@@ -910,12 +910,17 @@ class AgentsRecord(TypedDict):
     messages: NotRequired[list[AgentsRecordMessagesItem] | None]
     step_secs: NotRequired[int | None]
     elapsed_secs: NotRequired[int | None]
-    alerts: NotRequired[list[Literal[
-        "slow_step",
-        "errors",
-        "budget",
-        "awaits_person",
-    ]] | None]
+    alerts: NotRequired[
+        list[
+            Literal[
+                "slow_step",
+                "errors",
+                "budget",
+                "awaits_person",
+            ]
+        ]
+        | None
+    ]
     warning: NotRequired[str | None]
     error: NotRequired[AgentsRecordError | None]
     provider: NotRequired[str | None]
