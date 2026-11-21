@@ -1630,14 +1630,28 @@
           running
           (agent {:status "running"})]
 
+      ;; Cross-check 2026-11-22: a store that already kept team clocks counted the queue as work.
+      ;; The clock of a team with only a queued agent ran on after the reopen.
+      (agent {:status "queued" :team_id "queue"})
+      (sqlite-core/execute!
+        s1
+        {:insert-into :session_team
+         :values [{:leader_id (str leader) :turn_id "queue" :worked_ms 0 :busy_since 1000}]})
       (try (jdbc/execute! (:datasource s1) ["ALTER TABLE session_agent DROP COLUMN worked_ms"])
            (jdbc/execute! (:datasource s1) ["ALTER TABLE session_agent DROP COLUMN started_at"])
+           (jdbc/execute! (:datasource s1) ["PRAGMA user_version = 6"])
            (persistance/db-dispose-connection! s1)
            (let [s2 (persistance/db-create-connection! dir)]
              (try (expect (= 90000 (:worked_ms (persistance/db-agent-info s2 resumed))))
                   (expect (= 0 (:worked_ms (persistance/db-agent-info s2 running))))
                   (expect (= 1000 (:busy_since (persistance/db-agent-info s2 running)))
                           "A task of an older store started at its hand-off")
+                  ;; The janitor runs the store rewrites after the open.
+                  ((requiring-resolve
+                     'com.blockether.vis.internal.persistance.sqlite.core/rewrite-older-store!)
+                    (:datasource s2))
+                  (expect (= #{"team"} (set (keys (persistance/db-team-clocks s2 (str leader)))))
+                          "A team with only a queued agent has no clock")
                   (finally (persistance/db-dispose-connection! s2))))
            (finally (fs/delete-tree root))))))
 
@@ -1816,7 +1830,7 @@
         (expect (= 0 (user-version s)))
         (rewrite-older-store! (:datasource s))
         (let [[text] (activity-search-texts s)]
-          (expect (= 6 (user-version s)))
+          (expect (= 7 (user-version s)))
           (expect (not= old-text text))
           (expect (str/includes? text "Disk quota reached"))
           (expect (<= (count text) 4096))
@@ -1926,7 +1940,7 @@
                      ["UPDATE session_turn_iteration SET tool_calls = ?" (nippy/freeze older)])
       (jdbc/execute! (:datasource s) ["PRAGMA user_version = 1"])
       (rewrite-older-store! (:datasource s))
-      (expect (= 6 (user-version s)))
+      (expect (= 7 (user-version s)))
       (expect (= [(dissoc snapshot :rows) orphan grouped] (stored-activities s)))
       (expect (= [snapshot orphan grouped]
                  (mapv :activity
@@ -4343,7 +4357,7 @@
         (jdbc/execute! ds ["CREATE INDEX idx_log_created ON log(created_at)"])
         (jdbc/execute! ds ["PRAGMA user_version = 2"])
         (rewrite-older-store! ds)
-        (expect (= 6 (user-version s)))
+        (expect (= 7 (user-version s)))
         (expect (= [] (log-schema-names s))))))
 
 (defn- improve-schema-names
@@ -4433,7 +4447,7 @@
                                         " entry_id INTEGER REFERENCES improve(entry_id))")])
                    (jdbc/execute! ds ["PRAGMA user_version = 3"])
                    (rewrite-older-store! ds)
-                   (expect (= 6 (user-version s)))
+                   (expect (= 7 (user-version s)))
                    (expect (= [] (improve-schema-names s))))))
 
 (defdescribe council-machine-table-drop-test
@@ -4450,7 +4464,7 @@
                    (jdbc/execute! ds ["INSERT INTO council_machine VALUES (1, 'desk', 0)"])
                    (jdbc/execute! ds ["PRAGMA user_version = 4"])
                    (rewrite-older-store! ds)
-                   (expect (= 6 (user-version s)))
+                   (expect (= 7 (user-version s)))
                    (expect (= []
                               (raw-query s
                                          {:select [:name]

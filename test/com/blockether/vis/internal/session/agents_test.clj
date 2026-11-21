@@ -2574,6 +2574,67 @@
         (expect (some? (:busy_since (first (vals (ps/db-team-clocks db leader))))))
         (ps/db-delete-session-tree! db child)
         (expect (= {} (ps/db-team-clocks db leader)))))
+  ;; Cross-check 2026-11-22: a person wrote to a child that had ended. The row said running, but
+  ;; no time ran, and the time of that turn was lost.
+  (it
+    "counts a turn of an ended child without a ping as a new task"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {})
+
+          team
+          (:team_id (agents/info db child))
+
+          start
+          (long (:created_at (agents/info db child)))
+
+          at
+          (fn [ms f]
+            (with-redefs [util/now-ms (fn ^long []
+                                        (+ start (long ms)))]
+              (f)))]
+
+      (at 0 #(ps/db-agent-claim-iteration! db child))
+      (ps/db-agent-update! db child {:status "completed" :finished_at (+ start 1000)})
+      (at 10000 #(ps/db-agent-claim-iteration! db child))
+      (let [row (agents/info db child)]
+        (expect (= ["running" (+ start 10000) nil] ((juxt :status :busy_since :finished_at) row)))
+        (expect (= [{:start start :end (+ start 1000) :status "completed"}] (:runs row)))
+        (expect (document/valid-json? "agents" "agent" (walk/stringify-keys row))))
+      (expect (= {team {:worked_ms 1000 :busy_since (+ start 10000)}}
+                 (ps/db-team-clocks db leader)))
+      (at 12000 #(agents/finish! db child "completed"))
+      (expect (= 3000 (:worked_ms (agents/info db child))))
+      (expect (= {team {:worked_ms 3000}} (ps/db-team-clocks db leader)))))
+  ;; Cross-check 2026-11-22: the system clock went back before a follow-up task. The end of the
+  ;; orphan used the last iteration of the earlier task, so the queued task got 5 s of work.
+  (it "gives no time to a queued follow-up task that a dead process left"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            child
+            (child! db leader {})
+
+            start
+            (long (:created_at (agents/info db child)))]
+
+        (doseq [ms [5000 6000]]
+          (with-redefs [util/now-ms (fn ^long []
+                                      (+ start (long ms)))]
+            (ps/db-agent-claim-iteration! db child)))
+        (ps/db-agent-update! db child {:status "completed" :finished_at (+ start 6000)})
+        (ps/db-agent-resume! db child 1 (+ start 1000))
+        (agents/reconcile-orphans! db [])
+        (expect (= ["failed" 1000] ((juxt :status :worked_ms) (agents/info db child))))
+        (expect (= [{:worked_ms 1000}] (vals (ps/db-team-clocks db leader))))))
   (it
     "lists the turns, notes, messages and end of a child, oldest first"
     (let [db

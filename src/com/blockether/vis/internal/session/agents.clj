@@ -338,7 +338,7 @@
               (swap! handoffs disj (str sid))
               ;; The first iteration of a task starts its work: the clients get the row and the
               ;; clock of its team now, not after the model call.
-              (when-not (:started_at before)
+              (when-not (:busy_since before)
                 (when-let [changed! (get @runtime :changed!)]
                   (changed! sid)))
               true)

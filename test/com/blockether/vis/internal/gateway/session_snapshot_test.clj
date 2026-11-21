@@ -717,21 +717,22 @@
               ["UPDATE session_agent SET runs = ?, resumed_at = ?, finished_at = ? WHERE session_id = ?"
                "[{\"start\":1,\"end\":60001,\"status\":\"failed\"}]" 90001 120001 cid])
             (let
-              [old
-               (recoded (state/export-session sid)
-                        (fn [tree]
-                          (update tree
-                                  :sessions
-                                  (fn [ss]
-                                    (mapv #(update %
-                                                   :agent
-                                                   (fn [a]
-                                                     (some-> a
-                                                             (dissoc :worked_ms :started_at))))
-                                          ss)))))
+              [older
+               (fn []
+                 (recoded (state/export-session sid)
+                          (fn [tree]
+                            (update tree
+                                    :sessions
+                                    (fn [ss]
+                                      (mapv #(update %
+                                                     :agent
+                                                     (fn [a]
+                                                       (some-> a
+                                                               (dissoc :worked_ms :started_at))))
+                                            ss))))))
 
                new-root
-               (get (state/import-session! old {}) "id")
+               (get (state/import-session! (older) {}) "id")
 
                ;; A child that was cancelled in the queue started no work.
                idle-root
@@ -742,6 +743,14 @@
                     cid])
                  (get (state/import-session! (state/export-session sid) {}) "id"))
 
+               ;; Cross-check 2026-11-22: the import ended a queued child before it filled the
+               ;; start, so the child got the start of a task that never ran.
+               queued-root
+               (do (jdbc/execute! (:datasource store)
+                                  ["UPDATE session_agent SET status = 'queued' WHERE session_id = ?"
+                                   cid])
+                   (get (state/import-session! (older) {}) "id"))
+
                times
                (fn [root]
                  (rows store
@@ -751,7 +760,9 @@
               (expect (= [{:worked_ms 90000 :started_at 90001}] (times new-root))
                       "A task of an older snapshot started at its hand-off")
               (expect (= [nil] (mapv :started_at (times idle-root)))
-                      "A task without an iteration stays without a start"))))))
+                      "A task without an iteration stays without a start")
+              (expect (= [nil] (mapv :started_at (times queued-root)))
+                      "A queued task of an older snapshot did not start"))))))
     (it "restores a child alone as an independent session"
         (with-store
           (fn [store]
