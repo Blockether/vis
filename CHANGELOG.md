@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.26] - 2026-11-21
+
+Vis v0.5.25 was not published, because its release checks failed. v0.5.26 contains all v0.5.25 changes.
+
+### Fixed
+
+- SDK: the generated response types of the gateway pass the ruff format check.
+
 ## [v0.5.25] - 2026-11-21
 
 ### Added
