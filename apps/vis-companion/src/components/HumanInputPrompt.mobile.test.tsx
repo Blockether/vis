@@ -16,6 +16,7 @@ import {
 } from '../lib/human-input';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
+import type { SseEvent } from '../lib/types';
 
 /** The native paste menu plugin of the phone app. A browser has no such plugin. */
 const systemMenu = vi.hoisted(() => ({ show: vi.fn(), move: vi.fn(), hide: vi.fn() }));
@@ -182,18 +183,17 @@ describe('a one-time code on a phone', () => {
 
 /** A gateway that serves one open request and a stream that can reconnect. */
 function harness(request: HumanInputRequest) {
-  const connection = new Set<(connected: boolean) => void>();
+  const events = new Set<(event: SseEvent) => void>();
   let served = request;
   const client = {
     inputViews: () => Promise.resolve([served]),
     viewAction: () => Promise.resolve({ is_accepted: true }),
   } as unknown as GatewayClient;
   const subscriptions = {
-    subscribeConnection: (listener: (connected: boolean) => void) => {
-      connection.add(listener);
-      return () => connection.delete(listener);
+    subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
+      events.add(listener);
+      return () => events.delete(listener);
     },
-    subscribeSession: () => () => undefined,
   } as unknown as SessionSubscriptionHub;
   return {
     client,
@@ -201,7 +201,7 @@ function harness(request: HumanInputRequest) {
     /** Read the request again as the gateway serves it after a reconnect: a new object. */
     reconnect: (next: HumanInputRequest = { ...served }) => {
       served = next;
-      for (const listener of connection) listener(true);
+      for (const listener of events) listener({ type: 'subscription.ready', is_live: false });
     },
   };
 }

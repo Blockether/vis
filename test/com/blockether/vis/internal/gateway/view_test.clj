@@ -24,6 +24,7 @@
             [com.blockether.vis.internal.gateway.server.views :as views-api]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.view :as gw-hi]
+            [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.session.agents :as agents]
@@ -131,12 +132,126 @@
                   (expect (= "submitted" (get-in event ["result" "reason"]))))
                 (finally (hi/cancel! rid "cleanup")))))))))
 
-;; Issue #392: a form raised in a subagent hung its run for hours. A subagent may not
-;; ask the person, because its leader answers for it: the engine refuses the form at once.
+;; Issue #494: a form that a subagent raises reaches the person in the session of its
+;; leader. Issue #392: in the session of the subagent, which nobody watches, such a form
+;; hung its run for hours.
+(defn- with-team
+  "Call `f` while each session in the atom `children` is a managed subagent of
+   `leader` and the wired ask gate decides."
+  [leader children f]
+  (let [db
+        (Object.)
+
+        previous
+        @(var-get #'hi/ask-gate)]
+
+    (hi/set-ask-gate! #'wiring/may-ask?)
+    (try (with-redefs-fn {#'lp/db-info (constantly db)
+                          #'agents/info (fn [d sid]
+                                          (when (and (identical? db d) (contains? @children sid))
+                                            {:parent_id leader :leader_id leader}))}
+           f)
+         (finally (hi/set-ask-gate! previous)))))
+
 (defdescribe
-  subagent-never-asks-the-person-test
+  subagent-form-shows-in-the-leader-session-test
+  (it "shows a subagent form only in the leader session, where the person answers it"
+      (gw-hi/install!)
+      (let [leader
+            (str (random-uuid))
+
+            child
+            (str (random-uuid))
+
+            rid
+            (str "req-" (random-uuid))]
+
+        (with-team
+          leader
+          (atom #{child})
+          (fn []
+            (with-events
+              (fn [seen]
+                (let [answer (future (hi/request! (spec :id rid :session-id child)))]
+                  (try (expect (await-true #(seq (events-of seen "view.open" rid))))
+                       (expect (= [leader] (mapv first (events-of seen "view.open" rid))))
+                       (let [view (get (second (first (events-of seen "view.open" rid))) "view")]
+                         (expect (= child (get view "session_id")))
+                         (expect (= {"session_id" child "parent_session_id" leader}
+                                    (select-keys (get view "origin")
+                                                 ["session_id" "parent_session_id"]))))
+                       ;; a client that connects later finds the form in the leader session
+                       (expect
+                         (= [rid]
+                            (into [] (comp (map :id) (filter #{rid})) (gw-hi/input-views leader))))
+                       (expect (empty? (gw-hi/input-views child)))
+                       ;; the answer goes through the session that shows the form
+                       (expect (nil? (gw-hi/input-view-of child rid)))
+                       (expect (nil? (gw-hi/input-view-of (str (random-uuid)) rid)))
+                       (expect (some? (gw-hi/input-view-of leader rid)))
+                       (expect (true? (:is-accepted (gw-hi/action! rid
+                                                                   {:action :submit
+                                                                    :values {"confirm" true}}))))
+                       (expect (= true (get-in (deref answer 2000 ::timeout) [:values "confirm"])))
+                       (expect (await-true #(seq (events-of seen "view.close" rid))))
+                       (expect (= [leader] (mapv first (events-of seen "view.close" rid))))
+                       (finally (hi/cancel! rid "cleanup"))))))))))
+  (it "pushes the team row of the subagent at the open and at the close of its form"
+      (gw-hi/install!)
+      (let [leader
+            (str (random-uuid))
+
+            child
+            (str (random-uuid))
+
+            rid
+            (str "req-" (random-uuid))
+
+            pushed
+            (atom [])]
+
+        (with-team leader
+                   (atom #{child})
+                   (fn []
+                     (with-redefs [state/input-changed! #(swap! pushed conj (str %))]
+                       (let [answer (future (hi/request! (spec :id rid :session-id child)))]
+                         (try (expect (await-true #(= [child] @pushed)))
+                              (gw-hi/action! rid {:action :cancel})
+                              (expect (= "cancelled" (:reason (deref answer 2000 ::timeout))))
+                              (expect (await-true #(= [child child] @pushed)))
+                              (finally (hi/cancel! rid "cleanup")))))))))
+  (it "cancels the forms that a deleted session raised or shows, and no other form"
+      (gw-hi/install!)
+      (let [leader
+            (str (random-uuid))
+
+            child
+            (str (random-uuid))
+
+            stranger
+            (str (random-uuid))
+
+            ask
+            (fn [sid]
+              (let [rid (str "req-" (random-uuid))]
+                ;; A delete also ends a form that refuses a cancel.
+                {:rid rid
+                 :answer (future (hi/request!
+                                   (spec :id rid :session-id sid :is-cancellable false)))}))]
+
+        (with-team leader
+                   (atom #{child})
+                   (fn []
+                     (let [[own shown other :as asks] (mapv ask [leader child stranger])]
+                       (try (expect (await-true #(every? (comp hi/pending-request :rid) asks)))
+                            (state/append-event! leader "session.deleted" {} {:store? false})
+                            (expect (= ["session deleted" "session deleted"]
+                                       (mapv #(:reason (deref (:answer %) 2000 ::parked))
+                                             [own shown])))
+                            (expect (some? (hi/pending-request (:rid other))))
+                            (finally (hi/cancel-all! "cleanup"))))))))
   (it
-    "refuses a subagent form at once and shows it in no session; a leader form stays its own"
+    "puts the close after the open when a form ends while its open is on the way"
     (gw-hi/install!)
     (let [leader
           (str (random-uuid))
@@ -144,50 +259,178 @@
           child
           (str (random-uuid))
 
-          child-rid
+          rid
           (str "req-" (random-uuid))
 
-          leader-rid
-          (str "req-" (random-uuid))
+          entered
+          (promise)
 
-          db
-          (Object.)
+          resume
+          (promise)
 
-          previous
-          @(var-get #'hi/ask-gate)]
+          append!
+          state/append-event!]
 
-      (hi/set-ask-gate! #'gw-hi/person-may-answer?)
-      (try (with-redefs-fn {#'lp/db-info (constantly db)
-                            #'agents/info (fn [d sid]
-                                            (when (and (identical? db d) (= child sid))
-                                              {:parent_id leader :leader_id leader}))}
-             (fn []
-               (with-events
-                 (fn [seen]
-                   (let [answer (future (hi/request! (spec :id child-rid :session-id child)))]
-                     (try (expect
-                            (= {:is-submitted false :reason "undeliverable" :request-id child-rid}
-                               (deref answer 1000 ::timeout)))
-                          (expect (empty? (events-of seen "view.open" child-rid)))
-                          (expect (nil? (hi/pending-request child-rid)))
-                          (expect (empty? (filterv #(= child-rid (:id %))
-                                            (into (gw-hi/input-views leader)
-                                                  (gw-hi/input-views child)))))
-                          (finally (hi/cancel! child-rid "cleanup"))))
-                   (let [answer (future (hi/request! (spec :id leader-rid :session-id leader)))]
-                     (try (expect (await-true #(seq (events-of seen "view.open" leader-rid))))
-                          (expect (= #{leader}
-                                     (set (map first (events-of seen "view.open" leader-rid)))))
-                          (expect (nil? (gw-hi/input-view-of child leader-rid)))
-                          (expect (true? (:is-accepted (gw-hi/action! leader-rid
-                                                                      {:action :submit
-                                                                       :values {"confirm" true}}))))
-                          (expect (true? (:is-submitted (deref answer 2000 ::timeout))))
-                          (expect (await-true #(seq (events-of seen "view.close" leader-rid))))
-                          (expect (= #{leader}
-                                     (set (map first (events-of seen "view.close" leader-rid)))))
-                          (finally (hi/cancel! leader-rid "cleanup"))))))))
-           (finally (hi/set-ask-gate! previous))))))
+      (with-team leader
+                 (atom #{child})
+                 (fn []
+                   (with-events
+                     (fn [seen]
+                       (with-redefs [state/append-event!
+                                     (fn [sid type & more]
+                                       (when (and (= gateway-contract/view-open-event type)
+                                                  (= rid (str (:view-id (first more)))))
+                                         (deliver entered true)
+                                         (deref resume 2000 nil))
+                                       (apply append! sid type more))]
+                         (let [answer (future (hi/request! (spec :id rid :session-id child)))]
+                           (try (expect (deref entered 2000 false))
+                                (hi/cancel! rid "stopped")
+                                (deliver resume true)
+                                (expect (= "stopped" (:reason (deref answer 2000 ::parked))))
+                                (expect (await-true #(seq (events-of seen "view.close" rid))))
+                                (expect (= [[leader "view.open"] [leader "view.close"]]
+                                           (into []
+                                                 (comp (filter (fn [[_ event]]
+                                                                 (= rid
+                                                                    (or (get-in event ["view" "id"])
+                                                                        (get event "view_id")))))
+                                                       (map (fn [[sid event]]
+                                                              [sid (get event "type")])))
+                                                 @seen)))
+                                (expect (zero? (long (bus/raised-waiting-count child))))
+                                (finally (deliver resume true) (hi/cancel! rid "cleanup")))))))))))
+  (it "shows no form that ends, or that loses its leader, before its open has a home"
+      (gw-hi/install!)
+      (doseq [[reason end!] [["stopped"
+                              (fn [rid _]
+                                (hi/cancel! rid "stopped"))]
+                             ;; A delete of the leader removes the rows of its subagents first.
+                             ["session deleted"
+                              (fn [_ children]
+                                (reset! children #{}))]]]
+        (let [leader (str (random-uuid))
+              child (str (random-uuid))
+              children (atom #{child})
+              rid (str "req-" (random-uuid))
+              entered (promise)
+              resume (promise)
+              origin-of @#'gw-hi/origin-of]
+
+          (with-team leader
+                     children
+                     (fn []
+                       (with-events
+                         (fn [seen]
+                           (with-redefs-fn {#'gw-hi/origin-of (fn [sid]
+                                                                (when (= child sid)
+                                                                  (deliver entered true)
+                                                                  (deref resume 2000 nil))
+                                                                (origin-of sid))}
+                             (fn []
+                               (let [answer (future (hi/request! (spec :id rid :session-id child)))]
+                                 (try (expect (deref entered 2000 false))
+                                      (end! rid children)
+                                      (deliver resume true)
+                                      (expect (= reason (:reason (deref answer 2000 ::parked))))
+                                      (expect (empty? (events-of seen "view.open" rid)))
+                                      (expect (not (contains? @@#'gw-hi/input-homes rid)))
+                                      (expect (zero? (long (bus/raised-waiting-count child))))
+                                      (finally (deliver resume true)
+                                               (hi/cancel! rid "cleanup")))))))))))))
+  (it
+    "gives each answer to its own call when many subagents ask at the same time"
+    (gw-hi/install!)
+    (let [leader
+          (str (random-uuid))
+
+          asks
+          (vec (for [child
+                     (repeatedly 6 #(str (random-uuid)))
+
+                     _
+                     (range 2)]
+
+                 {:child child :rid (str "req-" (random-uuid))}))
+
+          rids
+          (mapv :rid asks)]
+
+      (with-team
+        leader
+        (atom (into #{} (map :child) asks))
+        (fn []
+          (with-events
+            (fn [seen]
+              (let [answers (mapv (fn [{:keys [child rid]}]
+                                    (future (hi/request!
+                                              {:id rid
+                                               :session-id child
+                                               :title (str "Code for " rid)
+                                               :nodes [{:id "who" :type "plaintext" :label "Who"}]
+                                               :timeout-ms 10000})))
+                                  asks)]
+                (try (expect (await-true #(= (set rids)
+                                             (into #{}
+                                                   (comp (map :id) (filter (set rids)))
+                                                   (gw-hi/input-views leader)))))
+                     ;; every other form is cancelled, the rest are submitted, all in parallel
+                     (let [verdicts (mapv (fn [[n rid]]
+                                            (future (gw-hi/action! rid
+                                                                   (if (odd? (long n))
+                                                                     {:action :cancel}
+                                                                     {:action :submit
+                                                                      :values {"who" rid}}))))
+                                          (shuffle (map-indexed vector rids)))]
+                       (expect (every? #(true? (:is-accepted (deref % 5000 nil))) verdicts)))
+                     (expect (= (map-indexed (fn [n rid]
+                                               (if (odd? (long n)) [false nil] [true rid]))
+                                             rids)
+                                (map (fn [answer]
+                                       (let [result (deref answer 5000 nil)]
+                                         [(:is-submitted result) (get-in result [:values "who"])]))
+                                     answers)))
+                     (expect (await-true #(= (count rids)
+                                             (count (mapcat (fn [rid]
+                                                              (events-of seen "view.close" rid))
+                                                            rids)))))
+                     (expect (= #{leader}
+                                (into #{}
+                                      (comp (mapcat #(concat (events-of seen "view.open" %)
+                                                             (events-of seen "view.close" %)))
+                                            (map first))
+                                      rids)))
+                     (expect (empty? (filterv (comp (set rids) :id) (gw-hi/input-views leader))))
+                     (finally (run! #(hi/cancel! % "cleanup") rids))))))))))
+  (it "closes the form in the leader session when the subagent is gone from the team at the close"
+      (gw-hi/install!)
+      (let [leader
+            (str (random-uuid))
+
+            child
+            (str (random-uuid))
+
+            rid
+            (str "req-" (random-uuid))
+
+            children
+            (atom #{child})]
+
+        (with-team leader
+                   children
+                   (fn []
+                     (with-events
+                       (fn [seen]
+                         (let [answer (future (hi/request! (spec :id rid :session-id child)))]
+                           (try (expect (await-true #(seq (events-of seen "view.open" rid))))
+                                (reset! children #{})
+                                (expect (some? (gw-hi/input-view-of leader rid)))
+                                (expect (true? (:is-accepted (gw-hi/action! rid
+                                                                            {:action :cancel}))))
+                                (expect (= "cancelled" (:reason (deref answer 2000 ::timeout))))
+                                (expect (await-true #(seq (events-of seen "view.close" rid))))
+                                (expect (= [leader] (mapv first (events-of seen "view.close" rid))))
+                                (finally (hi/cancel! rid "cleanup")))))))))))
 
 (defdescribe rejected-answer-keeps-the-request-open-test
              (it "rejected answer keeps the request open"
@@ -2235,84 +2478,84 @@
                                ["threads" 0 "anchor"])))))))
   ;; User request: a review comment shows in the composer, goes with the next
   ;; message and is gone after the send.
-  (it "puts the drafts that the composer sends into the turn and removes them"
-      (recorded
-        (fn []
-          (let [sid
-                (str (random-uuid))
+  (it
+    "puts the drafts that the composer sends into the turn and removes them"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
 
-                view-id
-                (get (app-op! {"op" "open"
-                               "view" {"title" "Review"
-                                       "session_id" sid
-                                       "placement" "attachment"
-                                       "nodes" [{"id" "change"
-                                                 "type" "diff"
-                                                 "patch" app-patch
-                                                 "new_revision" "def5678"
-                                                 "threads"
-                                                 [{"id" "finding"
-                                                   "anchor" app-line
-                                                   "messages" [{"id" "m1"
-                                                                "author" {"kind" "extension"
-                                                                          "name" "vis-review"}
-                                                                "created_at" 1
-                                                                "body" "error ruff: unused import"}]}]}
-                                                {"id" "general" "type" "thread" "messages" []}]}})
-                     "view_id")
+              view-id
+              (get (app-op!
+                     {"op" "open"
+                      "view" {"title" "Review"
+                              "session_id" sid
+                              "placement" "attachment"
+                              "nodes" [{"id" "change"
+                                        "type" "diff"
+                                        "patch" app-patch
+                                        "new_revision" "def5678"
+                                        "threads" [{"id" "finding"
+                                                    "anchor" app-line
+                                                    "messages" [{"id" "m1"
+                                                                 "author" {"kind" "extension"
+                                                                           "name" "vis-review"}
+                                                                 "created_at" 1
+                                                                 "body"
+                                                                 "error ruff: unused import"}]}]}
+                                       {"id" "general" "type" "thread" "messages" []}]}})
+                   "view_id")
 
-                draft!
-                #(view-action-response sid view-id (merge {"action" "draft" "node_id" "change"} %))
+              draft!
+              #(view-action-response sid view-id (merge {"action" "draft" "node_id" "change"} %))
 
-                comment
-                (get (json-body (draft! {"anchor" {"path" "src/a.py"
-                                                   "side" "new"
-                                                   "start_line" 1
-                                                   "line" 2}
-                                         "body" "Join these"}))
-                     "thread_id")
+              comment
+              (get (json-body (draft! {"anchor"
+                                       {"path" "src/a.py" "side" "new" "start_line" 1 "line" 2}
+                                       "body" "Join these"}))
+                   "thread_id")
 
-                _
-                (draft! {"thread_id" "finding" "body" ""})
+              _
+              (draft! {"thread_id" "finding" "body" ""})
 
-                _
-                (view-action-response sid
-                                      view-id
-                                      {"action" "draft" "node_id" "general" "body" "Not yet"})
+              _
+              (view-action-response sid
+                                    view-id
+                                    {"action" "draft" "node_id" "general" "body" "Not yet"})
 
-                chips
-                (fn []
-                  (->> (gw-hi/live-views sid nil false true)
-                       (some #(when (= view-id (:id %)) (:drafts %)))
-                       (mapv :thread-id)))
+              chips
+              (fn []
+                (->> (gw-hi/live-views sid nil false true)
+                     (some #(when (= view-id (:id %)) (:drafts %)))
+                     (mapv :thread-id)))
 
-                turns
-                (atom [])]
+              turns
+              (atom [])]
 
-            (expect (= ["finding" comment "general"] (chips)))
-            (with-redefs [state/submit-turn! (fn [_ opts]
-                                               (swap! turns conj opts)
-                                               {:turn (fixture/turn {:turn_id "t1"})})]
-              (#'turns-api/submit-turn-handler
-               {:path-params {:sid sid}
-                :body (body-stream {"request" "Fix [COMMENT a.py:1-2] these"
-                                    "display_request" "Fix [COMMENT a.py:1-2] these"
-                                    "comments" [{"view_id" view-id
-                                                 "node_id" "change"
-                                                 "thread_id" comment
-                                                 "reference" "[COMMENT a.py:1-2]"}
-                                                {"view_id" view-id
-                                                 "node_id" "change"
-                                                 "thread_id" "finding"}]})}))
-            (expect (= (str "Fix [COMMENT a.py:1-2] these\n\nComments in Review:\n"
-                            "- src/a.py:2: error ruff: unused import\n"
-                            "- [COMMENT a.py:1-2] src/a.py:1-2: Join these")
-                       (:request (first @turns))))
-            (expect (= (:request (first @turns)) (:display-request (first @turns))))
-            (expect (= ["general"] (chips)))
-            (expect (= ["finding"]
-                       (mapv #(get % "id")
-                             (get (app-node (app-view sid view-id) "change") "threads"))))))))
+          (expect (= ["finding" comment "general"] (chips)))
+          (with-redefs [state/submit-turn! (fn [_ opts]
+                                             (swap! turns conj opts)
+                                             {:turn (fixture/turn {:turn_id "t1"})})]
+            (#'turns-api/submit-turn-handler
+             {:path-params {:sid sid}
+              :body (body-stream {"request" "Fix [COMMENT a.py:1-2] these"
+                                  "display_request" "Fix [COMMENT a.py:1-2] these"
+                                  "comments" [{"view_id" view-id
+                                               "node_id" "change"
+                                               "thread_id" comment
+                                               "reference" "[COMMENT a.py:1-2]"}
+                                              {"view_id" view-id
+                                               "node_id" "change"
+                                               "thread_id" "finding"}]})}))
+          (expect (= (str "Fix [COMMENT a.py:1-2] these\n\nComments in Review:\n"
+                          "- src/a.py:2: error ruff: unused import\n"
+                          "- [COMMENT a.py:1-2] src/a.py:1-2: Join these")
+                     (:request (first @turns))))
+          (expect (= (:request (first @turns)) (:display-request (first @turns))))
+          (expect (= ["general"] (chips)))
+          (expect (= ["finding"]
+                     (mapv #(get % "id")
+                           (get (app-node (app-view sid view-id) "change") "threads"))))))))
   (it "restores the value of each input type after a restart"
       ;; #421: a replayed record kept the field type as text. A saved value then
       ;; failed its domain check, and the app list of the session threw.

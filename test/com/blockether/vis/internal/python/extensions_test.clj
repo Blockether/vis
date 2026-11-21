@@ -8180,7 +8180,11 @@ vis.register_extension(vis.Extension(name=\"stale-ctx\", description=\"Stale ctx
                (let [opened (filterv #(= :view/open (:op (second %))) @seen)]
                  (expect (= [:tui :app] (mapv first opened)))
                  (expect (= [(str sid) (str sid)]
-                            (mapv #(get-in (second %) [:view :session-id]) opened))))
+                            (mapv #(get-in (second %) [:view :session-id]) opened)))
+                 ;; Issue #494: the person sees which tool asks, also when the
+                 ;; call gives no source.
+                 (expect (= ["ask_key" "ask_key"]
+                            (mapv #(get-in (second %) [:view :source]) opened))))
                (finally (channel-events/remove-channel-event-listener! :tui ::issue-104)
                         (channel-events/remove-channel-event-listener! :app ::issue-104)))))))
   (it "a cancelled request returns a falsey answer instead of raising"

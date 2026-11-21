@@ -1035,10 +1035,16 @@ export function SessionsScreen({
               ? event.sid
               : '';
       if (!sid) return false;
+      const holders = machinesRef.current.filter((machine) =>
+        machine.sessions?.some((row) => row.id === sid),
+      );
       let update: Partial<Session>;
       if (event.type === 'session.status') {
         if (typeof event.is_live !== 'boolean') return false;
-        if (!event.is_live) {
+        const isSettling = !event.is_live && holders.some((machine) =>
+          machine.sessions?.some((row) => row.id === sid && row.live === true),
+        );
+        if (isSettling) {
           for (const { updates } of fleetReads.current) updates.set(sid, null);
           return false;
         }
@@ -1059,13 +1065,10 @@ export function SessionsScreen({
         if (previous !== null || event.type === 'session.status')
           updates.set(sid, { ...previous, ...update });
       }
-      const holders = machinesRef.current.filter((machine) =>
-        machine.sessions?.some((row) => row.id === sid),
-      );
       const orderChanged =
         event.type === 'session.status' &&
         holders.some((machine) =>
-          machine.sessions?.some((row) => row.id === sid && row.live !== update.live),
+          machine.sessions?.some((row) => row.id === sid && (row.live === true) !== update.live),
         );
       for (const machine of holders)
         patchMachine(machineKey(machine.conn), (current) =>

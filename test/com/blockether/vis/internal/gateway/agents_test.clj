@@ -740,23 +740,25 @@
                      (expect (true? (get (last-row events child) "routing_locked"))
                              "A human pick of the same model locks routing")))))
   (it "pushes the child row when a form for the person opens and closes"
-      (let [open (atom 0)]
-        (with-redefs [bus/session-waiting? (fn [_]
-                                             (pos? (long @open)))
-                      bus/session-waiting-count (fn [_]
-                                                  @open)]
-
-          (with-team {:statuses ["running"] :watched? true}
-                     (fn [{:keys [children events]}]
-                       (let [[child] children]
-                         (reset! open 1)
-                         (state/append-event! child
-                                              "view.open"
-                                              {:kind "input" :view_id "req" :view {:id "req"}})
+      ;; The leader session shows the form of the child (issue #494), so the marker
+      ;; of the leader holds it, with the child as the session that asks.
+      (let [waiting (atom {})]
+        (with-redefs [bus/waiting-requests (fn []
+                                             @waiting)]
+          (with-team {:statuses ["running" "running"] :watched? true}
+                     (fn [{:keys [leader children events]}]
+                       (let [[child other] children]
+                         (reset! waiting {leader [{"id" "req" "session_id" child}
+                                                  {"id" "own" "session_id" leader}]})
+                         (state/input-changed! child)
+                         (state/input-changed! other)
                          (drain!)
                          (expect (= 1 (get (last-row events child) "pending_input_count")))
-                         (reset! open 0)
-                         (state/append-event! child "view.close" {:kind "input" :view_id "req"})
+                         (expect (true? (get (last-row events child) "pending_input")))
+                         (expect (false? (get (last-row events other) "pending_input"))
+                                 "A form of another session of the team is not its form")
+                         (reset! waiting {})
+                         (state/input-changed! child)
                          (drain!)
                          (expect (false? (get (last-row events child) "pending_input")))))))))
   (it "pushes the child row after a file grant and a plain extend"

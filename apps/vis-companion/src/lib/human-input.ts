@@ -180,6 +180,12 @@ export interface HumanInputRequest {
    * never tells the operator a form is about to expire when it is not.
    */
   timeout_ms?: number;
+  created_at?: number;
+}
+
+/** Fields whose answers must not leave the active form except on submit. */
+export function isHumanInputSecret(field: HumanInputField): boolean {
+  return field.type === 'password' || field.type === 'otp';
 }
 
 /** What one field submits. The engine coerces and validates it again. */
@@ -341,6 +347,7 @@ export function humanInputRequestFromWire(raw: unknown): HumanInputRequest | nul
     ...(sessionId ? { session_id: sessionId } : {}),
     ...(origin ? { origin } : {}),
     ...(timeoutMs ? { timeout_ms: timeoutMs } : {}),
+    ...(typeof row.created_at === 'number' ? { created_at: row.created_at } : {}),
   };
 }
 
@@ -363,8 +370,8 @@ function originFromWire(raw: unknown): HumanInputOrigin | undefined {
 
 /**
  * The subagent and parent names a form header shows, or null for a form that a
- * top-level session raised. A subagent's form also reaches every ancestor
- * session, so the header must say which session asks.
+ * top-level session raised. The leader session shows the form of a subagent,
+ * so the header must say which session asks.
  */
 export function originLabel(
   origin: HumanInputOrigin | undefined,
@@ -565,7 +572,13 @@ export function applyInputViewEvent(
   const request = humanInputRequestFromWire(event.view);
   if (!request) return pending;
   const index = pending.findIndex((row) => row.id === request.id);
-  if (index < 0) return [...pending, request];
+  if (index < 0) {
+    const createdAt = request.created_at;
+    const after = createdAt === undefined ? -1 : pending.findIndex(
+      (row) => row.created_at !== undefined && row.created_at > createdAt,
+    );
+    return after < 0 ? [...pending, request] : [...pending.slice(0, after), request, ...pending.slice(after)];
+  }
   const merged = pending.slice();
   merged[index] = request;
   return merged;

@@ -782,7 +782,7 @@
           "minimum": 0
         },
         "alerts": {
-          "description": "For a running child: slow_step after 300 s in one step, errors for three failed steps of the last five, budget at 80% of the iteration budget.",
+          "description": "For a running child: slow_step after 300 s in one step, errors for three failed steps of the last five, budget at 80% of the iteration budget, awaits_person while a form of the child waits for the answer of the person in the leader session. A child with awaits_person has no slow_step.",
           "type": [
             "array",
             "null"
@@ -791,7 +791,8 @@
             "enum": [
               "slow_step",
               "errors",
-              "budget"
+              "budget",
+              "awaits_person"
             ]
           }
         },

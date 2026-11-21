@@ -1056,7 +1056,9 @@
   "The progress of running child `row` since the last wait: its `activity`, its new progress
    `notes` and Council `messages`, `step_secs` in its current step, `elapsed_secs` in its task
    and `alerts`. The alerts are slow_step after 300 s in one step, errors for three failed steps
-   of the last five, and budget at 80% of the iteration budget. Marks the steps as shown."
+   of the last five, budget at 80% of the iteration budget, and awaits_person while a form of the
+   child (`:pending-input` of `row`) waits for the answer of the person. A step that waits for
+   the person is not slow. Marks the steps as shown."
   [db row now]
   (let [[turn steps]
         (current-steps db row now)
@@ -1098,16 +1100,22 @@
              (mapv (fn [e]
                      {:entry_id (:entry_id e) :content (clip (:content e) 600)})))
 
+        awaits-person?
+        (pos? (long (or (:pending-input row) 0)))
+
         alerts
         (cond-> []
-          (>= step-secs 300)
+          (and (>= step-secs 300) (not awaits-person?))
           (conj "slow_step")
 
           (>= errors 3)
           (conj "errors")
 
           (and used budget (>= (* 10 (long used)) (* 8 (long budget))))
-          (conj "budget"))]
+          (conj "budget")
+
+          awaits-person?
+          (conj "awaits_person"))]
 
     (when-let [p (:position (peek steps))]
       (swap! shown assoc (str (:id turn)) p))
@@ -1137,6 +1145,10 @@
 
         activity
         (or (get @runtime :activity) (constantly nil))
+
+        ;; Only the gateway shows forms to the person; another runtime has none.
+        pending-input
+        (or (get @runtime :pending-input) (constantly 0))
 
         held?
         (held-fn)
@@ -1292,7 +1304,12 @@
 
     (mapv #(if (= "running" (:status %))
              (let [row (get rows (:session_id %))]
-               (merge % (digest db (assoc row :activity (activity (:session_id %))) now)))
+               (merge %
+                      (digest db
+                              (assoc row
+                                :activity (activity (:session_id %))
+                                :pending-input (pending-input (:session_id %)))
+                              now)))
              %)
           recs)))
 
@@ -1533,6 +1550,8 @@
 
    The call also returns when the first child ends, asks or publishes a message. A running
    child's record then has values in activity, notes, messages, step_secs, elapsed_secs and alerts.
+   The alert awaits_person means that a tool of the child waits for the person to answer a form
+   in your session: tell the person, and do not cancel the child for a slow step.
 
    asking with budget_request needs council.extend or council.deny. asking with files_request
    needs council.grant or council.deny. budget_limited needs council.extend before a follow-up ping,

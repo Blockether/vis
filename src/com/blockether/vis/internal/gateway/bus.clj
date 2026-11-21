@@ -294,8 +294,11 @@
     (catch Throwable t (tel/log! :debug ["gateway-bus: waiting scan failed" (ex-message t)]) {})))
 
 (defn waiting-requests
-  "`{session-id-string [{\"id\" … \"since\" …} …]}` for every human-input request
-   still unanswered on this machine — this process's and every sibling's alike.
+  "`{session-id-string [{\"id\" … \"since\" … \"session_id\" …} …]}` for every
+   human-input request still unanswered on this machine — this process's and every
+   sibling's alike. The key is the session that SHOWS the request, and the
+   `session_id` of a request is the session that raised it: the same one, or a
+   subagent of it.
 
    THE cross-process answer to \"is this session waiting on a HUMAN\". The
    engine's pending registry is process-local (only the process that raised a
@@ -323,34 +326,75 @@
   [sid]
   (count (get (waiting-requests) (str sid))))
 
+(defn raised-waiting-count
+  "HOW MANY unanswered human-input requests session `sid` RAISED, across every vis
+   process on this machine: those that it shows itself, and those that the session
+   of its leader shows for it. 0 when none."
+  [sid]
+  (let [sid (str sid)]
+    (count (for [[shown-in requests] (waiting-requests)
+                 request requests
+                 :when (= sid (get request "session_id" shown-in))]
+
+             request))))
+
+(defonce ^:private waiting-lock
+  ;; One marker takes writes from the journal writer and from the producer of a
+  ;; turn terminal, also of another session. Each rewrite reads the file first.
+  (Object.))
+
 (defn- mark-waiting!
   "Announce that `sid` is blocked on `request` until somebody answers it. A
    marker left by a DEAD process is replaced rather than extended, so an
    abandoned request cannot ride along with a live one. Never throws."
   [sid request]
-  (try (let [dir
-             (waiting-dir)
+  (try (locking waiting-lock
+         (let [dir
+               (waiting-dir)
 
-             marker
-             (waiting-marker sid)
+               marker
+               (waiting-marker sid)
 
-             rid
-             (str (get request "id"))
+               rid
+               (str (get request "id"))
 
-             kept
-             (if (= (long (producer-pid)) (long (or (get marker "pid") -1)))
-               (vec (remove #(= rid (str (get % "id"))) (get marker "requests")))
-               [])]
+               kept
+               (if (= (long (producer-pid)) (long (or (get marker "pid") -1)))
+                 (vec (remove #(= rid (str (get % "id"))) (get marker "requests")))
+                 [])]
 
-         (when-not (Files/exists dir (make-array LinkOption 0))
-           (Files/createDirectories dir (make-array FileAttribute 0)))
-         (spit (waiting-file sid)
-               (wire/json-str {"schema" 1
-                               "session_id" (str sid)
-                               "pid" (producer-pid)
-                               "requests" (conj kept {"id" rid "since" (util/now-ms)})}))
-         (invalidate-waiting-cache!))
+           (when-not (Files/exists dir (make-array LinkOption 0))
+             (Files/createDirectories dir (make-array FileAttribute 0)))
+           (spit (waiting-file sid)
+                 (wire/json-str {"schema" 1
+                                 "session_id" (str sid)
+                                 "pid" (producer-pid)
+                                 "requests" (conj kept
+                                                  {"id" rid
+                                                   "since" (util/now-ms)
+                                                   ;; The session that raised it: `sid`, or a
+                                                   ;; subagent whose form `sid` shows.
+                                                   "session_id" (str (or (get request "session_id")
+                                                                         sid))})}))
+           (invalidate-waiting-cache!)))
        (catch Throwable t (tel/log! :debug ["gateway-bus: waiting mark failed" (ex-message t)])))
+  nil)
+
+(defn- keep-waiting!
+  "Keep in `sid`'s marker only the requests that `keep?` accepts. The marker is
+   deleted with its last request. Never throws."
+  [sid keep?]
+  (try (locking waiting-lock
+         (when-let [marker (waiting-marker sid)]
+           (let [requests (get marker "requests")
+                 kept (filterv keep? requests)]
+
+             (when (< (count kept) (count requests))
+               (if (seq kept)
+                 (spit (waiting-file sid) (wire/json-str (assoc marker "requests" kept)))
+                 (.delete (waiting-file sid)))
+               (invalidate-waiting-cache!)))))
+       (catch Throwable t (tel/log! :debug ["gateway-bus: waiting clear failed" (ex-message t)])))
   nil)
 
 (defn- clear-waiting!
@@ -358,28 +402,24 @@
    out. The marker survives while other requests are still open — a run can park
    on more than one — and is deleted with the last of them. Never throws."
   [sid request-id]
-  (try (let [marker
-             (waiting-marker sid)
+  (let [rid (str request-id)]
+    (keep-waiting! sid #(not= rid (str (get % "id"))))))
 
-             rid
-             (str request-id)
-
-             kept
-             (vec (remove #(= rid (str (get % "id"))) (get marker "requests")))]
-
-         (when marker
-           (if (seq kept)
-             (spit (waiting-file sid) (wire/json-str (assoc marker "requests" kept)))
-             (.delete (waiting-file sid)))
-           (invalidate-waiting-cache!)))
-       (catch Throwable t (tel/log! :debug ["gateway-bus: waiting clear failed" (ex-message t)])))
-  nil)
+(defn- clear-raised-waiting!
+  "Retract every request that session `sid` raised: its turn reached a terminal,
+   so no thread of it can still be blocked on an answer. The requests leave the
+   marker of `sid` and the marker of the session that shows them, such as the
+   leader of a subagent. A request of another session that `sid` shows stays
+   until its own close. Never throws."
+  [sid]
+  (let [sid (str sid)]
+    (doseq [shown-in (distinct (cons sid (keys (waiting-requests))))]
+      (keep-waiting! shown-in #(not= sid (get % "session_id" shown-in))))))
 
 (defn- clear-all-waiting!
-  "Drop `sid`'s marker outright: its turn reached a terminal, so no thread of it
-   can still be blocked on an answer. Never throws."
+  "Drop `sid`'s marker outright: the session is closed. Never throws."
   [sid]
-  (try (.delete (waiting-file sid))
+  (try (locking waiting-lock (.delete (waiting-file sid)))
        (invalidate-waiting-cache!)
        (catch Throwable t (tel/log! :debug ["gateway-bus: waiting clear failed" (ex-message t)])))
   nil)
@@ -863,11 +903,12 @@
   #{"turn.completed" "turn.failed" "turn.cancelled"})
 
 (defn retract-live!
-  "Retract `sid`'s liveness marker and every parked human-input mark from the
-   PRODUCER thread, independent of the journal. Idempotent; never throws."
+  "Retract `sid`'s liveness marker and the human-input mark of every request that
+   `sid` raised from the PRODUCER thread, independent of the journal. Idempotent;
+   never throws."
   [sid]
   (clear-live! sid)
-  (clear-all-waiting! sid)
+  (clear-raised-waiting! sid)
   nil)
 
 (defn- write-event!
@@ -1116,6 +1157,7 @@
   (try (.delete (session-file sid)) (catch Throwable _ nil))
   (try (.delete (floor-file sid)) (catch Throwable _ nil))
   (clear-live! sid)
+  (clear-raised-waiting! sid)
   (clear-all-waiting! sid)
   (let [k (str sid)]
     (swap! floors dissoc k)

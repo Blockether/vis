@@ -249,6 +249,31 @@ describe('a session list carried by the fleet stream', () => {
     expect(listReads(view.requests)).toBe(read + 2);
   });
 
+  it('updates the input count of an idle leader without a window read', async () => {
+    const fleet = fleetHub();
+    const view = oneRow(fleet);
+    restore = view.restore;
+    await settle(200);
+    const read = listReads(view.requests);
+    const inputCount = (count: number) => fleet.emit({
+      type: 'session.status',
+      session_id: 's1',
+      is_live: false,
+      is_awaiting_input: count > 0,
+      awaiting_input_count: count,
+      current_turn_id: null,
+    });
+
+    await inputCount(3);
+    expect(screen.getByText('HITL ×3')).toBeVisible();
+    await inputCount(1);
+    expect(screen.getByText('HITL')).toBeVisible();
+    await inputCount(0);
+    expect(screen.queryByText('HITL')).toBeNull();
+    await settle(200);
+    expect(listReads(view.requests)).toBe(read);
+  });
+
   it('paints a run the stream announced without waiting for the window read', async () => {
     const fleet = fleetHub();
     const view = oneRow(fleet);

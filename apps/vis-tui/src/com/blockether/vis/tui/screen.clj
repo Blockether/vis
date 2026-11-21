@@ -754,26 +754,16 @@
     nil))
 
 (defn- human-input-answer!
-  "Answer one open request WHEREVER it is parked.
-
-   A request raised in this process sits in the engine's own registry and is
-   answered in-process. A request raised in the serve daemon exists only there
-   — its id resolves to nothing locally, so the in-process call could never
-   release the parked run (issue #122). That one is answered over the gateway
-   that owns its session, through exactly the same engine validation."
-  [form op values]
-  (let [request-id
-        (hi/request-id form)
-
-        session-id
-        (hi/session-id form)
-
-        action
-        (cond-> {:action op}
-          (= :submit op)
-          (assoc :values values))]
-
-    (vis/gateway-view-action! session-id request-id action)))
+  "Answer `form` on the session route that delivered it, not the session that asks.
+   Returns the outcome, or nil when the request fails. A 404 means that the gateway
+   has no such form any more, so the answer has nothing to keep open."
+  [session-id form op values]
+  (try (vis/gateway-view-action! session-id
+                                 (hi/request-id form)
+                                 (cond-> {:action op}
+                                   (= :submit op)
+                                   (assoc :values values)))
+       (catch Exception e (when (= 404 (:http-status (ex-data e))) {:is-accepted true}))))
 
 (defn- error-card-row-geometry?
   "True when a bubble is painted as the failed-turn CARD.
@@ -1277,21 +1267,18 @@
       (state/dispatch [:live-view-note (lv/view-id pane) next-pane])
       (when (= :stop action) (interrupt-front-live-view! db note)))))
 
-(defn- replay-human-input!
-  "Open EVERY request `session-id` is blocked on right now, oldest first.
-
-   A request can be parked BEFORE this tab attaches — the daemon blocked while
-   no TUI was running, or the stream's replay ring already rolled past the
-   event — and a session can be blocked on MORE than one at a time. The gateway
-   answers with all of them, so all of them are surfaced: the first becomes the
-   open dialog and the rest queue behind it in the daemon's own order. Deduped
-   by `:human-input-open` against the live event, so a request that also arrives
-   on the stream still opens exactly one dialog."
+(defn- read-human-input!
+  "Read the pending forms of `session-id`. Stream events can arrive during the read."
   [session-id]
-  (try (doseq [wire (vis/gateway-input-views session-id)]
-         (when-let [request (hi/request<-wire wire)]
-           (state/dispatch [:human-input-open (hi/init-form request) session-id])))
-       (catch Throwable _ nil)))
+  (let [token (Object.)]
+    (state/dispatch [:human-input-read session-id token])
+    (vis/worker-future "tui-human-input-read"
+                       (fn []
+                         (let [forms (try (into []
+                                                (comp (keep hi/request<-wire) (map hi/init-form))
+                                                (vis/gateway-input-views session-id))
+                                          (catch Exception _ nil))]
+                           (state/dispatch [:human-input-read-result session-id token forms]))))))
 
 (defn- replay-live-views!
   "Mount every live view `session-id` is SHOWING right now, oldest first.
@@ -1330,25 +1317,25 @@
         (hi/handle-event open-form (hi/key->event key))
 
         request-id
-        (hi/request-id form)]
+        (hi/request-id form)
+
+        session-id
+        (get-in db [:session :id])]
 
     (case action
       :submit
-      (let [outcome (try (human-input-answer! form :submit (hi/submit-values form))
-                         (catch Throwable t
-                           (vis/notify! (str "Could not submit: " (ex-message t)) :level :error)
-                           {:is-accepted false}))]
+      (let [outcome (human-input-answer! session-id form :submit (hi/submit-values form))]
+        (when-not outcome (vis/notify! "Could not submit the form." :level :error))
         (if (:is-accepted outcome)
           (state/dispatch [:human-input-close request-id])
-          (state/dispatch [:human-input-form (hi/set-errors form (:errors outcome))])))
+          (state/dispatch [:human-input-form (hi/set-errors form (:errors outcome)) session-id])))
 
       :cancel
-      (do (try (human-input-answer! form :cancel nil)
-               (catch Throwable t
-                 (vis/notify! (str "Could not cancel: " (ex-message t)) :level :error)))
-          (state/dispatch [:human-input-close request-id]))
+      (if (:is-accepted (human-input-answer! session-id form :cancel nil))
+        (state/dispatch [:human-input-close request-id])
+        (vis/notify! "Could not cancel the form." :level :error))
 
-      (state/dispatch [:human-input-form form]))))
+      (state/dispatch [:human-input-form form session-id]))))
 
 (defn- slash-spec->menu-command
   "Adapt a declarative slash spec into the legacy menu-command shape
@@ -7129,6 +7116,8 @@
                   (do (agent-team/stream-ready! session-id (:agents chunk))
                       ;; A reconnect can hide a model change; read the pref again.
                       (vis/refresh-session-model! session-id)
+                      ;; Read pending forms even when the replay misses an open or a close.
+                      (read-human-input! session-id)
                       ;; It can hide a change of an app too: no `view.patch` comes again.
                       (read-app-states! session-id)
                       (state/dispatch [:sync-agent-name tab-id chunk])
@@ -7138,14 +7127,8 @@
           (catch Throwable _
             (fn [])))
 
-        ;; REPLAY. Ask the gateway what this session is blocked on AND what it is
-        ;; showing right now, and surface all of it: a form is drawn instead of a
-        ;; turn that never moves, and a run watched from the daemon paints its whole
-        ;; picture instead of the rest of it. See [[replay-human-input!]] and
-        ;; [[replay-live-views!]].
         _
-        (vis/worker-future "tui-human-input-replay"
-                           #(do (replay-human-input! session-id) (replay-live-views! session-id)))
+        (vis/worker-future "tui-live-view-replay" #(replay-live-views! session-id))
 
         ;; The footer reads the model pref from this cache and never sends a request.
         _

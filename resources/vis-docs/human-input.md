@@ -58,6 +58,8 @@ The request opens this form in the Vis terminal, with the password masked.
 Every key is a snake_case string, such as `timeout_ms`. Vis refuses a camelCase or kebab-case key
 with an error that names the right spelling. It refuses an unknown key by name.
 
+A form from a tool call shows the name of that tool, so that the person knows which tool asks.
+
 ## The answer
 
 `vis.ask` never raises for a refusal. It returns an `Answer` that is truthy when the person
@@ -74,6 +76,11 @@ the model get only the handle. To get the value, call `answer.reveal(name)` or `
 `vis.forget(handle)` removes the value. Do not print or log the revealed value.
 
 If no client can show the form, the request logs an error and returns `undeliverable` at once.
+The session of an extension automation run cannot ask the person, so its request also returns
+`undeliverable` at once.
+
+A form from a subagent shows in the session of its leader, because the person watches that
+session. The form names the subagent that asks. The answer goes to the call of that subagent.
 
 ## Fields
 

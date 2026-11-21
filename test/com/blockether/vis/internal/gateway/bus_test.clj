@@ -774,6 +774,47 @@
               {"schema" 1 "seq" 2 "type" "turn.cancelled" "session_id" sid "turn_id" "T-9"}
               {:store? true})
             (expect (not (bus/session-waiting? sid)))))))
+  (it
+    "keeps the form of a subagent through the terminal of the leader that shows it"
+    (with-temp-journal
+      (fn [_capture _write!]
+        ;; Issue #494: the leader session shows the form of its subagent. The turn
+        ;; of the leader can end while the subagent still waits for the person.
+        (let [leader
+              (str (random-uuid))
+
+              child
+              (str (random-uuid))
+
+              open!
+              (fn [seq-no rid raiser]
+                (bus/publish! leader
+                              {"schema" 1
+                               "seq" seq-no
+                               "type" "view.open"
+                               "kind" "input"
+                               "session_id" leader
+                               "view" {"id" rid "session_id" raiser}}
+                              {:store? true}))
+
+              terminal!
+              (fn [sid seq-no]
+                (bus/publish!
+                  sid
+                  {"schema" 1 "seq" seq-no "type" "turn.cancelled" "session_id" sid "turn_id" "T"}
+                  {:store? true}))]
+
+          (open! 1 "req-own" leader)
+          (open! 2 "req-child" child)
+          (expect (= 2 (bus/session-waiting-count leader)))
+          (expect (= [1 1] (mapv bus/raised-waiting-count [leader child])))
+          (terminal! leader 3)
+          (expect (= ["req-child"] (mapv #(get % "id") (get (bus/waiting-requests) leader))))
+          (expect (= [0 1] (mapv bus/raised-waiting-count [leader child])))
+          ;; The terminal of the subagent takes its form out of the leader marker.
+          (terminal! child 1)
+          (expect (not (bus/session-waiting? leader)))
+          (expect (zero? (long (bus/raised-waiting-count child))))))))
   (it "ignores AND deletes a marker whose producer process is gone"
       (with-temp-journal
         (fn [_capture _write!]

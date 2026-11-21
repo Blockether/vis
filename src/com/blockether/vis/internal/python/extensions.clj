@@ -2085,9 +2085,12 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
             (or leased (recur (inc attempt)))))]
 
-    ;; A hook belongs to its Python extension, not the tool it observes.
+    ;; A hook belongs to its Python extension, not the tool it observes. Only a
+    ;; call of a tool of this extension keeps the symbol: its form names the tool.
     (try (extension/with-context
-           {:ext {:ext/name ext-name} :env effective-env}
+           {:ext {:ext/name ext-name}
+            :symbol (when (= ext-name (extension/current-extension-id)) extension/*current-symbol*)
+            :env effective-env}
            (python-host/conveying call-ctx (perf/timed :pyext/call (call-py call-ctx call-f args))))
          (catch Throwable t
            ;; A reload must not replay an operation which already ran and failed.

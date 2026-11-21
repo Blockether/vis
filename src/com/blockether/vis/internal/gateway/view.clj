@@ -14,9 +14,10 @@
    A `:view/send` envelope carries a Send of an app of the python_execution sandbox.
    It becomes one bounded notification turn of the session that owns the app.
 
-   An input View belongs only to the session that raises it. A managed subagent
-   never raises one: the engine refuses its request, because its leader answers
-   for it. Each input View carries an `:origin` that names the session which asks."
+   An input View is shown in one session: its [[input-home]]. For a managed
+   subagent, that is the session of its leader, because the person watches the
+   leader. Each input View carries an `:origin` that names the session which asks
+   and its parent."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.gateway :as gateway-contract]
@@ -91,39 +92,66 @@
       parent-title
       (assoc :parent-title parent-title))))
 
+(defn input-home
+  "The session that shows the input Views of session `sid`: the leader of its team
+   for a managed subagent, else `sid`. The person watches the leader, so a form that
+   a subagent raises goes there (issue #494). When the lookup fails, the form stays
+   with the session that asks."
+  [sid]
+  (let [sid (str sid)]
+    (or (try (agents/leader-id (lp/db-info) sid)
+             (catch Throwable t
+               (tel/log! {:level :error
+                          :id ::input-home-failed
+                          :data {:session-id sid :error (ex-message t)}
+                          :msg
+                          "Vis could not read the leader of a session, so its form stays there"})
+               nil))
+        sid)))
+
+(defonce ^:private input-homes
+  ;; Input View id -> `{:home … :origin …}` from its open to its close: the session
+  ;; that shows it, and its origin stamp. The answer and the close then go where
+  ;; the open went, also when the session tree has changed since, and a list reads
+  ;; no store. While the open is on its way to the journal the record has
+  ;; `:is-opening`, and a close that comes then waits in `:closed`.
+  (atom {}))
+
+(defn- shown-in
+  "The session that shows open View `view`: the home of an input View that this
+   bridge opened, else the session of the View."
+  [view]
+  (get-in @input-homes [(str (:id view)) :home] (session-of view)))
+
 (defn- with-origin
   "Input View `view` with its `:origin` stamp."
   [view]
-  (if-let [sid (session-of view)]
-    (assoc view :origin (origin-of sid))
+  (if-let [origin (or (get-in @input-homes [(str (:id view)) :origin])
+                      (some-> (session-of view)
+                              origin-of))]
+    (assoc view :origin origin)
     view))
-
-(defn person-may-answer?
-  "Whether the person may be asked in session `sid`. This is the ask gate of the
-   engine: a managed subagent may not ask, because its leader answers for it."
-  [sid]
-  (agents/person-answers? (lp/db-info) (str sid)))
 
 (defn view-of
   "Open View `view-id` when session `sid` may act on it, as a kind/document
    descriptor, else nil. This is the ownership gate for the shared action route.
-   A View belongs only to its session."
+   A View belongs to the one session that shows it."
   [sid view-id]
   (or (when-let [{:keys [view] :as descriptor} (view/open-view (str view-id))]
-        (when (= (str sid) (session-of view)) descriptor))
+        (when (= (str sid) (shown-in view)) descriptor))
       ;; A closed app stays readable. After a restart, its record answers.
       (when-let [app (view/app-view sid view-id)]
         {:kind :live :view app})))
 
 (defn input-views
-  "Input Views session `sid` is BLOCKED on right now, oldest first, each with its
-   `:origin`."
+  "Input Views that session `sid` shows right now, oldest first, each with its
+   `:origin`: its own, and those of its subagents when `sid` leads a team."
   [sid]
   (let [sid (str sid)]
-    (into [] (comp (filter #(= sid (session-of %))) (map with-origin)) (view/pending-requests))))
+    (into [] (comp (filter #(= sid (shown-in %))) (map with-origin)) (view/pending-requests))))
 
 (defn input-view-of
-  "Input View `view-id` when it is pending in `sid`, else nil."
+  "Input View `view-id` when session `sid` shows it, else nil."
   [sid view-id]
   (let [{:keys [kind view]} (view-of sid view-id)]
     (when (= :input kind) view)))
@@ -805,7 +833,8 @@
   (let [found (vec (for [[view-id refs] (group-by #(get % "view_id") (filter map? (take 200 refs)))
                          :let [view (view/app-view sid view-id)
                                wanted (into {}
-                                            (map (juxt (juxt #(get % "node_id") #(get % "thread_id"))
+                                            (map (juxt (juxt #(get % "node_id")
+                                                             #(get % "thread_id"))
                                                        identity))
                                             refs)]
                          :when (and view (not (:is-closed view)))
@@ -816,7 +845,8 @@
                      (cond-> (assoc draft
                                :view-id view-id
                                :title (:title view))
-                       (string? (get ref "reference")) (assoc :reference (get ref "reference")))))]
+                       (string? (get ref "reference"))
+                       (assoc :reference (get ref "reference")))))]
     (when (seq found)
       {:drafts found
        :text (str/join "\n\n"
@@ -1059,6 +1089,51 @@
               {:session-id sid :view-id view-id :submission-id submission-id :error (ex-message t)}
               :msg "Vis could not give an app Send to its session"})))))
 
+(defn- close-input!
+  "Publish close `payload` of an input View in the session that `place` shows it in."
+  [place payload]
+  (state/append-event! (:home place) gateway-contract/view-close-event payload)
+  (some-> (get-in place [:origin :session-id])
+          state/input-changed!))
+
+(defn- open-input!
+  "Publish the open of input View `event` of session `sid` in its home. Another
+   thread can end the form, or delete its home, at each moment. A form that ended
+   before this call recorded its home gets no open. A form whose home changed since
+   then lost its leader, and ends. A close that comes while the open is on its way
+   to the journal waits in `input-homes` and goes out here, after the open. So no
+   surface gets a close before its open, or the open of a form that has ended."
+  [sid event]
+  (let [id
+        (:view-id event)
+
+        view-id
+        (str id)
+
+        place
+        {:home (input-home sid) :origin (origin-of sid)}]
+
+    (swap! input-homes assoc view-id (assoc place :is-opening true))
+    (cond
+      ;; The close found no record, or it waits in the record: no surface got the form.
+      (not (view/pending-request id)) (swap! input-homes dissoc view-id)
+      ;; A delete of the leader that came before the record did not see this form.
+      (not= (:home place) (input-home sid)) (do (view/cancel-requests! #(= id (:id %))
+                                                                       "session deleted")
+                                                (swap! input-homes dissoc view-id))
+      :else (try (state/append-event!
+                   (:home place)
+                   gateway-contract/view-open-event
+                   {:kind :input :view-id id :view (assoc (:view event) :origin (:origin place))})
+                 (finally (let [[homes _] (swap-vals! input-homes
+                                                      (fn [homes]
+                                                        (if (get-in homes [view-id :closed])
+                                                          (dissoc homes view-id)
+                                                          (assoc homes view-id place))))]
+                            (if-let [payload (get-in homes [view-id :closed])]
+                              (close-input! place payload)
+                              (state/input-changed! sid))))))))
+
 (defn on-channel-event!
   "Project one canonical `:app` View event into the session journal. A Send of a
    sandbox app becomes a notification turn of its session."
@@ -1069,12 +1144,7 @@
       (cond (:is-global event)
             (publish-global! gateway-contract/view-open-event
                              {:kind (:kind event) :view-id (:view-id event) :view (:view event)})
-            (and sid (= :input (:kind event)))
-            (state/append-event! sid
-                                 gateway-contract/view-open-event
-                                 {:kind :input
-                                  :view-id (:view-id event)
-                                  :view (assoc (:view event) :origin (origin-of sid))})
+            (and sid (= :input (:kind event))) (open-input! sid event)
             sid (state/append-event!
                   sid
                   gateway-contract/view-open-event
@@ -1090,18 +1160,31 @@
                      (:before event)))
 
     :view/close
-    (let [sid (session-of event)]
+    (let [view-id
+          (str (:view-id event))
+
+          payload
+          {:kind (:kind event) :view-id (:view-id event) :result (:result event)}
+
+          ;; The close of an input View goes where its open went, and after it.
+          [homes _]
+          (swap-vals! input-homes
+                      (fn [homes]
+                        (if (get-in homes [view-id :is-opening])
+                          (assoc-in homes [view-id :closed] payload)
+                          (dissoc homes view-id))))
+
+          place
+          (get homes view-id)]
+
       ;; An ending never overtakes buffered live work.
       (when (= :live (:kind event)) (flush-view! (:view-id event)))
       (swap! deltas dissoc (:view-id event))
-      (when (:is-global event)
-        (publish-global! gateway-contract/view-close-event
-                         {:kind (:kind event) :view-id (:view-id event) :result (:result event)}))
-      (when sid
-        (state/append-event!
-          sid
-          gateway-contract/view-close-event
-          {:kind (:kind event) :view-id (:view-id event) :result (:result event)})))
+      (when (:is-global event) (publish-global! gateway-contract/view-close-event payload))
+      (cond (:is-opening place) nil
+            place (close-input! place payload)
+            :else (some-> (session-of event)
+                          (state/append-event! gateway-contract/view-close-event payload))))
 
     :view/send
     (deliver-send! event)
@@ -1109,10 +1192,19 @@
     nil)
   nil)
 
+(defn- on-session-event
+  "Event tap: a deleted session takes its forms with it, those that it raised and
+   those that it shows. No thread stays blocked on a form that nobody can answer."
+  [sid event]
+  (when (= "session.deleted" (get event "type"))
+    (let [sid (str sid)]
+      (view/cancel-requests! #(or (= sid (session-of %)) (= sid (shown-in %))) "session deleted"))))
+
 (defn install!
   "Subscribe the gateway to `:app` View lifecycle events. Idempotent."
   []
   (channel-events/add-channel-event-listener! channel-id listener-id on-channel-event!)
+  (state/add-event-tap! listener-id #'on-session-event)
   ;; The saved pictures of owned views come back as stale views.
   (view/restore-owned!)
   nil)
@@ -1123,6 +1215,7 @@
    the engine already accepted."
   []
   (channel-events/remove-channel-event-listener! channel-id listener-id)
+  (state/remove-event-tap! listener-id)
   (flush-live-patches!)
   (view/flush-owned!)
   nil)

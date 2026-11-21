@@ -680,6 +680,15 @@
          (when (map? env) (trimmed (:session-id env))))
        (catch Throwable _ nil)))
 
+(defn- ambient-source
+  "The tool whose call raises the request, by the name that a block calls it, or
+   nil outside a tool call. The person then sees which tool asks."
+  []
+  (when-let [sym extension/*current-symbol*]
+    (str (if-let [ext extension/*current-extension*]
+           (extension/symbol-binding ext sym)
+           sym))))
+
 (defn- normalize-channel-ids
   [request fail!]
   (let [ids
@@ -1503,7 +1512,10 @@
             (invalid-request! "field names must be distinct")))
 
         session-id
-        (or (trimmed (:session-id request)) (ambient-session-id))]
+        (or (trimmed (:session-id request)) (ambient-session-id))
+
+        source
+        (or (trimmed (:source request)) (ambient-source))]
 
     (checked-request
       (cond-> {:id (or (trimmed (:id request)) (str (random-uuid)))
@@ -1520,8 +1532,8 @@
         (trimmed (:description request))
         (assoc :description (trimmed (:description request)))
 
-        (trimmed (:source request))
-        (assoc :source (trimmed (:source request)))))))
+        source
+        (assoc :source source)))))
 
 (defn live-nodes?
   "Whether `nodes` are the picture a human WATCHES rather than the questions a
@@ -4637,6 +4649,13 @@
                     (when-not (:is-app entry) id))
                   @pending)))))
 
+(defn cancel-requests!
+  "Cancel each pending form that `pred` accepts, called with the form as a view.
+   Returns how many were released. Used when the session of a form is deleted:
+   like [[cancel-all!]], it ignores `:is-cancellable`."
+  [pred reason]
+  (count (filterv #(force-cancel! (:id %) reason) (filter pred (pending-requests)))))
+
 (defonce ^:private ask-gate
   ;; Decides whether a session may ask the person at all. The layer that knows the
   ;; session tree installs it; this namespace cannot reach that layer.
@@ -4646,9 +4665,8 @@
   "Install what decides whether a session may ask the person: called
    `[session-id]`, truthy when it may. Without a gate, every session may ask.
 
-   The composition root installs a gate that refuses a managed subagent. Its
-   leader answers its questions and decides its grants, so the person never sees
-   a form that a subagent raises."
+   The composition root installs a gate that refuses the session of an extension
+   automation run, where nobody answers."
   [f]
   (reset! ask-gate f))
 
@@ -4739,12 +4757,15 @@
       (invalid-request! (str "request " request-id
                              " names no session — set :session-id, or raise it "
                              "from an extension environment that carries one")))
-    (when (contains? @pending request-id)
-      (invalid-request! (str "request id " request-id " is already pending")))
     (if-not (may-ask? (:session-id entry))
       (refused entry)
       (do
-        (swap! pending assoc request-id entry)
+        ;; One step: two calls with the same id never share a registry entry.
+        (when (contains? (first (swap-vals!
+                                  pending
+                                  #(if (contains? % request-id) % (assoc % request-id entry))))
+                         request-id)
+          (invalid-request! (str "request id " request-id " is already pending")))
         (tel/log! {:level :debug
                    :id ::request-opened
                    :data {:request-id request-id

@@ -152,7 +152,7 @@
    :attachment-feedback :attachment-focus? :attachment-index :loading? :cancel-token :cancelling?
    :cancelling-at-ms :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress
    :turn-start-ms :liveness-probed-at-ms :gateway-resynced-at-ms :detail-expansions :mouse-selection
-   :session-model-pref :human-input :human-input-queue :live-views :live-viewer-id
+   :session-model-pref :human-input :human-input-queue :human-input-read :live-views :live-viewer-id
    :live-viewer-search :app-views :live-panel
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
    ;; tab you left must not keep speaking through the tab you entered.
@@ -209,6 +209,7 @@
    ;; tab: session A's form must never take over the tab showing session B.
    :human-input nil
    :human-input-queue []
+   :human-input-read nil
    ;; And so does a live view: it reports on ONE session's run, so it paints on
    ;; that session's tab and gives its rows back when the run ends.
    :live-views []
@@ -4078,9 +4079,8 @@
 
 (defn- human-input-target-tab
   "The tab `form` is allowed to appear on — [[session-target-tab]] for `watched-sid`,
-   the session whose stream delivered the form, else for the session the request parks.
-   A subagent's form also reaches each ancestor session's stream (issue #392), so the
-   delivering session decides the tab, not the subagent that asks."
+   the session whose stream delivered the form, else for the session of the request.
+   The leader receives a Council child's form, so the leader's tab shows it."
   [db form watched-sid]
   (session-target-tab db (or watched-sid (get-in form [:request :session-id]))))
 
@@ -4103,26 +4103,90 @@
           (:human-input db) (update db :human-input-queue (fnil conj []) form)
           :else (assoc db :human-input form))))
 
+(defn- note-human-input-change
+  [db request-id op]
+  (if (:human-input-read db) (assoc-in db [:human-input-read :changes request-id] op) db))
+
 (reg-event-db :human-input-open
               (fn [db [_ form watched-sid]]
                 (let [target (human-input-target-tab db form watched-sid)]
-                  (if (= :not-here target) db (update-tab db target #(open-human-input % form))))))
+                  (if (= :not-here target)
+                    db
+                    (update-tab db
+                                target
+                                #(-> %
+                                     (open-human-input form)
+                                     (note-human-input-change (get-in form [:request :id])
+                                                              :open)))))))
+
+(reg-event-db
+  :human-input-read
+  (fn [db [_ sid token]]
+    (let [target (session-target-tab db sid)]
+      (if (= :not-here target)
+        db
+        (update-tab db target #(assoc % :human-input-read {:token token :changes {}}))))))
+
+(defn- reconcile-human-input
+  [{:keys [human-input human-input-queue human-input-read] :as db} token forms]
+  (if-not (= token (:token human-input-read))
+    db
+    (let [db (assoc db :human-input-read nil)]
+      (if (nil? forms)
+        db
+        (let [request-id #(get-in % [:request :id])
+              held (into [] (remove nil?) (cons human-input human-input-queue))
+              by-id (into {} (map (juxt request-id identity)) held)
+              changes (:changes human-input-read)
+              listed-ids (into #{} (map request-id) forms)
+              pending (into (into []
+                                  (comp (remove #(= :close (changes (request-id %))))
+                                        (map #(get by-id (request-id %) %)))
+                                  forms)
+                            (filter #(let [id (request-id %)] (and (= :open (changes id))
+                                                                   (not (listed-ids id)))))
+                            held)]
+
+          (assoc db
+            :human-input (first pending)
+            :human-input-queue (vec (rest pending))))))))
+
+(reg-event-db
+  :human-input-read-result
+  (fn [db [_ sid token forms]]
+    (let [target (session-target-tab db sid)]
+      (if (= :not-here target) db (update-tab db target #(reconcile-human-input % token forms))))))
 
 (reg-event-db :human-input-form
-              (fn [db [_ form]]
-                (assoc db :human-input form)))
+              (fn [db [_ form watched-sid]]
+                (let [target (human-input-target-tab db form watched-sid)]
+                  (if (= :not-here target)
+                    db
+                    (update-tab db
+                                target
+                                #(if (= (get-in form [:request :id])
+                                        (get-in % [:human-input :request :id]))
+                                   (assoc % :human-input form)
+                                   %))))))
 
 (defn- close-human-input
   "Drop `request-id` from ONE tab's db half, promoting the next queued form."
   [db request-id]
-  (if (or (nil? request-id) (= request-id (get-in db [:human-input :request :id])))
-    (let [queue (vec (:human-input-queue db))]
+  (let [front-id
+        (get-in db [:human-input :request :id])
+
+        db
+        (note-human-input-change db (or request-id front-id) :close)
+
+        queue
+        (:human-input-queue db)]
+
+    (if (or (nil? request-id) (= request-id front-id))
       (assoc db
         :human-input (first queue)
-        :human-input-queue (vec (rest queue))))
-    (assoc db
-      :human-input-queue (vec (remove #(= request-id (get-in % [:request :id]))
-                                (:human-input-queue db))))))
+        :human-input-queue (vec (rest queue)))
+      (assoc db
+        :human-input-queue (into [] (remove #(= request-id (get-in % [:request :id]))) queue)))))
 
 (reg-event-db :human-input-close
               (fn [db [_ request-id]]

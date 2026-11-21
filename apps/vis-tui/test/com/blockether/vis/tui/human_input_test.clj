@@ -1588,6 +1588,13 @@
         (expect (= {:kind :description :text "Subagent Read logs · parent Deploy DEV13"}
                    (first rows)))
         (expect (= {:kind :blank} (second rows)))))
+  (it "identifies the tool that asks for input"
+      (let [form (hi/init-form (hi/request<-wire {"id" "auth"
+                                                  "title" "Sign in"
+                                                  "source" "github.login"
+                                                  "origin" {"session_id" "child-1"
+                                                            "parent_session_id" "leader-1"}}))]
+        (expect (some #(str/includes? (str (:text %)) "github.login") (hi/form-rows form)))))
   (it "shortens each long title with an ellipsis, so the parent stays visible"
       (let [text (hi/origin-text {:session-id "child-1"
                                   :title (apply str (repeat 60 "a"))
@@ -1633,26 +1640,181 @@
                                               "origin" {"session_id" "child-1"
                                                         "parent_session_id" "leader-1"
                                                         "parent_title" "Lead"}})))))
-  (it "opens a subagent form on the leader tab that received it, and answers its owner"
-      ;; Before #392 the TUI routed by the form's own session, so a leader tab
-      ;; dropped the forwarded form of a subagent that has no tab.
-      (let [submitted
-            (atom nil)
+  (it
+    "submits and cancels child forms through the leader session"
+    (let [actions
+          (atom [])
 
-            child-form
+          child-form
+          (fn [n]
             (hi/init-form (assoc (request)
-                            :id "req-child"
-                            :session-id "child-1"))]
+                            :id (str "req-" n)
+                            :session-id (str "child-" n))))]
 
-        (reset! state/app-db {:session {:id "leader-1"} :render-version 0})
-        (state/dispatch [:human-input-open child-form])
-        (expect (nil? (:human-input @state/app-db)))
-        (state/dispatch [:human-input-open child-form "leader-1"])
-        (expect (= "req-child" (get-in @state/app-db [:human-input :request :id])))
-        (with-redefs [vis/gateway-view-action!
-                      (fn [sid id action]
-                        (reset! submitted [sid id action])
-                        {:action (:action action) :view-id id :is-accepted true})]
-          (#'screen/human-input-key! @state/app-db (KeyStroke. KeyType/Escape)))
-        (expect (= ["child-1" "req-child" :cancel]
-                   [(first @submitted) (second @submitted) (get-in @submitted [2 :action])])))))
+      (reset! state/app-db {:session {:id "leader-1"} :render-version 0})
+      (state/dispatch [:human-input-open (child-form 1)])
+      (expect (nil? (:human-input @state/app-db)))
+      (doseq [n (range 1 5)]
+        (state/dispatch [:human-input-open (child-form n) "leader-1"]))
+      (expect (= "req-1" (hi/request-id (:human-input @state/app-db))))
+      (with-redefs [vis/gateway-view-action! (fn [sid id action]
+                                               (swap! actions conj [sid id action])
+                                               {:is-accepted true})]
+        (#'screen/human-input-key! @state/app-db (stroke \b))
+        (state/dispatch [:human-input-close "req-3"])
+        (doseq [key [(KeyStroke. KeyType/ArrowDown) (stroke \p) (KeyStroke. KeyType/Enter)]]
+          (#'screen/human-input-key! @state/app-db key))
+        (expect (= "req-2" (hi/request-id (:human-input @state/app-db))))
+        (expect (= "" (get-in @state/app-db [:human-input :values "pass"])))
+        (expect (= 0 (get-in @state/app-db [:human-input :focus])))
+        (#'screen/human-input-key! @state/app-db (KeyStroke. KeyType/Escape))
+        (expect (= "req-4" (hi/request-id (:human-input @state/app-db)))))
+      (expect (= [["leader-1" "req-1"
+                   {:action :submit
+                    :values (assoc (hi/submit-values (child-form 1))
+                              "user" "b"
+                              "pass" "p")}] ["leader-1" "req-2" {:action :cancel}]]
+                 @actions))))
+  (it "keeps the form open when the gateway does not accept cancel"
+      (reset! state/app-db {:session {:id "leader-1"} :render-version 0})
+      (state/dispatch [:human-input-open (hi/init-form (request)) "leader-1"])
+      (with-redefs [vis/gateway-view-action!
+                    (constantly {:is-accepted false})
+
+                    vis/notify!
+                    (fn [& _]
+                      nil)]
+
+        (#'screen/human-input-key! @state/app-db (KeyStroke. KeyType/Escape)))
+      (expect (= "req-1" (hi/request-id (:human-input @state/app-db)))))
+  (it "closes a form that the gateway no longer has"
+      (reset! state/app-db {:session {:id "leader-1"} :render-version 0})
+      (state/dispatch [:human-input-open (hi/init-form (request)) "leader-1"])
+      (with-redefs [vis/gateway-view-action!
+                    (fn [& _]
+                      (throw (ex-info "no such open View" {:http-status 404})))
+
+                    vis/notify!
+                    (fn [& _]
+                      nil)]
+
+        (#'screen/human-input-key! @state/app-db (KeyStroke. KeyType/Escape)))
+      (expect (nil? (:human-input @state/app-db))))
+  (it "does not replace the next form with a late edit of the closed form"
+      (reset! state/app-db {:session {:id "session-1"} :render-version 0})
+      (let [old
+            (hi/init-form (request))
+
+            pending
+            (hi/init-form (assoc (request) :id "req-2"))]
+
+        (state/dispatch [:human-input-open old])
+        (state/dispatch [:human-input-open pending])
+        (state/dispatch [:human-input-close "req-1"])
+        (state/dispatch [:human-input-form (feed old [(ch \z)])])
+        (expect (= pending (:human-input @state/app-db)))))
+  (it
+    "reconciles pending child forms when the leader stream reconnects"
+    (let [sink
+          (atom nil)
+
+          pending
+          (atom [])
+
+          during-read
+          (atom nil)
+
+          wire
+          (fn [n]
+            {"id" (str "req-" n)
+             "title" "Sign in"
+             "session_id" (str "child-" n)
+             "origin" {"session_id" (str "child-" n) "parent_session_id" "leader-1"}
+             "nodes" [{"id" "pass" "type" "password" "label" "Password"}]})
+
+          emit
+          (fn [event]
+            (@sink (assoc event "session_id" "leader-1")))
+
+          ready
+          {"type" "subscription.ready" "cursor" 20 "is_live" false}
+
+          active
+          #(hi/request-id (:human-input @state/app-db))]
+
+      (reset! state/app-db {:session {:id "leader-1"}
+                            :active-tab-id :main
+                            :tabs [{:id :main :session-id "leader-1"}
+                                   {:id :other :session-id "other"}]
+                            :tab-locals {:other {:session {:id "other"}}}
+                            :render-version 0})
+      (with-redefs [vis/add-title-listener!
+                    (fn [& _]
+                      nil)
+
+                    vis/add-title-pending-listener!
+                    (fn [& _]
+                      nil)
+
+                    vis/remove-title-listener!
+                    (fn [& _]
+                      nil)
+
+                    vis/remove-title-pending-listener!
+                    (fn [& _]
+                      nil)
+
+                    vis/refresh-session-model!
+                    (fn [& _]
+                      nil)
+
+                    vis/gateway-current-seq
+                    (constantly 0)
+
+                    vis/gateway-input-views
+                    (fn [sid]
+                      (when (= sid "leader-1")
+                        (let [snapshot @pending]
+                          (when-let [f @during-read]
+                            (f))
+                          snapshot)))
+
+                    vis/gateway-live-views
+                    (constantly [])
+
+                    vis/gateway-app-summaries
+                    (constantly [])
+
+                    vis/gateway-mux-subscribe!
+                    (fn [_ handler _]
+                      (reset! sink handler)
+                      (fn []))
+
+                    vis/worker-future
+                    (fn [_ run]
+                      (run))]
+
+        (let [stop (#'screen/subscribe-session-live! "leader-1")]
+          (try (reset! pending [(wire 0)])
+               (emit ready)
+               (expect (= "req-0" (active)))
+               (emit {"type" "view.close" "kind" "input" "view_id" "req-0"})
+               (emit {"type" "view.open" "kind" "input" "view_id" "req-1" "view" (wire 1)})
+               (expect (= "req-1" (active)))
+               (expect (= "child-1" (get-in @state/app-db [:human-input :request :session-id])))
+               (doseq [type ["turn.completed" "turn.failed" "turn.cancelled"]]
+                 (swap! state/app-db assoc :loading? true :gateway-turn-id "leader-turn")
+                 (emit {"type" type "turn_id" "leader-turn"})
+                 (expect (false? (:loading? @state/app-db)))
+                 (expect (= "req-1" (active))))
+               (state/dispatch [:select-tab-by-session "other"])
+               (expect (nil? (active)))
+               (state/dispatch [:select-tab-by-session "leader-1"])
+               (expect (= "req-1" (active)))
+               (reset! pending [(wire 2) (wire 3) (wire 4)])
+               (reset! during-read #(emit {"type" "view.close" "kind" "input" "view_id" "req-3"}))
+               (emit ready)
+               (expect (= "req-2" (active)))
+               (emit {"type" "view.close" "kind" "input" "view_id" "req-2"})
+               (expect (= "req-4" (active)))
+               (finally (stop))))))))

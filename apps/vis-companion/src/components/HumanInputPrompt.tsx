@@ -18,7 +18,9 @@ import { Clipboard } from '@capacitor/clipboard';
 import { Capacitor } from '@capacitor/core';
 import { Markdown } from './ChatContent';
 import { hasSystemPasteMenu, hideSystemPasteMenu, moveSystemPasteMenu, showSystemPasteMenu } from '../lib/paste-menu';
-import type { GatewayClient } from '../lib/gateway';
+import { GatewayError, type GatewayClient } from '../lib/gateway';
+import type { SseEvent } from '../lib/types';
+import type { ViewAction } from '../lib/view';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   applyInputViewEvent,
@@ -27,6 +29,8 @@ import {
   humanInputFormChange,
   humanInputFormRefused,
   humanInputFormStart,
+  humanInputInputFields,
+  isHumanInputSecret,
   humanInputOtp,
   humanInputOtpDigits,
   humanInputRange,
@@ -58,221 +62,178 @@ function RangeSlider({ className = '', ...props }: InputHTMLAttributes<HTMLInput
   );
 }
 
-/**
- * Answers typed into open requests, by session and request ID. The draft stays
- * in memory only, never in storage, because a field can hold a password or a
- * one-time code. It lets a remounted screen show the answer again.
- */
-const humanInputDrafts = new Map<string, HumanInputForm>();
+/** Keep non-secret answers in memory when the operator leaves an open request. */
+const humanInputDrafts = new Map<string, Map<string, HumanInputValues>>();
 
-function humanInputDraftKey(sid: string, requestId: string): string {
-  return `${sid}\u0000${requestId}`;
+function saveHumanInputDraft(sessionKey: string, request: HumanInputRequest, values: HumanInputValues) {
+  const visible = humanInputInputFields(request.nodes).filter(
+    (field) => !isHumanInputSecret(field),
+  );
+  if (visible.length === 0) return;
+  const drafts = humanInputDrafts.get(sessionKey) ?? new Map<string, HumanInputValues>();
+  drafts.set(request.id, Object.fromEntries(visible.map(({ id }) => [id, values[id]])));
+  humanInputDrafts.set(sessionKey, drafts);
 }
 
-function restoreHumanInputDraft(sid: string, request: HumanInputRequest | null): HumanInputForm {
-  if (!request) return humanInputFormStart(null);
-  return humanInputDrafts.get(humanInputDraftKey(sid, request.id)) ?? humanInputFormStart(request);
+function forgetClosedHumanInputDrafts(sessionKey: string, open: readonly HumanInputRequest[]) {
+  const drafts = humanInputDrafts.get(sessionKey);
+  if (!drafts) return;
+  const kept = new Set(open.map((row) => row.id));
+  for (const id of drafts.keys()) if (!kept.has(id)) drafts.delete(id);
+  if (drafts.size === 0) humanInputDrafts.delete(sessionKey);
 }
 
-/** Drop the drafts of this session's requests that are no longer open. */
-function forgetClosedHumanInputDrafts(sid: string, open: readonly HumanInputRequest[]): void {
-  const kept = new Set(open.map((row) => humanInputDraftKey(sid, row.id)));
-  const prefix = humanInputDraftKey(sid, '');
-  for (const key of humanInputDrafts.keys()) {
-    if (key.startsWith(prefix) && !kept.has(key)) humanInputDrafts.delete(key);
-  }
-}
-
-/**
- * The companion half of the typed human-input pause.
- *
- * An extension can BLOCK a run on the operator. The engine publishes that pause
- * on every channel the request names — the TUI band and this screen are two
- * views of the SAME request, answered through the same engine coercion — and a
- * phone that is not looking gets the push the gateway sends alongside.
- *
- * Live `view.open` frames open the form; `view.close` closes it
- * no matter who answered, so a request settled in the TUI cannot leave a dead
- * dialog here.
- *
- * The dialog is a SHEET on a phone and a centred card on a desktop, and in both
- * the question scrolls while the answer bar does not: a long form must never be
- * able to push its own Submit button off the screen, least of all under a
- * virtual keyboard.
- */
-export function HumanInputPrompt({
-  client,
-  subscriptions,
-  sid,
-}: {
+type InputPromptProps = {
   client: GatewayClient;
   subscriptions: SessionSubscriptionHub;
   sid: string;
-}) {
+};
+
+export function HumanInputPrompt(props: InputPromptProps) {
+  const sessionKey = JSON.stringify([props.client.base, props.sid]);
+  return <HumanInputQueue key={sessionKey} {...props} sessionKey={sessionKey} />;
+}
+
+/** List snapshots recover missed frames. Live changes also apply to an in-flight snapshot. */
+function HumanInputQueue({ client, subscriptions, sid, sessionKey }: InputPromptProps & { sessionKey: string }) {
   const [pending, setPending] = useState<HumanInputRequest[]>([]);
-  // The open forms were read back at least once, so a draft for a form that is
-  // not in `pending` belongs to a closed request.
   const [isLoaded, setLoaded] = useState(false);
-  const [draft, setDraft] = useState<{ id: string | null; form: HumanInputForm }>(() => ({
-    id: null,
-    form: humanInputFormStart(null),
-  }));
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const read = useRef<{ controller: AbortController; events: SseEvent[] } | null>(null);
 
-  const request = pending[0] ?? null;
-  const requestId = request?.id ?? null;
-  const form = draft.form;
-
-  // A screen opened while a run is ALREADY parked never saw the live frame, so
-  // the open forms are read back on mount and whenever the stream reconnects.
-  useEffect(() => {
-    let cancelled = false;
-    const controller = new AbortController();
-    const reload = () => {
-      client
-        .inputViews(sid, controller.signal)
-        .then((requests) => {
-          if (cancelled) return;
-          setPending(requests);
-          setLoaded(true);
-        })
-        .catch(() => undefined);
-    };
-    reload();
-    const stopConnection = subscriptions.subscribeConnection((connected) => {
-      if (connected) reload();
-    });
-    const stopEvents = subscriptions.subscribeSession(sid, (event) => {
-      if (!isInputViewEvent(event)) return;
-      setPending((current) => applyInputViewEvent(current, event));
-    });
-    return () => {
-      cancelled = true;
-      controller.abort();
-      stopConnection();
-      stopEvents();
-    };
-  }, [client, sid, subscriptions]);
-
-  // Each request opens on ITS OWN defaults — the same starting form the TUI
-  // paints — and a keyed reset here keeps a queued second request from
-  // inheriting the answer typed into the first. The key is the request ID, not
-  // the object: a reconnect reads the same open request back as a new object,
-  // and a reset on that read erased what the operator had typed while the app
-  // was in the background. A draft also survives a remount of this screen.
-  useEffect(() => {
-    setDraft((current) =>
-      current.id === requestId
-        ? current
-        : { id: requestId, form: restoreHumanInputDraft(sid, request) },
-    );
-  }, [request, requestId, sid]);
-
-  useEffect(() => {
-    setError(null);
-    setBusy(false);
-  }, [requestId]);
-
-  useEffect(() => {
-    if (draft.id !== null) humanInputDrafts.set(humanInputDraftKey(sid, draft.id), draft.form);
-  }, [draft, sid]);
-
-  useEffect(() => {
-    if (isLoaded) forgetClosedHumanInputDrafts(sid, pending);
-  }, [isLoaded, pending, sid]);
-
-  const setValue = useCallback((id: string, value: HumanInputValues[string]) => {
-    // Any touch of a field also DROPS the engine's complaint about it: that
-    // message judged the previous answer, and the next confirmation will judge
-    // this one. The rule lives in `humanInputFormChange`, so the sheet cannot
-    // forget it and the TUI band does the same thing on a keystroke.
-    setDraft((current) => ({ ...current, form: humanInputFormChange(current.form, id, value) }));
+  const apply = useCallback((event: SseEvent) => {
+    read.current?.events.push(event);
+    setPending((current) => applyInputViewEvent(current, event));
   }, []);
 
-  const drop = useCallback(
-    (id: string) => {
-      humanInputDrafts.delete(humanInputDraftKey(sid, id));
-      setPending((current) => current.filter((row) => row.id !== id));
-    },
-    [sid],
-  );
+  useEffect(() => {
+    const reload = () => {
+      read.current?.controller.abort();
+      const current = { controller: new AbortController(), events: [] as SseEvent[] };
+      read.current = current;
+      client.inputViews(sid, current.controller.signal)
+        .then((requests) => {
+          if (read.current !== current) return;
+          setPending(current.events.reduce(applyInputViewEvent, requests));
+          setLoaded(true);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (read.current === current) read.current = null;
+        });
+    };
+    const stop = subscriptions.subscribeSession(sid, (event) => {
+      if (event.type === 'subscription.ready') reload();
+      else if (isInputViewEvent(event)) apply(event);
+    }, { replay: false });
+    if (!read.current) reload();
+    return () => {
+      stop();
+      read.current?.controller.abort();
+      read.current = null;
+    };
+  }, [apply, client, sid, subscriptions]);
 
-  const submit = useCallback(() => {
-    if (!request || busy) return;
-    // The answer ALWAYS leaves. Validators are FUNCTIONS living in the
-    // extension that asked the question, so this form cannot know whether the
-    // answer is good — only a confirmation can, and a button that silently
-    // refuses to fire teaches the operator nothing.
+  useEffect(() => {
+    if (isLoaded) forgetClosedHumanInputDrafts(sessionKey, pending);
+  }, [isLoaded, pending, sessionKey]);
+
+  const close = useCallback((id: string) => {
+    humanInputDrafts.get(sessionKey)?.delete(id);
+    // A reply can precede the close frame, including during a list read.
+    apply({ type: 'view.close', kind: 'input', session_id: sid, view_id: id });
+  }, [apply, sessionKey, sid]);
+
+  const request = pending[0];
+  if (!request) return null;
+  return <ActiveHumanInput key={request.id} {...{ client, sid, sessionKey, request, close }} waiting={pending.length - 1} />;
+}
+
+function preventSecretCopy(event: React.ClipboardEvent) {
+  event.preventDefault();
+}
+
+function ActiveHumanInput({
+  client,
+  sid,
+  sessionKey,
+  request,
+  waiting,
+  close,
+}: {
+  client: GatewayClient;
+  sid: string;
+  sessionKey: string;
+  request: HumanInputRequest;
+  waiting: number;
+  close: (id: string) => void;
+}) {
+  const [form, setForm] = useState<HumanInputForm>(() => {
+    const initial = humanInputFormStart(request);
+    const saved = humanInputDrafts.get(sessionKey)?.get(request.id);
+    return saved ? { ...initial, values: { ...initial.values, ...saved } } : initial;
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const sending = useRef(false);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    saveHumanInputDraft(sessionKey, request, form.values);
+  }, [form.values, request, sessionKey]);
+
+  const setValue = useCallback((id: string, value: HumanInputValues[string]) => {
+    setForm((current) => humanInputFormChange(current, id, value));
+  }, []);
+
+  const send = useCallback((action: ViewAction) => {
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
     setError(null);
-    client
-      .viewAction(sid, request.id, { action: 'submit', values: form.values })
+    // Only the gateway can validate an answer. Use the session that owns the queue,
+    // not the child session named in the request document.
+    client.viewAction(sid, request.id, action)
       .then((outcome) => {
-        if (outcome?.is_accepted) {
-          // The close event drops it too; doing it here as well keeps the
-          // dialog from lingering for a stream that is briefly offline.
-          drop(request.id);
-          return;
+        if (outcome?.is_accepted) close(request.id);
+        else {
+          setForm((current) => humanInputFormRefused(current, outcome?.errors));
+          setError(action.action === 'cancel' ? 'The daemon did not cancel this request.' : 'The daemon rejected this answer.');
         }
-        setDraft((current) => ({
-          ...current,
-          form: humanInputFormRefused(current.form, outcome?.errors ?? {}),
-        }));
-        setError('The daemon rejected this answer.');
-        setBusy(false);
       })
       .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : 'Could not send this answer.');
+        if (cause instanceof GatewayError && cause.status === 404) close(request.id);
+        else setError(action.action === 'cancel' ? 'Could not cancel this request.' : 'Could not send this answer.');
+      })
+      .finally(() => {
+        sending.current = false;
         setBusy(false);
       });
-  }, [busy, client, drop, form, request, sid]);
+  }, [client, close, request.id, sid]);
 
-  const cancel = useCallback(() => {
-    if (!request || busy) return;
-    setBusy(true);
-    setError(null);
-    client
-      .viewAction(sid, request.id, { action: 'cancel' })
-      .then(() => drop(request.id))
-      .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : 'Could not cancel this request.');
-        setBusy(false);
-      });
-  }, [busy, client, drop, request, sid]);
+  const submit = useCallback(() => send({ action: 'submit', values: form.values }), [form.values, send]);
+  const cancel = useCallback(() => send({ action: 'cancel' }), [send]);
 
-  // The SAME two chords the TUI band offers, so an operator who answers in one
-  // channel does not have to relearn the other. `Enter` alone belongs to the
-  // multiline field, which is why submit is the modified chord everywhere.
-  const isCancellable = request?.is_cancellable ?? false;
+  // Match the TUI shortcuts. Leave handled keys with the control that took them.
   useEffect(() => {
-    if (!request) return undefined;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && isCancellable) {
+      if (event.defaultPrevented) return;
+      if (event.key === 'Escape' && request.is_cancellable) {
         event.preventDefault();
         cancel();
-        return;
-      }
-      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         submit();
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [cancel, isCancellable, request, submit]);
+  }, [cancel, request.is_cancellable, submit]);
 
-  // A pause nobody asked for still opens ready to answer — but only where a
-  // keyboard is already on screen. Focusing a field on a phone raises the
-  // virtual keyboard over the very question being asked.
+  // Do not raise a phone keyboard over the question when it opens.
   useEffect(() => {
-    if (!requestId) return;
     if (window.matchMedia?.('(pointer: coarse)').matches) return;
     bodyRef.current?.querySelector<HTMLElement>('input, textarea, button')?.focus();
-  }, [requestId]);
-
-  if (!request) return null;
+  }, []);
 
   return (
     <HumanInputSheet
@@ -281,7 +242,7 @@ export function HumanInputPrompt({
       errors={form.errors}
       error={error}
       busy={busy}
-      waiting={pending.length - 1}
+      waiting={waiting}
       bodyRef={bodyRef}
       onChange={setValue}
       onSubmit={submit}
@@ -326,7 +287,7 @@ export function HumanInputSheet({
   // read like a screen the operator had navigated to, with the verbs that end the
   // pause stranded a phone's length below the question. Above `sm:` it is the same
   // box every other dialog is, minus the fixed height.
-  // A subagent's form also reaches its ancestor sessions: name who asks.
+  // The leader session shows the form of a subagent: name who asks.
   const origin = originLabel(request.origin);
   return (
     <Modal
@@ -979,7 +940,7 @@ function OtpBoxes({
       : navigator.clipboard.readText();
     read
       .then((text) => paste(text))
-      .catch((error: unknown) => console.warn('one-time code: clipboard read failed', error));
+      .catch(() => console.warn('One-time code: could not read the clipboard.'));
   };
   // The next digit lands in this box; a full code keeps the last box marked.
   const active = Math.min(digits.length, max - 1);
@@ -1055,6 +1016,8 @@ function OtpBoxes({
           inputMode="numeric"
           pattern="[0-9]*"
           autoComplete="one-time-code"
+          onCopy={preventSecretCopy}
+          onCut={preventSecretCopy}
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}

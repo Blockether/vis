@@ -1,9 +1,11 @@
 (ns com.blockether.vis.internal.gateway.wiring-test
-  (:require [com.blockether.vis.internal.council.core :as council]
+  (:require [com.blockether.vis.internal.automation.runner :as automation-runner]
+            [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.mcp.sampling :as sampling]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.view :as gateway-view]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.router :as router]
@@ -44,3 +46,15 @@
       (let [waker (slot #'council/runtime-waker)]
         (wiring/install!)
         (expect (identical? waker (slot #'council/runtime-waker))))))
+
+(defdescribe ask-gate-test
+             (it "refuses an extension automation run and a subagent of it, where nobody answers"
+                 (with-redefs [automation-runner/refuse-ask!
+                               #(= "run" (str %))
+
+                               gateway-view/input-home
+                               #(if (= "child-of-run" (str %)) "run" (str %))]
+
+                   (expect (false? (#'wiring/may-ask? "run")))
+                   (expect (false? (#'wiring/may-ask? "child-of-run")))
+                   (expect (true? (#'wiring/may-ask? "child-of-person"))))))

@@ -235,15 +235,6 @@
   [wire]
   (engine/live-result<-wire wire))
 
-(defn session-id
-  "The gateway session whose run this form parks, or nil. A form built from a
-   session event must be answered over the gateway that owns it."
-  [form]
-  (some-> (get-in form [:request :session-id])
-          str
-          str/trim
-          not-empty))
-
 (defn submit-values
   "The values map carried by a `submit` View action — keyed by field id."
   [form]
@@ -605,8 +596,8 @@
 
 (defn origin-text
   "The line that names a subagent and its parent session, or nil for a form that a
-   top-level session raised. A subagent's form also reaches every ancestor session,
-   so its header must say which session asks (issue #392). Each title is shortened
+   top-level session raised. The leader receives a Council child's form, so the line
+   names the child that asks. Each title is shortened
    with `…` to [[origin-title-cols]] columns."
   [origin]
   (let [text
@@ -1001,13 +992,17 @@
   ([form] (form-rows form nil))
   ([{:keys [request focus stops] :as form} text-w]
    (let [head
-         ;; The origin stays on ONE row: the painter shortens it with `…` to the
-         ;; dialog width instead of wrapping it.
-         (into (if-let [text (origin-text (:origin request))]
-                 [{:kind :description :text text} {:kind :blank}]
-                 [])
-               (when-let [rows (seq (markdown-prose-rows (:description request) text-w))]
-                 (conj (vec rows) {:kind :blank})))
+         ;; The origin and the tool that asks each take one row. The painter shortens each.
+         (let [metadata (into []
+                              (keep #(when % {:kind :description :text %}))
+                              [(origin-text (:origin request))
+                               (when-not (str/blank? (:source request))
+                                 (str "Asked by " (:source request)))])]
+           (into (cond-> metadata
+                   (seq metadata)
+                   (conj {:kind :blank}))
+                 (when-let [rows (seq (markdown-prose-rows (:description request) text-w))]
+                   (conj (vec rows) {:kind :blank}))))
 
          ;; ONE context per paint — including the stop index the whole tree shares,
          ;; so nested groups cost lookups, not rescans.

@@ -809,8 +809,8 @@
                    (expect (signal? signals :error ::hi/request-undeliverable rid)))))
 
 (defdescribe ask-gate-test
-             ;; A managed subagent may not ask the person: its leader answers for it. The gate
-             ;; refuses its form before any surface sees it.
+             ;; Nobody answers in some sessions, such as an extension automation run. The
+             ;; gate refuses their forms before any surface sees them.
              (it "refuses a session that may not ask, at once and without a trace on any channel"
                  (let [rid
                        (str "refused-" (random-uuid))
@@ -825,10 +825,10 @@
                        @(var-get #'hi/ask-gate)]
 
                    (ce/add-channel-event-listener! chan ::refused-collector #(swap! events conj %))
-                   (hi/set-ask-gate! #(not= "subagent-session" %))
+                   (hi/set-ask-gate! #(not= "unattended-session" %))
                    (try (let [{answer :value signals :signals}
                               (tel/with-signals (hi/request! {:id rid
-                                                              :session-id "subagent-session"
+                                                              :session-id "unattended-session"
                                                               :title "Deploy"
                                                               :timeout-ms 2000
                                                               :nodes [{:id "env"}]
@@ -840,9 +840,56 @@
                           (expect (signal? signals :warn ::hi/request-refused rid)))
                         (finally (hi/set-ask-gate! previous)
                                  (ce/remove-channel-event-listener! chan ::refused-collector)))))
+             (it
+               "registers one of two requests that take the same id at the same time"
+               (let [rid
+                     (str "twin-" (random-uuid))
+
+                     chan
+                     (fresh-channel)
+
+                     previous
+                     @(var-get #'hi/ask-gate)
+
+                     at-gate
+                     (java.util.concurrent.CountDownLatch. 2)
+
+                     go
+                     (promise)
+
+                     call
+                     #(future (try (hi/request! {:id rid
+                                                 :session-id "twin-session"
+                                                 :title "Deploy"
+                                                 :timeout-ms 1500
+                                                 :nodes [{:id "env"}]
+                                                 :channel-ids [chan]})
+                                   (catch clojure.lang.ExceptionInfo e (ex-message e))))]
+
+                 (ce/add-channel-event-listener! chan
+                                                 ::twin-collector
+                                                 (fn [_]))
+                 ;; Both calls stand at the gate before one of them takes the id.
+                 (hi/set-ask-gate! (fn [_]
+                                     (.countDown at-gate)
+                                     (deref go 2000 nil)
+                                     true))
+                 (try (let [calls [(call) (call)]]
+                        (expect (.await at-gate 2 java.util.concurrent.TimeUnit/SECONDS))
+                        (deliver go true)
+                        (expect (await-true #(some realized? calls)))
+                        (expect (true? (:is-accepted (hi/submit! rid {"env" "prod"}))))
+                        (let [results (mapv #(deref % 3000 ::parked) calls)]
+                          ;; The call that lost the id is refused. It never takes the
+                          ;; answer of the other call or leaves that call blocked.
+                          (expect (= 1 (count (filter string? results))))
+                          (expect (= [{"env" "prod"}] (keep :values (filter map? results))))))
+                      (finally (hi/set-ask-gate! previous)
+                               (hi/cancel! rid "cleanup")
+                               (ce/remove-channel-event-listener! chan ::twin-collector)))))
              (it "opens the form of a session that may ask, and also when the gate fails"
                  (let [previous @(var-get #'hi/ask-gate)]
-                   (doseq [gate [#(not= "subagent-session" %)
+                   (doseq [gate [#(not= "unattended-session" %)
                                  (fn [_]
                                    (throw (ex-info "store down" {})))]]
                      (hi/set-ask-gate! gate)

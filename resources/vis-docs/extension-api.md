@@ -1310,8 +1310,8 @@ vis.register_extension(vis.Extension(
 ```
 
 When the person cancels or the dialog times out, `answer` is false, and this hook refuses the
-call. A session that cannot ask the person, for example a subagent session, gets
-`answer.reason == "undeliverable"` at once.
+call. A session that cannot ask the person, for example the session of an extension automation
+run, gets `answer.reason == "undeliverable"` at once.
 
 If a hook raises an exception, the operation runs. When the operation must not run without an
 answer, catch the exception and return `vis.block`. A hook that calls a tool of its own

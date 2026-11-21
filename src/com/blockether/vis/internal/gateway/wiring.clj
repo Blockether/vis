@@ -48,9 +48,10 @@
                     :data {:root project-root :error (ex-message t)}}))))
 
 (defn- may-ask?
-  "The ask gate: a managed subagent and an extension automation run never ask."
+  "The ask gate: nobody answers in the session of an extension automation run, so that
+   session never asks, and neither does a subagent whose form would show there."
   [sid]
-  (and (not (automation-runner/refuse-ask! sid)) (gateway-view/person-may-answer? sid)))
+  (not-any? automation-runner/refuse-ask! (distinct [(str sid) (gateway-view/input-home sid)])))
 
 (defonce ^:private installed
   (delay
@@ -77,8 +78,7 @@
     ;; A live View a human stops after its block returned has no collector left;
     ;; the gateway owns the database, so it files the late artifact.
     (view/set-late-artifact-filer! #'state/append-iteration-attachment!)
-    ;; A managed subagent never asks the person: its leader answers for it. Nobody
-    ;; answers in the session of an extension automation run either.
+    ;; Nobody answers in the session of an extension automation run.
     (view/set-ask-gate! #'may-ask?)
     ;; Provider and default-model changes rebuild the shared router and reseed
     ;; every cached session environment, not only `/reload`.

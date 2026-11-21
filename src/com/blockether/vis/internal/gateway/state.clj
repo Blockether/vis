@@ -3366,24 +3366,25 @@
   #{"turn.queued" "turn.queued.deleted" "turn.started" "turn.completed" "turn.failed"
     "turn.cancelled" "session.model_updated"})
 
-(def ^:private team-input-types
-  "Events of a child that open or close a form for the person: `pending_input` changes."
-  #{"view.open" "view.close"})
-
 (defn- team-tap
-  "Event tap: after a child turn, model, input or step event, push the row of the child to its
+  "Event tap: after a child turn, model or step event, push the row of the child to its
    leader. The terminal events come after `agents/finish!` stored the child status. A
    `block.activity` changes only the Activity line; `iteration.completed` also changes the note,
    usage and iterations."
   [sid event]
   (let [type (get event "type")]
     (cond (contains? team-event-types type) (team-changed! sid true)
-          (and (contains? team-input-types type) (= "input" (get event "kind")))
-          (team-changed! sid true)
           (= "iteration.completed" type) (team-changed! sid false :full)
           (= "block.activity" type) (team-changed! sid false :activity))))
 
 (defonce team-listener (add-event-tap! ::team #'team-tap))
+
+(defn input-changed!
+  "A form of session `sid` opened or closed: push the row of `sid` to its leader, because
+   `pending_input` changed. The form itself is an event of the session that shows it, so no
+   event of `sid` says this."
+  [sid]
+  (team-changed! sid true))
 
 (defonce team-watch (bus/set-watch-hooks! #'team-watch-interest? #'team-watched-elsewhere!))
 
@@ -8030,13 +8031,17 @@
          (when live? (agents/latest-note db child (util/now-ms)))
 
          activity
-         (when live? (agent-activity sid))]
+         (when live? (agent-activity sid))
+
+         ;; The leader session shows the forms of the child, so count by who asks.
+         pending
+         (bus/raised-waiting-count sid)]
 
      (cond-> (merge (dissoc child :spawn_key :spawn_fingerprint)
                     (smodel/model-of db sid)
                     {:routing_locked (persistance/db-routing-locked? db sid)
-                     :pending_input (bus/session-waiting? sid)
-                     :pending_input_count (bus/session-waiting-count sid)
+                     :pending_input (pos? pending)
+                     :pending_input_count pending
                      :usage (session-usage-info sid)
                      :turn_ids (turn-ids turns child)})
        request
@@ -8592,6 +8597,11 @@
                          peek
                          (get (:turns entry)))))))
 
+(defn- agent-pending-input
+  "How many forms of session `sid` wait for the answer of the person, in any vis process."
+  [sid]
+  (bus/raised-waiting-count sid))
+
 (defn- agent-held?
   "True when a human holds the queue of `sid`."
   [sid]
@@ -8632,6 +8642,7 @@
    :leader-active? #'agent-leader-active?
    :held? #'agent-held?
    :activity #'agent-activity
+   :pending-input #'agent-pending-input
    :publish #'agent-publish
    :changed! #(team-changed! % true)})
 

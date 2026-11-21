@@ -1915,6 +1915,44 @@
                                             (agents/wait-agents env [busy] {:timeout_secs 1})))
                                    "notes"))
                         "A second check-in shows only new notes")))))))
+    ;; Issue #494: a tool of a child waits for the person at a form in the leader session.
+    ;; The leader must not read that wait as a slow step and cancel the child.
+    (it
+      "alerts awaits_person, not slow_step, while a form of the child waits for the person"
+      (let [{:keys [db env busy]}
+            (team)
+
+            turn
+            (str (random-uuid))
+
+            long-ago
+            (java.util.Date. (- (System/currentTimeMillis) 400000))
+
+            forms
+            (atom 1)]
+
+        (with-fake-runtime
+          db
+          (atom #{busy})
+          (fn [_]
+            (agents/install-runtime! (assoc @@#'agents/runtime
+                                       :pending-input (fn [sid]
+                                                        (if (= busy (str sid)) @forms 0))))
+            (with-redefs [ps/db-list-session-turns-meta
+                          (fn [_ sid]
+                            (if (= busy (str sid)) [{:id turn :position 0 :created-at (now)}] []))
+
+                          ;; The last step ended 400 s ago: the child is in a slow step.
+                          ps/db-list-session-turn-iterations
+                          (fn [_ id]
+                            (if (= turn (str id)) [{:position 0 :finished-at long-ago}] []))]
+
+              (let [alerts #(get (first (:result (agents/wait-agents env [busy] {:timeout_secs 1})))
+                                 "alerts")]
+                (expect (= ["awaits_person"] (alerts)))
+                (reset! forms 0)
+                (expect (= ["slow_step"] (alerts))
+                        "After the answer, a slow step is slow again")))))))
     (it
       "returns when a running child publishes a Council message"
       (let [{:keys [db env busy]}
