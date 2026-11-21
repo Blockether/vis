@@ -236,7 +236,7 @@ export function hasTimeline(agents: readonly Subagent[], leader?: LeaderLane): b
 
 /**
  * The control that swaps the notes of a team for its timeline, and back: a quiet mark at the end of the team line,
- * so the line reads as status first (user decision). It takes the page ink and an edge while the timeline shows.
+ * so the line reads as status first (user decision). It takes the page ink, with no border, while the timeline shows.
  */
 export function TimelineToggle({ isOn, onToggle }: { isOn: boolean; onToggle: () => void }) {
   return (
@@ -246,8 +246,8 @@ export function TimelineToggle({ isOn, onToggle }: { isOn: boolean; onToggle: ()
       title="Timeline"
       aria-pressed={isOn}
       onClick={onToggle}
-      className={`pointer-events-auto relative -my-0.5 inline-flex min-h-6 min-w-6 shrink-0 items-center justify-center border after:absolute after:-inset-2 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 mouse:after:content-none ${
-        isOn ? 'border-edge-strong text-white' : 'border-transparent text-dialog-hint hover:text-white'
+      className={`pointer-events-auto relative -my-0.5 inline-flex min-h-6 min-w-6 shrink-0 items-center justify-center after:absolute after:-inset-2 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 mouse:after:content-none ${
+        isOn ? 'text-white' : 'text-dialog-hint hover:text-white'
       }`}
     >
       <TimelineIcon className="size-3.5" />
