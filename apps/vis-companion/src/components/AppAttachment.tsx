@@ -15,6 +15,7 @@ import {
   canOpenApp,
   draftAction,
   foldAppEvent,
+  isAppAway,
   newerAppView,
   sendAction,
   withSubmission,
@@ -72,6 +73,10 @@ export interface AppViewState {
   reread: () => void;
   /** Send one action and fold its answer in. */
   act: (action: ViewAction) => Promise<AppActionResult>;
+  /** The owner of the app is away and the open brings it back. */
+  isAway: boolean;
+  /** The host refused to bring the owner back. */
+  isConnectRefused: boolean;
 }
 
 /**
@@ -220,7 +225,24 @@ export function useAppView(
     [client, sid, viewId, hub, commit, reread],
   );
 
-  return { view, isMissing, reread, act };
+  // A person who opens an app whose owner is away brings the owner back: one
+  // `connect` for each outage. The host answers a connected app with an acceptance.
+  const isAway = view !== null && isAppAway(view);
+  const [isConnectRefused, setConnectRefused] = useState(false);
+  useEffect(() => {
+    if (!isAway) return;
+    let isCurrent = true;
+    void act({ action: 'connect' }).then((result) => {
+      if (!isCurrent) return;
+      if (result.status === 'saved') reread();
+      setConnectRefused(result.status !== 'saved');
+    });
+    return () => {
+      isCurrent = false;
+    };
+  }, [isAway, act, reread]);
+
+  return { view, isMissing, reread, act, isAway, isConnectRefused: isAway && isConnectRefused };
 }
 
 /** The label of node `id` in `nodes`, for the key legend. */
@@ -353,7 +375,7 @@ export function AppSurface({
 }) {
   const hub = useContext(SessionEventsContext);
   const revealApp = useContext(AppRevealContext);
-  const { view, isMissing, act } = useAppView(client, sid, viewId, hub);
+  const { view, isMissing, act, isAway, isConnectRefused } = useAppView(client, sid, viewId, hub);
   useEffect(() => {
     if (view) onView?.(view);
   }, [view, onView]);
@@ -527,7 +549,15 @@ export function AppSurface({
   const appLog = useAppLog(log, surface, isFramed);
 
   const title = view?.title || fallbackTitle;
-  const state = view ? (sid === null ? globalAppStateWord(view) : appStateWord(view)) : '';
+  const state = !view
+    ? ''
+    : isAway
+      ? isConnectRefused
+        ? 'Disconnected'
+        : 'Connecting'
+      : sid === null
+        ? globalAppStateWord(view)
+        : appStateWord(view);
   // A pane shows the state of the app beside its name, and the app keeps its height.
   const headline = isPane && view ? appHeadline(view.nodes) : undefined;
   const subtitle = view ? (
@@ -778,7 +808,7 @@ export const AppAttachmentRow = memo(function AppAttachmentRow({
   );
 });
 
-/** One app of the session list, with its title and state. A disconnected app cannot open. */
+/** One app of the session list, with its title and state. An app that cannot connect cannot open. */
 export function AppListRow({
   view,
   stateWord = appStateWord,

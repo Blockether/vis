@@ -1392,6 +1392,63 @@
                                          (get-in @state/app-db [:live-panel :app]))))))
                         (finally (reset! state/app-db saved))))))
 
+;; User report 2026-11-29: the review app said Disconnected after a gateway restart, until
+;; a turn ran. The open of such an app must start its owner.
+(defdescribe
+  away-app
+  (it
+    "sends one connect when a person opens the app, and reads the app that came back"
+    (let [saved
+          @state/app-db
+
+          away
+          (assoc game
+            :is-stale true
+            :is-reconnectable true)
+
+          calls
+          (atom [])
+
+          reads
+          (atom [])
+
+          answer
+          (atom {:is-accepted false :reason "disconnected"})
+
+          open!
+          (fn []
+            (let [component
+                  (surface/component "s1" (:id away) away)
+
+                  geom
+                  #((:measure-pane component) (:init component) 60 0 60 40)]
+
+              (geom)
+              (model/status (:view (geom)))))]
+
+      (try (reset! state/app-db (assoc saved :app-views {(:id away) {:view away}}))
+           (with-redefs [vis/worker-future
+                         (fn [_ f]
+                           (f))
+
+                         vis/gateway-app-action!
+                         (fn [sid view-id action]
+                           (swap! calls conj [sid view-id action])
+                           @answer)]
+
+             (with-redefs-fn {#'surface/read-view! (fn [_ _ _ & [whole?]]
+                                                     (swap! reads conj whole?))}
+               (fn []
+                 ;; A refusal leaves the app disconnected, and nothing sends again.
+                 (expect (= :stale (open!)))
+                 (expect (= [["s1" (:id away) {:action :connect}]] @calls))
+                 (reset! answer {:is-accepted true})
+                 (reset! reads [])
+                 (expect (= :away (open!)))
+                 (expect (= 2 (count @calls)))
+                 (expect (= [nil true] @reads)))))
+           (finally (reset! state/app-db saved))))))
+
 ;; User report, Council #9648: the app menu crossed the pane and inherited focus ink.
 (defdescribe
   app-menu-paint-bounds

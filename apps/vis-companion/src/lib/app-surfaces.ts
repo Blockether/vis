@@ -102,7 +102,7 @@ export function pressReveal(view: { nodes: readonly LiveNode[] }, nodeId: string
  * The id of the open app that `reveal` names: the same owner and key. Null while
  * that app is not open or is disconnected, so the press waits for its open.
  */
-export function revealedApp<T extends Pick<LiveView, 'id' | 'extension' | 'key' | 'is_closed' | 'is_disconnected'>>(
+export function revealedApp<T extends Pick<LiveView, 'id' | 'extension' | 'key' | 'is_closed' | 'is_disconnected' | 'is_reconnectable'>>(
   apps: readonly T[],
   reveal: AppReveal,
 ): string | null {

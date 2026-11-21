@@ -1075,6 +1075,9 @@ app keeps its state, but its owner does not listen yet.
   owner gets each Send that waited.
 - An extension has no separate start hook. Open your apps again with their keys when your extension
   loads.
+- An app of an extension with the [`on_reload` hook](#after-a-reload-of-your-extension) does not
+  show as disconnected. When a person opens the app, Vis starts the Python sandbox of the session
+  and calls the hook.
 - A program with `on_event` waits for the gateway and opens a keyed app again by itself. An app
   without a key cannot come back to its program. Vis then logs an error and stops the events of
   that app.
@@ -1114,8 +1117,10 @@ def reopen(app):
 - The hook needs an app with a `key`. Only an extension that Vis loads takes the hook. An SDK
   program and `python_execution` raise `TypeError`.
 - Vis does not call the hook for an app that a person closed.
-- Vis calls the hook only while the Python sandbox of the session runs. After a gateway restart,
-  open the app at the next call of your extension.
+- After a gateway restart, the Python sandbox of the session does not run. Vis then calls the hook
+  when a person opens the app, or you open the app at the next call of your extension.
+- Vis does not start the sandbox for the hook while a turn of the session runs. The app then shows
+  as disconnected until your extension opens the key again.
 - An error in the hook goes to the gateway log, and the app stays disconnected. A name that the new
   code does not have is such an error.
 

@@ -100,8 +100,8 @@
       (expect (= #{:multiselect :select} contract/choice-types))
       (expect (= {:min 0 :max 100 :step 1} contract/range-defaults))
       (expect (= {:length 6 :ceiling 12} contract/otp-defaults))
-      (expect (= #{:id :seq :created-at :owner :extension :is-stale :submissions :is-closed
-                   :is-archived :settings-key :log}
+      (expect (= #{:id :seq :created-at :owner :extension :is-stale :is-reconnectable :submissions
+                   :is-closed :is-archived :settings-key :log}
                  contract/live-view-stamp-keys))
       (expect (= #{:created-at :origin} contract/request-stamp-keys))
       (expect (= #{:is-secret} contract/derived-keys))

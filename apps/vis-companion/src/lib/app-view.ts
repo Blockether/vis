@@ -49,6 +49,7 @@ export function newerAppView(held: LiveView | null, read: LiveView): LiveView {
     // A read without the flag is the owner back again: the held flag must not stay.
     const merged = { ...held, ...read };
     if (read.is_disconnected !== true) delete merged.is_disconnected;
+    if (read.is_reconnectable !== true) delete merged.is_reconnectable;
     return merged;
   }
   return held;
@@ -101,11 +102,21 @@ export function sendAction(
   };
 }
 
-/** The state word of an app card. A live app is the usual case and has no word. */
-export function appStateWord(view: Pick<LiveView, 'is_closed' | 'is_archived' | 'is_disconnected'>): string {
+/** True for an app whose owner is away and comes back when a person opens the app. */
+export function isAppAway(view: Pick<LiveView, 'is_disconnected' | 'is_reconnectable'>): boolean {
+  return view.is_disconnected === true && view.is_reconnectable === true;
+}
+
+/**
+ * The state word of an app card. A live app is the usual case and has no word, and
+ * so does an app that connects when a person opens it.
+ */
+export function appStateWord(
+  view: Pick<LiveView, 'is_closed' | 'is_archived' | 'is_disconnected' | 'is_reconnectable'>,
+): string {
   if (view.is_closed) return 'Closed';
   if (view.is_archived) return 'Archived';
-  if (view.is_disconnected) return 'Disconnected';
+  if (view.is_disconnected && !isAppAway(view)) return 'Disconnected';
   return '';
 }
 
@@ -118,11 +129,12 @@ export function appHeadline(nodes: readonly LiveNode[]): LiveStatusNode | undefi
 }
 
 /**
- * True when a press can open the app. A disconnected app never opens: its owner is
- * not there to answer. An app that is open already and then disconnects stays open.
+ * True when a press can open the app. A disconnected app opens only when the open
+ * brings its owner back: else nobody is there to answer. An app that is open already
+ * and then disconnects stays open.
  */
-export function canOpenApp(view: Pick<LiveView, 'is_disconnected'>): boolean {
-  return view.is_disconnected !== true;
+export function canOpenApp(view: Pick<LiveView, 'is_disconnected' | 'is_reconnectable'>): boolean {
+  return view.is_disconnected !== true || isAppAway(view);
 }
 
 /** The name of an app before its view arrives: the filename without `.app.json`. */

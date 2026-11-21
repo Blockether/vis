@@ -389,51 +389,11 @@
                                        title))
   nil)
 
-(defn- with-turn-lock
-  "Call `f` with the current environment of session `id` while this caller holds the
-   one-turn lock of the session. A turn and a single block both run here."
-  [id f]
-  (let [k
-        (loop-env/cache-key id)
-
-        ;; ONE turn per session, and the lock is TAKEN right here — through
-        ;; `acquire-turn-lock!`, which never parks on a lock a wedged turn is
-        ;; never going to release. Extension reload marks envs dirty; the actual
-        ;; sandbox reset happens under the lock below, after prior IR/render is
-        ;; finished and before the next user code executes.
-        {:keys [^java.util.concurrent.locks.ReentrantLock lock] :as entry}
-        (loop-env/acquire-turn-lock! id)]
-
-    (try
-      ;; Apply a pending `/reload` FIRST: if this entry was built under an
-      ;; older policy epoch, recycle it now so the turn runs against a
-      ;; security-policy snapshot rebuilt from the freshly-reloaded vis.yml
-      ;; (new network domains / filesystem roots take effect here). Done under
-      ;; the lock, before the turn, so no eval races the swap.
-      (when (loop-env/policy-stale? (or (get @loop-env/cache k) entry)) (loop-env/recycle-env! k))
-      ;; Re-read :environment UNDER the lock: a `/reload` recycle by an earlier
-      ;; queued turn or a router/extension reseat may have swapped it since we
-      ;; captured `entry`, so the queued turn runs against the CURRENT context.
-      (f (:environment (or (get @loop-env/cache k) entry)))
-      (finally
-        ;; Housekeeping must NEVER strand the lock. A throw here used to skip
-        ;; the `.unlock` below, pinning this session's entry as permanently
-        ;; "busy": `evict-if-idle!` tryLocks, fails forever, and the session —
-        ;; plus every door and namespace it holds — leaks for the life of the
-        ;; gateway. Unlock in an inner `finally` so it is unconditional.
-        (try (loop-env/touch-entry! (or (get @loop-env/cache k) entry))
-             (catch Throwable _ nil)
-             (finally (.unlock lock)
-                      ;; After unlocking: a reload racing this handoff either closes
-                      ;; the idle sandbox itself or is picked up here. Never wait for
-                      ;; another turn (or the idle TTL) to reclaim the old worker.
-                      (loop-env/dispose-reloaded-sandbox! k)))))))
-
 (defn send!
   ([id messages] (send! id messages {}))
   ([id messages opts]
    (let [message-vec (if (string? messages) [(svar/user messages)] messages)]
-     (with-turn-lock id #(turn/turn! % message-vec opts)))))
+     (loop-env/with-turn-lock id #(turn/turn! % message-vec opts)))))
 
 (defn run-block!
   "Run one Python block `code` in the sandbox of session `id`, as the
@@ -441,25 +401,25 @@
    block waits for a running turn of the session. Returns `{:result text :error?
    bool}`. `text` is what the agent sees ([[transcript/block-text]])."
   [id code]
-  (with-turn-lock id
-                  (fn [environment]
-                    (let [overrides
-                          (merge (scoped/values (:db-info environment) (:session-id environment))
-                                 toggles/*invocation-overrides*)
+  (loop-env/with-turn-lock
+    id
+    (fn [environment]
+      (let [overrides
+            (merge (scoped/values (:db-info environment) (:session-id environment))
+                   toggles/*invocation-overrides*)
 
-                          outcome
-                          (binding [toggles/*overrides*
-                                    overrides
+            outcome
+            (binding [toggles/*overrides*
+                      overrides
 
-                                    rt/*rlm-context*
-                                    {:rlm-type :main
-                                     :db-info (:db-info environment)
-                                     :session-soul-id (:session-id environment)}]
+                      rt/*rlm-context*
+                      {:rlm-type :main
+                       :db-info (:db-info environment)
+                       :session-soul-id (:session-id environment)}]
 
-                            (python-exec/execute-code environment code))]
+              (python-exec/execute-code environment code))]
 
-                      {:result (or (transcript/block-text outcome) "")
-                       :error? (boolean (:error outcome))}))))
+        {:result (or (transcript/block-text outcome) "") :error? (boolean (:error outcome))}))))
 
 (defn close!
   [id]

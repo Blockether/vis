@@ -613,6 +613,8 @@ export interface LiveView {
    * not loaded. It is kept apart from `is_stale`, which asks for a re-read.
    */
   is_disconnected?: boolean;
+  /** A `connect` action brings the owner of this disconnected app back. */
+  is_reconnectable?: boolean;
   /** The session that shows the view. */
   session_id?: string;
   /** The extension that owns a panel view. */
@@ -1482,6 +1484,7 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     ...(view.is_archived === true ? { is_archived: true } : {}),
     ...(view.is_closed === true ? { is_closed: true } : {}),
     ...(view.is_stale === true ? { is_disconnected: true } : {}),
+    ...(view.is_reconnectable === true ? { is_reconnectable: true } : {}),
     ...(Array.isArray(view.shortcuts) ? { shortcuts: liveShortcutsFromWire(view.shortcuts) } : {}),
     ...(view.surfaces === undefined ? {} : { surfaces: appSurfacesFromWire(view.surfaces) }),
     ...(view.icon === undefined ? {} : { icon: appIconName(view.icon) }),

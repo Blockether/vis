@@ -575,6 +575,36 @@ describe('a disconnected app', () => {
     fireEvent.click(button);
     expect(onPick).not.toHaveBeenCalled();
   });
+
+  // User report 2026-11-29: the review app of a session said Disconnected after a gateway
+  // restart, until a turn or /review ran. The open of such an app must start its owner.
+  describe('that the host can connect again', () => {
+    const away = () => game(3, { is_stale: true, is_reconnectable: true });
+
+    it('opens from its row without a state word and sends one connect', async () => {
+      const { client, viewAction } = fakeClient([away(), game(3)], accepted);
+      render(row(client, [away()], 'away-row'));
+      const button = screen.getByRole('button', { name: 'Open app counter' });
+      expect(button).toBeEnabled();
+      expect(within(button).queryByText('Disconnected')).toBeNull();
+      fireEvent.click(button);
+      await screen.findByRole('toolbar', { name: 'App keys' });
+      expect(viewAction.mock.calls.map((call) => call[2])).toEqual([{ action: 'connect' }]);
+      expect(screen.queryByText('Disconnected')).toBeNull();
+      expect(screen.queryByText('Connecting')).toBeNull();
+    });
+
+    it('says Disconnected in the opened app when the host refuses the connect', async () => {
+      const { client, viewAction } = fakeClient([away()], async () => {
+        throw new GatewayError(409, 'disconnected', { is_accepted: false, reason: 'disconnected' });
+      });
+      render(row(client, [away()], 'away-refused'));
+      fireEvent.click(screen.getByRole('button', { name: 'Open app counter' }));
+      expect(await screen.findByText('Disconnected')).toBeInTheDocument();
+      expect(viewAction).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('toolbar', { name: 'App keys' })).toBeNull();
+    });
+  });
 });
 
 describe('AppSurface focus, names and owner loss', () => {

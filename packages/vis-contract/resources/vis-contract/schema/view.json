@@ -188,6 +188,18 @@
             "action",
             "key"
           ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "connect"
+            }
+          },
+          "required": [
+            "action"
+          ]
         }
       ]
     },
@@ -3112,6 +3124,11 @@
         },
         "is_stale": {
           "description": "True for the saved picture of an owned view after a gateway restart, until its extension loads again.",
+          "type": "boolean",
+          "readOnly": true
+        },
+        "is_reconnectable": {
+          "description": "True for a stale app that gets its owner back when a client sends the `connect` action.",
           "type": "boolean",
           "readOnly": true
         },

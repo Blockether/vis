@@ -121,6 +121,10 @@
              (it "reads the state an app shows"
                  (expect (= :live (model/status {})))
                  (expect (= :stale (model/status {:is-stale true})))
+                 (expect (= :away (model/status {:is-stale true :is-reconnectable true})))
+                 (expect (model/openable? {:is-stale true :is-reconnectable true}))
+                 (expect (not (model/openable? {:is-stale true})))
+                 (expect (model/stale? {:is-stale true :is-reconnectable true}))
                  (expect (= :closed (model/status {:is-stale true :is-closed true})))
                  (expect (model/read-only? {:is-closed true}))
                  (expect (not (model/read-only? {:is-stale true}))))

@@ -2746,8 +2746,9 @@
   {:owner-context (:context *live-owner*)
    :listener (:listener *live-owner*)
    :listener-agent (when (:listener *live-owner*) (agent nil))
-   ;; Hook name -> the function that the code of the owner names for it.
-   :owner-hooks (:hooks *live-owner*)
+   ;; Hook name -> the function that the code of the owner names for it. The entry
+   ;; keeps the hooks after it loses the owner, and the list of the session saves them.
+   :hooks (:hooks *live-owner*)
    ;; An app that its owner opened or adopted in this process.
    :is-held true})
 
@@ -2757,15 +2758,70 @@
   [entry]
   (boolean (and (:is-app entry) (not (:is-held entry)) (:extension @(:view entry)))))
 
+(defonce ^:private connector
+  ;; What runs the `reload` hook of a disconnected app for a person who opens the app.
+  ;; The layer that owns the session environments installs it.
+  (atom nil))
+
+(defn set-connector!
+  "Install what brings the owner of a disconnected app back when a person opens the
+   app: called with `{:session-id :extension :key :view-id :hook}` on the thread of
+   the `connect` action. It can start the sandbox of the session. It answers true
+   when the hook ran."
+  [f]
+  (reset! connector f))
+
+(defn- reconnectable?
+  "True for app `entry` without an owner that the `connect` action can connect again:
+   an app of a session whose last owner named a `reload` hook."
+  [entry]
+  (boolean
+    (and (app-stale? entry) (first (:app-key entry)) (get (:hooks entry) "reload") @connector)))
+
 (defn- app-picture
   "The picture of live `entry` as the surfaces paint it: an app that waits for its
-   owner says `:is-stale` true."
+   owner says `:is-stale` true, and `:is-reconnectable` true when a `connect` action
+   brings the owner back."
   [entry]
   (some-> (:view entry)
           deref
           (cond->
             (app-stale? entry)
-            (assoc :is-stale true))))
+            (assoc :is-stale true)
+
+            (reconnectable? entry)
+            (assoc :is-reconnectable true))))
+
+(defn- connect-app!
+  "Bring the owner of app `entry` back for a person who opens the app, and answer the
+   verdict of the `connect` action on `base`. An app with an owner is connected
+   already. An app that nothing can connect answers `disconnected`."
+  [entry base]
+  (let [[session-id extension k]
+        (:app-key entry)
+
+        connected?
+        #(not (app-stale? (get @pending (:id entry))))]
+
+    (if (or (connected?)
+            (and (reconnectable? entry)
+                 (try (@connector
+                       {:session-id session-id
+                        :extension extension
+                        :key k
+                        :view-id (:id entry)
+                        :hook (get (:hooks entry) "reload")})
+                      (catch Throwable t
+                        (tel/log! {:level :warn
+                                   :id ::app-connect-failed
+                                   :data {:view-id (:id entry) :error (ex-message t)}
+                                   :msg "The reload hook of an app failed"})
+                        false))
+                 (connected?)))
+      (assoc base :is-accepted true)
+      (assoc base
+        :is-accepted false
+        :reason "disconnected"))))
 
 (defonce ^:private session-sends
   ;; Offers the Sends of sandbox apps to their sessions in order, away from the app lock.
@@ -2803,6 +2859,31 @@
           :when (= "accepted" (:status receipt))]
 
     (offer-send! entry receipt)))
+
+(defn- app-index-row
+  "The line of app `view` in the list of its session. `hooks` are the hooks of its
+   owner, kept as pairs, so a hook name is never read as a key."
+  [view hooks]
+  (cond-> {:view-id (:id view) :created-at (:created-at view)}
+    (:key view)
+    (assoc :key (:key view))
+
+    (:extension view)
+    (assoc :extension (:extension view))
+
+    (seq hooks)
+    (assoc :hooks (vec hooks))))
+
+(defn- saved-hooks
+  "The hooks that the last owner of app `view-id` of session `sid` named, or nil.
+   The list of the session keeps them, so a restart does not lose them."
+  [sid view-id]
+  (some->> (sink/app-index sid)
+           (filter #(= (str view-id) (:view-id %)))
+           last
+           :hooks
+           (into {})
+           not-empty))
 
 (defn- replayed-app
   "[[replay-app]] of `file`, the record of app `view-id` of session `sid`. A record
@@ -2842,7 +2923,9 @@
                  view-id)
             (let [[before after] (swap-vals! pending
                                              #(cond-> % (not (contains? % view-id))
-                                                (assoc view-id (app-entry view file node-seqs))))
+                                                (assoc view-id
+                                                  (assoc (app-entry view file node-seqs)
+                                                    :hooks (saved-hooks sid view-id)))))
                   entry (get after view-id)]
 
               (when (and entry (not (contains? before view-id)))
@@ -2949,6 +3032,9 @@
                   #(cond-> % (contains? % (:id entry)) (update (:id entry) merge (owner-hold))))
                 adopted (get after (:id entry))]
 
+            ;; The next restart reads the hooks of this owner.
+            (when (and adopted (not= (:hooks (get before (:id entry))) (:hooks adopted)))
+              (sink/index-app! (:session-id @cell) (app-index-row @cell (:hooks adopted))))
             (when (and adopted
                        (or changed?
                            (some-> (get before (:id entry))
@@ -2963,13 +3049,7 @@
    that opened it. An app opened outside a block has no row; its session still
    lists it."
   [view]
-  (sink/index-app! (:session-id view)
-                   (cond-> {:view-id (:id view) :created-at (:created-at view)}
-                     (:key view)
-                     (assoc :key (:key view))
-
-                     (:extension view)
-                     (assoc :extension (:extension view))))
+  (sink/index-app! (:session-id view) (app-index-row view (:hooks *live-owner*)))
   (let [picture (.getBytes ^String (wire/json-str view) java.nio.charset.StandardCharsets/UTF_8)]
     (mpl-capture/record-attachment! {:kind "file"
                                      :media-type app/media-type
@@ -3654,18 +3734,16 @@
         #(and (:is-app %) (identical? ctx (:owner-context %)))
 
         [before after]
-        (swap-vals!
-          pending
-          (fn [entries]
-            (into
-              {}
-              (map
-                (fn [[id entry]]
-                  [id
-                   (if (released? entry)
-                     (dissoc entry :owner-context :listener :listener-agent :owner-hooks :is-held)
-                     entry)]))
-              entries)))]
+        (swap-vals! pending
+                    (fn [entries]
+                      (into {}
+                            (map
+                              (fn [[id entry]]
+                                [id
+                                 (if (released? entry)
+                                   (dissoc entry :owner-context :listener :listener-agent :is-held)
+                                   entry)]))
+                            entries)))]
 
     ;; The surfaces show each released app as disconnected.
     (doseq [[id entry]
@@ -3676,7 +3754,7 @@
             :when (and (released? entry) now (app-stale? now))]
 
       (publish! (:channel-ids now) (lifecycle-event :view/open now {:view (app-picture now)}))
-      (app-disconnected! now (get (:owner-hooks entry) "reload"))))
+      (app-disconnected! now (get (:hooks entry) "reload"))))
   (->> (vals @pending)
        (filter #(and (:owned-key %) (identical? ctx (:owner-context %))))
        (sort-by :created-at)
@@ -4308,7 +4386,7 @@
           (some? (:revision raw))
           (assoc :revision (live-text fail! "draft revision" (:revision raw)))))
 
-      :cancel
+      (:cancel :connect)
       {:action action}
 
       :activate
@@ -4579,7 +4657,7 @@
               :cancel
               (= :input kind)
 
-              (:draft :shortcut)
+              (:draft :shortcut :connect)
               (boolean (:is-app entry))
 
               :interrupt
@@ -4604,6 +4682,9 @@
 
           :draft
           (merge base (app-draft! entry view-id normalized))
+
+          :connect
+          (connect-app! entry base)
 
           :change
           (merge base

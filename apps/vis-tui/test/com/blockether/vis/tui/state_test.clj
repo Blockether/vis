@@ -7071,7 +7071,15 @@
         (state/dispatch [:app-pane-open "A" "gone"])
         (expect (nil? (get-in @state/app-db [:live-panel :app])))
         (state/dispatch [:app-pane-open "A" "live"])
-        (expect (= {:session-id "A" :view-id "live"} (get-in @state/app-db [:live-panel :app]))))))
+        (expect (= {:session-id "A" :view-id "live"} (get-in @state/app-db [:live-panel :app])))))
+  ;; User report 2026-11-29: the review app did not open after a gateway restart.
+  (it "opens a disconnected app that the gateway can connect again"
+      (with-redefs [state/app-db (atom {:session {:id "A"}
+                                        :app-views {"away" {:view {:id "away"
+                                                                   :is-stale true
+                                                                   :is-reconnectable true}}}})]
+        (state/dispatch [:app-pane-open "A" "away"])
+        (expect (= {:session-id "A" :view-id "away"} (get-in @state/app-db [:live-panel :app]))))))
 
 ;; All disclosures opened at once left each bubble out of view on a height estimate
 ;; (20151 rows for a transcript of 8655). The reader then scrolled into bubbles that

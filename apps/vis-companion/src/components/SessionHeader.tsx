@@ -133,6 +133,8 @@ export function SessionHeader({
       is_archived?: boolean;
       /** A disconnected app shows its state and its row cannot open it. */
       is_disconnected?: boolean;
+      /** The open of this disconnected app connects it again. */
+      is_reconnectable?: boolean;
     }[];
     /** The app that is open now. A press on its row closes it. */
     openId: string | null;

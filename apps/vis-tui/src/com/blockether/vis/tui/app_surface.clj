@@ -456,6 +456,12 @@
   "What the status line says when a control of an app without its owner is used."
   "Disconnected: the app waits for its owner")
 
+(def connecting-notice
+  "What the status line says when a control is used while the owner of the app starts."
+  "Connecting: the app waits for its owner")
+
+(defn- waiting-notice [view] (if (model/away? view) connecting-notice disconnected-notice))
+
 (defn- owner-control
   [state view node item-id {:keys [activate! select! edit! reveal!]}]
   (let [node-id (:id node)]
@@ -479,7 +485,7 @@
           (= :image (:type node)) (do (inspect! node) state)
           (button-refusal node) (assoc state :notice "That button is disabled")
           (submit-button? node) (send-app state view node-id effects)
-          (model/stale? view) (assoc state :notice disconnected-notice)
+          (model/stale? view) (assoc state :notice (waiting-notice view))
           :else (owner-control state view node item-id effects))))
 
 (def ^:private named-shortcut-keys
@@ -578,13 +584,14 @@
                               enabled))]
 
       (if (model/stale? view)
-        (str "Disconnected: the controls wait for the owner of the app"
+        (str (if (model/away? view) "Connecting" "Disconnected")
+             ": the controls wait for the owner of the app"
              (when (seq pairs) (str "  ·  " (str/join "  ·  " (map #(str/join " " %) pairs)))))
         (not-empty pairs)))))
 
 (defn- press-shortcut
   [state view s {:keys [shortcut!] :as effects}]
-  (cond (model/stale? view) (assoc state :notice disconnected-notice)
+  (cond (model/stale? view) (assoc state :notice (waiting-notice view))
         (:node-id s) (press state view (:node-id s) nil effects)
         :else (do (shortcut! {:action :shortcut :key (:key s)} s)
                   (assoc state :notice (str (shortcut-label view s) " …")))))
@@ -1586,7 +1593,8 @@
   (str (app/icon-mark view)
        "  "
        (or (not-empty (str (:title view))) "App")
-       (when-let [word (get model/status-label (model/status view))]
+       (when-let [word
+                  (if (model/away? view) "Connecting" (get model/status-label (model/status view)))]
          (str "  ·  " word))))
 
 (def ^:private app-region
@@ -2181,6 +2189,22 @@
 
     (refresh-gap! nil sid view-id)))
 
+(defn- connect-away!
+  "Bring the owner of the app back for the person who has the app open: one `connect`
+   action for each time that the owner is away."
+  [box session-id view-id]
+  (let [connect (:connect box)]
+    (cond (not (model/away? (newer @(:view box) (:view (held-view session-id view-id)))))
+          (reset! connect nil)
+          (compare-and-set! connect nil :sent)
+          (vis/worker-future
+            "vis-app-connect"
+            (fn []
+              (if (:is-accepted (vis/gateway-app-action! session-id view-id {:action :connect}))
+                (read-view! box session-id view-id true)
+                (reset! connect :refused))
+              ((:on-change box)))))))
+
 (defn- idle-paint! [] (Thread/sleep (if (lv/scene-moving?) 12 40)) nil)
 
 (defn- reveal-ready?
@@ -2197,6 +2221,7 @@
    closes, so the chat shows the revealed app."
   [box session-id view-id ^TerminalScreen screen]
   (refresh-gap! box session-id view-id)
+  (connect-away! box session-id view-id)
   (cond (dlg/modal-input-pending? screen) (modal-key! screen)
         (reveal-ready? session-id) ::reveal
         :else (idle-paint!)))
@@ -2212,11 +2237,19 @@
 
 (defn- component-box
   [first-view on-change]
-  {:view (atom first-view) :outcomes (atom []) :on-change (or on-change (constantly nil))})
+  {:view (atom first-view)
+   :outcomes (atom [])
+   ;; nil, `:sent` after the `connect` of this outage, or `:refused`.
+   :connect (atom nil)
+   :on-change (or on-change (constantly nil))})
 
 (defn- current-app-view
+  "The copy of the app that the surface shows. After a refused `connect`, the app
+   shows as disconnected: nothing brings its owner back."
   [box session-id view-id]
-  (or (newer @(:view box) (:view (held-view session-id view-id))) {:id view-id :nodes []}))
+  (cond-> (or (newer @(:view box) (:view (held-view session-id view-id))) {:id view-id :nodes []})
+    (= :refused @(:connect box))
+    (dissoc :is-reconnectable)))
 
 (defn- component-initial-state
   [close-label]
@@ -2243,11 +2276,13 @@
 
     ;; The stream holds no app frame, so read the newest copy.
     (read-view! box session-id view-id)
+    (connect-away! box session-id view-id)
     {:init (component-initial-state close-label)
      :measure (fn [st cols rows]
                 (measure st cols rows (current)))
      :measure-pane (fn [st left top width height]
                      (refresh-gap! box session-id view-id)
+                     (connect-away! box session-id view-id)
                      (pane-measure st left top width height (current)))
      :reconcile (partial reconcile-outcomes! box)
      :paint paint!
@@ -2259,7 +2294,7 @@
   "Open app `view-id` of `session-id`, or global app `view-id` without `session-id`,
    until the human closes it. `band` `{:left :width}` keeps the app in those screen
    columns; without it the app uses the whole terminal width. `close-label` names
-   what Esc does. A disconnected app does not open."
+   what Esc does. An app that cannot connect does not open."
   [^TerminalScreen screen session-id view-id & [{:keys [band close-label open-picture!]}]]
   (let [run! #(dlg/run-modal! screen
                               (component session-id

@@ -1468,7 +1468,8 @@ you get every view of the session except the archived apps. With `archived` set 
 only the archived [apps](live-views.md#apps).
 
 A panel view also has `placement`, `key`, `extension`, and `is_stale`. `is_stale` is true for the
-saved state of a view after a gateway restart, until its extension loads again.
+saved state of a view after a gateway restart, until its extension loads again. A stale app also
+has `is_reconnectable` true when the `connect` action can connect it again.
 
 ### Change an input or press a button
 
@@ -1511,6 +1512,7 @@ shortcut of an [app](live-views.md#add-shortcuts-to-an-app). A closed app return
 | `activate` | Presses a button or a selectable card |
 | `submit` | Presses a submit button. [Collect input in a view](live-views.md#collect-input-in-a-view) lists the `values` that it sends |
 | `shortcut` | Presses a shortcut. An accepted press answers the `shortcut` id. A key without a shortcut answers `is_accepted` false and `reason` `unbound` |
+| `connect` | Connects a stale app with `is_reconnectable` true again, as the clients do when a person opens the app. Vis calls the [`on_reload` hook](live-views.md#after-a-reload-of-your-extension) of the app. A refusal returns 409 with `reason` `disconnected` |
 
 ### Run an app from a program
 

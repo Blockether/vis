@@ -4300,7 +4300,8 @@
             (long (or (:behind-seq held) 0))
 
             owner-state
-            #(if (:is-stale view) (assoc % :is-stale true) (dissoc % :is-stale))
+            #(cond-> (dissoc % :is-stale :is-reconnectable) (:is-stale view) (assoc :is-stale true)
+               (:is-reconnectable view) (assoc :is-reconnectable true))
 
             with-body
             #(merge (dissoc view :is-summary) (select-keys (:view held) %))]
@@ -4516,7 +4517,7 @@
 
 (reg-event-db :app-pane-open
               ;; C-x b o: show session app `view-id` in the side panel slot, with the focus.
-              ;; A disconnected app does not open.
+              ;; An app that cannot connect does not open.
               (fn [db [_ session-id view-id]]
                 (if-not (app-model/openable? (get-in db [:app-views view-id :view]))
                   db

@@ -26,15 +26,17 @@
     (when-not (str/blank? (str id)) (str id))))
 
 (defn status
-  "The lifecycle state an app view shows: `:closed`, `:archived`, `:stale` or `:live`."
+  "The lifecycle state an app view shows: `:closed`, `:archived`, `:stale`, `:away` or
+   `:live`. An `:away` app waits for its owner, and its open brings the owner back."
   [view]
   (cond (:is-closed view) :closed
         (:is-archived view) :archived
-        (:is-stale view) :stale
+        (:is-stale view) (if (:is-reconnectable view) :away :stale)
         :else :live))
 
 (def status-label
-  "The badge text of each lifecycle state. A live app is the usual case and has none."
+  "The badge text of each lifecycle state. A live app is the usual case and has none,
+   and so does an app that connects when a person opens it."
   {:stale "Disconnected" :closed "Closed" :archived "Archived"})
 
 (defn read-only?
@@ -45,12 +47,18 @@
 (defn stale?
   "True when the app waits for its owner: its controls and keys reach nobody."
   [view]
-  (= :stale (status view)))
+  (contains? #{:stale :away} (status view)))
+
+(defn away?
+  "True when the app waits for its owner and its open brings the owner back."
+  [view]
+  (= :away (status view)))
 
 (defn openable?
-  "True when people can open the app. A disconnected app does not open on any surface."
+  "True when people can open the app. A disconnected app opens only when the open
+   brings its owner back."
   [view]
-  (not (stale? view)))
+  (not= :stale (status view)))
 
 ;;; ── Diff lines ─────────────────────────────────────────────────────────────
 

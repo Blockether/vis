@@ -7942,6 +7942,61 @@ vis.register_extension(vis.Extension(name='board', description='Board fixture.',
                            (finally (when view-id (human-input/close-live! view-id))))))
                  (finally (ep/dispose-python-context! ctx)))))))))
 
+(defdescribe
+  restart-connect-app-test
+  ;; User report 2026-11-21: after a gateway restart, the Review app stayed disconnected
+  ;; until the next block or `/review`. A person who opens the app now connects it.
+  (doseq [reopens? [true false]]
+    (it
+      (if reopens?
+        "connects an app with the on_reload hook again after a restart, when a person opens it"
+        "keeps an app without the on_reload hook disconnected after a restart")
+      (with-fresh-loaded
+        {"extension.py" (board-py 1 reopens?)}
+        (fn [loaded {:keys [store]}]
+          (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+          (let [root (.getCanonicalPath ^java.io.File (temp-dir))
+                ws (ps/db-workspace-insert! store {:repo-id "board" :root root})
+                sid (ps/db-store-session! store
+                                          {:channel :tui :workspace-id (:id ws) :title "board"})
+                ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                env {:python-context ctx
+                     :db-info store
+                     :session-id sid
+                     :channel :tui
+                     :extensions (atom [(registered "board")])
+                     :active-extensions (atom [])
+                     :workspace-atom (atom ws)}
+                pending @#'human-input/pending]
+
+            (try (with-redefs-fn {(requiring-resolve
+                                    'com.blockether.vis.internal.view.sink/views-dir)
+                                  (constantly (io/file root "views"))
+                                  #'loop-env/cache (atom {(loop-env/cache-key sid) {:environment
+                                                                                    env}})}
+                   #(let [opened
+                          (binding [extension/*current-environment* env]
+                            ((symbol-fn (registered "board") 'open_board))) view-id
+                          (:id (first (human-input/session-apps (str sid)))) picture
+                          (fn []
+                            (human-input/app-view (str sid) view-id))]
+                      (try (expect (:success? opened) (pr-str opened))
+                           ;; A restart: the gateway holds no owner and reads the record back.
+                           (swap! pending dissoc view-id)
+                           (expect (true? (:is-stale (picture))))
+                           (expect (= reopens? (true? (:is-reconnectable (picture)))))
+                           (let [outcome (human-input/action! view-id {:action "connect"})]
+                             (if reopens?
+                               (do (expect (:is-accepted outcome) (pr-str outcome))
+                                   (expect (some? (:owner-context (get @pending view-id))))
+                                   (expect (nil? (:is-stale (picture))))
+                                   (expect (nil? (:is-reconnectable (picture)))))
+                               (do (expect (= {:is-accepted false :reason "disconnected"}
+                                              (select-keys outcome [:is-accepted :reason])))
+                                   (expect (true? (:is-stale (picture)))))))
+                           (finally (when view-id (human-input/close-live! view-id))))))
+                 (finally (ep/dispose-python-context! ctx)))))))))
+
 (def ^:private stale-ctx-py
   "import blockether.vis.extension as vis
 

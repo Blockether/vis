@@ -87,6 +87,7 @@ export const VIEW_ACTIONS = [
   'activate',
   'cancel',
   'change',
+  'connect',
   'draft',
   'interrupt',
   'select',
@@ -134,6 +135,8 @@ export type ViewAction =
       revision?: string;
     }
   | { action: 'cancel' }
+  /** A person opens an app whose owner is away: the host brings the owner back. */
+  | { action: 'connect' }
   | { action: 'activate'; node_id: string }
   | { action: 'select'; node_id: string; item_ids: string[] }
   /** A key that the app binds to an action of its owner. */

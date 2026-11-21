@@ -2310,9 +2310,12 @@
    Nothing is disposed here because parent-side host work may still hold the old
    environment. The expensive interpreter process is already reclaimed on the
    retirement path. Rescue happens at most once per acquisition — a fresh context
-   that still refuses is a real turn failure, not a reason to keep minting workers."
-  [id]
-  (let [k (cache-key id)]
+   that still refuses is a real turn failure, not a reason to keep minting workers.
+
+   With `wait?` false, a lock that another caller holds answers nil after one poll."
+  ([id] (acquire-turn-lock! id true))
+  ([id wait?]
+   (let [k (cache-key id)]
     (loop [rescued? false]
       (let [{:keys [^java.util.concurrent.locks.ReentrantLock lock
                     ^java.util.concurrent.atomic.AtomicBoolean condemned]
@@ -2331,9 +2334,60 @@
                 {:level :warn :id ::engine-context-unsafe :data {:session k}}
                 "Session Python context is retired or cannot be entered; starting a fresh context")
               (recur true)))
-          (do
+          (when wait?
             (when (and condemned (.get condemned) (detach-entry! k entry))
               (tel/log!
                 {:level :warn :id ::engine-abandoned :data {:session k}}
                 "Session engine abandoned: its turn was declared over but its thread never returned - starting a fresh context"))
-            (recur rescued?)))))))
+            (recur rescued?))))))))
+
+(defn with-turn-lock
+  "Call `f` with the current environment of session `id` while this caller holds the
+   one-turn lock of the session. A turn and a single block both run here. With
+   `wait?` false, a session whose lock is held answers nil and `f` does not run."
+  ([id f] (with-turn-lock id f true))
+  ([id f wait?]
+   (let [k (cache-key id)]
+     ;; ONE turn per session, and the lock is TAKEN right here — through
+     ;; `acquire-turn-lock!`, which never parks on a lock a wedged turn is
+     ;; never going to release. Extension reload marks envs dirty; the actual
+     ;; sandbox reset happens under the lock below, after prior IR/render is
+     ;; finished and before the next user code executes.
+     (when-let [{:keys [^java.util.concurrent.locks.ReentrantLock lock] :as entry}
+                (acquire-turn-lock! id wait?)]
+       (try
+         ;; Apply a pending `/reload` FIRST: if this entry was built under an
+         ;; older policy epoch, recycle it now so the turn runs against a
+         ;; security-policy snapshot rebuilt from the freshly-reloaded vis.yml
+         ;; (new network domains / filesystem roots take effect here). Done under
+         ;; the lock, before the turn, so no eval races the swap.
+         (when (policy-stale? (or (get @cache k) entry)) (recycle-env! k))
+         ;; Re-read :environment UNDER the lock: a `/reload` recycle by an earlier
+         ;; queued turn or a router/extension reseat may have swapped it since we
+         ;; captured `entry`, so the queued turn runs against the CURRENT context.
+         (f (:environment (or (get @cache k) entry)))
+         (finally
+           ;; Housekeeping must NEVER strand the lock. A throw here used to skip
+           ;; the `.unlock` below, pinning this session's entry as permanently
+           ;; "busy": `evict-if-idle!` tryLocks, fails forever, and the session —
+           ;; plus every door and namespace it holds — leaks for the life of the
+           ;; gateway. Unlock in an inner `finally` so it is unconditional.
+           (try (touch-entry! (or (get @cache k) entry))
+                (catch Throwable _ nil)
+                (finally (.unlock lock)
+                         ;; After unlocking: a reload racing this handoff either closes
+                         ;; the idle sandbox itself or is picked up here. Never wait for
+                         ;; another turn (or the idle TTL) to reclaim the old worker.
+                         (dispose-reloaded-sandbox! k)))))))))
+
+(defn- connect-app!
+  "Bring the owner of disconnected `app` back for a person who opens the app: run its
+   `reload` hook in its extension. A session without a live sandbox gets one under the
+   one-turn lock, as its first step does. Answers true when the hook ran, and nil while
+   a turn holds that lock: the first step of the turn loads the extension."
+  [{:keys [session-id extension] :as app}]
+  (or (reconnect-app! app)
+      (with-turn-lock session-id #(extension/run-app-hook % extension app) false)))
+
+;; Keep the Var so namespace reloads retain live wiring.
+(defonce ^:private _app-connect (view/set-connector! #'connect-app!))

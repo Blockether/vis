@@ -166,6 +166,11 @@ describe('newerAppView', () => {
     const back = newerAppView(lost, { ...app(), seq: 8 });
     expect(back.is_disconnected).toBeUndefined();
     expect(appStateWord(back)).toBe('');
+    // An owner that came back with a connect leaves no claim on the next outage.
+    const away = newerAppView(live, { ...app(), seq: 8, is_disconnected: true, is_reconnectable: true });
+    expect(appStateWord(away)).toBe('');
+    const gone = newerAppView(newerAppView(away, { ...app(), seq: 8 }), { ...app(), seq: 8, is_disconnected: true });
+    expect(appStateWord(gone)).toBe('Disconnected');
   });
 });
 
