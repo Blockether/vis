@@ -1047,9 +1047,16 @@
 
 (defn- paint-team-line!
   "Paint one transcript line of a team table."
-  [^TextGraphics g left row width viewport-top {:keys [team-line]}]
+  [^TextGraphics g left row width viewport-top {:keys [team-line bg]}]
   (let [{:keys [line columns]} team-line]
-    (paint-table-line! g left row width line columns (System/currentTimeMillis) t/code-block-bg)
+    (paint-table-line! g
+                       left
+                       row
+                       width
+                       line
+                       columns
+                       (System/currentTimeMillis)
+                       (or bg t/terminal-bg))
     (when (= :row (:kind line))
       (register-row! (:row line) (+ (long viewport-top) (long row)) left width))))
 
@@ -1118,9 +1125,9 @@
 
 (defn- paint-card-head!
   "Paint the head line of a team block. A click on it folds or unfolds the table."
-  [^TextGraphics g left row width viewport-top {:keys [team-head session-id node-id collapsed?]}]
+  [^TextGraphics g left row width viewport-top {:keys [team-head session-id node-id collapsed? bg]}]
   (let [bg
-        t/code-block-bg
+        (or bg t/terminal-bg)
 
         y
         (long row)]
@@ -1174,7 +1181,8 @@
 (defn card-entries
   "Transcript rows of a team block at `width` cells: `{:line :meta}` maps. The head line folds
    and unfolds the block; an unfolded block shows the table under it. A blank row stands before
-   and after the block."
+   and after the block. Each row stands on the surface of its message (`:plain-surface?`), not on
+   the Code band: a team is no code (user decision)."
   [{:keys [rows expanded? session-id node-id] :as team-card} width]
   (let [marker
         m/MARKER_ACTIVITY
@@ -1188,21 +1196,23 @@
         head
         {:line (str marker (segments-text (card-head-segments team-card)))
          :meta {:kind :activity-live-entry
+                :plain-surface? true
                 :live-paint paint-card-head!
                 :team-head (select-keys team-card [:expanded? :clock :rows])
                 :session-id (str session-id)
                 :node-id node-id
                 :collapsed? (not expanded?)}}]
 
-    (into [{:line marker :meta nil} head]
+    (into [{:line marker :meta {:plain-surface? true}} head]
           (concat (when expanded?
                     (map (fn [line]
                            {:line (str marker (segments-text (table-segments line columns now)))
                             :meta {:kind :activity-live-entry
+                                   :plain-surface? true
                                    :live-paint paint-team-line!
                                    :team-line {:line line :columns columns}}})
                          (table-lines rows)))
-                  [{:line marker :meta nil}]))))
+                  [{:line marker :meta {:plain-surface? true}}]))))
 
 (defn- card-width ^long [bubble-w] (max 1 (- (long bubble-w) 4)))
 

@@ -760,6 +760,53 @@
                                          (range 40)))))
                      "One background across the head line")
              (finally (.stopScreen screen)))))
+  ;; User report 2026-11-21: the team block of a turn stood on the darker Code band, though a team
+  ;; is no code. It stands on the surface of its message, as the dock does.
+  (it
+    "paints the team block on the surface of its message, not on the Code band"
+    (let [card
+          (assoc (team/card "turn-1" (mapv #(agent-row % "completed") (range 1 3)))
+            :expanded? true
+            :session-id "leader"
+            :node-id "agent-team:turn-1")
+
+          entries
+          (team/card-entries card 40)
+
+          paint-row!
+          (requiring-resolve 'com.blockether.vis.tui.render/paint-activity-row!)
+
+          screen
+          (doto (TerminalScreen. (DefaultVirtualTerminal. (TerminalSize. 42 (count entries))))
+            (.startScreen))
+
+          g
+          (.newTextGraphics screen)]
+
+      (try (doseq [[y {:keys [line meta]}] (map-indexed vector entries)]
+             (paint-row! g
+                         {:bg-color theme/terminal-bg
+                          :fg-color theme/text-fg
+                          :in-answer? false
+                          :fbx 0
+                          :fill-iw 42
+                          :iw 42
+                          :x 0
+                          :y y
+                          :line line
+                          :meta meta
+                          :right-inset 1
+                          :viewport-top 0}))
+           (expect (not= theme/code-block-bg theme/terminal-bg))
+           (expect (= #{theme/terminal-bg}
+                      (set (for [y
+                                 (range (count entries))
+
+                                 x
+                                 (range 42)]
+
+                             (.getBackgroundColor (.getCharacter g (int x) (int y)))))))
+           (finally (.stopScreen screen)))))
   ;; User report 2026-11-19: a turn that pinged its agents with a follow-up task showed no team.
   (it
     "shows an agent in the turn that started it and in each turn that pinged it"

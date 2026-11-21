@@ -2532,7 +2532,7 @@
 
     (case (:kind meta)
       :activity-live-entry
-      ((:live-paint meta) g x y (max 0 (dec (long iw))) viewport-top meta)
+      ((:live-paint meta) g x y (max 0 (dec (long iw))) viewport-top (assoc meta :bg band-bg))
 
       (:activity-row :activity-header)
       (do (p/set-colors! g
@@ -2708,8 +2708,11 @@
       nil)))
 
 (defn- paint-activity-row!
-  "Paint an activity row inside the Code surface."
-  [^TextGraphics g {:keys [fbx fill-iw iw line meta right-inset viewport-top x y]}]
+  "Paint an activity row inside the Code surface. A row with `:plain-surface?` stands on the
+   surface of its message instead, as the team block does."
+  [^TextGraphics g
+   {:keys [bg-color fg-color fbx fill-iw in-answer? iw line meta right-inset viewport-top x y
+           zone-bg zone-fg]}]
   (let [fbx
         (long fbx)
 
@@ -2735,10 +2738,14 @@
             (subs line 1)
 
             band-bg
-            t/code-block-bg
+            (cond (not (:plain-surface? meta)) t/code-block-bg
+                  in-answer? zone-bg
+                  :else bg-color)
 
             band-fg
-            t/code-block-fg
+            (cond (not (:plain-surface? meta)) t/code-block-fg
+                  in-answer? zone-fg
+                  :else fg-color)
 
             tone-fg
             (case (:status-tone meta)
