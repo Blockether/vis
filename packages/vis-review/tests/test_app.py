@@ -51,6 +51,13 @@ def repository(root):
     return git
 
 
+def notes(recorder):
+    """The texts that the app shows below the diff."""
+    if "notes" not in recorder.ids():
+        return []
+    return [child["text"] for child in recorder.node("notes")["children"]]
+
+
 def wait_for(check, timeout=2.0):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -197,9 +204,65 @@ def test_the_ai_review_shows_its_summary_and_findings(tmp_path, recorder):
     edit(root, "a.py", "a = 2\n")
     journal.checkpoint("block")
     recorder.send("activate", "ai")
-    assert wait_for(lambda: recorder.node("notice").get("detail") == "Looks risky.")
+    assert wait_for(lambda: notes(recorder) == ["Looks risky."])
     [thread] = recorder.node("diff")["threads"]
     assert thread["messages"][0]["body"].endswith("Check this.")
+
+
+def test_the_result_of_a_review_stays_until_a_person_works_on_a_comment(
+    tmp_path, recorder
+):
+    # User report: the state of the AI review must show in the header of the app, and
+    # stay there after the review until the person works on a comment.
+    def ask(request, model):
+        return AiReview(summary="Looks risky.", findings=[])
+
+    root, journal, app = setup(tmp_path, recorder, ask=ask)
+    edit(root, "a.py", "a = 2\n")
+    journal.checkpoint("block")
+    recorder.send("activate", "ai")
+    assert wait_for(lambda: notes(recorder) == ["Looks risky."])
+    # The first status of the app is its state: it holds no text of the result.
+    assert recorder.ids() == ["diff", "notice", "notes"]
+    assert "detail" not in recorder.node("notice")
+    recorder.send("activate", "refresh")
+    assert wait_for(lambda: recorder.node("notice")["tone"] == "ok")
+    recorder.send("draft", "diff", thread_id="t1")
+    assert wait_for(lambda: recorder.ids() == ["diff", "notes"])
+
+
+def test_a_second_ai_review_checks_the_open_findings_again(tmp_path, recorder):
+    # User report: a second AI review dropped each finding of the first one, also
+    # when nobody fixed it.
+    requests = []
+
+    def ask(request, model):
+        requests.append(request)
+        if len(requests) == 1:
+            return AiReview(
+                summary="Two problems.",
+                findings=[
+                    AiFinding(path="a.py", line=1, level="warning", message="Fixed."),
+                    AiFinding(path="a.py", line=2, level="error", message="Open."),
+                ],
+            )
+        return AiReview(summary="One problem.", findings=[], still_open=[2])
+
+    root, journal, app = setup(tmp_path, recorder, ask=ask)
+    edit(root, "a.py", "a = 2\nb = 3\n")
+    journal.checkpoint("block")
+    recorder.send("activate", "ai")
+    assert wait_for(lambda: len(recorder.node("diff").get("threads") or []) == 2)
+    first = recorder.node("diff")["threads"]
+    recorder.send("activate", "ai")
+    assert wait_for(lambda: notes(recorder) == ["One problem."])
+    assert "2. a.py:2 error: Open." in requests[1]
+    [thread] = recorder.node("diff")["threads"]
+    assert thread["messages"][0]["body"].endswith("Open.")
+    # The finding is the same comment: it keeps its date.
+    assert thread["messages"][0]["created_at"] in {
+        t["messages"][0]["created_at"] for t in first
+    }
 
 
 def test_a_restart_keeps_the_scope_and_the_results_of_the_review(tmp_path, recorder):
@@ -222,12 +285,12 @@ def test_a_restart_keeps_the_scope_and_the_results_of_the_review(tmp_path, recor
     recorder.send("activate", f"checkpoint-{second.seq}")
     assert wait_for(lambda: recorder.node("scope")["label"] == label)
     recorder.send("activate", "ai")
-    assert wait_for(lambda: recorder.node("notice").get("detail") == "Looks risky.")
+    assert wait_for(lambda: notes(recorder) == ["Looks risky."])
     # A restart: a new process reads the journal and adopts the open app.
     again = Journal(root, "s1", tmp_path / "base", files=walked)
     ReviewApp(again, extension_opener, ask=ask).open()
     assert recorder.node("scope")["label"] == label
-    assert recorder.node("notice").get("detail") == "Looks risky."
+    assert notes(recorder) == ["Looks risky."]
     [thread] = recorder.node("diff")["threads"]
     assert thread["messages"][0]["body"].endswith("Check this.")
 
@@ -624,7 +687,7 @@ def test_the_apps_of_two_roots_share_one_pair_of_settings(tmp_path, recorder):
     assert declared == [("review-one", "review"), ("review-two", "review")]
 
 
-def test_a_finding_on_no_line_shows_in_the_notice(tmp_path, recorder):
+def test_a_finding_on_no_line_shows_below_the_diff(tmp_path, recorder):
     # T18 user report: the findings table went away with the diff-only layout, so a finding
     # that no diff line holds must still reach the person.
     root, journal, app = setup(tmp_path, recorder)
@@ -632,10 +695,7 @@ def test_a_finding_on_no_line_shows_in_the_notice(tmp_path, recorder):
     journal.checkpoint("block")
     recorder.send("activate", "checks")
     assert wait_for(
-        lambda: (
-            "notice" in recorder.ids()
-            and "No language tools here" in recorder.node("notice").get("detail", "")
-        )
+        lambda: any("No language tools here" in text for text in notes(recorder))
     )
     assert not recorder.node("diff").get("threads")
 
@@ -703,7 +763,7 @@ def test_many_findings_keep_the_view_valid(tmp_path, recorder):
     app.refresh()
     diff = recorder.node("diff")
     assert len(diff["threads"]) == limit
-    assert "1 more finding not shown" in recorder.node("notice")["detail"]
+    assert "1 more finding not shown" in notes(recorder)
 
 
 def test_a_finding_in_a_file_cut_from_the_patch_is_no_thread(
@@ -720,7 +780,7 @@ def test_a_finding_in_a_file_cut_from_the_patch_is_no_thread(
     app.refresh()
     diff = recorder.node("diff")
     assert not diff.get("threads")
-    assert "z.py:1" in recorder.node("notice")["detail"]
+    assert any("z.py:1" in text for text in notes(recorder))
     # User report 2026-11-15: the names of the cut files were the heading of the diff.
     assert not diff.get("label")
-    assert "Too large to show: a.py, z.py" in recorder.node("notice")["detail"]
+    assert "Too large to show: a.py, z.py" in notes(recorder)

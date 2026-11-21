@@ -41,7 +41,11 @@ class AiReview(BaseModel):
         description="What the change does and whether it is safe, in at most 3 sentences."
     )
     findings: list[AiFinding] = Field(
-        description="Each problem; empty when there is none."
+        description="Each new problem; empty when there is none."
+    )
+    still_open: list[int] = Field(
+        default_factory=list,
+        description="The number of each earlier finding that the code still has.",
     )
 
 
@@ -50,8 +54,10 @@ def prompt_of(
     diffs: Sequence[FileDiff],
     findings: Iterable[Finding] = (),
     budget: int = MOST_PROMPT_CHARS,
+    earlier: Sequence[Finding] = (),
 ) -> str:
-    """The review request: the rules, the known findings and the patch within `budget`."""
+    """The review request: the rules, the known findings, the numbered findings
+    `earlier` of the last review, and the patch within `budget`."""
     shown = [diff for diff in diffs if diff.patch and not diff.is_binary]
     share = max(2000, budget // max(1, len(shown)))
     parts = []
@@ -67,6 +73,10 @@ def prompt_of(
         f"- {d.path}: {d.status}, {d.note or 'binary'}" for d in diffs if d not in shown
     ]
     known = [f"- {f.path}:{f.line} {f.check}: {f.message}" for f in findings]
+    again = [
+        f"{n}. {f.path}:{f.line} {f.level}: {f.message}"
+        for n, f in enumerate(earlier, 1)
+    ]
     return "\n".join(
         [
             "Review this change like a senior engineer before it is merged.",
@@ -79,6 +89,17 @@ def prompt_of(
             "",
             "Known findings:" if known else "Known findings: none",
             *known,
+            *(
+                [
+                    "",
+                    "Earlier findings of this review. Check each one again. Put its number",
+                    "in still_open when the code still has the problem, and do not report",
+                    "it again as a new finding:",
+                    *again,
+                ]
+                if again
+                else []
+            ),
             *(["", "Files without a line diff:", *others] if others else []),
             "",
             "Patch:",
@@ -92,25 +113,28 @@ def review(
     diffs: Sequence[FileDiff],
     ask: Callable[[str, type[BaseModel]], BaseModel],
     findings: Iterable[Finding] = (),
+    earlier: Sequence[Finding] = (),
 ) -> tuple[str, list[Finding]]:
-    """The summary and the findings of one AI review of `diffs`."""
+    """The summary and the findings of one AI review of `diffs`: each finding of
+    `earlier` that the code still has, unchanged, then the new findings."""
     if not diffs:
         return "Nothing changed.", []
-    answer = ask(prompt_of(root, diffs, findings), AiReview)
+    answer = ask(prompt_of(root, diffs, findings, earlier=earlier), AiReview)
     if not isinstance(answer, AiReview):
         answer = AiReview.model_validate(answer)
     paths = {diff.path for diff in diffs}
-    found = []
+    numbers = dict.fromkeys(n for n in answer.still_open if 1 <= n <= len(earlier))
+    found = [earlier[n - 1] for n in numbers]
     for item in answer.findings:
         path = item.path.removeprefix("b/").removeprefix("./")
-        found.append(
-            Finding(
-                "ai",
-                item.level,
-                path,
-                item.line if path in paths else 0,
-                item.message.strip() or "No reason given.",
-                "ai",
-            )
+        finding = Finding(
+            "ai",
+            item.level,
+            path,
+            item.line if path in paths else 0,
+            item.message.strip() or "No reason given.",
+            "ai",
         )
+        if finding not in found:
+            found.append(finding)
     return answer.summary.strip(), found

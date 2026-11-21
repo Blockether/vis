@@ -34,6 +34,8 @@ The first Python block or patch of a session opens the app of that session, so t
 - The changed files with their added and removed line counts. Pick one to see only its diff.
 - The diff. A comment on a line becomes a review thread. When you send the review, the session gets the threads.
 - The findings of the checks and of the AI review, on their lines.
+- The state of the last run, for example **AI review in progress**. The Companion app shows it in the header of the app, next to the name. A result stays until you write or change a comment.
+- The review notes below the diff: the summary of the AI review and each finding that no shown line holds.
 - The changed pictures (PNG, JPEG, GIF and WebP). A changed picture shows its old and new version side by side. A picture over 2 MiB shows a note instead.
 - The log of the app: how long each check and AI review took, each failure with its stack trace, and each refused action.
 
@@ -52,7 +54,7 @@ The terminal shows the keys in its key legend instead of a row of buttons.
 | Refresh | `R` | Record a checkpoint now. |
 | Run checks | `C` | Run the diff checks and the language checks on the changed files. |
 | Run tests | `T` | Run the checks, and also the tests of the language tools. |
-| AI review | `A` | Ask a model to review the diff. Its findings become threads on their lines. |
+| AI review | `A` | Ask a model to review the diff. Its findings become threads on their lines. A second review checks each open finding again. A finding that the code still has stays, and a fixed finding goes away. |
 | Undo file | `U` | Undo the changes of the chosen file: in the chosen checkpoint, in this session, or in all changes. It is off in a git comparison. |
 | Undo checkpoint | `Z` | Undo only what the chosen checkpoint changed. A file that changed again later is a conflict and stays as it is. |
 | Restore to here | `B` | Bring every file back to how the chosen checkpoint left it. |

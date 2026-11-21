@@ -48,6 +48,26 @@ def test_review_turns_answers_into_findings_on_the_changed_files():
     ]
 
 
+def test_review_keeps_each_earlier_finding_that_is_still_open():
+    # User report: a second AI review dropped the findings that nobody fixed.
+    fixed = Finding("ai", "warning", "a.py", 1, "Fixed.", "ai")
+    still = Finding("ai", "error", "a.py", 2, "Open.", "ai")
+    asked = []
+
+    def ask(request, model):
+        asked.append(request)
+        return AiReview(
+            summary="One left.",
+            findings=[AiFinding(path="a.py", line=3, level="info", message="New.")],
+            still_open=[2, 2, 9],
+        )
+
+    _, found = review("/r", [diff("a.py", "a\n", "b\n")], ask, (), [fixed, still])
+    assert "1. a.py:1 warning: Fixed." in asked[0]
+    assert found[0] is still
+    assert [f.message for f in found] == ["Open.", "New."]
+
+
 def test_review_of_no_change_asks_no_model():
     assert review("/r", [], lambda *_: (_ for _ in ()).throw(AssertionError)) == (
         "Nothing changed.",

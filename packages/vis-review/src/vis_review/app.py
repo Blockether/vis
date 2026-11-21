@@ -35,8 +35,11 @@ ui = vis.ui
 
 # Characters of patch text the diff node shows; the contract allows 1 MB.
 MOST_PATCH_CHARS = 900_000
-# File names of the cut files that the notice lists.
+# File names of the cut files that the notes list.
 MOST_CUT_NAMES = 5
+# Notes below the diff, and the characters of one note.
+MOST_NOTES = 20
+MOST_NOTE_CHARS = 2000
 # Unchanged lines around each change; full files show every line, as "Expand all" does.
 CONTEXT_LINES = 3
 FULL_CONTEXT = 1_000_000
@@ -341,10 +344,12 @@ class ReviewApp:
         now = int(newest * 1000) or 1
         self._found_at = {f: self._found_at.get(f, now) for f in findings}
         threads, left = _threads(findings, shown, self._found_at)
-        notice = self._notice([*_left_out(cut, left), *_off_lines(findings, shown)])
+        notice = self._notice()
+        notes = self._notes([*_left_out(cut, left), *_off_lines(findings, shown)])
         return [
             self._diff(patch, threads, diffs, diffs_all, end),
             *([notice] if notice else []),
+            *([notes] if notes else []),
             *([ui.group("images", *images, label="Changed images")] if images else []),
         ]
 
@@ -398,22 +403,34 @@ class ReviewApp:
             return "this session"
         return "all changes" if self._is_all() else f"#{self.start}..#{end}"
 
-    def _notice(self, off_lines: list[str]) -> dict | None:
-        """The result of the last action, or None while there is nothing to tell.
+    def _notice(self) -> dict | None:
+        """The state of the last action, or None while there is nothing to tell.
 
-        A finding on a shown line is a thread of the diff; the others are listed here,
-        after the files and the findings that the diff leaves out.
+        It is the first status of the app, so a surface can show it in the header.
+        It has no detail: `_notes` gives the texts of a result.
         """
         text, tone = self.notice
-        detail = "\n\n".join(part for part in (self.ai_summary, *off_lines) if part)
-        if tone == "idle" and not detail:
+        return None if tone == "idle" else ui.status("notice", text=text, tone=tone)
+
+    def _notes(self, off_lines: list[str]) -> dict | None:
+        """The texts of the last results below the diff, or None when there is none.
+
+        A finding on a shown line is a thread of the diff; the others are listed here,
+        after the AI summary and the files and findings that the diff leaves out.
+        """
+        parts = [part for part in (self.ai_summary, *off_lines) if part]
+        if not parts:
             return None
-        if tone == "idle":
-            # Nothing ran, so there is no result to tell: only findings off the diff lines.
-            text, tone = "Outside the diff", "warn"
-        if detail:
-            return ui.status("notice", text=text, tone=tone, detail=detail[:2000])
-        return ui.status("notice", text=text, tone=tone)
+        more = len(parts) - MOST_NOTES
+        texts = parts[:MOST_NOTES] + ([f"{more} more not shown"] if more > 0 else [])
+        return ui.group(
+            "notes",
+            *(
+                ui.paragraph(f"note-{n}", text[:MOST_NOTE_CHARS])
+                for n, text in enumerate(texts)
+            ),
+            label="Review notes",
+        )
 
     def _shortcuts(self) -> list[dict]:
         """One key for each button. A shortcut has no label, so it shows the button's own text."""
@@ -644,6 +661,9 @@ class ReviewApp:
     def dispatch(self, event: dict) -> None:
         """Do what one event asks and paint the result."""
         kind, node = event.get("type"), event.get("node_id")
+        if kind == "draft":
+            self._seen()
+            return
         if kind == "activate" and node in SLOW:
             self._slow(node)
             return
@@ -658,6 +678,13 @@ class ReviewApp:
                 self.refresh()
             elif kind == "activate" and node in BUTTONS:
                 getattr(self, "_" + node.replace("-", "_"))()
+
+    def _seen(self) -> None:
+        """A person works on a comment: the result of the last action leaves the app."""
+        with self._lock:
+            # A run that is not done keeps its state.
+            if not self._busy and self.notice[1] not in ("idle", "running"):
+                self.refresh(("Ready", "idle"))
 
     def _choose_checkpoint(self, ids) -> None:
         seq = int(ids[0]) if ids else None
@@ -714,27 +741,17 @@ class ReviewApp:
         self._choose_checkpoint([str(self.journal.last)])
 
     def _full(self) -> None:
+        # The same changes in another picture: the result of the last run stays.
         self.is_full = not self.is_full
-        text = "Showing full files" if self.is_full else "Showing changes only"
-        self.refresh((text, "idle"))
+        self.refresh()
 
     def _merged(self) -> None:
         self.is_merged_shown = not self.is_merged_shown
-        text = (
-            "Showing the merged changes of this session too"
-            if self.is_merged_shown
-            else "Showing the changes of this session that are not merged"
-        )
-        self.refresh((text, "idle"))
+        self.refresh()
 
     def _refresh(self) -> None:
-        entry = self.journal.checkpoint("manual", "Refresh")
-        self.refresh(
-            (
-                "Recorded checkpoint #%d" % entry.seq if entry else "No new change",
-                "idle",
-            )
-        )
+        self.journal.checkpoint("manual", "Refresh")
+        self.refresh()
 
     def _checks(self, *, is_tested: bool = False) -> None:
         name = _RUN_NAMES[is_tested]
@@ -794,19 +811,22 @@ class ReviewApp:
     def _ai(self) -> None:
         with self._lock:
             diffs, scope = self.diffs(), self._scope()
-            known = self.all_findings(diffs)
-            self.refresh(("The AI review is running", "running"))
+            shown = self.all_findings(diffs)
+            known = [f for f in shown if f.source != "ai"]
+            # The model checks each finding of the last AI review again.
+            earlier = [f for f in shown if f.source == "ai"]
+            self.refresh(("AI review in progress", "running"))
         started = time.perf_counter()
-        summary, found = ai.review(self.journal.root, diffs, self._ask, known)
+        summary, found = ai.review(self.journal.root, diffs, self._ask, known, earlier)
         self.log(f"The AI review ran in {_ms(started)} ms: {len(found)} findings")
         with self._lock:
             if scope != self._scope():
                 return
-            self.findings = [f for f in self.findings if f.source != "ai"] + found
+            # A finding of a file that this review did not read stays.
+            self.findings = [f for f in self.findings if f not in earlier] + found
             self.ai_summary = summary
-            self.refresh(
-                (f"AI review done: {len(found)} findings", "warn" if found else "ok")
-            )
+            count = f"{len(found)} finding{'' if len(found) == 1 else 's'}"
+            self.refresh((f"AI review done: {count}", "warn" if found else "ok"))
 
     def _scope(self) -> tuple:
         """What the shown results belong to: a result for another scope is dropped."""
