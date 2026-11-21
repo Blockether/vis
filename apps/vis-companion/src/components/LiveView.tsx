@@ -256,6 +256,22 @@ export function ToneMark({ tone, className = 'size-3' }: { tone: LiveTone; class
 }
 
 /**
+ * A status ON ONE LINE, for the header of a frame: the mark, then the sentence, cut
+ * at the edge. It is a live region, so a screen reader hears each new state.
+ */
+export function StatusLine({ node }: { node: LiveStatusNode }) {
+  return (
+    <span role="status" className="flex min-w-0 items-center gap-1.5">
+      <ToneMark tone={node.tone} />
+      <span className="sr-only">{TONE_WORD[node.tone]}</span>
+      <span className={`min-w-0 truncate ${node.tone === 'error' ? 'text-err' : ''}`}>
+        <InlineMarkdown>{node.text}</InlineMarkdown>
+      </span>
+    </span>
+  );
+}
+
+/**
  * A mark ON ITS LINE. The box is one line tall in the type of the words beside it,
  * and the mark is centred in it. The mark then stands on the first line of those
  * words, however they wrap and whatever size the mark is. A padding guessed for one
@@ -2372,6 +2388,7 @@ export function LiveViewPanel({
   inDialog = false,
   app,
   errors,
+  headlineId,
 }: {
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
@@ -2406,6 +2423,11 @@ export function LiveViewPanel({
   app?: AppNodeActions;
   /** The host's refusal of each input value, by node id. */
   errors?: Readonly<Record<string, string>>;
+  /**
+   * The status node that the frame of the view shows in its header. The panel leaves
+   * its sentence out and shows only its detail, so the state stands in one place.
+   */
+  headlineId?: string;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
@@ -2688,24 +2710,35 @@ export function LiveViewPanel({
             reading, keeps a rule above it. */}
         {!embedded && (
           <ul className={`space-y-6 ${inDialog ? 'pt-2 pb-4' : 'py-4'}`}>
-            {view.nodes.map((node, index) => (
-              <li
-                key={node.id}
-                className={`min-w-0 ${node.type === 'divider' || node.type === 'diff' ? '' : 'px-(--live-view-inset)'} ${
-                  node.type === 'log' && index > 0
-                    ? 'relative pt-4 before:absolute before:inset-x-(--live-view-inset) before:top-0 before:border-t before:border-dialog-edge/40'
-                    : ''
-                }`}
-              >
-                <NodeCell
-                  node={node}
-                  load={load}
-                  onSelect={onSelect}
-                  presentation={presentation}
-                  statusAction={index === 0 ? stopInHeadline : undefined}
-                />
-              </li>
-            ))}
+            {view.nodes.map((node, index) => {
+              const inHeader = node.type === 'status' && node.id === headlineId;
+              const detail = inHeader ? node.detail : undefined;
+              if (inHeader && !detail) return null;
+              return (
+                <li
+                  key={node.id}
+                  className={`min-w-0 ${node.type === 'divider' || node.type === 'diff' ? '' : 'px-(--live-view-inset)'} ${
+                    node.type === 'log' && index > 0
+                      ? 'relative pt-4 before:absolute before:inset-x-(--live-view-inset) before:top-0 before:border-t before:border-dialog-edge/40'
+                      : ''
+                  }`}
+                >
+                  {detail ? (
+                    <p className="min-w-0 font-mono text-body text-dialog-hint [overflow-wrap:anywhere]">
+                      <InlineMarkdown>{detail}</InlineMarkdown>
+                    </p>
+                  ) : (
+                    <NodeCell
+                      node={node}
+                      load={load}
+                      onSelect={onSelect}
+                      presentation={presentation}
+                      statusAction={index === 0 ? stopInHeadline : undefined}
+                    />
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

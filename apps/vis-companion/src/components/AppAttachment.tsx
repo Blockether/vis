@@ -10,6 +10,7 @@ import { useAppLog } from '../hooks/useAppLog';
 import { runAppAction, SendKeys, type AppActionResult, type AppActionStatus } from '../lib/app-actions';
 import {
   appFallbackTitle,
+  appHeadline,
   appStateWord,
   canOpenApp,
   draftAction,
@@ -37,7 +38,7 @@ import type { IterationAttachment, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
 import { ActionStatus, type AppNodeActions } from './AppNodes';
 import { ReviewMemoryContext, ReviewPrefsContext, useReviewScroll, useVisitState } from '../lib/review-memory';
-import { LiveViewPanel, RunDialog } from './LiveView';
+import { LiveViewPanel, RunDialog, StatusLine } from './LiveView';
 import { AppLogButton, AppLogPanel } from './AppLog';
 import { AppIcon, ChevronIcon, FullScreenIcon } from './icons';
 import { BandButton, DialogFrame, DialogHeader, ExecutionAction, KeyCap, ListRow, Modal, PaneHeader, closeWith } from './ui';
@@ -527,9 +528,12 @@ export function AppSurface({
 
   const title = view?.title || fallbackTitle;
   const state = view ? (sid === null ? globalAppStateWord(view) : appStateWord(view)) : '';
+  // A pane shows the state of the app beside its name, and the app keeps its height.
+  const headline = isPane && view ? appHeadline(view.nodes) : undefined;
   const subtitle = view ? (
-    <span className="flex items-center gap-2">
+    <span className="flex min-w-0 items-center gap-2">
       {state && <span>{state}</span>}
+      {headline && <StatusLine node={headline} />}
       {/* A read-only app says why in its state word; an old refusal adds nothing. */}
       <ActionStatus status={isReadOnly ? 'idle' : formStatus} isOnBand />
     </span>
@@ -567,6 +571,7 @@ export function AppSurface({
               isSettled={view.is_closed === true}
               app={actions}
               errors={fieldErrors}
+              headlineId={headline?.id}
               onActivate={isReadOnly ? undefined : onActivate}
               onSelect={isReadOnly ? undefined : onSelect}
               onChange={isReadOnly ? undefined : onChange}

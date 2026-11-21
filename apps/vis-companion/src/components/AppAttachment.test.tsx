@@ -929,3 +929,38 @@ it('keeps the session app available while its returning list read waits', async 
   render(<Apps />);
   expect(screen.getByRole('button', { name: 'Open app Code review' })).toBeInTheDocument();
 });
+
+// User report: the state of the review stood below a long diff, where nobody saw it.
+it('shows the first status of an app in the header of its pane, and in the body elsewhere', async () => {
+  const raw = wire(3);
+  const withState = () => {
+    const parsed = liveViewFromWire({
+      ...raw,
+      nodes: [...raw.nodes, { id: 'notice', type: 'status', text: 'AI review in progress', tone: 'running' }],
+    });
+    if (!parsed) throw new Error('fixture must parse');
+    return parsed;
+  };
+  const pane = render(
+    <SessionEventsContext.Provider value={null}>
+      <div data-session-surface>
+        <AppSurface
+          client={fakeClient([withState()], async () => ({})).client}
+          sid="s1"
+          viewId="app-1"
+          fallbackTitle="code-review"
+          isPane
+          onClose={() => undefined}
+        />
+      </div>
+    </SessionEventsContext.Provider>,
+  );
+  const state = await screen.findByText('AI review in progress');
+  expect(screen.getAllByText('AI review in progress')).toHaveLength(1);
+  expect(state.closest('header')).not.toBeNull();
+  expect(state.closest('[data-app-surface]')).toBeNull();
+  pane.unmount();
+  open(fakeClient([withState()], async () => ({})).client, null);
+  const inBody = await screen.findByText('AI review in progress');
+  expect(inBody.closest('[data-app-surface]')).not.toBeNull();
+});

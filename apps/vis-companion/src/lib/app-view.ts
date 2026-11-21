@@ -8,6 +8,8 @@ import {
   findLiveNode,
   liveViewFromWire,
   upsertSubmission,
+  type LiveNode,
+  type LiveStatusNode,
   type LiveView,
 } from './live-view';
 import type { SseEvent } from './types';
@@ -105,6 +107,14 @@ export function appStateWord(view: Pick<LiveView, 'is_closed' | 'is_archived' | 
   if (view.is_archived) return 'Archived';
   if (view.is_disconnected) return 'Disconnected';
   return '';
+}
+
+/**
+ * The headline of an app: its first status node at the top level, or undefined.
+ * A pane shows it in its header beside the name, so the app keeps its height.
+ */
+export function appHeadline(nodes: readonly LiveNode[]): LiveStatusNode | undefined {
+  return nodes.find((node): node is LiveStatusNode => node.type === 'status');
 }
 
 /**
