@@ -36,7 +36,7 @@ The first Python block or patch of a session opens the app of that session, so t
 - The findings of the checks and of the AI review, on their lines.
 - The state of the last run, for example **AI review in progress**. The Companion app shows it in the header of the app, next to the name. A result stays until you write or change a comment.
 - The review notes below the diff: the summary of the AI review and each finding that no shown line holds.
-- The changed pictures (PNG, JPEG, GIF and WebP). A changed picture shows its old and new version side by side. A picture over 2 MiB shows a note instead.
+- The changed pictures (PNG, JPEG, GIF and WebP), as a list with `+` for an added file, `-` for a deleted file and `•` for a modified file. Select a file of the list to open its picture, and select it again to close it. A changed picture shows its old and new version side by side. A picture over 2 MiB shows a note instead. The app holds 8 MiB of open pictures: when a new picture needs the room, the pictures that you opened first close.
 - The log of the app: how long each check and AI review took, each failure with its stack trace, and each refused action.
 
 The buttons and their keys. Each key presses its button, and an upper-case key needs Shift.

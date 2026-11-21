@@ -87,6 +87,11 @@ SLOW = ("checks", "tests", "ai")
 _AGAINST = {"HEAD": "uncommitted changes", "base": "changes against the base branch"}
 # Nodes that one view holds at most: the view bound.
 MOST_NODES = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
+# The table of the changed pictures, and the rows that it holds at most.
+IMAGE_TABLE = "image-files"
+MOST_IMAGE_ROWS = ui.bound("table", "rows")
+# Changed binary files that the app knows as a picture or not, newest first.
+MOST_KNOWN_FILES = 4 * MOST_IMAGE_ROWS
 # Decoded picture bytes that the app shows together, old and new: the view bound.
 MOST_PICTURE_BYTES = _contracts.definition("view", "live_view")[
     "x-vis-max-picture-bytes"
@@ -193,6 +198,10 @@ class ReviewApp:
         self._busy: str | None = None
         # Image nodes by (path, old digest, new digest): a paint reads no blob twice.
         self._images: OrderedDict[tuple, dict | None] = OrderedDict()
+        # Whether a changed binary file is a picture, by the key of its image node.
+        self._pictures: dict[tuple, bool] = {}
+        # The row ids of the pictures that a person opened, oldest first.
+        self._open: list[str] = []
         # The scope and the last results, saved at each paint for the next process.
         self._state_path = journal.path.with_suffix(".view.json")
         self._saved: dict | None = None
@@ -246,6 +255,8 @@ class ReviewApp:
                     self.view.drop(*args)
                 elif step == "add":
                     self.view.add(args[0], after=args[1])
+                elif step == "select":
+                    self.view.node(args[0]).select(*args[1])
                 else:
                     self.view.node(args[0]).set(**args[1])
         self._painted = {node["id"]: node for node in nodes}
@@ -357,8 +368,8 @@ class ReviewApp:
             *([notice] if notice else []),
             *([notes] if notes else []),
         ]
-        # The group of the images is one node and each file row is two.
-        room = (MOST_NODES - len(list(_contracts._wire_tree(nodes))) - 1) // 2
+        # The group of the images and its table are two nodes.
+        room = MOST_NODES - len(list(_contracts._wire_tree(nodes))) - 2
         images = self.image_nodes(diffs, room)
         if images:
             nodes.append(ui.group("images", *images, label="Changed images"))
@@ -602,42 +613,54 @@ class ReviewApp:
             children=self._toolbar(diffs_all, bool(diffs)),
         )
 
-    def image_nodes(self, diffs: list[FileDiff], most: int) -> list[dict]:
-        """One folded file row for each changed picture: old and new side by side.
+    def image_nodes(self, diffs: list[FileDiff], room: int) -> list[dict]:
+        """The table of the changed pictures, then each picture that a person opened.
 
-        A row is closed until a person opens it, as a file of the diff is. The
-        view has room for `most` rows; the file list names each other picture.
+        A row of the table is no node and holds no bytes, so each changed picture
+        has a row and none shows until a person presses its row. The view has room
+        for `room` open pictures and for `MOST_PICTURE_BYTES`: when a new picture
+        needs that room, the pictures that were opened first close.
         """
-        nodes: list[dict] = []
-        budget = MOST_PICTURE_BYTES
+        files: dict[str, FileDiff] = {}
         for diff in diffs:
-            if len(nodes) >= most:
+            if len(files) == MOST_IMAGE_ROWS:
                 break
-            if not diff.is_binary:
+            if diff.is_binary and self._is_picture(diff):
+                files[_image_id(diff.path)] = diff
+        if not files:
+            return []
+        budget = MOST_PICTURE_BYTES
+        shown: dict[str, dict] = {}
+        closed: set[str] = set()
+        for row_id in reversed(self._open):
+            # A picture of another range or file stays open for its return.
+            if (diff := files.get(row_id)) is None:
                 continue
-            node = self._image((diff.path, diff.before, diff.after), diff)
-            if node is None:
-                continue
+            node = self._image(_image_key(diff), diff)
             size = _contracts.node_picture_bytes(node)
-            if size > budget:
-                node = ui.status(
-                    node["id"],
-                    text=f"{diff.path}: no preview",
-                    detail="The changed images of this range are too large together.",
-                    tone="warn",
-                )
-            else:
-                budget -= size
-            nodes.append(
-                ui.group(
-                    "file-" + node["id"],
-                    node,
-                    label=_file_label(diff),
-                    is_collapsible=True,
-                    default_expanded=False,
-                )
-            )
-        return nodes
+            if closed or len(shown) == room or size > budget:
+                closed.add(row_id)
+                continue
+            budget -= size
+            shown[row_id] = dict(node, label=_file_label(diff))
+        self._open = [row_id for row_id in self._open if row_id not in closed]
+        table = ui.table(
+            IMAGE_TABLE,
+            columns=[ui.table_column("file", "File")],
+            rows=[ui.table_row(i, [_file_label(diff)]) for i, diff in files.items()],
+            is_selectable=True,
+            selected_ids=[row_id for row_id in files if row_id in shown],
+        )
+        return [table, *(shown[row_id] for row_id in files if row_id in shown)]
+
+    def _is_picture(self, diff: FileDiff) -> bool:
+        """True when a surface can show the binary file `diff`: one read for each version."""
+        key = _image_key(diff)
+        if key not in self._pictures:
+            self._pictures[key] = self._image(key, diff) is not None
+            while len(self._pictures) > MOST_KNOWN_FILES:
+                del self._pictures[next(iter(self._pictures))]
+        return self._pictures[key]
 
     def _image(self, key: tuple, diff: FileDiff) -> dict | None:
         """The image node of `diff` from the cache, which keeps the newest bytes."""
@@ -692,6 +715,17 @@ class ReviewApp:
                 self.refresh()
             elif kind == "activate" and node in BUTTONS:
                 getattr(self, "_" + node.replace("-", "_"))()
+            elif kind == "select" and node == IMAGE_TABLE:
+                self._press_images(list(event.get("item_ids") or []))
+
+    def _press_images(self, ids: list[str]) -> None:
+        """A press on one row opens or closes its picture; a longer selection is the open set."""
+        if len(ids) == 1:
+            is_open = ids[0] in self._open
+            self._open = [i for i in self._open if i != ids[0]] + ids * (not is_open)
+        else:
+            self._open = ids
+        self.refresh()
 
     def _seen(self) -> None:
         """A person works on a comment: the result of the last action leaves the app."""
@@ -905,12 +939,22 @@ def _file_label(diff: FileDiff) -> str:
     return f"{CHANGE_MARKS.get(diff.status, MODIFIED_MARK)} {diff.path}"
 
 
+def _image_id(path: str) -> str:
+    """The id of the image node of the file `path`, and of its row in the table."""
+    return "image-" + hashlib.sha1(path.encode()).hexdigest()[:12]
+
+
+def _image_key(diff: FileDiff) -> tuple:
+    """The cache key of the image node of `diff`: the path and its two versions."""
+    return (diff.path, diff.before, diff.after)
+
+
 def image_node(diff: FileDiff, blob: Callable[[str], bytes | None]) -> dict | None:
     """The image node of one changed picture, a note when it cannot show, or None.
 
     A modified picture compares its old and new version. An added or deleted one
     shows one picture. None means that the file is no picture that a surface draws.
-    The node has no label: its file row names the file.
+    The node has no label: the app adds the mark and the path of the file.
     """
     old = blob(diff.before) if diff.before else None
     new = blob(diff.after) if diff.after else None
@@ -918,7 +962,7 @@ def image_node(diff: FileDiff, blob: Callable[[str], bytes | None]) -> dict | No
     is_new = bool(new) and ui.picture_type(new) is not None
     if not (is_old or is_new):
         return None
-    node_id = "image-" + hashlib.sha1(diff.path.encode()).hexdigest()[:12]
+    node_id = _image_id(diff.path)
     try:
         if is_new:
             return ui.image(
@@ -1053,7 +1097,7 @@ def _steps(
     painted: list[dict], nodes: list[dict], known: set[str], is_top: bool = True
 ) -> list[tuple] | None:
     """The view calls that turn the nodes `painted` into `nodes`: `("drop", id)`,
-    `("add", node, after)` and `("set", id, changes)`.
+    `("add", node, after)`, `("set", id, changes)` and `("select", id, row_ids)`.
 
     A node changes in place when it can, so a long diff does not go to each surface
     again as a whole node. None when the group of the nodes must come as a new node: a
@@ -1097,7 +1141,9 @@ def _node_steps(old: dict, node: dict, known: set[str]) -> list[tuple] | None:
             return None
         steps += inner
         changed.discard("children")
-    if changed:
+    if changed == {"selected_ids"}:
+        steps.append(("select", node["id"], node["selected_ids"]))
+    elif changed:
         if node["type"] != "diff" or not changed <= _DIFF_SET:
             return None
         steps.append(("set", node["id"], {key: node[key] for key in changed}))

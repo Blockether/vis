@@ -360,16 +360,27 @@ def put(root, rel, data):
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
 
 
-def image_files(recorder):
-    """The file rows of the changed images, each a group that holds one picture."""
+def image_group(recorder):
+    """The children of the group of the changed images: its table, then the open pictures."""
     group = next(
         (n for n in recorder._open_view()["nodes"] if n["id"] == "images"), None
     )
     return [] if group is None else group["children"]
 
 
+def image_rows(recorder):
+    """The row id of each changed image by its label."""
+    return {row["cells"][0]: row["id"] for row in image_group(recorder)[0]["rows"]}
+
+
 def images(recorder):
-    return {n["label"]: n["children"][0] for n in image_files(recorder)}
+    """The open pictures by their label."""
+    return {n["label"]: n for n in image_group(recorder)[1:]}
+
+
+def press_image(recorder, label):
+    """Press the row of one changed image, as a surface does."""
+    recorder.send("select", "image-files", item_ids=[image_rows(recorder)[label]])
 
 
 def test_a_changed_picture_shows_its_old_and_new_version(tmp_path, recorder):
@@ -383,19 +394,21 @@ def test_a_changed_picture_shows_its_old_and_new_version(tmp_path, recorder):
     (root / "gone.png").unlink()
     journal.checkpoint("block", "change logo")
     app.refresh()
-    shown = images(recorder)
+    # Request of Karol: a picture of 1490x2670 was open and filled the panel.
+    assert images(recorder) == {}
     # From the start, logo.png is new: one picture. Huge files show a note.
+    press_image(recorder, "+ logo.png")
+    press_image(recorder, "+ huge.png")
+    assert wait_for(lambda: set(images(recorder)) == {"+ logo.png", "+ huge.png"})
+    shown = images(recorder)
     assert "before" not in shown["+ logo.png"]
     assert "no preview" in shown["+ huge.png"]["text"]
-    # Request of Karol: a picture of 1490x2670 was open and filled the panel.
-    assert [
-        (f["is_collapsible"], f["default_expanded"]) for f in image_files(recorder)
-    ] == [(True, False)] * len(shown)
     last = journal.entries[-1].seq
     recorder.send("activate", f"checkpoint-{last}")
+    # An open picture stays open in another range.
     assert wait_for(lambda: "• logo.png" in images(recorder))
     # The marks of GitHub take the place of "(added)" and "(deleted)".
-    assert set(images(recorder)) == {
+    assert set(image_rows(recorder)) == {
         "• logo.png",
         "+ new.png",
         "+ huge.png",
@@ -404,6 +417,8 @@ def test_a_changed_picture_shows_its_old_and_new_version(tmp_path, recorder):
     changed = images(recorder)["• logo.png"]
     assert (changed["width"], changed["before"]["width"]) == (3, 2)
     assert changed["media_type"] == changed["before"]["media_type"] == "image/png"
+    press_image(recorder, "• logo.png")
+    assert wait_for(lambda: set(images(recorder)) == {"+ huge.png"})
 
 
 def test_a_deleted_picture_shows_its_old_version_alone():
@@ -458,22 +473,31 @@ def test_the_log_tells_timings_failures_and_refused_actions(tmp_path, recorder):
     assert "model is away" in failure["message"] and "Traceback" in failure["detail"]
 
 
-def test_a_picture_without_preview_leaves_the_budget_to_smaller_ones(
+def test_a_new_open_picture_closes_the_oldest_when_the_view_is_full(
     tmp_path, recorder, monkeypatch
 ):
-    # Audit L2: only a picture that shows counts against the view bound.
+    # Audit L2: only a picture that shows counts against the view bound. The picture
+    # that a person opens always shows: "no preview" for a full view hid it.
     import vis_review.app as review
 
     small = png(1, 1)
-    monkeypatch.setattr(review, "MOST_PICTURE_BYTES", 3 * len(small))
+    monkeypatch.setattr(review, "MOST_PICTURE_BYTES", 2 * len(small))
     root, journal, app = setup(tmp_path, recorder)
-    put(root, "a_big.png", png(40, 40) + b"\x00" * 4 * len(small))
-    put(root, "b_small.png", small)
+    for name in ("a.png", "b.png", "c.png"):
+        put(root, name, small)
     journal.checkpoint("block")
     app.refresh()
-    shown = images(recorder)
-    assert shown["+ a_big.png"]["type"] == "status"
-    assert shown["+ b_small.png"]["type"] == "image"
+    press_image(recorder, "+ a.png")
+    press_image(recorder, "+ b.png")
+    assert wait_for(lambda: set(images(recorder)) == {"+ a.png", "+ b.png"})
+    press_image(recorder, "+ c.png")
+    assert wait_for(lambda: set(images(recorder)) == {"+ b.png", "+ c.png"})
+    assert {node["type"] for node in images(recorder).values()} == {"image"}
+    rows = image_rows(recorder)
+    assert image_group(recorder)[0]["selected_ids"] == [
+        rows["+ b.png"],
+        rows["+ c.png"],
+    ]
 
 
 def node_count(nodes):
@@ -483,23 +507,24 @@ def node_count(nodes):
     )
 
 
-def test_each_changed_picture_has_a_file_row_while_the_view_has_room(
+def test_each_changed_picture_has_a_row_and_no_bytes_until_a_person_opens_it(
     tmp_path, recorder
 ):
-    # A cap of 8 pictures put the others behind a "More images" note.
+    # A view holds 64 nodes and 8 MiB of pictures: only about 31 pictures had a row,
+    # and each picture went to the surface while its row was closed.
     from blockether.vis import _contracts
 
+    most = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
     root, journal, app = setup(tmp_path, recorder)
-    for index in range(40):
+    for index in range(most + 6):
         put(root, f"p{index:02}.png", png(1, 1))
     journal.checkpoint("block")
     app.refresh()
-    rows = image_files(recorder)
-    assert len(rows) > 8
-    assert {row["type"] for row in rows} == {"group"}
-    assert {node["type"] for node in images(recorder).values()} == {"image"}
-    # 40 rows are more than a view can hold: the app stays in the node bound.
-    most = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
+    assert len(image_rows(recorder)) == most + 6
+    assert images(recorder) == {}
+    press_image(recorder, f"+ p{most + 5}.png")
+    assert wait_for(lambda: len(images(recorder)) == 1)
+    assert images(recorder)[f"+ p{most + 5}.png"]["type"] == "image"
     assert node_count(recorder._open_view()["nodes"]) <= most
 
 
