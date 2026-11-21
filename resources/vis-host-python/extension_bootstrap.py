@@ -109,7 +109,23 @@ def __vis_seal__(value):
 def __vis_registration__():
     """The sealed registration spec, or None when the file registered nothing."""
     reg = _vis_mod.__dict__.get("_registration")
-    return None if reg is None else __vis_seal__(reg["spec"])
+    spec = None if reg is None else reg["spec"]
+    if spec is None:
+        return None
+    # Each registration carries the door that runs an app hook by its name.
+    return __vis_seal__({**spec, "app_hook": __vis_app_hook__})
+
+
+def __vis_app_hook__(app):
+    """Run the hook that an app named: find the function again in this namespace.
+
+    A reload ends the process that held the function, so the app gave its name.
+    `app["hook"]` is that name; the function gets the other keys.
+    """
+    app = dict(app)
+    # The host runs the extension file as the module `<this namespace>__extension`.
+    entry = __import__("sys").modules[__name__ + "__extension"]
+    return _vis_mod._app_hook_function(app.pop("hook"), vars(entry))(app)
 
 
 def __vis_unseal_host__(value):

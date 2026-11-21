@@ -177,7 +177,6 @@ def test_replayed_call_id_cannot_change_arguments_or_execute_twice():
     [
         {"ctx": lambda: {}},
         {"activation": lambda: True},
-        {"reopen_app": lambda app: None},
         {"env": ["PRIVATE_TOKEN"]},
         {"prompt": lambda: "dynamic"},
     ],

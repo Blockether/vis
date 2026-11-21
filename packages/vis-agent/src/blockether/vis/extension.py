@@ -1335,11 +1335,6 @@ class Extension:
             function of the extension and no model. Keys are unique.
         op_hooks: `OpHook` declarations for host lifecycle operations.
         ctx: Optional host context callback.
-        reopen_app: Optional callback that opens an app of this extension again.
-            After a reload disconnected the app, Vis calls it in the session of the
-            app with `{"key", "view_id", "session_id", "workspace_root",
-            "project_root"}`. Without it, the app stays disconnected until this
-            extension opens the key again.
         providers: `Provider` declarations.
         network_filters: `NetworkFilter` declarations.
         settings: Host-owned `Setting` declarations with explicit allowed scopes.
@@ -1372,7 +1367,6 @@ class Extension:
     automations: Sequence[Automation] = ()
     op_hooks: Sequence[OpHook] = ()
     ctx: Callable[..., Any] | None = None
-    reopen_app: Callable[..., Any] | None = None
     providers: Sequence[Provider] = ()
     network_filters: Sequence[NetworkFilter] = ()
     settings: Sequence[Setting] = ()
@@ -1393,7 +1387,7 @@ class Extension:
                 getattr(self, name), str
             ):
                 raise TypeError(f"vis.Extension {name} must be a string")
-        for name in ("ctx", "activation", "reopen_app"):
+        for name in ("ctx", "activation"):
             if getattr(self, name) is not None and not callable(getattr(self, name)):
                 raise ValueError(f"vis.Extension {name} must be a callable")
         if (
@@ -5286,6 +5280,7 @@ def _attachment_verbs(host, *, present=None, app_door=None):
         audience="both",
         *,
         on_event=None,
+        on_reload=None,
         **aliases,
     ):
         """Store an artifact as a durable attachment of the running block, or open an app.
@@ -5308,8 +5303,12 @@ def _attachment_verbs(host, *, present=None, app_door=None):
 
         An app declaration from `vis.ui.app(...)` opens an app and answers its
         `LiveAttachment` handle. The app row from `list_attachments()` answers a handle
-        for that app again. An app takes only `on_event(event)`, which then runs for
-        each human change, submit, activate or shortcut, as with `vis.live`.
+        for that app again. An app takes the hooks `on_event` and `on_reload`.
+        `on_event(event)` runs for each human change, submit, activate or shortcut,
+        as with `vis.live`. `on_reload(app)` runs after a reload of the extension
+        disconnected the app: it opens the app with its key again. It is a function at
+        module level, because Vis finds it by its name in the new code. `app` has
+        `key`, `view_id`, `session_id`, `workspace_root` and `project_root`.
         """
         if aliases:
             given = _attachment_keywords(
@@ -5339,14 +5338,18 @@ def _attachment_verbs(host, *, present=None, app_door=None):
                     "attach: an app takes no filename, kind, media_type, label "
                     "or audience."
                 )
-            if on_event is not None and app_door is not None:
-                raise TypeError(
-                    "attach: on_event is only for an extension: the app door of "
-                    "python_execution takes no callback."
-                )
-            return LiveAttachment._from(source, door=app_door, on_event=on_event)
-        if on_event is not None:
-            raise TypeError("attach: on_event is only for an app")
+            for name, hook in (("on_event", on_event), ("on_reload", on_reload)):
+                if hook is not None and app_door is not None:
+                    raise TypeError(
+                        f"attach: {name} is only for an extension: the app door of "
+                        "python_execution takes no callback."
+                    )
+            return LiveAttachment._from(
+                source, door=app_door, on_event=on_event, on_reload=on_reload
+            )
+        for name, hook in (("on_event", on_event), ("on_reload", on_reload)):
+            if hook is not None:
+                raise TypeError(f"attach: {name} is only for an app")
         door = host()
         data, name, path, size = _attachment_source(source, filename, door)
         caption = _attachment_caption(label)
@@ -6042,7 +6045,7 @@ class LiveView:
     def __init__(self, request, flush_ms=None, on_event=None):
         self._prepare(flush_ms)
         request, self._validators = _live_validators(request)
-        envelope = {"op": "open", "view": request}
+        envelope = self._open_envelope(request)
         if self._validators:
             envelope["validators"] = sorted(self._validators)
         # Validators need an event route: the extension host and the SDK app door
@@ -6062,6 +6065,10 @@ class LiveView:
             answer = self._call(envelope)
         self.view_id = str(answer.get("view_id") or "")
         self._settle(answer)
+
+    def _open_envelope(self, request):
+        """The envelope that opens view declaration `request`."""
+        return {"op": "open", "view": request}
 
     def _prepare(self, flush_ms):
         """Set the empty state of a handle before it knows its view."""
@@ -6868,6 +6875,61 @@ def _receipt_stages() -> list[str]:
     return _contracts.definition("view", "submission_status")["enum"]
 
 
+def _app_hook_part(scope, qualname):
+    """The value that dotted `qualname` names in namespace `scope`."""
+    first, *rest = qualname.split(".")
+    value = scope[first]
+    for part in rest:
+        value = getattr(value, part)
+    return value
+
+
+def _app_hook_ref(name, fn):
+    """The name that finds app hook `fn` again after a reload ended this process.
+
+    The name is `module:qualname`. The module is empty for a function of the
+    extension file: the module name of that file changes with each load, so its
+    namespace finds the name.
+    """
+    qualname = getattr(fn, "__qualname__", None) or ""
+    scope = getattr(fn, "__globals__", None)
+    found = None
+    if isinstance(scope, dict) and qualname and "<" not in qualname:
+        try:
+            found = _app_hook_part(scope, qualname)
+        except (KeyError, AttributeError):
+            found = None
+    if found is not fn:
+        raise TypeError(
+            f"{name} must be a function at module level: after a reload, Vis "
+            "finds it by its name in the new code"
+        )
+    # The host gives `__vis_ext_dir__` to the module of an extension file.
+    module = "" if "__vis_ext_dir__" in scope else fn.__module__
+    return f"{module}:{qualname}"
+
+
+def _app_hook_function(ref, scope):
+    """The function that `ref` from `_app_hook_ref` names in the loaded code.
+
+    `scope` is the namespace of the extension file.
+    """
+    module, _, qualname = str(ref).partition(":")
+    if module:
+        import importlib
+
+        scope = vars(importlib.import_module(module))
+    try:
+        found = _app_hook_part(scope, qualname)
+    except (KeyError, AttributeError):
+        found = None
+    if not callable(found):
+        raise LookupError(
+            f"the loaded code has no function {qualname!r} for an app hook"
+        )
+    return found
+
+
 class LiveAttachment(LiveView):
     """An app: a live view that is attached to the session and keeps its state.
 
@@ -6879,18 +6941,43 @@ class LiveAttachment(LiveView):
 
     `id` is the app identity. `vis.attach(row)` with the app row from
     `list_attachments()` answers a new handle for the same app, also after a restart.
+
+    An app has two hooks. `on_event(event)` gets each event of a person. In an
+    extension, `on_reload(app)` runs after a reload disconnected the app, and opens
+    the app with its key again.
     """
 
-    def __init__(self, request, flush_ms=None, on_event=None, door=None):
+    def __init__(
+        self, request, flush_ms=None, on_event=None, door=None, on_reload=None
+    ):
         import threading
 
         # A client extension callback binds the HTTP door of its session.
         self._door = door if door is not None else _app_door.get()
         self._lock = threading.RLock()
+        self._hooks = {}
+        if on_reload is not None:
+            if self._door is not None:
+                raise TypeError(
+                    "on_reload is only for an extension that Vis loads: a reload "
+                    "does not end an SDK program or the python_execution sandbox"
+                )
+            if not str(request.get("key") or "").strip():
+                raise ValueError(
+                    "on_reload needs an app with a key: only the key opens the "
+                    "same app again"
+                )
+            self._hooks["reload"] = _app_hook_ref("on_reload", on_reload)
         super().__init__(request, flush_ms=flush_ms, on_event=on_event)
 
+    def _open_envelope(self, request):
+        envelope = super()._open_envelope(request)
+        if self._hooks:
+            envelope["hooks"] = dict(self._hooks)
+        return envelope
+
     @classmethod
-    def _from(cls, source, door=None, on_event=None):
+    def _from(cls, source, door=None, on_event=None, on_reload=None):
         """The handle of app declaration or app attachment row `source`."""
         import threading
 
@@ -6902,6 +6989,11 @@ class LiveAttachment(LiveView):
             view_id = str(source.get("view_id") or "").strip()
             if not view_id:
                 raise ValueError("this app attachment row has no view_id")
+            if on_reload is not None:
+                raise TypeError(
+                    "on_reload needs the app declaration: open the declaration "
+                    "with its key again"
+                )
             handle = cls.__new__(cls)
             handle._door = door if door is not None else _app_door.get()
             handle._lock = threading.RLock()
@@ -6925,7 +7017,13 @@ class LiveAttachment(LiveView):
             )
         request = dict(source)
         flush_ms = request.pop("flush_ms", None)
-        return cls(request, flush_ms=flush_ms, on_event=on_event, door=door)
+        return cls(
+            request,
+            flush_ms=flush_ms,
+            on_event=on_event,
+            door=door,
+            on_reload=on_reload,
+        )
 
     def _push(self, op):
         # An event callback can patch the app from the poller thread.

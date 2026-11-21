@@ -1084,29 +1084,40 @@ app keeps its state, but its owner does not listen yet.
 
 `/reload` restarts the worker that ran the old code of your extension. An app of that worker stays
 open, but it shows as disconnected, as after a gateway restart. To connect it again without a
-person, declare `reopen_app`:
+person, give the app the `on_reload` hook:
 
 ```python
-def reopen(app):
-    if app["key"] == "board":
-        vis.attach(vis.ui.app("Board", *nodes(), key="board"), on_event=on_event)
+def open_board():
+    return vis.attach(
+        vis.ui.app("Board", *nodes(), key="board"),
+        on_event=on_event,
+        on_reload=reopen,
+    )
 
-vis.register_extension(
-    vis.Extension(name="board", description="A board.", reopen_app=reopen)
-)
+def reopen(app):
+    open_board()
 ```
 
-- Vis calls `reopen_app` one time for each app of your extension that the reload disconnected. The
-  call runs the new code in the session of the app.
+- `on_reload` is a hook of one app, as `on_event` is. An app without the hook stays disconnected
+  until the extension opens the key again, for example in its next tool call.
+- To connect an app again only in development, give the hook only then, for example
+  `on_reload=reopen if DEV else None`.
+- The reload ends the process that held your function. Vis keeps only the name of the function and
+  finds that name in the new code.
+- Give a function at module level, in the extension file or in a module that Python can import. A
+  lambda or a nested function raises `TypeError`.
+- Vis calls the function one time for each app that the reload disconnected. The call runs the new
+  code in the session of the app.
 - `app` is a dict with `key`, `view_id`, `session_id`, `workspace_root`, and `project_root`.
-- Open the app again with the same `key`. The module globals of the old worker are gone, so read
-  your data first.
-- An extension without `reopen_app` gets no call. Its app stays disconnected until the extension
-  opens the key again, for example in its next tool call.
-- Vis does not call `reopen_app` for an app without a key, or for an app that a person closed.
-- Vis calls `reopen_app` only while the Python sandbox of the session runs. After a gateway
-  restart, open the app at the next call of your extension.
-- An error in `reopen_app` goes to the gateway log, and the app stays disconnected.
+- Open the app again with the same `key`, and give `on_reload` again. The module globals of the old
+  worker are gone, so read your data first.
+- The hook needs an app with a `key`. Only an extension that Vis loads takes the hook. An SDK
+  program and `python_execution` raise `TypeError`.
+- Vis does not call the hook for an app that a person closed.
+- Vis calls the hook only while the Python sandbox of the session runs. After a gateway restart,
+  open the app at the next call of your extension.
+- An error in the hook goes to the gateway log, and the app stays disconnected. A name that the new
+  code does not have is such an error.
 
 ### Keep app data apart from its picture
 

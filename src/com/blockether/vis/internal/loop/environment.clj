@@ -1874,15 +1874,14 @@
   (python-extensions/add-change-listener! ::reseat-python-extensions #'reseat-python-extensions!))
 
 (defn- reconnect-app!
-  "Ask the extension of disconnected `app` to open it again, in the session of the
-   app. Only an extension that declares `reopen_app` is asked. A session without a
-   live sandbox is not asked, because its first step loads the extension. Answers
-   true when the extension was asked."
+  "Run the `reload` hook of disconnected `app` in its extension, in the session of the
+   app. The hook opens the app again. A session without a live sandbox is not asked,
+   because its first step loads the extension. Answers true when the hook ran."
   [{:keys [session-id extension] :as app}]
   (when-let [environment (:environment (get @cache (cache-key session-id)))]
     (when-let [context (env/python-context-if-built environment)]
       (when-not (env/python-context-disposed? context)
-        (extension/reopen-app environment extension app)))))
+        (extension/run-app-hook environment extension app)))))
 
 (defn- reconnect-app-soon!
   "[[reconnect-app!]] on another thread: the caller retires the owner of the app and

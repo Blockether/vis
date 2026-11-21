@@ -707,7 +707,7 @@
        (optional-field? x :ext/source-nses #(vector-of? symbol? %))
        (optional-field? x :ext/kind non-blank-string?)
        (every? #(optional-field? x % fn?)
-               [:ext/activation-fn :ext/prompt-fn :ext/ctx-fn :ext/doctor-fn :ext/reopen-app-fn])
+               [:ext/activation-fn :ext/prompt-fn :ext/ctx-fn :ext/doctor-fn :ext/app-hook-fn])
        (optional-field? x :ext/hooks #(vector-of? hook? %))
        (optional-field? x :ext/op-hooks #(every? op-hook? %))
        (optional-field? x :ext/network-filters #(every? ifn? %))
@@ -3445,17 +3445,17 @@
      (into (into [] (comp (keep registry) (remove #(local-names (:ext/name %)))) @extension-order)
            local))))
 
-(defn reopen-app
-  "Ask extension `ext-name` to open its disconnected `app` again in the session of
-   `env`: call its `:ext/reopen-app-fn` with `env` and `app`, a map with `:key` and
-   `:view-id`. Only an extension that declares the function is asked, and not while the
-   settings of `env` turn it off. Answers true when the function ran."
+(defn run-app-hook
+  "Run a hook of `app` in extension `ext-name`, in the session of `env`: call its
+   `:ext/app-hook-fn` with `env` and `app`, a map with `:key`, `:view-id` and `:hook`,
+   the name of the function that the app gave for the hook. An extension is not asked
+   while the settings of `env` turn it off. Answers true when the function ran."
   [env ext-name app]
   (when-let [ext (some #(when (= ext-name (:ext/name %)) %)
                        (if-let [rows (:extensions env)] @rows (registered-extensions)))]
-    (when-let [reopen (:ext/reopen-app-fn ext)]
+    (when-let [run (:ext/app-hook-fn ext)]
       (when (not= "off" (scoped/engine-mode env ext (delay (scoped/live-values env))))
-        (with-context {:ext ext :env env} (reopen env app))
+        (with-context {:ext ext :env env} (run env app))
         true))))
 
 (defn keybindings

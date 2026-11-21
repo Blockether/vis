@@ -253,6 +253,14 @@ def test_the_app_door_of_a_session_takes_no_callback():
     )
 
 
+def test_an_app_takes_only_a_named_function_as_its_reload_hook():
+    # A reload ends the process: Vis finds the hook by its name in the new code.
+    with pytest.raises(TypeError) as refusal:
+        vis.attach(vis.ui.app("Board", key="board"), on_reload=lambda app: None)
+
+    assert "on_reload must be a function at module level" in str(refusal.value)
+
+
 def test_an_app_names_the_arguments_that_it_refuses():
     with pytest.raises(TypeError) as refusal:
         vis.attach(vis.ui.app("Review"), "review.json")

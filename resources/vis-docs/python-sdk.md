@@ -628,7 +628,7 @@ needs an explicit Activity for every exported method, and it can have a static `
 object namespace, use `Symbol(object, name="inventory")` and annotate its methods with
 `@vis.method(activity=...)`. The [extension API](extension-api.md) has the details.
 
-Vis rejects the host-only features: `activation`, `ctx`, `reopen_app`, `env`,
+Vis rejects the host-only features: `activation`, `ctx`, `env`,
 providers, op hooks with `phase="after"`, network filters, slash commands, and callable prompts. For those features,
 write an [engine-side extension](extending.md). Its registration entry point is
 `vis.register_extension(...)`.

@@ -76,7 +76,9 @@
    :context ctx :listener f}`, or nil. Only an owner opens a `panel` view. The `python_execution` sandbox has no owner, so it never opens one.
 
    `:listener` receives each human event as `(listener event session-id)` on a
-   thread of its own. The door that made it binds that session for the callback."
+   thread of its own. The door that made it binds that session for the callback.
+
+   `:hooks` holds the app hooks that the open envelope names, see [[live-json!]]."
   nil)
 
 (defonce ^:private human-stops
@@ -2744,6 +2746,8 @@
   {:owner-context (:context *live-owner*)
    :listener (:listener *live-owner*)
    :listener-agent (when (:listener *live-owner*) (agent nil))
+   ;; Hook name -> the function that the code of the owner names for it.
+   :owner-hooks (:hooks *live-owner*)
    ;; An app that its owner opened or adopted in this process.
    :is-held true})
 
@@ -3614,24 +3618,27 @@
     closed))
 
 (defonce ^:private disconnect-listener
-  ;; What asks the owner of a disconnected app to open it again. The layer that owns
-  ;; the session environments installs it; this namespace cannot reach that layer.
+  ;; What runs the `reload` hook of a disconnected app. The layer that owns the
+  ;; session environments installs it; this namespace cannot reach that layer.
   (atom nil))
 
 (defn set-disconnect-listener!
-  "Install what hears that an app of a session lost its owner: called with
-   `{:session-id :extension :key :view-id}` on the thread that retires the owner,
-   so it must not block. An app without a key cannot come back and is not told."
+  "Install what hears that an app with a `reload` hook lost its owner: called with
+   `{:session-id :extension :key :view-id :hook}` on the thread that retires the
+   owner, so it must not block. `:hook` names the function of the hook. An app
+   without the hook, or without a key, is not told."
   [f]
   (reset! disconnect-listener f))
 
 (defn- app-disconnected!
-  "Tell the listener that app `entry` of a session lost its owner. Never throws."
-  [entry]
-  (when-let [f @disconnect-listener]
+  "Tell the listener that app `entry` of a session lost the owner that named
+   function `hook` for a reload. Never throws."
+  [entry hook]
+  (when-let [f (and hook @disconnect-listener)]
     (when-let [[session-id extension k] (:app-key entry)]
       (when session-id
-        (try (f {:session-id session-id :extension extension :key k :view-id (:id entry)})
+        (try (f
+               {:session-id session-id :extension extension :key k :view-id (:id entry) :hook hook})
              (catch Throwable t
                (tel/log! {:level :warn
                           :id ::disconnect-listener-failed
@@ -3647,16 +3654,18 @@
         #(and (:is-app %) (identical? ctx (:owner-context %)))
 
         [before after]
-        (swap-vals! pending
-                    (fn [entries]
-                      (into {}
-                            (map
-                              (fn [[id entry]]
-                                [id
-                                 (if (released? entry)
-                                   (dissoc entry :owner-context :listener :listener-agent :is-held)
-                                   entry)]))
-                            entries)))]
+        (swap-vals!
+          pending
+          (fn [entries]
+            (into
+              {}
+              (map
+                (fn [[id entry]]
+                  [id
+                   (if (released? entry)
+                     (dissoc entry :owner-context :listener :listener-agent :owner-hooks :is-held)
+                     entry)]))
+              entries)))]
 
     ;; The surfaces show each released app as disconnected.
     (doseq [[id entry]
@@ -3667,7 +3676,7 @@
             :when (and (released? entry) now (app-stale? now))]
 
       (publish! (:channel-ids now) (lifecycle-event :view/open now {:view (app-picture now)}))
-      (app-disconnected! now)))
+      (app-disconnected! now (get (:owner-hooks entry) "reload"))))
   (->> (vals @pending)
        (filter #(and (:owned-key %) (identical? ctx (:owner-context %))))
        (sort-by :created-at)
@@ -5300,6 +5309,23 @@
           {:view-id view-id :is-open false :result result}
           (live-ended view-id))))))
 
+(defn- declared-hooks
+  "The app hooks that open envelope `envelope` names, or nil: a map from a hook name
+   to the name of a function in the code of the owner. `reload` is the only hook. Code
+   does not outlive a reload, so the owner names the function, and its new code finds
+   that name again. Only an app with a key takes hooks, because only a key adopts it."
+  [envelope]
+  (when-let [hooks (get envelope "hooks")]
+    (when-not (and (map? hooks)
+                   (every? #{"reload"} (keys hooks))
+                   (every? #(and (util/non-blank-string? %) (<= (count %) 512)) (vals hooks)))
+      (invalid-live-view! "hooks must be a map from reload to the name of a function"))
+    (when-not (and (= "open" (get envelope "op"))
+                   (= (name app/placement) (get-in envelope ["view" "placement"]))
+                   (util/non-blank-string? (get-in envelope ["view" "key"])))
+      (invalid-live-view! "only the open of an app with a key takes hooks"))
+    (not-empty hooks)))
+
 (defn live-json!
   "The strings-only seam a Python extension crosses for a live view: one JSON
    envelope in, one JSON answer out.
@@ -5311,14 +5337,25 @@
    Only a `state` with `timeout_ms` blocks: it waits for a change or close,
    without periodic guest callbacks or publishing a view event.
 
-   `owner` is the [[*live-owner*]] of the extension door that crosses."
+   `owner` is the [[*live-owner*]] of the extension door that crosses. The `hooks` of
+   an open envelope stay with that owner, see [[declared-hooks]]."
   ([envelope-json] (live-json! envelope-json nil))
   ([envelope-json owner]
-   (let [envelope (json/read-json (str envelope-json) :key-fn identity)]
-     (when-not (map? envelope) (invalid-live-view! "a live envelope must be a JSON object"))
-     (binding [*live-owner* owner]
+   (let [envelope
+         (json/read-json (str envelope-json) :key-fn identity)
+
+         _
+         (when-not (map? envelope) (invalid-live-view! "a live envelope must be a JSON object"))
+
+         hooks
+         (declared-hooks envelope)]
+
+     (when (and hooks (nil? owner)) (invalid-live-view! "only extension code names app hooks"))
+     (binding [*live-owner* (cond-> owner
+                              hooks
+                              (assoc :hooks hooks))]
        (-> envelope
-           (dissoc "channel_id" "channel_ids")
+           (dissoc "channel_id" "channel_ids" "hooks")
            live-dispatch
            wire/json-str)))))
 
