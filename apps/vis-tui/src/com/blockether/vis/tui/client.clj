@@ -618,13 +618,34 @@
                             (or target {:scope "global"})
                             {:timeout-ms 120000}))))
 
+;; The idempotency key of each create that got no answer, by its options.
+(defonce ^:private unanswered-creates (atom {}))
+
 (defn create-session!
   "POST a new session. The gateway may load the extensions of its project for the first
-   time before it answers, so the request uses the cold-load timeout (#493)."
+   time before it answers, so the request uses the cold-load timeout (#493).
+
+   A create that got no answer can still make its session. The same create again sends
+   the same idempotency key, and the gateway answers with that session, not with a
+   second one. Only one retry takes the key, so two creates at the same time stay two
+   sessions."
   [opts]
-  (let [entry (target!)]
+  (let [entry
+        (target!)
+
+        [unanswered]
+        (swap-vals! unanswered-creates dissoc opts)
+
+        idempotency-key
+        (or (get unanswered opts) (str "tui:" (random-uuid)))]
+
     (ensure-client! entry)
-    (send-json-with-entry! entry "POST" "/v1/sessions" opts {:timeout-ms cold-load-timeout-ms})))
+    (try (send-json-with-entry! entry
+                                "POST"
+                                "/v1/sessions"
+                                (assoc opts :idempotency-key idempotency-key)
+                                {:timeout-ms cold-load-timeout-ms})
+         (catch Throwable t (swap! unanswered-creates assoc opts idempotency-key) (throw t)))))
 
 (defn session-slashes
   "GET the gateway-owned slash catalog for `sid` and `channel`. The first call may

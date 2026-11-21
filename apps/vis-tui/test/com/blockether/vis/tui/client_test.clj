@@ -1100,3 +1100,33 @@
                        (swap! cache assoc :rows [{"id" "b"}])
                        (expect (= [:b] (mapv :id (client/configured-providers-cached))))
                        (expect (= 2 @calls) "New rows are converted once"))))))
+
+;; #493: the gateway answered a create after the TUI stopped its wait. The retry made a
+;; second session, and the first session stayed without an owner.
+(defdescribe
+  create-session-retry
+  (it "sends the key of a create that got no answer again, and a new key after an answer"
+      (let [keys-sent
+            (atom [])
+
+            answers
+            (atom [#(throw (java.net.http.HttpTimeoutException. "request timed out"))
+                   (constantly {:status 201 :body "{\"id\":\"s1\"}"})
+                   (constantly {:status 201 :body "{\"id\":\"s2\"}"})])]
+
+        (with-redefs-fn {#'client/target! (constantly {:host "127.0.0.1" :port 1 :local? true})
+                         #'client/ensure-client! (constantly nil)
+                         #'http/request (fn [{:keys [body]}]
+                                          (swap! keys-sent conj
+                                            (get (wire/parse-json body) "idempotency_key"))
+                                          ((first (first (swap-vals! answers rest)))))}
+          (fn []
+            (let [opts {:channel :tui :root "/project"}]
+              (expect (= :no-answer
+                         (try (client/create-session! opts) (catch Exception _ :no-answer))))
+              (expect (= {"id" "s1"} (client/create-session! opts)))
+              (expect (= {"id" "s2"} (client/create-session! opts)))
+              (let [[first-key retry-key next-key] @keys-sent]
+                (expect (string? first-key))
+                (expect (= first-key retry-key) "the retry is the same create")
+                (expect (not= retry-key next-key) "the next create is a new session"))))))))
