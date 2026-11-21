@@ -3,10 +3,10 @@
  * to an extension and stays while the session is open.
  */
 
-import { useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { Chip, CloseButton, Disclosure } from './ui';
 import { ResizeEdge } from './ResizeEdge';
-import { useChosenWidth } from '../lib/chosen-width';
+import { clampWidth, useChosenWidth } from '../lib/chosen-width';
 import { LiveView, ToneMark, runSummary, runTone } from './LiveView';
 import type { GatewayClient } from '../lib/gateway';
 import type { LiveView as LiveViewModel } from '../lib/live-view';
@@ -17,6 +17,9 @@ import type { LiveView as LiveViewModel } from '../lib/live-view';
  * panel, so a review toolbar fits on one row.
  */
 export const LIVE_PANEL_WIDTH = { min: 280, max: 1200, step: 16, share: 0.42, fitMin: 360, fitMax: 560 } as const;
+
+/** The transcript beside the panel keeps the width of a phone, in CSS pixels. */
+const TRANSCRIPT_MIN_WIDTH = 320;
 
 /** Only a width that the person chose is kept. The old key held every first width. */
 const WIDTH_KEY = 'vis.live-panel.chosen-width';
@@ -159,14 +162,39 @@ export function LivePanel({
   );
 }
 
-/** A panel beside the transcript. Drag its edge, or use the arrow keys on it, to resize it. */
+/**
+ * The widest panel in a row `rowWidth` wide: the transcript beside it keeps its width.
+ * A row that has no layout yet (0) sets no limit.
+ */
+function panelMaxWidth(rowWidth: number): number {
+  const { min, max } = LIVE_PANEL_WIDTH;
+  return rowWidth > 0 ? Math.max(min, Math.min(max, rowWidth - TRANSCRIPT_MIN_WIDTH)) : max;
+}
+
+/**
+ * A panel beside the transcript. Drag its edge, or use the arrow keys on it, to resize it.
+ * The panel stays in its row, so it never hides the transcript or the session list.
+ * A row that became narrower shows a narrower panel, and keeps the chosen width.
+ */
 export function ResizablePanel({ children }: { children: ReactNode }) {
-  const [chosen, choose] = useChosenWidth(WIDTH_KEY, LIVE_PANEL_WIDTH);
+  const box = useRef<HTMLDivElement>(null);
+  const [rowWidth, setRowWidth] = useState(0);
+  useLayoutEffect(() => {
+    const row = box.current?.parentElement;
+    if (!row) return;
+    const measure = () => setRowWidth(row.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, []);
+  const bounds = { ...LIVE_PANEL_WIDTH, max: panelMaxWidth(rowWidth) };
+  const [chosen, choose] = useChosenWidth(WIDTH_KEY, bounds);
   const [initial] = useState(() => initialPanelWidth(window.innerWidth));
-  const width = chosen ?? initial;
+  const width = clampWidth(chosen ?? initial, bounds);
   return (
-    <div className="relative flex h-full min-h-0 shrink-0 border-l border-dialog-edge" style={{ width }}>
-      <ResizeEdge label="Resize live views" side="start" bounds={LIVE_PANEL_WIDTH} width={width} onWidth={choose} />
+    <div ref={box} className="relative flex h-full min-h-0 shrink-0 border-l border-dialog-edge" style={{ width }}>
+      <ResizeEdge label="Resize live views" side="start" bounds={bounds} width={width} onWidth={choose} />
       <div className="min-h-0 min-w-0 flex-1">{children}</div>
     </div>
   );
