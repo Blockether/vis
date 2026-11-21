@@ -8025,7 +8025,7 @@
         pending
         (bus/raised-waiting-count sid)]
 
-    (cond-> (merge (dissoc child :spawn_key :spawn_fingerprint)
+    (cond-> (merge (dissoc child :spawn_key :spawn_fingerprint :started_at)
                    (smodel/model-of db sid)
                    {:routing_locked (persistance/db-routing-locked? db sid)
                     :pending_input (pos? pending)

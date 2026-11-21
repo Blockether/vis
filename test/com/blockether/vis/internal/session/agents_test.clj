@@ -97,6 +97,11 @@
                                                                 :content "Full current context"}]}
                                                  opts)}))))
 
+(defn- start!
+  "Store the first model iteration of the current task of `child` at epoch ms `at`."
+  [db child at]
+  (ps/db-agent-update! db child {:status "running" :started_at at}))
+
 ;; The leader computed whole answers itself and spawned children only to confirm them. The rules
 ;; follow the Codex and Claude Code delegation rules and the Vis subagent evaluation.
 
@@ -1461,19 +1466,20 @@
             last-iteration
             (+ (long (start running)) 5000)]
 
+      (doseq [at [(+ (long (start running)) 1000) last-iteration]]
         (with-redefs [util/now-ms (fn ^long []
-                                    (long last-iteration))]
-          (ps/db-agent-claim-iteration! db running))
-        (with-redefs [util/now-ms (fn ^long []
-                                    (+ (long last-iteration) 86400000))]
-          (agents/reconcile-orphans! db []))
-        (expect (= [0 (start queued)] ((juxt :worked_ms :finished_at) (agents/info db queued)))
-                "A child that started no iteration did no work")
-        (expect (= [5000 last-iteration] ((juxt :worked_ms :finished_at) (agents/info db running)))
-                "A child ends at its last iteration")
-        (expect (= 5000
-                   (:worked_ms (get (ps/db-team-clocks db leader)
-                                    (:team_id (agents/info db running)))))))))
+                                    (long at))]
+          (ps/db-agent-claim-iteration! db running)))
+      (with-redefs [util/now-ms (fn ^long []
+                                  (+ (long last-iteration) 86400000))]
+        (agents/reconcile-orphans! db []))
+      (expect (= [0 (start queued)] ((juxt :worked_ms :finished_at) (agents/info db queued)))
+              "A child that started no iteration did no work")
+      (expect (= [4000 last-iteration] ((juxt :worked_ms :finished_at) (agents/info db running)))
+              "A child works from its first iteration to its last one")
+      (expect (= 4000
+                 (:worked_ms (get (ps/db-team-clocks db leader)
+                                  (:team_id (agents/info db running)))))))))
 
 ;; Regression (session 6866e0a0): after a gateway restart, the wait records of the ended
 ;; children were empty, and the leader rebuilt their work from git diff.
@@ -2389,11 +2395,13 @@
           start
           (:created_at (agents/info db child))]
 
+      (start! db child start)
       (ps/db-agent-update! db child {:status "failed" :finished_at (+ start 60000)})
       (ps/db-agent-resume! db child 1 (+ start 90000))
       (expect (= [{:start start :end (+ start 60000) :status "failed"}]
                  (:runs (agents/info db child)))
               "The resume keeps the failed task that it replaces")
+      (start! db child (+ start 90000))
       (ps/db-agent-update! db
                            child
                            {:status "completed" :outcome "passed" :finished_at (+ start 120000)})
@@ -2432,6 +2440,7 @@
           #(:worked_ms (agents/info db child))]
 
       (expect (= 0 (worked)))
+      (start! db child start)
       (ps/db-agent-update! db child {:status "failed" :finished_at (+ start 60000)})
       (expect (= 60000 (worked)))
       (ps/db-agent-update! db child {:status "failed" :finished_at (+ start 70000)})
@@ -2440,6 +2449,7 @@
       (expect (= 60000 (worked)) "The time stops while the child does not work")
       (expect (= [(+ start 60000)] (mapv :end (:runs (agents/info db child))))
               "A repeated end keeps the first end, so the earlier task keeps its time")
+      (start! db child (+ start 90000))
       (ps/db-agent-update! db child {:status "completed" :finished_at (+ start 120000)})
       (expect (= 90000 (worked)))
       (expect (document/valid-json? "agents" "agent" (walk/stringify-keys (agents/info db child))))
@@ -2468,10 +2478,12 @@
           clocks
           #(ps/db-team-clocks db leader)]
 
+      (start! db a start)
       (expect (= {team {:worked_ms 0 :busy_since start}} (clocks)))
       (ps/db-agent-update! db a {:status "completed" :finished_at (+ start 60000)})
       (expect (= {team {:worked_ms 60000}} (clocks)) "The time stops while no agent works")
       (let [b (child! db leader {:team_id team :spawn_key "b"})]
+        (start! db b start)
         (expect (= {team {:worked_ms 0 :busy_since start}} (clocks))
                 "An agent that started in the time of another continues that work")
         (ps/db-agent-update! db b {:status "completed" :finished_at (+ start 30000)})
@@ -2490,11 +2502,78 @@
         (ps/db-agent-resume! db a 1 (+ start 90000))
         (expect (= [team ping-turn] (:turn_ids (agents/info db a)))
                 "A follow-up task joins the newest turn of the leader")
+        (start! db a (+ start 90000))
         (expect (= {team {:worked_ms 60000 :busy_since (+ start 90000)}
                     ping-turn {:worked_ms 60000 :busy_since (+ start 90000)}}
                    (clocks)))
         (ps/db-agent-update! db a {:status "completed" :finished_at (+ start 120000)})
         (expect (= {team {:worked_ms 90000} ping-turn {:worked_ms 90000}} (clocks))))))
+  ;; Cross-check 2026-11-22: the time in the queue counted as work, a cancel in the queue got the
+  ;; time to the end of its turn, and a deleted child left the clock of its team running.
+  (it
+    "counts the work of a child from its first iteration to its end"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {})
+
+          team
+          (:team_id (agents/info db child))
+
+          start
+          (long (:created_at (agents/info db child)))
+
+          at
+          (fn [ms f]
+            (with-redefs [util/now-ms (fn ^long []
+                                        (+ start (long ms)))]
+              (f)))
+
+          clocks
+          #(ps/db-team-clocks db leader)]
+
+      (expect (= {} (clocks)) "A queued child does no work")
+      (at 60000 #(ps/db-agent-claim-iteration! db child))
+      (at 60500 #(ps/db-agent-claim-iteration! db child))
+      (expect (= {team {:worked_ms 0 :busy_since (+ start 60000)}} (clocks)))
+      (ps/db-agent-update! db child {:status "completed" :finished_at (+ start 61000)})
+      (expect (= 1000 (:worked_ms (agents/info db child))))
+      (expect (= {team {:worked_ms 1000}} (clocks)))
+      (ps/db-agent-resume! db child 1 (+ start 90000))
+      (expect (= {team {:worked_ms 1000}} (clocks))
+              "A follow-up task waits for its first iteration")
+      (at 95000 #(ps/db-agent-claim-iteration! db child))
+      (at 97000 #(ps/db-agent-update! db child {:status "cancelled"}))
+      (at 150000 #(agents/finish! db child "cancelled"))
+      (expect (= 3000 (:worked_ms (agents/info db child))) "A cancel ends the task")
+      (expect (= {team {:worked_ms 3000}} (clocks)))
+      (ps/db-agent-resume! db child 1 (+ start 200000))
+      (expect (= [{:start (+ start 60000) :end (+ start 61000) :status "completed"}
+                  {:start (+ start 95000) :end (+ start 97000) :status "cancelled"}]
+                 (:runs (agents/info db child))))
+      (at 200500 #(ps/db-agent-update! db child {:status "cancelled"}))
+      (at 260000 #(agents/finish! db child "cancelled"))
+      (expect (= 3000 (:worked_ms (agents/info db child)))
+              "A task that is cancelled in the queue did no work")
+      (expect (= {team {:worked_ms 3000}} (clocks)))))
+  (it "stops the clock of a team when its child is deleted"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            child
+            (child! db leader {})]
+
+        (ps/db-agent-claim-iteration! db child)
+        (expect (some? (:busy_since (first (vals (ps/db-team-clocks db leader))))))
+        (ps/db-delete-session-tree! db child)
+        (expect (= {} (ps/db-team-clocks db leader)))))
   (it
     "lists the turns, notes, messages and end of a child, oldest first"
     (let [db

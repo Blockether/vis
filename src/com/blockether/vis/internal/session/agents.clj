@@ -330,12 +330,17 @@
         sid
         (:session-id env)]
 
-    (if (info db sid)
+    (if-let [before (info db sid)]
       (let [on? (enabled? db sid)]
         (if (and on? (ps/db-agent-claim-iteration! db sid))
           (do (ctx-loop/set-turn-state! env :agent-handoff? false)
               (ctx-loop/set-turn-state! env :agent-claimed? true)
               (swap! handoffs disj (str sid))
+              ;; The first iteration of a task starts its work: the clients get the row and the
+              ;; clock of its team now, not after the model call.
+              (when-not (:started_at before)
+                (when-let [changed! (get @runtime :changed!)]
+                  (changed! sid)))
               true)
           (let [child (info db sid)
                 exhausted? (>= (long (:iterations_used child)) (long (:iteration_budget child)))]
@@ -1953,10 +1958,11 @@
           #(ps/db-agent-update!
              db
              sid
-             (merge {:result nil :outcome nil :finished_at nil :runs nil :turn_ids nil}
-                    (select-keys child
-                                 [:status :resumed_turns :resumed_at :result :outcome :finished_at
-                                  :runs :worked_ms :turn_ids]))))))
+             (merge
+               {:result nil :outcome nil :started_at nil :finished_at nil :runs nil :turn_ids nil}
+               (select-keys child
+                            [:status :resumed_turns :resumed_at :result :outcome :started_at
+                             :finished_at :runs :worked_ms :turn_ids]))))))
 
 (defn task-request
   "The turn request of a Council wake from the parent of managed child `sid`, or nil for another

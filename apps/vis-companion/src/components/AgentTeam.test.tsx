@@ -73,10 +73,14 @@ describe('agent rows', () => {
   // User report 2026-11-21: each follow-up Council ping reset the time of an agent.
   // The store keeps the time of the ended tasks in worked_ms, so a row adds no earlier task.
   it('adds the current task to the stored time of an agent, and stops it while the agent does not work', () => {
-    const resumed = { ...child, worked_ms: 60_000, resumed_at: T0 + 170_000 };
+    const queued = { ...child, status: 'queued' as const, worked_ms: 60_000, resumed_at: T0 + 160_000 };
+    const resumed = { ...queued, status: 'running' as const, busy_since: T0 + 170_000 };
     expect(agentTime(resumed, T0 + 200_000)).toBe(90_000);
-    expect(agentTime({ ...resumed, status: 'queued' }, T0 + 200_000)).toBe(60_000);
-    expect(agentTime({ ...resumed, status: 'completed', worked_ms: 80_000, finished_at: T0 + 190_000 }, T0 + 999_000)).toBe(80_000);
+    // Cross-check 2026-11-22: the time in the queue is not work.
+    expect(agentTime(queued, T0 + 200_000)).toBe(60_000);
+    expect(agentTime({ ...queued, status: 'running' }, T0 + 200_000)).toBe(60_000);
+    expect(agentTime({ ...queued, status: 'completed', worked_ms: 80_000, finished_at: T0 + 190_000 }, T0 + 999_000)).toBe(80_000);
+    expect(agentTime({ ...resumed, worked_ms: 5_000, busy_since: T0 + 10_000 }, T0)).toBe(5_000);
   });
 
   it('times the current task: so far while it runs, its duration after, none while queued', () => {

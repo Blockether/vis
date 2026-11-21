@@ -1392,10 +1392,17 @@
               busy
               {"turn_id" team "worked_ms" 0 "busy_since" start}
 
+              _
+              (doseq [child children]
+                (ps/db-agent-update! db child {:started_at start}))
+
               frame
               (ready-frame leader)]
 
           (expect (document/valid-json? "gateway" "subscription_ready" frame))
+          (expect (= [[start nil] [start nil]]
+                     (mapv (juxt #(get % "busy_since") #(get % "started_at")) (get frame "agents")))
+                  "An agent row gives the start of the work that runs now, as its team does")
           (expect (= [busy] (get frame "team_clocks")))
           (expect (= [busy] (get (ready-frame one) "team_clocks"))
                   "A subagent stream gets the clock of its team")

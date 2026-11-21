@@ -508,29 +508,34 @@
                    "created_at" (- now-ms 200000)
                    "runs" [{"start" (- now-ms 200000) "end" (- now-ms 140000) "status" "completed"}]
                    "worked_ms" 60000
-                   "resumed_at" (- now-ms 30000))
+                   "resumed_at" (- now-ms 40000)
+                   "busy_since" (- now-ms 30000))
 
         ended
-        (assoc resumed
-          "status" "completed"
-          "worked_ms" 80000
-          "finished_at" (- now-ms 10000))]
+        (-> resumed
+            (dissoc "busy_since")
+            (assoc "status" "completed"
+                   "worked_ms" 80000
+                   "finished_at" (- now-ms 10000)))]
 
     (it "adds the current task to the stored time of an agent that works"
         (expect (= "1m 30s" (team/row-time (team/team-row 1 resumed) now-ms))))
     (it "shows the stored time of an agent that does not work, so the time stops"
         (expect (= "1m 20s" (team/row-time (team/team-row 1 ended) (+ now-ms 600000))))
         (expect (= "1m 00s"
-                   (team/row-time (team/team-row 1 (assoc resumed "status" "queued")) now-ms))))
+                   (team/row-time (team/team-row 1
+                                                 (-> resumed
+                                                     (dissoc "busy_since")
+                                                     (assoc "status" "queued")))
+                                  now-ms))
+                "The time in the queue is not work"))
     (it "shows the current task alone for a gateway from before worked_ms"
-        (expect (= "20s"
+        (expect (= "30s"
                    (team/row-time (team/team-row 1 (dissoc ended "worked_ms")) (+ now-ms 600000)))))
     ;; Verifier report 2026-11-22: with the gateway clock ahead, the TUI subtracted from the
     ;; stored time and showed 3s where the Companion showed 5s.
     (it "subtracts nothing from the stored time when the start is after now"
-        (expect (= "5s"
-                   (team/row-time {:start 10000 :active? true :status "RUNNING" :worked-ms 5000}
-                                  8000))))
+        (expect (= "5s" (team/row-time {:busy-since 10000 :worked-ms 5000} 8000))))
     ;; User report 2026-11-22: the TUI joined the work of the agent rows for the team time. The
     ;; gateway gives the stored clock of the team, so the TUI only adds the time to now.
     (it

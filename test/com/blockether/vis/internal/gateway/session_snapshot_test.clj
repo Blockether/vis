@@ -716,26 +716,42 @@
               (:datasource store)
               ["UPDATE session_agent SET runs = ?, resumed_at = ?, finished_at = ? WHERE session_id = ?"
                "[{\"start\":1,\"end\":60001,\"status\":\"failed\"}]" 90001 120001 cid])
-            (let [old
-                  (recoded (state/export-session sid)
-                           (fn [tree]
-                             (update tree
-                                     :sessions
-                                     (fn [ss]
-                                       (mapv #(update %
-                                                      :agent
-                                                      (fn [a]
-                                                        (some-> a
-                                                                (dissoc :worked_ms))))
-                                             ss)))))
+            (let
+              [old
+               (recoded (state/export-session sid)
+                        (fn [tree]
+                          (update tree
+                                  :sessions
+                                  (fn [ss]
+                                    (mapv #(update %
+                                                   :agent
+                                                   (fn [a]
+                                                     (some-> a
+                                                             (dissoc :worked_ms :started_at))))
+                                          ss)))))
 
-                  new-root
-                  (get (state/import-session! old {}) "id")]
+               new-root
+               (get (state/import-session! old {}) "id")
 
-              (expect (= [{:worked_ms 90000}]
-                         (rows store
-                               ["SELECT worked_ms FROM session_agent WHERE parent_id = ?"
-                                new-root]))))))))
+               ;; A child that was cancelled in the queue started no work.
+               idle-root
+               (do
+                 (jdbc/execute!
+                   (:datasource store)
+                   ["UPDATE session_agent SET status = 'cancelled', started_at = NULL WHERE session_id = ?"
+                    cid])
+                 (get (state/import-session! (state/export-session sid) {}) "id"))
+
+               times
+               (fn [root]
+                 (rows store
+                       ["SELECT worked_ms, started_at FROM session_agent WHERE parent_id = ?"
+                        root]))]
+
+              (expect (= [{:worked_ms 90000 :started_at 90001}] (times new-root))
+                      "A task of an older snapshot started at its hand-off")
+              (expect (= [nil] (mapv :started_at (times idle-root)))
+                      "A task without an iteration stays without a start"))))))
     (it "restores a child alone as an independent session"
         (with-store
           (fn [store]

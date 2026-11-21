@@ -3227,6 +3227,16 @@
               "type": "null"
             }
           ]
+        },
+        "busy_since": {
+          "anyOf": [
+            {
+              "$ref": "agents.json#/$defs/agent/properties/busy_since"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [

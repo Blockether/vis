@@ -438,6 +438,7 @@
       :pending? (pending? agent)
       :start (start-ms agent)
       :worked-ms (get agent "worked_ms")
+      :busy-since (get agent "busy_since")
       :end (when (and (not (active? agent)) (number? (get agent "finished_at")))
              (long (get agent "finished_at")))})))
 
@@ -573,18 +574,19 @@
     (str (duration-text total) " (waited " (duration-text (min total waited)) ")")))
 
 (defn row-time
-  "The time of a row. The store keeps the time of the tasks that ended (`worked_ms`), so this
-   adds no earlier task. An agent that works shows that time plus its current task to now. An
-   agent that does not work shows that time only, so the time stops. A gateway from before
-   `worked_ms` gives the time of the current task only. Nil while queued without earlier work,
-   or without times. A leader row adds its wait."
-  [{:keys [start end active? status worked-ms] :as row} now-ms]
+  "The time of a row. The store keeps the time of the tasks that ended (`worked_ms`) and the
+   start of the work that runs now (`busy_since`), so this adds only the time from that start to
+   now, as for a team clock. An agent that does not work shows the stored time only, so the time
+   stops. A gateway from before `worked_ms` gives the time of the current task only. Nil while
+   queued without earlier work, or without times. A leader row adds its wait."
+  [{:keys [start end active? status worked-ms busy-since] :as row} now-ms]
   (let [worked (long (or worked-ms 0))]
-    (cond (nil? start) nil
-          (leader? row) (leader-time row now-ms)
-          (and active? (not= "QUEUED" status)) (duration-text
-                                                 (+ worked (max 0 (- (long now-ms) (long start)))))
+    (cond (leader? row) (when start (leader-time row now-ms))
+          busy-since (duration-text (+ worked (max 0 (- (long now-ms) (long busy-since)))))
           (pos? worked) (duration-text worked)
+          (or worked-ms (nil? start)) nil
+          (and active? (not= "QUEUED" status)) (duration-text (max 0
+                                                                   (- (long now-ms) (long start))))
           end (duration-text (- (long end) (long start))))))
 
 (defn- widest [texts] (reduce max 0 (map #(long (p/display-width (str %))) texts)))

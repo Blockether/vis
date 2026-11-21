@@ -114,6 +114,8 @@ export interface Subagent {
   runs?: AgentRun[];
   /** The time in ms of the tasks that ended. The store adds a task when it ends. */
   worked_ms?: number;
+  /** Epoch ms of the first model iteration of the task that runs now. Absent while the agent does not work. */
+  busy_since?: number;
 }
 
 /**

@@ -282,8 +282,12 @@
    `{[table column] expression}`. The expression reads the other columns of the row.
 
    `session_agent.worked_ms` is the time of the tasks that ended: each task in `runs`, then
-   the current task when it has an end."
-  {["session_agent" "worked_ms"]
+   the current task when it has an end. `session_agent.started_at` is the hand-off of the
+   current task, because an older store kept no time of its first iteration."
+  {["session_agent" "started_at"] (str
+                                    "CASE WHEN status IN ('waiting', 'queued', 'blocked') THEN NULL"
+                                    " ELSE coalesce(resumed_at, created_at) END")
+   ["session_agent" "worked_ms"]
    (str "coalesce((SELECT sum(max(0, json_extract(run.value, '$.end')"
         " - json_extract(run.value, '$.start')))"
         " FROM json_each(coalesce(session_agent.runs, '[]')) AS run), 0)"

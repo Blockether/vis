@@ -1631,10 +1631,13 @@
           (agent {:status "running"})]
 
       (try (jdbc/execute! (:datasource s1) ["ALTER TABLE session_agent DROP COLUMN worked_ms"])
+           (jdbc/execute! (:datasource s1) ["ALTER TABLE session_agent DROP COLUMN started_at"])
            (persistance/db-dispose-connection! s1)
            (let [s2 (persistance/db-create-connection! dir)]
              (try (expect (= 90000 (:worked_ms (persistance/db-agent-info s2 resumed))))
                   (expect (= 0 (:worked_ms (persistance/db-agent-info s2 running))))
+                  (expect (= 1000 (:busy_since (persistance/db-agent-info s2 running)))
+                          "A task of an older store started at its hand-off")
                   (finally (persistance/db-dispose-connection! s2))))
            (finally (fs/delete-tree root))))))
 
@@ -4402,6 +4405,8 @@
                                        :runs
                                        "[{\"start\":2000,\"end\":62000,\"status\":\"failed\"}]"
                                        :resumed_at 150000
+                                       ;; The column fill of an older store: the hand-off.
+                                       :started_at 150000
                                        :finished_at 180000}]})
       (jdbc/execute! (:datasource s) ["PRAGMA user_version = 5"])
       (rewrite-older-store! (:datasource s))

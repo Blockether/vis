@@ -121,17 +121,20 @@ function startOf(agent: Subagent): number | undefined {
 }
 
 /**
- * The time of an agent in ms. The store keeps the time of the tasks that ended (`worked_ms`), so
- * this adds no earlier task. An agent that runs shows that time plus its current task to now.
- * An agent that does not run shows that time only, so the time stops. A gateway from before
- * `worked_ms` gives the time of the current task only. Undefined while queued without earlier work.
+ * The time of an agent in ms. The store keeps the time of the tasks that ended (`worked_ms`) and
+ * the start of the work that runs now (`busy_since`), so this adds only the time from that start
+ * to now, as for a team clock. An agent that does not work shows the stored time only, so the
+ * time stops. A gateway from before `worked_ms` gives the time of the current task only.
+ * Undefined while queued without earlier work.
  */
 export function agentTime(agent: Subagent, now: number): number | undefined {
-  const start = startOf(agent);
   const worked = agent.worked_ms ?? 0;
-  if (agent.status === 'running' && start !== undefined) return worked + Math.max(0, now - start);
+  if (typeof agent.busy_since === 'number') return worked + Math.max(0, now - agent.busy_since);
   if (worked > 0) return worked;
-  if (start === undefined || agent.status === 'queued' || agent.finished_at == null) return undefined;
+  const start = startOf(agent);
+  if (agent.worked_ms !== undefined || start === undefined) return undefined;
+  if (agent.status === 'running') return Math.max(0, now - start);
+  if (agent.status === 'queued' || agent.finished_at == null) return undefined;
   return Math.max(0, agent.finished_at - start);
 }
 

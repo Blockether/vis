@@ -552,28 +552,33 @@
   [runs resumed-at]
   (filterv number? (conj (mapv #(get % "start") runs) resumed-at)))
 
+(def ^:private end-statuses
+  "The statuses that end a task of an agent."
+  #{"completed" "failed" "cancelled" "budget_limited"})
+
+(defn- busy-since
+  "The start in epoch ms of the work that agent `row` does now, or nil. An agent works from the
+   first model iteration of its task (`started_at`) to the end of that task, so a task that
+   waits in the queue is no work."
+  [{:keys [started_at finished_at status]}]
+  (when (and (number? started_at) (nil? finished_at) (contains? #{"queued" "running"} status))
+    (long started_at)))
+
 (defn- agent-spans
   "The work of an agent row as `[start end]` pairs in epoch ms: its earlier tasks, then its
-   current task. The current end is nil while the agent is queued or runs. A task that ended
-   without an end time has no span."
-  [{:keys [created_at resumed_at finished_at status]} runs]
-  (let [start
-        (max (long created_at) (long (or resumed_at 0)))
+   current task from its first model iteration. The current end is nil while the agent works
+   (`busy-since`). A task without an iteration or without an end time has no span."
+  [{:keys [started_at finished_at] :as row} runs]
+  (let [earlier (into []
+                      (keep (fn [run]
+                              (let [from (get run "start")
+                                    to (get run "end")]
 
-        earlier
-        (into []
-              (keep (fn [run]
-                      (let [from
-                            (get run "start")
-
-                            to
-                            (get run "end")]
-
-                        (when (and (number? from) (number? to)) [(long from) (long to)]))))
-              runs)]
-
-    (cond (contains? #{"queued" "running"} status) (conj earlier [start nil])
-          (number? finished_at) (conj earlier [start (max start (long finished_at))])
+                                (when (and (number? from) (number? to)) [(long from) (long to)]))))
+                      runs)]
+    (cond (busy-since row) (conj earlier [(long started_at) nil])
+          (and (number? started_at) (number? finished_at))
+          (conj earlier [(long started_at) (max (long started_at) (long finished_at))])
           :else earlier)))
 
 (defn- team-clock
@@ -611,8 +616,7 @@
 
         clocks
         (->> (query! tx-info
-                     {:select [:team_id :turn_ids :status :created_at :resumed_at :finished_at
-                               :runs]
+                     {:select [:team_id :turn_ids :status :started_at :finished_at :runs]
                       :from :session_agent
                       :where [:= :leader_id leader]})
              (reduce (fn [teams row]
@@ -2960,7 +2964,21 @@
     (sqlite-write-tx!
       db-info
       (fn [tx-info]
-        (execute! tx-info {:delete-from :session_soul :where [:= :id (->id session-soul-id)]})))))
+        (let [id
+              (str (->id session-soul-id))
+
+              ;; The delete takes the agent rows of this session and of its children. Their
+              ;; leader keeps the clocks of its teams, so those follow the rows that stay.
+              leaders
+              (into []
+                    (comp (map :leader_id) (remove #{id}))
+                    (query! tx-info
+                            {:select-distinct [:leader_id]
+                             :from :session_agent
+                             :where [:or [:= :session_id id] [:= :parent_id id]]}))]
+
+          (execute! tx-info {:delete-from :session_soul :where [:= :id (->id session-soul-id)]})
+          (run! #(refresh-teams! tx-info %) leaders))))))
 
 ;; Projects (cross-channel) + movable project sessions + ownership  (V6/V7)
 
@@ -5775,7 +5793,7 @@
   [:session_id :parent_id :leader_id :team_id :task :role :status :iteration_budget :iterations_used
    :inherited_turns :allowed_models :fallback_model :files :spawn_key :spawn_fingerprint :created_at
    :resumed_turns :resumed_at :title :result :outcome :finished_at :ordinal :after :runs :worked_ms
-   :turn_ids])
+   :turn_ids :started_at])
 
 (defn- agent-row
   [row]
@@ -5824,7 +5842,11 @@
         (as-> r (apply dissoc
                   r
                   (filter #(nil? (get r %))
-                          [:title :result :outcome :finished_at :fallback_model])))
+                          [:title :result :outcome :finished_at :fallback_model :started_at])))
+
+        ;; A reader adds only the time since busy_since, as for a team clock.
+        (busy-since row)
+        (assoc :busy_since (busy-since row))
 
         files
         (assoc :files files)
@@ -6007,28 +6029,31 @@
 (defn db-agent-update!
   "Change the row of child `sid`. The first end of a task stores its end time and adds its time
    to `worked_ms` in the same write, so no reader adds the earlier tasks again, and a repeated
-   end changes neither. A change with its own `:worked_ms` restores a row as given. A change of
-   when the agent worked also stores the clocks of its teams (`refresh-teams!`)."
+   end changes neither. The time of a task is from its first model iteration (`started_at`) to
+   its end, so a task that never started adds nothing. A status that ends a task ends it now when
+   the change gives no end time: a cancelled task stops at its cancel. A change with its own
+   `:worked_ms` restores a row as given. A change of when the agent worked also stores the clocks
+   of its teams (`refresh-teams!`)."
   [db sid changes]
   (let [end
-        (when-not (contains? changes :worked_ms) (:finished_at changes))
+        (when-not (contains? changes :worked_ms)
+          (or (:finished_at changes) (when (end-statuses (:status changes)) (now-ms))))
 
         clock?
-        (some #(contains? changes %) [:status :resumed_at :finished_at :runs :turn_ids])
+        (some #(contains? changes %) [:status :resumed_at :started_at :finished_at :runs :turn_ids])
 
         changes
         (cond-> (select-keys changes
-                             [:status :resumed_turns :resumed_at :result :outcome :finished_at
-                              :worked_ms])
+                             [:status :resumed_turns :resumed_at :result :outcome :started_at
+                              :finished_at :worked_ms])
           ;; SQLite reads the old row values: only a task without an end gets this end and
           ;; adds its time, so a repeated end changes nothing.
           end
           (assoc :finished_at
             [:coalesce :finished_at [:inline (long end)]] :worked_ms
             [:+ :worked_ms
-             [:case [:= :finished_at nil]
-              [:max [:inline 0] [:- [:inline (long end)] [:coalesce :resumed_at :created_at]]] :else
-              [:inline 0]]])
+             [:case [:and [:= :finished_at nil] [:<> :started_at nil]]
+              [:max [:inline 0] [:- [:inline (long end)] :started_at]] :else [:inline 0]]])
 
           (contains? changes :files)
           (assoc :files
@@ -6065,26 +6090,47 @@
 
 (defn db-agent-claim-iteration!
   "Reserve one child model iteration atomically. A follow-up from a Council ping can pass
-   the active cap; only a new spawn counts against it."
+   the active cap; only a new spawn counts against it. The first iteration of a task starts its
+   work (`started_at`) and the clocks of its teams."
   [db sid]
-  (pos? (long (or (:next.jdbc/update-count
-                    (first (execute! db
-                                     {:update :session_agent
-                                      :set {:iterations_used [:+ :iterations_used 1]
-                                            :status "running"
-                                            :claimed_at (now-ms)}
-                                      :where [:and [:= :session_id (str sid)]
-                                              [:not-in :status ["cancelled" "budget_limited"]]
-                                              [:< :iterations_used :iteration_budget]]})))
-                  0))))
+  (sqlite-write-tx!
+    db
+    (fn [tx-info]
+      (let [now
+            (long (now-ms))
+
+            before
+            (query-one! tx-info
+                        {:select [:leader_id :started_at]
+                         :from :session_agent
+                         :where [:= :session_id (str sid)]})
+
+            claimed?
+            (pos? (long (or (:next.jdbc/update-count
+                              (first (execute!
+                                       tx-info
+                                       {:update :session_agent
+                                        :set {:iterations_used [:+ :iterations_used 1]
+                                              :status "running"
+                                              :claimed_at now
+                                              :started_at [:coalesce :started_at [:inline now]]}
+                                        :where [:and [:= :session_id (str sid)]
+                                                [:not-in :status ["cancelled" "budget_limited"]]
+                                                [:< :iterations_used :iteration_budget]]})))
+                            0)))]
+
+        (when (and claimed? (nil? (:started_at before)))
+          (refresh-teams! tx-info (:leader_id before)))
+        claimed?))))
 
 (defn db-agent-end-orphan!
   "End the task of child `sid` that a dead process left queued or running. The status becomes
    `failed`, and the task ends at the start of its last model iteration, so the time without a
-   process is not work. A task without an iteration ends at its start. Answers the new row."
+   process is not work. A task without an iteration ends at its hand-off and adds no time.
+   Answers the new row."
   [db sid]
   (let [start
-        [:coalesce :resumed_at :created_at]
+        [:coalesce :started_at :resumed_at :created_at]
 
         end
         [:max start [:coalesce :claimed_at [:inline 0]]]]
@@ -6094,8 +6140,11 @@
       (fn [tx-info]
         (execute! tx-info
                   {:update :session_agent
-                   :set
-                   {:status "failed" :finished_at end :worked_ms [:+ :worked_ms [:- end start]]}
+                   :set {:status "failed"
+                         :finished_at [:coalesce :finished_at end]
+                         :worked_ms [:+ :worked_ms
+                                     [:case [:= :finished_at nil] [:- end start] :else
+                                      [:inline 0]]]}
                    :where [:and [:= :session_id (str sid)] [:in :status ["queued" "running"]]]})
         (some->> (query-one!
                    tx-info
@@ -6168,38 +6217,42 @@
                                :from :session_agent
                                :where [:= :session_id (str sid)]})
 
-                  resumed?
-                  (and child
-                       (pos?
-                         (long
-                           (or (:next.jdbc/update-count
-                                 (first
-                                   (execute!
-                                     tx-info
-                                     {:update :session_agent
-                                      ;; The follow-up task has no result yet. The task that ended goes
-                                      ;; into runs first: SQLite reads the old row values. A task
-                                      ;; without an end time adds no time, as in worked_ms.
-                                      :set {:runs
-                                            [:case
-                                             [:in :status
-                                              ["completed" "failed" "cancelled" "budget_limited"]]
-                                             [:json_insert [:coalesce :runs "[]"] "$[#]"
-                                              [:json_object "start"
-                                               [:coalesce :resumed_at :created_at] "end"
-                                               [:coalesce :finished_at :resumed_at :created_at]
-                                               "status" :status "outcome" :outcome]] :else :runs]
-                                            :status "queued"
-                                            :resumed_turns (long turns)
-                                            :resumed_at (long now)
-                                            :result nil
-                                            :outcome nil
-                                            :finished_at nil
-                                            :turn_ids (resumed-turn-ids tx-info child now)}
-                                      :where [:and [:= :session_id (str sid)]
-                                              [:not-in :status ["queued" "running"]]
-                                              [:< :iterations_used :iteration_budget]]})))
-                               0))))]
+              resumed?
+              (and
+                child
+                (pos?
+                  (long
+                    (or (:next.jdbc/update-count
+                          (first
+                            (execute! tx-info
+                                      {:update :session_agent
+                                       ;; The follow-up task has no result yet. The task that ended goes
+                                       ;; into runs first: SQLite reads the old row values. A task
+                                       ;; without an iteration or an end time adds no time, as in
+                                       ;; worked_ms.
+                                       :set {:runs [:case
+                                                    [:in :status
+                                                     ["completed" "failed" "cancelled"
+                                                      "budget_limited"]]
+                                                    [:json_insert [:coalesce :runs "[]"] "$[#]"
+                                                     [:json_object "start"
+                                                      [:coalesce :started_at :finished_at
+                                                       :resumed_at :created_at] "end"
+                                                      [:coalesce :finished_at :started_at
+                                                       :resumed_at :created_at] "status" :status
+                                                      "outcome" :outcome]] :else :runs]
+                                             :status "queued"
+                                             :resumed_turns (long turns)
+                                             :resumed_at (long now)
+                                             :started_at nil
+                                             :result nil
+                                             :outcome nil
+                                             :finished_at nil
+                                             :turn_ids (resumed-turn-ids tx-info child now)}
+                                       :where [:and [:= :session_id (str sid)]
+                                               [:not-in :status ["queued" "running"]]
+                                               [:< :iterations_used :iteration_budget]]})))
+                        0))))]
 
               (when resumed? (refresh-teams! tx-info (:leader_id child)))
               resumed?)))
@@ -7018,6 +7071,13 @@
                               {:update :session_agent
                                :set {:worked_ms
                                      [:raw (migration/column-fill "session_agent" "worked_ms")]}
+                               :where [:= :session_id (get ids (:id soul))]}))
+                  ;; A snapshot from before started_at: a task started at its hand-off.
+                  (when-not (contains? agent :started_at)
+                    (execute! tx-info
+                              {:update :session_agent
+                               :set {:started_at
+                                     [:raw (migration/column-fill "session_agent" "started_at")]}
                                :where [:= :session_id (get ids (:id soul))]})))
                 (doseq [leader (distinct (keep #(get ids (:leader_id (:agent %))) sessions))]
                   (refresh-teams! tx-info leader)))

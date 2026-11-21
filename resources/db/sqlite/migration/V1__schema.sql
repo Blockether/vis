@@ -220,6 +220,9 @@ CREATE TABLE session_agent (
   -- When the agent last started a model iteration. The task of an agent that a dead process
   -- left ends at this time, so the time without a process is not work.
   claimed_at       INTEGER,
+  -- When the current task started its first model iteration. The time of a task is from this
+  -- time to its end, so the time in the queue is not work. NULL = the task did not start.
+  started_at       INTEGER,
   UNIQUE (parent_id, spawn_key),
   CHECK (session_id <> parent_id AND session_id <> leader_id)
 );
