@@ -1090,15 +1090,53 @@
   [team-id]
   (str "agent-team:" team-id))
 
+(def ^:private ^:const card-max-dots
+  "The most status dots on the head line of a team block. `+N more` counts the other agents."
+  3)
+
+(defn- card-dots
+  "The status dots of the agent rows of `rows` on the head line of a team block, from column
+   `col`: three at most in start order, then `+N more` (user decision, the same as the Companion
+   team line). Returns `[segments end]`: `[col text :dot tone]` and `[col text :more]` vectors,
+   and the column after them."
+  [rows col]
+  (let [agents
+        (vec (remove leader? rows))
+
+        shown
+        (subvec agents 0 (min (count agents) (long card-max-dots)))
+
+        dots
+        (vec (map-indexed (fn [i row]
+                            [(+ (long col) (long i)) "●" :dot (:tone row)])
+                          shown))
+
+        dots-end
+        (+ (long col) (count shown))
+
+        more
+        (- (count agents) (count shown))]
+
+    (if (pos? more)
+      (let [text (str "+" more " more")]
+        [(conj dots [(inc dots-end) text :more]) (+ (inc dots-end) (count text))])
+      [dots dots-end])))
+
 (defn card-head-segments
   "The painted parts of the head line of a team block: `[col text part]` vectors. `part` is
-   `:mark`, `:head`, `:chrome` or `:time`. The fold mark, then the team and its time, like the
-   Companion team line: `▸ TEAM │ 3m 20s`."
-  [{:keys [expanded? span]}]
-  (let [time (span-time span 0 false)]
-    (cond-> [[0 (if expanded? "▾" "▸") :mark] [2 "TEAM" :head]]
+   `:mark`, `:head`, `:dot`, `:more` or `:time`, and a `:dot` vector ends with the status tone of
+   its agent. The fold mark, the team, a status dot for each agent and the time, like the
+   Companion team line: `▸ TEAM  ●●● +2 more  3m 20s`."
+  [{:keys [expanded? span rows]}]
+  (let [time
+        (span-time span 0 false)
+
+        [dots end]
+        (card-dots rows 8)]
+
+    (cond-> (into [[0 (if expanded? "▾" "▸") :mark] [2 "TEAM" :head]] dots)
       time
-      (conj [7 "│" :chrome] [9 time :time]))))
+      (conj [(if (seq dots) (+ (long end) 2) 8) time :time]))))
 
 (defn- paint-card-head!
   "Paint the head line of a team block. A click on it folds or unfolds the table."
@@ -1109,7 +1147,7 @@
         y
         (long row)]
 
-    (doseq [[col text part]
+    (doseq [[col text part tone]
             (card-head-segments team-head)
 
             :let [room
@@ -1126,8 +1164,8 @@
           :head
           (do (p/set-colors! g t/code-block-fg bg) (p/styled g [p/BOLD] (p/put-str! g x y text)))
 
-          :chrome
-          (do (p/set-colors! g t/code-border-fg bg) (p/put-str! g x y text))
+          :dot
+          (do (p/set-colors! g (t/legible-ink (tone-ink tone) bg) bg) (p/put-str! g x y text))
 
           (do (p/set-colors! g t/dialog-hint bg) (p/put-str! g x y text)))))
     (p/clear-styles! g)
@@ -1169,7 +1207,7 @@
         {:line (str marker (segments-text (card-head-segments team-card)))
          :meta {:kind :activity-live-entry
                 :live-paint paint-card-head!
-                :team-head (select-keys team-card [:expanded? :span])
+                :team-head (select-keys team-card [:expanded? :span :rows])
                 :session-id (str session-id)
                 :node-id node-id
                 :collapsed? (not expanded?)}}]

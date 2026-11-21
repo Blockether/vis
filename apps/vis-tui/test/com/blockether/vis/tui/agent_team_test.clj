@@ -683,6 +683,21 @@
                      (select-keys head [:session-id :node-id :collapsed?])))
           (expect (= (- (count (:prewrapped-lines folded)) 1)
                      (team/card-height (:agent-team-card (nth decorated 1)) 100)))))))
+  ;; User request 2026-11-21: the head line of a team block shows a status dot for each agent,
+  ;; three at most, then `+N more`, as on the Companion team line.
+  (it "shows three status dots on the head line and counts the other agents"
+      (let [card
+            (team/card "turn-1"
+                       (mapv #(agent-row % (if (odd? %) "completed" "running")) (range 1 6)))
+
+            segments
+            (team/card-head-segments card)]
+
+        (expect (= "▸ TEAM  ●●● +2 more" (team/segments-text segments)))
+        (expect (= [:ok :running :ok]
+                   (keep (fn [[_ _ part tone]]
+                           (when (= :dot part) tone))
+                         segments)))))
   ;; User report 2026-11-19: a turn that pinged its agents with a follow-up task showed no team.
   (it
     "shows an agent in the turn that started it and in each turn that pinged it"
