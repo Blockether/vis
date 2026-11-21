@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.25] - 2026-11-21
+
+### Added
+
+- Review: a diff comment can cover a range of lines. In the Companion app, click and drag to select the lines.
+- Review: the TUI and the Companion app put the saved review comments into the message composer, and the next turn sends them. The saved drafts of an app also go to the next turn as comments.
+- Context: Vis reads `AGENTS.local.md` after `AGENTS.md`.
+- Extensions: the `vis-lang-javascript` extension is available.
+- TUI and Companion: the team line shows one status dot for each agent, in spawn order. It shows 3 dots at most, then `+N more`.
+- Companion: the arrow keys move the selection in the session search.
+- Companion: dictation shows on the lock screen and in a notification.
+
+### Changed
+
+- Council: Vis stores the time of each subagent and the clock of each team. The TUI and the Companion app only add the time of the work that runs now. The time adds up across Council pings and stops while no agent works.
+- Council: the time of a task starts at its first model iteration. Before, the time in the queue counted as work. A cancel ends the task at once.
+- Council: when you delete a subagent session, its row and its clock leave the team at once. An open subagent session gets each change of its team.
+- Review: the review app has no Send button. Use the message composer.
+- Janitor: cleanup and vacuum run on one background worker.
+- Performance: the sandbox loads network modules on first use, the TUI keeps diff rows between frames, and session exports remove credentials faster.
+- Docs: Getting started is now two pages, Overview and Quickstart.
+
+### Fixed
+
+- Council (#494): the form of a subagent shows in the session of its leader.
+- TUI (#493): a retry of a session create makes the same session, not a second one.
+- Extensions (#493): a load keeps the installed packages, and an interrupted sync removes its link. The log names the package that a load waits for and its slow step.
+- Gateway: the reserved ports are free again when the proxy stops.
+- Compaction: Vis tells you when a fold saved no tokens.
+- SDK: the SDK sources pass Pyright again.
+- TUI: the team block of a turn uses the message background.
+- Companion: the menu of a session row stays open during a rename. The project folder field keeps the focus. The review diff shows its scrollbar and keeps its toolbar at the top. `.mjs`, `.cjs`, `.mts` and `.cts` files have syntax colors.
+
 ## [v0.5.24] - 2026-11-20
 
 ### Added
