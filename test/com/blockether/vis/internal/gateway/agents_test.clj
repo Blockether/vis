@@ -1455,4 +1455,48 @@
               (= [{"turn_id" team "worked_ms" 0}] (get event "team_clocks"))
               "Only a queued agent is left, so the clock of the team has no time and does not run")
             (expect (= [waiting]
-                       (mapv #(get % "session_id") (get (ready-frame leader) "agents"))))))))))
+                       (mapv #(get % "session_id") (get (ready-frame leader) "agents")))))))))
+  ;; Cross-check 2026-11-22: an open subagent session kept the rows and the clock of its team from
+  ;; the moment it opened. Each push went to the stream of the leader only.
+  (it
+    "sends each change of a team to the open stream of each subagent of that team"
+    (with-team
+      {:statuses ["running" "queued"]}
+      (fn [{:keys [db children events]}]
+        (let [[working waiting]
+              children
+
+              {team :team_id start :created_at}
+              (ps/db-agent-info db working)
+
+              to-waiting
+              (fn []
+                (keep (fn [[sid event]]
+                        (when (= waiting (str sid)) event))
+                      @events))]
+
+          (ps/db-agent-update! db working {:started_at start})
+          (state/subscribe! waiting
+                            "client-1"
+                            (fn [_])
+                            0)
+          (drain!)
+          (ps/db-agent-update! db working {:status "completed" :finished_at (+ (long start) 4000)})
+          (state/append-event! working "turn.completed" {:turn_id "t"})
+          (drain!)
+          (let [event (last (to-waiting))]
+            (expect (document/valid-json? "gateway"
+                                          "team_update"
+                                          (select-keys event
+                                                       ["team" "agents" "changes" "team_clocks"
+                                                        "removed" "child_id"])))
+            (expect (= [working] (mapv #(get % "session_id") (get event "agents"))))
+            (expect (= [{"turn_id" team "worked_ms" 4000}] (get event "team_clocks"))
+                    "The clock of the team stops at the subagent too")
+            (expect (= {"active" 0 "total" 0} (get event "team"))
+                    "The summary is the team of the subagent itself, not of its leader"))
+          (with-redefs-fn {#'state/teardown-session-async! (constantly nil)}
+            #(state/close-session! working))
+          (drain!)
+          (expect (= [working] (get (last (to-waiting)) "removed")))
+          (state/unsubscribe! waiting "client-1"))))))

@@ -214,7 +214,7 @@
   (boolean (some client-subscriber? (keys (:subscribers (session-entry sid))))))
 
 ;; The team push below reacts to subscribers, model picks, grants and deletes.
-(declare team-changed! team-dropped! broadcast-team!)
+(declare team-changed! team-dropped! broadcast-team! team-subscribed!)
 
 ;; Goes up when a client stream starts here, or a process starts to watch a session. A client
 ;; gets the whole team in its `subscription.ready` frame, so the next team push sends whole rows
@@ -1285,7 +1285,8 @@
 
      (when (client-subscriber? sub-id)
        (swap! team-watch-epoch inc)
-       (bus/sync-watching! sid #(client-watched? sid)))
+       (bus/sync-watching! sid #(client-watched? sid))
+       (team-subscribed! sid))
      ;; After registration, so each held notice reaches the new sink after its replay.
      (doseq [notice held]
        (append-event! sid "notification" notice {:store? false}))
@@ -2948,6 +2949,10 @@
 ;; The push thread fills it, so an event tap never reads the store on the turn thread.
 (defonce ^:private team-leaders (atom {}))
 
+;; The team id of each child that the push thread read, as `child -> team_id`. A team id never
+;; changes. Only the push thread writes it.
+(defonce ^:private team-of (atom {}))
+
 (def ^:private team-kind-rank "The strength of each change kind." {:activity 1 :full 2 :urgent 3})
 
 (defn- team-kind
@@ -3152,6 +3157,74 @@
         activity (assoc cached :activity activity)
         :else (dissoc cached :activity)))
 
+(defn- team-id!
+  "The team id of child `child`, read from the store once. Only the push thread calls it."
+  [child]
+  (or (get @team-of child)
+      (when-let [team (some-> (agents/info (lp/db-info) child)
+                              :team_id
+                              str)]
+        (swap! team-of assoc child team)
+        team)))
+
+(defn- team-watchers
+  "The children of `leader` that a client stream watches, as `{child team_id}`. Only the push
+   thread calls it."
+  [leader]
+  (into {}
+        (keep (fn [[child l]]
+                (when (and (= leader l) (team-watched? child))
+                  (when-let [team (team-id! child)]
+                    [child team]))))
+        @team-leaders))
+
+(defn- child-team-event
+  "The part of `event`, a team push of a leader, that the stream of its child `child` in team
+   `team` shows, as the `subscription.ready` frame of that stream gives its team: the rows, changes,
+   clocks and deleted children of that team, with the team summary of `child` itself. `teams` maps
+   each child in `event` to its team. Nil when nothing of that team changed."
+  [event teams team child]
+  (let [in?
+        #(= team (get teams (str %)))
+
+        agents
+        (filterv #(in? (get % "session_id")) (:agents event))
+
+        changes
+        (filterv #(in? (get % "session_id")) (:changes event))
+
+        removed
+        (filterv in? (:removed event))
+
+        clocks
+        (filterv #(= team (str (:turn_id %))) (:team_clocks event))]
+
+    (when (or (seq agents) (seq changes) (seq removed) (seq clocks))
+      (cond-> {:team (team-wire (team-counts child)) :agents agents}
+        (seq changes)
+        (assoc :changes changes)
+
+        (seq clocks)
+        (assoc :team_clocks clocks)
+
+        (seq removed)
+        (assoc :removed removed)
+
+        (some-> (:child_id event)
+                in?)
+        (assoc :child_id (:child_id event))))))
+
+(defn- send-team!
+  "Send the team push `event` of `leader` on the stream of `leader`, and the part of each team on
+   the stream of each watched child of that team ([[child-team-event]]). `teams` maps each child in
+   `event` to its team. Only the push thread calls it, so it is the one writer of
+   `session.team_updated`."
+  [leader event teams]
+  (when (team-watched? leader) (append-event! leader "session.team_updated" event {:store? false}))
+  (doseq [[child team] (team-watchers leader)]
+    (when-let [part (child-team-event event teams team child)]
+      (append-event! child "session.team_updated" part {:store? false}))))
+
 (defn- push-team!
   "Send the rows of the pending children of `leader` live on its stream, with its team summary.
    Only the push thread calls it, so this is the one writer of `session.team_updated` and of
@@ -3173,7 +3246,8 @@
 
     (when (seq pending) (swap! team-cache team-note leader pending (util/now-ms)))
     (cond (empty? pending) nil
-          (not (team-watched? leader)) (swap! team-cache team-forget leader children)
+          (and (not (team-watched? leader)) (empty? (team-watchers leader)))
+          (swap! team-cache team-forget leader children)
           :else
           (let [{:keys [full reuse]}
                 (team-plan @team-cache pending)
@@ -3237,18 +3311,18 @@
             (swap! team-cache #(-> (team-remember % leader children rows team)
                                    (team-sent leader epoch wire-rows agents team now)))
             (when-not same?
-              (append-event! leader
-                             "session.team_updated"
-                             (cond-> {:team team :agents agents}
-                               (seq changes)
-                               (assoc :changes changes)
+              (send-team!
+                leader
+                (cond-> {:team team :agents agents}
+                  (seq changes)
+                  (assoc :changes changes)
 
-                               (seq clocks)
-                               (assoc :team_clocks clocks)
+                  (seq clocks)
+                  (assoc :team_clocks clocks)
 
-                               (= 1 (count children))
-                               (assoc :child_id (first children)))
-                             {:store? false}))))))
+                  (= 1 (count children))
+                  (assoc :child_id (first children)))
+                (into {} (map (juxt (comp str :session_id) (comp str :team_id))) rows)))))))
 
 (defn- step-team!
   "Apply `f`, a queue step that answers `[queue action]`, and start what the action asks."
@@ -3283,11 +3357,34 @@
   "Read the leader of session `sid` once, keep it, and push the row of `sid` when it has one. The
    push builds the row after each event that came during the read."
   [sid]
-  (let [leader (some-> (agents/info (lp/db-info) sid)
-                       :leader_id
-                       str)]
+  (let [info
+        (agents/info (lp/db-info) sid)
+
+        leader
+        (some-> (:leader_id info)
+                str)]
+
+    (when-let [team (:team_id info)]
+      (swap! team-of assoc sid (str team)))
     (swap! team-leaders #(if (= ::resolving (get % sid)) (assoc % sid (or leader false)) %))
     (when leader (mark-team! leader sid true))))
+
+(defn- team-subscribed!
+  "A client stream of session `sid` started. Read and keep the leader and the team of `sid` once,
+   on the push thread and without a push, so each later push of its team also reaches that stream."
+  [sid]
+  (let [sid (str sid)]
+    (run-team! #(when-not (contains? @team-leaders sid)
+                  (let [info (agents/info (lp/db-info) sid)]
+                    (when-let [team (:team_id info)]
+                      (swap! team-of assoc sid (str team)))
+                    (swap! team-leaders (fn [leaders]
+                                          (if (contains? leaders sid)
+                                            leaders
+                                            (assoc leaders
+                                              sid (or (some-> (:leader_id info)
+                                                              str)
+                                                      false))))))))))
 
 (defn- team-changed!
   "Session `sid` changed: push its row to its leader, when it has one. `urgent?` is false for a
@@ -3375,22 +3472,22 @@
    those turns: the stored clock, or a clock without time when the team has none now. So the row
    and a clock that ran for it stop at each client. It runs on the push thread, the one writer of
    `session.team_updated` and of `team-cache`."
-  [leader child turns]
-  (run-team! #(do (swap! team-cache team-forget leader [child])
-                  (when (team-watched? leader)
-                    (let [stored (into {}
-                                       (map (juxt :turn_id identity))
-                                       (clock-rows (lp/db-info) leader (set turns)))]
-                      (append-event! leader
-                                     "session.team_updated"
-                                     {:team (team-wire (team-counts leader))
-                                      :agents []
-                                      :removed [child]
-                                      :team_clocks
-                                      (mapv (fn [turn]
-                                              (get stored turn {:turn_id turn :worked_ms 0}))
-                                            (sort turns))}
-                                     {:store? false}))))))
+  [leader child team turns]
+  (run-team! #(let [stored
+                    (into {}
+                          (map (juxt :turn_id identity))
+                          (clock-rows (lp/db-info) leader (set turns)))] (swap! team-cache
+                                                                           team-forget
+                                                                           leader
+                                                                           [child])
+                (send-team! leader
+                            {:team (team-wire (team-counts leader))
+                             :agents []
+                             :removed [child]
+                             :team_clocks (mapv (fn [turn]
+                                                  (get stored turn {:turn_id turn :worked_ms 0}))
+                                                (sort turns))}
+                            {child team}) (swap! team-of dissoc child))))
 
 (def ^:private team-event-types
   "Events of a child that change its row or the team summary of its leader. A model change also
@@ -10149,7 +10246,7 @@
     (team-dropped! sid)
     ;; The leader of a deleted child keeps its stream: its team lost a row, and maybe a clock.
     (when-let [leader (:leader_id child)]
-      (team-removed! (str leader) (str sid) (mapv str (:turn_ids child)))))
+      (team-removed! (str leader) (str sid) (str (:team_id child)) (mapv str (:turn_ids child)))))
   ;; Notify attached clients while their sinks still exist. Reconnects learn the
   ;; same verdict from the missing persisted session, not a deleted replay ring.
   (append-event! sid "session.deleted" {} {:store? false})
