@@ -52,6 +52,11 @@ _steps: contextvars.ContextVar[dict[str, int] | None] = contextvars.ContextVar(
 _working: contextvars.ContextVar[tuple[Path, int, str] | None] = contextvars.ContextVar(
     "extension_package_working", default=None
 )
+# The `current` link that `sync` changed for the package that it handles now: the link
+# target before and after. Empty when the link did not change.
+_activation: contextvars.ContextVar[dict[str, str | None] | None] = (
+    contextvars.ContextVar("extension_package_activation", default=None)
+)
 # The note of a lock file. The file is in the project folder: a reader repeats no other text.
 _WORK = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)* (?:source|catalog|git)")
 _EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", ".DS_Store"}
@@ -819,6 +824,11 @@ def _admit(
             previous = None
             save_state = None
             exists = os.path.lexists(destination)
+            # The link before this operation changes a file, for a caller that undoes it.
+            before = _link_target(destination)
+            before_version = (
+                os.readlink(destination) if destination.is_symlink() else None
+            )
             if sync_records is not None:
                 current = sync_records.get(metadata["name"])
                 if current is None and len(sync_records) >= 128:
@@ -956,6 +966,13 @@ def _admit(
                         snapshot.symlink_to(selected, target_is_directory=True)
                         created = True
                 os.replace(pointer, destination)
+                activation = _activation.get()
+                if activation is not None:
+                    activation.update(
+                        previous=before,
+                        version=before_version,
+                        target=_link_target(destination),
+                    )
             except BaseException:
                 if saved_receipt is not None:
                     os.replace(saved_receipt, snapshot / "receipt.json")
@@ -1253,6 +1270,10 @@ def _save_sync_records(directory, records):
         temporary.unlink(missing_ok=True)
 
 
+def _link_target(destination):
+    return str(destination.resolve()) if os.path.lexists(destination) else None
+
+
 def _sync_owned(destination, record):
     return (
         record is not None
@@ -1303,7 +1324,7 @@ def _relocated(destination, record):
     }
 
 
-def _restore_saved_link(directory, name, expected, target):
+def _restore_saved_link(directory, name, expected, target, version=None):
     destination = _destination(directory, name)
     lock = directory / ("." + name + ".install-lock")
     fd = _acquire(lock)
@@ -1328,7 +1349,12 @@ def _restore_saved_link(directory, name, expected, target):
                 if target.parent == destination.parent:
                     version = _version(target.name)
                 else:
-                    version = inspect_source(target)["version"]
+                    # A caller that knows the version names it: the folder can be gone.
+                    version = (
+                        _version(version)
+                        if version
+                        else inspect_source(target)["version"]
+                    )
                     snapshot = destination.parent / version
                     if snapshot.exists() and not snapshot.is_symlink():
                         raise ValueError(
@@ -1684,6 +1710,8 @@ def sync(
     steps = {}
     scope = _steps.set(steps)
     working = _working.set(None)
+    activation = {}
+    activated = _activation.set(activation)
     try:
         records = _sync_records(directory)
         if prune and not dry_run:
@@ -1728,17 +1756,42 @@ def sync(
                         "status": "cached" if unchanged else "would-sync",
                     }
                 else:
-                    result = _sync_one(
-                        name, spec, directory, current, refresh, vis_version, frozen
-                    )
-                    record = {
-                        "spec": spec,
-                        "target": str(destination.resolve()),
-                        "result": {k: v for k, v in result.items() if k != "status"},
-                    }
-                    if records.get(name) != record:
-                        records[name] = record
-                        _save_sync_records(directory, records)
+                    activation.clear()
+                    try:
+                        result = _sync_one(
+                            name, spec, directory, current, refresh, vis_version, frozen
+                        )
+                        record = {
+                            "spec": spec,
+                            "target": str(destination.resolve()),
+                            "result": {
+                                k: v for k, v in result.items() if k != "status"
+                            },
+                        }
+                        if records.get(name) != record:
+                            _save_sync_records(directory, {**records, name: record})
+                            records[name] = record
+                    except BaseException as error:
+                        # A link and its record change together. A link without its
+                        # record is not owned, and each later sync refuses it. A link
+                        # that another operation made since then stays.
+                        if (
+                            activation
+                            and _link_target(destination) == activation["target"]
+                        ):
+                            try:
+                                _restore_saved_link(
+                                    directory,
+                                    name,
+                                    activation["target"],
+                                    activation["previous"],
+                                    activation["version"],
+                                )
+                            except (ValueError, OSError) as failure:
+                                error.add_note(
+                                    f"The link of {name} was not put back: {failure}"
+                                )
+                        raise
                 results.append(timed(result, started))
                 if prune:
                     results.extend(
@@ -1755,5 +1808,6 @@ def sync(
     finally:
         _steps.reset(scope)
         _working.reset(working)
+        _activation.reset(activated)
         if not dry_run:
             _release(lock, fd)

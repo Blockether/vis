@@ -1291,6 +1291,81 @@ def test_sync_latest_tracks_approved_stable_releases(releases):
     assert (updated["status"], updated["version"]) == ("updated", "1.1.0")
 
 
+# An interrupted sync left a `current` link without its record: each later sync refused
+# the package as not owned.
+@pytest.mark.parametrize("step", ["_save_sync_records", "_count_download"])
+@pytest.mark.parametrize("version", [None, "1.0.0"])
+def test_a_sync_after_an_interrupted_sync_handles_the_package(
+    releases, monkeypatch, step, version
+):
+    metadata, target, _ = releases
+    newer = metadata.pop(1)
+    configured = {
+        "vis-greeter": {
+            "source": REPOSITORY,
+            "subdirectory": "plugins/greeting",
+            "version": "latest",
+        }
+    }
+    if version:
+        assert package.sync(configured, target, trust=True)[0]["version"] == version
+    metadata.append(newer)
+    pointer = target / "vis-greeter/current"
+
+    def interrupt(*_):
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as patch:
+        patch.setattr(package, step, interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            package.sync(configured, target, trust=True)
+    assert (os.readlink(pointer) if os.path.lexists(pointer) else None) == version
+    done = package.sync(configured, target, trust=True)[0]
+    assert (done["status"], done["version"]) == (
+        "updated" if version else "installed",
+        "1.1.0",
+    )
+    assert package.sync(configured, target, trust=True)[0]["status"] == "cached"
+
+
+def test_an_interrupted_sync_of_a_moved_local_source_keeps_the_package_owned(
+    tmp_path, monkeypatch
+):
+    source, target = project(tmp_path / "source"), tmp_path / "extensions"
+    assert sync_greeter(source, target)[0]["status"] == "installed"
+    shutil.move(source, tmp_path / "moved")
+
+    def interrupt(*_):
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as patch:
+        patch.setattr(package, "_save_sync_records", interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            sync_greeter(tmp_path / "moved", target)
+    assert sync_greeter(tmp_path / "moved", target)[0]["status"] == "installed"
+
+
+def test_a_failed_sync_keeps_a_link_that_another_operation_made(releases, monkeypatch):
+    _, target, _ = releases
+    configured = {
+        "vis-greeter": {
+            "source": REPOSITORY,
+            "subdirectory": "plugins/greeting",
+            "version": "1.0.0",
+        }
+    }
+    pointer = target / "vis-greeter/current"
+
+    def other_operation_then_fail(*_):
+        (target / "other").symlink_to("9.9.9", target_is_directory=True)
+        os.replace(target / "other", pointer)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(package, "_save_sync_records", other_operation_then_fail)
+    row = package.sync(configured, target, trust=True)[0]
+    assert (row["status"], os.readlink(pointer)) == ("failed", "9.9.9")
+
+
 # Issue #493: a load installs a missing package but never looks for a newer release.
 def test_frozen_sync_keeps_an_installed_latest_package_without_the_catalog(
     releases, monkeypatch
