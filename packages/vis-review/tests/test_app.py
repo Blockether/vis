@@ -360,30 +360,48 @@ def put(root, rel, data):
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
 
 
-def images(recorder):
+def image_files(recorder):
+    """The file rows of the changed images, each a group that holds one picture."""
     group = next(
         (n for n in recorder._open_view()["nodes"] if n["id"] == "images"), None
     )
-    return {} if group is None else {n["label"]: n for n in group["children"]}
+    return [] if group is None else group["children"]
+
+
+def images(recorder):
+    return {n["label"]: n["children"][0] for n in image_files(recorder)}
 
 
 def test_a_changed_picture_shows_its_old_and_new_version(tmp_path, recorder):
     root, journal, app = setup(tmp_path, recorder)
     put(root, "logo.png", png(2, 2, b"\x00\x00\xff"))
+    put(root, "gone.png", png(1, 2))
     journal.checkpoint("block", "add logo")
     put(root, "logo.png", png(3, 2, b"\x00\xff\x00"))
     put(root, "new.png", png(1, 1))
     put(root, "huge.png", png(1, 1) + b"\x00" * (3 * 1024 * 1024))
+    (root / "gone.png").unlink()
     journal.checkpoint("block", "change logo")
     app.refresh()
     shown = images(recorder)
     # From the start, logo.png is new: one picture. Huge files show a note.
-    assert "before" not in shown["logo.png (added)"]
-    assert "no preview" in shown["huge.png (added)"]["text"]
+    assert "before" not in shown["+ logo.png"]
+    assert "no preview" in shown["+ huge.png"]["text"]
+    # Request of Karol: a picture of 1490x2670 was open and filled the panel.
+    assert [
+        (f["is_collapsible"], f["default_expanded"]) for f in image_files(recorder)
+    ] == [(True, False)] * len(shown)
     last = journal.entries[-1].seq
     recorder.send("activate", f"checkpoint-{last}")
-    assert wait_for(lambda: "logo.png (modified)" in images(recorder))
-    changed = images(recorder)["logo.png (modified)"]
+    assert wait_for(lambda: "• logo.png" in images(recorder))
+    # The marks of GitHub take the place of "(added)" and "(deleted)".
+    assert set(images(recorder)) == {
+        "• logo.png",
+        "+ new.png",
+        "+ huge.png",
+        "- gone.png",
+    }
+    changed = images(recorder)["• logo.png"]
     assert (changed["width"], changed["before"]["width"]) == (3, 2)
     assert changed["media_type"] == changed["before"]["media_type"] == "image/png"
 
@@ -454,8 +472,8 @@ def test_a_picture_without_preview_leaves_the_budget_to_smaller_ones(
     journal.checkpoint("block")
     app.refresh()
     shown = images(recorder)
-    assert shown["a_big.png (added)"]["type"] == "status"
-    assert shown["b_small.png (added)"]["type"] == "image"
+    assert shown["+ a_big.png"]["type"] == "status"
+    assert shown["+ b_small.png"]["type"] == "image"
 
 
 def test_the_image_cache_keeps_only_the_newest_bytes(tmp_path, recorder, monkeypatch):

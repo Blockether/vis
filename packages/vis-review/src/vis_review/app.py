@@ -599,7 +599,10 @@ class ReviewApp:
         )
 
     def image_nodes(self, diffs: list[FileDiff]) -> list[dict]:
-        """One image node for each changed picture: old and new side by side."""
+        """One folded file row for each changed picture: old and new side by side.
+
+        A row is closed until a person opens it, as a file of the diff is.
+        """
         nodes: list[dict] = []
         budget = MOST_PICTURE_BYTES
         for diff in diffs:
@@ -622,14 +625,21 @@ class ReviewApp:
             if size > budget:
                 node = ui.status(
                     node["id"],
-                    label=node.get("label"),
                     text=f"{diff.path}: no preview",
                     detail="The changed images of this range are too large together.",
                     tone="warn",
                 )
             else:
                 budget -= size
-            nodes.append(node)
+            nodes.append(
+                ui.group(
+                    "file-" + node["id"],
+                    node,
+                    label=_file_label(diff),
+                    is_collapsible=True,
+                    default_expanded=False,
+                )
+            )
         return nodes
 
     def _image(self, key: tuple, diff: FileDiff) -> dict | None:
@@ -888,11 +898,22 @@ class ReviewApp:
         )
 
 
+# The marks of GitHub for a changed file. Each other status is a modified file.
+CHANGE_MARKS = {"added": "+", "deleted": "-"}
+MODIFIED_MARK = "•"
+
+
+def _file_label(diff: FileDiff) -> str:
+    """The path of a changed file after the mark of its status."""
+    return f"{CHANGE_MARKS.get(diff.status, MODIFIED_MARK)} {diff.path}"
+
+
 def image_node(diff: FileDiff, blob: Callable[[str], bytes | None]) -> dict | None:
     """The image node of one changed picture, a note when it cannot show, or None.
 
     A modified picture compares its old and new version. An added or deleted one
     shows one picture. None means that the file is no picture that a surface draws.
+    The node has no label: its file row names the file.
     """
     old = blob(diff.before) if diff.before else None
     new = blob(diff.after) if diff.after else None
@@ -901,23 +922,18 @@ def image_node(diff: FileDiff, blob: Callable[[str], bytes | None]) -> dict | No
     if not (is_old or is_new):
         return None
     node_id = "image-" + hashlib.sha1(diff.path.encode()).hexdigest()[:12]
-    label = f"{diff.path} ({diff.status})"
     try:
         if is_new:
             return ui.image(
                 node_id,
                 new,
                 alt=f"The new version of {diff.path}"[:300],
-                label=label,
                 before=old if is_old else None,
             )
-        return ui.image(
-            node_id, old, alt=f"The deleted file {diff.path}"[:300], label=label
-        )
+        return ui.image(node_id, old, alt=f"The deleted file {diff.path}"[:300])
     except ValueError as error:
         return ui.status(
             node_id,
-            label=label,
             text=f"{diff.path}: no preview",
             detail=str(error),
             tone="warn",
