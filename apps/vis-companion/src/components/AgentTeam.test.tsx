@@ -70,6 +70,14 @@ describe('agent rows', () => {
     expect(team.map((agent) => agentLabel(agent, team))).toEqual(['#2', 'Map routes', '#1']);
   });
 
+  // User report 2026-11-21: each follow-up Council ping reset the time of an agent.
+  it('adds the time of each task of an agent, and stops it while the agent does not work', () => {
+    const resumed = { ...child, runs: [{ start: T0, end: T0 + 60_000, status: 'completed' as const }], resumed_at: T0 + 170_000 };
+    expect(agentTime(resumed, T0 + 200_000)).toBe(90_000);
+    expect(agentTime({ ...resumed, status: 'queued' }, T0 + 200_000)).toBe(60_000);
+    expect(agentTime({ ...resumed, status: 'completed', finished_at: T0 + 190_000 }, T0 + 999_000)).toBe(80_000);
+  });
+
   it('times the current task: so far while it runs, its duration after, none while queued', () => {
     const resumed = { ...child, resumed_at: T0 + 60_000 };
     expect(agentTime(child, T0 + 45_000)).toBe(45_000);
@@ -319,11 +327,15 @@ describe('agent row notes', () => {
 });
 
 describe('team line', () => {
-  it('times the team from its first spawn to now while it works, else to its last end', () => {
+  // User report 2026-11-21: the team time also counted the time in which no agent worked.
+  it('times the team while one of its agents works or waits, and stops it while none works', () => {
     const ended = { ...child, status: 'completed' as const };
+    const resumed = { ...child, runs: [{ start: T0, end: T0 + 60_000, status: 'completed' as const }], resumed_at: T0 + 170_000 };
     expect(teamTime([], T0)).toBeUndefined();
     expect(teamTime([{ ...child, created_at: T0 + 5_000 }, { ...child, session_id: 'b', status: 'queued' }], T0 + 90_000)).toBe(90_000);
-    expect(teamTime([ended, { ...ended, session_id: 'b', created_at: T0 + 1, finished_at: T0 + 40_000 }], T0 + 999_000)).toBe(40_000);
+    expect(teamTime([ended, { ...ended, session_id: 'b', finished_at: T0 + 40_000 }], T0 + 999_000)).toBe(40_000);
+    expect(teamTime([resumed, { ...ended, session_id: 'b', finished_at: T0 + 30_000 }], T0 + 200_000)).toBe(90_000);
+    expect(teamTime([{ ...resumed, status: 'completed', finished_at: T0 + 190_000 }], T0 + 999_000)).toBe(80_000);
     expect(teamTime([ended], T0 + 999_000)).toBeUndefined();
   });
 

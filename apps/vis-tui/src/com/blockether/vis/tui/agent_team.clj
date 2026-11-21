@@ -393,6 +393,29 @@
           (number? resumed) (long resumed)
           (number? created) (long created))))
 
+(defn- runs
+  "The earlier tasks of `agent` as `[start end]` pairs in epoch ms, oldest first."
+  [agent]
+  (into []
+        (keep (fn [run]
+                (let [start
+                      (get run "start")
+
+                      end
+                      (get run "end")]
+
+                  (when (and (number? start) (number? end)) [(long start) (long end)]))))
+        (get agent "runs")))
+
+(defn- runs-ms
+  "The time of the earlier tasks of `agent` in ms."
+  ^long [agent]
+  (reduce +
+          0
+          (map (fn [[start end]]
+                 (max 0 (- (long end) (long start))))
+               (runs agent))))
+
 (defn team-row
   "The row data of agent `agent` with start order `n`. Plain data, so an unchanged agent
    compares equal across polls. The painter computes the running time. `agents` are the rows of
@@ -412,6 +435,7 @@
       :active? (active? agent)
       :pending? (pending? agent)
       :start (start-ms agent)
+      :past-ms (runs-ms agent)
       :end (when (and (not (active? agent)) (number? (get agent "finished_at")))
              (long (get agent "finished_at")))})))
 
@@ -547,13 +571,18 @@
     (str (duration-text total) " (waited " (duration-text (min total waited)) ")")))
 
 (defn row-time
-  "The time of a row: the elapsed time while the agent works or waits, the duration of its
-   task when it ended, nil while queued or without times. A leader row adds its wait."
-  [{:keys [start end active? status] :as row} now-ms]
-  (cond (nil? start) nil
-        (leader? row) (leader-time row now-ms)
-        end (duration-text (- (long end) (long start)))
-        (and active? (not= "QUEUED" status)) (duration-text (- (long now-ms) (long start)))))
+  "The time of a row: the time of its earlier tasks plus its current task. The current task
+   counts to now while the agent works or waits, to its end after it. So a follow-up ping adds
+   to the time, and the time stops while the agent does not work. Nil while queued without
+   earlier work, or without times. A leader row adds its wait."
+  [{:keys [start end active? status past-ms] :as row} now-ms]
+  (let [past (long (or past-ms 0))]
+    (cond (nil? start) nil
+          (leader? row) (leader-time row now-ms)
+          end (duration-text (+ past (- (long end) (long start))))
+          (and active? (not= "QUEUED" status)) (duration-text (+ past
+                                                                 (- (long now-ms) (long start))))
+          (pos? past) (duration-text past))))
 
 (defn- widest [texts] (reduce max 0 (map #(long (p/display-width (str %))) texts)))
 
@@ -1021,25 +1050,47 @@
     (when (= :row (:kind line))
       (register-row! (:row line) (+ (long viewport-top) (long row)) left width))))
 
+(defn- work-spans
+  "The work of `agent` as `[start end]` pairs in epoch ms: its earlier tasks, then its current
+   task. The current end is nil while the agent works or waits."
+  [agent]
+  (let [start
+        (start-ms agent)
+
+        end
+        (get agent "finished_at")]
+
+    (cond-> (runs agent)
+      (and start (active? agent))
+      (conj [start nil])
+
+      (and start (not (active? agent)) (number? end))
+      (conj [start (max (long start) (long end))]))))
+
 (defn team-span
-  "The time span of the team of `agents`: `{:start :end}` in epoch ms. `:start` is the first
-   spawn. `:end` is the last end, or nil while an agent works or waits. Nil without a spawn."
+  "The work of the team of `agents`: `[start end]` pairs in epoch ms, oldest first, with each
+   overlap merged. The last end is nil while an agent works or waits. Nil without a spawn."
   [agents]
-  (let [marks (fn [k]
-                (keep #(let [v (get % k)] (when (number? v) (long v))) agents))]
-    (when-let [starts (seq (marks "created_at"))]
-      {:start (reduce min starts)
-       :end (when-not (some active? agents)
-              (some->> (seq (marks "finished_at"))
-                       (reduce max)))})))
+  (when-let [spans (seq (sort-by first (mapcat work-spans agents)))]
+    (reduce (fn [out [start end]]
+              (let [[from to :as last-span] (peek out)]
+                (if (and last-span (or (nil? to) (<= (long start) (long to))))
+                  (conj (pop out) [from (when (and to end) (max (long to) (long end)))])
+                  (conj out [start end]))))
+            []
+            spans)))
 
 (defn span-time
-  "The time of team span `span` at `now-ms`, such as `3m 20s`: to its end, or to now while the
-   team works. Nil without a span, or for an ended team without an end time."
-  [{:keys [start end]} now-ms active?]
-  (when start
-    (cond end (duration-text (- (long end) (long start)))
-          active? (duration-text (- (long now-ms) (long start))))))
+  "The time of team span `span` at `now-ms`, such as `3m 20s`: the sum of its parts, so the time
+   stops while no agent works. An open part counts to now while the team works. Nil without a
+   span, or for an open span of a team that does not work."
+  [span now-ms active?]
+  (when (and (seq span) (or active? (some? (second (peek span)))))
+    (duration-text (reduce +
+                           0
+                           (map (fn [[start end]]
+                                  (- (long (or end now-ms)) (long start)))
+                                span)))))
 
 (defn card-node-id
   "The fold node of the transcript block of team `team-id`. The block starts folded to its head

@@ -120,15 +120,23 @@ function startOf(agent: Subagent): number | undefined {
   return marks.length ? Math.max(...marks) : undefined;
 }
 
+// The time of the earlier tasks of an agent in ms.
+function pastTime(agent: Subagent): number {
+  return (agent.runs ?? []).reduce((sum, run) => sum + Math.max(0, run.end - run.start), 0);
+}
+
 /**
- * The time of the current task in ms: the time so far while the agent runs, the
- * duration when its task ended. A queued agent has no time yet.
+ * The time of an agent in ms: its earlier tasks plus its current task. The current task counts
+ * to now while the agent runs, to its end after it. So a follow-up ping adds to the time, and
+ * the time stops while the agent does not work. Undefined while queued without earlier work.
  */
 export function agentTime(agent: Subagent, now: number): number | undefined {
   const start = startOf(agent);
-  if (start === undefined || agent.status === 'queued') return undefined;
-  if (agent.status === 'running') return Math.max(0, now - start);
-  return agent.finished_at == null ? undefined : Math.max(0, agent.finished_at - start);
+  const past = pastTime(agent);
+  const idle = past > 0 ? past : undefined;
+  if (start === undefined || agent.status === 'queued') return idle;
+  if (agent.status === 'running') return past + Math.max(0, now - start);
+  return agent.finished_at == null ? idle : past + Math.max(0, agent.finished_at - start);
 }
 
 /**
@@ -146,17 +154,32 @@ export function agentUpdate(agent: Subagent, agents: readonly Subagent[] = []): 
 
 const marks = (values: readonly (number | null | undefined)[]) => values.filter((mark): mark is number => typeof mark === 'number');
 
+// The work of an agent as [start, end] pairs: its earlier tasks, then its current task to now while it works or waits.
+function workSpans(agent: Subagent, now: number): [number, number][] {
+  const spans = (agent.runs ?? []).map((run): [number, number] => [run.start, run.end]);
+  const start = startOf(agent);
+  const end = isLive(agent) ? now : agent.finished_at;
+  if (start !== undefined && end != null) spans.push([start, Math.max(start, end)]);
+  return spans;
+}
+
 /**
- * The time of a team in ms: from the spawn of its first agent to now while one of its agents
- * works or waits, else to the end of its last agent. Undefined without a spawn or an end.
+ * The time of a team in ms: the time in which one of its agents worked or waited, to now while
+ * one works. So the time stops while no agent works. Undefined without a task that has an end.
  */
 export function teamTime(agents: readonly Subagent[], now: number): number | undefined {
-  const starts = marks(agents.map((agent) => agent.created_at));
-  if (starts.length === 0) return undefined;
-  const start = Math.min(...starts);
-  if (agents.some(isLive)) return Math.max(0, now - start);
-  const ends = marks(agents.map((agent) => agent.finished_at));
-  return ends.length ? Math.max(0, Math.max(...ends) - start) : undefined;
+  const spans = agents.flatMap((agent) => workSpans(agent, now)).sort((a, b) => a[0] - b[0]);
+  if (spans.length === 0) return undefined;
+  let total = 0;
+  let [from, to] = spans[0];
+  for (const [start, end] of spans.slice(1)) {
+    if (start > to) {
+      total += to - from;
+      from = start;
+    }
+    to = Math.max(to, end);
+  }
+  return total + to - from;
 }
 
 // A hairline between the parts of a team line.

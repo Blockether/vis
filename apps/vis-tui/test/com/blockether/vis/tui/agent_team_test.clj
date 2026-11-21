@@ -499,6 +499,28 @@
               "resumed_at" (- now-ms 30000)
               "finished_at" now-ms)])
 
+;; User report 2026-11-21: each follow-up Council ping reset the time of an agent and of its team.
+(defdescribe
+  cumulative-time-test
+  (let [resumed
+        (agent-row 1 "running"
+                   "created_at" (- now-ms 200000)
+                   "runs" [{"start" (- now-ms 200000) "end" (- now-ms 140000) "status" "completed"}]
+                   "resumed_at" (- now-ms 30000))
+
+        ended
+        (assoc resumed
+          "status" "completed"
+          "finished_at" (- now-ms 10000))]
+
+    (it "adds the time of each task of an agent"
+        (expect (= "1m 30s" (team/row-time (team/team-row 1 resumed) now-ms))))
+    (it "stops the time of an agent while it does not work"
+        (expect (= "1m 20s" (team/row-time (team/team-row 1 ended) (+ now-ms 600000)))))
+    (it "counts the team time only while an agent works"
+        (expect (= "1m 30s" (team/span-time (team/team-span [resumed]) now-ms true)))
+        (expect (= "1m 20s" (team/span-time (team/team-span [ended]) (+ now-ms 600000) false))))))
+
 ;; User report: the titles of an AUDIT team and an IMPLEMENT team did not line up.
 (defdescribe
   role-column-test
