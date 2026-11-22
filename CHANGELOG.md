@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.28] - 2026-11-22
+
+Vis v0.5.27 was not published, because its native release check failed. v0.5.28 contains all v0.5.27 changes.
+
+### Fixed
+
+- Gateway: each finished turn is archived on disk again. Since a recent change, the archive could not store a turn, and the gateway read the turn from the database.
+
 ## [v0.5.27] - 2026-11-22
 
 ### Added
