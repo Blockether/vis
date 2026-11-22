@@ -2737,7 +2737,8 @@
   []
   (let [open-keys (set (keep :owned-key (vals @pending)))]
     (doseq [saved (sink/load-owned)
-            :let [view (assoc (live<-wire saved) :is-stale true)
+            :let [[picture changed] (app/migrate-canvas-ids (live<-wire saved))
+                  view (assoc picture :is-stale true)
                   why (view-spec/live-view-error view)]
             :when (and (string? (:id view)) (owned-key view) (not (open-keys (owned-key view))))]
 
@@ -2749,7 +2750,7 @@
                        :data {:view-id (:id view) :extension (:extension view) :error why}
                        :msg "Vis dropped a saved owned live view that is no longer valid"})
             (save-owned-soon!))
-        (swap! stale-views assoc (:id view) view)))
+        (do (swap! stale-views assoc (:id view) view) (when (seq changed) (save-owned-soon!)))))
     (count @stale-views)))
 
 ;; Apps — live views with the `attachment` placement
@@ -2779,34 +2780,54 @@
                                                                                   (:seq patch)]))
         (:ops patch)))
 
+(defn- migrate-app-record
+  "Change a recovered app once, before the first new patch or at the end of the record."
+  [{:keys [view] :as state}]
+  (when state
+    (if (:has-separate-canvas-ids state)
+      state
+      (let [[view changed] (app/migrate-canvas-ids view)]
+        (-> state
+            (assoc :view view
+                   :has-separate-canvas-ids true)
+            (update :node-seqs into (map #(vector % (:seq view)) changed)))))))
+
+(defn- replay-app-line
+  [state line]
+  (case (str (:kind line))
+    "open"
+    (let [view (materializer/materialize (live<-wire (:view line)))]
+      (if (app/app? view)
+        ;; A compacted record keeps the node seqs as pairs.
+        {:view view :node-seqs (into {} (:node-seqs line))}
+        (reduced nil)))
+
+    "patch"
+    (let [patch
+          (live<-wire (:patch line))
+
+          state
+          (if (:has-separate-canvas-ids line) (migrate-app-record state) state)]
+
+      ;; Keep the meaning of an accepted old remove. Only a surviving thread gets a new id.
+      (binding [view-spec/*replay-legacy-canvas-ids* (not (:has-separate-canvas-ids state))]
+        (-> state
+            (update :view materializer/apply-patch patch)
+            (update :node-seqs merge (patch-node-seqs patch)))))
+
+    "close"
+    (update state :view closed-picture)
+
+    "archive"
+    (assoc-in state [:view :is-archived] true)
+
+    state))
+
 (defn- replay-app
   "The picture of the app that `file` records, with the seq of the last write to
    each node. nil when the record holds no app."
   [file]
-  (sink/fold-lines file
-                   (fn [acc line]
-                     (case (str (:kind line))
-                       "open"
-                       (let [view (materializer/materialize (live<-wire (:view line)))]
-                         (if (app/app? view)
-                           ;; A compacted record keeps the node seqs as pairs.
-                           {:view view :node-seqs (into {} (:node-seqs line))}
-                           (reduced nil)))
-
-                       "patch"
-                       (let [patch (live<-wire (:patch line))]
-                         (-> acc
-                             (update :view materializer/apply-patch patch)
-                             (update :node-seqs merge (patch-node-seqs patch))))
-
-                       "close"
-                       (update acc :view closed-picture)
-
-                       "archive"
-                       (assoc-in acc [:view :is-archived] true)
-
-                       acc))
-                   nil))
+  (migrate-app-record (sink/fold-lines file replay-app-line nil)))
 
 (defn- app-entry
   "The registry entry of open app `view`, recorded in `file`. `node-seqs` maps

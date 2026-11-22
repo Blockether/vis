@@ -4100,6 +4100,142 @@
   [view-id]
   (swap! (var-get #'hi/pending) dissoc view-id))
 
+(defn- legacy-canvas
+  []
+  {:id "board"
+   :type :canvas
+   :is-selectable true
+   :selected-ids ["shared"]
+   :cards [{:id "shared" :title "Card"} {:id "shared-1" :title "Other card"}]
+   :threads [{:id "shared" :item-id "shared-1" :messages [] :draft "Saved reply"}]})
+
+(defdescribe
+  legacy-canvas-restart-test
+  (it "restores a saved owned canvas with its card selection and draft"
+      (owned
+        (fn []
+          (let [id
+                (str (random-uuid))
+
+                view
+                {:id id
+                 :session-id "forge-session"
+                 :title "Build"
+                 :placement :panel
+                 :key "board"
+                 :extension "forge"
+                 :channel-ids ["app"]
+                 :created-at 1
+                 :timeout-ms 0
+                 :seq 4
+                 :nodes [(legacy-canvas)]}]
+
+            (live-sink/save-owned! [view])
+            (hi/restore-owned!)
+            (let [saved
+                  (some #(when (= id (:id %)) %) (hi/live-views))
+
+                  [board]
+                  (:nodes saved)]
+
+              (expect (= 5 (:seq saved)))
+              (expect (= ["shared"] (:selected-ids board)))
+              (expect (= [{:id "shared-2" :item-id "shared-1" :messages [] :draft "Saved reply"}]
+                         (:threads board))))))))
+  (it
+    "restores a compacted app with separate ids for a card and a thread"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              id
+              (str (random-uuid))
+
+              comment
+              {:node-id "board"
+               :thread-id "shared"
+               :item-id "shared-1"
+               :message-id "sent"
+               :body "Earlier reply"}
+
+              receipt
+              {:id "send"
+               :idempotency-key "send-key"
+               :status :answered
+               :created-at 1
+               :updated-at 2
+               :comments [comment]}
+
+              view
+              {:id id
+               :session-id sid
+               :title "Build"
+               :placement :attachment
+               :channel-ids ["app"]
+               :created-at 1
+               :timeout-ms 0
+               :seq 7
+               :submissions [receipt]
+               :nodes [(legacy-canvas)]}
+
+              file
+              (live-sink/open! view)]
+
+          (live-sink/compact! file view {"board" 7})
+          (try (let [saved (hi/app-view sid id)]
+                 (expect (= 8 (:seq saved)))
+                 (expect (= "shared-2" (get-in saved [:nodes 0 :threads 0 :id])))
+                 (expect (= [(assoc comment :thread-id "shared-2")]
+                            (get-in saved [:submissions 0 :comments])))
+                 (expect (= "conflict"
+                            (:reason (hi/action! id
+                                                 {:action :draft
+                                                  :node-id "board"
+                                                  :thread-id "shared"
+                                                  :base-seq 7
+                                                  :body nil}))))
+                 (expect (:is-accepted
+                           (hi/action!
+                             id
+                             {:action :draft :node-id "board" :thread-id "shared-2" :body nil})))
+                 (let [picture (hi/app-view sid id)]
+                   (expect (= ["shared" "shared-1"] (mapv :id (get-in picture [:nodes 0 :cards]))))
+                   (expect (empty? (get-in picture [:nodes 0 :threads])))
+                   (restart-app! id)
+                   (expect (= picture (hi/app-view sid id)))))
+               (finally (when (hi/live-view id) (hi/close-live! id))))))))
+  (it "replays old operations before it changes the ids of surviving threads"
+      (recorded
+        (fn []
+          (let [{:strs [old new] expected "expect"}
+                (json/read-json (slurp (io/resource "vis-contract/fixtures/legacy-canvas-record.json")))
+                id (get-in old [0 "view" "id"])
+                sid (get-in old [0 "view" "session_id"])
+                file (live-sink/view-file sid id)
+                write-line (fn [line] (str (json/write-json-str line) "\n"))]
+            (io/make-parents file)
+            (spit file (apply str (map write-line old)))
+            (try
+              (let [saved (hi/app-view sid id)
+                    [board] (:nodes saved)]
+                (expect (= (get expected "seq") (:seq saved)))
+                (expect (= (get expected "card_ids") (mapv :id (:cards board))))
+                (expect (= (get expected "selected_ids") (:selected-ids board)))
+                (expect (= [(get expected "thread")] (hs/wire-data (:threads board))))
+                (expect (= [(get expected "comment")]
+                           (hs/wire-data (get-in saved [:submissions 0 :comments])))))
+              (restart-app! id)
+              (spit file (write-line new) :append true)
+              (let [continued (hi/app-view sid id)
+                    [board] (:nodes continued)]
+                (expect (= (get-in new ["patch" "seq"]) (:seq continued)))
+                (expect (= (get expected "card_ids") (mapv :id (:cards board))))
+                (expect (empty? (:threads board)))
+                (restart-app! id)
+                (expect (= continued (hi/app-view sid id))))
+              (finally (when (hi/live-view id) (hi/close-live! id)))))))))
+
 (defn- event-types
   [sid view-id after]
   (mapv #(get % "type")

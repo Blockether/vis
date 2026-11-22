@@ -2747,10 +2747,47 @@ function recordedViewFromWire(raw: unknown, declared: LiveView | null): LiveView
   });
 }
 
+/** Restore separate ids after reading the old part of a record. */
+function migrateCanvasIds(view: LiveView): LiveView {
+  const aliases = new Map<string, string>();
+  const key = (node: string, thread: string, item?: string) => JSON.stringify([node, thread, item]);
+  // Match Clojure str/trim: Java Character.isWhitespace at the ends.
+  const trimId = (id: string) =>
+    id.replace(/^[\x09-\x0d\x1c-\x20\u1680\u2000-\u2006\u2008-\u200a\u2028\u2029\u205f\u3000]+|[\x09-\x0d\x1c-\x20\u1680\u2000-\u2006\u2008-\u200a\u2028\u2029\u205f\u3000]+$/gu, '');
+  const migrate = (node: LiveNode): LiveNode => {
+    if (node.type === 'group') return { ...node, children: node.children.map(migrate) };
+    if (node.type !== 'canvas' || node.cards.length === 0 || node.threads.length === 0) return node;
+    const cards = new Set(node.cards.map(({ id }) => trimId(id)));
+    const held = new Set([...cards, ...node.threads.map(({ id }) => trimId(id))]);
+    const threads = node.threads.map((thread) => {
+      const base = trimId(thread.id);
+      if (!cards.has(base)) return thread;
+      let suffix = 1;
+      while (held.has(`${base}-${suffix}`)) suffix += 1;
+      const id = `${base}-${suffix}`;
+      held.add(id);
+      aliases.set(key(node.id, thread.id, thread.item_id), id);
+      return { ...thread, id };
+    });
+    return { ...node, threads };
+  };
+  const nodes = view.nodes.map(migrate);
+  if (aliases.size === 0) return view;
+  const submissions = view.submissions?.map((receipt) => receipt.comments ? {
+    ...receipt,
+    comments: receipt.comments.map((comment) => {
+      const id = aliases.get(key(comment.node_id, comment.thread_id, comment.item_id));
+      return id === undefined ? comment : { ...comment, thread_id: id };
+    }),
+  } : receipt);
+  return { ...view, nodes, seq: view.seq + 1, ...(submissions ? { submissions } : {}) };
+}
+
 /** The NDJSON record of one view, or `null` when not one line of it is paintable. */
 export function liveRecordFromText(source: string): LiveRecord | null {
   let view: LiveView | null = null;
   let sealed: Omit<LiveRecord, 'view'> = {};
+  let hasSeparateCanvasIds = false;
   for (const line of source.split('\n')) {
     if (line.trim() === '') continue;
     let parsed: unknown;
@@ -2764,7 +2801,12 @@ export function liveRecordFromText(source: string): LiveRecord | null {
     const kind = text(frame.kind);
     if (kind === 'open') {
       view = liveViewFromWire(frame.view) ?? view;
+      hasSeparateCanvasIds = false;
     } else if (kind === 'patch' && view) {
+      if (!hasSeparateCanvasIds && frame.has_separate_canvas_ids === true) {
+        view = migrateCanvasIds(view);
+        hasSeparateCanvasIds = true;
+      }
       view = applyLivePatch(view, frame);
     } else if (kind === 'close') {
       const result = record(frame.result);
@@ -2797,7 +2839,7 @@ export function liveRecordFromText(source: string): LiveRecord | null {
       };
     }
   }
-  return view ? { view, ...sealed } : null;
+  return view ? { view: migrateCanvasIds(view), ...sealed } : null;
 }
 /**
  * How far a progress has come, as a fraction of one (`live/fraction`): its

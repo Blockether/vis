@@ -203,13 +203,72 @@
   [thread]
   (and (map? thread) (contains? thread :is-resolved) (not (contains? thread :messages))))
 
+(defn unused-thread-id
+  "The first unused id, starting with `candidate`, then with numbered suffixes."
+  [held candidate]
+  (if (held candidate)
+    (first (remove held (map #(str candidate "-" %) (iterate inc 1))))
+    candidate))
+
 (defn- fresh-thread-id
   "An unused thread id. A canvas shares ids between threads and cards."
   [node candidate]
-  (let [held (into (set (map :id (threads node))) (map :id) (:cards node))]
-    (if (held candidate)
-      (first (remove held (map #(str candidate "-" %) (iterate inc 1))))
-      candidate)))
+  (unused-thread-id (into (set (map :id (threads node))) (map :id) (:cards node)) candidate))
+
+(defn- migrate-canvas-node
+  "Rename threads that use a card id, and record their old and new ids."
+  [aliases node]
+  (cond-> node
+    (and (= :canvas (:type node)) (seq (:cards node)) (seq (:threads node)))
+    (update :threads
+            (fn [threads]
+              (let [card-ids
+                    (into #{} (map (comp str/trim :id)) (:cards node))
+
+                    held
+                    (into card-ids (map (comp str/trim :id)) threads)]
+
+                (second (reduce (fn [[held out] {:keys [id item-id] :as thread}]
+                                  (let [id-key (str/trim id)]
+                                    (if (card-ids id-key)
+                                      (let [new-id (unused-thread-id held id-key)]
+                                        (vswap! aliases assoc [(:id node) id item-id] new-id)
+                                        [(conj held new-id) (conj out (assoc thread :id new-id))])
+                                      [held (conj out thread)])))
+                                [held []]
+                                threads)))))
+
+    (seq (:children node))
+    (update :children #(mapv (partial migrate-canvas-node aliases) %))))
+
+(defn migrate-canvas-ids
+  "The picture with separate card and thread ids, and the ids of the changed nodes.
+   A draft moves with its thread. Card references keep the same ids."
+  [view]
+  (let [aliases
+        (volatile! {})
+
+        migrated
+        (update view :nodes #(mapv (partial migrate-canvas-node aliases) %))]
+
+    (if (empty? @aliases)
+      [view []]
+      [(cond-> (update migrated :seq inc)
+         (seq (:submissions migrated))
+         (update :submissions
+                 (fn [submissions]
+                   (mapv (fn [receipt]
+                           (cond-> receipt
+                             (seq (:comments receipt))
+                             (update :comments
+                                     (fn [comments]
+                                       (mapv (fn [{:keys [node-id thread-id item-id] :as comment}]
+                                               (if-let [id (get @aliases
+                                                                [node-id thread-id item-id])]
+                                                 (assoc comment :thread-id id)
+                                                 comment))
+                                             comments)))))
+                         submissions)))) (into #{} (map (comp first key)) @aliases)])))
 
 (defn owner-thread
   "Thread `thread` of an owner's thread op on node `node` as it lands: a message that

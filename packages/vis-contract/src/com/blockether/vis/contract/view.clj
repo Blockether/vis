@@ -1400,6 +1400,10 @@
             (range)
             cards)))
 
+(def ^:dynamic *replay-legacy-canvas-ids*
+  "Let the engine read an old record with card and thread ids that overlap."
+  false)
+
 (defn- hand-lines
   "The rules of filled node `node` that JSON Schema cannot say. Each one is a case
    of `live-view-checks.json`."
@@ -1554,10 +1558,11 @@
                            (array-map "id")
                            (line "/threads" "repeated_item_id")
                            vector)
-                  (keep-indexed (fn [i thread]
-                                  (when (cards (str/trim (get thread "id")))
-                                    (line (str "/threads/" i) "canvas_thread_id")))
-                                threads)
+                  (when-not *replay-legacy-canvas-ids*
+                    (keep-indexed (fn [i thread]
+                                    (when (cards (str/trim (get thread "id")))
+                                      (line (str "/threads/" i) "canvas_thread_id")))
+                                  threads))
                   (keep-indexed (fn [i card]
                                   (when (repeated (map #(str/trim (get % "from"))
                                                        (get card "edges")))

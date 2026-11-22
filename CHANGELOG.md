@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Terminal: an arrow shows only when its source item is on the board, and its sign shows its direction.
 - Terminal: the editor of a canvas comment refuses text longer than the limit of the contract before it sends it.
 - Live views: an owner patch that removes a thread and adds it again does not bring back the draft of the old thread.
+- Live views: a saved canvas from before this version, where an item and a thread have the same ID, gets a new ID for the thread when Vis loads it. A remove of the ID then removes only the item. Vis, the terminal, and the Companion app give the same new ID.
 - Companion: a reply that holds only a no-break space is text, as in the terminal and in Vis.
 - Companion: an emoji counts as one character of the limit of a canvas comment.
 - Companion: a delivered comment keeps the canvas item that it is about.

@@ -147,7 +147,7 @@
   "Record one ACCEPTED patch. Called after the materializer took it and before
    any surface is told, so the file is never behind a screen."
   ^File [^File file patch]
-  (append-line! file {:kind :patch :at (util/now-ms) :patch patch}))
+  (append-line! file {:kind :patch :at (util/now-ms) :has-separate-canvas-ids true :patch patch}))
 
 (defn close!
   "Seal the record with the verdict the model reads."

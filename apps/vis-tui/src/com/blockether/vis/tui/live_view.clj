@@ -62,6 +62,7 @@
             [com.blockether.vis.tui.scene-raster :as scene-raster]
             [com.blockether.vis.tui.view-materializer :as live]
             [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.view :as hi-spec]
             [com.blockether.vis.contract.wire :as wire])
   (:import [com.blockether.vis.render BoundedCache]
@@ -514,7 +515,8 @@
                 (str/split-lines source))]
     (when-not (and (:id view) (map? (:view result)) (sequential? (get-in result [:view :nodes])))
       (throw (ex-info "Live view record is incomplete. Reopen it after the run finishes." {})))
-    (-> (opened (merge view (:view result) {:id (:id view) :session-id session-id}))
+    (-> (opened (first (app/migrate-canvas-ids
+                          (merge view (:view result) {:id (:id view) :session-id session-id}))))
         (settled (update (dissoc result :view)
                          :reason
                          #(some-> %

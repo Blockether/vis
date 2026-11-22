@@ -1,6 +1,7 @@
 /** The TypeScript materializer against `internal.view.materializer` laws. */
 import { describe, expect, it } from 'vitest';
 import fixture from './live-view.fixture.json';
+import legacyCanvas from '../../../../packages/vis-contract/resources/vis-contract/fixtures/legacy-canvas-record.json';
 import canonical from '../../../../packages/vis-contract/resources/vis-contract/fixtures/view.json';
 import primitives from '../../../../packages/vis-contract/resources/vis-contract/fixtures/live-primitives.json';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
@@ -31,6 +32,27 @@ import {
   VIEW_PATCH_EVENT,
   isViewEvent,
 } from './view';
+
+it('restores separate canvas ids in old view records before it applies a new patch', () => {
+  const read = (frames: unknown[]) => liveRecordFromText(frames.map((frame) => JSON.stringify(frame)).join('\n'))?.view;
+  const check = (view: LiveView | undefined) => {
+    const board = view?.nodes[0];
+    if (board?.type !== 'canvas') throw new Error('Expected a canvas');
+    expect(view?.seq).toBe(legacyCanvas.expect.seq);
+    expect(board.cards.map(({ id }) => id)).toEqual(legacyCanvas.expect.card_ids);
+    expect(board.selected_ids).toEqual(legacyCanvas.expect.selected_ids);
+    expect(board.threads).toEqual([legacyCanvas.expect.thread]);
+    expect(view?.submissions?.[0].comments).toEqual([legacyCanvas.expect.comment]);
+  };
+  check(read(legacyCanvas.old));
+  check(read([...legacyCanvas.old, legacyCanvas.seal]));
+  const continued = read([...legacyCanvas.old, legacyCanvas.new]);
+  expect(continued?.seq).toBe(legacyCanvas.new.patch.seq);
+  const board = continued?.nodes[0];
+  if (board?.type !== 'canvas') throw new Error('Expected a canvas');
+  expect(board.cards.map(({ id }) => id)).toEqual(legacyCanvas.expect.card_ids);
+  expect(board.threads).toEqual([]);
+});
 
 it('keeps the canvas item of a delivered receipt comment', () => {
   const view = liveViewFromWire({ ...canonical.live, submissions: [{

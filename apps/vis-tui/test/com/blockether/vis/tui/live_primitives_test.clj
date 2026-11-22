@@ -1338,3 +1338,18 @@
 
                    (expect (= "│" (some #(when (= "d" (:node-id %)) (:text %)) cells)))
                    (expect (= 40 (count (some #(when (= "flat" (:node-id %)) (:text %)) rows)))))))
+
+(defdescribe
+  legacy-canvas-record-test
+  (it "restores the sealed canvas with separate card and thread ids"
+      (let [{:strs [old seal] expected "expect"}
+            (json/read-json (slurp (io/resource "vis-contract/fixtures/legacy-canvas-record.json")))
+            source (str/join "\n" (map json/write-json-str (conj old seal)))
+            view (:view (lv/recorded-pane source "fixture"))
+            [board] (:nodes view)]
+        (expect (= (get expected "seq") (:seq view)))
+        (expect (= (get expected "card_ids") (mapv :id (:cards board))))
+        (expect (= (get expected "selected_ids") (:selected-ids board)))
+        (expect (= [(get expected "thread")] (spec/wire-data (:threads board))))
+        (expect (= [(get expected "comment")]
+                   (spec/wire-data (get-in view [:submissions 0 :comments])))))))
