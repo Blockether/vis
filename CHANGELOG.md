@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.29] - 2026-11-22
+
 ### Added
 
 - Live views: canvas boards support shapes, notes, comments, nested frames, text, pictures, media, and captions. You can set item colors, borders, and motion, and set arrow routes, lines, and marks.
@@ -14,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Agent: the model tool `python_execution` is now `py3`. The shorter name uses fewer tokens in each request. Old sessions replay, and an op hook that names `python_execution` still runs on `py3`.
+
+### Fixed
+
+- Python: the extension environments stay after a macOS update. Before, each signed release looked like a new interpreter, and the first gateway start installed every extension again (about 40 s).
+- Gateway: each loopback connection to a native gateway logged `peer-check-failed`. The jail now declares its optional native calls.
+- Providers: a TLS handshake that ends with a `protocol_version` alert is retried. Before, one such alert failed the turn. A server error that names authentication is retried too.
+- Log: a stop logs the cancelled provider call and the interrupted tool call at the info level. Before, each stop added a false problem record.
+- Review: the extension no longer logs a warning at each load.
+- Export: a large HTML transcript opens without a hang. Chromium opens a 399 MB page in 0.7 s instead of 4.1 s, and the pages are smaller.
+- Companion: split diffs line up the old and the new side in every hunk, and line numbers no longer cover code. The diff toolbar fits a phone and a side panel.
+- Canvas: boards use square corners and solid shadows. Fit shows the whole board.
+- TUI and Companion: agent rows keep the backticks of inline code.
 
 ## [v0.5.28] - 2026-11-22
 
