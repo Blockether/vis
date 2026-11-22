@@ -102,12 +102,11 @@
                 0))) (str id)])
 
 (defn- session-row
-  [d c]
-  (let [turns
-        (or (persistance/db-list-session-turns d (:id c)) [])
-
-        last-turn
-        (last turns)
+  "One table row. `stats` is the `db-session-turn-stats` entry of the session: the
+   turn count and the time of the newest reply, the same time the session list shows."
+  [stats c]
+  (let [last-turn-at
+        (:latest-turn-at stats)
 
         channel-name
         (name (or (:channel c) :unknown))]
@@ -115,22 +114,22 @@
     {:id (str (:id c))
      :title (or (:title c) "-")
      :last-channel channel-name
-     :turns (count turns)
+     :turns (long (or (:turn-count stats) 0))
      :forks (long (or (:fork-count c) 0))
-     :last-turn-at (:created-at last-turn)
-     :last-turn (or (some-> last-turn
-                            :created-at
-                            fmt/format-date)
-                    "-")
+     :last-turn-at last-turn-at
+     :last-turn (or (fmt/format-date last-turn-at) "-")
      :created-at (:created-at c)
      :created (or (fmt/format-date (:created-at c)) "-")}))
 
 (defn- session-rows
+  "Table rows of `sessions`. One grouped read gives the turn stats of all sessions:
+   a read of the turns of each session took seconds on a large store."
   [d sessions]
-  (->> sessions
-       (mapv #(session-row d %))
-       (sort-by session-sort-key)
-       vec))
+  (let [stats (or (persistance/db-session-turn-stats d) {})]
+    (->> sessions
+         (mapv #(session-row (get stats (str (:id %))) %))
+         (sort-by session-sort-key)
+         vec)))
 
 (defn- sessions-for-listing
   [channel-input]
