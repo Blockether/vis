@@ -175,6 +175,27 @@ describe('the layout of a canvas', () => {
     expect(Math.min(...times)).toBeLessThan(100);
   });
 
+  it('routes no elbow through a card when the searches of a dense board run out of steps', () => {
+    const full = Array.from({ length: 9 }, (_, i) =>
+      card(String(i), Array.from({ length: i }, (_, k) => String(k)), { text: 'Short text', progress: 0 }));
+    const elbows = full.map((one) => ({ ...one, edges: one.edges.map((e) => ({ ...e, route: 'elbow' as const })) }));
+    for (const flow of ['right', 'down'] as const) {
+      const layout = canvasLayout(elbows, undefined, flow);
+      for (const arrow of layout.arrows) {
+        const points = [...arrow.path.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map(([, x, y]) => ({ x: +x, y: +y }));
+        for (const other of layout.boxes) {
+          if (other.id === arrow.from || other.id === arrow.to) continue;
+          const isHit = points.slice(1).some((q, i) => {
+            const p = points[i];
+            return Math.max(p.x, q.x) > other.x + 1 && Math.min(p.x, q.x) < other.x + other.width - 1 &&
+              Math.max(p.y, q.y) > other.y + 1 && Math.min(p.y, q.y) < other.y + other.height - 1;
+          });
+          expect(isHit, `${arrow.id} through ${other.id} (${flow})`).toBe(false);
+        }
+      }
+    }
+  });
+
   it('keeps the layout of a large board when only a progress or a tone changes', () => {
     const full = Array.from({ length: 200 }, (_, i) =>
       card(String(i), Array.from({ length: Math.min(i, 4) }, (_, k) => String(i - 1 - k * 7)).filter((id) => +id >= 0),

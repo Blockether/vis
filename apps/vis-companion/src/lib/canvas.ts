@@ -753,7 +753,7 @@ interface SearchNode { cell: number; axis: number; cost: number; score: number; 
 
 /** Search the grid of obstacle sides and port offsets. */
 function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lanes, room: number,
-  separate: boolean, limit: Rect | undefined, leave: Point, enter: Point, budget: Budget): Point[] | undefined {
+  separate: boolean, limit: Rect | undefined, leave: Point, enter: Point, budget: Budget, isBeside = true, crossingCost = CROSSING_COST): Point[] | undefined {
   budget.isCut = budget.steps <= 0;
   if (budget.isCut) return undefined;
   const local = {
@@ -779,7 +779,7 @@ function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lanes, roo
     if (limit) values.push(limit[lo], limit[hi]);
     for (const r of relevant) values.push(r[lo] - DETOUR_LANE_GAP, r[lo], r[hi], r[hi] + DETOUR_LANE_GAP);
     // A lane beside each arrow in the box lets a way pass on either side of it.
-    for (const r of crossable[axis]) values.push(r.at - DETOUR_LANE_GAP, r.at + DETOUR_LANE_GAP);
+    if (isBeside) for (const r of crossable[axis]) values.push(r.at - DETOUR_LANE_GAP, r.at + DETOUR_LANE_GAP);
     return [...new Set(values.filter((n) => n >= local[lo] && n <= local[hi]))].sort((a, b) => a - b);
   };
   const xs = rail('x');
@@ -864,12 +864,17 @@ function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lanes, roo
         ? (rowCrossings[j] ??= crossGaps(xs, crossable.x.filter((r) => here.y > r.low && here.y < r.high).map((r) => r.at)))[gap]
         : (columnCrossings[i] ??= crossGaps(ys, crossable.y.filter((r) => here.x > r.low && here.x < r.high).map((r) => r.at)))[gap];
       const cost = node.cost + track.high - track.low + (node.axis !== 2 && axis !== node.axis ? 16 : 0) + 20 * overlap +
-        CROSSING_COST * crossings;
+        crossingCost * crossings;
       const key = cell * 3 + axis;
       if (cost >= (costs.get(key) ?? Infinity)) continue;
       costs.set(key, cost);
       push({ cell, axis, cost, score: cost + heuristic(there), prev: node });
     }
+  }
+  // The lanes beside the other arrows make the grid larger. When the search runs
+  // out of steps on that grid, it searches once more on the smaller grid.
+  if (pending.length && isBeside && budget.steps > 0 && crossable.x.length + crossable.y.length) {
+    return findLanes(start, end, obstacles, used, room, separate, limit, leave, enter, budget, false, crossingCost);
   }
   budget.isCut = pending.length > 0;
   return undefined;
@@ -929,7 +934,7 @@ function makeRoute(edge: LiveCanvasEdge, from: Port, to: Port): { route: Route; 
   return { start, end, route: { start: a, parts: [{ to: b, controls }] } };
 }
 
-function detour(edge: LiveCanvasEdge, from: Port, to: Port, obstacles: Rect[], used: Lanes, budget: Budget) {
+function detour(edge: LiveCanvasEdge, from: Port, to: Port, obstacles: Rect[], used: Lanes, budget: Budget, isPlain = false) {
   const angle = (dir: Point) => Math.atan2(-dir.y, -dir.x) * 180 / Math.PI;
   const start = { ...from.point, angle: angle(from.direction) };
   const end = { ...to.point, angle: angle(to.direction) };
@@ -946,10 +951,11 @@ function detour(edge: LiveCanvasEdge, from: Port, to: Port, obstacles: Rect[], u
       top: r.top - margin, bottom: r.bottom + margin }));
     if (!hasAncestor(to.item, from.item)) rails.push(bounds(from.item.box));
     if (!hasAncestor(from.item, to.item)) rails.push(bounds(to.item.box));
-    const searches = used.count ? [[96, true], [Infinity, true], [96, false], [Infinity, false]] as const :
+    const searches = used.count && !isPlain ? [[96, true], [Infinity, true], [96, false], [Infinity, false]] as const :
       [[96, false], [Infinity, false]] as const;
     for (const [room, separate] of searches) {
-      const points = findLanes(first, last, rails, used, room, separate, limit, from.direction, to.direction, budget);
+      const points = findLanes(first, last, rails, used, room, separate, limit, from.direction, to.direction, budget,
+        !isPlain, isPlain ? 0 : CROSSING_COST);
       if (!points) {
         if (budget.isCut) return undefined;
         continue;
@@ -1065,7 +1071,7 @@ function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boole
     if (!around && isElbow && isClear) around = { ...direct, lanes };
     // A direct way holds its lanes too, so that the arrows after it see it.
     (around?.lanes ?? lanes).forEach(used.add);
-    return { id, from, to, edge, obstacles, direct, around };
+    return { id, from, to, edge, obstacles, direct, around, isClear };
   });
   // An arrow did not see the arrows after it. When two arrows cross, both search
   // again in each order, and the pair keeps the ways with the fewest crossings.
@@ -1108,6 +1114,15 @@ function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boole
         two.around.lanes.forEach(used.add);
       });
     }
+  }
+  // An arrow whose search ran out of steps does not go through an item. A plain
+  // search with its own steps finds a way that can share lanes or cross arrows.
+  const rescue = { steps: BOARD_STEPS / 2, isCut: false };
+  for (const one of routed) {
+    if (one.around || one.isClear || rescue.steps <= 0) continue;
+    rescue.isCut = false;
+    one.around = detour(one.edge, one.from, one.to, one.obstacles, used, rescue, true);
+    one.around?.lanes.forEach(used.add);
   }
   for (const { id, from, to, edge, direct, around } of routed) {
     const path = around ?? direct;

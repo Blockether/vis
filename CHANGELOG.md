@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Companion: on a dense canvas board, an arrow at right angles does not go through an item when the search for its way runs out of steps. A second, simpler search finds a way that can share a line with another arrow or cross it.
 - Companion: the boxes of a task list show in messages. Before, the page style hid them.
 
 ## [v0.5.30] - 2026-11-22
