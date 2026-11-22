@@ -1626,11 +1626,20 @@ ol.markdown-list > li::before {
 @variant narrow-pane {
   .diff-toolbar {
     flex-direction: column;
+    /* A wrapping column sizes each line to its content, so the controls would not get
+       the width of the pane. */
+    flex-wrap: nowrap;
     align-items: stretch;
     row-gap: 4px;
   }
-  .diff-toolbar-controls {
-    flex-wrap: wrap;
+  /* All controls keep one row, the app's menu too: on a small screen each button gives
+     up width, down from its 44px, until the row fits the pane (user report: the "More"
+     menu took a second row on a phone). */
+  .diff-toolbar-controls > button:not(.sr-only),
+  .diff-layout,
+  .diff-layout button {
+    min-width: 0;
+    flex-shrink: 1;
   }
   /* The first row is as high as a control: it takes the 44px or 28px of the toolbar for
      the pointer in use. The line counts stand at its right end, above the counts of each file. */
