@@ -62,6 +62,24 @@
                          (expect (= 3 (state/replay-floor sid)))
                          (expect (not (.exists (java.io.File. ^String file))))))))))
 
+(defdescribe deleted-archive-directory-test
+             ;; Regression: a script erased the temporary directory of the user. Each larger frame then
+             ;; failed until the gateway restarted, and each failure emptied the replay ring.
+             (it "stores a frame after another program deleted the archive directory"
+                 (with-replay
+                   (fn [sid registry]
+                     (binding [store/*inline-max-bytes* 0]
+                       (state/append-event! sid "block.output" {:output "first"})
+                       (let [file (java.io.File.
+                                    ^String (::store/file (first (get-in @registry [sid :events]))))
+                             directory (.getParentFile file)]
+
+                         (run! #(.delete ^java.io.File %) (.listFiles directory))
+                         (.delete directory)
+                         (state/append-event! sid "block.output" {:output "second"})
+                         (expect (= ["second"]
+                                    (mapv #(get % "output") (state/events-since sid 1))))))))))
+
 (defdescribe
   inline-frames-test
   (it "replays a small frame without a file and releases its bytes when it rotates"
