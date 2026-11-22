@@ -4101,7 +4101,10 @@
     (when-let [^bytes data (try (.decode (java.util.Base64/getDecoder) (str (:base64 att)))
                                 (catch Throwable _ nil))]
       (when (<= (alength data) (long attachments/max-stored-attachment-bytes))
-        {:bytes data :storage_uri nil :size_bytes (long (or (:size att) (alength data)))}))))
+        {:bytes data
+         :storage_uri nil
+         :size_bytes (long (or (:size att) (alength data)))
+         :compaction_pending (if (:compaction-pending? att) 1 0)}))))
 
 (defn- attachment-live-view-cols
   "Stable identity carried only by a filed live-view attachment."
@@ -8693,6 +8696,46 @@
             db
             (fn [tx]
               (execute! tx {:update :automation_delivery :set attrs :where [:= :id id]}))))))
+
+;; Image compaction
+
+(defn db-pending-attachment-compactions
+  "Up to `limit` stored attachments that wait for the image compactor, as
+   `{:id :bytes}` rows."
+  [db limit]
+  (if-not (ds db)
+    []
+    (query! db
+            {:select [:id :bytes]
+             :from :session_attachment
+             :where [:and [:= :compaction_pending 1] [:is-not :bytes nil]]
+             :limit (long limit)})))
+
+(defn db-finish-attachment-compaction!
+  "End the compaction of the attachment `id`: write `compacted` (nil when the
+   optimiser won nothing) and clear its wait. The bytes change only while the row
+   still holds the `stored` bytes that the compactor read. Each call clears the
+   wait, so a row never waits again."
+  [db id stored compacted]
+  (sqlite-write-tx!
+    db
+    (fn [tx]
+      (when (or (nil? compacted)
+                (zero? (update-count
+                         (execute! tx
+                                   {:update :session_attachment
+                                    :set {:bytes compacted
+                                          :size_bytes (alength ^bytes compacted)
+                                          :compaction_pending 0}
+                                    :where [:and
+                                            [:= :id id]
+                                            [:= :compaction_pending 1]
+                                            [:= :bytes stored]]}))))
+        (execute! tx
+                  {:update :session_attachment
+                   :set {:compaction_pending 0}
+                   :where [:= :id id]}))))
+  nil)
 
 ;; Backend
 

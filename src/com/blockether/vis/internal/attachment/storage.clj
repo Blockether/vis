@@ -22,15 +22,19 @@
      2. else `default-offload?`               (engine default policy)
      3. no active backend                     -> always inline (zero regression)
 
-   Either way the bytes are COMPACTED first (`image-convert/compact`): a PNG /
-   JPEG / GIF payload is re-compressed LOSSLESSLY -- oxipng, jpegtran-style
-   marker stripping, gifsicle differencing -- before it becomes a BLOB or a
-   backend PUT. That is the only transformation this rail performs, it is
-   verified per payload (strictly smaller AND the same format at the same
-   dimensions and frame count, else the original is kept), and it is why an
-   attached PNG costs a fraction of a row."
+   An inline PNG / JPEG / GIF payload is COMPACTED (`image-convert/compact`): re-compressed
+   LOSSLESSLY -- oxipng, jpegtran-style marker stripping, gifsicle differencing.
+   An inline image is stored as it arrived and marked `:compaction-pending?`; the
+   image compactor ([[com.blockether.vis.internal.attachment.compactor]]) rewrites
+   its BLOB in the background, so a step never waits for the optimiser. A backend
+   PUT gets the bytes as they arrived: they leave the database, and no step waits
+   for them either. Compaction is the only transformation this rail performs, it is
+   verified per payload
+   (strictly smaller AND the same format at the same dimensions and frame count,
+   else the original is kept), and it is why an attached PNG costs a fraction of a
+   row."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.attachment.image-convert :as image-convert]
+            [com.blockether.vis.internal.attachment.compactor :as compactor]
             [com.blockether.vis.internal.util :as util])
   (:import (java.nio.file Files LinkOption OpenOption Path)
            (java.nio.file.attribute FileAttribute)
@@ -167,41 +171,25 @@
    PDF, a CSV, a wav -- is stored exactly as it arrived; nothing here guesses."
   #{"image/png" "image/jpeg" "image/jpg" "image/gif"})
 
-(defn- compacted
-  "Losslessly shrink ONE store-bound attachment's bytes before they become a BLOB
-   or a backend PUT: `:base64` re-encoded from the compacted payload and `:size`
-   corrected to the bytes actually stored (so the offload decision and every
-   size label describe the row that exists). Returns `att` untouched for a
-   non-image, a missing payload, or any payload the optimiser cannot beat.
-   Never throws."
+(defn- compactable?
   [att]
-  (if-not (and (:base64 att)
-               (contains? compactable-media-types (str/lower-case (str (:media-type att)))))
-    att
-    (or (try (when-let [^bytes data (decode-b64 att)]
-               (let [^bytes out (image-convert/compact data)]
-                 (when (< (alength out) (alength data))
-                   (assoc att
-                     :base64 (.encodeToString (Base64/getEncoder) out)
-                     :size (alength out)))))
-             (catch Throwable _ nil))
-        att)))
+  (boolean (and (:base64 att)
+                (contains? compactable-media-types (str/lower-case (str (:media-type att)))))))
+
+(defn- pending
+  "`att` marked for the image compactor when it is an image that stays inline."
+  [att]
+  (cond-> att (compactable? att) (assoc :compaction-pending? true)))
 
 (defn offload-attachment
-  "Route ONE store-bound attachment map. The payload is [[compacted]] first --
-   an image is re-compressed losslessly, everything else passes through. An
-   inline candidate then carries `:base64`.
-   When a backend is active AND `offload?` says so, decode + PUT the bytes and
-   return the map with `:storage-uri` set (and `:size` fixed to the real byte
-   count) and `:base64` DROPPED; otherwise the (compacted) map is returned. NEVER
-   throws -- a decode/PUT failure or a non-string URI falls back to inline."
+  "Route ONE store-bound attachment map.
+   When a backend is active AND `offload?` says so, the bytes are PUT as they
+   arrived and the map comes back with `:storage-uri` set (and `:size` fixed to the real byte
+   count) and `:base64` DROPPED. Otherwise the map stays inline, and an image is
+   marked `:compaction-pending?` for the image compactor. NEVER throws -- a
+   decode/PUT failure or a non-string URI falls back to inline."
   [att]
-  (let [att
-        (compacted att)
-
-        backend
-        (active-backend)]
-
+  (let [backend (active-backend)]
     (if (and backend (:base64 att) (offload? backend att))
       (or (try (when-let [^bytes data (decode-b64 att)]
                  (let [uri ((:storage/put-fn backend)
@@ -216,8 +204,8 @@
                                 :size (alength data))
                          (dissoc :base64)))))
                (catch Throwable _ nil))
-          att)
-      att)))
+          (pending att))
+      (pending att))))
 
 (defn offload-attachments
   "Map `offload-attachment` over a store-bound attachment seq.
@@ -227,10 +215,12 @@
 
    Attachment PIXELS are stored verbatim: vis never resamples and never
    re-encodes what the user attached, so what replays is the same picture bit
-   for bit. Its ENCODING is compacted losslessly on the way in -- see
-   [[com.blockether.vis.internal.attachment.image-convert/compact]]."
+   for bit. Its ENCODING is compacted losslessly after the store, by the image
+   compactor -- see [[com.blockether.vis.internal.attachment.image-convert/compact]]."
   [atts]
-  (mapv offload-attachment atts))
+  (let [out (mapv offload-attachment atts)]
+    (when (some :compaction-pending? out) (compactor/wake!))
+    out))
 
 ;; Read side: resolve + hydrate
 

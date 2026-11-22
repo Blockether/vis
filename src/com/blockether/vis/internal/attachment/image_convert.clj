@@ -476,9 +476,10 @@
    with only `:level`, which that library documents as pixel-preserving (only
    `:lossy`/`:quality`/`:format`/`:max-*` license a re-encode).
 
-   Level 1, not the default 3: this runs before the iteration is stored, so the
-   next model request waits for it. On six screenshots level 1 took 4.3 s and kept
-   16 percent fewer bytes; level 3 took 57 s for 25 percent.
+   Level 2, not the default 3: the image compactor runs this in the background, one
+   image at a time. On six screenshots level 1 took 4.3 s for 16 percent fewer
+   bytes, level 2 took 16.7 s for 25 percent, and level 3 took 57 s for the same 25
+   percent.
 
    The second exception to \"never re-compress\", and a narrower one than
    [[fit-within]]: the PICTURE is untouched, only its encoding is. A rendered
@@ -496,7 +497,7 @@
   ^bytes [^bytes data]
   (if (or (not *enabled?*) (nil? data) (zero? (alength data)))
     data
-    (let [out (try (imaging/optimize data {:level 1}) (catch Throwable _ nil))]
+    (let [out (try (imaging/optimize data {:level 2}) (catch Throwable _ nil))]
       (if (and out
                (pos? (alength ^bytes out))
                (< (alength ^bytes out) (alength data))

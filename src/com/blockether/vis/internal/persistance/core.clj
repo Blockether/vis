@@ -327,10 +327,20 @@
   (db-import-session-tree! [db-info tree opts]
     "Write an exported tree with new ids in one transaction. Answer the new root and id map."))
 
+(defprotocol AttachmentStore
+  "Image compaction operations of a persistence backend, with the `Store` dispatch. They
+   are a separate protocol for the same JVM method-size limit as `AutomationStore`."
+  (db-pending-attachment-compactions [db-info limit]
+    "Up to `limit` stored attachments that wait for the image compactor, as `{:id :bytes}`.")
+  (db-finish-attachment-compaction! [db-info id stored compacted]
+    "Write the `compacted` bytes (nil: no gain) of one waiting attachment and clear its wait.
+     The bytes change only while the row still holds the `stored` bytes."))
+
 (defmacro store-implementation
   "Expand, inside a backend namespace, to its op map for `Store`, `AutomationStore`,
-   `QueueStore`, `AgentStore` and `SnapshotStore`: every op keyed to the backend's own fn of the same name. A
-   backend missing an op fails to compile instead of failing at its first call."
+   `QueueStore`, `AgentStore`, `SnapshotStore` and `AttachmentStore`: every op keyed to the
+   backend's own fn of the same name. A backend missing an op fails to compile instead of
+   failing at its first call."
   []
   (into {}
         (map (fn [op]
@@ -339,7 +349,8 @@
                      (:sigs AutomationStore)
                      (:sigs QueueStore)
                      (:sigs AgentStore)
-                     (:sigs SnapshotStore)))))
+                     (:sigs SnapshotStore)
+                     (:sigs AttachmentStore)))))
 
 ;; Turn outcome
 
@@ -479,6 +490,10 @@
   "Every `SnapshotStore` op forwarded to the backend."
   (into {} (map (juxt identity forward)) (keys (:sigs SnapshotStore))))
 
+(def ^:private attachment-ops
+  "Every `AttachmentStore` op forwarded to the backend."
+  (into {} (map (juxt identity forward)) (keys (:sigs AttachmentStore))))
+
 ;; Extended once, while this namespace loads: re-exports copy the protocol fns,
 ;; and a later `extend` would rebind them behind those copies.
 (extend nil
@@ -491,7 +506,9 @@
     AgentStore
     agent-ops
     SnapshotStore
-    snapshot-ops)
+    snapshot-ops
+    AttachmentStore
+    attachment-ops)
 
 (extend Object
   Store
@@ -503,7 +520,9 @@
     AgentStore
     agent-ops
     SnapshotStore
-    snapshot-ops)
+    snapshot-ops
+    AttachmentStore
+    attachment-ops)
 
 ;; Connection lifecycle
 

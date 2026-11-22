@@ -7,6 +7,7 @@
    cached sessions, and serializes turns per session."
   (:require [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
+            [com.blockether.vis.internal.attachment.compactor :as compactor]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.config.scoped :as scoped]
@@ -520,6 +521,7 @@
   (let [pending (volatile! nil)]
     (try
       (let [db-info (persistance/db-create-connection! db)
+            _ (compactor/watch! db-info)
             resolved-session-id (persistance/db-resolve-session-id db-info session)
             persisted-session (when resolved-session-id
                                 (persistance/db-get-session db-info resolved-session-id))
