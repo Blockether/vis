@@ -968,6 +968,7 @@ export function DiffNodeView({ node, actions, commands }: DiffNodeViewProps) {
     files: sourceFiles,
     words,
     digits,
+    columns,
     total,
     elsewhere,
   } = useMemo(() => diffModel(node.patch, node.threads), [node.patch, node.threads]);
@@ -1198,6 +1199,7 @@ export function DiffNodeView({ node, actions, commands }: DiffNodeViewProps) {
               style={
                 {
                   '--diff-number-width': `${numberWidth(digits.get(file.path) ?? 1)}px`,
+                  '--diff-code-columns': columns.get(file.path) ?? 0,
                   minHeight:
                     folded.has(file.path) || hasRows(file.path)
                       ? undefined

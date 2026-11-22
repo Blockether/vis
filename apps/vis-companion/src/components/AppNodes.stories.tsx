@@ -205,10 +205,13 @@ export const Split: Story = {
   },
 };
 
-/** Report: on a phone, unwrapped split numbers lay over the code of the other side. */
+/**
+ * Report: on a phone, unwrapped split numbers lay over the code of the other side, and the
+ * seam between the sides stood at a different place in each hunk.
+ */
 export const SplitPhone: Story = {
   decorators: width('390px'),
-  args: { view: review(), app },
+  args: { view: manyFiles(), app },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Split' }));
@@ -216,6 +219,11 @@ export const SplitPhone: Story = {
     await waitFor(() => expect(canvasElement.querySelector('.diff-table td:nth-child(4)')).not.toBeNull());
     const scroller = canvasElement.querySelector<HTMLElement>('[data-diff-scroll]')!;
     await expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth);
+    const seams = [...scroller.querySelectorAll('.diff-table')].map(
+      (table) => table.querySelector('td:nth-child(3)')!.getBoundingClientRect().left,
+    );
+    await expect(seams.length).toBeGreaterThan(1);
+    for (const seam of seams) await expect(Math.abs(seam - seams[0]!)).toBeLessThan(1);
     let checked = 0;
     for (const left of [0, 400, scroller.scrollWidth]) {
       scroller.scrollLeft = left;

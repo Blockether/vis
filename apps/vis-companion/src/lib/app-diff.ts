@@ -445,13 +445,15 @@ export interface DiffModel<T extends { anchor?: ViewAnchor }> {
   words: Map<string, DiffSpan[]>;
   /** The digits of the widest line number of each file, by path. */
   digits: Map<string, number>;
+  /** The columns of the longest line of each file, by path. A split side takes this width in every hunk. */
+  columns: Map<string, number>;
   /** The added and removed lines of all files. */
   total: { additions: number; deletions: number };
   /** Threads without an anchor or on a line that the diff does not show. */
   elsewhere: T[];
 }
 
-/** The model of a diff node: its files, word tints, number widths, totals and stray threads. */
+/** The model of a diff node: its files, word tints, number and code widths, totals and stray threads. */
 export function diffModel<T extends { anchor?: ViewAnchor }>(
   patch: string,
   threads: readonly T[],
@@ -459,10 +461,12 @@ export function diffModel<T extends { anchor?: ViewAnchor }>(
   const files = parseUnifiedDiff(patch);
   const words = new Map<string, DiffSpan[]>();
   const digits = new Map<string, number>();
+  const columns = new Map<string, number>();
   const shown = new Set<string>();
   const total = { additions: 0, deletions: 0 };
   for (const file of files) {
     let widest = 1;
+    let longest = 0;
     for (const hunk of file.hunks) {
       for (const [key, parts] of hunkWordSpans(hunk.lines)) words.set(key, parts);
       for (const line of hunk.lines) {
@@ -471,15 +475,24 @@ export function diffModel<T extends { anchor?: ViewAnchor }>(
           shown.add(anchorKey({ ...line.anchor, side: 'old', line: line.old_line }));
         }
         widest = Math.max(widest, line.old_line ?? 0, line.new_line ?? 0);
+        longest = Math.max(longest, textColumns(line.text));
       }
     }
     digits.set(file.path, String(widest).length);
+    columns.set(file.path, longest);
     const stat = fileStat(file);
     total.additions += stat.additions;
     total.deletions += stat.deletions;
   }
   const elsewhere = threads.filter((thread) => !thread.anchor || !shown.has(anchorKey(thread.anchor)));
-  return { files, words, digits, total, elsewhere };
+  return { files, words, digits, columns, total, elsewhere };
+}
+
+/** The columns of `text` in a monospace font, with a tab stop each 8 columns, as CSS `tab-size` sets by default. */
+export function textColumns(text: string): number {
+  let at = 0;
+  for (const char of text) at = char === '\t' ? at + 8 - (at % 8) : at + 1;
+  return at;
 }
 
 /** Test paths follow common directory and filename conventions, not substrings. */

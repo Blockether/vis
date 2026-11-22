@@ -1071,6 +1071,15 @@ ol.markdown-list > li::before {
   left: auto;
   right: auto;
 }
+/* Each hunk is one table. A side takes the longest line of its file, and half the file at least,
+   so the seam stands at one place in every hunk. */
+.app-diff[data-split='true'][data-wrap='false'] :is(.diff-code, .diff-empty:not(.diff-gutter)) {
+  box-sizing: border-box;
+  width: max(
+    calc(var(--diff-code-columns, 0) * 1ch + 24px),
+    calc(50cqw - var(--diff-number-width, 49px) - 1px)
+  );
+}
 .diff-threads {
   position: sticky;
   left: 0;
