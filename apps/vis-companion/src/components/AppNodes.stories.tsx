@@ -217,7 +217,6 @@ export const PhoneToolbar: Story = {
     const total = canvasElement.querySelector('.diff-toolbar .diff-stat')!.getBoundingClientRect();
     // The name and the line counts share the first row of the toolbar.
     await expect(Math.abs(total.top - name.top)).toBeLessThan(4);
-    if (!window.matchMedia('(max-width: 639px)').matches) return;
     const ofFile = canvasElement.querySelector('.diff-file-header .diff-stat')!.getBoundingClientRect();
     await expect(Math.abs(total.right - ofFile.right)).toBeLessThan(1);
   },
@@ -312,7 +311,7 @@ export const LineTargets: Story = {
 /** The review panel with its toolbar, in a 540px panel width. */
 export const ReviewPanel: Story = {
   decorators: width('540px'),
-  render: () => <ReviewPanelFixture />,
+  render: ({ view }) => <ReviewPanelFixture view={view} />,
   args: {
     view: { ...review(), nodes: [{ id: 'review', type: 'diff', patch: REVIEW_PATCH, threads: [] }] },
     app,
@@ -369,8 +368,11 @@ const REVIEW_TOOLBAR: LiveDiffNode['children'] = [
   },
 ];
 
-/** An interactive review fixture: save a draft and keep its anchored card. A null body removes it. */
-function ReviewPanelFixture() {
+/**
+ * An interactive review fixture: save a draft and keep its anchored card. A null body removes it.
+ * The diff stands in a live view, as in the app: its panel is the pane that the toolbar measures.
+ */
+function ReviewPanelFixture({ view }: { view: LiveView }) {
   const [node, setNode] = useState<LiveDiffNode>({
     id: 'review',
     type: 'diff',
@@ -401,7 +403,7 @@ function ReviewPanelFixture() {
       return { status: 'saved', seq: 4 };
     },
   };
-  return <DiffNodeView node={node} actions={actions} commands={{ onActivate: () => {}, isSettled: false }} />;
+  return <LiveViewPanel view={{ ...view, nodes: [node] }} app={actions} onActivate={() => {}} inDialog />;
 }
 
 /** An empty selection has no file headers or line controls. */

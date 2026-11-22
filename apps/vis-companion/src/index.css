@@ -23,6 +23,11 @@
    on `sm:`, because that really is a question about room. */
 @custom-variant mouse (@media (width >= 40rem) and (pointer: fine));
 
+/* In a live view, "is there room" is a question about the pane, not the screen: a side
+   panel is 360px wide on a 1280px screen. `narrow-pane:` asks the pane, at the width
+   where `sm:` asks the screen. */
+@custom-variant narrow-pane (@container live-view (width < 40rem));
+
 /* Desktop hides scrollbar chrome everywhere, without disabling scrolling.
    Keep this outside the layers so local scrollbar utilities cannot restore it. */
 @media (width >= 40rem) and (pointer: fine) {
@@ -829,6 +834,7 @@
 }
 
 .live-view-panel {
+  container: live-view / inline-size;
   --live-view-inset: max(0.75rem, env(safe-area-inset-left), env(safe-area-inset-right));
 }
 
@@ -1615,7 +1621,7 @@ ol.markdown-list > li::before {
   gap: 4px;
   align-items: center;
 }
-@media (max-width: 639px) {
+@variant narrow-pane {
   .diff-toolbar {
     flex-direction: column;
     align-items: stretch;
@@ -1624,11 +1630,11 @@ ol.markdown-list > li::before {
   .diff-toolbar-controls {
     flex-wrap: wrap;
   }
-  /* The first row is as high as the row of controls below it, and the line counts stand
-     at its right end, above the counts of each file. */
+  /* The first row is as high as a control: it takes the 44px or 28px of the toolbar for
+     the pointer in use. The line counts stand at its right end, above the counts of each file. */
   .diff-toolbar-summary {
     flex: auto;
-    min-height: 44px;
+    min-height: inherit;
   }
   .diff-toolbar-summary > .diff-stat {
     margin-left: auto;
@@ -1710,8 +1716,8 @@ ol.markdown-list > li::before {
   flex-direction: row-reverse;
   line-height: 16px;
 }
-/* On a phone the counts of the diff stand above the counts of each file: one order for both. */
-@media (max-width: 639px) {
+/* In a narrow pane the counts of the diff stand above the counts of each file: one order for both. */
+@variant narrow-pane {
   .diff-toolbar .diff-stat {
     flex-direction: row;
   }
