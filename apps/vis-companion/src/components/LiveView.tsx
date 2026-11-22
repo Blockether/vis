@@ -2208,7 +2208,9 @@ function NodeCell({
       ) : (
         node.label &&
         node.type !== 'button' &&
-        node.type !== 'card' && <NodeLabel>{node.label}</NodeLabel>
+        node.type !== 'card' &&
+        // A diff shows its name in its own toolbar.
+        node.type !== 'diff' && <NodeLabel>{node.label}</NodeLabel>
       )}
       {node.type === 'log' && !isOpen && <LogErrors node={node} label={label} />}
       {/* A log's output starts at the column of the view, not under its name: an
@@ -2329,6 +2331,7 @@ function NodeCell({
           {node.type === 'diff' && (
             <DiffNodeView
               node={node}
+              heading={node.label ? <NodeLabel>{node.label}</NodeLabel> : undefined}
               actions={presentation.app}
               commands={{
                 onActivate: presentation.onActivate,

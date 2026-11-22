@@ -205,6 +205,24 @@ export const Split: Story = {
   },
 };
 
+/** Report: on a phone the line counts stood alone under the name, away from the counts of the files. */
+export const PhoneToolbar: Story = {
+  decorators: width('390px'),
+  args: { view: manyFiles(), app },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getAllByText('Review')).toHaveLength(1);
+    if (!hasLayout(canvasElement)) return;
+    const name = canvas.getByText('Review').getBoundingClientRect();
+    const total = canvasElement.querySelector('.diff-toolbar .diff-stat')!.getBoundingClientRect();
+    // The name and the line counts share the first row of the toolbar.
+    await expect(Math.abs(total.top - name.top)).toBeLessThan(4);
+    if (!window.matchMedia('(max-width: 639px)').matches) return;
+    const ofFile = canvasElement.querySelector('.diff-file-header .diff-stat')!.getBoundingClientRect();
+    await expect(Math.abs(total.right - ofFile.right)).toBeLessThan(1);
+  },
+};
+
 /**
  * Report: on a phone, unwrapped split numbers lay over the code of the other side, and the
  * seam between the sides stood at a different place in each hunk.

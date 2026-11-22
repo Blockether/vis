@@ -957,13 +957,15 @@ function useNearFiles(files: readonly AppDiffFile[], sections: { current: Map<st
 
 interface DiffNodeViewProps {
   node: LiveDiffNode;
+  /** The name of the diff. It is the first word of the toolbar, so it stays in view with it. */
+  heading?: ReactNode;
   actions?: AppNodeActions;
   /** The click and keys of the toolbar buttons. Absent, they are read only. */
   commands?: DiffCommandActions;
 }
 
 /** Unified and split diffs share anchored comments, file controls and one scroller per file. */
-export function DiffNodeView({ node, actions, commands }: DiffNodeViewProps) {
+export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewProps) {
   const {
     files: sourceFiles,
     words,
@@ -1120,6 +1122,7 @@ export function DiffNodeView({ node, actions, commands }: DiffNodeViewProps) {
         count={files.length}
         total={total}
         base={node.old_revision}
+        heading={heading}
         nodes={node.children ?? []}
         commands={commands}
         hideTests={hideTests}
@@ -1593,6 +1596,7 @@ interface DiffToolbarProps {
   total: { additions: number; deletions: number };
   /** The revision that the diff compares against, if the producer names it. */
   base?: string;
+  heading?: ReactNode;
   onSplit: (split: boolean) => void;
   onWrap: () => void;
   onTree: () => void;
@@ -1604,7 +1608,7 @@ interface DiffToolbarProps {
 }
 
 /**
- * The header row of a diff, laid out like the T3 Code review panel: the app's
+ * The header row of a diff, laid out like the T3 Code review panel: its name, the app's
  * menus, the base it compares against and the line counts on the left; the app's
  * icon commands and the display toggles on the right; the app's icon menus last.
  */
@@ -1619,6 +1623,7 @@ function DiffToolbar({
   count,
   total,
   base,
+  heading,
   onSplit,
   onWrap,
   onTree,
@@ -1650,6 +1655,7 @@ function DiffToolbar({
   return (
     <div ref={bar} className="diff-toolbar" role="toolbar" aria-label="Diff display">
       <span className="diff-toolbar-summary">
+        {heading}
         {menus.length > 0 ? (
           <span className="diff-commands" role="group" aria-label="Review commands">
             {menus.map((node) => (

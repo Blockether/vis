@@ -1609,8 +1609,15 @@ ol.markdown-list > li::before {
   .diff-toolbar-controls {
     flex-wrap: wrap;
   }
+  /* The first row is as high as the row of controls below it, and the line counts stand
+     at its right end, above the counts of each file. */
   .diff-toolbar-summary {
     flex: auto;
+    min-height: 44px;
+  }
+  .diff-toolbar-summary > .diff-stat {
+    margin-left: auto;
+    margin-right: 4px;
   }
 }
 
@@ -1687,4 +1694,10 @@ ol.markdown-list > li::before {
 .diff-toolbar .diff-stat {
   flex-direction: row-reverse;
   line-height: 16px;
+}
+/* On a phone the counts of the diff stand above the counts of each file: one order for both. */
+@media (max-width: 639px) {
+  .diff-toolbar .diff-stat {
+    flex-direction: row;
+  }
 }
