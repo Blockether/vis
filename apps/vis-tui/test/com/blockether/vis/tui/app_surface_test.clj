@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.app-surface-test
   (:require [charred.api :as json]
             [clojure.java.io :as io]
+            [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.tui.app-model :as model]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.app-surface :as surface]
@@ -55,6 +56,8 @@
                       (swap! calls conj [:activate action]))
          :reload! (fn []
                     (swap! calls conj [:reload]))
+         :select! (fn [action]
+                    (swap! calls conj [:select action]))
          :paste identity}
 
         press
@@ -77,6 +80,90 @@
             (press s (k KeyType/ArrowDown)))
           st
           (range n)))
+
+(defn- canvas-view [opts]
+  (assoc view :nodes [(merge {:type :canvas :id "board"
+                             :cards [{:id "a" :title "First"} {:id "b" :title "Second"}]}
+                            opts)]))
+
+(defdescribe canvas-navigation
+  (it "opens each canvas thread and can start a new one"
+      (let [v (canvas-view {:threads [{:id "one" :item-id "a" :messages [] :is-resolved true}
+                                      {:id "two" :item-id "a" :messages [] :draft "unsent"}]})
+            {:keys [press start]} (harness v)
+            target (fn [n] (get-in (press (down press start n) (k KeyType/Enter)) [:editor :target]))]
+        (expect (= [nil "one" "two"] (mapv (comp :thread-id target) (range 3))))
+        (expect (= "a" (:item-id (target 0))))
+        (expect (= "unsent" (:draft (target 2))))))
+  (it "selects a canvas item and offers a separate stop for a new thread"
+      (let [v (canvas-view {:is-selectable true})
+            {:keys [press start calls]} (harness v)
+            selected (press start (k KeyType/Enter))
+            comment (press (down press start 1) (k KeyType/Enter))]
+        (expect (= [[:select {:action :select :node-id "board" :item-ids ["a"]}]] @calls))
+        (expect (nil? (:editor selected)))
+        (expect (= "a" (get-in comment [:editor :target :item-id])))))
+  (it "attaches existing canvas messages without a note and can remove the draft"
+      (let [thread {:id "discussion" :item-id "a"
+                    :messages [{:id "message" :author {:kind "agent"} :body "Review this" :created-at 1}]}
+            v (canvas-view {:threads [thread]})
+            {:keys [press start calls]} (harness v)
+            thread-editor #(press (down press start 1) (k KeyType/Enter))
+            expected {:action :draft :node-id "board" :thread-id "discussion" :base-seq 4}]
+        (press (thread-editor) (KeyStroke. KeyType/Enter true false))
+        (expect (= [[:save (assoc expected :body "")]] @calls))
+        (let [saved (assoc-in v [:nodes 0 :threads 0 :draft] "")
+              {:keys [press start calls]} (harness saved)]
+          (expect (some #(re-find #"without a note" (:text %))
+                        (surface/surface-rows saved 100 #{})))
+          (-> (down press start 1) (press (k KeyType/Enter)) (press (k \d true)))
+          (expect (= [[:save (assoc expected :body nil)]] @calls)))
+        (let [{:keys [press start calls]} (harness (assoc-in v [:nodes 0 :threads 0 :messages] []))]
+          (-> (down press start 1) (press (k KeyType/Enter)) (press (k \s true)))
+          (expect (empty? @calls)))))
+  (it "keeps a local comment when a patch removes its item"
+      (let [v (canvas-view {})
+            {:keys [press start calls]} (harness v)
+            editor (-> start (press (k KeyType/Enter)) (press {:paste "keep the text"}))
+            next-view (update-in v [:nodes 0 :cards] subvec 1)
+            geom (surface/measure editor 100 40 next-view)
+            removed (surface/reconcile editor geom)
+            attempted (surface/handle-key removed (k \s true) geom
+                                          {:save! (fn [action _] (swap! calls conj action))})]
+        (expect (empty? @calls))
+        (expect (= "keep the text" (input/input->text (get-in attempted [:editor :input]))))
+        (expect (re-find #"item .* gone" (surface/status-line removed)))))
+  (it "keeps the canvas cursor on the same thread when rows arrive above it"
+      (let [v (canvas-view {:threads [{:id "second-thread" :item-id "b" :messages []}]})
+            {:keys [press start]} (harness v)
+            focused (down press start 2)
+            next-view (update-in v [:nodes 0 :cards] #(into [{:id "new" :title "New"}] %))
+            refreshed (surface/reconcile focused (surface/measure focused 100 40 next-view))]
+        (expect (= "second-thread" (:thread-id (row-at refreshed next-view))))))
+  (it "opens a collapsed group to reach its canvas and can close it again"
+      (let [v (update (canvas-view {}) :nodes
+                      (fn [nodes] [{:id "group" :type :group :label "Review queue"
+                                    :is-collapsible true :children nodes}]))
+            {:keys [press start]} (harness v)
+            opened (press start (k KeyType/Enter))
+            closed (press opened (k KeyType/Enter))
+            items (fn [st] (set (keep :item-id (:rows (surface/measure st 100 40 v)))))]
+        (expect (= "group" (:node-id (row-at start v))))
+        (expect (empty? (items start)))
+        (expect (= #{"a" "b"} (items opened)))
+        (expect (empty? (items closed)))))
+  (it "does not send an oversized canvas draft and lets the person shorten it"
+      (let [v (canvas-view {})
+            {:keys [press start calls]} (harness v)
+            limit (:canvas-draft app/bounds)
+            text (apply str (repeat limit "😀"))
+            oversized (-> start (press (k KeyType/Enter)) (press {:paste (str text "!")}))
+            refused (press oversized (k \s true))]
+        (expect (zero? (count @calls)))
+        (expect (re-find (re-pattern (str limit)) (surface/status-line refused)))
+        (expect (= (str text "!") (input/input->text (get-in refused [:editor :input]))))
+        (-> refused (press (k KeyType/Backspace)) (press (k \s true)))
+        (expect (= text (get-in @calls [0 1 :body]))))))
 
 (defdescribe
   diff-navigation

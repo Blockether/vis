@@ -1028,7 +1028,7 @@ function canvasCardFromWire(raw: Record<string, unknown>): LiveCanvasCard | null
   const column = optionalNumber(raw.column);
   const row = optionalNumber(raw.row);
   const progress = optionalNumber(raw.progress);
-  const parent = optionalText(raw.parent);
+  const parent = text(raw.parent);
   return {
     id,
     title: text(raw.title) || id,
@@ -1054,7 +1054,7 @@ function canvasCardFromWire(raw: Record<string, unknown>): LiveCanvasCard | null
     ...(progress === undefined ? {} : { progress: Math.min(1, Math.max(0, progress)) }),
     ...optional('animation', canvasAnimation(raw.animation)),
     // An item cannot stand in itself.
-    ...(parent === undefined || parent === id ? {} : { parent }),
+    ...(parent === '' || parent === id ? {} : { parent }),
   };
 }
 
@@ -1624,7 +1624,7 @@ function canvasSettings(raw: Record<string, unknown>, held: CanvasSettings): Can
   const zoom = optionalNumber(raw.zoom);
   return {
     zoom: zoom !== undefined && zoom >= 0 ? Math.min(CANVAS_MAX_ZOOM, zoom) : held.zoom,
-    focus: typeof raw.focus === 'string' ? raw.focus.trim() : held.focus,
+    focus: typeof raw.focus === 'string' ? raw.focus : held.focus,
     is_locked: typeof raw.is_locked === 'boolean' ? raw.is_locked : held.is_locked,
     flow: canvasFlowSetting(raw.flow) ?? held.flow,
     pattern: canvasPattern(raw.pattern) ?? held.pattern,
@@ -2212,7 +2212,7 @@ function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
       return { ...node, objects: withoutIds(node.objects, op.item_ids) };
     case 'canvas': {
       // An id names an item or a thread, and a removed item takes its threads with it.
-      const gone = new Set(Array.isArray(op.item_ids) ? op.item_ids.map((id) => text(id)) : []);
+      const gone = new Set(lines(op.item_ids));
       const cards = withoutIds(node.cards, op.item_ids);
       const threads = node.threads.filter(
         (thread) => !gone.has(thread.id) && !gone.has(thread.item_id ?? ''),

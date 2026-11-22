@@ -4586,6 +4586,211 @@
           "node cv /threads/0/messages - the array has 51 items, the maximum is 50 (maxItems)"
         ]
       }
+    },
+    {
+      "name": "a canvas card and thread cannot use the same id",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ],
+            "threads": [
+              {
+                "id": "a",
+                "item_id": "a",
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /threads/0 - a canvas thread id also names a card (canvas_thread_id)"
+        ]
+      }
+    },
+    {
+      "name": "each arrow to a canvas item needs a different source",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              },
+              {
+                "id": "b",
+                "title": "B",
+                "edges": [
+                  {
+                    "from": "a"
+                  },
+                  {
+                    "from": "a",
+                    "label": "Again"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/1/edges - more than one arrow starts at the same item (canvas_edge_source)"
+        ]
+      }
+    },
+    {
+      "name": "canvas media needs non-blank alt text",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "media": {
+                  "kind": "audio",
+                  "url": "https://example.com/a",
+                  "alt": " "
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/media/alt - the string is blank (pattern)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas accepts an unpadded picture",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "picture": {
+                  "alt": "Dot",
+                  "media_type": "image/png",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2ocAAAAASUVORK5CYII"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
+    },
+    {
+      "name": "a thread message date must fit the display range",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ],
+            "threads": [
+              {
+                "id": "t",
+                "item_id": "a",
+                "messages": [
+                  {
+                    "id": "m",
+                    "body": "New message",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 8640000000000001
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /threads/0/messages/0/created_at - the number is greater than the maximum 8640000000000000 (maximum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas id keeps non-breaking spaces",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": " a ",
+                "title": "A"
+              },
+              {
+                "id": "\u00a0a\u00a0",
+                "title": "NBSP"
+              }
+            ],
+            "is_selectable": true
+          }
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
     }
   ],
   "patches": [
@@ -9158,6 +9363,484 @@
       ],
       "expect": {
         "refusal": "Invalid live-view patch: node cv /threads - the array has 101 items, the maximum is 100 (maxItems)"
+      }
+    },
+    {
+      "name": "a canvas cannot append a card with an existing thread id",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ],
+            "threads": [
+              {
+                "id": "t",
+                "item_id": "a",
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "cv",
+          "cards": [
+            {
+              "id": "t",
+              "title": "T"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node cv /threads/0 - a canvas thread id also names a card (canvas_thread_id)"
+      }
+    },
+    {
+      "name": "a canvas cannot add a thread with an existing card id",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "cv",
+          "thread": {
+            "id": "a",
+            "item_id": "a",
+            "messages": []
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node cv /threads/0 - a canvas thread id also names a card (canvas_thread_id)"
+      }
+    },
+    {
+      "name": "a canvas cannot append two arrows from the same source",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "cv",
+          "cards": [
+            {
+              "id": "b",
+              "title": "B",
+              "edges": [
+                {
+                  "from": "a"
+                },
+                {
+                  "from": "a",
+                  "label": "Again"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node cv /cards/1/edges - more than one arrow starts at the same item (canvas_edge_source)"
+      }
+    },
+    {
+      "name": "turning off canvas selection drops the selected ids",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ],
+            "is_selectable": true,
+            "selected_ids": [
+              "a"
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "cv",
+          "is_selectable": false
+        },
+        {
+          "op": "set",
+          "node_id": "cv",
+          "is_selectable": true
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0
+        ],
+        "value": {
+          "id": "cv",
+          "type": "canvas",
+          "cards": [
+            {
+              "id": "a",
+              "title": "A"
+            }
+          ],
+          "is_selectable": true
+        }
+      }
+    },
+    {
+      "name": "turning off canvas selection accepts an empty selection in the same set",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ],
+            "is_selectable": true,
+            "selected_ids": [
+              "a"
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "cv",
+          "is_selectable": false,
+          "selected_ids": []
+        },
+        {
+          "op": "set",
+          "node_id": "cv",
+          "is_selectable": true
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0
+        ],
+        "value": {
+          "id": "cv",
+          "type": "canvas",
+          "cards": [
+            {
+              "id": "a",
+              "title": "A"
+            }
+          ],
+          "is_selectable": true
+        }
+      }
+    },
+    {
+      "name": "resolving and reopening a canvas thread keeps the current messages and draft",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ],
+            "threads": [
+              {
+                "id": "t",
+                "item_id": "a",
+                "messages": [
+                  {
+                    "id": "m",
+                    "body": "New message",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 5
+                  }
+                ],
+                "draft": "Unsent"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "cv",
+          "thread": {
+            "id": "t",
+            "is_resolved": true
+          }
+        },
+        {
+          "op": "thread",
+          "node_id": "cv",
+          "thread": {
+            "id": "t",
+            "is_resolved": false
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "threads",
+          0
+        ],
+        "value": {
+          "id": "t",
+          "item_id": "a",
+          "messages": [
+            {
+              "id": "m",
+              "body": "New message",
+              "author": {
+                "kind": "agent"
+              },
+              "created_at": 5
+            }
+          ],
+          "draft": "Unsent",
+          "is_resolved": false
+        }
+      }
+    },
+    {
+      "name": "a patch selects cards after adding their canvas",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "intro",
+            "type": "paragraph",
+            "text": "Canvas"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "add-node",
+          "node_spec": {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": " a ",
+                "title": "A"
+              },
+              {
+                "id": "\u00a0a\u00a0",
+                "title": "NBSP"
+              }
+            ],
+            "is_selectable": true
+          }
+        },
+        {
+          "op": "set",
+          "node_id": "cv",
+          "selected_ids": [
+            " a ",
+            "\u00a0a\u00a0"
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          1,
+          "selected_ids"
+        ],
+        "value": [
+          "a",
+          "\u00a0a\u00a0"
+        ]
+      }
+    },
+    {
+      "name": "a patch removes a card after adding its canvas",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "intro",
+            "type": "paragraph",
+            "text": "Canvas"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "add-node",
+          "node_spec": {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": " a ",
+                "title": "A"
+              },
+              {
+                "id": "\u00a0a\u00a0",
+                "title": "NBSP"
+              }
+            ],
+            "is_selectable": true
+          }
+        },
+        {
+          "op": "remove",
+          "node_id": "cv",
+          "item_ids": [
+            " a "
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          1,
+          "cards"
+        ],
+        "value": [
+          {
+            "id": "\u00a0a\u00a0",
+            "title": "NBSP"
+          }
+        ]
+      }
+    },
+    {
+      "name": "canvas references use the same ids as their targets",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "focus": " child ",
+            "cards": [
+              {
+                "id": " frame ",
+                "kind": "frame",
+                "title": "Frame"
+              },
+              {
+                "id": " child ",
+                "title": "Child",
+                "parent": " frame ",
+                "edges": [
+                  {
+                    "from": " frame "
+                  }
+                ]
+              }
+            ],
+            "threads": [
+              {
+                "id": " talk ",
+                "item_id": " child ",
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "cv",
+          "focus": " child "
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0
+        ],
+        "value": {
+          "id": "cv",
+          "type": "canvas",
+          "focus": "child",
+          "cards": [
+            {
+              "id": "frame",
+              "kind": "frame",
+              "title": "Frame"
+            },
+            {
+              "id": "child",
+              "title": "Child",
+              "parent": "frame",
+              "edges": [
+                {
+                  "from": "frame"
+                }
+              ]
+            }
+          ],
+          "threads": [
+            {
+              "id": "talk",
+              "item_id": "child",
+              "messages": []
+            }
+          ]
+        }
       }
     }
   ]

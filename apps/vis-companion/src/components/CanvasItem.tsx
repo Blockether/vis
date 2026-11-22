@@ -139,6 +139,10 @@ function ItemPicture({ picture, isLoose = false }: { picture: LiveCanvasPicture;
  * with the words of the media: no request leaves the app.
  */
 function ItemMedia({ media }: { media: LiveCanvasMedia }) {
+  return <MediaPlayer key={JSON.stringify([media.kind, media.url])} media={media} />;
+}
+
+function MediaPlayer({ media }: { media: LiveCanvasMedia }) {
   const [isStarted, setIsStarted] = useState(false);
   const isVideo = media.kind === 'video';
   const frame = `pointer-events-auto mt-2 block w-full border border-[var(--cv-edge)] ${
@@ -301,7 +305,7 @@ function Badges({ badges }: { badges: string[] }) {
       {badges.map((badge) => (
         <span
           key={badge}
-          className={`border border-[var(--cv-edge)] px-1.5 font-mono text-meta ${HINT}`}
+          className={`min-w-0 max-w-full border border-[var(--cv-edge)] px-1.5 font-mono text-meta [overflow-wrap:anywhere] ${HINT}`}
         >
           {badge}
         </span>
@@ -343,6 +347,10 @@ function FarTitle({
   );
 }
 
+function ItemMeta({ meta, className }: { meta: string; className: string }) {
+  return <span className={`min-w-0 truncate font-mono text-meta tabular-nums ${HINT} ${className}`}>{meta}</span>;
+}
+
 /** The title line of a card, a note or a frame: icon, tone, title, meta. */
 function Heading({
   card,
@@ -358,11 +366,7 @@ function Heading({
       {card.icon && <AppIcon name={card.icon} className={`size-3.5 shrink-0 ${INK}`} />}
       {card.tone && mark(card.tone)}
       <span className={`min-w-0 truncate font-semibold ${titleClass}`}>{card.title}</span>
-      {card.meta && (
-        <span className={`ml-auto shrink-0 pl-2 font-mono text-meta tabular-nums ${HINT}`}>
-          {card.meta}
-        </span>
-      )}
+      {card.meta && <ItemMeta meta={card.meta} className="ml-auto max-w-[45%] pl-2" />}
     </span>
   );
 }
@@ -450,12 +454,19 @@ function TextFace({ card }: { card: LiveCanvasCard }) {
         >
           {card.title}
         </span>
+        {card.meta && <ItemMeta meta={card.meta} className={`ml-auto text-right ${NEAR}`} />}
       </span>
       {card.text && <ItemText text={card.text} className={`${HINT} ${NEAR}`} />}
       {(card.picture || card.media) && (
         <span className={`block ${NEAR}`}>
           {card.picture && <ItemPicture picture={card.picture} isLoose />}
           {card.media && <ItemMedia media={card.media} />}
+        </span>
+      )}
+      {(card.badges.length > 0 || card.progress !== undefined) && (
+        <span className={`block ${NEAR}`}>
+          <Badges badges={card.badges} />
+          {card.progress !== undefined && <ItemProgress value={card.progress} className="mt-2 h-[3px]" />}
         </span>
       )}
     </span>
@@ -475,7 +486,9 @@ function ShapeFace({ card, mark }: { card: LiveCanvasCard; mark: CanvasToneMark 
       </span>
       {card.text && <ItemText text={card.text} className={`${TEXT} max-w-full [&_p]:text-center`} />}
       {card.picture && <ItemPicture picture={card.picture} isLoose />}
+      {card.meta && <ItemMeta meta={card.meta} className="max-w-full" />}
       {card.media && <ItemMedia media={card.media} />}
+      <Badges badges={card.badges} />
       {card.progress !== undefined && <ItemProgress value={card.progress} className="mt-1.5 h-[3px] w-14" />}
     </span>
   );
@@ -651,6 +664,12 @@ function Item({
                 <span className={`block max-w-80 ${NEAR}`}>
                   {card.picture && <ItemPicture picture={card.picture} isLoose />}
                   {card.media && <ItemMedia media={card.media} />}
+                </span>
+              )}
+              {(card.badges.length > 0 || card.progress !== undefined) && (
+                <span className={`block ${NEAR} ${MOVES}`}>
+                  <Badges badges={card.badges} />
+                  {card.progress !== undefined && <ItemProgress value={card.progress} className="mt-2 h-[3px]" />}
                 </span>
               )}
             </div>

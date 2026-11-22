@@ -198,6 +198,19 @@
   [node thread-id]
   (some #(when (= thread-id (:id %)) %) (threads node)))
 
+(defn resolution-only?
+  "True for a thread op that changes only the resolved flag."
+  [thread]
+  (and (map? thread) (contains? thread :is-resolved) (not (contains? thread :messages))))
+
+(defn- fresh-thread-id
+  "An unused thread id. A canvas shares ids between threads and cards."
+  [node candidate]
+  (let [held (into (set (map :id (threads node))) (map :id) (:cards node))]
+    (if (held candidate)
+      (first (remove held (map #(str candidate "-" %) (iterate inc 1))))
+      candidate)))
+
 (defn owner-thread
   "Thread `thread` of an owner's thread op on node `node` as it lands: a message that
    the host stored keeps the stored copy, found by id, and the saved draft of the human
@@ -352,7 +365,7 @@
             {:op :thread
              :node-id (:id node)
              :thread (assoc target
-                       :id new-id
+                       :id (fresh-thread-id node new-id)
                        :messages []
                        :draft text)})))
 
@@ -430,9 +443,9 @@
                      thread-id (or (find-thread node thread-id)
                                    (refuse! (:id node) "no such thread"))
                      (and (= :canvas (:type node)) (not (blank-text? item-id)))
-                     {:id new-thread-id :item-id item-id :messages []}
+                     {:id (fresh-thread-id node new-thread-id) :item-id item-id :messages []}
                      (and (= :diff (:type node)) (map? anchor))
-                     {:id new-thread-id :anchor anchor :messages []}
+                     {:id (fresh-thread-id node new-thread-id) :anchor anchor :messages []}
                      :else (refuse! (:id node) "a reply names a thread or an anchor"))]
     {:op :thread :node-id (:id node) :thread (append-message node thread message)}))
 

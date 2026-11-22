@@ -21,11 +21,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Companion: a large canvas board opens faster. The app lays out the largest board, 200 items with 16 arrows each, in less than 100 ms. On a board of that size, a long arrow can go in a straight line.
 - Live views: the default route of a canvas arrow is `elbow`. An elbow has only lines at right angles. It goes around the items and the other arrows, and it crosses another arrow only when no other way is free. In the Companion app, arrows into one item do not go on top of each other.
 - Companion: a change of a canvas item that moves no item and no arrow, such as a progress, a tone, a colour, or the motion of an arrow, does not lay out the board again. The app draws again only the items and the arrows that changed, and the motion of the other arrows continues. On a board of 200 items, a progress step takes less than 1 ms instead of about 300 ms.
+- Live views: a canvas holds each ID one time. An item and a thread cannot have the same ID, and Vis gives a new thread an ID that no item and no thread has. Before, `canvas.remove(id)` removed the item and the thread of that ID.
+- Live views: an item of a canvas holds at most one arrow from each source item. Before, the Companion app showed only the last arrow and the terminal showed all of them. The `after` builder of the Python SDK keeps the last arrow of a source.
+- Live views: the `alt` text of a canvas recording must hold a visible character, and the time of a thread message is at most 8640000000000000 ms.
 
 ### Fixed
 
 - Companion: on a dense canvas board, an arrow at right angles does not go through an item when the search for its way runs out of steps. A second, simpler search finds a way that can share a line with another arrow or cross it.
 - Companion: the boxes of a task list show in messages. Before, the page style hid them.
+- Live views: `canvas.resolve(...)` does not remove a message that arrives while it runs. A resolution changes only the state of the thread that Vis holds at that time.
+- Live views: a canvas that you change to `is_selectable: false` removes its selection. Before, Vis refused the change.
+- Live views: an ID with spaces at its start or end stays connected to its frame, its threads, the selection, and its arrows.
+- Live views: Python and Clojure accept the same Base64 picture data of a canvas, also without the `=` padding.
+- Companion: each canvas arrow shows when an ID holds the sign `>`. Before, the arrows from `a` to `b>c` and from `a>b` to `c` showed as one arrow.
+- Companion: the thread mark of a canvas shape is on its outline, as on the corner of a card.
+- Companion: a new recording on a canvas item starts only when a person presses Play again.
+- Companion and terminal: you can add a thread to the next message without a note, and remove that again.
+- Companion: the progress, details, and badges of a canvas item show on each kind of item, as in the terminal.
+- Companion: a frame under a frame that is too deep stands on the board, as in the terminal.
+- Terminal: you can open and answer each thread of a canvas item, start a new thread, and select an item on a board that allows it.
+- Terminal: a comment on a canvas item that a change removes stays in the editor. Before, Vis saved it on no item.
+- Terminal: long Markdown words and lines of CJK text in a canvas item wrap inside the frame.
+- Terminal: the cursor stays on its canvas item when a change adds or removes other items.
+- Terminal: a group that holds a canvas keeps its title and its collapsed state.
+- Terminal: an arrow shows only when its source item is on the board, and its sign shows its direction.
+- Terminal: the editor of a canvas comment refuses text longer than the limit of the contract before it sends it.
 
 ## [v0.5.30] - 2026-11-22
 

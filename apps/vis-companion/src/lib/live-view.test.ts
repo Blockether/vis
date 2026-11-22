@@ -1098,3 +1098,46 @@ it('keeps the threads of a board with their items through thread, remove and cle
   expect(nodeOfType(cut, 'canvas', 'canvas').cards.map((card) => card.id)).not.toContain('tests');
   expect(threads(patched(added, 2, [{ op: 'clear', node_id: 'canvas' }]))).toEqual([]);
 });
+
+
+it('keeps distinct canvas ids with spaces and their references through patches', () => {
+  const canvas = primitives.nodes.find((node) => node.id === 'canvas')!;
+  const spaced = '\u00a0a\u00a0';
+  const spacedThread = '\u00a0note\u00a0';
+  const board = liveViewFromWire({ ...primitives, nodes: [{
+    ...canvas,
+    focus: spaced,
+    is_selectable: true,
+    selected_ids: [spaced],
+    cards: [
+      { id: 'a', title: 'First frame', kind: 'frame' },
+      { id: spaced, title: 'Second frame', kind: 'frame' },
+      { id: 'child', title: 'Child', parent: spaced, edges: [{ from: spaced }] },
+    ],
+    threads: [{ id: 'note', item_id: 'a', messages: [], draft: 'Check it.' }],
+  }] })!;
+  const node = (view: LiveView) => nodeOfType(view, 'canvas', 'canvas');
+  expect(node(board)).toMatchObject({
+    focus: spaced,
+    selected_ids: [spaced],
+    cards: [{ id: 'a' }, { id: spaced }, { id: 'child', parent: spaced, edges: [{ from: spaced }] }],
+  });
+  const changed = patched(board, 1, [
+    { op: 'append', node_id: 'canvas', cards: [{ id: spaced, title: 'Changed', kind: 'frame' }] },
+    { op: 'set', node_id: 'canvas', focus: spaced, selected_ids: ['a', spaced] },
+    { op: 'thread', node_id: 'canvas', thread: { id: spacedThread, item_id: spaced, messages: [], draft: 'Check it.' } },
+  ]);
+  expect(node(changed)).toMatchObject({
+    focus: spaced,
+    selected_ids: ['a', spaced],
+    cards: [{ id: 'a', title: 'First frame' }, { id: spaced, title: 'Changed' }, { id: 'child' }],
+    threads: [{ id: 'note', item_id: 'a' }, { id: spacedThread, item_id: spaced }],
+  });
+  expect(node(patched(changed, 2, [{ op: 'remove', node_id: 'canvas', item_ids: [spacedThread] }])).threads)
+    .toMatchObject([{ id: 'note', item_id: 'a' }]);
+  expect(node(patched(changed, 2, [{ op: 'remove', node_id: 'canvas', item_ids: [spaced] }]))).toMatchObject({
+    selected_ids: ['a'],
+    cards: [{ id: 'a' }, { id: 'child' }],
+    threads: [{ id: 'note', item_id: 'a' }],
+  });
+});

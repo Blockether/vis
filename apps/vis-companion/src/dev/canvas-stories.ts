@@ -236,6 +236,19 @@ const kinds = [
     column: 2,
     row,
   })),
+  // Each kind shows its details, badges and progress.
+  ...(['shape', 'text', 'frame'] as const).map((kind, row) => ({
+    id: `filled-${kind}`,
+    title: `Filled ${kind}`,
+    kind,
+    shape: kind === 'shape' ? 'hexagon' : undefined,
+    color: 'purple',
+    meta: '2 of 5',
+    badges: ['beta'],
+    progress: 0.4,
+    column: 3,
+    row,
+  })),
 ];
 
 const nested = [

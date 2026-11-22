@@ -138,6 +138,18 @@
         "a selected id names no card of the canvas",
         "selection"
       ],
+      "canvas_thread_id": [
+        "a canvas thread id also names a card",
+        "canvas_thread_id"
+      ],
+      "canvas_edge_source": [
+        "more than one arrow starts at the same item",
+        "canvas_edge_source"
+      ],
+      "thread_not_found": [
+        "no such thread",
+        "thread_not_found"
+      ],
       "not_selectable": [
         "only a selectable table, card or canvas takes this property",
         "selection"

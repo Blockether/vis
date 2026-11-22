@@ -1174,3 +1174,63 @@ def test_the_app_log_follows_the_shared_fixture(case):
         assert want.get("contains", "") in text, key
     assert not set(expect.get("absent", [])) & set(last)
     _contracts.validate("view", "log_entry", last)
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_canvas_resolve_keeps_a_message_posted_before_the_write(monkeypatch, host_kind):
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    fixture = _canvas_fixture()
+    with vis.live("Review", [fixture], flush_ms=0) as view:
+        board = view["canvas"]
+        current = next(t for t in board.threads if t["id"] == "contract-first")
+        message = {
+            "id": "late",
+            "body": "Late reply",
+            "created_at": 1,
+            "author": {"kind": "agent"},
+        }
+        push = view._push
+
+        def post_then_resolve(op):
+            push(
+                {
+                    "op": "thread",
+                    "node_id": "canvas",
+                    "thread": {
+                        **current,
+                        "messages": [*current["messages"], message],
+                    },
+                }
+            )
+            return push(op)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(view, "_push", post_then_resolve)
+            board.resolve("contract-first")
+        board.resolve("contract-first", is_resolved=False)
+        reopened = next(t for t in board.threads if t["id"] == "contract-first")
+        assert reopened["is_resolved"] is False
+        assert reopened["messages"] == [*current["messages"], message]
+
+
+def test_canvas_after_uses_the_last_arrow_for_a_source():
+    canvas = vis.ui.canvas
+    edge = canvas.edge("start", label="Changed")
+    card = canvas.card("finish", "Finish", after=["start", "other", edge])
+    assert card["edges"] == [edge, {"from": "other"}]
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_canvas_removes_a_card_by_its_normalized_id(monkeypatch, host_kind):
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    canvas = vis.ui.canvas("board", [vis.ui.canvas.card(" a ", "A")])
+    with vis.live("Board", [canvas], flush_ms=0) as view:
+        board = view["board"]
+        board.remove("a")
+        assert board.cards == {}

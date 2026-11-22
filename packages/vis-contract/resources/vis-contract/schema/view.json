@@ -1031,7 +1031,8 @@
         },
         "created_at": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 8640000000000000
         },
         "submission_id": {
           "$ref": "common.json#/$defs/non_blank_string"
@@ -3945,7 +3946,21 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "thread": {
-              "$ref": "#/$defs/thread"
+              "description": "To change only the resolution of an existing thread, give its id and is_resolved without messages.",
+              "if": {
+                "required": ["is_resolved"],
+                "not": {"required": ["messages"]}
+              },
+              "then": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {"$ref": "common.json#/$defs/non_blank_string"},
+                  "is_resolved": {"type": "boolean"}
+                },
+                "required": ["id", "is_resolved"]
+              },
+              "else": {"$ref": "#/$defs/thread"}
             }
           },
           "required": [
@@ -5890,7 +5905,7 @@
           "x-vis-max-depth": 4
         },
         "edges": {
-          "description": "The arrows that end at this card.",
+          "description": "The arrows that end at this card. Each arrow must start at a different item.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/canvas_edge"
@@ -6097,8 +6112,7 @@
         },
         "alt": {
           "description": "What the video or the sound holds, for a person who cannot play it.",
-          "type": "string",
-          "minLength": 1,
+          "$ref": "common.json#/$defs/non_blank_string",
           "maxLength": 300
         }
       },

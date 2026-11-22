@@ -287,6 +287,43 @@ describe('a canvas', () => {
     expect(document.querySelector('audio')).toBeNull();
   });
 
+  it('waits for Play again when the media of the same item changes', () => {
+    const canvas = fixture.nodes.find((n) => n.id === 'canvas')!;
+    const mediaView = (kind: 'audio' | 'video', url: string, alt = 'A run') => liveViewFromWire({
+      ...fixture,
+      nodes: [{ ...canvas, cards: [{ id: 'run', title: 'Run', media: { kind, url, alt } }] }],
+    })!;
+    const first = 'https://example.com/first';
+    const second = 'https://example.com/second';
+    const { rerender } = render(<LiveViewPanel view={mediaView('audio', first)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Play the sound: A run' }));
+    const player = document.querySelector('audio');
+    expect(player?.getAttribute('src')).toBe(first);
+    rerender(<LiveViewPanel view={mediaView('audio', first, 'First run')} />);
+    expect(document.querySelector('audio')).toBe(player);
+    rerender(<LiveViewPanel view={mediaView('audio', second)} />);
+    expect(document.querySelector('audio, video')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Play the sound: A run' }));
+    expect(document.querySelector('audio')?.getAttribute('src')).toBe(second);
+    rerender(<LiveViewPanel view={mediaView('video', second)} />);
+    expect(document.querySelector('audio, video')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Play the video: A run' }));
+    expect(document.querySelector('video')?.getAttribute('src')).toBe(second);
+  });
+
+  it.each(['text', 'shape', 'frame'])('shows the details and progress of a %s item', (kind) => {
+    const canvas = fixture.nodes.find((n) => n.id === 'canvas')!;
+    render(<LiveViewPanel view={liveViewFromWire({
+      ...fixture,
+      nodes: [{ ...canvas, cards: [{
+        id: 'test', title: 'Test', kind, meta: '1 of 4', badges: ['Slow'], progress: 0.25,
+      }] }],
+    })!} />);
+    expect(screen.getByText('1 of 4')).toBeVisible();
+    expect(screen.getByText('Slow')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Progress' }).getAttribute('aria-valuenow')).toBe('25');
+  });
+
   it('shows the picture and the Play button of each kind of item', () => {
     const kinds = ['card', 'note', 'text', 'shape', 'frame'];
     const canvas = fixture.nodes.find((n) => n.id === 'canvas')!;
@@ -324,6 +361,36 @@ describe('a canvas', () => {
     expect(screen.queryByRole('button', { name: 'Reply' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'New thread' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Comment on Verify' })).toBeNull();
+  });
+
+  it('adds an existing thread to the next message without a note', async () => {
+    const draft = vi.fn(async (): Promise<AppActionResult> => ({ status: 'saved', seq: 9 }));
+    render(<LiveViewPanel view={board()} app={{ isReadOnly: false, draft }} />);
+    fireEvent.click(screen.getByRole('button', { name: '2 comments on Tests, resolved' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(draft).toHaveBeenCalledWith('canvas', { threadId: 'two-machines', body: '' }),
+    );
+  });
+
+  it('lets a person remove an attached thread with no note', async () => {
+    const original = board();
+    const node = original.nodes[0];
+    if (node.type !== 'canvas') throw new Error('The fixture has no canvas');
+    const thread = node.threads.find((entry) => entry.id === 'two-machines')!;
+    const attached = applyLivePatch(original, {
+      view_id: original.id,
+      patch: { seq: 1, ops: [{ op: 'thread', node_id: node.id, thread: { ...thread, draft: '' } }] },
+    });
+    const draft = vi.fn(async (): Promise<AppActionResult> => ({ status: 'saved', seq: 9 }));
+    render(<LiveViewPanel view={attached} app={{ isReadOnly: false, draft }} />);
+    fireEvent.click(screen.getByRole('button', { name: '2 comments on Tests, with a saved draft' }));
+    expect(screen.getByText('In the next message')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() =>
+      expect(draft).toHaveBeenCalledWith('canvas', { threadId: 'two-machines', body: null }),
+    );
   });
 
   it('saves the comment of a person on the item and the reply in its thread', async () => {

@@ -113,3 +113,20 @@
       (expect (throws? clojure.lang.ExceptionInfo
                        #(app/append-log {:placement :attachment}
                                         {:level "info" :message "x" :at 1})))))
+
+(defdescribe canvas-thread-id-test
+             (it "does not replace a card or thread when a new draft picks its id"
+                 (let [node
+                       {:id "board"
+                        :type :canvas
+                        :cards [{:id "a"}]
+                        :threads [{:id "a-1" :item-id "a" :messages []}]}
+
+                       draft
+                       (app/draft-op node {:item-id "a" :body "Check it"} "a")
+
+                       reply
+                       (app/reply-op node {:item-id "a" :new-thread-id "a-1"} {:body "Answer"})]
+
+                   (expect (= "a-2" (get-in draft [:thread :id])))
+                   (expect (not (#{"a" "a-1"} (get-in reply [:thread :id])))))))

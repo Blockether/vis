@@ -520,3 +520,36 @@
                      (catch clojure.lang.ExceptionInfo _ true)))
         (expect (some? (engine/normalize-live-node
                          {:id "tl" :type "timeline" :lanes (pop lanes)}))))))
+
+(defdescribe
+  canvas-reference-test
+  (it "keeps canvas references connected when an id has surrounding spaces"
+      (let [view
+            (materializer/materialize
+              (engine/normalize-live-view
+                {:title "Board"
+                 :nodes
+                 [{:id "board"
+                   :type :canvas
+                   :is-selectable true
+                   :focus " child "
+                   :selected-ids [" child "]
+                   :cards
+                   [{:id " frame " :title "Frame" :kind "frame"}
+                    {:id " child " :title "Child" :parent " frame " :edges [{:from " frame "}]}]
+                   :threads [{:id " talk " :item-id " child " :messages []}]}]}))
+
+            canvas
+            (node view "board")]
+
+        (expect (= ["child" ["child"] "frame" "frame" "child"]
+                   [(:focus canvas) (:selected-ids canvas) (get-in canvas [:cards 1 :parent])
+                    (get-in canvas [:cards 1 :edges 0 :from])
+                    (get-in canvas [:threads 0 :item-id])]))
+        (let [patch
+              (engine/landed-patch view [{:op :set :node-id "board" :selected-ids [" frame "]}])
+
+              after
+              (node (materializer/apply-patch view patch) "board")]
+
+          (expect (= ["frame"] (:selected-ids after)))))))

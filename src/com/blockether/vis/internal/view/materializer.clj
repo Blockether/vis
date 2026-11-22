@@ -246,7 +246,10 @@
       ;; states by leaving the key out, so a status can drop the second
       ;; line it was carrying instead of refusing the patch.
       (and (contains? given :detail) (str/blank? (:detail op)))
-      (dissoc :detail))))
+      (dissoc :detail)
+
+      (and (= :canvas (:type node)) (false? (:is-selectable op)))
+      (dissoc :selected-ids))))
 
 (defn- apply-append
   "A node with items added. A `log` grows its window and its record; a keyed
@@ -407,17 +410,21 @@
              (app/upsert-thread node (:thread op)))
    :set-value apply-set-value})
 
+(defn- checked-node-path
+  [view node-id]
+  (or (node-path view node-id)
+      (invalid-patch! (spec/node-fault-text node-id
+                                            [(document/named-line
+                                               "/node_id"
+                                               "missing_node"
+                                               {"ids" (str/join ", " (node-ids view))})]))))
+
 (defn- apply-node-op
   "The view after ONE operation on the node that `op` names; an unknown node is
    refused with the ids the view has."
   [view op]
   (let [path
-        (or (node-path view (:node-id op))
-            (invalid-patch! (spec/node-fault-text (:node-id op)
-                                                  [(document/named-line
-                                                     "/node_id"
-                                                     "missing_node"
-                                                     {"ids" (str/join ", " (node-ids view))})])))
+        (checked-node-path view (:node-id op))
 
         apply-node
         (or (get node-appliers (:op op))
@@ -442,6 +449,49 @@
   (if-let [apply-view (get view-appliers (:op op))]
     (apply-view view op)
     (apply-node-op view op)))
+
+(defn- item-references? [op] (or (contains? op :selected-ids) (contains? op :item-ids)))
+
+(defn- land-node-op
+  [view op]
+  (let [resolve?
+        (app/resolution-only? (:thread op))
+
+        node
+        (when (or resolve? (item-references? op))
+          (get-in
+            view
+            (if resolve? (checked-node-path view (:node-id op)) (node-path view (:node-id op)))))]
+
+    (if resolve?
+      (let [{:keys [id is-resolved]} (:thread op)]
+        (checked-op! node op)
+        (if-let [thread (app/find-thread node id)]
+          (assoc op :thread (assoc thread :is-resolved is-resolved))
+          (invalid-patch! (spec/node-fault-text (:node-id op)
+                                                [(document/named-line "/thread/id"
+                                                                      "thread_not_found")]))))
+      (cond-> op
+        (and (= :canvas (:type node)) (contains? op :selected-ids))
+        (update :selected-ids #(mapv str/trim %))
+
+        (and (= :canvas (:type node)) (contains? op :item-ids))
+        (update :item-ids #(mapv str/trim %))))))
+
+(defn land-node-refs
+  "Normalize canvas references and expand thread resolution requests before storage."
+  [view patch]
+  (let [ops (:ops patch)]
+    (assoc patch
+      :ops (if (or (some (comp app/resolution-only? :thread) ops)
+                   (and (some item-references? ops)
+                        (some (comp #{:add-node :remove-node} :op) ops)))
+             (second (reduce (fn [[current landed] op]
+                               (let [op (land-node-op current op)]
+                                 [(apply-op current op) (conj landed op)]))
+                             [view []]
+                             ops))
+             (mapv #(land-node-op view %) ops)))))
 
 (defn apply-patch
   "`view` after every operation in `patch`, or a refusal naming the first one

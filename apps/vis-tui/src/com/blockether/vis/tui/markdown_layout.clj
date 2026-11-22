@@ -2232,6 +2232,19 @@
                                  (assoc r :text widened-t)))))
                runs))))))
 
+(defn- fold-long-line
+  [width {:keys [runs] :as line}]
+  (let [text (apply str (map :text runs))
+        parts (p/fold-cols text width)]
+    (if (next parts)
+      (let [ranges (source-run-ranges runs)
+            ends (reductions + 0 (map count parts))]
+        (map (fn [start end]
+               (assoc (dissoc line :wrap? :optimized?) :runs (slice-source-runs ranges start end)))
+             ends
+             (rest ends)))
+      [line])))
+
 (defn ast->entries
   "Drop-in replacement for the legacy `render/markdown->entries`.
    Returns a vector of `{:line :meta}` maps where `:line` is the
@@ -2256,6 +2269,8 @@
    `:window-start` / `:window-num` render a visible slice through the same
    justification path as the full projection.
 
+   `:fold-long-lines? true` folds long rows at grapheme bounds.
+
    `:code-spacing? false` suppresses generated code margins and padding for
    content inside an existing band. Literal blank source lines are preserved.
 
@@ -2274,6 +2289,9 @@
            (ast->lines-window ir width (long (:window-start opts)) (long (:window-num opts)) opts)
            tail-n (ast->lines-tail ir width (long tail-n) opts)
            :else (ast->lines ir width opts))
+
+         lines
+         (if (:fold-long-lines? opts) (mapcat #(fold-long-line width %) lines) lines)
 
          justify?
          (not (false? (:justify? opts)))

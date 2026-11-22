@@ -50,7 +50,7 @@
     (:card :trow)
     (boolean (:is-selectable entry))
 
-    :picture-open
+    (:picture-open :disclosure)
     true
 
     :field
@@ -88,7 +88,7 @@
   "Rows of a node that the live view paints: one `:plan` row for each plan entry.
    The cursor stops on each control, and on one row of each field. A row of
    side-by-side cells has one stop for each control in it, in `:cells`."
-  [view node width]
+  [view node width disclosures]
   (first
     (reduce (fn [[rows seen] entry]
               (let [cells
@@ -101,24 +101,40 @@
                        (cond-> {:kind :plan
                                 :node-id (:node-id entry)
                                 :item-id (:item-id entry)
-                                :entry entry
+                                 :thread-id (:canvas-thread-id entry)
+                                 :entry entry
                                 :text (:text entry)
                                 :is-selectable (boolean (seq found))}
                          cells
                          (assoc :cells found))) seen]))
             [[] #{}]
-            (lv/plan (cond-> (lv/opened (assoc view
-                                          :nodes [node]
-                                          :description nil))
+            (lv/plan (cond-> (assoc (lv/opened (assoc view :nodes [node] :description nil))
+                                    :disclosures disclosures)
                        (= :canvas (:type node))
                        (lv/expanded (:id node)))
                      width))))
+
+(defn- canvas-rows
+  [view node width disclosures]
+  (into []
+        (mapcat (fn [[head & more :as rows]]
+                  (if-let [item-id (:item-id head)]
+                    (let [selectable? (:is-selectable node)
+                          head (assoc head :kind (if selectable? :canvas-select :canvas-comment)
+                                           :is-selectable true)
+                          comment {:kind :canvas-comment
+                                   :node-id (:id node) :item-id item-id
+                                   :text "  New thread" :is-selectable true}]
+                      (concat (if selectable? [head comment] [head])
+                              (map #(cond-> % (:thread-id %) (assoc :is-selectable true)) more)))
+                    rows)))
+        (partition-by :item-id (plan-rows view node width disclosures))))
 
 (defn- node-rows
   [view node width folded opts]
   (cond (= :diff (:type node))
         ;; Toolbar buttons that no key covers stand above the diff as rows.
-        (into (into [] (mapcat #(plan-rows view % width)) (:children node))
+        (into (into [] (mapcat #(plan-rows view % width (:disclosures opts))) (:children node))
               (model/diff-rows (dissoc node :children) width folded opts))
         (= :thread (:type node))
         (into [{:kind :thread-node
@@ -128,17 +144,17 @@
                 :is-selectable true}]
               (model/thread-rows node width {:node-id (:id node) :thread-id (:id node)}))
         (and (seq (:children node)) (holds-threads? node))
-        (into [] (mapcat #(node-rows view % width folded opts)) (:children node))
-        (= :canvas (:type node)) (into []
-                                       (mapcat (fn [[row & more]]
-                                                 (cons (cond-> row
-                                                         (:item-id row)
-                                                         (assoc :is-selectable true))
-                                                       more)))
-                                       (partition-by :item-id (plan-rows view node width)))
+        (let [disclosures (:disclosures opts)
+              header (plan-rows view (dissoc node :children) width disclosures)
+              open? (or (not (:is-collapsible node))
+                        (get disclosures (:id node) (:default-expanded node)))]
+          (cond-> header
+            open? (into (mapcat #(node-rows view % width folded opts)) (:children node))))
+        (= :canvas (:type node)) (canvas-rows view node width (:disclosures opts))
         (= :image (:type node))
-        (plan-rows view (assoc node :is-flipped (contains? folded [:picture (:id node)])) width)
-        :else (plan-rows view node width)))
+        (plan-rows view (assoc node :is-flipped (contains? folded [:picture (:id node)]))
+                   width (:disclosures opts))
+        :else (plan-rows view node width (:disclosures opts))))
 
 (def ^:private surface-letters
   "The letters that the surface gives to its own verbs. An automatic key takes none
@@ -283,15 +299,11 @@
    or nil. A diff line with a thread edits that thread; else it starts one."
   [view row]
   (let [node (model/find-node view (:node-id row))]
-    (cond (and (= :canvas (:type node)) (:item-id row))
-          (let [item-id (:item-id row)
-                thread (first (filter #(= item-id (:item-id %)) (app/threads node)))]
-
-            (cond-> {:node-id (:id node) :item-id item-id}
-              thread
-              (assoc :thread-id
-                (:id thread) :draft
-                (:draft thread))))
+    (cond (and (= :canvas (:type node)) (:is-selectable row) (:item-id row)
+               (not= :canvas-select (:kind row)))
+          (cond-> {:node-id (:id node) :item-id (:item-id row)}
+            (:thread-id row)
+            (assoc :thread-id (:thread-id row) :draft (:draft (app/find-thread node (:thread-id row)))))
           (#{:thread-head :thread-node} (:kind row))
           {:node-id (:node-id row)
            :thread-id (:thread-id row)
@@ -396,15 +408,36 @@
                       (input/paste-text (input/empty-input) (:draft target))
                       (input/empty-input))}))
 
+(def ^:private canvas-item-gone-notice "The canvas item is gone. The comment stays here.")
+
+(defn- canvas-item-gone?
+  [view {:keys [node-id item-id]}]
+  (and view item-id
+       (not-any? #(= item-id (:id %)) (:cards (model/find-node view node-id)))))
+
+(defn- target-thread
+  [view {:keys [node-id thread-id]}]
+  (when thread-id
+    (app/find-thread (model/find-node view node-id) thread-id)))
+
 (defn save-request
   "What Save does with the editor: `{:action a}` for the gateway, `{:skip reason}`
-   when a blank text has nothing to remove, or nil without an editor."
-  [view {:keys [target input]}]
+   when there is no draft to save, `{:blocked reason}` when the draft
+   must stay here, or nil without an editor."
+  [view {:keys [target input remove?]}]
   (when target
-    (let [body (input/input->text input)]
-      (if (and (app/blank-text? body) (not (:draft target)))
-        {:skip "Nothing saved: the comment is empty"}
-        {:action (model/draft-action view target body)}))))
+    (let [^String body (input/input->text input)
+          blank? (app/blank-text? body)
+          messages? (seq (:messages (target-thread view target)))
+          limit (long (:canvas-draft app/bounds))]
+      (cond (canvas-item-gone? view target) {:blocked canvas-item-gone-notice}
+            remove? (when (string? (:draft target))
+                      {:action (model/draft-action view target nil)})
+            (and (not blank?) (:item-id target) (> (.codePointCount body 0 (.length body)) limit))
+            {:blocked (str "Use at most " limit " characters in a canvas draft")}
+            (and blank? (not messages?) (nil? (:draft target)))
+            {:skip "Nothing saved: the comment is empty"}
+            :else {:action (model/draft-action view target (if blank? (when messages? "") body))}))))
 
 (defn send-key
   "The idempotency key of the next Send: the key of a Send that did not get a
@@ -413,16 +446,17 @@
   (if (and (:key send) (not= :sent (:state send))) (:key send) (fresh)))
 
 (defn- save-editor
-  [state view save!]
+  [state view save! remove?]
   (if (= :saving (get-in state [:save :state]))
     state
-    (let [{:keys [action skip]} (save-request view (:editor state))]
-      (cond skip (assoc state
+    (let [{:keys [action skip blocked]} (save-request view (assoc (:editor state) :remove? remove?))]
+      (cond blocked (assoc state :notice blocked)
+            skip (assoc state
                    :editor nil
                    :save {:state :skipped :message skip})
             action (do (save! action (:editor state))
-                       (assoc state
-                         :save {:state :saving :target (get-in state [:editor :target])}))
+                       (assoc (dissoc state :notice)
+                          :save {:state :saving :target (get-in state [:editor :target])}))
             :else state))))
 
 (defn- save-shortcut?
@@ -451,11 +485,15 @@
 (defn- editor-key
   [state ^KeyStroke key view {:keys [save!]}]
   (cond (= KeyType/Escape (.getKeyType key)) (assoc state :editor nil)
-        (save-shortcut? key) (if (and (= KeyType/Enter (.getKeyType key))
-                                      (app/blank-text? (input/input->text
-                                                         (get-in state [:editor :input]))))
-                               state
-                               (save-editor state view save!))
+        (and (.isCtrlDown key) (#{\d \D} (.getCharacter key)))
+        (save-editor state view save! true)
+        (save-shortcut? key)
+        (let [{:keys [target input]} (:editor state)]
+          (if (and (= KeyType/Enter (.getKeyType key))
+                   (app/blank-text? (input/input->text input))
+                   (not (seq (:messages (target-thread view target)))))
+            state
+            (save-editor state view save! false)))
         :else (update-in state [:editor :input] edit-input-key key)))
 
 (defn- input-values
@@ -486,7 +524,7 @@
     (cond (#{:button :card} (:type node)) (do (activate! {:action :activate :node-id node-id})
                                               (when reveal! (reveal! view node))
                                               state)
-          (and item-id (= :table (:type node)))
+          (and item-id (#{:table :canvas} (:type node)))
           (do (select! {:action :select :node-id node-id :item-ids [item-id]}) state)
           (lv/input-node {:view view} node-id) (do (edit! node) state)
           :else state)))
@@ -644,7 +682,8 @@
 
 (defn- enter-row
   [state {:keys [view rows]} effects]
-  (let [row (selected-row state rows)]
+  (let [row (selected-row state rows)
+        entry (focused-entry row (:cell state))]
     (case (:kind row)
       :file-item
       (if-let [i (file-row-of rows (:path row))]
@@ -657,14 +696,17 @@
       :file
       (toggle-fold state (:path row))
 
-      (if (model/read-only? view)
-        (assoc state :save {:state :closed})
-        (if (and (= :plan (:kind row)) (not (editor-target view row)))
-          (let [entry (focused-entry row (:cell state))]
-            (press state view (:node-id entry) (:item-id entry) effects))
-          (if-let [target (editor-target view row)]
-            (open-editor state target)
-            state))))))
+      (cond (= :disclosure (:kind entry))
+            (let [id (:node-id entry)
+                  node (model/find-node view id)]
+              (assoc-in state [:disclosures id]
+                        (not (get (:disclosures state) id (:default-expanded node)))))
+            (model/read-only? view) (assoc state :save {:state :closed})
+            :else (if-let [target (editor-target view row)]
+                    (open-editor state target)
+                    (if (and entry (:is-selectable row))
+                      (press state view (:node-id entry) (:item-id entry) effects)
+                      state))))))
 
 (defn- horizontal-key
   [state delta]
@@ -882,6 +924,12 @@
         state))
     state))
 
+(defn- canvas-focus
+  [row]
+  (when (and (:item-id row)
+             (or (:thread-id row) (#{:canvas-select :canvas-comment} (:kind row))))
+    ((juxt :node-id :item-id :thread-id :kind) row)))
+
 (defn handle-key
   "The next surface state for `key`. `geom` holds `:rows`, `:view` and `:list-h`;
    `effects` holds `:save!`, `:send!`, `:comment!`, `:activate!`, `:select!`, `:edit!`,
@@ -891,14 +939,18 @@
    their surface meaning. After C-x, the next key has its surface meaning, so a
    verb that a shortcut hides stays reachable: C-x s sends and C-x r reloads."
   [state key {:keys [view] :as geom} {:keys [paste] :as effects}]
-  (cond (pasted-key? key) (paste-key state (:paste key) paste)
-        (not (instance? KeyStroke key)) state
-        (log-chip-click? key (:log-chip geom)) (do ((:log! effects)) state)
-        (instance? MouseAction key) (mouse-key state key geom effects)
-        (:key-menu state) (menu-key state key geom effects)
-        (:editor state) (editor-key state key view effects)
-        (:search state) (search-key state key (:rows geom))
-        :else (command-key state key geom effects)))
+  (let [next-state
+        (cond (pasted-key? key) (paste-key state (:paste key) paste)
+              (not (instance? KeyStroke key)) state
+              (log-chip-click? key (:log-chip geom)) (do ((:log! effects)) state)
+              (instance? MouseAction key) (mouse-key state key geom effects)
+              (:key-menu state) (menu-key state key geom effects)
+              (:editor state) (editor-key state key view effects)
+              (:search state) (search-key state key (:rows geom))
+              :else (command-key state key geom effects))]
+    (if (and (contains? next-state :selected) (not= (:selected state) (:selected next-state)))
+      (assoc next-state :canvas-focus (canvas-focus (nth (:rows geom) (:selected next-state) nil)))
+      next-state)))
 
 ;;; ── Outcomes ───────────────────────────────────────────────────────────────
 
@@ -1355,7 +1407,7 @@
 
 (defn- paint-row!
   [g left row-y inner-w view-id selected? cell hscroll row]
-  (if (= :plan (:kind row))
+  (if (:entry row)
     (paint-plan-row! g left row-y inner-w view-id selected? cell row)
     (paint-source-row! g left row-y inner-w selected? hscroll row)))
 
@@ -1374,15 +1426,23 @@
     :file-item
     "go to"
 
+    :canvas-select
+    "select"
+
+    :canvas-comment
+    "new thread"
+
     :plan
     (case (:kind (focused-entry row (:cell state)))
+      :disclosure
+      "fold or expand"
       :field
       "edit"
 
       :picture-open
       "open"
 
-      "press")
+      (if (:thread-id row) "reply" "press"))
 
     (when (editor-target view row) "comment")))
 
@@ -1590,7 +1650,10 @@
         keys
         [(hidden-key view "?" "?") "keys"]]
 
-    (cond (:editor state) [["C-Enter/C-s" "save"] ["Esc" "cancel"]]
+    (cond (:editor state) (into [["C-Enter/C-s" "save"]]
+                                 (if (string? (get-in state [:editor :target :draft]))
+                                   [["C-d" "remove draft"] ["Esc" "cancel"]]
+                                   [["Esc" "cancel"]]))
           (:search state) [["Enter/S-Enter" "find"] ["Esc" "back"]]
           (:prefix state) [["C-x" "surface key"] ["?" "keys"]]
           (and (:auto-keys? view) (vector? legend)) (-> legend
@@ -1649,7 +1712,7 @@
         (surface-rows view
                       width
                       (:folded state)
-                      (select-keys state [:unified? :wrap? :files? :hide-tests? :hide-whitespace?]))
+                      (select-keys state [:unified? :wrap? :files? :hide-tests? :hide-whitespace? :disclosures]))
 
         editor-rows
         (if (:editor state) (+ 2 (long editor-h)) 0)
@@ -1718,12 +1781,19 @@
 
 (defn reconcile
   "Keep the cursor on a stop and in view."
-  [state {:keys [rows list-h]}]
+  [state {:keys [rows list-h view]}]
   (let [stops
         (selectable-indexes rows)
 
         selected
-        (long (:selected state))
+        (long (or (when-let [anchor (:canvas-focus state)]
+                    (or (some #(when (= anchor (canvas-focus (nth rows %))) %) stops)
+                        (let [[node-id item-id] anchor]
+                          (some (fn [i]
+                                  (let [[node item] (canvas-focus (nth rows i))]
+                                    (when (and (= node-id node) (= item-id item)) i)))
+                                stops))))
+                  (:selected state)))
 
         selected
         (long (cond (empty? stops) 0
@@ -1745,10 +1815,17 @@
             (max (inc (- selected list-h)))
             (p/clamp 0 (max 0 (- (count rows) list-h))))]
 
-    (assoc state
-      :selected selected
-      :cell cell
-      :scroll scroll)))
+    (cond-> (assoc state
+              :selected selected
+              :cell cell
+              :scroll scroll
+              :canvas-focus (canvas-focus (nth rows selected nil)))
+      (canvas-item-gone? view (get-in state [:editor :target]))
+      (assoc :notice canvas-item-gone-notice)
+
+      (and (= canvas-item-gone-notice (:notice state))
+           (not (canvas-item-gone? view (get-in state [:editor :target]))))
+      (dissoc :notice))))
 
 (defn- paint-pane-chrome!
   "Paint the side pane like the project sidebar: a box, the title on its own row
@@ -2077,9 +2154,8 @@
                                                                     (:thread-id save)))))))
 
 (defn- save-effect!
-  [box session-id view-id action editor]
-  (let [body (not-empty (str/trim (input/input->text (:input editor))))]
-    (run-action! box session-id view-id action (partial saved-editor body))))
+  [box session-id view-id action _editor]
+  (run-action! box session-id view-id action (partial saved-editor (:body action))))
 
 (defn- send-outcome [st outcome] (assoc st :send (sent (:send st) outcome)))
 

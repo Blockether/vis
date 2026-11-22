@@ -1527,21 +1527,38 @@
                                 objects)))
 
         "canvas"
-        (let [cards (set (map #(get % "id") (get node "cards")))]
-          (concat (some->> (repeated (map #(get % "id") (get node "cards")))
+        (let [items
+              (get node "cards")
+
+              cards
+              (set (map #(str/trim (get % "id")) items))
+
+              threads
+              (get node "threads")]
+
+          (concat (some->> (repeated (map #(str/trim (get % "id")) items))
                            (array-map "id")
                            (line "/cards" "repeated_item_id")
                            vector)
                   (when (contains? node "selected_ids")
                     (cond (not (true? (get node "is_selectable"))) [(line "/selected_ids"
                                                                           "not_selectable")]
-                          (not-every? cards (get node "selected_ids")) [(line "/selected_ids"
-                                                                              "canvas_selection")]))
-                  (some->> (repeated (map #(get % "id") (get node "threads")))
+                          (not-every? cards (map str/trim (get node "selected_ids")))
+                          [(line "/selected_ids" "canvas_selection")]))
+                  (some->> (repeated (map #(str/trim (get % "id")) threads))
                            (array-map "id")
                            (line "/threads" "repeated_item_id")
                            vector)
-                  (canvas-picture-lines (get node "cards") "/cards" decl?)))
+                  (keep-indexed (fn [i thread]
+                                  (when (cards (str/trim (get thread "id")))
+                                    (line (str "/threads/" i) "canvas_thread_id")))
+                                threads)
+                  (keep-indexed (fn [i card]
+                                  (when (repeated (map #(str/trim (get % "from"))
+                                                       (get card "edges")))
+                                    (line (str "/cards/" i "/edges") "canvas_edge_source")))
+                                items)
+                  (canvas-picture-lines items "/cards" decl?)))
 
         "image"
         (for [[path raw]
@@ -1629,7 +1646,8 @@
   [node op]
   (let [fit?
         (and (<= (count (:cards node)) (long (:max-cards canvas-defaults)))
-             (<= (count (:threads node)) (long (:max-threads canvas-defaults))))
+             (<= (count (:threads node)) (long (:max-threads canvas-defaults)))
+             (not-any? (into #{} (map :id) (:threads node)) (map :id (:cards node))))
 
         sample
         (when fit?

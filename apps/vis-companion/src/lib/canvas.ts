@@ -357,15 +357,18 @@ function setParents(items: Map<string, Item>): Item[] {
   function depth(item: Item): number {
     if (item.box.depth < 0) {
       const parent = item.parent;
-      const next = parent ? depth(parent) + 1 : 0;
-      item.box.depth = next > MAX_DEPTH ? 0 : next;
-      if (next > MAX_DEPTH) item.parent = undefined;
+      item.box.depth = parent ? depth(parent) + 1 : 0;
     }
     return item.box.depth;
   }
+  // Measure each chain before removing its links.
+  for (const item of items.values()) depth(item);
   const roots: Item[] = [];
   for (const item of items.values()) {
-    depth(item);
+    if (item.box.depth > MAX_DEPTH) {
+      item.box.depth = 0;
+      item.parent = undefined;
+    }
     if (item.parent) {
       item.box.parent = item.parent.box.id;
       item.parent.children.push(item);

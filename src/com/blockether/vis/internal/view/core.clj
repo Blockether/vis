@@ -837,6 +837,8 @@
   [values]
   (if (sequential? values) (vec values) values))
 
+(defn- canvas-ids [values] (if (sequential? values) (mapv schema-text values) values))
+
 (defn- live-target-kind
   "What a link points AT: named by the spec, or `:url` for a target with a URL scheme.
    Without both it is absent, and the node check refuses the link."
@@ -1018,6 +1020,9 @@
                       :id id
                       :title (schema-text (:title item))
                       :tone tone)
+              (some? (:parent item))
+              (update :parent schema-text)
+
               (map? (:picture item))
               (update :picture #(merge % (picture %)))
 
@@ -1169,6 +1174,9 @@
                      {:id (or (trimmed (:id thread)) (:id thread))
                       :messages
                       (if (sequential? messages) (mapv app-message messages) (or messages []))})
+        (some? (:item-id thread))
+        (update :item-id schema-text)
+
         (map? anchor)
         (assoc :anchor
           (merge anchor
@@ -1477,7 +1485,7 @@
                  (assoc :is-selectable (schema-bool (:is-selectable node)))
 
                  (some? (:selected-ids node))
-                 (assoc :selected-ids (text-items (:selected-ids node))))
+                 (assoc :selected-ids (canvas-ids (:selected-ids node))))
 
                :diff
                (cond-> (assoc base :patch (:patch node))
@@ -1983,7 +1991,7 @@
    :new-revision (fn [_ value]
                    (schema-text value))
    :thread (fn [_ value]
-             (app-thread value))
+             (if (app/resolution-only? value) (update value :id schema-text) (app-thread value)))
    :submission (fn [_ value]
                  value)
    :shortcuts (fn [fail! value]
@@ -3390,7 +3398,9 @@
     (invalid-live-patch! "a Send receipt changes only through the live `submission` op")
 
     :thread
-    (update op :thread #(app/owner-thread (app-node view (:node-id op)) %))
+    (if (app/resolution-only? (:thread op))
+      op
+      (update op :thread #(app/owner-thread (app-node view (:node-id op)) %)))
 
     op))
 
@@ -3428,6 +3438,7 @@
                 (fn [ops]
                   (mapv #(stamped-op % now) ops))))
       materializer/redact-presentation
+      (#(materializer/land-node-refs view %))
       checked-live-patch))
 
 (defn patch-live!

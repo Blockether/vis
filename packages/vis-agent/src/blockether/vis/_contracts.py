@@ -529,9 +529,13 @@ def read_picture(picture: Any) -> dict[str, Any]:
             f"picture data is {len(data)} characters; the most is {longest}"
         )
     try:
-        decoded = (
-            base64.b64decode(data, validate=True) if isinstance(data, str) else None
-        )
+        decoded = None
+        if isinstance(data, str):
+            # Match Java's decoder: unpadded data is valid, but partial or extra padding is not.
+            core = data.rstrip("=")
+            needed = -len(core) % 4
+            if needed != 3 and data in (core, core + "=" * needed):
+                decoded = base64.b64decode(core + "=" * needed, validate=True)
     except (binascii.Error, ValueError):
         decoded = None
     if decoded is None:
@@ -1282,6 +1286,40 @@ def _ids(items: Any) -> list[Any]:
     return [one.get("id") if isinstance(one, dict) else None for one in items or []]
 
 
+# Java Character.isWhitespace, as used by Clojure's str/trim.
+_ID_WHITESPACE = (
+    "\t\n\v\f\r\x1c\x1d\x1e\x1f \u1680\u2000\u2001\u2002\u2003\u2004"
+    "\u2005\u2006\u2008\u2009\u200a\u2028\u2029\u205f\u3000"
+)
+
+
+def trim_live_id(value: Any) -> Any:
+    """Trim a live id as the engine does, leaving a blank or invalid value as given."""
+    return (value.strip(_ID_WHITESPACE) or value) if isinstance(value, str) else value
+
+
+def _canvas_card_ids(card: dict[str, Any]) -> dict[str, Any]:
+    card = dict(card, id=trim_live_id(card["id"]))
+    if "parent" in card:
+        card["parent"] = trim_live_id(card["parent"])
+    if "edges" in card:
+        card["edges"] = [
+            {**edge, "from": trim_live_id(edge["from"])} for edge in card["edges"]
+        ]
+    return card
+
+
+def normalize_canvas_ids(node: dict[str, Any]) -> None:
+    """Normalize the item ids and references of a validated canvas in place."""
+    if node.get("type") != "canvas":
+        return
+    node["cards"] = [_canvas_card_ids(card) for card in node["cards"]]
+    if "focus" in node:
+        node["focus"] = trim_live_id(node["focus"])
+    if "selected_ids" in node:
+        node["selected_ids"] = [trim_live_id(one) for one in node["selected_ids"]]
+
+
 def _canvas_picture_lines(cards: Any, path: str, is_declaration: bool) -> list[str]:
     """Faults in the pictures of the cards at `path`."""
     lines = []
@@ -1379,17 +1417,28 @@ def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
             elif not all(one in rows for one in node["selected_ids"]):
                 lines.append(named_line("/selected_ids", "table_selection"))
     elif kind == "canvas":
-        cards = _ids(node.get("cards"))
-        if (one := _repeated(cards)) is not None:
+        items = node.get("cards") or []
+        threads = node.get("threads") or []
+        card_ids = [trim_live_id(one) for one in _ids(items)]
+        if (one := _repeated(card_ids)) is not None:
             lines.append(named_line("/cards", "repeated_item_id", {"id": one}))
+        cards = set(card_ids)
         if "selected_ids" in node:
             if node.get("is_selectable") is not True:
                 lines.append(named_line("/selected_ids", "not_selectable"))
-            elif not all(one in cards for one in node["selected_ids"]):
+            elif not all(trim_live_id(one) in cards for one in node["selected_ids"]):
                 lines.append(named_line("/selected_ids", "canvas_selection"))
-        lines += _canvas_picture_lines(node.get("cards"), "/cards", is_declaration)
-        if (one := _repeated(_ids(node.get("threads")))) is not None:
+        lines += _canvas_picture_lines(items, "/cards", is_declaration)
+        if (one := _repeated(trim_live_id(one) for one in _ids(threads))) is not None:
             lines.append(named_line("/threads", "repeated_item_id", {"id": one}))
+        for i, thread in enumerate(threads):
+            if trim_live_id(thread["id"]) in cards:
+                lines.append(named_line(f"/threads/{i}", "canvas_thread_id"))
+        for i, card in enumerate(items):
+            if _repeated(
+                trim_live_id(edge["from"]) for edge in card.get("edges") or []
+            ):
+                lines.append(named_line(f"/cards/{i}/edges", "canvas_edge_source"))
     elif kind == "scene":
         meshes, objects = node.get("meshes") or [], node.get("objects") or []
         builtin = scene_meshes()
@@ -1696,12 +1745,12 @@ def _live_message(message: Any, author: dict[str, Any], at: int) -> Any:
         return message
     kept = {
         **message,
-        "id": _trimmed(message.get("id")) or str(uuid.uuid4()),
+        "id": trim_live_id(message.get("id")) or str(uuid.uuid4()),
         "author": dict(author),
         "created_at": message.get("created_at", at),
     }
-    if _trimmed(message.get("submission_id")):
-        kept["submission_id"] = _trimmed(message["submission_id"])
+    if "submission_id" in message:
+        kept["submission_id"] = trim_live_id(message["submission_id"])
     return kept
 
 
@@ -1713,7 +1762,9 @@ def _live_thread(thread: Any, author: dict[str, Any], at: int) -> Any:
     if not isinstance(thread, dict):
         return thread
     kept = {k: v for k, v in thread.items() if k != "draft"}
-    kept["id"] = _trimmed(thread.get("id")) or thread.get("id")
+    kept["id"] = trim_live_id(thread.get("id"))
+    if "item_id" in thread:
+        kept["item_id"] = trim_live_id(thread["item_id"])
     messages = thread.get("messages")
     kept["messages"] = (
         [_live_message(one, author, at) for one in messages]
@@ -1832,12 +1883,33 @@ def apply_live_node_op(
         raise ValueError(fault_text(node.get("id"), lines))
     node = deepcopy_json(node)
     given = {k: deepcopy_json(v) for k, v in op.items() if k not in ("op", "node_id")}
+    if kind == "canvas":
+        for field in ("selected_ids", "item_ids"):
+            if field in given:
+                given[field] = [trim_live_id(one) for one in given[field]]
+        if "focus" in given:
+            given["focus"] = trim_live_id(given["focus"])
+        if "cards" in given:
+            given["cards"] = [_canvas_card_ids(card) for card in given["cards"]]
     # The target table takes a clear or a remove only for a node that holds items.
     key = "threads" if kind == "diff" else live_collection(kind) or ""
     if name == "thread":
-        thread = owner_live_thread(
-            node, _live_thread(given.get("thread"), author or {"kind": "agent"}, at)
-        )
+        offered = given["thread"]
+        if "is_resolved" in offered and "messages" not in offered:
+            thread_id = trim_live_id(offered["id"])
+            held_threads = [node] if kind == "thread" else node.get("threads") or []
+            before = next((one for one in held_threads if one["id"] == thread_id), None)
+            if before is None:
+                raise ValueError(
+                    fault_text(
+                        node["id"], [named_line("/thread/id", "thread_not_found")]
+                    )
+                )
+            thread = dict(before, is_resolved=offered["is_resolved"])
+        else:
+            thread = owner_live_thread(
+                node, _live_thread(offered, author or {"kind": "agent"}, at)
+            )
         if kind == "thread":
             for one in ("anchor", "draft", "is_resolved"):
                 node.pop(one, None)
@@ -1862,6 +1934,8 @@ def apply_live_node_op(
             node["threads"] = held
     elif name == "set":
         node.update({k: _filled_items(k, v) for k, v in given.items()})
+        if kind == "canvas" and given.get("is_selectable") is False:
+            node.pop("selected_ids", None)
         # A blank detail CLEARS it, like a declaration that leaves the key out.
         if "detail" in given and not str(given["detail"]).strip():
             node.pop("detail", None)

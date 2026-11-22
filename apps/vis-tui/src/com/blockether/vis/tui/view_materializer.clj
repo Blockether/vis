@@ -186,7 +186,10 @@
       ;; states by leaving the key out, so a status can drop the second
       ;; line it was carrying instead of refusing the patch.
       (and (contains? given :detail) (str/blank? (:detail op)))
-      (dissoc :detail))))
+      (dissoc :detail)
+
+      (and (= :canvas (:type node)) (false? (:is-selectable op)))
+      (dissoc :selected-ids))))
 
 (defn- apply-append
   "A node with items added. A `log` keeps every line it is handed — the terminal

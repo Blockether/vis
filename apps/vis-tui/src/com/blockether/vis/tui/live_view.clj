@@ -61,6 +61,7 @@
             [com.blockether.vis.tui.scene-motion :as scene-motion]
             [com.blockether.vis.tui.scene-raster :as scene-raster]
             [com.blockether.vis.tui.view-materializer :as live]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.view :as hi-spec]
             [com.blockether.vis.contract.wire :as wire])
   (:import [com.blockether.vis.render BoundedCache]
@@ -1353,14 +1354,19 @@
                          :markdown-indent indent
                          :markdown-width width
                          :text (str pad (markers/plain-text line))})
-                      (layout/ast->entries (vis/markdown->ast text) (max 1 (- (long width) 4))))]
+                      (layout/ast->entries (vis/markdown->ast text)
+                                            (max 1 (- (long width) 4))
+                                            {:fold-long-lines? true}))]
 
             (locking cache (or (.get cache key) (.put cache key rows))))))))
 
 (defn- canvas-thread-rows
   [threads detail-rows body-w body-indent]
-  (mapcat (fn [{:keys [messages draft is-resolved]}]
-            (concat (detail-rows (if is-resolved "Resolved thread" "Open thread"))
+  (mapcat (fn [{:keys [id messages draft is-resolved]}]
+            (concat (map-indexed (fn [i row]
+                                   (cond-> row
+                                     (zero? (long i)) (assoc :canvas-thread-id id)))
+                                 (detail-rows (if is-resolved "Resolved thread" "Open thread")))
                     (mapcat (fn [{:keys [author body]}]
                               (concat (detail-rows (str (flat-text (or (:name author)
                                                                        (some-> (:kind author)
@@ -1368,8 +1374,26 @@
                                                         ":"))
                                       (canvas-markdown-rows body body-w body-indent)))
                             messages)
-                    (when (some? draft) (detail-rows (str "Draft: " (flat-text draft))))))
+                    (when (some? draft)
+                       (detail-rows (if (str/blank? draft)
+                                      (app-model/draft-label draft)
+                                      (str "Draft: " (flat-text draft)))))))
           threads))
+
+(def ^:private canvas-edge-mark-defaults
+  (let [properties (get-in (document/schema-document "view") ["$defs" "canvas_edge" "properties"])]
+    (into {} (map (fn [k] [k (get-in properties [(str/replace (name k) "-" "_") "default"])]))
+          [:start-mark :end-mark])))
+
+(defn- canvas-edge-glyph
+  [edge]
+  (let [marked? (fn [k] (not= :none (keyword (or (get edge k) (get canvas-edge-mark-defaults k)))))
+        start? (marked? :start-mark)
+        end? (marked? :end-mark)]
+    (cond (and start? end?) "↔"
+          start? "→"
+          end? "←"
+          :else "—")))
 
 (defn- canvas-details
   [{:keys [kind shape progress picture media caption edges]} titles]
@@ -1383,14 +1407,10 @@
     (when picture [(str "Picture: " (flat-text (:alt picture)))])
     (when media [(str (name (:kind media)) ": " (flat-text (:alt media))) (:url media)])
     (when caption [(flat-text caption)])
-    (for [{:keys [from label line]}
-          edges
-
-          :when (not= "none"
-                      (some-> line
-                              name))]
-
-      (str "← " (flat-text (get titles from from)) (when label (str " (" (flat-text label) ")"))))))
+    (for [{:keys [from label line] :as edge} edges
+          :when (and (contains? titles from) (not= :none (keyword line)))]
+      (str (canvas-edge-glyph edge) " " (flat-text (get titles from from))
+           (when label (str " (" (flat-text label) ")"))))))
 
 (defn- canvas-card-rows
   [[{:keys [id kind title text meta tone badges] :as card} depth] node-id titles threads selected
@@ -2546,6 +2566,7 @@
 
         body
         (cond (not is-open) []
+              (and (= :group (:type node)) (nil? children)) []
               (= :leaf layout) (node-rows node node-ctx)
               (= :row layout) (split-rows parts)
               (= :grid layout) (stacked-rows (mapv split-rows (columns/grid-chunks parts span)))

@@ -327,6 +327,11 @@
   "Columns before the text of a thread message: the rail and two spaces."
   (+ (count thread-rail) 2))
 
+(defn draft-label
+  "What a saved draft adds to the next message when it has no note."
+  [draft]
+  (if (app/blank-text? draft) "Draft: attach messages without a note" "Draft (saved, not sent)"))
+
 (defn thread-rows
   "Rows of one thread, `width` columns wide: each message as an author line and
    its wrapped body, then the saved draft. `base` is merged into every row."
@@ -349,9 +354,10 @@
             messages)
 
       (:draft thread)
-      (into (cons (merge base {:kind :draft-head :text "Draft (saved, not sent)"})
+      (into (cons (merge base {:kind :draft-head :text (draft-label (:draft thread))})
                   (map #(merge base {:kind :draft :text %})
-                       (wrap-text (:draft thread) (- (long width) (long message-indent))))))
+                       (when-not (app/blank-text? (:draft thread))
+                          (wrap-text (:draft thread) (- (long width) (long message-indent)))))))
 
       (:is-resolved thread)
       (conj (merge base {:kind :thread-empty :text "Resolved"})))))
@@ -891,7 +897,7 @@
    `{:node-id :thread-id :anchor}` against the view state `view`."
   [view {:keys [node-id thread-id anchor item-id]} body]
   (let [node (find-node view node-id)]
-    (cond-> {:action :draft :node-id node-id :body (str body) :base-seq (:seq view)}
+    (cond-> {:action :draft :node-id node-id :body body :base-seq (:seq view)}
       thread-id
       (assoc :thread-id thread-id)
 

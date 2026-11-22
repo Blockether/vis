@@ -6126,11 +6126,9 @@ class Canvas(_KeyedNode):
 
     def resolve(self, thread_id, *, is_resolved=True):
         """Set a thread's resolved state. The thread keeps its messages and draft."""
-        thread_id = str(thread_id)
-        for thread in self.threads:
-            if thread["id"] == thread_id:
-                return self._op("thread", thread=dict(thread, is_resolved=is_resolved))
-        raise KeyError(f"canvas {self.node_id!r} has no thread {thread_id!r}")
+        return self._op(
+            "thread", thread={"id": str(thread_id), "is_resolved": is_resolved}
+        )
 
     def fit(self):
         """Show the whole board."""
@@ -7664,6 +7662,7 @@ class _LiveRecorder:
         # The schema owns the defaults; the recorder adds only what the host writes.
         view["nodes"] = [_contracts.fill_live_node(n) for n in view.get("nodes") or []]
         for node in self._nodes(view.get("nodes")):
+            _contracts.normalize_canvas_ids(node)
             _contracts.stamp_live_threads(node, int(time.time() * 1000), self._author)
             kind = node.get("type")
             if kind == "log":
@@ -8715,14 +8714,21 @@ def _ui_canvas_card(card_id, title, *, after=None, **spec):
         if spec.get("edges") is not None:
             raise ValueError("use after or edges, not both")
         sources = [after] if isinstance(after, (str, Mapping)) else list(after)
-        spec["edges"] = [
+        edges = [
             one
             if isinstance(one, dict)
             else dict(one)
             if isinstance(one, Mapping)
             else {"from": str(one)}
             for one in sources
-        ] or None
+        ]
+        if all(isinstance(edge.get("from"), str) for edge in edges):
+            from blockether.vis import _contracts
+
+            edges = list(
+                {_contracts.trim_live_id(edge["from"]): edge for edge in edges}.values()
+            )
+        spec["edges"] = edges or None
     picture = spec.get("picture")
     has_checked_picture = _CanvasValue.checked(picture, "picture")
     if isinstance(picture, Mapping):

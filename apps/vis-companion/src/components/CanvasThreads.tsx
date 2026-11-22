@@ -105,11 +105,11 @@ function Thread({
   const [status, setStatus] = useState<AppActionStatus>('idle');
   const canEdit = Boolean(actions) && !actions?.isReadOnly;
   const draft = thread.draft;
-  const hasDraft = draft !== undefined && draft !== '';
+  const hasDraft = draft !== undefined;
   const count = thread.messages.length;
-  // A blank reply is no reply: it removes the draft.
+  // A blank reply adds the messages without a note.
   const save = (body: string | null) =>
-    actions!.draft(nodeId, { threadId: thread.id, body: body && body.trim() !== '' ? body : null });
+    actions!.draft(nodeId, { threadId: thread.id, body: body === '' && count === 0 ? null : body });
   const remove = async () => {
     setStatus('saving');
     const result = await save(null);
@@ -136,12 +136,14 @@ function Thread({
             <div className="flex min-w-0 items-baseline gap-1.5">
               <span className="font-mono text-ui font-bold text-dialog-foreground">You</span>
               <span className="min-w-0 truncate font-mono text-meta text-dialog-hint">
-                draft · in the next message
+                {draft === '' ? 'In the next message' : 'draft · in the next message'}
               </span>
             </div>
-            <p className="whitespace-pre-wrap font-mono text-ui text-dialog-foreground [overflow-wrap:anywhere]">
-              {draft}
-            </p>
+            {draft !== '' && (
+              <p className="whitespace-pre-wrap font-mono text-ui text-dialog-foreground [overflow-wrap:anywhere]">
+                {draft}
+              </p>
+            )}
           </Row>
         )}
       </ol>
@@ -152,7 +154,8 @@ function Thread({
               memoryId={`${nodeId}:${thread.id}:${draft ?? ''}`}
               label={count > 0 ? 'Reply' : 'Edit comment'}
               saved={draft ?? ''}
-              placeholder={count > 0 ? 'Reply…' : undefined}
+              placeholder={count > 0 ? 'Add a note (optional)…' : undefined}
+              isBlankAllowed={count > 0}
               maxLength={CANVAS_MESSAGE_CHARS}
               onSave={save}
               onClose={() => setEditing(false)}

@@ -1424,6 +1424,7 @@ def _live_node_kept(node):
     writes, and log text made visible."""
     node = _contracts.fill_live_node(node)
     for one in _contracts._wire_tree([node]):
+        _contracts.normalize_canvas_ids(one)
         _contracts.stamp_live_threads(one, int(time.time() * 1000), _live_author())
         kind = one.get("type")
         found = _contracts.component_variant(kind)

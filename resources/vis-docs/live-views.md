@@ -642,8 +642,12 @@ for receipt in app.submissions("delivered"):
             canvas.reply("I will check this.", thread_id=comment["thread_id"], submission_id=receipt["id"])
 ```
 
-Call `canvas.resolve(thread_id)` when a thread needs no more work. Call `canvas.remove(thread_id)`
-to remove it. Removing an item also removes its threads. Replacing an item keeps its threads.
+Call `canvas.resolve(thread_id)` when a thread needs no more work. Pass `is_resolved=False`
+to reopen the thread. Both calls keep the current messages and draft. A `thread` patch
+can change only the resolution if its `thread` value has `id` and `is_resolved` only.
+
+Use a different ID for each item and thread on a canvas. Call `canvas.remove(thread_id)`
+to remove a thread. Removing an item also removes its threads. Replacing an item keeps its threads.
 
 ### Canvas options
 

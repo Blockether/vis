@@ -116,6 +116,38 @@
 
 ;;; ── Tests ───────────────────────────────────────────────────────────────────
 
+(defn- canvas-pane [cards]
+  (lv/opened {:id "board-preview"
+              :title "Review queue"
+              :nodes [{:id "board" :type :canvas :cards cards}]}))
+
+(defdescribe canvas-rows-test
+  (it "shows an edge only after its source item arrives"
+      (let [card {:id "b" :title "Destination" :edges [{:from "a" :label "Wait"}]}
+            before (rows-of (canvas-pane [card]))
+            after (rows-of (canvas-pane [{:id "a" :title "Source"} card]))]
+        (expect (not-any? #(str/includes? (:text %) "(Wait)") before))
+        (expect (some #(str/includes? (:text %) "← Source (Wait)") after))))
+  (it "shows edge direction from both end marks"
+      (let [cards [{:id "a" :title "Source"}
+                   {:id "b" :title "Destination"
+                    :edges [{:from "a" :label "End"}
+                            {:from "a" :label "Start" :start-mark :arrow :end-mark :none}
+                            {:from "a" :label "Both" :start-mark :arrow :end-mark :arrow}
+                            {:from "a" :label "Neither" :start-mark :none :end-mark :none}]}]
+            shown (into #{} (map (comp str/trim :text)) (rows-of (canvas-pane cards)))]
+        (expect (every? shown ["← Source (End)" "→ Source (Start)" "↔ Source (Both)"
+                               "— Source (Neither)"]))))
+  (it "wraps an unbroken Markdown word inside the canvas frame"
+      (let [word (apply str (repeat 12 "漢"))
+            pane (canvas-pane [{:id "a" :title "Review" :text (str "**" word "**")}])
+            painted (painted-text [pane] 32 18)
+            lines (filter #(str/includes? % "漢") (str/split-lines painted))]
+        (expect (< 1 (count lines)))
+        ;; The capture stores a wide glyph in both of its terminal cells.
+        (expect (= (* 2 (count word)) (count (mapcat #(re-seq #"漢" %) lines))))
+        (expect (not-any? #(re-find #"│\s*漢\s*$" %) lines)))))
+
 (defdescribe live-view-window-test
              (it "a node paints a window and says how much it is holding back"
                  (let [p

@@ -164,7 +164,7 @@ describe('the layout of a canvas', () => {
     }
     expect(box(layout, 'cycle-a').x).not.toBe(box(layout, 'cycle-b').x);
     expect(box(layout, 'f4').depth).toBe(4);
-    expect(box(layout, 'f6').parent).toBe('f5');
+    expect(box(layout, 'f6').parent).toBeUndefined();
   });
 
   it('lays out a full board with frames within one hundred milliseconds', () => {
