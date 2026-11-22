@@ -52,3 +52,7 @@ packages = ["src/blockether"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/blockether", "tests", "hatch_build.py", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+# The examples are separate packages with their own tests.
+testpaths = ["tests"]
