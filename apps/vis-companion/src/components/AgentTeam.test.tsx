@@ -326,7 +326,7 @@ describe('agent rows', () => {
 
 describe('agent row notes', () => {
   // User report 2026-11-02: a row showed the Markdown markers of a note.
-  it('shows a Markdown note in its row without the markers, and keeps inline code in backticks', () => {
+  it('shows a Markdown note in its row without the markers', () => {
     expect(agentUpdate({ ...child, note: '## Done\n**Fixing** the `parser`' })).toBe('Done Fixing the `parser`');
   });
 });
