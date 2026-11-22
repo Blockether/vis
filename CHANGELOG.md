@@ -7,9 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.27] - 2026-11-22
+
 ### Added
 
 - Live views: a `canvas` node draws a graph of your own from cards with arrows between them. Vis puts the cards in steps. In the Companion app, people pan and zoom the board, and your code moves the camera with `zoom` and `focus`. A narrow window puts the steps from top to bottom. The TUI shows the cards as a list.
+- Extensions: `vis.SessionApp` declares one app of an extension. Each session of a workspace that loads the extension shows the app in its list before a block runs. The app opens when you open it.
+- Apps: when you open an app that a restart or a reload disconnected, Vis connects it again. An app can reopen itself after a reload with its `on_reload` hook.
+- Apps: the owner of an app gets each changed draft. The Companion app shows the app status in the pane header.
+- Review: each session shows the Review app from its start. Each changed image has a row and loads when you open it. The review keeps its state and its open findings.
+- Projects: you can select and remove many projects at once.
+
+### Removed
+
+- Review: the `/review` command and the TUI key `C-x R`. Open Review from the app list: `C-x b o` in the TUI, Cmd/Ctrl+D in the Companion app.
+
+### Fixed
+
+- Gateway: the daemon does not stop while a turn runs a block.
+- Companion: you can create a folder from a button in the field. Menu badges, the timeline toggle and the side panel show correctly.
 
 ## [v0.5.26] - 2026-11-21
 
