@@ -153,6 +153,36 @@
                (finally (#'state/drop-session! sid))))))))
 
 (defdescribe
+  terminal-archive-of-a-launched-run-test
+  ;; Release v0.5.27: the native memory test found no turn archive. The record of a
+  ;; launched turn holds the stall atom and the worker future of its run, and the
+  ;; archive could not freeze them.
+  (it "archives a turn whose launched run recorded its stall state and worker"
+      (let [sid
+            (str (random-uuid))
+
+            tid
+            (str (random-uuid))
+
+            token
+            (cancellation/cancellation-token)
+
+            registry
+            (atom {sid {:current-turn tid
+                        :turns {tid {:turn_id tid
+                                     :request "payload"
+                                     :status "running"
+                                     :cancel-token token}}}})]
+
+        (with-redefs-fn {#'state/registry registry #'lp/db-info (constantly nil)}
+          (fn []
+            (try (#'state/install-turn-run! sid tid token (atom {:phase :block}) (future nil))
+                 (#'state/finish-turn! sid tid {:status "completed"})
+                 (expect (false? (get-in @registry [sid :turns tid ::state/archive-error])))
+                 (expect (= "payload" (get (state/get-turn sid tid) "request")))
+                 (finally (#'state/drop-session! sid))))))))
+
+(defdescribe
   terminal-archive-falls-back-to-one-canonical-turn-test
   (it
     "terminal archive falls back to one canonical turn"

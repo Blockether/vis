@@ -494,9 +494,10 @@
 
 (def ^:private turn-execution-keys
   "Execution inputs and hooks of a turn record. `:engine-opts` holds the settings snapshot
-   with secret values, so no archive or wire view keeps these keys."
+   with secret values, and `::run` holds the stall atom and the worker future of the live
+   run, so no archive or wire view keeps these keys."
   [:cancel-token :messages :engine-opts :extra-body :turn-features :reasoning-default
-   ::cancel-disposer])
+   ::cancel-disposer ::run])
 
 (defn- archive-terminal-turn!
   "Persist the gateway-only projection, then release execution inputs and hooks.
