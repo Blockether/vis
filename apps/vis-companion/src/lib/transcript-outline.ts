@@ -164,7 +164,7 @@ export function answerExcerpt(markdown: string): string {
 }
 
 /** The answer of a turn as Markdown: its prose and its spoken text, in order. */
-function answerMarkdown(content: readonly ContentBlock[]): string {
+export function answerMarkdown(content: readonly ContentBlock[]): string {
   const parts: string[] = [];
   let length = 0;
   for (const block of content) {

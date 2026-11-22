@@ -1,4 +1,4 @@
-import type { Session, SessionUsage, Subagent, TranscriptTurn } from './types';
+import type { Session, SessionUsage, Subagent, TranscriptIteration, TranscriptTurn } from './types';
 
 /**
  * WHAT AN HTML EXPORT CARRIES FOR ONE SESSION.
@@ -9,15 +9,33 @@ import type { Session, SessionUsage, Subagent, TranscriptTurn } from './types';
  * shows. `attachments` holds the bytes of each artifact that the steps
  * name, keyed by `<iteration id>/<index>`, so the page shows them without a gateway. `usage` is
  * the session's usage rollup, as `GET /v1/sessions/:sid/usage` returns it, or `null` before the
- * first measured call.
+ * first measured call. `failed_tools` holds the rows of the Failed tools list, because the steps
+ * of a turn can stay in their chunk until the reader comes near the turn.
  */
 export interface SessionExport {
   session: Pick<Session, 'id' | 'title' | 'agent_name' | 'workspace' | 'model' | 'model_pref'>;
   usage: SessionUsage | null;
-  turns: TranscriptTurn[];
+  turns: ExportTurn[];
   child_session_ids: string[];
   agents: Subagent[];
   attachments: Record<string, ExportAttachment>;
+  failed_tools?: WireFailedToolCall[];
+}
+
+/**
+ * One turn of an export. The engine moves the steps of a turn to a chunk element of the page
+ * and names it in `iterations_chunk`: the steps are most of an export, and the page reads them
+ * only when the reader comes near the turn. A turn with `iterations` holds them inline.
+ */
+export type ExportTurn = TranscriptTurn & { iterations_chunk?: string };
+
+/** One row of `failed_tools`, as the engine writes it. */
+export interface WireFailedToolCall {
+  turn_id: string;
+  scope: string;
+  code: string;
+  language: string;
+  message: string;
 }
 
 /**
@@ -32,10 +50,11 @@ export interface TranscriptExport extends SessionExport {
   descendants: Record<string, SessionExport>;
 }
 
-/** The stored bytes of one artifact, in base64. */
+/** The stored bytes of one artifact, in base64: inline, or in the chunk element `chunk`. */
 export interface ExportAttachment {
   media_type: string;
-  base64: string;
+  base64?: string;
+  chunk?: string;
 }
 
 /** The element of the export page that holds the document. */
@@ -71,7 +90,54 @@ function sessionExport(value: unknown): SessionExport {
     child_session_ids: Array.isArray(doc.child_session_ids) ? doc.child_session_ids : [],
     agents: Array.isArray(doc.agents) ? doc.agents : [],
     attachments: doc.attachments && typeof doc.attachments === 'object' ? doc.attachments : {},
+    ...(Array.isArray(doc.failed_tools) ? { failed_tools: doc.failed_tools } : {}),
   };
+}
+
+/** The text of the chunk element `id` of the export page. Throws when the page does not hold it. */
+function chunkText(id: string): string {
+  const text = document.getElementById(id)?.textContent;
+  if (text == null) throw new Error(`The export page holds no chunk ${id}.`);
+  return text;
+}
+
+/** The bytes of base64 `text`. */
+function base64Bytes(text: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let at = 0; at < binary.length; at++) bytes[at] = binary.charCodeAt(at);
+  return bytes;
+}
+
+const readSteps = new Map<string, Promise<TranscriptIteration[]>>();
+const heldSteps = new Map<string, TranscriptIteration[]>();
+
+/**
+ * The steps of `turn` when they are inline or already read, else `undefined`. A turn that the
+ * reader saw draws whole at once when its transcript opens again, so a kept offset still holds.
+ */
+export function heldTurnSteps(turn: ExportTurn): TranscriptIteration[] | undefined {
+  return turn.iterations_chunk ? heldSteps.get(turn.iterations_chunk) : (turn.iterations ?? []);
+}
+
+/**
+ * The steps of `turn`: inline, else read from its chunk element, which holds them as raw
+ * DEFLATE in base64. A chunk is read one time; each later call gets the same answer.
+ */
+export function turnSteps(turn: ExportTurn): Promise<TranscriptIteration[]> {
+  const id = turn.iterations_chunk;
+  if (!id) return Promise.resolve(turn.iterations ?? []);
+  let steps = readSteps.get(id);
+  if (!steps) {
+    steps = (async () => {
+      const inflated = new Response(base64Bytes(chunkText(id))).body!.pipeThrough(new DecompressionStream('deflate-raw'));
+      const read = JSON.parse(await new Response(inflated).text()) as TranscriptIteration[];
+      heldSteps.set(id, read);
+      return read;
+    })();
+    readSteps.set(id, steps);
+  }
+  return steps;
 }
 
 /** One tool call of the export that failed, as the Failed tools list shows it. */
@@ -88,10 +154,20 @@ export interface FailedToolCall {
 }
 
 /**
- * The failed tool calls of `turns`, in order, each with its code. A call fails when it names a tool and returns an
- * error, which is the rule of `tool_failure_count`, so the list and the count agree.
+ * The failed tool calls of `turns`, in order, each with its code: the rows that the engine `listed`, else the rows of
+ * the inline steps. A call fails when it names a tool and returns an error, which is the rule of
+ * `tool_failure_count`, so the list and the count agree.
  */
-export function failedToolCalls(turns: TranscriptTurn[]): FailedToolCall[] {
+export function failedToolCalls(turns: TranscriptTurn[], listed?: readonly WireFailedToolCall[]): FailedToolCall[] {
+  if (listed) {
+    return listed.map((row) => ({
+      turnId: row.turn_id,
+      scope: row.scope,
+      code: row.code,
+      language: row.language,
+      message: row.message,
+    }));
+  }
   return turns.flatMap((turn, index) =>
     (turn.iterations ?? []).flatMap((iteration) =>
       (iteration.forms ?? []).flatMap((form) => {
@@ -145,7 +221,7 @@ export function snapshotResponse(data: TranscriptExport, url: string): Response 
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  const bytes = Uint8Array.from(atob(stored.base64), (char) => char.charCodeAt(0));
+  const bytes = base64Bytes(stored.base64 ?? chunkText(stored.chunk ?? ''));
   return new Response(bytes, { status: 200, headers: { 'Content-Type': stored.media_type } });
 }
 

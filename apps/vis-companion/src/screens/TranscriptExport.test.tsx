@@ -4,7 +4,8 @@
 // conversation of each subagent below the leader, and a row opens it without a gateway.
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { DecompressionStream } from 'node:stream/web';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import exportFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/transcript-export.json';
 import { GatewayClient } from '../lib/gateway';
@@ -12,11 +13,40 @@ import { parseTranscriptExport, SNAPSHOT_GATEWAY } from '../lib/transcript-expor
 import { TranscriptExport } from './TranscriptExport';
 
 // Contract fixture `transcript-export.json`: a leader, its subagent `child` and the subagent
-// `grand` of that subagent. The engine test compares its keys with the keys of a real page.
+// `grand` of that subagent. The engine test compares its keys with the keys of a real page. The
+// steps of each turn are in a chunk element of the page, as the engine writes them, so a turn
+// shows its answer only when the page reads its chunk.
 const EXPORT = exportFixture.export;
 
-function renderExport(document: object) {
-  const data = parseTranscriptExport(JSON.stringify(document));
+// jsdom has no `DecompressionStream`, and its observer never reports: each turn comes near at once.
+beforeEach(() => {
+  vi.stubGlobal('DecompressionStream', DecompressionStream);
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      private readonly report: IntersectionObserverCallback;
+      constructor(report: IntersectionObserverCallback) {
+        this.report = report;
+      }
+      observe(target: Element) {
+        this.report([{ target, isIntersecting: true } as IntersectionObserverEntry], this as never);
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
+
+function renderExport(doc: object) {
+  for (const [id, text] of Object.entries(exportFixture.chunks)) {
+    if (document.getElementById(id)) continue;
+    const chunk = document.createElement('script');
+    chunk.type = 'application/octet-stream';
+    chunk.id = id;
+    chunk.textContent = text;
+    document.body.append(chunk);
+  }
+  const data = parseTranscriptExport(JSON.stringify(doc));
   render(<TranscriptExport data={data} client={new GatewayClient({ url: SNAPSHOT_GATEWAY })} />);
 }
 

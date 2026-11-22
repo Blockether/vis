@@ -18,6 +18,21 @@
   (second (re-find #"<script id=\"vis-transcript-data\" type=\"application/json\">(.*?)</script>"
                    page)))
 
+(defn- chunk-text
+  "The text of the chunk element `id` of the filled page `page`."
+  [page id]
+  (second (re-find (re-pattern
+                     (str "<script type=\"application/octet-stream\" id=\"" id "\">(.*?)</script>"))
+                   page)))
+
+(defn- inflate
+  "The UTF-8 text of `base64`, raw DEFLATE in base64, as the page reads a chunk of steps."
+  [^String base64]
+  (with-open [in (java.util.zip.InflaterInputStream.
+                   (io/input-stream (.decode (java.util.Base64/getDecoder) base64))
+                   (java.util.zip.Inflater. true))]
+    (slurp in :encoding "UTF-8")))
+
 (defdescribe
   fill-test
   (describe "a transcript that holds HTML end tags"
@@ -111,8 +126,11 @@
                 _
                 (turn! grandchild "Read the logs")
 
+                exported
+                (transcript-export/html leader)
+
                 data
-                (wire/parse-json (data-json (transcript-export/html leader)))
+                (wire/parse-json (data-json exported))
 
                 documents
                 (get data "descendants")
@@ -137,8 +155,19 @@
             ;; The page draws the row of the nested subagent from the document of its parent.
             (expect (= [grandchild]
                        (mapv #(get % "session_id") (get-in documents [child "agents"]))))
-            (expect (= {"media_type" "image/png" "base64" "AQID"}
-                       (get-in documents [child "attachments" (str iteration "/0")])))))
+            (let [attachment (get-in documents [child "attachments" (str iteration "/0")])]
+              (expect (= #{"media_type" "chunk"} (set (keys attachment))))
+              (expect (= "image/png" (get attachment "media_type")))
+              (expect (= "AQID" (chunk-text exported (get attachment "chunk")))))
+            ;; A large export was one JSON string that the browser parsed whole before it drew
+            ;; anything. The steps of a turn now wait in a chunk until the reader comes near.
+            (let [turn (peek (get-in documents [child "turns"]))]
+              (expect (not (contains? turn "iterations")))
+              (expect (= ["attach(png, 'chart.png')"]
+                         (mapv #(get % "code")
+                               (wire/parse-json (inflate (chunk-text
+                                                           exported
+                                                           (get turn "iterations_chunk"))))))))))
         (finally (ps/db-dispose-connection! db))))))
 
 (defn- form

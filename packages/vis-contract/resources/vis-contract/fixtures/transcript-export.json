@@ -1,5 +1,5 @@
 {
-  "description": "The JSON document of an HTML transcript export (gateway/transcript_export.clj): a leader, its subagent and the subagent of that subagent. The engine writes these keys and the Companion export page reads them.",
+  "description": "The JSON document of an HTML transcript export (gateway/transcript_export.clj): a leader, its subagent and the subagent of that subagent. The engine writes these keys and the Companion export page reads them. The steps of each turn are not in the document: `iterations_chunk` names the chunk element of the page that holds them as raw DEFLATE in base64. `chunks` holds the text of each chunk element, keyed by its id.",
   "export": {
     "session": {
       "id": "lead",
@@ -12,12 +12,6 @@
         "request": "ship the parser",
         "status": "completed",
         "created_at": 1794819600000,
-        "iterations": [
-          {
-            "position": 0,
-            "answer": "The parser ships."
-          }
-        ],
         "agents": [
           {
             "session_id": "child",
@@ -32,7 +26,8 @@
             "created_at": 1794819600000,
             "finished_at": 1794819601000
           }
-        ]
+        ],
+        "iterations_chunk": "vis-chunk-1"
       }
     ],
     "child_session_ids": [
@@ -54,6 +49,7 @@
       }
     ],
     "attachments": {},
+    "failed_tools": [],
     "descendants": {
       "child": {
         "session": {
@@ -67,12 +63,6 @@
             "request": "fix the parser",
             "status": "completed",
             "created_at": 1794819600000,
-            "iterations": [
-              {
-                "position": 0,
-                "answer": "The parser is fixed."
-              }
-            ],
             "agents": [
               {
                 "session_id": "grand",
@@ -87,7 +77,8 @@
                 "created_at": 1794819600000,
                 "finished_at": 1794819601000
               }
-            ]
+            ],
+            "iterations_chunk": "vis-chunk-2"
           }
         ],
         "child_session_ids": [
@@ -108,7 +99,8 @@
             "finished_at": 1794819601000
           }
         ],
-        "attachments": {}
+        "attachments": {},
+        "failed_tools": []
       },
       "grand": {
         "session": {
@@ -122,18 +114,19 @@
             "request": "read the logs",
             "status": "completed",
             "created_at": 1794819600000,
-            "iterations": [
-              {
-                "position": 0,
-                "answer": "The logs are clean."
-              }
-            ]
+            "iterations_chunk": "vis-chunk-3"
           }
         ],
         "child_session_ids": [],
         "agents": [],
-        "attachments": {}
+        "attachments": {},
+        "failed_tools": []
       }
     }
+  },
+  "chunks": {
+    "vis-chunk-1": "i65WKsgvzizJzM9TsjLQUUrMKy5PLVKyUgrJSFUoSCwqTi1SKM7ILCjWU6qNBQA=",
+    "vis-chunk-2": "i65WKsgvzizJzM9TsjLQUUrMKy5PLVKyUgrJSFUoSCwqTi1SyCxWSMusSE3RU6qNBQA=",
+    "vis-chunk-3": "i65WKsgvzizJzM9TsjLQUUrMKy5PLVKyUgrJSFXIyU8vVkgsSlVIzklNzNNTqo0FAA=="
   }
 }

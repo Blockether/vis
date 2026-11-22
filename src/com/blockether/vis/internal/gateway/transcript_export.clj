@@ -11,6 +11,13 @@
    subagent session below the session, so a subagent row of the page opens its conversation.
    The page needs no gateway and no network when it opens.
 
+   The steps of the turns and the artifact bytes are most of an export, so they are not in the
+   JSON. Each one is in its own chunk element after the data element ([[chunk-prefix]]): the
+   steps of a turn as raw DEFLATE in base64, an artifact as its bytes in base64. The JSON names
+   the chunk of each turn (`iterations_chunk`) and of each artifact (`chunk`). Thus the page
+   parses only a small JSON when it opens, reads the steps of a turn when the reader comes near
+   it, and no single string of the page grows with the session.
+
    The bundle is found through `VIS_WEB_DIR` ([[web/configured-root]]), the folder the
    gateway serves the web app from. Without it, an export fails with a message that says how
    to build it; there is no second renderer to fall back to.
@@ -25,9 +32,11 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.util :as util])
-  (:import [java.io File]
+  (:import [java.io ByteArrayOutputStream File]
            [java.math BigDecimal RoundingMode]
-           [java.util Base64]))
+           [java.nio.charset StandardCharsets]
+           [java.util Base64]
+           [java.util.zip Deflater DeflaterOutputStream]))
 
 (def page-name "The export page inside the web bundle." "transcript-export.html")
 
@@ -50,16 +59,42 @@
   (str/replace (wire/json-str value) "<" "\\u003c"))
 
 (defn fill
-  "The export page `template` with `data` written into its data element. Throws when the
-   page has no data element or more than one, because then the page is not an export page."
-  ^String [^String template data]
-  (let [at (str/index-of template data-element)]
-    (when (or (nil? at) (not= at (str/last-index-of template data-element)))
-      (throw (ex-info (str "The HTML export page has no single transcript data element: " page-name)
-                      {:type :transcript-export/bad-template})))
-    (str (subs template 0 at)
-         "<script id=\"vis-transcript-data\" type=\"application/json\">" (script-json data)
-         "</script>" (subs template (+ (long at) (count data-element))))))
+  "The export page `template` with `data` written into its data element, and `chunks`, the
+   chunk elements, after it. Throws when the page has no data element or more than one, because
+   then the page is not an export page."
+  (^String [^String template data] (fill template data ""))
+  (^String [^String template data ^String chunks]
+   (let [at (str/index-of template data-element)]
+     (when (or (nil? at) (not= at (str/last-index-of template data-element)))
+       (throw (ex-info (str "The HTML export page has no single transcript data element: "
+                            page-name)
+                       {:type :transcript-export/bad-template})))
+     (str (subs template 0 at)
+          "<script id=\"vis-transcript-data\" type=\"application/json\">"
+          (script-json data)
+          "</script>"
+          chunks
+          (subs template (+ (long at) (count data-element)))))))
+
+(def chunk-prefix
+  "The id prefix of the chunk elements of an export page. The page reads `<prefix><n>`."
+  "vis-chunk-")
+
+(defn deflate-base64
+  "`text` in UTF-8, compressed as raw DEFLATE (the `deflate-raw` format of the browser's
+   `DecompressionStream`), in base64. The fastest level: it compresses transcript JSON almost as
+   well as the default level, in much less time."
+  ^String [^String text]
+  (let [deflater
+        (Deflater. Deflater/BEST_SPEED true)
+
+        out
+        (ByteArrayOutputStream.)]
+
+    (try (with-open [stream (DeflaterOutputStream. out deflater 65536)]
+           (.write stream (.getBytes text StandardCharsets/UTF_8)))
+         (finally (.end deflater)))
+    (.encodeToString (Base64/getEncoder) (.toByteArray out))))
 
 (defn- attachment-files
   "The bytes of each artifact that the steps of `turns` name, in base64, keyed by
@@ -122,6 +157,65 @@
                (concat (rest pending) (get doc "child_session_ids"))))
       found)))
 
+(defn- failure-line
+  "The first line of the error of a failed tool call, as the Failed tools list shows it."
+  [error]
+  (let [text (cond (string? error) error
+                   (string? (get error "message")) (get error "message")
+                   :else (wire/json-str error))]
+    (or (some #(not-empty (str/trim %)) (str/split-lines text)) "")))
+
+(defn- form-code
+  "The code of `form` as the session screen shows it under CODE."
+  [form]
+  (str/trim (str (some #(when (string? %) %)
+                       (map #(get form %) ["display_code" "code" "source" "src"])))))
+
+(defn failed-tool-calls
+  "The failed tool calls of `turns`, in order: the turn, the step (`scope`), the first line of the
+   error, the code and its language. A call fails when it names a tool and returns an error, which
+   is the rule of `tool_failure_count`, so the list and the count agree. The Failed tools list of
+   both exports shows these rows."
+  [turns]
+  (vec
+    (for [[index turn]
+          (map-indexed vector turns)
+
+          iteration
+          (get turn "iterations")
+
+          form
+          (get iteration "forms")
+
+          :when (and (not (str/blank? (str (get form "tool_name")))) (some? (get form "error")))]
+
+      {"turn_id" (get turn "turn_id")
+       "scope" (or (not-empty (str (get form "scope"))) (str "t" (inc (long index))))
+       "message" (failure-line (get form "error"))
+       "code" (form-code form)
+       "language" (or (not-empty (str/trim (str (get form "display_language")))) "python")})))
+
+(defn- page-document
+  "The export document `doc` as the page holds it: the steps of each turn and the bytes of each
+   artifact move to chunk elements, and the JSON names them. `chunk!` writes one chunk and
+   answers its id. `failed_tools` holds the rows of the Failed tools list, because the page
+   reads the steps of a turn only when the reader comes near it."
+  [doc chunk!]
+  (assoc doc
+    "turns" (mapv (fn [turn]
+                    (if (seq (get turn "iterations"))
+                      (-> turn
+                          (dissoc "iterations")
+                          (assoc "iterations_chunk"
+                                 (chunk! (deflate-base64 (wire/json-str (get turn "iterations"))))))
+                      turn))
+                  (get doc "turns"))
+    "attachments" (update-vals (get doc "attachments")
+                               (fn [file]
+                                 {"media_type" (get file "media_type")
+                                  "chunk" (chunk! (get file "base64"))}))
+    "failed_tools" (failed-tool-calls (get doc "turns"))))
+
 (defn html
   "The standalone HTML export of session `sid`, or nil when no session has that id. Throws
    with a build hint when the web bundle holds no export page."
@@ -134,7 +228,21 @@
                                       ". Build it in apps/vis-companion with: npm run build:web")
                                  {:type :transcript-export/no-template})))]
     (when-let [data (export-data sid)]
-      (fill (slurp file) (assoc data "descendants" (subagent-documents data))))))
+      (let [chunks (StringBuilder.)
+            n (volatile! 0)
+            chunk! (fn [^String text]
+                     (let [id (str chunk-prefix (vswap! n inc))]
+                       (-> chunks
+                           (.append "<script type=\"application/octet-stream\" id=\"")
+                           (.append id)
+                           (.append "\">")
+                           (.append text)
+                           (.append "</script>"))
+                       id))
+            page (assoc (page-document data chunk!)
+                   "descendants" (update-vals (subagent-documents data) #(page-document % chunk!)))]
+
+        (fill (slurp file) page (str chunks))))))
 
 (defn- strip-ansi
   "`s` without terminal escape sequences, which tool output can carry."
@@ -258,43 +366,18 @@
                   rows))
            "\n</details>\n\n"))))
 
-(defn- failure-line
-  "The first line of the error of a failed tool call, as the Failed tools list shows it."
-  [error]
-  (let [text (cond (string? error) error
-                   (string? (get error "message")) (get error "message")
-                   :else (wire/json-str error))]
-    (or (some #(not-empty (str/trim %)) (str/split-lines text)) "")))
-
-(defn- form-code
-  "The code of `form` as the session screen shows it under CODE."
-  [form]
-  (str/trim (str (some #(when (string? %) %)
-                       (map #(get form %) ["display_code" "code" "source" "src"])))))
-
 (defn failed-tools-markdown
   "The closed Failed tools section of a Markdown export, or an empty string when no call failed.
-   Each failed call shows its step, the first line of its error and its code. A call fails when it
-   names a tool and returns an error, which is the rule of `tool_failure_count`, so the list and
-   the count agree."
+   Each failed call shows its step, the first line of its error and its code."
   [turns]
-  (let [rows
-        (for [[index turn] (map-indexed vector turns)
-              iteration (get turn "iterations")
-              form (get iteration "forms")
-              :when (and (not (str/blank? (str (get form "tool_name")))) (some? (get form "error")))]
-
-          {:scope (or (not-empty (str (get form "scope"))) (str "t" (inc (long index))))
-           :message (failure-line (get form "error"))
-           :code (form-code form)
-           :language (or (not-empty (str/trim (str (get form "display_language")))) "python")})]
+  (let [rows (failed-tool-calls turns)]
     (if (empty? rows)
       ""
       (str "<details>\n<summary>Failed tools ("
            (count rows)
            ")</summary>\n\n"
            (apply str
-             (map (fn [{:keys [scope message code language]}]
+             (map (fn [{:strs [scope message code language]}]
                     (str "**" scope
                          "** · " (md-escape message)
                          "\n\n" (when-not (str/blank? code)
