@@ -256,7 +256,8 @@ def __vis_install_attach__():
             " · kind · media_type (overrides what the bytes sniff as)"
             " · label (one-line caption)"
             " · audience ('both', 'user' or 'model')"
-            " · on_event (the listener of an app, only in an extension)",
+            " · on_event (the listener of an app, only in an extension)"
+            " · on_reload (opens a keyed app again after a reload, only in an extension)",
             "Store a produced artifact as a durable attachment that survives restarts. "
             "source is a confined PATH, in-memory BYTES (name them with filename), or "
             "an in-memory image or figure object. SAME DOCUMENT, SAME NAME: "
