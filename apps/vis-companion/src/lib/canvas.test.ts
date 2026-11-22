@@ -4,6 +4,7 @@ import viewSchema from '../../../../packages/vis-contract/resources/vis-contract
 import {
   CANVAS_MAX_ZOOM,
   canvasFlow,
+  canvasFrameHeight,
   canvasLayout,
   canvasTarget,
   canvasZoomedAt,
@@ -201,6 +202,21 @@ describe('the layout of a canvas', () => {
         }
       }
     }
+  });
+
+  it('routes an elbow around a card between different frames on a full board', () => {
+    const cards = Array.from({ length: 200 }, (_, i) => card(`i${i}`, [], {
+      text: 'A line of **Markdown**',
+      kind: i < 30 ? 'frame' : 'card',
+      parent: i < 30 ? (i % 3 ? `i${i - i % 3}` : undefined) : `i${i % 30}`,
+      edges: i < 50 ? [] : [edge(`i${i - 20}`, { route: 'elbow' })],
+    }));
+    const layout = canvasLayout(cards);
+    const link = layout.arrows.find((one) => one.from === 'i31' && one.to === 'i51')!;
+    const samples = samplePath(link.path);
+    const hit = layout.boxes.find((one) => one.head === undefined && one.id !== link.from && one.id !== link.to &&
+      samples.some((sample) => pointIsInside(sample, one)));
+    expect(hit?.id).toBeUndefined();
   });
 
   it('keeps the layout of a large board when only a progress or a tone changes', () => {
@@ -423,6 +439,35 @@ describe('the camera of a canvas', () => {
     expect(camera.x + layout.width * camera.scale).toBeLessThanOrEqual(frame.width);
     expect(camera.y + layout.height * camera.scale).toBeLessThanOrEqual(frame.height);
     expect(canvasTarget(canvasLayout([card('one')]), { width: 2000, height: 2000 }, 0, '').scale).toBe(1);
+  });
+
+  it('fits a long board in a narrow frame without making the frame taller', () => {
+    const tall = { ...layout, width: 4000, height: 4000 };
+    const width = 204;
+    const height = canvasFrameHeight(tall, width, 1000);
+    const camera = canvasTarget(tall, { width, height }, 0, '');
+    expect(height).toBe(width);
+    expect(camera.scale).toBeGreaterThan(0);
+    expect(camera.x).toBeGreaterThanOrEqual(0);
+    expect(camera.x + tall.width * camera.scale).toBeLessThanOrEqual(width);
+    expect(camera.y + tall.height * camera.scale).toBeLessThanOrEqual(height);
+  });
+
+  it('uses the owner scale even below the default manual zoom limit', () => {
+    const camera = canvasTarget(layout, frame, 0.025, 'verify');
+    expect(camera.scale).toBe(0.025);
+    expect(centre('verify', camera).x).toBeCloseTo(frame.width / 2, 0);
+  });
+
+  it('zooms out as far as Fit on a large board', () => {
+    const fit = canvasTarget({ ...layout, width: 4000 }, frame, 0, '');
+    const camera = { x: 30, y: -20, scale: 0.5 };
+    const point = { x: 120, y: 80 };
+    const zoomed = canvasZoomedAt(camera, 0.01, point, fit.scale);
+    expect(zoomed.scale * 4000).toBeLessThanOrEqual(frame.width);
+    expect(zoomed.scale).toBe(fit.scale);
+    expect((point.x - zoomed.x) / zoomed.scale).toBeCloseTo((point.x - camera.x) / camera.scale);
+    expect(canvasZoomedAt({ ...camera, scale: 0.02 }, 0.5, point, fit.scale).scale).toBe(0.02);
   });
 
   it('puts the focus card in the centre and shows the whole board for an unknown focus', () => {

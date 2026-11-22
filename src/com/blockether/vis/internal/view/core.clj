@@ -2024,7 +2024,8 @@
                      stamps)
                 (view-spec/live-patch-lines (cond-> patch
                                               (sequential? (:ops patch))
-                                              (update :ops (partial mapv cut)))))]
+                                              (update :ops (partial mapv cut)))
+                                            true))]
 
     (when (seq lines) (invalid-live-patch! (document/joined-lines (vec (sort (distinct lines))))))))
 
@@ -3428,17 +3429,12 @@
    host did not write it, stamped, redacted and checked. [[patch-live!]] applies it."
   [view patch]
   (-> (normalize-patch view patch)
-      (cond->
-        (not *host-patch*)
-        (update :ops
-                (fn [ops]
-                  (mapv #(owner-op view %) ops))))
       (update :ops
               (let [now (util/now-ms)]
                 (fn [ops]
                   (mapv #(stamped-op % now) ops))))
       materializer/redact-presentation
-      (#(materializer/land-node-refs view %))
+      (#(materializer/land-node-refs view % (when-not *host-patch* owner-op)))
       checked-live-patch))
 
 (defn patch-live!

@@ -130,3 +130,19 @@
 
                    (expect (= "a-2" (get-in draft [:thread :id])))
                    (expect (not (#{"a" "a-1"} (get-in reply [:thread :id])))))))
+
+(defdescribe
+  canvas-draft-test
+  (it "refuses a new draft on a missing card"
+      (let [node {:id "board" :type :canvas :cards []}]
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(app/draft-op node {:item-id "missing" :body "Check it"} "draft-1")))))
+  (it "refuses a reply on a full thread but lets the human attach or remove a draft"
+      (let [limit (:canvas-messages app/bounds)
+            thread {:id "t" :item-id "a" :draft "Old note"
+                    :messages (mapv #(hash-map :id (str %) :body "Note") (range limit))}
+            node {:id "board" :type :canvas :cards [{:id "a"}] :threads [thread]}
+            save #(app/draft-op node {:thread-id "t" :body %} "unused")]
+        (expect (throws? clojure.lang.ExceptionInfo #(save "New note")))
+        (expect (= "" (get-in (save "") [:thread :draft])))
+        (expect (= (dissoc thread :draft) (:thread (save nil)))))))

@@ -1341,6 +1341,7 @@
      :init      immutable start state (a map), or a 0-arg fn returning it
      :measure   (fn [state cols rows] -> geom)     — geometry, screen-free, TESTABLE
      :reconcile (fn [state geom] -> state)         — optional clamp (e.g. scroll window)
+     :paint-key (fn [state geom] -> key|nil)       — skip idle paint if a non-nil key stays equal
      :paint     (fn [g state geom] -> cursor|nil)  — the only impure piece; draws to `g`
      :on-key    (fn [state key geom] -> state | {::done result})  — screen-free, TESTABLE
      :read-key  optional (fn [screen] -> key|nil), for async loading wakeups
@@ -1359,28 +1360,29 @@
    and `:on-key` are pure functions of data, a dialog's geometry and key logic
    can be unit-tested with no live terminal."
   [^TerminalScreen screen
-   {:keys [init measure reconcile paint on-key read-key after-refresh]
+   {:keys [init measure reconcile paint-key paint on-key read-key after-refresh]
     :or {read-key read-modal-key!}}]
   (with-modal-background
     screen
-    (loop [state (if (fn? init) (init) init)]
+    (loop [state (if (fn? init) (init) init)
+           last-key nil]
       (let [size (modal-size! screen)
             cols (.getColumns size)
             rows (.getRows size)
             geom (measure state cols rows)
             state (if reconcile (reconcile state geom) state)
-            g (frame/surface-graphics screen cols rows)
-            cursor (paint g state geom)]
+            next-key (when-let [k (and paint-key (paint-key state geom))] [cols rows k])]
 
-        ;; nil cursor hides the hardware cursor; a text field returns its cell.
-        (.setCursorPosition screen cursor)
-        (frame/refresh! screen)
-        (when after-refresh (after-refresh state geom))
+        (when (or (nil? next-key) (not= last-key next-key))
+          ;; A nil cursor hides the hardware cursor.
+          (.setCursorPosition screen (paint (frame/surface-graphics screen cols rows) state geom))
+          (frame/refresh! screen)
+          (when after-refresh (after-refresh state geom)))
         (let [key (read-key screen)]
           (if (nil? key)
-            (recur state)
+            (recur state next-key)
             (let [r (on-key state key geom)]
-              (if (and (map? r) (contains? r ::done)) (::done r) (recur r)))))))))
+              (if (and (map? r) (contains? r ::done)) (::done r) (recur r nil)))))))))
 
 (defn- metric-count
   [n]

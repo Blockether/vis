@@ -3011,6 +3011,16 @@
       (let [{:keys [box geom state]} (current-app-pane)]
         (app-surfaces/pane-click box geom (or (:scroll state) 0) (count (:rows geom)) mx my)))))
 
+(defn- app-pane-wheel!
+  "Send wheel rows inside the canvas list to the app, not to the chat."
+  [db key mx my]
+  (when (get-in db [:live-panel :app])
+    (let [{:keys [canvas? bounds content-top list-h]} (:geom (current-app-pane))]
+      (when (and canvas? (< (long (:left bounds)) (long mx) (long (:right bounds)))
+                 (<= (long content-top) (long my))
+                 (< (long my) (+ (long content-top) (long list-h))))
+        (app-pane-key! db key)))))
+
 (defn- app-pane-click!
   "A press at `mx` and `my` in the side pane app gives the pane the keyboard, like C-o,
    and moves the app cursor to the clicked row. Returns true when the press hit the pane.
@@ -3020,7 +3030,8 @@
   (if-let [{:keys [row]} (app-pane-point db mx my)]
     (do (state/dispatch [:focus-area :panel])
         (when row
-          (update-app-pane! (get-in db [:live-panel :app]) #(assoc-in % [:state :selected] row)))
+          (update-app-pane! (get-in db [:live-panel :app])
+                            #(update % :state (fn [st] (assoc (dissoc st :reading? :canvas-focus) :selected row)))))
         (state/dispatch [:bump-render-version])
         true)
     (let [{:keys [left top width height]} (:box (current-app-pane))]
@@ -4342,11 +4353,14 @@
     (let [undo? (state/queue-undo-open? db (System/currentTimeMillis))]
       (when (or undo? (seq (:pending-sends db))) (assoc focus :undo? undo?)))))
 
+(def ^:private side-canvas-moving? (volatile! false))
+
 (defn- paint-side-areas!
   "Paint the live side panel and the project rail, then fade the areas without the keyboard.
    Record each pass end in `post-marks`."
   [^TerminalScreen screen db live-panel cols rows screen-cols messages-top messages-bottom now-ms
    post-marks]
+  (vreset! side-canvas-moving? false)
   (let [panel-box
         (when-let [{:keys [left width is-docked panes app]} live-panel]
           (let [left (if is-docked cols left)
@@ -4355,8 +4369,11 @@
                 g (frame/surface-graphics screen (+ (long left) (long width)) rows)]
 
             (if app
-              (paint-app-pane! screen g db app left top width height)
+              (do (paint-app-pane! screen g db app left top width height)
+                  (let [{:keys [state geom]} (current-app-pane)]
+                    (vreset! side-canvas-moving? (boolean (app-surface/canvas-moving? state geom)))))
               (let [geom (lv/paint-panel! g left top width height panes (:live-panel db) now-ms)]
+                (vreset! side-canvas-moving? (:canvas-moving? geom))
                 (when (not= (:selected geom) (get-in db [:live-panel :selected]))
                   (state/dispatch [:live-panel-select (:selected geom)]))))
             {:col (frame/screen-column left) :row top :width width :height height}))]
@@ -6333,7 +6350,8 @@
                         any-loading?
                         (or loading?
                             (state/any-background-loading? db)
-                            (lv/animating? (:live-views db)))
+                            (lv/animating? (:live-views db))
+                            @side-canvas-moving?)
 
                         scroll-anim?
                         (scroll-anim-active? db)
@@ -6436,7 +6454,9 @@
 
                     loading?
                     (or (boolean (:loading? @state/app-db))
-                        (state/any-background-loading? @state/app-db))]
+                        (state/any-background-loading? @state/app-db)
+                         (lv/animating? (:live-views @state/app-db))
+                         @side-canvas-moving?)]
 
                 (when (= v-now version)
                   (try (.wait ^Object state/render-monitor
@@ -10278,6 +10298,7 @@
       (do (state/dispatch [:move-slash-command-selection (long wheel-delta)
                            (count slash-suggestions)])
           ::recur)
+      (and (not (zero? (long (or wheel-delta 0)))) (app-pane-wheel! db key mx my)) ::recur
       ;; The wheel over the agent dock scrolls its agent table with its own
       ;; momentum. At an end of the table the wheel stops there.
       dock-wheel-sid

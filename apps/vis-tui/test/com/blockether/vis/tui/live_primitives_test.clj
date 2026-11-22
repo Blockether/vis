@@ -2,6 +2,7 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.view :as spec]
             [com.blockether.vis.tui.capture :as capture]
             [com.blockether.vis.tui.client :as client]
@@ -56,6 +57,27 @@
 
 (defdescribe
   canvas-rows-test
+  (it "animates visible canvas markers by time without moving the text"
+      (let [board {:id "board" :type :canvas
+                   :cards [{:id "a" :title "First"}
+                           {:id "b" :title "Second" :edges [{:from "a" :animation "dot" :is-active true}]}]}
+            pane (lv/opened {:nodes [board]})
+            idle (lv/opened {:nodes [(update-in board [:cards 1] dissoc :edges)]})
+            closed (lv/opened {:nodes [{:id "g" :type :group :is-collapsible true :children [board]}]})]
+        (expect (lv/animating? [pane]))
+        (expect (not (lv/animating? [idle])))
+        (expect (not (lv/animating? [closed])))
+        (expect (not (lv/animating? [(lv/minimized pane)])))
+        (expect (not (lv/animating? [pane idle])))
+        (expect (not (lv/animating? [(lv/painted pane {:canvas-motion-visible? false})])))
+        (doseq [width [20 32 40 60 80 120 200]]
+          (let [rows #(mapv :text (lv/plan pane width %))
+                edge #(some (fn [line] (when (and line (str/includes? line "First")
+                                                 (not (str/includes? line "card"))) line)) (rows %))]
+            (expect (some? (edge 1000)))
+            (expect (not= (edge 1000) (edge 1200)))
+            (expect (= (edge 1000) (edge 1099)))
+            (expect (= (mapv p/display-width (rows 1000)) (mapv p/display-width (rows 1200))))))))
   (it
     "shows nested items and the details of a resolved comment"
     (let [cards
@@ -102,6 +124,14 @@
         (expect (str/includes? text detail) detail))
       (expect (not (str/includes? text "Hidden")))
       (expect (every? #(<= (p/display-width (:text %)) 32) rows))))
+  (it "changes the marker for each card animation without shifting the text"
+      (doseq [mode (get-in (document/schema-document "view") ["$defs" "canvas_animation" "enum"])]
+        (let [pane (lv/opened {:nodes [{:id "board" :type :canvas
+                                       :cards [{:id "a" :title "First" :animation mode}]}]})
+              line #(some :text (lv/plan pane 20 %))]
+          (expect (lv/animating? [pane]))
+          (expect (not= (line 1000) (line 1400)))
+          (expect (= (p/display-width (line 1000)) (p/display-width (line 1400)))))))
   (it "puts a card under a frame past the depth limit back on the board"
       (let [limit
             (:max-depth spec/canvas-defaults)

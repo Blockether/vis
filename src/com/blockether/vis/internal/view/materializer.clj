@@ -479,19 +479,23 @@
         (update :item-ids #(mapv str/trim %))))))
 
 (defn land-node-refs
-  "Normalize canvas references and expand thread resolution requests before storage."
-  [view patch]
-  (let [ops (:ops patch)]
+  "Normalize canvas references and expand thread resolution requests before storage.
+   `prepare-op` applies owner rules to the state before each operation, when set."
+  [view patch prepare-op]
+  (let [ops (:ops patch)
+        land (fn [current op]
+               (land-node-op current (if prepare-op (prepare-op current op) op)))]
     (assoc patch
-      :ops (if (or (some (comp app/resolution-only? :thread) ops)
+      :ops (if (or (and prepare-op (some #(= :thread (:op %)) (rest ops)))
+                   (some (comp app/resolution-only? :thread) ops)
                    (and (some item-references? ops)
                         (some (comp #{:add-node :remove-node} :op) ops)))
              (second (reduce (fn [[current landed] op]
-                               (let [op (land-node-op current op)]
+                               (let [op (land current op)]
                                  [(apply-op current op) (conj landed op)]))
                              [view []]
                              ops))
-             (mapv #(land-node-op view %) ops)))))
+             (mapv #(land view %) ops)))))
 
 (defn apply-patch
   "`view` after every operation in `patch`, or a refusal naming the first one

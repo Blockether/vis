@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type FocusEvent as ReactFocusEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
@@ -32,14 +33,15 @@ import { Button, IconButton } from './ui';
 
 /** The tallest frame. The style sheet also holds the frame under 70% of the screen. */
 const MAX_HEIGHT = 640;
-/** The band at the bottom of the frame that the camera bar stands in. */
-const BAR_ROOM = 44;
+/** The inset below the controls and the gap above them. */
+const BAR_INSET = 16;
 /** The marks of the paper stand this far apart at full size. */
 const GRID = 24;
 /** A pointer that travelled less than this pressed a card and did not move the board. */
 const DRAG_START = 4;
 /** One press of a zoom button. */
 const ZOOM_STEP = 1.25;
+const ZOOM_SETTLE_MS = 120;
 
 /** The paper of the board for each pattern. `plain` has none. */
 const PAPER: Record<CanvasPattern, string | undefined> = {
@@ -187,11 +189,15 @@ export function LiveCanvas({
   const frame = useRef<HTMLDivElement>(null);
   const world = useRef<HTMLDivElement>(null);
   const label = useRef<HTMLSpanElement>(null);
+  const toolbar = useRef<HTMLDivElement>(null);
+  const isGlidingNow = useRef(false);
+  const markZoom = useRef<{ scale?: number; timer?: number }>({});
   const camera = useRef<CanvasCamera>({ x: 0, y: 0, scale: 1 });
   const isHeld = useRef(false);
   const canGlide = useRef(false);
   const pointers = useRef(new Map<number, Point>());
-  const gesture = useRef({ hasMoved: false, spread: 0 });
+  const gesture = useRef({ hasMoved: false });
+  const [barHeight, setBarHeight] = useState(0);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const [measures, setMeasures] = useState<ReadonlyMap<string, CanvasMeasure>>(new Map());
   /** The open panel: one item, or the whole board with a null id. */
@@ -224,7 +230,8 @@ export function LiveCanvas({
   );
   const isLocked = node.is_locked;
   // The board stands in the part of the frame above the bar.
-  const barRoom = isLocked && !hasTalk ? 0 : BAR_ROOM;
+  const hasBar = !isLocked || hasTalk;
+  const barRoom = hasBar ? barHeight + BAR_INSET : 0;
   const room = useMemo(
     () => ({ width: size.width, height: Math.max(0, size.height - barRoom) }),
     [size, barRoom],
@@ -233,16 +240,23 @@ export function LiveCanvas({
     () => canvasTarget(layout, room, node.zoom, node.focus),
     [layout, room, node.zoom, node.focus],
   );
-  const latest = useRef({ layout, target, room, isLocked });
+  const whole = useMemo(() => canvasTarget(layout, room, 0, ''), [layout, room]);
+  const latest = useRef({ layout, target, whole, room, isLocked });
   useLayoutEffect(() => {
-    latest.current = { layout, target, room, isLocked };
+    latest.current = { layout, target, whole, room, isLocked };
   });
 
-  const paint = useCallback((isGliding: boolean) => {
+  useEffect(() => {
+    const mark = markZoom.current;
+    return () => window.clearTimeout(mark.timer);
+  }, []);
+
+  const paint = useCallback((isGliding: boolean, deferMarks = false) => {
     const frameNode = frame.current;
     const worldNode = world.current;
     if (!frameNode || !worldNode) return;
     const { x, y, scale } = camera.current;
+    isGlidingNow.current = isGliding;
     const duration = isGliding ? '' : '0ms';
     worldNode.style.transitionDuration = duration;
     worldNode.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
@@ -255,9 +269,20 @@ export function LiveCanvas({
     // A far camera makes each line thin. The arrows grow against the scale, so a
     // line stays near one pixel on the screen.
     frameNode.style.setProperty('--cv-weight', scaleStep(Math.min(2.2, Math.max(1, 0.8 / scale))));
-    // The mark of a discussion keeps its size on the screen, so a person can read
-    // and press it on a board that shows whole.
-    frameNode.style.setProperty('--cv-mark', scaleStep(Math.min(3, Math.max(1, 1 / scale))));
+    const held = markZoom.current;
+    if (held.scale !== scale) {
+      window.clearTimeout(held.timer);
+      const apply = () => {
+        const mark = scaleStep(Math.min(3, Math.max(1, 1 / scale)));
+        frameNode.style.setProperty('--cv-mark', mark);
+        frameNode.style.setProperty('--cv-hit', scaleStep(1 / (scale * Number(mark))));
+      };
+      // These inherited values change styles across the board. Set them once
+      // when a wheel or pinch stops, not on each frame of the gesture.
+      if (deferMarks) held.timer = window.setTimeout(apply, ZOOM_SETTLE_MS);
+      else apply();
+      held.scale = scale;
+    }
     // A person who holds the camera moves the board with one finger. Before that,
     // one finger scrolls the page, so a board in a long page is not a trap.
     frameNode.style.touchAction =
@@ -265,25 +290,33 @@ export function LiveCanvas({
     if (label.current) label.current.textContent = `${Math.round(scale * 100)}%`;
   }, []);
 
+  // The destination can be ahead of the picture during a CSS transition.
+  const readCamera = useCallback((): CanvasCamera => {
+    const node = world.current;
+    if (!isGlidingNow.current || !node) return camera.current;
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(node).transform);
+    return { x: matrix.e, y: matrix.f, scale: matrix.a };
+  }, []);
+
   /** The person moves the camera and holds it. */
   const move = useCallback(
     (next: CanvasCamera, isGliding = false) => {
       isHeld.current = true;
       camera.current = next;
-      paint(isGliding);
+      paint(isGliding, !isGliding);
     },
     [paint],
   );
 
-  const zoomBy = (factor: number) => {
+  const zoomBy = (factor?: number) => {
     const { width, height } = latest.current.room;
-    move(canvasZoomedAt(camera.current, factor, { x: width / 2, y: height / 2 }), true);
+    const current = readCamera();
+    move(canvasZoomedAt(current, factor ?? 1 / current.scale, { x: width / 2, y: height / 2 }, latest.current.whole.scale), true);
   };
 
   /** The whole board, also when the owner points the camera at one item. */
   const fit = () => {
-    const { layout, room, target } = latest.current;
-    const whole = canvasTarget(layout, room, 0, '');
+    const { whole, target } = latest.current;
     // The person holds the camera only when the owner points it at another place.
     isHeld.current =
       whole.x !== target.x || whole.y !== target.y || whole.scale !== target.scale;
@@ -329,6 +362,17 @@ export function LiveCanvas({
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
+
+  useLayoutEffect(() => {
+    const node = toolbar.current;
+    if (!node) return;
+    const measure = () => setBarHeight(node.offsetHeight);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasBar]);
 
   // The height of an item is the height of its words, so the layout asks the browser.
   // A frame is as high as the layout makes it: only its header has a height of its own.
@@ -387,17 +431,22 @@ export function LiveCanvas({
   }, [measureCards]);
 
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-    gesture.current.hasMoved = false;
     if (isLocked || (event.pointerType === 'mouse' && event.button !== 0)) return;
     // A press on the camera bar or on a player is not a move of the board.
     if ((event.target as Element).closest('[data-canvas-bar], [data-canvas-control]')) return;
-    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    gesture.current.spread = 0;
+    const held = pointers.current;
+    if (held.size === 0) gesture.current.hasMoved = false;
+    if (held.size < 2) held.set(event.pointerId, { x: event.clientX, y: event.clientY });
   }
 
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
-    const from = pointers.current.get(event.pointerId);
+    const held = pointers.current;
+    const from = held.get(event.pointerId);
     if (!from) return;
+    if (isLocked || (event.pointerType === 'mouse' && (event.buttons & 1) === 0)) {
+      onPointerUp(event);
+      return;
+    }
     const point = { x: event.clientX, y: event.clientY };
     const state = gesture.current;
     if (pointers.current.size === 1) {
@@ -409,25 +458,30 @@ export function LiveCanvas({
         event.currentTarget.setPointerCapture(event.pointerId);
         event.currentTarget.dataset.dragging = 'true';
       }
-      pointers.current.set(event.pointerId, point);
-      const { x, y, scale } = camera.current;
+      held.set(event.pointerId, point);
+      const { x, y, scale } = readCamera();
       move({ x: x + point.x - from.x, y: y + point.y - from.y, scale });
       return;
     }
-    pointers.current.set(event.pointerId, point);
-    const [a, b] = [...pointers.current.values()];
-    const spread = Math.max(1, distance(a, b));
-    if (state.spread) {
-      move(canvasZoomedAt(camera.current, spread / state.spread, inFrame(frame.current, midpoint(a, b))));
-    }
-    state.spread = spread;
+    const other = [...held.entries()].find(([id]) => id !== event.pointerId)?.[1];
+    if (!other || (from.x === point.x && from.y === point.y)) return;
+    held.set(event.pointerId, point);
+    const oldMid = midpoint(from, other);
+    const newMid = midpoint(point, other);
+    const factor = Math.max(1, distance(point, other)) / Math.max(1, distance(from, other));
+    const next = canvasZoomedAt(readCamera(), factor, inFrame(frame.current, oldMid), latest.current.whole.scale);
+    move({ ...next, x: next.x + newMid.x - oldMid.x, y: next.y + newMid.y - oldMid.y });
     state.hasMoved = true;
   }
 
   function onPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
-    pointers.current.delete(event.pointerId);
-    gesture.current.spread = 0;
-    if (pointers.current.size === 0) delete event.currentTarget.dataset.dragging;
+    if (pointers.current.delete(event.pointerId) && pointers.current.size === 0) {
+      delete event.currentTarget.dataset.dragging;
+    }
+  }
+
+  function onPointerLeave(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) onPointerUp(event);
   }
 
   /** The click that ends a drag belongs to the drag and not to the card under it. */
@@ -445,6 +499,26 @@ export function LiveCanvas({
     if (id) move(canvasTarget(latest.current.layout, latest.current.room, 1, id), true);
   }
 
+  function onBoardFocus(event: ReactFocusEvent<HTMLDivElement>) {
+    const control = event.target;
+    if (isLocked || !control.matches(':focus-visible') || !control.closest('[data-canvas-card]')) return;
+    // Use the focused control: a frame can be much taller than the viewport.
+    const box = control.getBoundingClientRect();
+    const { x, y } = inFrame(frame.current, { x: box.left, y: box.top });
+    const { width, height } = latest.current.room;
+    const shift = (start: number, length: number, room: number) => {
+      const pad = 4;
+      if (length >= room - 2 * pad || start < pad) return pad - start;
+      return Math.min(0, room - pad - start - length);
+    };
+    const dx = shift(x, box.width, width);
+    const dy = shift(y, box.height, height);
+    if (dx || dy) {
+      const current = readCamera();
+      move({ ...current, x: current.x + dx, y: current.y + dy }, true);
+    }
+  }
+
   // React listens to the wheel passively, so these listeners are native. A plain
   // wheel stays with the page. A pinch on a trackpad zooms about the pointer.
   useEffect(() => {
@@ -455,9 +529,10 @@ export function LiveCanvas({
       event.preventDefault();
       move(
         canvasZoomedAt(
-          camera.current,
+          readCamera(),
           wheelFactor(event.deltaY, event.deltaMode, event.ctrlKey),
           inFrame(node, { x: event.clientX, y: event.clientY }),
+          latest.current.whole.scale,
         ),
       );
     };
@@ -466,7 +541,7 @@ export function LiveCanvas({
     const onGestureStart = (event: SafariGestureEvent) => {
       if (latest.current.isLocked) return;
       event.preventDefault();
-      base = { ...camera.current };
+      base = readCamera();
       baseScale = event.scale || 1;
     };
     const onGestureChange = (event: SafariGestureEvent) => {
@@ -477,6 +552,7 @@ export function LiveCanvas({
           base,
           (event.scale || 1) / baseScale,
           inFrame(node, { x: event.clientX, y: event.clientY }),
+          latest.current.whole.scale,
         ),
       );
     };
@@ -504,7 +580,7 @@ export function LiveCanvas({
         node.removeEventListener(type, listener as EventListener);
       }
     };
-  }, [move]);
+  }, [move, readCamera]);
 
   const summary = `Canvas, ${node.cards.length} ${node.cards.length === 1 ? 'item' : 'items'}`;
   const glide = 'duration-300 ease-out motion-reduce:transition-none';
@@ -516,7 +592,7 @@ export function LiveCanvas({
       data-canvas={node.id}
       data-far="false"
       data-commenting={isCommenting}
-      className={`relative max-h-[70vh] w-full select-none overflow-hidden border border-edge-strong bg-ink transition-[background-position,background-size] ${glide} ${
+      className={`relative max-h-[70vh] w-full select-none overflow-clip border border-edge-strong bg-ink transition-[background-position,background-size] ${glide} ${
         isLocked ? '' : 'cursor-grab'
       }`}
       style={{
@@ -527,6 +603,8 @@ export function LiveCanvas({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onPointerLeave={onPointerLeave}
+      onLostPointerCapture={onPointerUp}
       onClickCapture={onClickCapture}
       onDoubleClick={onDoubleClick}
     >
@@ -534,6 +612,10 @@ export function LiveCanvas({
         ref={world}
         className={`absolute left-0 top-0 origin-top-left transition-transform ${glide}`}
         style={{ width: layout.width, height: layout.height }}
+        onFocusCapture={onBoardFocus}
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === 'transform') isGlidingNow.current = false;
+        }}
       >
         <Board
           node={node}
@@ -556,6 +638,7 @@ export function LiveCanvas({
           node={node}
           itemId={talk.itemId}
           isSheet={size.width < SHEET_WIDTH}
+          bottom={barRoom}
           isComposing={talk.isComposing}
           actions={app}
           onCompose={(isComposing) => setTalk((held) => held && { ...held, isComposing })}
@@ -568,78 +651,84 @@ export function LiveCanvas({
           onClose={() => setTalk(null)}
         />
       )}
-      {hasTalk && (
+      {hasBar && (
         <div
+          ref={toolbar}
           data-canvas-bar=""
-          role="group"
-          aria-label="Canvas comments"
-          className="absolute bottom-2 left-2 flex cursor-default items-center border border-edge-strong bg-ink"
+          className="pointer-events-none absolute inset-x-2 bottom-2 flex flex-wrap justify-between gap-1"
         >
-          <Button
-            variant="quiet"
-            density="compact"
-            pressEffect="none"
-            className="inline-flex min-w-11 items-center justify-center gap-1.5 tabular-nums"
-            aria-label={`Comments, ${node.threads.length} ${node.threads.length === 1 ? 'thread' : 'threads'}`}
-            title="Comments"
-            aria-pressed={talk !== null}
-            onClick={() => setTalk((held) => (held ? null : { itemId: null, isComposing: false }))}
-          >
-            <AppIcon name="chat" className="size-3" />
-            {node.threads.length}
-          </Button>
-          {canComment && (
-            <Button
-              variant="quiet"
-              density="compact"
-              pressEffect="none"
-              className="inline-flex min-w-11 items-center justify-center gap-1.5"
-              aria-label="Comment on items"
-              title="Show the comment control on each item"
-              aria-pressed={isCommenting}
-              onClick={() => setCommenting((held) => !held)}
+          {hasTalk && (
+            <div
+              role="group"
+              aria-label="Canvas comments"
+              className="pointer-events-auto flex max-w-full flex-wrap items-center border border-edge-strong bg-ink"
             >
-              <PlusIcon className="size-3" />
-              Comment
-            </Button>
+              <Button
+                variant="quiet"
+                density="compact"
+                pressEffect="none"
+                className="inline-flex min-w-11 items-center justify-center gap-1.5 tabular-nums"
+                aria-label={`Comments, ${node.threads.length} ${node.threads.length === 1 ? 'thread' : 'threads'}`}
+                title="Comments"
+                aria-pressed={talk !== null}
+                onClick={() => setTalk((held) => (held ? null : { itemId: null, isComposing: false }))}
+              >
+                <AppIcon name="chat" className="size-3" />
+                {node.threads.length}
+              </Button>
+              {canComment && (
+                <Button
+                  variant="quiet"
+                  density="compact"
+                  pressEffect="none"
+                  className="inline-flex min-w-11 items-center justify-center gap-1.5"
+                  aria-label="Comment on items"
+                  title="Show the comment control on each item"
+                  aria-pressed={isCommenting}
+                  onClick={() => setCommenting((held) => !held)}
+                >
+                  <PlusIcon className="size-3" />
+                  Comment
+                </Button>
+              )}
+            </div>
           )}
-        </div>
-      )}
-      {!isLocked && (
-        <div
-          data-canvas-bar=""
-          role="group"
-          aria-label="Canvas camera"
-          className="absolute bottom-2 right-2 flex cursor-default items-center border border-edge-strong bg-ink"
-        >
-          <IconButton label="Zoom out" title="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)}>
-            <MinusIcon className="size-3" />
-          </IconButton>
-          <Button
-            variant="quiet"
-            density="compact"
-            pressEffect="none"
-            className="min-w-11 tabular-nums"
-            aria-label="Full size"
-            title="Full size"
-            onClick={() => zoomBy(1 / camera.current.scale)}
-          >
-            <span ref={label}>100%</span>
-          </Button>
-          <IconButton label="Zoom in" title="Zoom in" onClick={() => zoomBy(ZOOM_STEP)}>
-            <PlusIcon className="size-3" />
-          </IconButton>
-          <Button
-            variant="quiet"
-            density="compact"
-            pressEffect="none"
-            className="min-w-11"
-            aria-label="Fit the board"
-            title="Fit the board"
-            onClick={fit}
-          >
-            Fit
-          </Button>
+          {!isLocked && (
+            <div
+              role="group"
+              aria-label="Canvas camera"
+              className="pointer-events-auto ml-auto flex max-w-full flex-wrap items-center border border-edge-strong bg-ink"
+            >
+              <IconButton label="Zoom out" title="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)}>
+                <MinusIcon className="size-3" />
+              </IconButton>
+              <Button
+                variant="quiet"
+                density="compact"
+                pressEffect="none"
+                className="min-w-11 tabular-nums"
+                aria-label="Full size"
+                title="Full size"
+                onClick={() => zoomBy()}
+              >
+                <span ref={label}>100%</span>
+              </Button>
+              <IconButton label="Zoom in" title="Zoom in" onClick={() => zoomBy(ZOOM_STEP)}>
+                <PlusIcon className="size-3" />
+              </IconButton>
+              <Button
+                variant="quiet"
+                density="compact"
+                pressEffect="none"
+                className="min-w-11"
+                aria-label="Fit the board"
+                title="Fit the board"
+                onClick={fit}
+              >
+                Fit
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

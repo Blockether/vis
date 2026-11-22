@@ -1328,7 +1328,11 @@ def _canvas_picture_lines(cards: Any, path: str, is_declaration: bool) -> list[s
         if not isinstance(raw, dict):
             continue
         at = f"{path}/{i}/picture"
-        if is_declaration and "bytes" in raw:
+        if is_declaration and (
+            alt_lines := _explain_lines("view", "canvas_picture_declaration", raw, prefix=at)
+        ):
+            lines.extend(alt_lines)
+        elif is_declaration and "bytes" in raw:
             lines.append(named_line(f"{at}/bytes", "read_only"))
         elif is_declaration or "data" in raw:
             if (reason := _picture_reason(raw)) is not None:

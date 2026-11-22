@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, userEvent } from 'storybook/test';
 import { useState } from 'react';
 
 import {
@@ -48,9 +49,8 @@ function Commented({ view: first }: { view: LiveView }) {
       const node = view.nodes.find((one) => one.id === nodeId);
       const held = node ? liveThreads(node).find((thread) => thread.id === threadId) : undefined;
       const id = threadId ?? `story-${view.seq + 1}`;
-      const text = body?.trim() ? body : undefined;
       const op =
-        !text && (held?.messages.length ?? 0) === 0
+        body === null && (held?.messages.length ?? 0) === 0
           ? { op: 'remove', node_id: nodeId, item_ids: [id] }
           : {
               op: 'thread',
@@ -60,7 +60,7 @@ function Commented({ view: first }: { view: LiveView }) {
                 item_id: held?.item_id ?? itemId,
                 messages: held?.messages ?? [],
                 ...(held?.is_resolved === undefined ? {} : { is_resolved: held.is_resolved }),
-                ...(text ? { draft: text } : {}),
+                ...(body !== null ? { draft: body } : {}),
               },
             };
       setView(applyLivePatch(view, { patch: { seq: view.seq + 1, ops: [op] } }));
@@ -73,6 +73,17 @@ function Commented({ view: first }: { view: LiveView }) {
 /** The threads of the items, with an app: a person comments, replies and removes a draft. */
 export const Comments: Story = {
   render: (args) => <Commented view={args.view as LiveView} />,
+};
+
+export const EmptyReply: Story = {
+  ...Comments,
+  play: async ({ canvas }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Comments, 2 threads' }));
+    await userEvent.click(canvas.getAllByRole('button', { name: 'Edit' })[0]);
+    await userEvent.clear(canvas.getByRole('textbox', { name: 'Reply' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Save' }));
+    await expect(await canvas.findByText('In the next message', { exact: true })).toBeVisible();
+  },
 };
 
 /** Each block of Markdown in an item: headings, lists, tasks, a table, code, a diagram and a quote. */

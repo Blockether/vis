@@ -5579,8 +5579,10 @@ class LiveEvent:
     `value` is the new value of a changed input; a secret input gives only
     `is_set`. `values` holds every input that a submit button collected.
     A Send in an app gives `submission_id`, the id of its receipt, and `comments`:
-    the thread messages that it posted, each with `node_id`, `thread_id`,
-    `message_id`, `body` and the `anchor` of a diff line, or of a range of lines
+    the replies that it collected, each with `node_id`, `thread_id`, `message_id`
+    and `body`. In a full canvas thread, `message_id` identifies the comment in
+    the receipt, not a message in the thread. A diff comment has the `anchor`
+    of a diff line, or of a range of lines
     from `start_line` to `line`, with `start_side` when it starts on the other side.
     A pressed app shortcut gives `action`, the id that the shortcut sends, and
     `key`, the key that the person pressed. A shortcut that names a node gives an
@@ -8780,7 +8782,7 @@ def _ui_canvas_picture(data_or_path, *, alt, media_type=None, fit=None):
     if fit is not None:
         picture["fit"] = fit
     return _CanvasValue(
-        "picture", _contracts.validate("view", "canvas_picture", picture)
+        "picture", _contracts.validate("view", "canvas_picture_declaration", picture)
     )
 
 

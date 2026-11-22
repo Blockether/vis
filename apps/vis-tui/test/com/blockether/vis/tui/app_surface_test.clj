@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.app-surface-test
   (:require [charred.api :as json]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.tui.app-model :as model]
             [com.blockether.vis.tui.capture :as cap]
@@ -86,7 +87,109 @@
                              :cards [{:id "a" :title "First"} {:id "b" :title "Second"}]}
                             opts)]))
 
+(defn- app-frame [v st cols rows]
+  (let [geom (surface/measure st cols rows v)
+        st (surface/reconcile st geom)
+        cursor (volatile! nil)
+        captured (cap/capture! {:cols cols :rows rows
+                                :paint! (fn [{:keys [g]}]
+                                          (vreset! cursor (#'surface/paint! g st geom)))})]
+    (expect (nil? (:error captured)))
+    {:geom geom :cells (last (:frames captured)) :cursor @cursor}))
+
+(defdescribe canvas-reading
+  (it "paints a static canvas once while idle and again when a patch arrives"
+      (let [current (atom (canvas-view {}))
+            polls (atom 0)
+            captured (cap/capture!
+                       {:cols 80 :rows 24
+                        :paint! (fn [{:keys [screen]}]
+                                  (with-redefs-fn {#'surface/read-view! (constantly nil)}
+                                    #(dlg/run-modal!
+                                       screen
+                                       (assoc (surface/component nil "app-1" @current screen)
+                                         :measure (fn [st cols rows]
+                                                    (surface/measure st cols rows @current))
+                                         :read-key (fn [_]
+                                                     (case (swap! polls inc)
+                                                       1 nil
+                                                       2 (do (swap! current assoc-in [:nodes 0 :cards 0 :title] "Patched") nil)
+                                                       3 (k KeyType/Escape)))))))})]
+        (expect (nil? (:error captured)))
+        (expect (= 2 (count (:frames captured))))
+        (expect (str/includes? (cap/frame-text captured 0) "First"))
+        (expect (str/includes? (cap/frame-text captured) "Patched"))))
+  (it "reads all rows of a long canvas card without moving to a control"
+      (let [v (dissoc (canvas-view {:cards [{:id "a" :title "One"
+                                            :text (str/join "\n\n" (map #(str "Line " %) (range 18)))}]})
+                      :submissions)
+            initial (surface/initial-state)
+            geom (surface/measure initial 32 10 v)
+            start (surface/reconcile initial geom)
+            press (fn [st key]
+                    (surface/reconcile (surface/handle-key st key geom {}) geom))
+            scroll-row (fn [st] (nth (:rows geom) (:scroll st)))
+            page (press start (k KeyType/PageDown))
+            end (press page (k KeyType/End))
+            down (press start (MouseAction. MouseActionType/SCROLL_DOWN 5 (TerminalPosition. 5 4)))]
+        (expect (< (:scroll start) (:scroll page)))
+        (expect (= (:selected start) (:selected page)))
+        (expect (= "  Line 17" (:text (scroll-row end))))
+        (expect (< (:scroll start) (:scroll down)))
+        (expect (= (:scroll start) (:scroll (press page (k KeyType/PageUp)))))))
+  (it "keeps canvas text inside its right rail in a narrow terminal"
+      (let [v (canvas-view {:cards [{:id "a" :title "One" :text "From the request to the release."}]})
+            {:keys [geom cells]} (app-frame v (surface/initial-state) 20 24)
+            {:keys [right]} (:bounds geom)
+            top (:content-top geom)]
+        (expect (every? #(= "│" (get-in cells [% right :ch]))
+                        (range top (+ top (:content-h geom)))))))
+  (it "keeps an open canvas draft visible and editable after a resize"
+      (let [v (canvas-view {})
+            {:keys [start press calls]} (harness v)
+            editor (-> start (press (k KeyType/Enter)) (press {:paste "Keep this draft"}))
+            {:keys [geom cells cursor]} (app-frame v editor 20 10)
+            {:keys [left bottom]} (:bounds geom)
+            row (some-> ^TerminalPosition cursor .getRow)
+            line (fn [y] (apply str (map :ch (nth cells y))))]
+        (expect (some? cursor))
+        (when row
+          (expect (< row (- bottom 2)))
+          (expect (re-find #"Keep" (line row))))
+        (expect (= "──" (subs (line bottom) (inc left) (+ left 3))))
+        (expect (re-find #"save" (line (:hint-row geom))))
+        (press editor (k \s true))
+        (expect (= "Keep this draft" (get-in @calls [0 1 :body]))))))
+
 (defdescribe canvas-navigation
+  (it "shows a refused canvas save and keeps the draft open"
+      (doseq [[body reason] [["{\"reason\":\"invalid\",\"message\":\"The thread is full\"}" "The thread is full"]
+                             ["{\"reason\":\"Canvas item not found\"}" "Canvas item not found"]]]
+        (let [v (canvas-view {})
+              events (atom [])]
+          (with-redefs-fn {#'surface/read-view! (constantly nil)
+                           #'vis/worker-future (fn [_ f] (f))
+                           #'vis/request! (fn [method _ request]
+                                            (swap! events conj [method (:body request)])
+                                            {:status 400 :body body})}
+              (fn []
+                (let [{:keys [init measure reconcile on-key]} (surface/component "session" (:id v) v)
+                      geom (measure init 80 24)
+                      start (reconcile init geom)
+                      press #(on-key %1 %2 geom)
+                      editor (-> start (press (k KeyType/Enter)) (press {:paste "Keep my reply"}))
+                      saving (press editor (k \s true))
+                      refused (reconcile saving (measure saving 80 24))
+                      {:keys [cells]} (app-frame v refused 80 24)
+                      frame (str/join "\n" (map #(apply str (map :ch %)) cells))
+                      compact (app-frame v refused 40 10)
+                      compact-text (str/join "\n" (map #(apply str (map :ch %)) (:cells compact)))]
+                  (expect (= [[:post {:action "draft" :node-id "board" :item-id "a"
+                                      :body "Keep my reply" :base-seq 4}]] @events))
+                  (expect (= (:editor editor) (:editor refused)))
+                  (expect (str/includes? frame reason))
+                  (expect (str/includes? compact-text reason))
+                  (expect (some? (:cursor compact)))))))))
   (it "opens each canvas thread and can start a new one"
       (let [v (canvas-view {:threads [{:id "one" :item-id "a" :messages [] :is-resolved true}
                                       {:id "two" :item-id "a" :messages [] :draft "unsent"}]})

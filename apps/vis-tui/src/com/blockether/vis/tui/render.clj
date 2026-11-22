@@ -3741,7 +3741,10 @@
 (defn paint-markdown-band-row!
   "Paint one Markdown entry in a band with the transcript's block and link styles."
   [^TextGraphics g x y width viewport-top {:keys [line meta]}]
-  (let [marker
+  (let [line
+        (clipped-line line (long width) (long width))
+
+        marker
         (when (seq line) (subs line 0 1))
 
         row

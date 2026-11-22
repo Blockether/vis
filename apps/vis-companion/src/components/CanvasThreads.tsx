@@ -8,11 +8,17 @@
 import { useState, type ReactNode } from 'react';
 
 import type { AppActionStatus } from '../lib/app-actions';
-import { CANVAS_MESSAGE_CHARS } from '../lib/canvas';
+import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 import type { LiveCanvasCard, LiveCanvasNode, LiveMessage, LiveThread } from '../lib/live-view';
 import { ActionStatus, DraftEditor, type AppNodeActions } from './AppNodes';
 import { AppIcon, CheckIcon, PencilIcon, PlusIcon, TrashIcon } from './icons';
 import { Button, CloseButton, IconButton } from './ui';
+
+const draftLimit = viewSchema.$defs.component.oneOf
+  .find((branch) => branch.properties.type?.const === 'canvas')
+  ?.properties.threads?.items?.allOf?.find((part) => part.properties?.draft)
+  ?.properties?.draft?.maxLength;
+if (draftLimit === undefined) throw new Error('view.json has no canvas draft limit');
 
 /** The first letters of the first two words of a name. */
 function initials(name: string): string {
@@ -156,7 +162,8 @@ function Thread({
               saved={draft ?? ''}
               placeholder={count > 0 ? 'Add a note (optional)…' : undefined}
               isBlankAllowed={count > 0}
-              maxLength={CANVAS_MESSAGE_CHARS}
+              maxLength={draftLimit}
+              showFailureReason
               onSave={save}
               onClose={() => setEditing(false)}
             />
@@ -221,7 +228,8 @@ function ItemThreads({
             label={`Comment on ${item.title}`}
             saved=""
             submitLabel="Comment"
-            maxLength={CANVAS_MESSAGE_CHARS}
+            maxLength={draftLimit}
+            showFailureReason
             onSave={(body) => actions!.draft(node.id, { itemId: item.id, body })}
             onClose={() => onCompose(false)}
           />
@@ -246,6 +254,7 @@ export function CanvasThreads({
   node,
   itemId,
   isSheet,
+  bottom,
   isComposing,
   actions,
   onCompose,
@@ -256,6 +265,7 @@ export function CanvasThreads({
   itemId: string | null;
   /** A narrow board shows the panel as a sheet over its lower part. */
   isSheet: boolean;
+  bottom: number;
   /** The editor of a new thread is open. */
   isComposing: boolean;
   actions?: AppNodeActions;
@@ -280,8 +290,9 @@ export function CanvasThreads({
       data-canvas-threads={itemId ?? ''}
       aria-label={item ? `Comments on ${item.title}` : 'Comments on the board'}
       className={`absolute z-20 flex cursor-default select-text flex-col border border-dialog-edge bg-panel text-left shadow-float ${
-        isSheet ? 'inset-x-2 bottom-12 max-h-[62%]' : 'bottom-12 right-2 top-2 w-80 max-w-[calc(100%-1rem)]'
+        isSheet ? 'inset-x-2 max-h-[62%]' : 'right-2 top-2 w-80 max-w-[calc(100%-1rem)]'
       }`}
+      style={{ bottom, maxHeight: isSheet ? `min(62%, calc(100% - ${bottom + 8}px))` : undefined }}
       onKeyDown={(event) => {
         if (event.key === 'Escape') onClose();
       }}

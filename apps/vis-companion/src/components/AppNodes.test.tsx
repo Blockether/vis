@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppActionResult } from '../lib/app-actions';
 import type { LiveDiffNode } from '../lib/live-view';
-import { DiffNodeView, type AppNodeActions } from './AppNodes';
+import { DiffNodeView, DraftEditor, type AppNodeActions } from './AppNodes';
 
 afterEach(cleanup);
 
@@ -47,6 +47,30 @@ function openLine(button: HTMLElement) {
   fireEvent.click(button);
   fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
 }
+
+it.each([
+  ['\u00a0', '\u00a0'],
+  ['\u001c', ''],
+])('saves a reply of %j as %j under the gateway whitespace rules', async (body, expected) => {
+  const save = vi.fn(async (): Promise<AppActionResult> => ({ status: 'saved', seq: 1 }));
+  render(<DraftEditor label="Reply" saved="" memoryId="reply-whitespace" isBlankAllowed onSave={save} onClose={() => {}} />);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Reply' }), { target: { value: body } });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save' })));
+  expect(save).toHaveBeenCalledExactlyOnceWith(expected);
+});
+
+it('saves all emoji at the draft limit and refuses a longer draft', async () => {
+  const save = vi.fn(async (): Promise<AppActionResult> => ({ status: 'saved', seq: 1 }));
+  const body = '😀'.repeat(4000);
+  render(<DraftEditor label="Reply" saved="" memoryId="emoji-limit" maxLength={4000} onSave={save} onClose={() => {}} />);
+  const editor = screen.getByRole('textbox', { name: 'Reply' });
+  fireEvent.change(editor, { target: { value: `${body}a` } });
+  fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true });
+  expect(save).not.toHaveBeenCalled();
+  fireEvent.change(editor, { target: { value: body } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith(body));
+});
 
 describe('DiffNodeView', () => {
   it('opens an editor on the line that a keyboard activates, on that line side', async () => {

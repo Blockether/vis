@@ -251,7 +251,7 @@ function TalkMark({
 }) {
   // The mark grows against the camera around the corner of its item.
   const reach =
-    'origin-[calc(100%-0.625rem)_0.625rem] scale-[var(--cv-mark,1)] after:absolute after:-inset-3 after:content-[""] mouse:after:content-none';
+    'origin-[calc(100%-0.625rem)_0.625rem] scale-[var(--cv-mark,1)] after:absolute after:left-1/2 after:top-1/2 after:min-h-full after:min-w-full after:w-[calc(44px*var(--cv-hit,1))] after:h-[calc(44px*var(--cv-hit,1))] after:-translate-x-1/2 after:-translate-y-1/2 mouse:after:w-[calc(24px*var(--cv-hit,1))] mouse:after:h-[calc(24px*var(--cv-hit,1))]';
   const face = isOpen
     ? 'border-accent bg-accent text-accent-foreground'
     : 'border-[var(--cv-edge)] bg-ink text-[color:var(--cv-ink)] hover:border-accent';

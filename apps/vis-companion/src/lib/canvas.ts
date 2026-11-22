@@ -6,18 +6,20 @@ import type { LiveCanvasCard, LiveCanvasEdge } from './live-view';
 import { clamp, type Point, type Size } from './zoom-pan';
 
 interface CanvasDefs {
-  component: { oneOf: { properties: Record<string, { const?: unknown; maximum?: number }> }[] };
+  component: { oneOf: { properties: Record<string, { const?: unknown; minimum?: number; maximum?: number }> }[] };
 }
 
 const CANVAS_BRANCH = (viewSchema.$defs as unknown as CanvasDefs).component.oneOf.find(
   (branch) => branch.properties.type?.const === 'canvas',
 );
-if (CANVAS_BRANCH?.properties.zoom?.maximum === undefined) {
+const ZOOM = CANVAS_BRANCH?.properties.zoom;
+if (!CANVAS_BRANCH || ZOOM?.minimum === undefined || ZOOM.maximum === undefined) {
   throw new Error('view.json has no canvas component');
 }
 
 /** The largest scale of a board (`view.json` canvas `zoom`). 1 is a card at full size. */
-export const CANVAS_MAX_ZOOM = CANVAS_BRANCH.properties.zoom.maximum;
+export const CANVAS_MAX_ZOOM = ZOOM.maximum;
+const CANVAS_OWNER_MIN_ZOOM = ZOOM.minimum;
 interface CanvasThreadBounds {
   properties: {
     threads: {
@@ -35,8 +37,8 @@ if (!THREAD_BOUNDS) throw new Error('view.json has no bounds for a canvas thread
 
 /** The longest message or draft of a thread on a board (`view.json` canvas `threads`). */
 export const CANVAS_MESSAGE_CHARS = THREAD_BOUNDS.messages.items.properties.body.maxLength;
-/** The smallest scale: a board of the largest size still fits in a phone. */
-export const CANVAS_MIN_ZOOM = 0.1;
+/** The default manual zoom limit. A large board can zoom out farther to fit. */
+const MANUAL_MIN_ZOOM = 0.1;
 /** Below this scale the text of a card is too small to read: a card shows its title only. */
 export const CANVAS_FAR_ZOOM = 0.55;
 
@@ -1025,6 +1027,62 @@ function outlineOf(item: Item): Segment[] {
   return outline(b.width, b.height, card.kind === 'shape' ? card.shape : 'rectangle');
 }
 
+/** A cheap way around cards when the detailed searches cannot find a path. */
+function corridorRoute(direct: Route, from: Port, to: Port, columns: Rect[], rows: Rect[]): Route | undefined {
+  const a = direct.start;
+  const b = direct.parts.at(-1)!.to;
+  const first = shift(a, from.direction, DETOUR_LEAD);
+  const last = shift(b, to.direction, DETOUR_LEAD);
+  const ports = [first, last];
+  const source = bounds(from.item.box);
+  const target = bounds(to.item.box);
+  const same = (a: Rect, b: Rect) => a.left === b.left && a.right === b.right && a.top === b.top && a.bottom === b.bottom;
+  if (rows.some((r) => (hitsLine(a, first, r) && !same(r, source)) || (hitsLine(last, b, r) && !same(r, target)))) return undefined;
+
+  function corridor(axis: Axis, rectangles: Rect[]): Point[] | undefined {
+    const cross: Axis = axis === 'x' ? 'y' : 'x';
+    const [lo, hi, crossLo, crossHi] = axis === 'x'
+      ? ['left', 'right', 'top', 'bottom'] as const : ['top', 'bottom', 'left', 'right'] as const;
+    let min = Math.max(from.direction[axis] > 0 ? first[axis] : -Infinity, to.direction[axis] > 0 ? last[axis] : -Infinity);
+    let max = Math.min(from.direction[axis] < 0 ? first[axis] : Infinity, to.direction[axis] < 0 ? last[axis] : Infinity);
+    for (const r of rectangles) for (const port of ports) {
+      if (r[crossLo] >= port[cross] || r[crossHi] <= port[cross]) continue;
+      if (r[hi] <= port[axis]) min = Math.max(min, r[hi]);
+      else if (r[lo] >= port[axis]) max = Math.min(max, r[lo]);
+      else return undefined;
+    }
+    if (min > max) return undefined;
+    const preferred = (first[axis] + last[axis]) / 2;
+    const crossMin = Math.min(first[cross], last[cross]);
+    const crossMax = Math.max(first[cross], last[cross]);
+    let at: number | undefined;
+    function check(low: number, high: number) {
+      if (low > high) return;
+      const place = clamp(preferred, low, high);
+      if (at === undefined || Math.abs(place - preferred) < Math.abs(at - preferred)) at = place;
+    }
+    // The sides are in order. Skip the solid spans to find the nearest free rail.
+    for (const r of rectangles) {
+      if (r[lo] >= max) break;
+      if (r[hi] <= min || r[crossLo] >= crossMax || r[crossHi] <= crossMin) continue;
+      check(min, r[lo]);
+      min = r[hi];
+      if (min > max) break;
+    }
+    check(min, max);
+    if (at === undefined) return undefined;
+    const rail = at;
+    const turn = (p: Point) => axis === 'x' ? xy(rail, p.y) : xy(p.x, rail);
+    return [a, first, turn(first), turn(last), last, b];
+  }
+
+  const cost = (way: Point[]) => way.slice(1).reduce((length, p, i) => length + distance(p, way[i]), 0);
+  const x = corridor('x', columns);
+  const y = corridor('y', rows);
+  const best = x && y ? (cost(x) <= cost(y) ? x : y) : x ?? y;
+  return best && squareWay(best);
+}
+
 function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boolean) {
   const groups = new Map<Item, Map<Side, Port[]>>();
   function add(item: Item, side: Side, other: Item): Port {
@@ -1152,13 +1210,20 @@ function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boole
     one.around = detour(one.edge, one.from, one.to, one.obstacles, used, rescue, true);
     one.around?.lanes.forEach(used.add);
   }
-  for (const { id, from, to, edge, direct, around } of routed) {
-    const path = around ?? direct;
-    const runs = around ? straightRuns(around.route) : [];
+  // Use narrow corridors between card bodies if the search could not keep the full
+  // clearance or avoid other frames. A frame is a group, not a card to read.
+  let rows: Rect[] | undefined;
+  let columns: Rect[] | undefined;
+  for (const { id, from, to, edge, direct, around, isClear } of routed) {
+    const corridor = !around && !isClear && edge.route === 'elbow' && corridorRoute(direct.route, from, to,
+      columns ??= [...labelObstacles].sort((a, b) => a.left - b.left),
+      rows ??= [...labelObstacles].sort((a, b) => a.top - b.top));
+    const path = around ?? (corridor ? { ...direct, route: corridor } : direct);
+    const runs = around || corridor ? straightRuns(path.route) : [];
     let middle = runs[0]?.middle ?? routePoint(path.route);
     if (edge.label) {
       const free = (p: Point) => !labelObstacles.some((r) => inside(p, r)) && !labels.some((q) => distance(p, q) < 1);
-      if (around && !free(middle)) {
+      if (runs.length && !free(middle)) {
         for (const { from, to } of runs) {
           const point = [0.5, 0.4, 0.6, 0.3, 0.7].map((at) => between(from, to, at)).find(free);
           if (point) { middle = point; break; }
@@ -1319,7 +1384,7 @@ function fitScale(content: Size, frame: Size): number {
     (frame.width - 2 * CANVAS_PAD) / content.width,
     (frame.height - 2 * CANVAS_PAD) / content.height,
   );
-  return clamp(scale, CANVAS_MIN_ZOOM, 1);
+  return clamp(Number.isNaN(scale) ? 1 : scale, Number.EPSILON, 1);
 }
 
 /**
@@ -1342,7 +1407,7 @@ export function canvasTarget(
     width: layout.width,
     height: layout.height,
   };
-  const scale = zoom > 0 ? clamp(zoom, CANVAS_MIN_ZOOM, CANVAS_MAX_ZOOM) : fitScale(box, frame);
+  const scale = zoom > 0 ? clamp(zoom, CANVAS_OWNER_MIN_ZOOM, CANVAS_MAX_ZOOM) : fitScale(box, frame);
   return {
     x: Math.round((frame.width - box.width * scale) / 2 - box.x * scale),
     y: Math.round((frame.height - box.height * scale) / 2 - box.y * scale),
@@ -1351,8 +1416,10 @@ export function canvasTarget(
 }
 
 /** The camera scaled about `point` of the frame: what is under the point stays there. */
-export function canvasZoomedAt(camera: CanvasCamera, factor: number, point: Point): CanvasCamera {
-  const scale = clamp(camera.scale * factor, CANVAS_MIN_ZOOM, CANVAS_MAX_ZOOM);
+export function canvasZoomedAt(camera: CanvasCamera, factor: number, point: Point, fitted = 1): CanvasCamera {
+  // A manual zoom out does not enlarge a board with a small owner scale.
+  const floor = Math.min(MANUAL_MIN_ZOOM, fitted, camera.scale);
+  const scale = clamp(camera.scale * factor, floor, CANVAS_MAX_ZOOM);
   const applied = scale / camera.scale;
   return {
     x: point.x - (point.x - camera.x) * applied,
@@ -1367,7 +1434,7 @@ export function canvasZoomedAt(camera: CanvasCamera, factor: number, point: Poin
  */
 export function canvasFrameHeight(layout: CanvasLayout, width: number, maxHeight: number): number {
   if (width <= 0 || layout.width <= 0) return CANVAS_MIN_HEIGHT;
-  const scale = clamp((width - 2 * CANVAS_PAD) / layout.width, CANVAS_MIN_ZOOM, 1);
+  const scale = fitScale(layout, { width, height: Infinity });
   return clamp(
     Math.ceil(layout.height * scale + 2 * CANVAS_PAD),
     CANVAS_MIN_HEIGHT,

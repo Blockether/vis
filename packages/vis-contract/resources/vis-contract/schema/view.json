@@ -6093,6 +6093,12 @@
         "media_type"
       ]
     },
+    "canvas_picture_declaration": {
+      "allOf": [
+        {"$ref": "#/$defs/canvas_picture"},
+        {"properties": {"alt": {"$ref": "common.json#/$defs/non_blank_string"}}}
+      ]
+    },
     "canvas_media": {
       "description": "A video or a sound in an item, by its web address. A surface loads nothing until the person starts it.",
       "type": "object",

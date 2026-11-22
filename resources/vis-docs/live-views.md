@@ -588,8 +588,9 @@ When the board is far away, only the titles of the items show.
 ### Add a picture or recording to a canvas
 
 To show an image in a card, change `release.png` to the path of your PNG file. You can also pass
-image bytes to `ui.canvas.picture`. Use `alt` to describe what the image shows. A recording uses
-an HTTP or HTTPS URL. The Companion app loads the recording when a person starts playback.
+image bytes to `ui.canvas.picture`. Give `alt` a description of what the image shows. An empty
+or blank description is not valid. A recording uses an HTTP or HTTPS URL. The Companion app
+loads the recording when a person starts playback.
 
 ```python
 canvas.card(
@@ -652,7 +653,11 @@ to remove a thread. Removing an item also removes its threads. Replacing an item
 ### Canvas options
 
 A board holds up to 200 items and 100 threads. Each item holds up to 16 incoming arrows and 8
-badges. Each thread holds up to 50 messages.
+badges. Each thread holds up to 50 messages. When a thread is full, you cannot save a new reply
+in that thread. You can still add its messages to your next session message without a note.
+
+If the thread fills after you save a reply, Send includes the reply in its receipt and gives it
+to the app. The reply does not appear in the full thread.
 
 IDs, the board label, item titles, and author names have a limit of 200 characters. Item details
 and arrow labels have a limit of 80 characters. Badge text has a limit of 40 characters. Item text
@@ -1001,8 +1006,9 @@ The event has no text. Read the draft from `app.state()`.
 ### Answer a Send
 
 Each Send gives your code one `submit` event. `event.submission_id` names its receipt, and
-`event.comments` holds the messages that it posted. Each comment has `node_id`, `thread_id`,
-`message_id`, and `body`. A comment on a diff line also has `anchor`.
+`event.comments` holds the replies that Send collected. Each comment has `node_id`, `thread_id`,
+`message_id`, and `body`. A comment on a diff line also has `anchor`. For a full canvas thread,
+`message_id` identifies the comment in the receipt, not a message in the thread.
 
 ```python
 def answer_sends(app):

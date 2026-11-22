@@ -37,6 +37,7 @@ import {
 import { useMediaMatch } from '../lib/fit-rows';
 import {
   LIVE_MESSAGE_CHARS,
+  isBlankDraft,
   type LiveDiffNode,
   type LiveMessage,
   type LiveNode,
@@ -159,6 +160,7 @@ interface DraftEditorProps {
   isBlankAllowed?: boolean;
   /** The longest text. A thread on a board holds less than a thread of a diff. */
   maxLength?: number;
+  showFailureReason?: boolean;
   onSave: (body: string) => Promise<AppActionResult>;
   onClose: () => void;
 }
@@ -176,6 +178,7 @@ export function DraftEditor({
   placeholder = 'Add a comment…',
   isBlankAllowed = false,
   maxLength = LIVE_MESSAGE_CHARS,
+  showFailureReason = false,
   onSave,
   onClose,
 }: DraftEditorProps) {
@@ -184,24 +187,27 @@ export function DraftEditor({
     setText(saved);
     onClose();
   };
-  const [status, setStatus] = useState<AppActionStatus>('idle');
+  const [outcome, setOutcome] = useState<Pick<AppActionResult, 'status' | 'message'>>({ status: 'idle' });
+  const { status } = outcome;
+  const failureReason = showFailureReason && status === 'failed' ? outcome.message : undefined;
   const isBusy = status === 'saving';
   const saving = useRef(false);
-  const isBlank = text.trim() === '';
+  const isBlank = isBlankDraft(text);
+  const isTooLong = text.length > maxLength && Array.from(text).length > maxLength;
   const save = async () => {
-    if (saving.current) return;
+    if (saving.current || isTooLong) return;
     if (isBlank && saved === '' && !isBlankAllowed) {
       onClose();
       return;
     }
     saving.current = true;
-    setStatus('saving');
+    setOutcome({ status: 'saving' });
     try {
       const result = await onSave(isBlank ? '' : text);
-      setStatus(result.status);
+      setOutcome(result);
       if (result.status === 'saved') close();
     } catch {
-      setStatus('failed');
+      setOutcome({ status: 'failed' });
     } finally {
       saving.current = false;
     }
@@ -227,13 +233,13 @@ export function DraftEditor({
         placeholder={placeholder}
         className={TEXTAREA}
         value={text}
-        maxLength={maxLength}
+        aria-invalid={isTooLong || Boolean(failureReason) || undefined}
         aria-label={label}
         aria-keyshortcuts="Meta+Enter Control+Enter Escape"
         disabled={isBusy}
         onChange={(event) => {
           setText(event.target.value);
-          if (status !== 'saving') setStatus('idle');
+          if (status !== 'saving') setOutcome({ status: 'idle' });
         }}
         onKeyDown={(event) => {
           if (
@@ -241,6 +247,7 @@ export function DraftEditor({
             event.key === 'Enter' &&
             (event.metaKey || event.ctrlKey) &&
             (!isBlank || isBlankAllowed) &&
+            !isTooLong &&
             !saving.current
           ) {
             event.preventDefault();
@@ -248,6 +255,12 @@ export function DraftEditor({
           }
         }}
       />
+      {isTooLong && (
+        <p role="status" className="text-err-ink">Use at most {maxLength} characters.</p>
+      )}
+      {failureReason && (
+        <p role="alert" className="break-words font-mono text-ui text-err-ink">{failureReason}</p>
+      )}
       <div className="diff-draft-actions flex flex-wrap items-center gap-2">
         <span className="diff-submit-hint">⌘/Ctrl Enter to save</span>
         <Button type="button" variant="secondary" onClick={close}>
@@ -256,11 +269,11 @@ export function DraftEditor({
         <Button
           type="submit"
           variant="primary"
-          disabled={isBusy || (submitLabel === 'Comment' && isBlank)}
+          disabled={isBusy || isTooLong || (submitLabel === 'Comment' && isBlank)}
         >
           {isRetryable(status) ? 'Retry' : submitLabel}
         </Button>
-        <ActionStatus status={status} />
+        {!failureReason && <ActionStatus status={status} />}
       </div>
     </form>
   );

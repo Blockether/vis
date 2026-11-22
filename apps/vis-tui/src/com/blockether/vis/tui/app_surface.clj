@@ -26,6 +26,7 @@
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.graphics TextGraphics]
+           [com.googlecode.lanterna.gui2 ScrollBar]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]))
 
@@ -108,7 +109,7 @@
                          cells
                          (assoc :cells found))) seen]))
             [[] #{}]
-            (lv/plan (cond-> (assoc (lv/opened (assoc view :nodes [node] :description nil))
+            (lv/layout-plan (cond-> (assoc (lv/opened (assoc view :nodes [node] :description nil))
                                     :disclosures disclosures)
                        (= :canvas (:type node))
                        (lv/expanded (:id node)))
@@ -812,9 +813,22 @@
                  #(character-key state (.getCharacter ^KeyStroke key) geom effects)}]
     ((get actions kt (constantly state)))))
 
+(defn- read-rows
+  "Scroll the list without moving its control cursor."
+  [state {:keys [rows list-h]} delta]
+  (assoc state
+    :reading? true
+    :scroll (p/clamp (+ (long (:scroll state)) (long delta)) 0
+                     (max 0 (- (count rows) (long list-h))))))
+
+(defn- cursor-in-view?
+  [state geom]
+  (let [scroll (long (:scroll state))]
+    (<= scroll (long (:selected state)) (dec (+ scroll (long (:list-h geom)))))))
+
 (defn- surface-key
   "The surface's own meaning of key, without app shortcuts."
-  [state ^KeyStroke key {:keys [rows list-h] :as geom} effects]
+  [state ^KeyStroke key {:keys [rows list-h canvas?] :as geom} effects]
   (let [kt
         (.getKeyType key)
 
@@ -827,7 +841,10 @@
          KeyType/End (count rows)}]
 
     (cond (.isCtrlDown key) state
-          (contains? steps kt) (move geom state (get steps kt))
+          (and canvas? (#{KeyType/PageUp KeyType/PageDown KeyType/Home KeyType/End} kt))
+          (read-rows state geom (get steps kt))
+          (and (:reading? state) (= KeyType/Enter kt) (not (cursor-in-view? state geom))) state
+          (contains? steps kt) (dissoc (move geom state (get steps kt)) :reading?)
           :else (row-key state kt key geom effects))))
 
 (defn log-chip
@@ -909,20 +926,25 @@
 
 (defn- mouse-key
   [state ^MouseAction key geom effects]
-  (if (= MouseActionType/CLICK_RELEASE (.getActionType key))
-    (let [pos (.getPosition key)]
-      (if-let [i (mouse-target geom (:scroll state) (.getColumn pos) (.getRow pos))]
-        (let [row (nth (:rows geom) i)
-              midpoint (+ (long (get-in geom [:bounds :left]))
-                          (quot (long (get-in geom [:bounds :inner-w])) 2))
-              selected (assoc state
-                         :selected i
-                         :cell nil
-                         :diff-side (if (< (.getColumn pos) midpoint) :left :right))]
+  (let [action (.getActionType key)
+        pos (.getPosition key)
+        wheel (when (and (:canvas? geom) (not (or (:editor state) (:key-menu state) (:search state))))
+                (ScrollBar/wheelStep key))]
+    (cond wheel (read-rows state geom wheel)
 
-          (if (= :file (:kind row)) (enter-row selected geom effects) selected))
-        state))
-    state))
+          (= MouseActionType/CLICK_RELEASE action)
+          (if-let [i (mouse-target geom (:scroll state) (.getColumn pos) (.getRow pos))]
+            (let [row (nth (:rows geom) i)
+                  midpoint (+ (long (get-in geom [:bounds :left]))
+                              (quot (long (get-in geom [:bounds :inner-w])) 2))
+                  selected (assoc (dissoc state :reading?)
+                             :selected i
+                             :cell nil
+                             :diff-side (if (< (.getColumn pos) midpoint) :left :right))]
+              (if (= :file (:kind row)) (enter-row selected geom effects) selected))
+            state)
+
+          :else state)))
 
 (defn- canvas-focus
   [row]
@@ -957,7 +979,10 @@
 (defn saved
   "The Save state after the gateway answered `outcome`. Saved only with an ack seq."
   [save outcome]
-  (let [st (model/outcome-state outcome)]
+  (let [st (model/outcome-state outcome)
+        detail (when (= 400 (:http-status outcome))
+                 (or (not-empty (:message outcome))
+                     (when-not (= "invalid" (:reason outcome)) (not-empty (:reason outcome)))))]
     (if (and (= :saved st) (some? (:seq outcome)))
       (assoc save
         :state :saved
@@ -965,7 +990,7 @@
         :thread-id (:thread-id outcome))
       (assoc save
         :state (if (= :saved st) :failed st)
-        :message (:message outcome)))))
+        :message detail))))
 
 (defn sent
   "The Send state after the gateway answered `outcome`. The key stays until a
@@ -997,7 +1022,7 @@
                  :saved
                  (str "Saved · state " (:seq save))
 
-                 (get model/save-label (:state save) "Save failed"))
+                 (or (:message save) (get model/save-label (:state save) "Save failed")))
                (case (:state send)
                  nil
                  nil
@@ -1696,47 +1721,75 @@
   ^long [^long rows-count]
   (max 8 (- rows-count (if (< rows-count 36) 8 12))))
 
+(defonce ^:private surface-plan-cache (atom nil))
+
+(defn- surface-plan
+  [view width state]
+  (let [opts (select-keys state [:unified? :wrap? :files? :hide-tests? :hide-whitespace? :disclosures])
+        inputs [width (:folded state) opts @t/theme-revision]
+        cached @surface-plan-cache]
+    (if (and (identical? view (:source cached)) (= inputs (:inputs cached)))
+      (:plan cached)
+      (let [view* (auto-keyed view)
+            rows (surface-rows view* width (:folded state) opts)
+            stops (selectable-indexes rows)
+            anchors (into {} (keep (fn [idx] (when-let [anchor (canvas-focus (nth rows idx))]
+                                              [anchor idx]))) stops)
+            items (reduce-kv (fn [acc anchor idx]
+                               (update acc (subvec anchor 0 2) (fnil min idx) idx))
+                             {} anchors)
+            nodes (tree-seq #(seq (:children %)) :children {:children (:nodes view*)})
+            ;; Timelines measure their live bars on each pass.
+            static? (not-any? #(or (#{:timeline :scene} (:type %))
+                                  (and (= :spinner (:type %)) (:is-active %))) nodes)
+            plan {:view view* :rows rows :stops stops :anchors anchors :items items
+                  :canvas? (boolean (seq anchors)) :static? static? :legend (shortcut-legend view*)
+                  :paint-version (Object.)}]
+        (when static?
+          (reset! surface-plan-cache {:source view :inputs inputs :plan plan}))
+        plan))))
+
 (defn- geom-in
   "The surface geometry for `state` in the box `bounds`."
   [state cols rows-count content-w bounds view]
   (let [{:keys [content-top content-h hint-row]}
         (dlg/dialog-layout bounds)
 
-        view
-        (auto-keyed view)
-
         width
-        (max 20 (- (long (:inner-w bounds)) 3))
+        (max 1 (- (long (:inner-w bounds)) 3))
 
-        rows
-        (surface-rows view
-                      width
-                      (:folded state)
-                      (select-keys state [:unified? :wrap? :files? :hide-tests? :hide-whitespace? :disclosures]))
+        {:keys [view] :as plan}
+        (surface-plan view width state)
 
-        editor-rows
-        (if (:editor state) (+ 2 (long editor-h)) 0)
+        content-h
+        (long content-h)
 
-        legend
-        (shortcut-legend view)
+        status?
+        (and (> content-h 1)
+             (or (not (:editor state)) (> content-h 2) (get-in state [:save :message])))
 
-        lines
-        []]
+        editor-title?
+        (and (:editor state) (> content-h 3))
 
-    {:cols cols
-     :rows-count rows-count
-     :content-w content-w
-     :bounds bounds
-     :content-top content-top
-     :content-h content-h
-     :hint-row hint-row
-     :view view
-     :rows rows
-     :editor-rows editor-rows
-     :legend legend
-     :legend-lines lines
-     :log-chip (log-chip bounds view)
-     :list-h (max 1 (- (long content-h) 1 (count lines) editor-rows))}))
+        field-h
+        (if (:editor state)
+          (min (long editor-h) (- content-h (if editor-title? 1 0) (if status? 1 0)
+                                             (if (> content-h (if status? 2 1)) 1 0)))
+          0)]
+
+    (assoc plan
+      :cols cols
+      :rows-count rows-count
+      :content-w content-w
+      :bounds bounds
+      :content-top content-top
+      :content-h content-h
+      :hint-row hint-row
+      :status? status?
+      :editor-title? editor-title?
+      :field-h field-h
+      :log-chip (log-chip bounds view)
+      :list-h (- content-h (if status? 1 0) (if editor-title? 1 0) field-h))))
 
 (defn measure
   "The surface geometry for `state` in a `cols`x`rows` terminal."
@@ -1781,24 +1834,19 @@
 
 (defn reconcile
   "Keep the cursor on a stop and in view."
-  [state {:keys [rows list-h view]}]
+  [state {:keys [rows list-h view canvas? anchors items stops]}]
   (let [stops
-        (selectable-indexes rows)
+        (or stops (selectable-indexes rows))
 
         selected
         (long (or (when-let [anchor (:canvas-focus state)]
-                    (or (some #(when (= anchor (canvas-focus (nth rows %))) %) stops)
-                        (let [[node-id item-id] anchor]
-                          (some (fn [i]
-                                  (let [[node item] (canvas-focus (nth rows i))]
-                                    (when (and (= node-id node) (= item-id item)) i)))
-                                stops))))
+                    (or (get anchors anchor) (get items (subvec anchor 0 2))))
                   (:selected state)))
 
         selected
         (long (cond (empty? stops) 0
-                    (some #{selected} stops) selected
-                    :else (or (last (filter #(<= (long %) selected) stops)) (first stops))))
+                    (:is-selectable (nth rows selected nil)) selected
+                    :else (or (last (take-while #(<= (long %) selected) stops)) (first stops))))
 
         cells
         (:cells (nth rows selected nil))
@@ -1810,10 +1858,11 @@
         (long list-h)
 
         scroll
-        (-> (long (:scroll state))
-            (min selected)
-            (max (inc (- selected list-h)))
-            (p/clamp 0 (max 0 (- (count rows) list-h))))]
+        (let [scroll (long (:scroll state))]
+          (p/clamp (if (and canvas? (:reading? state))
+                     scroll
+                     (max (min scroll selected) (inc (- selected list-h))))
+                   0 (max 0 (- (count rows) list-h))))]
 
     (cond-> (assoc state
               :selected selected
@@ -1896,9 +1945,18 @@
 
 (defn- paint-chrome! [g geom] (paint-frame-chrome! g geom) (paint-log-chip! g geom))
 
+(defn canvas-moving?
+  "True if a marker is visible in the app list."
+  [state {:keys [view rows list-h canvas?]}]
+  (when (and canvas? (not (:is-closed view)) (not (:key-menu state)))
+    (let [start (min (count rows) (long (:scroll state)))
+          end (min (count rows) (+ start (long list-h)))]
+      (some #(lv/canvas-motion-row? (:entry %)) (subvec rows start end)))))
+
 (defn- paint-body-rows!
   [g state {:keys [bounds content-top rows list-h view]}]
-  (let [{:keys [left inner-w]} bounds]
+  (let [{:keys [left inner-w]} bounds
+        step (when-not (:is-closed view) (lv/canvas-step (System/currentTimeMillis)))]
     (doseq [idx (range (long (:scroll state))
                        (min (count rows) (+ (long (:scroll state)) (long list-h))))]
       (paint-row! g
@@ -1909,7 +1967,10 @@
                   (= idx (:selected state))
                   (:cell state)
                   (:hscroll state)
-                  (assoc (nth rows idx) :selected-side (get state :diff-side :right))))))
+                  (let [row (assoc (nth rows idx) :selected-side (get state :diff-side :right))]
+                     (if (and step (lv/canvas-motion-row? (:entry row)))
+                       (update row :entry lv/animate-canvas-row step)
+                       row))))))
 
 (defn- paint-body!
   [g state {:keys [bounds content-top content-h rows] :as geom}]
@@ -1924,23 +1985,22 @@
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) top inner-w content-h)
-    (if (empty? rows)
-      (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-          (p/put-str! g (+ left 2) top "This app shows nothing yet"))
-      (paint-body-rows! g state geom))))
-
-(defn- legend-height [lines] (count lines))
+    (when (pos? (long (:list-h geom)))
+      (if (empty? rows)
+        (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+            (p/put-str! g (+ left 2) top (p/ellipsize "This app shows nothing yet" (max 1 (- (long inner-w) 3)))))
+        (paint-body-rows! g state geom)))))
 
 (defn- status-state [state] (or (get-in state [:save :state]) (get-in state [:send :state])))
 
 (defn- status-ink
   [state]
-  (if (#{:offline :conflict :failed :closed} (status-state state))
+  (if (#{:offline :conflict :failed :closed :invalid} (status-state state))
     t/footer-warning-fg
     t/dialog-hint))
 
 (defn- paint-status!
-  [g state {:keys [bounds content-top list-h legend-lines]}]
+  [g state {:keys [bounds content-top list-h]}]
   (let [{:keys [left inner-w]}
         bounds
 
@@ -1953,53 +2013,63 @@
     (p/set-colors! g (status-ink state) t/dialog-bg)
     (p/put-str! g
                 (+ left 2)
-                (+ row (long (legend-height legend-lines)))
+                row
                 (p/ellipsize (status-line state) (max 1 (- (long inner-w) 3))))))
 
 (defn- editor-geometry
   "The editor window keeps its cursor line visible without leaving the app content."
-  [{:keys [input]} {:keys [bounds content-top list-h legend-lines editor-rows content-h]}]
+  [{:keys [input]} {:keys [bounds content-top list-h status? editor-title? field-h]}]
   (let [left
-        (long (:left bounds))
+        (+ (long (:left bounds)) 2)
 
         w
         (max 1 (- (long (:inner-w bounds)) 3))
 
         top
-        (+ (long content-top) (long list-h) 1 (long (legend-height legend-lines)))
+        (+ (long content-top) (long list-h) (if status? 1 0) (if editor-title? 1 0))
+
+        field-h
+        (long field-h)
 
         first-line
-        (max 0 (- (long (:crow input)) (dec (long editor-h))))]
+        (max 0 (inc (- (long (:crow input)) field-h)))]
 
-    {:left (+ left 2)
+    {:left left
      :top top
      :width w
-     :first-line first-line
-     :lines (take editor-h (drop first-line (:lines input)))
-     :cursor (when (< (long editor-rows) (long content-h))
-               (p/cursor-pos (+ left 2 (min (long (:ccol input)) (dec w)))
-                             (+ top 1 (- (long (:crow input)) first-line))))}))
+     :lines (take field-h (drop first-line (:lines input)))
+     :cursor (p/cursor-pos (+ left (min (long (:ccol input)) (dec w)))
+                           (+ top (- (long (:crow input)) first-line)))}))
 
 (defn- paint-editor-lines!
   [g {:keys [left top width lines]}]
   (doseq [[i line] (map-indexed vector lines)]
-    (p/put-str! g left (+ (long top) 1 (long i)) (p/ellipsize line (long width)))))
+    (p/put-str! g left (+ (long top) (long i)) (p/ellipsize line (long width)))))
 
 (defn- paint-editor!
-  [g {:keys [target] :as editor} geom]
+  [g {:keys [target] :as editor} {:keys [field-h editor-title?] :as geom}]
   (let [{:keys [left top width cursor] :as box} (editor-geometry editor geom)]
-    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-    (p/put-str! g left top (p/ellipsize (target-label target) width))
+    (when editor-title?
+      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (p/put-str! g left (dec (long top)) (p/ellipsize (target-label target) width)))
     (p/set-colors! g t/code-block-fg t/code-block-bg)
-    (p/fill-rect! g left (inc (long top)) width editor-h)
+    (p/fill-rect! g left top width field-h)
     (paint-editor-lines! g box)
     cursor))
+
+(defn- fitted-footer
+  [state view rows legend width]
+  (let [pairs (footer state view rows legend)
+        fitted (dlg/fit-hint-keeping-last pairs width)]
+    (if (and (:editor state) (= 1 (count fitted)))
+      [["C-s" "save"]]
+      fitted)))
 
 (defn- paint!
   [g state {:keys [bounds hint-row view rows] :as geom}]
   (paint-chrome! g geom)
   (paint-body! g state geom)
-  (paint-status! g state geom)
+  (when (:status? geom) (paint-status! g state geom))
   (let [cursor
         (when-let [editor (:editor state)]
           (paint-editor! g editor geom))
@@ -2011,8 +2081,7 @@
                         left
                         hint-row
                         inner-w
-                        (dlg/fit-hint-keeping-last (footer state view rows (:legend geom))
-                                                   (max 0 (- (long inner-w) 2))))
+                        (fitted-footer state view rows (:legend geom) (max 0 (- (long inner-w) 2))))
     (if (:key-menu state) (paint-key-menu! g state geom) cursor)))
 
 ;;; ── Driver ─────────────────────────────────────────────────────────────────
@@ -2378,6 +2447,10 @@
                      (connect-away! box session-id view-id)
                      (pane-measure st left top width height (current)))
      :reconcile (partial reconcile-outcomes! box)
+     :paint-key (fn [st geom]
+                  (when (and (:canvas? geom) (:static? geom))
+                    [st (:bounds geom) (:paint-version geom)
+                     (when (canvas-moving? st geom) (lv/canvas-step (System/currentTimeMillis)))]))
      :paint paint!
      :on-key (fn [st key geom]
                (if (= ::reveal key) {::dlg/done nil} (handle-key st key geom effects)))

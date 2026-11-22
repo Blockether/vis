@@ -38,26 +38,18 @@
 
 (defdescribe
   editor-cursor-window
-  (it "scrolls the editor to its cursor and hides the cursor when the editor does not fit"
-      (doseq [[crow ccol editor-rows content-h expected-first cursor?]
-              [[0 0 4 12 0 true] [8 80 4 12 4 true] [0 0 4 4 0 false]]]
-        (let [result (#'surface/editor-geometry
-                      {:input {:crow crow :ccol ccol :lines (mapv str (range 12))}}
-                      {:bounds {:left 2 :inner-w 20}
-                       :content-top 3
-                       :list-h 5
-                       :legend "keys"
-                       :editor-rows editor-rows
-                       :content-h content-h})
-              cursor (:cursor result)]
-
-          (expect (= expected-first (:first-line result)))
-          (expect (= (str expected-first) (first (:lines result))))
-          (expect (= cursor? (some? cursor)))
-          (when cursor
-            (expect
-              (<= (:left result) (.getColumn cursor) (+ (:left result) (dec (:width result)))))
-            (expect (<= (inc (:top result)) (.getRow cursor) (+ (:top result) 5))))))))
+  (it "keeps the last line of a multiline draft visible when the editor shrinks"
+      (doseq [[cols rows expected-first] [[80 24 "4"] [20 10 "8"]]]
+        (let [view {:id "app" :nodes []}
+              editor {:input {:crow 8 :ccol 80 :lines (mapv str (range 12))}}
+              state (assoc (surface/initial-state) :editor editor)
+              geom (surface/measure state cols rows view)
+              {:keys [left top width lines cursor]} (#'surface/editor-geometry editor geom)]
+          (expect (= expected-first (first lines)))
+          (expect (= "8" (last lines)))
+          (expect (<= left (.getColumn cursor) (+ left (dec width))))
+          (expect (= (+ top (dec (count lines))) (.getRow cursor)))
+          (expect (< (.getRow cursor) (- (get-in geom [:bounds :bottom]) 2)))))))
 
 (defdescribe natural-plan-width
              (it "reserves the width that a picture, scene, field, or styled row paints"

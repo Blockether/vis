@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Live views: a canvas holds each ID one time. An item and a thread cannot have the same ID, and Vis gives a new thread an ID that no item and no thread has. Before, `canvas.remove(id)` removed the item and the thread of that ID.
 - Live views: an item of a canvas holds at most one arrow from each source item. Before, the Companion app showed only the last arrow and the terminal showed all of them. The `after` builder of the Python SDK keeps the last arrow of a source.
 - Live views: the `alt` text of a canvas recording must hold a visible character, and the time of a thread message is at most 8640000000000000 ms.
+- Live views: the `alt` text of a new canvas picture must hold a visible character. A saved picture with an empty `alt` text still shows in the Companion app.
+- Live views: Vis refuses a comment on a canvas item that is not on the board, and a reply on a thread that holds the largest number of messages. The Companion app and the terminal show the reason and keep the text.
+- Live views: when the owner fills a thread after a person writes a reply, Send still sends the reply to the owner in the receipt. The thread keeps its messages.
+- Live views: the owner can set a canvas `zoom` below 0.1, as the contract allows. Fit in the Companion app shows the full board also in a narrow panel.
+- Terminal: an active canvas arrow and a canvas item with motion move one sign in steps of 100 ms. A board without motion does not draw again while it does not change.
 
 ### Fixed
 
@@ -46,6 +51,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Terminal: a group that holds a canvas keeps its title and its collapsed state.
 - Terminal: an arrow shows only when its source item is on the board, and its sign shows its direction.
 - Terminal: the editor of a canvas comment refuses text longer than the limit of the contract before it sends it.
+- Live views: an owner patch that removes a thread and adds it again does not bring back the draft of the old thread.
+- Companion: a reply that holds only a no-break space is text, as in the terminal and in Vis.
+- Companion: an emoji counts as one character of the limit of a canvas comment.
+- Companion: a delivered comment keeps the canvas item that it is about.
+- Companion: the board does not move when the mouse comes back after a release outside the board.
+- Companion: a move of two fingers moves the board with the fingers. A zoom during a camera move keeps the point under the pointer.
+- Companion: the canvas controls wrap on a narrow board and do not cover the comment button. The thread marks have a larger touch area.
+- Companion: a card that gets the keyboard focus moves into the board view.
+- Companion: canvas arrows stop their motion when the board is not on the screen.
+- Companion: a zoom of a board with 300 items takes one frame at 60 Hz instead of two.
+- Companion: an arrow at right angles goes around the items between its ends also on a full board.
+- Terminal: Page Up, Page Down, Home, End, and the mouse wheel scroll a long canvas item to its end.
+- Terminal: a large canvas board draws in less than 1 ms. Before, each frame laid out the board again.
+- Terminal: canvas text and the comment editor stay inside the frame in a small terminal.
 
 ## [v0.5.30] - 2026-11-22
 

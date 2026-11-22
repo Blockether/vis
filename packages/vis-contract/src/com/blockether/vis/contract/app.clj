@@ -309,12 +309,19 @@
       (refuse! (:id node)
                (str (if draft? "a draft" "a reply") " holds at most " limit " characters")))))
 
+(defn- full-canvas-thread?
+  [node thread]
+  (and (= :canvas (:type node))
+       (>= (count (:messages thread)) (long (:canvas-messages bounds)))))
+
+(defn- check-message-room!
+  [node thread]
+  (when (full-canvas-thread? node thread)
+    (refuse! (:id node) (str "a canvas thread holds at most " (:canvas-messages bounds) " messages"))))
+
 (defn- append-message
   [node thread message]
-  (when (= :canvas (:type node))
-    (let [limit (long (:canvas-messages bounds))]
-      (when (>= (count (:messages thread)) limit)
-        (refuse! (:id node) (str "a canvas thread holds at most " limit " messages")))))
+  (check-message-room! node thread)
   (update thread :messages (fnil conj []) message))
 
 (defn draft-op
@@ -351,14 +358,17 @@
               after
               (saved thread)]
 
+          (when text (check-message-room! node thread))
           (cond (and (nil? text) (empty? (:messages thread)))
                 {:op :remove :node-id (:id node) :item-ids [thread-id]}
                 (and after (not= after thread)) {:op :thread :node-id (:id node) :thread after}))
         (when text
           (let [target (if (= :canvas (:type node))
-                         (if (blank-text? item-id)
-                           (refuse! (:id node) "a new canvas thread needs an item id")
-                           {:item-id item-id})
+                         (do (when (blank-text? item-id)
+                               (refuse! (:id node) "a new canvas thread needs an item id"))
+                             (when-not (some #(= item-id (:id %)) (:cards node))
+                               (refuse! (:id node) "the canvas has no item with that id"))
+                             {:item-id item-id})
                          (if (map? anchor)
                            {:anchor anchor}
                            (refuse! (:id node) "a new diff thread needs an anchor")))]
@@ -397,9 +407,10 @@
             (assoc :quote (str/join "\n\n" (map :body (:messages thread))))))))
 
 (defn post-drafts
-  "Post every saved draft of the thread nodes in `nodes` as a message. `post`
-   holds `:author`, `:at`, `:submission-id` and `:new-id`, a function that gives
-   one fresh message id per call. Answers `{:ops [...] :comments [...]}`."
+  "Send every nonblank draft of the thread nodes in `nodes`. A full canvas thread
+   does not take another message, but its draft becomes a comment on the Send.
+   `post` holds `:author`, `:at`, `:submission-id` and `:new-id`, a function that
+   gives one fresh message id per call. Answers `{:ops [...] :comments [...]}`."
   [nodes {:keys [author at submission-id new-id]}]
   (reduce (fn [acc node]
             (reduce
@@ -412,8 +423,9 @@
                           (assoc :submission-id submission-id))
 
                         posted
-                        (-> (append-message node thread message)
-                            (dissoc :draft))]
+                        (cond-> (dissoc thread :draft)
+                          (not (full-canvas-thread? node thread))
+                          (update :messages (fnil conj []) message))]
 
                     (-> acc
                         (update :ops conj {:op :thread :node-id (:id node) :thread posted})

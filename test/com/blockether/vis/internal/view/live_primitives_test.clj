@@ -2,12 +2,13 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.view :as spec]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.view.core :as engine]
             [com.blockether.vis.internal.view.materializer :as materializer]
             [com.blockether.vis.internal.view.sink :as sink]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defn- nodes [view] (mapcat #(tree-seq :children :children %) (:nodes view)))
 
@@ -553,3 +554,39 @@
               (node (materializer/apply-patch view patch) "board")]
 
           (expect (= ["frame"] (:selected-ids after)))))))
+
+(defdescribe
+  canvas-owner-patch-test
+  (it "does not restore the human draft when the owner removes and adds a thread in one patch"
+      (let [view (materializer/materialize
+                   (engine/normalize-live-view
+                     {:title "Board"
+                      :nodes [{:id "board" :type :canvas
+                               :cards [{:id "frame" :title "Frame"} {:id "child" :title "Child"}]
+                               :threads [{:id "t" :item-id "frame" :messages []}]}]}))
+            op (app/draft-op (node view "board") {:thread-id "t" :body "Check the frame"} "unused")
+            with-draft (binding [engine/*host-patch* true]
+                         (materializer/apply-patch view (engine/landed-patch view [op])))
+            patch (engine/landed-patch with-draft
+                                       [{:op :remove :node-id "board" :item-ids ["t"]}
+                                        {:op :thread :node-id "board"
+                                         :thread {:id "t" :item-id "child" :messages []}}])
+            after (materializer/apply-patch with-draft patch)]
+        (expect (= "Check the frame" (:body (first (app/drafts (:nodes with-draft))))))
+        (expect (= "child" (:item-id (app/find-thread (node after "board") "t"))))
+        (expect (empty? (app/drafts (:nodes after))))))
+  (it "refuses a new canvas picture with a blank description"
+      (let [fixture (json/read-json (slurp (io/resource "vis-contract/fixtures/live-primitives.json")))
+            canvas (first (filter #(= "canvas" (get % "type")) (get fixture "nodes")))
+            picture (some #(get % "picture") (get canvas "cards"))
+            picture {:alt "   " :media-type "image/png" :data (get picture "data")}
+            cards [{:id "a" :title "Preview" :picture picture}]
+            board {:id "board" :type :canvas :cards cards}
+            view (materializer/materialize
+                   (engine/normalize-live-view {:title "Board" :nodes [(assoc board :cards [])]}))
+            op {:op :append :node-id "board" :cards cards}
+            legacy {:view-id (:id view) :seq (inc (:seq view)) :ops [op]}]
+        (expect (throws? clojure.lang.ExceptionInfo #(engine/normalize-live-node board)))
+        (expect (throws? clojure.lang.ExceptionInfo #(engine/landed-patch view [op])))
+        (expect (= "   " (get-in (node (materializer/apply-patch view legacy) "board")
+                                 [:cards 0 :picture :alt]))))))

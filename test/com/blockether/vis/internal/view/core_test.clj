@@ -4413,3 +4413,46 @@
                  (restart-app! id)
                  (expect (= "review" (:icon (hi/app-view sid id))))
                  (finally (hi/close-live! id))))))))
+
+(defdescribe
+  full-canvas-send-test
+  (it "sends a saved comment even when the owner fills the thread before Send"
+      (recorded
+        (fn []
+          (let [sid (str (random-uuid))
+                limit (:canvas-messages app/bounds)
+                history (mapv #(hash-map "id" (str "m" %) "author" {"kind" "agent"}
+                                        "body" "Note" "created_at" 1)
+                              (range (dec limit)))
+                view-id (get (app-seam! sid
+                                        {"op" "open"
+                                         "view" {"title" "Review" "session_id" sid
+                                                 "placement" "attachment"
+                                                 "nodes" [{"id" "board" "type" "canvas"
+                                                           "cards" [{"id" "a" "title" "Card"}]
+                                                           "threads" [{"id" "t" "item_id" "a"
+                                                                       "messages" history}
+                                                                      {"id" "u" "item_id" "a"
+                                                                       "messages" []}]}]}})
+                             "view_id")]
+            (try
+              (doseq [[id body] [["t" "Pending note"] ["u" "Other note"]]]
+                (expect (:is-accepted (hi/action! view-id {:action :draft :node-id "board"
+                                                           :thread-id id :body body}))))
+              (expect (string? (get (app-seam! sid {"op" "reply" "view_id" view-id "node_id" "board"
+                                                   "thread_id" "t" "body" "Last owner reply"})
+                                    "message_id")))
+              (let [sent (hi/action! view-id {:action :submit :node-id "board" :values {}})
+                    receipt (get-in sent [:submission :comments])
+                    events (get (app-seam! sid {"op" "events" "view_id" view-id "after" 0
+                                                "timeout_ms" 0}) "events")
+                    event (first (filter #(= "submit" (get % "type")) events))
+                    [full other] (:threads (first (:nodes (hi/live-view view-id))))]
+                (expect (:is-accepted sent))
+                (expect (= ["Pending note" "Other note"] (mapv :body receipt)))
+                (expect (= ["Pending note" "Other note"] (mapv #(get % "body") (get event "comments"))))
+                (expect (= limit (count (:messages full))))
+                (expect (= "Last owner reply" (:body (peek (:messages full)))))
+                (expect (= "Other note" (:body (peek (:messages other)))))
+                (expect (not-any? #(contains? % :draft) [full other])))
+              (finally (hi/close-live! view-id))))))))

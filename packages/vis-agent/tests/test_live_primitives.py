@@ -435,6 +435,14 @@ def test_canvas_threads_follow_item_updates(monkeypatch, host_kind):
         assert board.cards == {} and board.threads == []
 
 
+def test_canvas_picture_requires_a_description():
+    import base64
+
+    picture = next(card["picture"] for card in _canvas_fixture()["cards"] if "picture" in card)
+    with pytest.raises(ValueError):
+        vis.ui.canvas.picture(base64.b64decode(picture["data"]), alt="   ")
+
+
 def test_canvas_pictures_count_toward_the_view_limit():
     import base64
 

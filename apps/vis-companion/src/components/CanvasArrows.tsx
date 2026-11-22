@@ -3,6 +3,7 @@
  * of its two marks. This file gives them their ink, their line and their motion.
  */
 
+import { useEffect, useRef } from 'react';
 import { canvasMarkPath, type CanvasArrow, type CanvasLayout } from '../lib/canvas';
 import type { CanvasLine, CanvasMark } from '../lib/canvas-vocabulary';
 import type { LiveCanvasEdge, LiveTone } from '../lib/live-view';
@@ -98,8 +99,41 @@ const LAYER = 'pointer-events-none absolute left-0 top-0 overflow-visible';
 
 /** The lines and the marks. They stand over the frames and under the other items. */
 export function CanvasArrows({ layout }: { layout: CanvasLayout }) {
+  const layer = useRef<SVGSVGElement>(null);
+  const hasMotion = layout.arrows.some(({ edge }) => edge.is_active);
+  useEffect(() => {
+    const svg = layer.current;
+    const frame = svg?.closest('[data-canvas]');
+    if (!svg || !frame || !hasMotion) return;
+    const preference = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    const canObserve = typeof IntersectionObserver !== 'undefined';
+    let isVisible = !canObserve;
+    const sync = () => {
+      const isPaused = !isVisible || Boolean(preference?.matches);
+      svg.toggleAttribute('data-motion-paused', isPaused);
+      if (isPaused) svg.pauseAnimations?.();
+      else svg.unpauseAnimations?.();
+    };
+    sync();
+    const observer = canObserve ? new IntersectionObserver(([entry]) => {
+      isVisible = entry.isIntersecting;
+      sync();
+    }) : undefined;
+    observer?.observe(frame);
+    preference?.addEventListener('change', sync);
+    return () => {
+      observer?.disconnect();
+      preference?.removeEventListener('change', sync);
+    };
+  }, [hasMotion]);
   return (
-    <svg aria-hidden="true" className={LAYER} width={layout.width} height={layout.height}>
+    <svg
+      ref={layer}
+      aria-hidden="true"
+      className={`${LAYER} [&[data-motion-paused]_*]:[animation-play-state:paused]`}
+      width={layout.width}
+      height={layout.height}
+    >
       {layout.arrows.map((arrow) => (
         <Arrow key={arrow.id} arrow={arrow} />
       ))}

@@ -32,6 +32,25 @@ import {
   isViewEvent,
 } from './view';
 
+it('keeps the canvas item of a delivered receipt comment', () => {
+  const view = liveViewFromWire({ ...canonical.live, submissions: [{
+    id: 'send-1', idempotency_key: 'once', status: 'delivered', created_at: 1, updated_at: 2,
+    comments: [{ node_id: 'board', thread_id: 'thread', message_id: 'message', item_id: 'card', body: 'Check this.' }],
+  }] });
+  expect(view?.submissions?.[0]?.comments?.[0]).toMatchObject({ item_id: 'card' });
+});
+
+it('keeps a saved canvas picture with blank alt text', () => {
+  const view = liveViewFromWire({ ...canonical.live, nodes: [{
+    id: 'board', type: 'canvas', cards: [{
+      id: 'card', title: 'Plan', picture: { media_type: 'image/png', data: 'AA==', alt: '   ' },
+    }],
+  }] });
+  expect(view?.nodes[0]).toMatchObject({
+    cards: [{ picture: { data: 'AA==', alt: expect.stringMatching(/\S/) } }],
+  });
+});
+
 it('materializes the canonical SDK live View lifecycle', () => {
   const opened = liveViewFromWire(canonical.live);
   expect(opened?.id).toBe('live-one');
@@ -1072,6 +1091,21 @@ it('keeps each declared app icon through a snapshot and a node patch', () => {
   }
   expect(liveViewFromWire({ ...canonical.live, icon: 'future-icon' })?.icon)
     .toBe(viewSchema.$defs.app_icon.default);
+});
+
+// Verifier report: a saved reply of one no-break space came back as an empty
+// attachment. The app contract counts only Java whitespace as blank.
+it('keeps a saved canvas draft of a no-break space as text', () => {
+  const board = liveViewFromWire(primitives);
+  if (!board) throw new Error('the fixture must be paintable');
+  const draftOf = (draft: string) =>
+    nodeOfType(
+      patched(board, 1, [{ op: 'thread', node_id: 'canvas', thread: { id: 'late', item_id: 'verify', messages: [], draft } }]),
+      'canvas',
+      'canvas',
+    ).threads.find((thread) => thread.id === 'late')?.draft;
+  expect(draftOf('\u00a0')).toBe('\u00a0');
+  expect(draftOf('\u001c')).toBeUndefined();
 });
 
 // Report: a person could not comment on an item of a board. A board now holds

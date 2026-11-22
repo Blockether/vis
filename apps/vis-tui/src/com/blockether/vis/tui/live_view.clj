@@ -615,12 +615,13 @@
    reached. Widths live HERE and not in the plan because they may only ever GROW
    while a view is open: a wider value in row 900 must not shuffle every column
    the human already read."
-  [pane {:keys [offset anchor total visible widths]}]
+  [pane {:keys [offset anchor total visible widths canvas-motion-visible?]}]
   (assoc pane
     :offset (long (or offset 0))
     :anchor anchor
     :total (long (or total 0))
     :visible (long (or visible 0))
+    :canvas-motion-visible? canvas-motion-visible?
     :widths (merge (:widths pane) widths)))
 
 ;;; ── The paint plan ──────────────────────────────────────────────────────────
@@ -1395,8 +1396,56 @@
           end? "←"
           :else "—")))
 
+(def ^:const canvas-step-ms 100)
+
+(defn canvas-step
+  "The marker phase for this wall-clock time."
+  ^long [now-ms]
+  (mod (quot (long now-ms) (long canvas-step-ms)) 10))
+
+(def ^:private canvas-motion-modes
+  (let [defs (get (document/schema-document "view") "$defs")]
+    (into {} (map (fn [[kind id]] [kind (set (get-in defs [id "enum"]))]))
+          [[:card "canvas_animation"] [:edge "canvas_edge_animation"]])))
+
+(defn- canvas-motion-mode [kind {:keys [animation is-active]}]
+  (let [mode (some-> animation name)]
+    (cond (contains? (get canvas-motion-modes kind) mode) mode
+          (and (= :edge kind) is-active) "flow")))
+
+(defn- canvas-marker [mode ^long step]
+  (case mode
+    "dot" (nth ["·" "•" "○" "•" "·"] (rem step 5))
+    "flow" (nth ["·" "▸" "▹" "▸" "·"] (rem step 5))
+    "dash" (nth ["·" "–" "–" "·" "·"] (rem step 5))
+    "glow" (if (< 2 step 7) "◆" "◇")
+    "bounce" (if (< 3 step 7) "˙" "·")
+    "shake" (if (< 3 step 7) "◦" "·")
+    (if (< 1 step 7) "•" "·")))
+
+(defn canvas-motion-row?
+  "True if a row or a cell in it has a canvas marker."
+  [row]
+  (or (:canvas-motion row) (some #(and % (canvas-motion-row? %)) (:cells row))))
+
+(defn animate-canvas-row
+  "Set the marker in a cached row without changing its width or anchor."
+  [row step]
+  (if-let [[mode idx] (:canvas-motion row)]
+    (let [segments (assoc-in (:segments row) [idx :text] (canvas-marker mode (long step)))]
+      (assoc row :segments segments :text (segment-line segments)))
+    (if (and (= :columns (:kind row)) (some canvas-motion-row? (:cells row)))
+      (update row :cells #(mapv (fn [cell] (animate-canvas-row cell step)) %))
+      row)))
+
+(defn- canvas-line [segments width]
+  (let [shown (runs-cut segments width)]
+    (cond-> {:segments shown :text (segment-line shown)}
+      (some :motion shown)
+      (assoc :canvas-motion (first (keep-indexed #(when-let [mode (:motion %2)] [mode %1]) shown))))))
+
 (defn- canvas-details
-  [{:keys [kind shape progress picture media caption edges]} titles]
+  [{:keys [kind shape progress picture media caption]}]
   (concat
     (when (and shape
                (= "shape"
@@ -1406,11 +1455,19 @@
     (when (some? progress) [(str (Math/round (* 100.0 (double progress))) "%")])
     (when picture [(str "Picture: " (flat-text (:alt picture)))])
     (when media [(str (name (:kind media)) ": " (flat-text (:alt media))) (:url media)])
-    (when caption [(flat-text caption)])
-    (for [{:keys [from label line] :as edge} edges
-          :when (and (contains? titles from) (not= :none (keyword line)))]
-      (str (canvas-edge-glyph edge) " " (flat-text (get titles from from))
-           (when label (str " (" (flat-text label) ")"))))))
+    (when caption [(flat-text caption)])))
+
+(defn- visible-canvas-edge? [edge titles]
+  (and (contains? titles (:from edge)) (not= :none (keyword (:line edge)))))
+
+(defn- canvas-edge-rows [edge titles body-indent body-w plain-row]
+  (let [mode (canvas-motion-mode :edge edge)
+        label (str (canvas-edge-glyph edge) " " (flat-text (get titles (:from edge)))
+                   (when-let [label (:label edge)] (str " (" (flat-text label) ")")))
+        [head & tail] (p/word-wrap label (max 1 (- (long body-w) (if mode 1 0))))
+        head-runs (if mode [body-indent (assoc (canvas-hint "·") :motion mode) (canvas-hint head)]
+                      [body-indent (canvas-hint head)])]
+    (cons (plain-row head-runs) (map #(plain-row [body-indent (canvas-hint %)]) tail))))
 
 (defn- canvas-card-rows
   [[{:keys [id kind title text meta tone badges] :as card} depth] node-id titles threads selected
@@ -1439,11 +1496,15 @@
         body-w
         (max 1 (- width indent 2))
 
+        motion
+        (canvas-motion-mode :card card)
+
         glyph
-        {:text (str (get tone-glyph tone "•") " ") :fg (if tone ink t/dialog-hint) :styles styles}
+        (cond-> {:text (str (get tone-glyph tone "•") " ") :fg (if tone ink t/dialog-hint) :styles styles}
+          motion (assoc :text "·" :motion motion))
 
         title-run
-        {:text (str (flat-text title) " · " (name (or kind :card))) :fg ink :styles styles}
+        {:text (str (when motion " ") (flat-text title) " · " (name (or kind :card))) :fg ink :styles styles}
 
         hints
         (cond-> []
@@ -1481,9 +1542,7 @@
         {:kind :item :node-id node-id :item-id id :tone tone :is-fresh is-fresh}
 
         plain-row
-        (fn [segments]
-          (let [shown (runs-cut segments width)]
-            {:segments shown :text (segment-line shown)}))
+        #(canvas-line % width)
 
         details
         (comp (mapcat detail-rows) (map plain-row))]
@@ -1492,13 +1551,15 @@
                    (assoc (merge base row) :canvas-line line))
                  (concat (map plain-row headings)
                          (canvas-markdown-rows text body-w (+ indent 2))
-                         (sequence details (canvas-details card titles))
+                         (sequence details (canvas-details card))
+                         (mapcat #(canvas-edge-rows % titles body-indent body-w plain-row)
+                                 (filter #(visible-canvas-edge? % titles) (:edges card)))
                          (canvas-thread-rows (get threads id)
                                              (comp (partial map plain-row) detail-rows)
                                              body-w
                                              (+ indent 2))))))
 
-(defmethod node-rows :canvas
+(defn- build-canvas-rows
   [{:keys [id cards selected-ids threads]} {:keys [text-w fresh is-expanded]}]
   (if (seq cards)
     (let [{:keys [shown behind]}
@@ -1517,6 +1578,21 @@
         (pos? (long behind))
         (conj (update (more-row id behind "card") :text p/ellipsize text-w))))
     [{:kind :empty :node-id id :text (p/ellipsize (empty-text :canvas) text-w)}]))
+
+(defonce ^:private ^BoundedCache canvas-row-cache (BoundedCache. 16))
+
+(defmethod node-rows :canvas
+  [node {:keys [text-w fresh is-expanded] :as ctx}]
+  (let [^BoundedCache cache canvas-row-cache
+        ;; The id finds the slot. The node identity avoids hashing every card.
+        key [(:id node) text-w is-expanded]
+        inputs [fresh @t/theme-revision]
+        cached (locking cache (.get cache key))]
+    (if (and (identical? node (:node cached)) (= inputs (:inputs cached)))
+      (:rows cached)
+      (let [rows (build-canvas-rows node ctx)]
+        (locking cache (.put cache key {:node node :inputs inputs :rows rows}))
+        rows))))
 
 (def ^:private bar-eighths
   "The cells that end a bar: one to seven eighths of a column."
@@ -2599,7 +2675,7 @@
                  (into (if (pos? indent) (map #(update % :indent (fnil + 0) indent) body) body)))
       {:widths (reduce merge {} (map (comp :widths meta) (or parts [body])))})))
 
-(defn plan
+(defn layout-plan
   "The pane's whole paint plan, `text-w` columns wide: one entry per painted row,
    nodes in DECLARATION order, each under its own label with a row of air above
    it. A node the run wrapped in a `row` group stands BESIDE its siblings wherever
@@ -2610,7 +2686,7 @@
 
    `now-ms` is the clock a running timeline lane extends to. A settled pane holds
    no clock: its lanes read the time of their last end."
-  ([pane text-w] (plan pane text-w (System/currentTimeMillis)))
+  ([pane text-w] (layout-plan pane text-w (System/currentTimeMillis)))
   ([pane text-w now-ms]
    (let [{:keys [view widths fresh expanded]}
          pane
@@ -2644,6 +2720,16 @@
                                 true
                                 (into sections)))
        {:widths (reduce merge {} (map (comp :widths meta) sections))}))))
+
+(defn plan
+  "The rows as they appear at `now-ms`, with their measured widths."
+  ([pane text-w] (plan pane text-w (System/currentTimeMillis)))
+  ([pane text-w now-ms]
+   (let [rows (layout-plan pane text-w now-ms)]
+     (if (or (nil? now-ms) (settled? pane) (minimized? pane))
+       rows
+       (let [step (canvas-step now-ms)]
+         (with-meta (mapv #(animate-canvas-row % step) rows) (meta rows)))))))
 
 (defn- view-nodes
   "Every node of `pane`'s view, groups opened, in declaration order."
@@ -2825,13 +2911,18 @@
                               (get page "lines"))))))
 
 (defn animating?
-  "Whether the visible, expanded pane contains an active spinner or a moving scene."
+  "Whether the front pane has visible motion."
   [panes]
   (when-let [pane (last (remove dormant? panes))]
     (when-not (or (settled? pane) (minimized? pane))
       (letfn [(active? [node]
                 (or (and (= :spinner (:type node)) (:is-active node))
                     (and (= :scene (:type node)) (scene-moving?))
+                    (and (= :canvas (:type node))
+                         (if (some? (:canvas-motion-visible? pane))
+                           (:canvas-motion-visible? pane)
+                           (some canvas-motion-row?
+                                 (layout-plan (assoc-in pane [:view :nodes] [node]) 80 nil))))
                     (and (= :group (:type node))
                          (or (not (:is-collapsible node))
                              (get (:disclosures pane) (:id node) (:default-expanded node)))
@@ -3760,7 +3851,7 @@
    those are. A band drawn taller than the wheel believes hands the top of the
    pane's own scroll back to the transcript underneath it, which reads as a live
    view that only scrolls near its footer."
-  [panes region]
+  [panes region now-ms]
   (let [;; A settled view is not band furniture: it has already given its rows
         ;; back to the transcript, where its own row now waits.
         panes
@@ -3788,7 +3879,7 @@
         rows-plan
         (cond minimized-front? [(minimized-row front (count panes))]
               (:log-search front) (log-search-plan (:log-search front) text-w)
-              front (plan front text-w)
+              front (layout-plan front text-w now-ms)
               :else [])
 
         ;; Four fifths of the rows between the transcript top and the prompt, at
@@ -3835,7 +3926,7 @@
           (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
 
           {:keys [sep-row foot-row]}
-          (tr/band-geometry region (:n (band-shape panes region)) false)]
+          (tr/band-geometry region (:n (band-shape panes region (System/currentTimeMillis))) false)]
 
       [(long sep-row) (long foot-row)])))
 
@@ -3861,7 +3952,7 @@
                body-left left
                body-w (- inner-w 2 (long bar-right-margin))
                {:keys [front others collapsed rows-plan stop is-minimized n]} (band-shape panes
-                                                                                          region)
+                                                                                          region now-ms)
                {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
                (tr/band-geometry region n false)
                ;; The band CLOSES below its hint bar, exactly like the form's: the
@@ -3947,7 +4038,7 @@
                            (+ (long body-top) (count collapsed) (long idx))
                            body-w
                            view-id
-                           entry))
+                           (if (settled? front) entry (animate-canvas-row entry (canvas-step now-ms)))))
            (doseq [idx (range (count shown) body-visible)]
              (paint-entry! g
                            body-left
@@ -4001,6 +4092,7 @@
                       :anchor (anchor-at rows-plan start)
                       :total total
                       :visible body-visible
+                      :canvas-motion-visible? (boolean (some canvas-motion-row? shown))
                       :widths (:widths (meta rows-plan))}
                search
                (assoc :is-log-search
@@ -4104,8 +4196,8 @@
                           :elapsed (title-line pane now-ms)}]
                         (when open?
                           (map (fn [entry]
-                                 {:view-id id :entry entry})
-                               (plan pane text-w))))))
+                                 {:view-id id :entry entry :is-settled (settled? pane)})
+                               (layout-plan pane text-w now-ms))))))
             (range)
             shown)))
 
@@ -4212,7 +4304,10 @@
                             0))
           start (if (< sel-idx visible)
                   0
-                  (min (- sel-idx (quot visible 3)) (max 0 (- (count rows) visible))))]
+                  (min (- sel-idx (quot visible 3)) (max 0 (- (count rows) visible))))
+           shown-rows (subvec rows start (min (count rows) (+ start visible)))
+           moving? #(and (not (:is-settled %)) (canvas-motion-row? (:entry %)))
+           step (canvas-step now-ms)]
 
       (p/set-colors! g t/dialog-fg t/dialog-bg)
       (p/fill-rect! g left top width height)
@@ -4220,13 +4315,15 @@
       (doseq [row (range top (+ top height))]
         (p/put-str! g left row "│"))
       (when tabs? (paint-panel-tabs! g left top width tabs tab))
-      (doseq [[idx row-entry] (map-indexed vector (take visible (drop start rows)))]
+      (doseq [[idx row-entry] (map-indexed vector shown-rows)]
         (let [row (+ body-top (long idx))]
           (if (:is-title row-entry)
             (paint-panel-title! g left row width row-entry focused?)
-            (paint-entry! g (+ left 2) row (dec inner-w) (:view-id row-entry) (:entry row-entry)))))
+            (paint-entry! g (+ left 2) row (dec inner-w) (:view-id row-entry)
+                           (cond-> (:entry row-entry) (moving? row-entry) (animate-canvas-row step))))))
       (p/clear-styles! g)
-      {:selected selected :shown (mapv view-id shown) :tab tab})))
+      (cond-> {:selected selected :shown (mapv view-id shown) :tab tab}
+        (some moving? shown-rows) (assoc :canvas-moving? true)))))
 
 (defn inline-entries
   "A compact LIVE receipt. Pane details belong only to the transient viewer."

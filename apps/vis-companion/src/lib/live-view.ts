@@ -644,7 +644,7 @@ export interface LiveSubmission {
   updated_at: number;
   revision?: string;
   note?: string;
-  comments?: { node_id: string; thread_id: string; message_id: string; body: string }[];
+  comments?: { node_id: string; thread_id: string; message_id: string; item_id?: string; body: string }[];
 }
 
 /** A static thematic break spanning its allocated content width. */
@@ -1004,12 +1004,12 @@ function optional<K extends string, V>(key: K, value: V | undefined): { [P in K]
   return (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
 }
 
-/** The picture of a canvas item, or nothing without a known format and an alt text. */
+/** A saved picture with no alt text still shows with a basic label. */
 function canvasPictureFromWire(raw: unknown): LiveCanvasPicture | undefined {
   const picture = pictureFromWire(raw);
-  const alt = optionalText(record(raw)?.alt);
-  if (!picture || alt === undefined) return undefined;
-  return { ...picture, alt, fit: canvasPictureFit(record(raw)?.fit) };
+  if (!picture) return undefined;
+  const fields = record(raw);
+  return { ...picture, alt: optionalText(fields?.alt) ?? 'Picture', fit: canvasPictureFit(fields?.fit) };
 }
 
 /** The media of a canvas item, or nothing without a kind, a web address and an alt text. */
@@ -1165,13 +1165,21 @@ function messageFromWire(raw: Record<string, unknown>): LiveMessage | null {
   };
 }
 
+// Java Character.isWhitespace, as used by the app contract and the SDK.
+const NON_BLANK_DRAFT_CHAR = /[^\x09-\x0d\x1c-\x20\u1680\u2000-\u2006\u2008-\u200a\u2028\u2029\u205f\u3000]/u;
+
+/** True when a draft holds only the characters that the app contract counts as blank. */
+export function isBlankDraft(text: string): boolean {
+  return !NON_BLANK_DRAFT_CHAR.test(text);
+}
+
 /**
  * A saved draft. Blank text is no draft, except on a thread with messages: there
  * an empty draft adds the messages to the next message of the session without a note.
  */
 function draftFromWire(value: unknown, hasMessages: boolean): string | undefined {
   if (typeof value !== 'string') return undefined;
-  if (value.trim() !== '') return value;
+  if (!isBlankDraft(value)) return value;
   return hasMessages ? '' : undefined;
 }
 
@@ -1209,6 +1217,7 @@ export function submissionFromWire(raw: Record<string, unknown>): LiveSubmission
       node_id: text(comment.node_id),
       thread_id: text(comment.thread_id),
       message_id: text(comment.message_id),
+      ...optional('item_id', text(comment.item_id) || undefined),
       body: text(comment.body),
     }))
     .filter((comment) => comment.thread_id !== '' && comment.body !== '');

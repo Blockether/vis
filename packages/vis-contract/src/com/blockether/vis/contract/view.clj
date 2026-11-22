@@ -1381,13 +1381,18 @@
 
 (defn- canvas-picture-lines
   "Faults in the pictures of the canvas cards at JSON pointer `path`."
-  [cards path decl?]
+  [cards path decl? new-alt?]
   (when (sequential? cards)
     (mapcat (fn [i card]
               (when-let [raw (get card "picture")]
                 (when (map? raw)
-                  (let [at (str path "/" i "/picture")]
-                    (cond (and decl? (contains? raw "bytes"))
+                  (let [at (str path "/" i "/picture")
+                        alt-lines (when new-alt?
+                                    (document/explain-lines
+                                      (document/explain "view" "canvas_picture_declaration" raw)
+                                      raw at))]
+                    (cond (seq alt-lines) alt-lines
+                          (and decl? (contains? raw "bytes"))
                           [(document/named-line (str at "/bytes") "read_only")]
                           (or decl? (contains? raw "data"))
                           (when-let [reason (:error (read-picture (wire/->engine raw)))]
@@ -1558,7 +1563,7 @@
                                                        (get card "edges")))
                                     (line (str "/cards/" i "/edges") "canvas_edge_source")))
                                 items)
-                  (canvas-picture-lines items "/cards" decl?)))
+                  (canvas-picture-lines items "/cards" decl? decl?)))
 
         "image"
         (for [[path raw]
@@ -1912,7 +1917,7 @@
    `component` variant: a report against the whole union stops before the faults of
    the chosen form. The node of an `add-node` op is left to the node check after the
    op, which names the node. Each case is in `live-view-checks.json`."
-  [path op]
+  [path op decl?]
   (if-let [index (when (map? op) (get live-op-index (get op "op")))]
     (let [lines (document/explain-lines
                   (update (document/explain "view" (str "live_op/oneOf/" index) op)
@@ -1921,7 +1926,7 @@
                                    #(str/starts-with? (str (:instanceLocation %)) "/node_spec")))
                   op
                   path)]
-      (if (seq lines) lines (canvas-picture-lines (get op "cards") (str path "/cards") true)))
+      (if (seq lines) lines (canvas-picture-lines (get op "cards") (str path "/cards") true decl?)))
     (let [table (get (document/message-table) "keywords")]
       (if (map? op)
         [(document/rule-line (str path "/op")
@@ -1970,27 +1975,28 @@
   "The sorted fault lines of live patch `patch`, which every host gives before it applies
    an op. The patch keys and the op list are checked with a stand-in op, and each op on
    its own, so a fault of one op never hides the faults of the patch. An item gets its
-   schema defaults first."
-  [patch]
-  (let [patch
-        (wire-data patch)
+   schema defaults first. With `decl?`, apply the rules for new declarations."
+  ([patch] (live-patch-lines patch false))
+  ([patch decl?]
+   (let [patch
+         (wire-data patch)
 
-        ops
-        (get patch "ops")
+         ops
+         (get patch "ops")
 
-        shell
-        (cond-> patch
-          (and (sequential? ops) (seq ops))
-          (assoc "ops" [{"op" "clear" "node_id" "p"}]))]
+         shell
+         (cond-> patch
+           (and (sequential? ops) (seq ops))
+           (assoc "ops" [{"op" "clear" "node_id" "p"}]))]
 
-    (->> (when (sequential? ops)
-           (map-indexed (fn [i op]
-                          (live-op-lines (str "/ops/" i) (filled-op op)))
-                        ops))
-         (apply concat (document/explain-lines (document/explain "view" "live_patch" shell) shell))
-         distinct
-         sort
-         vec)))
+     (->> (when (sequential? ops)
+            (map-indexed (fn [i op]
+                           (live-op-lines (str "/ops/" i) (filled-op op) decl?))
+                         ops))
+          (apply concat (document/explain-lines (document/explain "view" "live_patch" shell) shell))
+          distinct
+          sort
+          vec))))
 
 (def ^:private patch-targets
   "Op name to wire node type to the op keys that type takes, from `x-vis-patch-targets`."
