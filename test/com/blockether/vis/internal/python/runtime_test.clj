@@ -706,12 +706,12 @@
             home
             (#'python-runtime/interpreter-home (.getCanonicalFile (io/file python)))
 
-            ;; The start check of a copy writes bytecode files that a new tree does not have.
+            ;; A copy has no SDK packages of a release; its start check writes bytecode files.
             files
             (fn [^java.io.File dir]
               (count (filter #(and (.isFile ^java.io.File %)
                                    (not (str/starts-with? (.getName ^java.io.File %) ".vis-"))
-                                   (not (str/ends-with? (.getName ^java.io.File %) ".pyc")))
+                                   (not (re-find #"vis-sdk-packages|\.pyc$" (str %))))
                              (file-seq dir))))
 
             start
