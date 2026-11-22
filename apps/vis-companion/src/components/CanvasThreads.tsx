@@ -11,8 +11,8 @@ import type { AppActionStatus } from '../lib/app-actions';
 import { CANVAS_MESSAGE_CHARS } from '../lib/canvas';
 import type { LiveCanvasCard, LiveCanvasNode, LiveMessage, LiveThread } from '../lib/live-view';
 import { ActionStatus, DraftEditor, type AppNodeActions } from './AppNodes';
-import { AppIcon, CheckIcon } from './icons';
-import { Button, CloseButton } from './ui';
+import { AppIcon, CheckIcon, PencilIcon, PlusIcon, TrashIcon } from './icons';
+import { Button, CloseButton, IconButton } from './ui';
 
 /** The first letters of the first two words of a name. */
 function initials(name: string): string {
@@ -146,7 +146,7 @@ function Thread({
         )}
       </ol>
       {canEdit && (
-        <div className="border-t border-edge px-2.5 py-2">
+        <div className={`border-t border-edge ${isEditing ? 'px-2.5 py-2' : 'px-1 py-0.5'}`}>
           {isEditing ? (
             <DraftEditor
               memoryId={`${nodeId}:${thread.id}:${draft ?? ''}`}
@@ -158,19 +158,24 @@ function Thread({
               onClose={() => setEditing(false)}
             />
           ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="secondary" density="compact" onClick={() => setEditing(true)}>
-                {hasDraft ? 'Edit' : 'Reply'}
-              </Button>
+            <div className="flex items-center gap-1">
+              <IconButton
+                label={hasDraft ? 'Edit' : 'Reply'}
+                title={hasDraft ? 'Edit' : 'Reply'}
+                onClick={() => setEditing(true)}
+              >
+                <PencilIcon />
+              </IconButton>
               {hasDraft && (
-                <Button
-                  variant="secondary"
-                  density="compact"
+                <IconButton
+                  variant="remove"
+                  label="Remove"
+                  title="Remove"
                   disabled={status === 'saving'}
                   onClick={() => void remove()}
                 >
-                  Remove
-                </Button>
+                  <TrashIcon />
+                </IconButton>
               )}
               <ActionStatus status={status} />
             </div>
@@ -218,9 +223,13 @@ function ItemThreads({
             onClose={() => onCompose(false)}
           />
         ) : (
-          <Button variant="secondary" density="compact" onClick={() => onCompose(true)}>
-            {threads.length > 0 ? 'New thread' : 'Comment'}
-          </Button>
+          <IconButton
+            label={threads.length > 0 ? 'New thread' : 'Comment'}
+            title={threads.length > 0 ? 'New thread' : 'Comment'}
+            onClick={() => onCompose(true)}
+          >
+            <PlusIcon />
+          </IconButton>
         ))}
     </div>
   );
