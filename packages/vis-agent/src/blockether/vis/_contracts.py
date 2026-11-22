@@ -1329,7 +1329,9 @@ def _canvas_picture_lines(cards: Any, path: str, is_declaration: bool) -> list[s
             continue
         at = f"{path}/{i}/picture"
         if is_declaration and (
-            alt_lines := _explain_lines("view", "canvas_picture_declaration", raw, prefix=at)
+            alt_lines := _explain_lines(
+                "view", "canvas_picture_declaration", raw, prefix=at
+            )
         ):
             lines.extend(alt_lines)
         elif is_declaration and "bytes" in raw:

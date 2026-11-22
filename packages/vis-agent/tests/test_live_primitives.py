@@ -438,7 +438,9 @@ def test_canvas_threads_follow_item_updates(monkeypatch, host_kind):
 def test_canvas_picture_requires_a_description():
     import base64
 
-    picture = next(card["picture"] for card in _canvas_fixture()["cards"] if "picture" in card)
+    picture = next(
+        card["picture"] for card in _canvas_fixture()["cards"] if "picture" in card
+    )
     with pytest.raises(ValueError):
         vis.ui.canvas.picture(base64.b64decode(picture["data"]), alt="   ")
 
