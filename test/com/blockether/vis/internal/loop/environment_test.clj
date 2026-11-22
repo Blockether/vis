@@ -1,7 +1,8 @@
 (ns com.blockether.vis.internal.loop.environment-test
   "Extension and tool selection for a new session: `--extensions` and `--tools` in the
    CLI and the TUI, and the `extensions` and `tools` fields of `POST /v1/sessions`."
-  (:require [com.blockether.vis.internal.config.core :as config]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.loop.environment :as loop-env]
@@ -549,3 +550,38 @@
                                     [(assoc row :reloaded true)]))
         (sync! (assoc base :turn 3))
         (expect (= 2 @bind-calls))))))
+
+(defdescribe
+  turn-environment-test
+  (it "gives the tools the turn environment in a first, a warm and a renewed sandbox"
+      (let [created
+            (loop-env/create-environment {:providers [{:id :lmstudio}]} {:db (temp-db-path)})
+
+            where
+            #(str (:marker extension/*current-environment*))
+
+            ext
+            {:ext/name "probe"
+             :ext/activation-fn (constantly true)
+             :ext/engine {:ext.engine/symbols [{:ext.symbol/symbol 'probe_where
+                                                :ext.symbol/raw? true
+                                                :ext.symbol/fn where}]}}
+
+            called
+            (fn [environment]
+              (some-> (env/run-python-block (env/python-context environment) "print(probe_where())")
+                      :stdout
+                      str/trim))]
+
+        (try (with-redefs [scoped/engine-mode (constantly "on")]
+               (loop-env/install-extension! created ext)
+               (let [first-turn (assoc created :marker "turn-1")
+                     second-turn (assoc created :marker "turn-2")]
+
+                 (loop-env/sync-active-extension-symbols! first-turn)
+                 (expect (= "turn-1" (called first-turn)))
+                 (loop-env/sync-active-extension-symbols! second-turn)
+                 (expect (= "turn-2" (called second-turn)))
+                 (env/renew-python-sandbox! second-turn)
+                 (expect (= "turn-2" (called second-turn)))))
+             (finally (loop-env/dispose-environment! created))))))

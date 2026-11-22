@@ -195,8 +195,11 @@
                  not-empty
                  (env/unowned-bindings python-context))]
 
-    ;; A failed sync leaves no key, so the next sync binds again.
+    ;; A failed sync leaves no key, so the next sync binds again. Until the sync
+    ;; completes, the tracked names also hold each name that it can bind.
     (some-> sync-atom (reset! {:env environment}))
+    (some-> (:bound-extension-symbols environment)
+            (swap! into (keep :sym) bound))
     ;; One batch for each direction, so a sandbox build pays a few guest calls, not
     ;; several for each symbol. A name that an active extension binds stays bound.
     (env/set-python-bindings! python-context bound)
@@ -312,7 +315,9 @@
    ;; session is still cold, and starting an interpreter to seed symbols nobody
    ;; asked for is exactly the wait this laziness exists to remove. A sandbox
    ;; built later seeds itself: `create-environment`'s delay ends by calling
-   ;; `sync-extension-symbols-into!` with its own fresh context.
+   ;; `sync-extension-symbols-into!` with its own fresh context, and with this
+   ;; environment, which the line below keeps for it.
+   (some-> (:extension-sync environment) (swap! assoc :env environment))
    (when-let [python-context (env/python-context-if-built environment)]
      (sync-extension-symbols-into! python-context environment active-extensions))
    environment))
@@ -827,7 +832,14 @@
                       ;; Extensions installed while this sandbox was still cold skipped their
                       ;; symbol sync; give them their globals now. The context goes in by hand
                       ;; because reaching it through the environment would re-enter THIS delay.
-                      (when-let [environment @environment-atom]
+                      ;; The tools run with the environment of the last turn sync,
+                      ;; also when this build is the first or a renewed sandbox.
+                      (when-let [environment (some-> @environment-atom
+                                                     (as-> base
+                                                       (or (some-> (:extension-sync base)
+                                                                   deref
+                                                                   :env)
+                                                           base)))]
                         (perf/timed :sandbox/sync-symbols
                                     (sync-extension-symbols-into! python-context
                                                                   environment
