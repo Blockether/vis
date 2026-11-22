@@ -7,6 +7,7 @@ import {
   canvasLayout,
   canvasTarget,
   canvasZoomedAt,
+  keptCanvasLayout,
   type CanvasBox,
   type CanvasLayout,
 } from './canvas';
@@ -172,6 +173,25 @@ describe('the layout of a canvas', () => {
       return performance.now() - start;
     });
     expect(Math.min(...times)).toBeLessThan(100);
+  });
+
+  it('keeps the layout of a large board when only a progress or a tone changes', () => {
+    const full = Array.from({ length: 200 }, (_, i) =>
+      card(String(i), Array.from({ length: Math.min(i, 4) }, (_, k) => String(i - 1 - k * 7)).filter((id) => +id >= 0),
+        { progress: 0.1 }));
+    const layoutOf = keptCanvasLayout();
+    const before = layoutOf(full);
+    const changed = full.map((one) => one.id === '150'
+      ? { ...one, progress: 0.9, edges: one.edges.map((e) => ({ ...e, tone: 'ok' as const, is_active: true })) }
+      : one);
+    const start = performance.now();
+    const after = layoutOf(changed);
+    expect(performance.now() - start).toBeLessThan(20);
+    expect(after.boxes).toBe(before.boxes);
+    expect(after.arrows.find((arrow) => arrow.to === '150')?.edge.tone).toBe('ok');
+    // A change that makes an item taller moves the items under it.
+    const taller = changed.map((one) => one.id === '150' ? { ...one, text: 'A long line. '.repeat(40) } : one);
+    expect(layoutOf(taller).boxes).not.toBe(before.boxes);
   });
 });
 

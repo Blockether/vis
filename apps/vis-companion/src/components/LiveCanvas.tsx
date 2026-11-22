@@ -13,7 +13,7 @@ import {
   CANVAS_FAR_ZOOM,
   canvasFlow,
   canvasFrameHeight,
-  canvasLayout,
+  keptCanvasLayout,
   canvasTarget,
   canvasZoomedAt,
   type CanvasCamera,
@@ -217,9 +217,10 @@ export function LiveCanvas({
   );
 
   const flow = canvasFlow(size.width, node.flow);
+  const [layoutOf] = useState(keptCanvasLayout);
   const layout = useMemo(
-    () => canvasLayout(node.cards, measures, flow),
-    [node.cards, measures, flow],
+    () => layoutOf(node.cards, measures, flow),
+    [layoutOf, node.cards, measures, flow],
   );
   const isLocked = node.is_locked;
   // The board stands in the part of the frame above the bar.

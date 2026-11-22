@@ -1131,6 +1131,49 @@ function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boole
   return arrows;
 }
 
+/**
+ * The inputs that move a box or an arrow. A progress, a tone, a colour or a motion
+ * is not one of them, and a measured item gives its height, not its words.
+ */
+function layoutKey(cards: readonly LiveCanvasCard[], measures: ReadonlyMap<string, CanvasMeasure> | undefined,
+  flow: CanvasFlow): string {
+  const parts: unknown[] = [flow];
+  for (const card of cards) {
+    const measure = measures?.get(card.id);
+    parts.push(card.id, card.kind, card.parent, card.size, card.shape, card.row, card.column,
+      measure?.height ?? estimatedCardHeight(card), captionHeight(card, measure, canvasItemWidth(card)), card.edges.length);
+    for (const edge of card.edges) parts.push(edge.from, edge.route, edge.label, edge.line, edge.start_mark, edge.end_mark);
+  }
+  return JSON.stringify(parts);
+}
+
+/**
+ * The layout of one board over time. A change that moves no box and no arrow, such
+ * as a progress or a tone, gives the last layout again with the new edges. Then the
+ * board draws again only the items and the arrows that changed.
+ */
+export function keptCanvasLayout() {
+  let held: { key: string; layout: CanvasLayout } | undefined;
+  return (cards: readonly LiveCanvasCard[], measures?: ReadonlyMap<string, CanvasMeasure>,
+    flow: CanvasFlow = 'right'): CanvasLayout => {
+    const key = layoutKey(cards, measures, flow);
+    if (held?.key !== key) {
+      held = { key, layout: canvasLayout(cards, measures, flow) };
+      return held.layout;
+    }
+    // The last edge of a pair wins, as in the layout.
+    const edges = new Map<string, LiveCanvasEdge>();
+    for (const card of cards) for (const edge of card.edges) edges.set(`${edge.from}>${card.id}`, edge);
+    const { layout } = held;
+    if (layout.arrows.every((arrow) => edges.get(arrow.id) === arrow.edge)) return layout;
+    held = { key, layout: { ...layout, arrows: layout.arrows.map((arrow) => {
+      const edge = edges.get(arrow.id) ?? arrow.edge;
+      return edge === arrow.edge ? arrow : { ...arrow, edge };
+    }) } };
+    return held.layout;
+  };
+}
+
 export function canvasLayout(
   cards: readonly LiveCanvasCard[],
   measures?: ReadonlyMap<string, CanvasMeasure>,

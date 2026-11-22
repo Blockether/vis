@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Companion: a large canvas board zooms, pans, and changes between near and far without stops. On a board of 200 items with long Markdown text, a step of a zoom takes less than 60 ms instead of about 300 ms, and the change to a far view takes about 20 ms instead of about 300 ms. An item with a diagram or a picture gets its full height when the content loads.
 - Companion: a large canvas board opens faster. The app lays out the largest board, 200 items with 16 arrows each, in less than 100 ms. On a board of that size, a long arrow can go in a straight line.
 - Live views: the default route of a canvas arrow is `elbow`. An elbow has only lines at right angles. It goes around the items and the other arrows, and it crosses another arrow only when no other way is free. In the Companion app, arrows into one item do not go on top of each other.
+- Companion: a change of a canvas item that moves no item and no arrow, such as a progress, a tone, a colour, or the motion of an arrow, does not lay out the board again. The app draws again only the items and the arrows that changed, and the motion of the other arrows continues. On a board of 200 items, a progress step takes less than 1 ms instead of about 300 ms.
 
 ### Fixed
 
