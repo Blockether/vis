@@ -8993,10 +8993,9 @@
 
 (defn- session-summary-extras
   "Bulk summary decorations for `list-sessions`: per-session `turn_count` +
-   `modified_at` (from the ONE grouped `db-session-turn-stats` query `stats`
-   already holds for the whole store) — facts the TUI session picker previously
-   fetched with TWO HTTP round-trips PER session (109 sequential calls / ~7.5s at
-   54 sessions). The lean `workspace` map rides `soul` itself
+   `modified_at` (from `db-listed-session-turn-stats`). The TUI session picker
+   previously used two HTTP requests per session (109 calls in 7.5s for 54
+   sessions). The lean `workspace` map rides `soul` itself
    (`lean-workspace`), so every payload carries it and this decoration does not
    resolve it a second time per row.
 
@@ -9434,7 +9433,7 @@
 
          ;; ONE grouped query serves BOTH the ordering and the page's decorations.
          stats
-         (if db (read-or {:read :turn-stats} {} #(persistance/db-session-turn-stats db)) {})
+         (if db (read-or {:read :turn-stats} {} #(persistance/db-listed-session-turn-stats db)) {})
 
          reader-id
          (or (not-empty (str reader)) default-reader-id)
@@ -9731,7 +9730,7 @@
 
          stats
          (or (:stats facts)
-             (if db (read-or {:read :turn-stats} {} #(persistance/db-session-turn-stats db)) {}))
+             (if db (read-or {:read :turn-stats} {} #(persistance/db-listed-session-turn-stats db)) {}))
 
          live
          (or (:live facts) (read-or {:read :live-turns} {} bus/live-turns))

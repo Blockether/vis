@@ -2481,13 +2481,12 @@
    :order-by [[:last_turn.created_at :desc] [:last_turn.position :desc]]
    :limit 1})
 
-(def ^:private all-session-turn-stats-sql
-  "All-session turn stats without transcript reads. Covering indexes keep request
-   and context data out of this scan. SQLite's single MAX(version) selects id and
-   status from the same newest state; the version is unique within each turn.
-   The ordered aggregate selects the newest human status without a second scan.
-   Bind the settled statuses, in order."
-  (str "WITH sessions AS MATERIALIZED (SELECT id, session_soul_id FROM session_state), "
+(defn- grouped-session-turn-stats-sql
+  "Turn stats without transcript reads. The single MAX(version) selects id and
+   status from the same newest state. The ordered aggregate selects the newest
+   human status without a second scan. Bind the settled statuses in order."
+  [sessions-sql]
+  (str "WITH sessions AS MATERIALIZED (" sessions-sql "), "
        "t AS ("
        "SELECT ss.session_soul_id AS sid, ts.request_kind AS kind, ts.created_at AS created_at, "
        "ts.position AS position, f.id AS id, f.status AS status, MAX(f.version) AS version "
@@ -2501,6 +2500,16 @@
        turn-state-reply-at-sql
        ") AS latest FROM t f GROUP BY sid"))
 
+(def ^:private all-session-turn-stats-sql
+  (grouped-session-turn-stats-sql "SELECT id, session_soul_id FROM session_state"))
+
+(def ^:private listed-session-turn-stats-sql
+  ;; Match the top-level and claim filters in `db-list-sessions`.
+  (grouped-session-turn-stats-sql
+    (str "SELECT ss.id, ss.session_soul_id FROM session_state ss "
+        "JOIN session_soul cs ON cs.id = ss.session_soul_id "
+        "WHERE cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL")))
+
 (defn- turn-stats-row
   [row]
   (let [status (:last_status row)]
@@ -2510,6 +2519,19 @@
      :latest-turn-failed? (= (normalize-status :error) status)
      :latest-turn-at (->date (:latest row))}))
 
+(defn- grouped-session-turn-stats
+  [db-info cache-key sql]
+  (if (ds db-info)
+    (read-at-version db-info
+                     cache-key
+                     #(into {}
+                            (map (fn [row] [(str (:sid row)) (turn-stats-row row)]))
+                            (query-sql! db-info
+                                        (into [sql]
+                                              (map normalize-status)
+                                              [:success :error :interrupted]))))
+    {}))
+
 (defn db-session-turn-stats
   "Counts, clocks, and the newest turn's verdict. `:latest-turn-at` is the end of the
    newest agent reply, nil before any reply. answer-count counts settled
@@ -2518,17 +2540,7 @@
    failed and interrupted runs from ordinary idle sessions. The all-session arity
    uses one grouped query, never N+1 transcript reads."
   ([db-info]
-   (if (ds db-info)
-     (read-at-version db-info
-                      ::session-turn-stats
-                      #(into {}
-                             (map (fn [row]
-                                    [(str (:sid row)) (turn-stats-row row)]))
-                             (query-sql! db-info
-                                         (into [all-session-turn-stats-sql]
-                                               (map normalize-status)
-                                               [:success :error :interrupted]))))
-     {}))
+   (grouped-session-turn-stats db-info ::session-turn-stats all-session-turn-stats-sql))
   ([db-info session-id]
    (when (and (ds db-info) session-id)
      (when-let [row (query-one! db-info
@@ -2539,6 +2551,10 @@
                                  :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
                                  :where [:= :ss.session_soul_id (->ref session-id)]})]
        (turn-stats-row row)))))
+
+(defn db-listed-session-turn-stats
+  [db-info]
+  (grouped-session-turn-stats db-info ::listed-session-turn-stats listed-session-turn-stats-sql))
 
 (defn- session-usage-scope
   "Honeysql `[from join where]` fragments selecting the CURRENT chain of the

@@ -168,6 +168,9 @@
      {:turn-count n :latest-turn-at Date}}`. 2-arity: ONE session's stats
      unwrapped (nil when unknown), so a single-session read never scans the
      whole store.")
+  (db-listed-session-turn-stats [db-info]
+    "Read turn aggregates for top-level, claimed sessions only. Same result shape
+     as the 1-arity `db-session-turn-stats`.")
   (db-session-usage-stats [db-info session-id])
   (db-session-subagent-usage [db-info session-id]
     "Summed usage of every subagent below one session, at any depth, in one query.")

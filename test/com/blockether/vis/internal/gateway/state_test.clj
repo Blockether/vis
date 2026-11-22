@@ -3363,7 +3363,7 @@
                  (with-redefs-fn {#'lp/db-info (constantly ::db)
                                   #'lp/by-channel (constantly records)
                                   #'lp/by-id (into {} (map (juxt :id identity)) records)
-                                  #'persistance/db-session-turn-stats (constantly {})
+                                  #'persistance/db-listed-session-turn-stats (constantly {})
                                   #'bus/live-turns (constantly {})
                                   #'bus/live-turn-id (constantly nil)
                                   #'bus/session-waiting? (constantly false)
@@ -3485,9 +3485,10 @@
       (with-redefs-fn {#'lp/db-info (constantly ::db)
                        #'lp/by-channel (constantly records)
                        #'lp/by-id (into {} (map (juxt :id identity)) records)
-                       #'persistance/db-session-turn-stats (fn ([_] {"a" {:turn-count 3
-                                                                          :answer-count 2}})
-                                                             ([_ _] (swap! per-session inc) nil))
+                       #'persistance/db-listed-session-turn-stats
+                       (constantly {"a" {:turn-count 3 :answer-count 2}})
+                       #'persistance/db-session-turn-stats
+                       (fn [_ _] (swap! per-session inc) nil)
                        #'bus/live-turns (constantly {})
                        #'bus/live-turn-id (constantly nil)
                        #'bus/session-waiting? (constantly false)
@@ -3537,7 +3538,7 @@
       (with-redefs-fn {#'lp/db-info (constantly ::db)
                        #'lp/by-channel (constantly records)
                        #'lp/by-id single!
-                       #'persistance/db-session-turn-stats (constantly {})
+                       #'persistance/db-listed-session-turn-stats (constantly {})
                        #'persistance/db-session-page-facts (fn [_ ids]
                                                              (swap! batches conj (set ids))
                                                              (select-keys facts (map str ids)))
@@ -3578,7 +3579,7 @@
               (with-redefs-fn {#'lp/db-info (constantly ::db)
                                #'lp/by-channel (constantly records)
                                #'lp/by-id (into {} (map (juxt :id identity)) records)
-                               #'persistance/db-session-turn-stats (constantly {})
+                               #'persistance/db-listed-session-turn-stats (constantly {})
                                #'persistance/db-session-page-facts (fn [_ _]
                                                                      (throw (ex-info "store locked"
                                                                                      {})))
@@ -3619,7 +3620,7 @@
       (with-redefs [lp/db-info
                     (constantly nil)
 
-                    persistance/db-session-turn-stats
+                    persistance/db-listed-session-turn-stats
                     (constantly nil)
 
                     lp/by-channel
@@ -3674,7 +3675,7 @@
                  (with-redefs [lp/db-info
                                (constantly nil)
 
-                               persistance/db-session-turn-stats
+                               persistance/db-listed-session-turn-stats
                                (constantly nil)
 
                                lp/by-channel
@@ -3715,7 +3716,7 @@
                        {:id "c" :title "c" :created-at 3000} {:id "b" :title "b" :created-at 2000}
                        {:id "a" :title "a" :created-at 1000}])]
       (with-redefs [lp/db-info (constantly nil)
-                    persistance/db-session-turn-stats (constantly nil)
+                    persistance/db-listed-session-turn-stats (constantly nil)
                     lp/by-channel (fn [_]
                                     @fleet)
                     bus/waiting-requests (constantly {})
@@ -3748,7 +3749,7 @@
       (with-redefs [lp/db-info
                     (constantly nil)
 
-                    persistance/db-session-turn-stats
+                    persistance/db-listed-session-turn-stats
                     (constantly nil)
 
                     lp/by-channel
@@ -3799,7 +3800,7 @@
 (defn- navigator-page
   [opts]
   (with-redefs-fn {#'lp/db-info (constantly nil)
-                   #'persistance/db-session-turn-stats (constantly nil)
+                   #'persistance/db-listed-session-turn-stats (constantly nil)
                    #'lp/by-channel (constantly navigator-fleet)
                    #'bus/live-turns (constantly {"busy" "turn-1"})
                    #'bus/waiting-requests (constantly {})
@@ -3814,7 +3815,7 @@
   "`state/search-sessions` over `navigator-fleet`, the store answering `matches`."
   [opts matches]
   (with-redefs-fn {#'lp/db-info (constantly nil)
-                   #'persistance/db-session-turn-stats (constantly nil)
+                   #'persistance/db-listed-session-turn-stats (constantly nil)
                    #'lp/by-channel (constantly navigator-fleet)
                    #'bus/live-turns (constantly {"busy" "turn-1"})
                    #'bus/waiting-requests (constantly {})
@@ -3998,7 +3999,7 @@
 
             page
             (with-redefs-fn {#'lp/db-info (constantly :db)
-                             #'persistance/db-session-turn-stats (constantly stats)
+                             #'persistance/db-listed-session-turn-stats (constantly stats)
                              #'lp/by-channel (constantly [{:id "used"
                                                            :title "Refactor the pager"
                                                            :created-at 3000}])
@@ -4552,7 +4553,7 @@
                    {:id "s3" :created-at 100}]]
         (with-redefs-fn {#'lp/db-info (constantly ::db)
                          #'lp/projects (constantly [])
-                         #'persistance/db-session-turn-stats (constantly nil)
+                         #'persistance/db-listed-session-turn-stats (constantly nil)
                          #'lp/by-channel (constantly fleet)
                          #'state/session-project-root (constantly "/repo/a")
                          #'bus/live-turns (constantly {})
@@ -4593,7 +4594,7 @@
 
              (with-redefs-fn {#'lp/db-info (constantly store)
                               #'lp/projects (constantly [])
-                              #'persistance/db-session-turn-stats (constantly nil)
+                              #'persistance/db-listed-session-turn-stats (constantly nil)
                               #'lp/by-channel (constantly fleet)
                               #'state/session-project-root (fn [_ sid]
                                                              (get roots (str sid)))
@@ -4620,7 +4621,7 @@
   [opts]
   (with-redefs-fn {#'lp/db-info (constantly ::db)
                    #'lp/projects (constantly [])
-                   #'persistance/db-session-turn-stats (constantly nil)
+                   #'persistance/db-listed-session-turn-stats (constantly nil)
                    #'lp/by-channel (constantly
                                      [{:id "aa11" :title "One" :created-at 300 :project-id "p1"}
                                       {:id "aa22" :title "Two" :created-at 200 :project-id "p2"}
@@ -4659,7 +4660,7 @@
   [f]
   (with-redefs-fn {#'lp/db-info (constantly ::db)
                    #'lp/projects (constantly [])
-                   #'persistance/db-session-turn-stats (constantly nil)
+                   #'persistance/db-listed-session-turn-stats (constantly nil)
                    #'lp/by-channel (constantly [{:id "rooted-1" :title "One" :created-at 300}
                                                 {:id "loose" :title "Two" :created-at 200}
                                                 {:id "rooted-2" :title "Three" :created-at 100}])
@@ -4702,7 +4703,7 @@
   [opts]
   (with-redefs-fn {#'lp/db-info (constantly ::db)
                    #'lp/projects (constantly [])
-                   #'persistance/db-session-turn-stats (constantly nil)
+                   #'persistance/db-listed-session-turn-stats (constantly nil)
                    #'lp/by-channel (constantly
                                      [{:id "loose1" :title "One" :created-at 400}
                                       {:id "filed1" :title "Two" :created-at 300 :group-id "g1"}
@@ -4787,7 +4788,7 @@
                      #'lp/projects (constantly [])
                      #'lp/by-channel (constantly records)
                      #'lp/by-id (into {} (map (juxt :id identity)) records)
-                     #'persistance/db-session-turn-stats (constantly {})
+                     #'persistance/db-listed-session-turn-stats (constantly {})
                      #'bus/live-turns (constantly {})
                      #'bus/live-turn-id (constantly nil)
                      #'bus/waiting-requests (constantly {})
@@ -4837,7 +4838,7 @@
   (let [resolutions (atom 0)]
     (with-redefs-fn {#'lp/db-info (constantly ::db)
                      #'lp/projects (constantly [])
-                     #'persistance/db-session-turn-stats (constantly {})
+                     #'persistance/db-listed-session-turn-stats (constantly {})
                      #'lp/by-channel (constantly records)
                      #'lp/session-read-marks (constantly (or marks {}))
                      #'bus/live-turns (constantly (or live {}))
@@ -4864,7 +4865,7 @@
     (reset! @#'state/projects-overview-cache nil)
     (with-redefs-fn {#'lp/db-info (constantly ::db)
                      #'lp/projects (constantly [])
-                     #'persistance/db-session-turn-stats (fn [& _]
+                     #'persistance/db-listed-session-turn-stats (fn [& _]
                                                            (swap! reads inc)
                                                            {})
                      #'lp/by-channel (constantly records)
@@ -8608,7 +8609,7 @@
       (with-redefs-fn {#'lp/db-info (constantly ::db)
                        #'lp/projects (fn [_]
                                        [{:id "p-a" :name "Vis" :workspace-root "/repo/a"}])
-                       #'persistance/db-session-turn-stats
+                       #'persistance/db-listed-session-turn-stats
                        (fn [_]
                          {"s1" {:latest-turn-at 300 :turn-count 2}
                           "s2" {:latest-turn-at 100 :turn-count 1}
@@ -8648,7 +8649,7 @@
         (with-redefs-fn {#'lp/db-info (constantly ::db)
                          #'lp/projects (fn [_]
                                          [{:id "p-a" :name "Vis" :workspace-root "/repo/a"}])
-                         #'persistance/db-session-turn-stats
+                         #'persistance/db-listed-session-turn-stats
                          (fn [_]
                            {"s1" {:latest-turn-at 300 :turn-count 4 :answer-count 4}
                             "s2" {:latest-turn-at 100 :turn-count 1 :answer-count 1}
@@ -8681,7 +8682,7 @@
                        #'lp/projects (constantly [])
                        ;; s1 and s3 were woken: their council turns are the newest turns
                        ;; anywhere, yet only settled human answers count toward NEW.
-                       #'persistance/db-session-turn-stats
+                       #'persistance/db-listed-session-turn-stats
                        (constantly {"s1" {:latest-turn-at 900 :turn-count 5 :answer-count 2}
                                     "s2" {:latest-turn-at 100 :turn-count 3 :answer-count 3}
                                     "s3" {:latest-turn-at 800 :turn-count 2 :answer-count 1}})
@@ -8708,7 +8709,7 @@
                {:latest-turn-at 100 :turn-count 1 :answer-count 1 :latest-turn-interrupted? true}})]
         (with-redefs-fn {#'lp/db-info (constantly ::db)
                          #'lp/projects (constantly [])
-                         #'persistance/db-session-turn-stats (fn [_]
+                         #'persistance/db-listed-session-turn-stats (fn [_]
                                                                @stats)
                          #'lp/by-channel (constantly [{:id "s1"} {:id "s2"} {:id "s3"} {:id "s4"}])
                          ;; s4 stopped too, but its reader is caught up: no news.
@@ -8740,7 +8741,7 @@
 
         (with-redefs-fn {#'lp/db-info (constantly ::db)
                          #'lp/projects (constantly [{:id "empty" :workspace-root "/repo/c"}])
-                         #'persistance/db-session-turn-stats (fn [_]
+                         #'persistance/db-listed-session-turn-stats (fn [_]
                                                                @stats)
                          #'lp/by-channel (fn [_]
                                            @rows)
@@ -8766,7 +8767,7 @@
                        #'lp/projects
                        (fn [_]
                          [{:id "p-empty" :name "Empty" :workspace-root "/repo/empty"}])
-                       #'persistance/db-session-turn-stats (constantly {})
+                       #'persistance/db-listed-session-turn-stats (constantly {})
                        #'lp/by-channel (constantly [])
                        #'bus/live-turns (constantly {})
                        #'bus/waiting-requests (constantly {})}
@@ -9002,7 +9003,7 @@
   [seeds opts]
   (with-redefs-fn {#'lp/db-info (constantly ::db)
                    #'lp/projects (constantly [])
-                   #'persistance/db-session-turn-stats
+                   #'persistance/db-listed-session-turn-stats
                    (constantly {"read1" {:turn-count 4 :answer-count 3 :latest-turn-failed? true}
                                 "filed1" {:turn-count 2 :answer-count 2}})
                    #'lp/session-read-marks (constantly {"read1" 1})
