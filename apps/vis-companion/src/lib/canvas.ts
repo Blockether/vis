@@ -18,6 +18,23 @@ if (CANVAS_BRANCH?.properties.zoom?.maximum === undefined) {
 
 /** The largest scale of a board (`view.json` canvas `zoom`). 1 is a card at full size. */
 export const CANVAS_MAX_ZOOM = CANVAS_BRANCH.properties.zoom.maximum;
+interface CanvasThreadBounds {
+  properties: {
+    threads: {
+      items: {
+        allOf: { properties?: { messages: { items: { properties: { body: { maxLength: number } } } } } }[];
+      };
+    };
+  };
+}
+
+const THREAD_BOUNDS = (CANVAS_BRANCH as unknown as CanvasThreadBounds).properties.threads.items.allOf.find(
+  (part) => part.properties,
+)?.properties;
+if (!THREAD_BOUNDS) throw new Error('view.json has no bounds for a canvas thread');
+
+/** The longest message or draft of a thread on a board (`view.json` canvas `threads`). */
+export const CANVAS_MESSAGE_CHARS = THREAD_BOUNDS.messages.items.properties.body.maxLength;
 /** The smallest scale: a board of the largest size still fits in a phone. */
 export const CANVAS_MIN_ZOOM = 0.1;
 /** Below this scale the text of a card is too small to read: a card shows its title only. */
@@ -37,6 +54,10 @@ const DETOUR_LANE_GAP = 10;
 const DETOUR_LEAD = 18;
 /** The room past the clearance that a detour first tries to keep from an item. */
 const DETOUR_BERTH = 8;
+/** The most steps of one search for a way around the items. */
+const SEARCH_STEPS = 6000;
+/** The most steps of all the searches of one board. */
+const BOARD_STEPS = 60000;
 const CAPTION_GAP = 6;
 const PORT_STEP = 12;
 const MAX_DEPTH = viewSchema.$defs.canvas_card.properties.parent['x-vis-max-depth'];
@@ -89,12 +110,12 @@ export interface CanvasLayout extends Size {
 export interface CanvasCamera extends Point { scale: number }
 
 const widths = {
-  card: [208, 260, 332], comment: [176, 220, 280], note: [144, 184, 224],
+  card: [208, 260, 332], note: [144, 184, 224],
   text: [128, 176, 240], shape: [120, 160, 208], pill: [136, 184, 240],
   frame: [208, 260, 332],
 };
 const heights = {
-  card: [56, 64, 72], comment: [60, 68, 76], note: [128, 160, 196],
+  card: [56, 64, 72], note: [128, 160, 196],
   text: [28, 32, 40], shape: [72, 96, 120], pill: [56, 64, 76],
   frame: [96, 112, 136],
 };
@@ -119,7 +140,7 @@ export function estimatedCardHeight(card: LiveCanvasCard): number {
   const text = card.text?.split('\n').reduce((sum, line) => sum + Math.max(1, lines(line, width - 32, 7)), 0) ?? 0;
   const picture = card.picture ? 8 + Math.round((width - 32) * 9 / 16) : 0;
   const media = card.media?.kind === 'video' ? 8 + Math.round((width - 32) * 9 / 16) : card.media ? 44 : 0;
-  const detail = (text ? text * 18 + 4 : 0) + (card.meta || card.author ? 20 : 0) +
+  const detail = (text ? text * 18 + 4 : 0) + (card.meta ? 20 : 0) +
     (card.badges.length ? 24 : 0) + (card.progress === undefined ? 0 : 10);
   return Math.max(canvasItemMinHeight(card), 26 + title + detail + picture + media);
 }
@@ -598,24 +619,110 @@ function hitsCurve(points: Point[], r: Rect, depth = 0): boolean {
 function hitsRoute({ start, parts }: Route, obstacles: Rect[]): boolean {
   for (const { to, controls } of parts) {
     const points = [start, ...(controls ?? []), to];
-    if (obstacles.some((rect) => hitsCurve(points, rect))) return true;
+    // The points of a part bound it. Most items of a board are far from one arrow.
+    let left = Infinity;
+    let right = -Infinity;
+    let top = Infinity;
+    let bottom = -Infinity;
+    for (const { x, y } of points) {
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y);
+    }
+    for (const rect of obstacles) {
+      if (right <= rect.left || left >= rect.right || bottom <= rect.top || top >= rect.bottom) continue;
+      if (hitsCurve(points, rect)) return true;
+    }
     start = to;
   }
   return false;
 }
 
+/** The first index of sorted `values` whose value is above `n`, or at `n` when `isAt`. */
+function indexAbove(values: number[], n: number, isAt: boolean): number {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (values[middle] < n || (!isAt && values[middle] === n)) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+/**
+ * The gaps of one rail that an obstacle cuts. Gap `i` is the run between `stops[i]`
+ * and `stops[i + 1]`. `spans` holds the obstacles that the rail goes through.
+ */
+function cutGaps(stops: number[], spans: [low: number, high: number][]): Uint8Array {
+  const gaps = new Uint8Array(stops.length);
+  for (const [low, high] of spans) {
+    const first = Math.max(0, indexAbove(stops, low, false) - 1);
+    const last = Math.min(stops.length - 2, indexAbove(stops, high, true) - 1);
+    for (let i = first; i <= last; i++) gaps[i] = 1;
+  }
+  return gaps;
+}
+
 interface Lane { axis: Axis; at: number; low: number; high: number }
+
+/** The lanes that the arrows of a board already use. */
+interface Lanes {
+  count: number;
+  add: (lane: Lane) => void;
+  /** The lanes along `axis` that are too near `at` to share, in the order of use. */
+  near: (axis: Axis, at: number) => Lane[];
+}
+
+/** An index by place, so a step of a search reads the lanes of one rail only. */
+function laneIndex(): Lanes {
+  const buckets = new Map<number, { lane: Lane; order: number }[]>();
+  const key = (axis: Axis, at: number) => 2 * Math.floor(at / DETOUR_LANE_GAP) + (axis === 'x' ? 0 : 1);
+  const lanes: Lanes = {
+    count: 0,
+    add(lane) {
+      const id = key(lane.axis, lane.at);
+      const bucket = buckets.get(id);
+      const entry = { lane, order: lanes.count++ };
+      if (bucket) bucket.push(entry);
+      else buckets.set(id, [entry]);
+    },
+    near(axis, at) {
+      const id = key(axis, at);
+      return [id - 2, id, id + 2]
+        .flatMap((bucket) => buckets.get(bucket) ?? [])
+        .filter(({ lane }) => Math.abs(lane.at - at) < DETOUR_LANE_GAP - 1e-7)
+        .sort((a, b) => a.order - b.order)
+        .map(({ lane }) => lane);
+    },
+  };
+  return lanes;
+}
+
+/** The steps that the searches of one board can take. An arrow after them goes direct. */
+interface Budget {
+  steps: number;
+  /** The last search stopped at its limit: a longer search for the same arrow does not help. */
+  isCut: boolean;
+}
 
 function lane(a: Point, b: Point): Lane {
   const axis = a.y === b.y ? 'x' : 'y';
   return { axis, at: axis === 'x' ? a.y : a.x, low: Math.min(a[axis], b[axis]), high: Math.max(a[axis], b[axis]) };
 }
 
+/** The four steps of a search: right, left, down, up. */
+const STEP_X = [1, -1, 0, 0];
+const STEP_Y = [0, 0, 1, -1];
+
 interface SearchNode { cell: number; axis: number; cost: number; score: number; prev?: SearchNode }
 
 /** Search the grid of obstacle sides and port offsets. */
-function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lane[], room: number,
-  separate: boolean, limit: Rect | undefined, leave: Point, enter: Point): Point[] | undefined {
+function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lanes, room: number,
+  separate: boolean, limit: Rect | undefined, leave: Point, enter: Point, budget: Budget): Point[] | undefined {
+  budget.isCut = budget.steps <= 0;
+  if (budget.isCut) return undefined;
   const local = {
     left: Math.max(Math.min(start.x, end.x) - room, limit?.left ?? -Infinity),
     right: Math.min(Math.max(start.x, end.x) + room, limit?.right ?? Infinity),
@@ -624,6 +731,8 @@ function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lane[], ro
   };
   if ([start, end].some((p) => p.x < local.left || p.x > local.right || p.y < local.top || p.y > local.bottom)) return undefined;
   const relevant = obstacles.filter((r) => r.left < local.right && r.right > local.left && r.top < local.bottom && r.bottom > local.top);
+  // The rails of a search cost as its steps do.
+  budget.steps -= relevant.length;
   const rail = (axis: Axis): number[] => {
     const [lo, hi] = axis === 'x' ? ['left', 'right'] as const : ['top', 'bottom'] as const;
     const values = [start[axis], end[axis]];
@@ -664,8 +773,17 @@ function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lane[], ro
   }
   const costs = new Map<number, number>();
   const heuristic = (p: Point) => Math.abs(p.x - end.x) + Math.abs(p.y - end.y);
+  // Each rail keeps the obstacles that can cut a run along it and the lanes in use
+  // near it. A step then reads a few entries, not the whole board.
+  const rowCuts: Uint8Array[] = [];
+  const columnCuts: Uint8Array[] = [];
+  const rowLanes: Lane[][] = [];
+  const columnLanes: Lane[][] = [];
+  let steps = Math.min(budget.steps, SEARCH_STEPS);
   push({ cell: cellOf(start), axis: 2, cost: 0, score: heuristic(start) });
-  while (pending.length) {
+  while (pending.length && steps > 0) {
+    steps--;
+    budget.steps--;
     const node = pop();
     if (node.cost > (costs.get(node.cell * 3 + node.axis) ?? Infinity)) continue;
     if (node.cell === last) {
@@ -678,16 +796,22 @@ function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lane[], ro
     const here = pointOf(node.cell);
     const i = node.cell % xs.length;
     const j = Math.floor(node.cell / xs.length);
-    for (const [di, dj, axis] of [[1, 0, 0], [-1, 0, 0], [0, 1, 1], [0, -1, 1]]) {
+    for (let way = 0; way < 4; way++) {
+      const di = STEP_X[way];
+      const dj = STEP_Y[way];
+      const axis = way >> 1;
       if (xs[i + di] === undefined || ys[j + dj] === undefined) continue;
       const cell = (j + dj) * xs.length + i + di;
       if ((node.prev === undefined && (di * leave.x + dj * leave.y) < 0) ||
           (cell === last && (di * enter.x + dj * enter.y) > 0)) continue;
       const there = xy(xs[i + di], ys[j + dj]);
-      if (relevant.some((r) => hitsLine(here, there, r))) continue;
+      const cuts = axis === 0
+        ? (rowCuts[j] ??= cutGaps(xs, relevant.filter((r) => here.y > r.top && here.y < r.bottom).map((r) => [r.left, r.right])))
+        : (columnCuts[i] ??= cutGaps(ys, relevant.filter((r) => here.x > r.left && here.x < r.right).map((r) => [r.top, r.bottom])));
+      if (cuts[axis === 0 ? Math.min(i, i + di) : Math.min(j, j + dj)]) continue;
       const track = lane(here, there);
-      const overlap = used.reduce((n, r) => n + (r.axis === track.axis && Math.abs(r.at - track.at) < DETOUR_LANE_GAP - 1e-7 ?
-        Math.max(0, Math.min(r.high, track.high) - Math.max(r.low, track.low)) : 0), 0);
+      const lanes = axis === 0 ? (rowLanes[j] ??= used.near('x', here.y)) : (columnLanes[i] ??= used.near('y', here.x));
+      const overlap = lanes.reduce((n, r) => n + Math.max(0, Math.min(r.high, track.high) - Math.max(r.low, track.low)), 0);
       if (separate && overlap > 1e-7) continue;
       const cost = node.cost + track.high - track.low + (node.axis !== 2 && axis !== node.axis ? 16 : 0) + 20 * overlap;
       const key = cell * 3 + axis;
@@ -696,6 +820,7 @@ function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lane[], ro
       push({ cell, axis, cost, score: cost + heuristic(there), prev: node });
     }
   }
+  budget.isCut = pending.length > 0;
   return undefined;
 }
 
@@ -753,7 +878,7 @@ function makeRoute(edge: LiveCanvasEdge, from: Port, to: Port): { route: Route; 
   return { start, end, route: { start: a, parts: [{ to: b, controls }] } };
 }
 
-function detour(edge: LiveCanvasEdge, from: Port, to: Port, obstacles: Rect[], used: Lane[]) {
+function detour(edge: LiveCanvasEdge, from: Port, to: Port, obstacles: Rect[], used: Lanes, budget: Budget) {
   const angle = (dir: Point) => Math.atan2(-dir.y, -dir.x) * 180 / Math.PI;
   const start = { ...from.point, angle: angle(from.direction) };
   const end = { ...to.point, angle: angle(to.direction) };
@@ -770,17 +895,20 @@ function detour(edge: LiveCanvasEdge, from: Port, to: Port, obstacles: Rect[], u
       top: r.top - margin, bottom: r.bottom + margin }));
     if (!hasAncestor(to.item, from.item)) rails.push(bounds(from.item.box));
     if (!hasAncestor(from.item, to.item)) rails.push(bounds(to.item.box));
-    const searches = used.length ? [[96, true], [Infinity, true], [96, false], [Infinity, false]] as const :
+    const searches = used.count ? [[96, true], [Infinity, true], [96, false], [Infinity, false]] as const :
       [[96, false], [Infinity, false]] as const;
     for (const [room, separate] of searches) {
-      const points = findLanes(first, last, rails, used, room, separate, limit, from.direction, to.direction);
-      if (!points) continue;
+      const points = findLanes(first, last, rails, used, room, separate, limit, from.direction, to.direction, budget);
+      if (!points) {
+        if (budget.isCut) return undefined;
+        continue;
+      }
       const way = straightWay([a, ...points, b]);
       const route = squareWay(way);
       const clear = obstacles.map((r) => ({ left: r.left - DETOUR_CLEARANCE, right: r.right + DETOUR_CLEARANCE,
         top: r.top - DETOUR_CLEARANCE, bottom: r.bottom + DETOUR_CLEARANCE }));
       if (hitsRoute(route, clear)) continue;
-      for (let i = 1; i < way.length; i++) if (distance(way[i - 1], way[i]) > 0) used.push(lane(way[i - 1], way[i]));
+      for (let i = 1; i < way.length; i++) if (distance(way[i - 1], way[i]) > 0) used.add(lane(way[i - 1], way[i]));
       return { route, start, end };
     }
   }
@@ -831,12 +959,13 @@ function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boole
   const bodies = Array.from(items, (item) => ({ item, rect: bounds(item.box) }));
   const labelObstacles = bodies.filter(({ item }) => item.card.kind !== 'frame').map(({ rect }) => rect);
   const labels: Point[] = [];
-  const used: Lane[] = [];
+  const used = laneIndex();
+  const budget = { steps: BOARD_STEPS, isCut: false };
   for (const { id, from, to, edge } of ports) {
     const obstacles = bodies.filter(({ item }) => item !== from.item && item !== to.item &&
       !hasAncestor(from.item, item) && !hasAncestor(to.item, item)).map(({ rect }) => rect);
     const direct = makeRoute(edge, from, to);
-    const around = hitsRoute(direct.route, obstacles) ? detour(edge, from, to, obstacles, used) : undefined;
+    const around = budget.steps > 0 && hitsRoute(direct.route, obstacles) ? detour(edge, from, to, obstacles, used, budget) : undefined;
     const path = around ?? direct;
     const runs = around ? straightRuns(around.route) : [];
     let middle = runs[0]?.middle ?? routePoint(path.route);

@@ -263,6 +263,7 @@
   {:max-cards (get-in live-nodes ["canvas" "properties" "cards" "maxItems"])
    :max-edges (get-in (definition "canvas_card") ["properties" "edges" "maxItems"])
    :max-depth (get-in (definition "canvas_card") ["properties" "parent" "x-vis-max-depth"])
+   :max-threads (get-in live-nodes ["canvas" "properties" "threads" "maxItems"])
    :max-zoom (get-in live-nodes ["canvas" "properties" "zoom" "maximum"])})
 
 (def scene-meshes
@@ -1536,6 +1537,10 @@
                                                                           "not_selectable")]
                           (not-every? cards (get node "selected_ids")) [(line "/selected_ids"
                                                                               "canvas_selection")]))
+                  (some->> (repeated (map #(get % "id") (get node "threads")))
+                           (array-map "id")
+                           (line "/threads" "repeated_item_id")
+                           vector)
                   (canvas-picture-lines (get node "cards") "/cards" decl?)))
 
         "image"
@@ -1618,6 +1623,28 @@
   [node decl?]
   (let [lines (live-node-lines node decl?)]
     (when (seq lines) (node-fault-text (when (map? node) (get node "id")) lines))))
+
+(defn canvas-change-checked?
+  "Check the changed entries of a canvas whose other entries passed the node check."
+  [node op]
+  (let [fit?
+        (and (<= (count (:cards node)) (long (:max-cards canvas-defaults)))
+             (<= (count (:threads node)) (long (:max-threads canvas-defaults))))
+
+        sample
+        (when fit?
+          (case (:op op)
+            :append
+            (assoc (dissoc node :threads :selected-ids) :cards (:cards op))
+
+            :thread
+            (assoc (dissoc node :selected-ids)
+              :cards []
+              :threads [(:thread op)])
+
+            nil))]
+
+    (and sample (nil? (live-node-fault (wire-data sample) false)))))
 
 (defn error-card
   "The node that a host shows in place of node `id` with fault `text`."

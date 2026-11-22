@@ -21,11 +21,13 @@ import {
   type CanvasMeasure,
 } from '../lib/canvas';
 import type { CanvasPattern } from '../lib/canvas-vocabulary';
-import type { LiveCanvasNode } from '../lib/live-view';
+import type { LiveCanvasNode, LiveThread } from '../lib/live-view';
 import { distance, midpoint, wheelFactor, type Point, type Size } from '../lib/zoom-pan';
 import { CanvasArrowLabels, CanvasArrows } from './CanvasArrows';
-import { CanvasItem, type CanvasToneMark } from './CanvasItem';
-import { MinusIcon, PlusIcon } from './icons';
+import type { AppNodeActions } from './AppNodes';
+import { CanvasItem, type CanvasTalkState, type CanvasToneMark } from './CanvasItem';
+import { CanvasThreads } from './CanvasThreads';
+import { AppIcon, MinusIcon, PlusIcon } from './icons';
 import { Button, IconButton } from './ui';
 
 /** The tallest frame. The style sheet also holds the frame under 70% of the screen. */
@@ -53,6 +55,37 @@ const PAPER: Record<CanvasPattern, string | undefined> = {
  */
 type SafariGestureEvent = Event & { scale: number; clientX: number; clientY: number };
 
+/** A frame under this width shows the discussions as a sheet over its lower part. */
+const SHEET_WIDTH = 560;
+
+/** What the threads of one item hold, for the mark at its corner. */
+interface Talk {
+  count: number;
+  state: CanvasTalkState;
+}
+
+/** The mark of each item that has a thread: a saved draft shows before open messages. */
+function talksOf(threads: readonly LiveThread[]): ReadonlyMap<string, Talk> {
+  const talks = new Map<string, Talk>();
+  for (const thread of threads) {
+    if (!thread.item_id) continue;
+    const hasDraft = thread.draft !== undefined;
+    const state: CanvasTalkState = hasDraft ? 'draft' : thread.is_resolved ? 'resolved' : 'open';
+    const count = thread.messages.length + (hasDraft && thread.draft !== '' ? 1 : 0);
+    const held = talks.get(thread.item_id);
+    talks.set(thread.item_id, {
+      count: (held?.count ?? 0) + count,
+      state:
+        held?.state === 'draft' || state === 'draft'
+          ? 'draft'
+          : held?.state === 'open' || state === 'open'
+            ? 'open'
+            : 'resolved',
+    });
+  }
+  return talks;
+}
+
 /** A point of the screen, from the top left corner of `frame`. */
 function inFrame(frame: HTMLElement | null, point: Point): Point {
   const box = frame?.getBoundingClientRect();
@@ -68,32 +101,48 @@ const Board = memo(function Board({
   node,
   layout,
   mark,
+  talks,
+  talkingId,
+  canComment,
   onSelect,
+  onTalk,
 }: {
   node: LiveCanvasNode;
   layout: CanvasLayout;
   mark: CanvasToneMark;
-  onSelect?: (nodeId: string, itemIds: string[]) => void;
+  talks: ReadonlyMap<string, Talk>;
+  /** The item whose discussion is open. */
+  talkingId: string | null;
+  /** False on a board that a person only reads: an item without a thread has no mark. */
+  canComment: boolean;
+  onSelect?: (itemId: string) => void;
+  /** Absent when a person can neither read nor write a comment. */
+  onTalk?: (itemId: string) => void;
 }) {
   const cards = new Map(node.cards.map((card) => [card.id, card]));
   const selected = new Set(node.selected_ids);
-  const isSelectable = node.is_selectable && Boolean(onSelect);
   const items = (isFrame: boolean) =>
     layout.boxes.map((box) => {
       const card = cards.get(box.id);
       if (!card || (card.kind === 'frame') !== isFrame) return null;
-      const sources = card.edges
+      const after = card.edges
         .filter((edge) => cards.has(edge.from) && edge.line !== 'none')
-        .map((edge) => `${cards.get(edge.from)?.title}${edge.label ? ` (${edge.label})` : ''}`);
+        .map((edge) => `${cards.get(edge.from)?.title}${edge.label ? ` (${edge.label})` : ''}`)
+        .join(', ');
+      const talk = talks.get(card.id);
       return (
         <CanvasItem
           key={card.id}
           card={card}
           box={box}
           mark={mark}
-          sources={sources}
+          after={after}
           isSelected={selected.has(card.id)}
-          onSelect={isSelectable ? () => onSelect?.(node.id, [card.id]) : undefined}
+          onSelect={onSelect}
+          talkCount={talk?.count ?? 0}
+          talkState={talk?.state}
+          isTalkOpen={talkingId === card.id}
+          onTalk={talk || canComment ? onTalk : undefined}
         />
       );
     });
@@ -110,7 +159,8 @@ const Board = memo(function Board({
 /**
  * A live `canvas`: cards and arrows on a board with a camera. The owner points the
  * camera with `zoom` and `focus`. A person who moves the board holds the camera until
- * the owner points it again or the person presses Fit.
+ * the owner points it again or the person presses Fit. The threads of the items
+ * open in a panel over the board, and with an app a person writes comments there.
  *
  * The camera is written to style and not to state: a pinch that drew React again on
  * each frame stutters on the devices that pinch.
@@ -119,11 +169,14 @@ export function LiveCanvas({
   node,
   mark,
   onSelect,
+  app,
 }: {
   node: LiveCanvasNode;
   /** The mark of a tone, with its word for a screen reader. */
   mark: CanvasToneMark;
   onSelect?: (nodeId: string, itemIds: string[]) => void;
+  /** The Save action of an app. Absent, the threads are read only. */
+  app?: AppNodeActions;
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const world = useRef<HTMLDivElement>(null);
@@ -135,6 +188,27 @@ export function LiveCanvas({
   const gesture = useRef({ hasMoved: false, spread: 0 });
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const [measures, setMeasures] = useState<ReadonlyMap<string, CanvasMeasure>>(new Map());
+  /** The open panel: one item, or the whole board with a null id. */
+  const [talk, setTalk] = useState<{ itemId: string | null; isComposing: boolean } | null>(null);
+  /** The person adds comments: each item shows the control that starts one. */
+  const [isCommenting, setCommenting] = useState(false);
+
+  const canComment = Boolean(app) && !app?.isReadOnly;
+  const talks = useMemo(() => talksOf(node.threads), [node.threads]);
+  const hasTalk = canComment || node.threads.length > 0;
+  const nodeId = node.id;
+  const isSelectable = node.is_selectable && Boolean(onSelect);
+  const select = useMemo(
+    () => (isSelectable ? (itemId: string) => onSelect?.(nodeId, [itemId]) : undefined),
+    [isSelectable, onSelect, nodeId],
+  );
+  const openTalk = useCallback(
+    (itemId: string) => {
+      setTalk({ itemId, isComposing: canComment && !talks.has(itemId) });
+      setCommenting(false);
+    },
+    [canComment, talks],
+  );
 
   const flow = canvasFlow(size.width, node.flow);
   const layout = useMemo(
@@ -142,8 +216,8 @@ export function LiveCanvas({
     [node.cards, measures, flow],
   );
   const isLocked = node.is_locked;
-  // The board stands in the part of the frame above the camera bar.
-  const barRoom = isLocked ? 0 : BAR_ROOM;
+  // The board stands in the part of the frame above the bar.
+  const barRoom = isLocked && !hasTalk ? 0 : BAR_ROOM;
   const room = useMemo(
     () => ({ width: size.width, height: Math.max(0, size.height - barRoom) }),
     [size, barRoom],
@@ -174,6 +248,9 @@ export function LiveCanvas({
     // A far camera makes each line thin. The arrows grow against the scale, so a
     // line stays near one pixel on the screen.
     frameNode.style.setProperty('--cv-weight', String(Math.min(2.2, Math.max(1, 0.8 / scale))));
+    // The mark of a discussion keeps its size on the screen, so a person can read
+    // and press it on a board that shows whole.
+    frameNode.style.setProperty('--cv-mark', String(Math.min(3, Math.max(1, 1 / scale))));
     // A person who holds the camera moves the board with one finger. Before that,
     // one finger scrolls the page, so a board in a long page is not a trap.
     frameNode.style.touchAction =
@@ -411,6 +488,7 @@ export function LiveCanvas({
       aria-label={node.label || summary}
       data-canvas={node.id}
       data-far="false"
+      data-commenting={isCommenting}
       className={`group/canvas relative max-h-[70vh] w-full select-none overflow-hidden border border-edge-strong bg-ink transition-[background-position,background-size] ${glide} ${
         isLocked ? '' : 'cursor-grab data-[dragging=true]:cursor-grabbing'
       }`}
@@ -430,8 +508,71 @@ export function LiveCanvas({
         className={`absolute left-0 top-0 origin-top-left transition-transform ${glide}`}
         style={{ width: layout.width, height: layout.height }}
       >
-        <Board node={node} layout={layout} mark={mark} onSelect={onSelect} />
+        <Board
+          node={node}
+          layout={layout}
+          mark={mark}
+          talks={talks}
+          talkingId={talk?.itemId ?? null}
+          canComment={canComment}
+          onSelect={select}
+          onTalk={hasTalk ? openTalk : undefined}
+        />
       </div>
+      {talk && (
+        <CanvasThreads
+          node={node}
+          itemId={talk.itemId}
+          isSheet={size.width < SHEET_WIDTH}
+          isComposing={talk.isComposing}
+          actions={app}
+          onCompose={(isComposing) => setTalk((held) => held && { ...held, isComposing })}
+          onOpen={(itemId) => {
+            setTalk({ itemId, isComposing: false });
+            if (itemId !== null && !isLocked) {
+              move(canvasTarget(latest.current.layout, latest.current.room, camera.current.scale, itemId), true);
+            }
+          }}
+          onClose={() => setTalk(null)}
+        />
+      )}
+      {hasTalk && (
+        <div
+          data-canvas-bar=""
+          role="group"
+          aria-label="Canvas comments"
+          className="absolute bottom-2 left-2 flex cursor-default items-center border border-edge-strong bg-ink"
+        >
+          <Button
+            variant="quiet"
+            density="compact"
+            pressEffect="none"
+            className="inline-flex min-w-11 items-center justify-center gap-1.5 tabular-nums"
+            aria-label={`Comments, ${node.threads.length} ${node.threads.length === 1 ? 'thread' : 'threads'}`}
+            title="Comments"
+            aria-pressed={talk !== null}
+            onClick={() => setTalk((held) => (held ? null : { itemId: null, isComposing: false }))}
+          >
+            <AppIcon name="chat" className="size-3" />
+            {node.threads.length}
+          </Button>
+          {canComment && (
+            <Button
+              variant="quiet"
+              density="compact"
+              pressEffect="none"
+              className="inline-flex min-w-11 items-center justify-center gap-1.5"
+              aria-label="Comment on items"
+              title="Show the comment control on each item"
+              aria-pressed={isCommenting}
+              onClick={() => setCommenting((held) => !held)}
+            >
+              <PlusIcon className="size-3" />
+              Comment
+            </Button>
+          )}
+        </div>
+      )}
       {!isLocked && (
         <div
           data-canvas-bar=""

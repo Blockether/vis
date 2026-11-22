@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import fixture from './live-view.fixture.json';
 import canonical from '../../../../packages/vis-contract/resources/vis-contract/fixtures/view.json';
+import primitives from '../../../../packages/vis-contract/resources/vis-contract/fixtures/live-primitives.json';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 import {
   appSummary,
@@ -1071,4 +1072,29 @@ it('keeps each declared app icon through a snapshot and a node patch', () => {
   }
   expect(liveViewFromWire({ ...canonical.live, icon: 'future-icon' })?.icon)
     .toBe(viewSchema.$defs.app_icon.default);
+});
+
+// Report: a person could not comment on an item of a board. A board now holds
+// threads, and each thread lives and goes with its item.
+it('keeps the threads of a board with their items through thread, remove and clear', () => {
+  const board = liveViewFromWire(primitives);
+  if (!board) throw new Error('the fixture must be paintable');
+  const threads = (view: LiveView) => nodeOfType(view, 'canvas', 'canvas').threads.map((thread) => thread.id);
+  expect(threads(board)).toEqual(['two-machines', 'contract-first']);
+  const late = { id: 'late', item_id: 'verify', messages: [], draft: 'Check the phone.' };
+  const added = patched(board, 1, [{ op: 'thread', node_id: 'canvas', thread: late }]);
+  expect(threads(added)).toEqual(['two-machines', 'contract-first', 'late']);
+  expect(nodeOfType(added, 'canvas', 'canvas').threads[2]).toMatchObject({ item_id: 'verify', draft: 'Check the phone.' });
+  // A thread without an item has no place on a board.
+  const lost = patched(added, 2, [{ op: 'thread', node_id: 'canvas', thread: { id: 'lost', messages: [], draft: 'x' } }]);
+  expect(threads(lost)).toEqual(threads(added));
+  // An id names a thread or an item. A removed item takes its threads with it.
+  expect(threads(patched(added, 2, [{ op: 'remove', node_id: 'canvas', item_ids: ['late'] }]))).toEqual([
+    'two-machines',
+    'contract-first',
+  ]);
+  const cut = patched(added, 2, [{ op: 'remove', node_id: 'canvas', item_ids: ['tests'] }]);
+  expect(threads(cut)).toEqual(['contract-first', 'late']);
+  expect(nodeOfType(cut, 'canvas', 'canvas').cards.map((card) => card.id)).not.toContain('tests');
+  expect(threads(patched(added, 2, [{ op: 'clear', node_id: 'canvas' }]))).toEqual([]);
 });

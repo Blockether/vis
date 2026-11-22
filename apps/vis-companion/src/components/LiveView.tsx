@@ -2346,7 +2346,7 @@ function NodeCell({
             (node.cards.length === 0 ? (
               <Empty>{EMPTY_LINE.canvas}</Empty>
             ) : (
-              <LiveCanvas node={node} mark={canvasMark} onSelect={onSelect} />
+              <LiveCanvas node={node} mark={canvasMark} onSelect={onSelect} app={presentation.app} />
             ))}
           {node.type === 'image' && <ImageNodeView node={node} />}
         </div>

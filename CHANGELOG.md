@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Live views: people comment on the items of a canvas board. A comment starts a thread on its item, and one item can hold more than one thread. A mark on the item shows the number of comments and the state of the thread. Your code reads the threads with `board.threads` and answers with `board.reply(...)` and `board.resolve(...)`. The Companion app and the TUI show the threads.
+
+### Changed
+
+- Live views: the `comment` kind of a canvas item is removed, with the `author`, `is_resolved`, and `comments` keys of an item. Put a thread on the item.
+- Python SDK: the canvas builders are in `vis.ui.canvas`: `vis.ui.canvas.card`, `.shape`, `.note`, `.frame`, `.text`, `.edge`, and `.picture`. `vis.ui.canvas_card` and `vis.ui.canvas_edge` are removed. Use `vis.ui.canvas.card` and `vis.ui.canvas.edge`.
+- Live views: each text of a canvas node has a largest length. An ID, a title, and the label of the board hold at most 200 characters, and a message holds at most 4,000 characters. A board holds at most 100 threads of 50 messages. Vis refuses a larger value and keeps the board as it was.
+- Companion: a large canvas board opens faster. The app lays out the largest board, 200 items with 16 arrows each, in less than 100 ms. On a board of that size, a long arrow can go in a straight line.
+
 ## [v0.5.30] - 2026-11-22
 
 Vis v0.5.29 was not published, because its native release check failed. v0.5.30 contains all v0.5.29 changes.

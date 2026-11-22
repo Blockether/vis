@@ -82,7 +82,19 @@
             data
             (some #(get-in % ["picture" "data"]) (get canvas "cards"))]
 
-        (expect (= canvas (wire/->wire (node view "canvas"))))
+        (let [owner-authors (fn [n]
+                              (update n
+                                      "threads"
+                                      #(mapv (fn [t]
+                                               (update t
+                                                       "messages"
+                                                       (fn [ms]
+                                                         (mapv (fn [m]
+                                                                 (assoc m
+                                                                   "author" {"kind" "agent"}))
+                                                               ms))))
+                                             %)))]
+          (expect (= (owner-authors canvas) (wire/->wire (node view "canvas")))))
         (expect (= (spec/picture-byte-count data) (:bytes picture)))
         (expect (not (contains? picture :data)))
         (expect (not (str/includes? (materializer/->markdown view) data))))

@@ -107,9 +107,11 @@
                          cells
                          (assoc :cells found))) seen]))
             [[] #{}]
-            (lv/plan (lv/opened (assoc view
-                                  :nodes [node]
-                                  :description nil))
+            (lv/plan (cond-> (lv/opened (assoc view
+                                          :nodes [node]
+                                          :description nil))
+                       (= :canvas (:type node))
+                       (lv/expanded (:id node)))
                      width))))
 
 (defn- node-rows
@@ -127,6 +129,13 @@
               (model/thread-rows node width {:node-id (:id node) :thread-id (:id node)}))
         (and (seq (:children node)) (holds-threads? node))
         (into [] (mapcat #(node-rows view % width folded opts)) (:children node))
+        (= :canvas (:type node)) (into []
+                                       (mapcat (fn [[row & more]]
+                                                 (cons (cond-> row
+                                                         (:item-id row)
+                                                         (assoc :is-selectable true))
+                                                       more)))
+                                       (partition-by :item-id (plan-rows view node width)))
         (= :image (:type node))
         (plan-rows view (assoc node :is-flipped (contains? folded [:picture (:id node)])) width)
         :else (plan-rows view node width)))
@@ -274,7 +283,16 @@
    or nil. A diff line with a thread edits that thread; else it starts one."
   [view row]
   (let [node (model/find-node view (:node-id row))]
-    (cond (#{:thread-head :thread-node} (:kind row))
+    (cond (and (= :canvas (:type node)) (:item-id row))
+          (let [item-id (:item-id row)
+                thread (first (filter #(= item-id (:item-id %)) (app/threads node)))]
+
+            (cond-> {:node-id (:id node) :item-id item-id}
+              thread
+              (assoc :thread-id
+                (:id thread) :draft
+                (:draft thread))))
+          (#{:thread-head :thread-node} (:kind row))
           {:node-id (:node-id row)
            :thread-id (:thread-id row)
            :anchor (:anchor row)
@@ -641,7 +659,7 @@
 
       (if (model/read-only? view)
         (assoc state :save {:state :closed})
-        (if (= :plan (:kind row))
+        (if (and (= :plan (:kind row)) (not (editor-target view row)))
           (let [entry (focused-entry row (:cell state))]
             (press state view (:node-id entry) (:item-id entry) effects))
           (if-let [target (editor-target view row)]
@@ -2084,21 +2102,20 @@
   "Send the saved drafts of the app with a new turn of the session. The gateway
    removes the drafts when it accepts the turn."
   [box session-id view-id]
-  (vis/worker-future "vis-app-comments"
-                     (fn []
-                       (let [notice
-                             (try (if (:turn (vis/gateway-submit-turn!
-                                               session-id
-                                               {:request ""
-                                                :comments (comment-refs view-id @(:view box))}))
-                                    "Comments sent to the session"
-                                    "Comments not sent")
-                                  (catch Throwable t (str "Comments not sent: " (ex-message t))))]
-                         (swap! (:outcomes box) conj
-                           [(fn [st _]
-                              (assoc st :notice notice)) nil])
-                         ((:on-change box))
-                         (read-view! box session-id view-id)))))
+  (vis/worker-future
+    "vis-app-comments"
+    (fn []
+      (let [notice (try (if (:turn (vis/gateway-submit-turn!
+                                     session-id
+                                     {:request "" :comments (comment-refs view-id @(:view box))}))
+                          "Comments sent to the session"
+                          "Comments not sent")
+                        (catch Throwable t (str "Comments not sent: " (ex-message t))))]
+        (swap! (:outcomes box) conj
+          [(fn [st _]
+             (assoc st :notice notice)) nil])
+        ((:on-change box))
+        (read-view! box session-id view-id)))))
 
 (defn- notice-effect!
   [box notice]

@@ -37,7 +37,6 @@ import { CANVAS_MAX_ZOOM } from './canvas';
 import {
   CANVAS_DEFAULT_FLOW,
   CANVAS_DEFAULT_PATTERN,
-  CANVAS_MAX_COMMENTS,
   canvasAnimation,
   canvasColor,
   canvasEdgeAnimation,
@@ -487,6 +486,8 @@ export interface LiveMessage {
 export interface LiveThread {
   id: string;
   anchor?: ViewAnchor;
+  /** The canvas item that the thread belongs to. Only a thread of a canvas has it. */
+  item_id?: string;
   messages: LiveMessage[];
   draft?: string;
   is_resolved?: boolean;
@@ -570,11 +571,6 @@ export interface LiveCanvasCard {
   media?: LiveCanvasMedia;
   /** A line under the item, outside its border. */
   caption?: string;
-  /** Who wrote an item of kind `comment`. */
-  author?: string;
-  is_resolved: boolean;
-  /** The count on the comment mark. Absent or 0 shows no mark. */
-  comments?: number;
   /** From 0 to 1. Absent shows no bar. */
   progress?: number;
   animation?: CanvasAnimation;
@@ -597,6 +593,8 @@ export interface LiveCanvasNode extends LiveNodeBase {
   /** The texture of the board behind the items. */
   pattern: CanvasPattern;
   cards: LiveCanvasCard[];
+  /** The discussions on the items. Each names its item with `item_id`. */
+  threads: LiveThread[];
 }
 
 /** One picture as base64 data (`view.json` `picture`). */
@@ -773,6 +771,8 @@ export interface LiveDraft {
   thread_id: string;
   body: string;
   anchor?: ViewAnchor;
+  /** The canvas item of the thread. */
+  item_id?: string;
   /** The messages of the thread, when the draft adds a finding. */
   quote?: string;
 }
@@ -1027,7 +1027,6 @@ function canvasCardFromWire(raw: Record<string, unknown>): LiveCanvasCard | null
   if (id === '') return null;
   const column = optionalNumber(raw.column);
   const row = optionalNumber(raw.row);
-  const comments = optionalNumber(raw.comments);
   const progress = optionalNumber(raw.progress);
   const parent = optionalText(raw.parent);
   return {
@@ -1052,11 +1051,6 @@ function canvasCardFromWire(raw: Record<string, unknown>): LiveCanvasCard | null
     ...optional('picture', canvasPictureFromWire(raw.picture)),
     ...optional('media', canvasMediaFromWire(raw.media)),
     ...optional('caption', optionalText(raw.caption)),
-    ...optional('author', optionalText(raw.author)),
-    is_resolved: raw.is_resolved === true,
-    ...(comments === undefined || comments < 1
-      ? {}
-      : { comments: Math.min(CANVAS_MAX_COMMENTS, Math.trunc(comments)) }),
     ...(progress === undefined ? {} : { progress: Math.min(1, Math.max(0, progress)) }),
     ...optional('animation', canvasAnimation(raw.animation)),
     // An item cannot stand in itself.
@@ -1184,10 +1178,12 @@ function draftFromWire(value: unknown, hasMessages: boolean): string | undefined
 /** The thread fields that a thread node and a diff thread share. */
 function threadPartsFromWire(raw: Record<string, unknown>): Omit<LiveThread, 'id'> {
   const anchor = anchorFromWire(raw.anchor);
+  const itemId = text(raw.item_id);
   const messages = keyed(raw.messages, messageFromWire);
   const draft = draftFromWire(raw.draft, messages.length > 0);
   return {
     ...(anchor ? { anchor } : {}),
+    ...(itemId === '' ? {} : { item_id: itemId }),
     messages,
     ...(draft === undefined ? {} : { draft }),
     ...(raw.is_resolved === undefined ? {} : { is_resolved: raw.is_resolved === true }),
@@ -1338,9 +1334,9 @@ function cutLogTexts(op: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-/** The threads a node holds: every thread of a diff, or the thread node itself. */
+/** The threads a node holds: every thread of a diff or a canvas, or the thread node itself. */
 export function liveThreads(node: LiveNode): LiveThread[] {
-  if (node.type === 'diff') return node.threads;
+  if (node.type === 'diff' || node.type === 'canvas') return node.threads;
   if (node.type === 'thread') {
     return [
       {
@@ -1355,10 +1351,14 @@ export function liveThreads(node: LiveNode): LiveThread[] {
   return [];
 }
 
-/** `thread` upserted into a diff by id, or put in place of a thread node's thread. */
+/** `thread` upserted into a diff or a canvas by id, or put in place of a thread node's thread. */
 function upsertThread(node: LiveLeafNode, thread: LiveThread): LiveNode {
   if (node.type === 'diff') {
     return { ...node, threads: upsert(node.threads, [thread]) };
+  }
+  if (node.type === 'canvas') {
+    // A canvas thread without its item has no place on the board.
+    return thread.item_id ? { ...node, threads: upsert(node.threads, [thread]) } : node;
   }
   if (node.type === 'thread' && node.id === thread.id) {
     const { id: _id, ...parts } = thread;
@@ -1611,6 +1611,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         is_selectable: isSelectable,
         selected_ids: isSelectable ? selectedIds(node.selected_ids, cards) : [],
         cards,
+        threads: keyed(node.threads, threadFromWire).filter((thread) => thread.item_id !== undefined),
       };
     }
   }
@@ -1737,6 +1738,7 @@ function draftsFromWire(raw: unknown[]): LiveDraft[] {
     const threadId = text(entry.thread_id);
     if (nodeId === '' || threadId === '' || typeof entry.body !== 'string') return [];
     const anchor = anchorFromWire(entry.anchor);
+    const itemId = text(entry.item_id);
     const quote = optionalText(entry.quote);
     return [
       {
@@ -1744,6 +1746,7 @@ function draftsFromWire(raw: unknown[]): LiveDraft[] {
         thread_id: threadId,
         body: entry.body,
         ...(anchor ? { anchor } : {}),
+        ...(itemId === '' ? {} : { item_id: itemId }),
         ...(quote ? { quote } : {}),
       },
     ];
@@ -1753,7 +1756,7 @@ function draftsFromWire(raw: unknown[]): LiveDraft[] {
 /** The saved drafts of the thread nodes in `nodes`, in reading order (`app/drafts`). */
 export function liveDrafts(nodes: readonly LiveNode[]): LiveDraft[] {
   return nodes.flatMap((node): LiveDraft[] => [
-    ...(node.type === 'diff' ? threadDrafts(node.id, node.threads) : []),
+    ...(node.type === 'diff' || node.type === 'canvas' ? threadDrafts(node.id, node.threads) : []),
     ...(node.type === 'thread' ? threadDrafts(node.id, [node]) : []),
     ...liveDrafts(nestedLiveNodes(node)),
   ]);
@@ -1769,6 +1772,7 @@ function threadDrafts(nodeId: string, threads: readonly (LiveThread | LiveThread
             thread_id: thread.id,
             body: thread.draft,
             ...(thread.anchor ? { anchor: thread.anchor } : {}),
+            ...('item_id' in thread && thread.item_id ? { item_id: thread.item_id } : {}),
             ...(thread.messages.length
               ? { quote: thread.messages.map((message) => message.body).join('\n\n') }
               : {}),
@@ -2207,8 +2211,13 @@ function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
     case 'scene':
       return { ...node, objects: withoutIds(node.objects, op.item_ids) };
     case 'canvas': {
+      // An id names an item or a thread, and a removed item takes its threads with it.
+      const gone = new Set(Array.isArray(op.item_ids) ? op.item_ids.map((id) => text(id)) : []);
       const cards = withoutIds(node.cards, op.item_ids);
-      return { ...node, cards, selected_ids: selectedIds(node.selected_ids, cards) };
+      const threads = node.threads.filter(
+        (thread) => !gone.has(thread.id) && !gone.has(thread.item_id ?? ''),
+      );
+      return { ...node, cards, threads, selected_ids: selectedIds(node.selected_ids, cards) };
     }
     default:
       return node;
@@ -2243,7 +2252,7 @@ function applyClear(node: LiveLeafNode): LiveNode {
     case 'scene':
       return { ...node, objects: [] };
     case 'canvas':
-      return { ...node, cards: [], selected_ids: [] };
+      return { ...node, cards: [], threads: [], selected_ids: [] };
     default:
       return node;
   }

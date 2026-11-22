@@ -303,14 +303,14 @@ def test_canvas_builds_and_updates_the_shared_board(monkeypatch, tmp_path, host_
             picture = spec.pop("picture")
             path = tmp_path / "board.png"
             path.write_bytes(base64.b64decode(picture["data"]))
-            spec["picture"] = vis.ui.canvas_picture(
+            spec["picture"] = vis.ui.canvas.picture(
                 path, alt=picture["alt"], fit=picture["fit"]
             )
         if edges:
             spec["after"] = [
-                vis.ui.canvas_edge(edge.pop("from"), **edge) for edge in edges
+                vis.ui.canvas.edge(edge.pop("from"), **edge) for edge in edges
             ]
-        cards.append(getattr(vis.ui, f"canvas_{kind}")(item_id, title, **spec))
+        cards.append(getattr(vis.ui.canvas, kind)(item_id, title, **spec))
 
     node = vis.ui.canvas(
         "canvas",
@@ -322,11 +322,13 @@ def test_canvas_builds_and_updates_the_shared_board(monkeypatch, tmp_path, host_
         board = view["canvas"]
         expected_cards = {card["id"]: card for card in cards}
         assert board.cards == expected_cards
+        assert [(one["id"], one["item_id"]) for one in board.threads] == [
+            (one["id"], one["item_id"]) for one in fixture["threads"]
+        ]
         board.set(flow="down", pattern="grid")
         board.frame("design", "Design", parent="checks")
         board.shape("sketch", "Sketch", shape="rectangle", parent="design")
         board.note("review-note", "Review", parent="design")
-        board.comment("reply", "Reply", author="Ada", parent="design")
         board.text("footnote", "Footnote", parent="design")
         state = view.state()["nodes"][0]
         _contracts.validate("view", "component", state)
@@ -335,7 +337,6 @@ def test_canvas_builds_and_updates_the_shared_board(monkeypatch, tmp_path, host_
         for item_id, kind in [
             ("sketch", "shape"),
             ("review-note", "note"),
-            ("reply", "comment"),
             ("footnote", "text"),
         ]:
             assert board.cards[item_id]["kind"] == kind
@@ -346,17 +347,17 @@ def test_canvas_builds_and_updates_the_shared_board(monkeypatch, tmp_path, host_
     "build, field",
     [
         (lambda: vis.ui.canvas("board", flow="back"), "flow"),
-        (lambda: vis.ui.canvas_shape("item", "Item", shape="star"), "shape"),
-        (lambda: vis.ui.canvas_card("item", "Item", progress=2), "progress"),
+        (lambda: vis.ui.canvas.shape("item", "Item", shape="star"), "shape"),
+        (lambda: vis.ui.canvas.card("item", "Item", progress=2), "progress"),
         (
-            lambda: vis.ui.canvas_card(
+            lambda: vis.ui.canvas.card(
                 "item",
                 "Item",
                 media={"kind": "video", "alt": "Demo", "url": "file:///demo.mp4"},
             ),
             "url",
         ),
-        (lambda: vis.ui.canvas_edge("item", route="zigzag"), "route"),
+        (lambda: vis.ui.canvas.edge("item", route="zigzag"), "route"),
     ],
 )
 def test_canvas_rejects_invalid_values_at_the_call(build, field):
@@ -367,7 +368,7 @@ def test_canvas_rejects_invalid_values_at_the_call(build, field):
 def test_canvas_item_builder_rejects_host_only_picture_bytes():
     picture = {"alt": "Board", "media_type": "image/png", "bytes": 32}
     with pytest.raises(ValueError, match=r"/cards/0/picture/bytes .*\(readOnly\)"):
-        vis.ui.canvas_card("n", "Board", picture=picture)
+        vis.ui.canvas.card("n", "Board", picture=picture)
 
 
 @pytest.mark.parametrize(
@@ -393,8 +394,45 @@ def test_canvas_item_builder_reports_the_raw_canvas_fault(kind, spec, path):
     )
     assert expected is not None and expected.startswith(f"node n /cards/0/{path} - ")
     with pytest.raises(ValueError) as error:
-        getattr(vis.ui, f"canvas_{kind}")("n", "Board", **spec)
+        getattr(vis.ui.canvas, kind)("n", "Board", **spec)
     assert str(error.value) == expected
+
+
+def test_canvas_checks_an_edited_builder_value():
+    canvas = vis.ui.canvas
+    edge = canvas.edge("source", route="curve")
+    card = canvas.card("target", "Target", after=edge)
+    edge["route"] = "zigzag"
+    with pytest.raises(ValueError, match=r"/cards/0/edges/0/route"):
+        canvas("board", [card])
+    with pytest.raises(ValueError, match=r"/cards/0/edges/0/route"):
+        canvas.card("target", "Target", after=edge)
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_canvas_threads_follow_item_updates(monkeypatch, host_kind):
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    fixture = _canvas_fixture()
+    with vis.live("Review", [fixture], flush_ms=0) as view:
+        board = view["canvas"]
+        by_id = {thread["id"]: thread for thread in board.threads}
+        board.resolve("contract-first")
+        resolved = next(t for t in board.threads if t["id"] == "contract-first")
+        assert resolved == dict(by_id["contract-first"], is_resolved=True)
+        board.card("build", "Build again")
+        assert next(t for t in board.threads if t["id"] == "contract-first") == resolved
+        board.remove("build")
+        assert [t["id"] for t in board.threads] == ["two-machines"]
+        board.remove("two-machines")
+        assert board.threads == []
+        assert "tests" in board.cards
+    with vis.live("Review", [fixture], flush_ms=0) as view:
+        board = view["canvas"]
+        board.clear()
+        assert board.cards == {} and board.threads == []
 
 
 def test_canvas_pictures_count_toward_the_view_limit():
@@ -410,9 +448,9 @@ def test_canvas_pictures_count_toward_the_view_limit():
     data = base64.b64decode(picture["data"]).ljust(most, b"\0")
     budget = _contracts.definition("view", "live_view")["x-vis-max-picture-bytes"]
     count = budget // most + 1
-    picture = vis.ui.canvas_picture(data, alt=picture["alt"])
+    picture = vis.ui.canvas.picture(data, alt=picture["alt"])
     cards = [
-        vis.ui.canvas_card(str(i), "Preview", picture=picture) for i in range(count)
+        vis.ui.canvas.card(str(i), "Preview", picture=picture) for i in range(count)
     ]
     faults = _contracts.live_view_faults(
         {"title": "Board", "nodes": [vis.ui.canvas("board", cards)]}
@@ -435,8 +473,8 @@ def test_canvas_draws_arrows_from_after_and_moves_its_camera(monkeypatch, host_k
     canvas = vis.ui.canvas(
         "flow",
         [
-            vis.ui.canvas_card("plan", "Plan", tone="ok"),
-            vis.ui.canvas_card("build", "Build", after="plan"),
+            vis.ui.canvas.card("plan", "Plan", tone="ok"),
+            vis.ui.canvas.card("build", "Build", after="plan"),
         ],
         is_selectable=True,
     )
@@ -448,7 +486,7 @@ def test_canvas_draws_arrows_from_after_and_moves_its_camera(monkeypatch, host_k
             flow.card(
                 "ship",
                 "Ship",
-                after=["plan", vis.ui.canvas_edge("build", is_active=True)],
+                after=["plan", vis.ui.canvas.edge("build", is_active=True)],
             )
             flow.select("build")
             flow.focus("ship", zoom=1.5)

@@ -1388,6 +1388,8 @@ def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
             elif not all(one in cards for one in node["selected_ids"]):
                 lines.append(named_line("/selected_ids", "canvas_selection"))
         lines += _canvas_picture_lines(node.get("cards"), "/cards", is_declaration)
+        if (one := _repeated(_ids(node.get("threads")))) is not None:
+            lines.append(named_line("/threads", "repeated_item_id", {"id": one}))
     elif kind == "scene":
         meshes, objects = node.get("meshes") or [], node.get("objects") or []
         builtin = scene_meshes()
@@ -1733,6 +1735,26 @@ VIEW_REFUSAL = "Invalid live view: "
 PATCH_REFUSAL = "Invalid live-view patch: "
 
 
+def check_canvas_reply(
+    body: Any, thread_id: Any, item_id: Any, submission_id: Any
+) -> None:
+    """Refuse reply text that does not fit the canvas thread rules."""
+    canvas = component_variant("canvas")
+    assert canvas is not None
+    thread = canvas[1]["properties"]["threads"]["items"]["allOf"][1]["properties"]
+    message = thread["messages"]["items"]["properties"]
+    for field, value, rule in (
+        ("body", body if isinstance(body, str) else None, message["body"]),
+        ("thread_id", thread_id, thread["id"]),
+        ("item_id", item_id, thread["item_id"]),
+        ("submission_id", submission_id, message["submission_id"]),
+    ):
+        if value is not None and len(str(value)) > rule["maxLength"]:
+            raise ValueError(
+                f"canvas reply {field} must have at most {rule['maxLength']} characters"
+            )
+
+
 def owner_author(extension: Any = None) -> dict[str, Any]:
     """The author that the host writes on a message of the owner: extension
     `extension` by name, or, without a name, the agent of the sandbox."""
@@ -1751,7 +1773,9 @@ def stamp_live_threads(node: Any, at: int, author: Any = None) -> None:
         kept = _live_thread(node, author, at)
         node.clear()
         node.update(kept)
-    elif node.get("type") == "diff" and isinstance(node.get("threads"), list):
+    elif node.get("type") in ("diff", "canvas") and isinstance(
+        node.get("threads"), list
+    ):
         node["threads"] = [_live_thread(one, author, at) for one in node["threads"]]
 
 
@@ -1763,7 +1787,7 @@ def owner_live_thread(node: dict[str, Any], thread: Any) -> Any:
         return thread
     held = (
         node.get("threads") or []
-        if node.get("type") == "diff"
+        if node.get("type") in ("diff", "canvas")
         else [node]
         if node.get("type") == "thread"
         else []
@@ -1875,6 +1899,8 @@ def apply_live_node_op(
         node.pop("line_tones", None)
     elif name == "clear":
         node[key] = []
+        if kind == "canvas" and "threads" in node:
+            node["threads"] = []
     elif name == "remove":
         dropped = set(given.get("item_ids") or [])
         node[key] = [
@@ -1882,6 +1908,12 @@ def apply_live_node_op(
             for one in node.get(key) or []
             if not (isinstance(one, dict) and one.get("id") in dropped)
         ]
+        if kind == "canvas" and "threads" in node:
+            node["threads"] = [
+                one
+                for one in node["threads"]
+                if one["id"] not in dropped and one["item_id"] not in dropped
+            ]
     elif name == "replace":
         node["rows"] = _upserted([], _filled_items("rows", given.get("rows")))
     if name in ("clear", "remove", "replace"):

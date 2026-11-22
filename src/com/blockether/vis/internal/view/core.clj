@@ -1461,6 +1461,9 @@
 
                :canvas
                (cond-> (merge base (select-keys node [:flow :pattern]) {:cards (items :cards)})
+                 (some? (:threads node))
+                 (assoc :threads (app-threads (:threads node)))
+
                  (some? (:zoom node))
                  (assoc :zoom (schema-fraction (:zoom node)))
 
@@ -3320,7 +3323,12 @@
         entry
         (cond-> entry
           app?
-          (merge (app-entry view file {}) (owner-hold)))]
+          (merge (app-entry view file {}) (owner-hold))
+
+          (and app?
+               (some #(= :canvas (:type %))
+                     (tree-seq :children :children {:children (:nodes view)})))
+          (assoc :compacted-bytes (atom (.length ^java.io.File file))))]
 
     (swap! pending assoc view-id entry)
     (when owned (save-owned-soon!))
@@ -4497,9 +4505,13 @@
                     (if-not (:is-accepted outcome)
                       {:is-accepted false :reason "invalid" :errors (:errors outcome)}
                       (let [{:keys [receipt comments patch]}
-                            (app-send
-                              action
-                              {:button button :inputs inputs :threaded threaded :outcome outcome})
+                            (app-checked (str "Invalid View action for " view-id ": ")
+                                         {:type :vis/view-invalid-action :view-id view-id}
+                                         #(app-send action
+                                                    {:button button
+                                                     :inputs inputs
+                                                     :threaded threaded
+                                                     :outcome outcome}))
 
                             patched
                             (binding [*host-patch* true]
@@ -4577,6 +4589,9 @@
                  :body body}
           (some? (:thread-id raw))
           (assoc :thread-id (live-text fail! "draft thread_id" (:thread-id raw)))
+
+          (some? (:item-id raw))
+          (assoc :item-id (live-text fail! "draft item_id" (:item-id raw)))
 
           (some? anchor)
           (assoc :anchor
@@ -5416,6 +5431,7 @@
             op
             (owner-checked #(app/reply-op node
                                           {:thread-id (trimmed (get opts "thread_id"))
+                                           :item-id (trimmed (get opts "item_id"))
                                            :anchor (some->> (get opts "anchor")
                                                             spec<-json
                                                             (app-anchor invalid-live-patch!))
@@ -5658,8 +5674,7 @@
       (let [op (live-op-name envelope)]
         (if (= "open" op)
           (when-not (= (name app/placement) (get-in envelope ["view" "placement"]))
-            (invalid-live-view!
-              "the py3 sandbox opens only apps: attach(ui.app(...))"))
+            (invalid-live-view! "the py3 sandbox opens only apps: attach(ui.app(...))"))
           (let [view-id (live-handle-id envelope op)]
             (recorded-app! view-id)
             (app-only! view-id op))))

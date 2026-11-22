@@ -812,12 +812,15 @@
 (defn- comment-line
   "Draft `draft` as one list item of the comments of a turn. A `reference` is the
    marker of the comment in the turn text."
-  [{:keys [anchor body reference] about :quote}]
+  [{:keys [anchor body reference item-title] about :quote}]
   (let [indent
         #(str/replace (str/trim %) "\n" "\n  ")
 
         where
-        (str (when reference (str reference " ")) (if anchor (anchor-text anchor) "the thread"))]
+        (str (when reference (str reference " "))
+             (cond item-title (str "canvas item " item-title)
+                   anchor (anchor-text anchor)
+                   :else "the thread"))]
 
     (cond (str/blank? about) (str "- " where ": " (indent body))
           (str/blank? body) (str "- " where ": " (indent about))
@@ -830,23 +833,32 @@
    marker of the comment in the turn text. A ref to a missing draft gives
    nothing, so a retry after the drafts are gone adds no text."
   [sid refs]
-  (let [found (vec (for [[view-id refs] (group-by #(get % "view_id") (filter map? (take 200 refs)))
-                         :let [view (view/app-view sid view-id)
-                               wanted (into {}
-                                            (map (juxt (juxt #(get % "node_id")
-                                                             #(get % "thread_id"))
-                                                       identity))
-                                            refs)]
-                         :when (and view (not (:is-closed view)))
-                         draft (app/drafts (:nodes view))
-                         :let [ref (wanted [(:node-id draft) (:thread-id draft)])]
-                         :when ref]
+  (let [found (vec
+                (for [[view-id refs] (group-by #(get % "view_id") (filter map? (take 200 refs)))
+                      :let [view (view/app-view sid view-id)
+                            wanted (into {}
+                                         (map (juxt (juxt #(get % "node_id") #(get % "thread_id"))
+                                                    identity))
+                                         refs)]
+                      :when (and view (not (:is-closed view)))
+                      draft (app/drafts (:nodes view))
+                      :let [ref (wanted [(:node-id draft) (:thread-id draft)])]
+                      :when ref]
 
-                     (cond-> (assoc draft
-                               :view-id view-id
-                               :title (:title view))
-                       (string? (get ref "reference"))
-                       (assoc :reference (get ref "reference")))))]
+                  (cond-> (assoc draft
+                            :view-id view-id
+                            :title (:title view))
+                    (:item-id draft)
+                    (assoc :item-title
+                      (or (some (fn [node]
+                                  (when (= (:node-id draft) (:id node))
+                                    (some #(when (= (:item-id draft) (:id %)) (:title %))
+                                          (:cards node))))
+                                (tree-seq :children :children {:children (:nodes view)}))
+                          (:item-id draft)))
+
+                    (string? (get ref "reference"))
+                    (assoc :reference (get ref "reference")))))]
     (when (seq found)
       {:drafts found
        :text (str/join "\n\n"

@@ -72,12 +72,13 @@ import { CODE_DEFAULT_CLASS, highlightSegments, languageOfPath, type SyntaxSegme
 /** What an app gives its review nodes. Absent, the nodes are read only. */
 export interface AppNodeActions {
   /**
-   * Save the draft of one thread, or start a thread on `anchor`. The next message
-   * of the session adds each saved draft. A null body removes the draft.
+   * Save the draft of one thread, or start a thread on `anchor` or on the canvas
+   * item `itemId`. The next message of the session adds each saved draft. A null
+   * body removes the draft.
    */
   draft: (
     nodeId: string,
-    target: { threadId?: string; anchor?: ViewAnchor; body: string | null },
+    target: { threadId?: string; anchor?: ViewAnchor; itemId?: string; body: string | null },
   ) => Promise<AppActionResult>;
   /** The app is closed or its owner is not connected: show, do not act. */
   isReadOnly: boolean;
@@ -156,6 +157,8 @@ interface DraftEditorProps {
   placeholder?: string;
   /** Blank text saves an empty draft: a finding added without a note. */
   isBlankAllowed?: boolean;
+  /** The longest text. A thread on a board holds less than a thread of a diff. */
+  maxLength?: number;
   onSave: (body: string) => Promise<AppActionResult>;
   onClose: () => void;
 }
@@ -165,13 +168,14 @@ interface DraftEditorProps {
  * of the session adds it. Cancel closes the editor and keeps the saved draft. A
  * blank Save on a new line creates nothing.
  */
-function DraftEditor({
+export function DraftEditor({
   label,
   saved,
   memoryId,
   submitLabel = 'Save',
   placeholder = 'Add a comment…',
   isBlankAllowed = false,
+  maxLength = LIVE_MESSAGE_CHARS,
   onSave,
   onClose,
 }: DraftEditorProps) {
@@ -223,7 +227,7 @@ function DraftEditor({
         placeholder={placeholder}
         className={TEXTAREA}
         value={text}
-        maxLength={LIVE_MESSAGE_CHARS}
+        maxLength={maxLength}
         aria-label={label}
         aria-keyshortcuts="Meta+Enter Control+Enter Escape"
         disabled={isBusy}

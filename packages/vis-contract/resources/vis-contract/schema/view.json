@@ -149,6 +149,10 @@
             "anchor": {
               "$ref": "#/$defs/anchor"
             },
+            "item_id": {
+              "description": "The canvas item that a new thread of a canvas belongs to.",
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
             "body": {
               "description": "The new draft. Null removes the draft. Blank text removes the draft of a thread without messages, and a new blank thread is not created. On a thread with messages, blank text saves an empty draft: the messages go into the next message of the session without a note.",
               "type": [
@@ -1051,6 +1055,10 @@
         "anchor": {
           "$ref": "#/$defs/anchor"
         },
+        "item_id": {
+          "description": "The id of the canvas item that the thread belongs to. Only a thread of a canvas has it.",
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
         "messages": {
           "type": "array",
           "items": {
@@ -1096,6 +1104,10 @@
         },
         "anchor": {
           "$ref": "#/$defs/anchor"
+        },
+        "item_id": {
+          "description": "The canvas item of the thread.",
+          "$ref": "common.json#/$defs/non_blank_string"
         },
         "body": {
           "type": "string",
@@ -2191,10 +2203,12 @@
           "description": "A board of items with arrows between them, which a person can pan and zoom. An item is a card, a shape, a sticky note, a comment, a frame or a text. A surface puts the items in steps: an item goes one step after the last item that it comes from. `column` and `row` put an item in a fixed place.",
           "properties": {
             "id": {
-              "$ref": "common.json#/$defs/non_blank_string"
+              "$ref": "common.json#/$defs/non_blank_string",
+              "maxLength": 200
             },
             "label": {
-              "$ref": "common.json#/$defs/non_blank_string"
+              "$ref": "common.json#/$defs/non_blank_string",
+              "maxLength": 200
             },
             "type": {
               "const": "canvas"
@@ -2226,9 +2240,11 @@
             "selected_ids": {
               "type": "array",
               "items": {
-                "$ref": "common.json#/$defs/non_blank_string"
+                "$ref": "common.json#/$defs/non_blank_string",
+                "maxLength": 200
               },
-              "uniqueItems": true
+              "uniqueItems": true,
+              "maxItems": 200
             },
             "cards": {
               "default": [],
@@ -2238,6 +2254,64 @@
               },
               "minItems": 0,
               "maxItems": 200
+            },
+            "threads": {
+              "description": "The discussions on the items of the board. Each thread names its item with `item_id`, and one item can have more than one thread. A thread whose item the canvas does not hold shows when that item arrives. A removed item takes its threads with it. A thread of a board is smaller than a thread of a diff: it holds at most 50 messages of 4000 characters.",
+              "type": "array",
+              "items": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/thread"
+                  },
+                  {
+                    "required": [
+                      "item_id"
+                    ],
+                    "properties": {
+                      "id": {
+                        "maxLength": 200
+                      },
+                      "anchor": {
+                        "properties": {
+                          "path": {
+                            "maxLength": 200
+                          }
+                        }
+                      },
+                      "item_id": {
+                        "maxLength": 200
+                      },
+                      "draft": {
+                        "maxLength": 4000
+                      },
+                      "messages": {
+                        "maxItems": 50,
+                        "items": {
+                          "properties": {
+                            "id": {
+                              "maxLength": 200
+                            },
+                            "body": {
+                              "maxLength": 4000
+                            },
+                            "submission_id": {
+                              "maxLength": 200
+                            },
+                            "author": {
+                              "properties": {
+                                "name": {
+                                  "maxLength": 200
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "maxItems": 100
             }
           },
           "required": [
@@ -3291,6 +3365,10 @@
         "anchor": {
           "$ref": "#/$defs/anchor"
         },
+        "item_id": {
+          "description": "The canvas item of the thread.",
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
         "body": {
           "type": "string",
           "maxLength": 20000
@@ -3421,7 +3499,8 @@
         },
         "thread": {
           "diff": ["thread"],
-          "thread": ["thread"]
+          "thread": ["thread"],
+          "canvas": ["thread"]
         }
       },
       "oneOf": [
@@ -3737,6 +3816,7 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "item_ids": {
+              "description": "The ids of the things to remove. For a canvas, an id names an item or a thread, and a removed item takes its threads with it.",
               "type": "array",
               "items": {
                 "$ref": "common.json#/$defs/non_blank_string"
@@ -5718,17 +5798,20 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "$ref": "common.json#/$defs/non_blank_string"
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
         },
         "title": {
-          "$ref": "common.json#/$defs/non_blank_string"
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
         },
         "text": {
           "type": "string",
           "maxLength": 2000
         },
         "meta": {
-          "$ref": "common.json#/$defs/non_blank_string"
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 80
         },
         "tone": {
           "$ref": "#/$defs/tone"
@@ -5736,7 +5819,8 @@
         "badges": {
           "type": "array",
           "items": {
-            "$ref": "common.json#/$defs/non_blank_string"
+            "$ref": "common.json#/$defs/non_blank_string",
+            "maxLength": 40
           },
           "maxItems": 8
         },
@@ -5789,20 +5873,6 @@
           "minLength": 1,
           "maxLength": 300
         },
-        "author": {
-          "description": "Who wrote an item of kind `comment`. A surface shows the name and its first letters.",
-          "$ref": "common.json#/$defs/non_blank_string"
-        },
-        "is_resolved": {
-          "type": "boolean",
-          "description": "True when a comment needs no more work. A surface shows it dimmed with a check mark."
-        },
-        "comments": {
-          "description": "How many comments the item has. A surface shows the number in a mark at the corner of the item. 0 or no value shows no mark.",
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 999
-        },
         "progress": {
           "description": "The part of the work that is done, from 0 to 1. A surface shows a bar in the item.",
           "type": "number",
@@ -5815,6 +5885,7 @@
         "parent": {
           "description": "The id of the item of kind `frame` that holds this item. An item whose parent the canvas does not hold, or whose parent is not a frame, stands on the board itself. A frame can hold frames, to a depth of 4. An item under a deeper frame stands on the board itself.",
           "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200,
           "x-vis-max-depth": 4
         },
         "edges": {
@@ -5838,10 +5909,12 @@
       "properties": {
         "from": {
           "description": "The id of the card where the arrow starts.",
-          "$ref": "common.json#/$defs/non_blank_string"
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
         },
         "label": {
-          "$ref": "common.json#/$defs/non_blank_string"
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 80
         },
         "tone": {
           "$ref": "#/$defs/tone"
@@ -5880,13 +5953,12 @@
       ]
     },
     "canvas_kind": {
-      "description": "What an item of a canvas is. `card` has a title line, text, badges and a picture. `shape` has its title in the middle of an outline. `note` is a sticky note. `comment` is a remark of a person, with its author. `frame` is a titled area that holds other items. `text` is a title and text with no border, such as a heading on the board.",
+      "description": "What an item of a canvas is. `card` has a title line, text, badges and a picture. `shape` has its title in the middle of an outline. `note` is a sticky note. `frame` is a titled area that holds other items. `text` is a title and text with no border, such as a heading on the board.",
       "type": "string",
       "enum": [
         "card",
         "shape",
         "note",
-        "comment",
         "frame",
         "text"
       ],

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import primitives from '../../../../packages/vis-contract/resources/vis-contract/fixtures/live-primitives.json';
+import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 import {
   CANVAS_MAX_ZOOM,
   canvasFlow,
@@ -19,7 +20,7 @@ const edge = (from: string, more: Partial<LiveCanvasEdge> = {}): LiveCanvasEdge 
 });
 const card = (id: string, after: string[] = [], more: Partial<LiveCanvasCard> = {}): LiveCanvasCard => ({
   id, title: id, badges: [], edges: after.map((from) => edge(from)), kind: 'card',
-  shape: 'rounded', fill: 'soft', border: 'solid', size: 'medium', is_resolved: false, ...more,
+  shape: 'rounded', fill: 'soft', border: 'solid', size: 'medium', ...more,
 });
 const diamond = () => [
   card('plan'), card('build', ['plan']), card('docs', ['plan']), card('verify', ['build', 'docs']),
@@ -396,4 +397,18 @@ describe('the camera of a canvas', () => {
     expect(under(zoomed).y).toBeCloseTo(under(camera).y);
     expect(canvasZoomedAt(camera, 1000, point).scale).toBe(CANVAS_MAX_ZOOM);
   });
+
+  // Report: a board of the largest size of the contract did not lay out in minutes.
+  it('lays out the largest board of the contract, with an arrow for each edge', () => {
+    const branches = viewSchema.$defs.component.oneOf as unknown as {
+      properties: { type?: { const?: string }; cards?: { maxItems: number } };
+    }[];
+    const most = branches.find((branch) => branch.properties.type?.const === 'canvas')!.properties.cards!.maxItems;
+    const arrows = viewSchema.$defs.canvas_card.properties.edges.maxItems;
+    const cards = Array.from({ length: most }, (_, i) =>
+      card(`n${i}`, Array.from({ length: Math.min(arrows, i) }, (_, k) => `n${i - 1 - k}`)));
+    const layout = canvasLayout(cards);
+    expect(layout.boxes).toHaveLength(most);
+    expect(layout.arrows).toHaveLength(cards.reduce((n, one) => n + one.edges.length, 0));
+  }, 5000);
 });

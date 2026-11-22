@@ -5,7 +5,7 @@
 
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 
-export type CanvasKind = 'card' | 'shape' | 'note' | 'comment' | 'frame' | 'text';
+export type CanvasKind = 'card' | 'shape' | 'note' | 'frame' | 'text';
 export type CanvasShape =
   | 'rectangle'
   | 'rounded'
@@ -98,5 +98,3 @@ export const canvasMediaKind = optionalWord(CANVAS_MEDIA_KINDS);
 /** The flow and the pattern of a board that states none. */
 export const CANVAS_DEFAULT_FLOW = DEFS.canvas_flow.default as CanvasFlowSetting;
 export const CANVAS_DEFAULT_PATTERN = DEFS.canvas_pattern.default as CanvasPattern;
-/** The largest count that a comment mark shows (`view.json` `canvas_card.comments`). */
-export const CANVAS_MAX_COMMENTS = DEFS.canvas_card.properties.comments.maximum;

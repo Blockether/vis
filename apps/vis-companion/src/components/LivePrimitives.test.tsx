@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/live-primitives.json';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
+import type { AppActionResult } from '../lib/app-actions';
 import { LiveViewPanel } from './LiveView';
 import { applyLivePatch, liveViewFromWire, type LiveNode, type LiveView } from '../lib/live-view';
 
@@ -262,7 +263,7 @@ describe('a canvas', () => {
   });
 
   it('shows the picture and the Play button of each kind of item', () => {
-    const kinds = ['card', 'note', 'comment', 'text', 'shape', 'frame'];
+    const kinds = ['card', 'note', 'text', 'shape', 'frame'];
     const canvas = fixture.nodes.find((n) => n.id === 'canvas')!;
     const pictured = (canvas.cards as { id: string; picture?: object }[]).find((card) => card.picture)!;
     const wireBoard = {
@@ -286,6 +287,38 @@ describe('a canvas', () => {
       expect(screen.getByRole('img', { name: `A picture of the ${kind}` })).toBeVisible();
       expect(screen.getByRole('button', { name: `Play the sound: The ${kind} sound` })).toBeVisible();
     }
+  });
+
+  it('shows the threads of an item on the item, and only reads them without an app', () => {
+    render(<LiveViewPanel view={board()} />);
+    expect(screen.getByRole('button', { name: '2 comments on Build, with a saved draft' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: '2 comments on Tests, resolved' }));
+    expect(screen.getByText('Can the tests run on two machines?')).toBeVisible();
+    expect(screen.getByText('Yes. The second machine takes the tests.')).toBeVisible();
+    expect(screen.queryByText('The contract changes first. The surfaces follow it.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reply' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New thread' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Comment on Verify' })).toBeNull();
+  });
+
+  it('saves the comment of a person on the item and the reply in its thread', async () => {
+    const draft = vi.fn(async (): Promise<AppActionResult> => ({ status: 'saved', seq: 9 }));
+    render(<LiveViewPanel view={board()} app={{ isReadOnly: false, draft }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on Verify' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Comment on Verify' }), {
+      target: { value: 'Run it on the phone too.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await waitFor(() =>
+      expect(draft).toHaveBeenCalledWith('canvas', { itemId: 'verify', body: 'Run it on the phone too.' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: '2 comments on Tests, resolved' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Reply' }), { target: { value: 'Good.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(draft).toHaveBeenLastCalledWith('canvas', { threadId: 'two-machines', body: 'Good.' }),
+    );
   });
 
   it('fits the whole board when the owner points the camera at one item', () => {

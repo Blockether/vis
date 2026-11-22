@@ -3360,9 +3360,6 @@
                 "icon": "lightning",
                 "animation": "bounce",
                 "caption": "One step",
-                "author": "Ada",
-                "is_resolved": true,
-                "comments": 999,
                 "progress": 1,
                 "parent": "f",
                 "media": {
@@ -3461,7 +3458,7 @@
           "cv"
         ],
         "text": [
-          "node cv /cards/0/kind - the value is not one of card, shape, note, comment, frame, text (enum)"
+          "node cv /cards/0/kind - the value is not one of card, shape, note, frame, text (enum)"
         ]
       }
     },
@@ -3963,18 +3960,18 @@
       }
     },
     {
-      "name": "a canvas rejects comments outside its limits",
+      "name": "a canvas label cannot exceed its limit",
       "view": {
         "title": "Canvas",
         "nodes": [
           {
             "id": "cv",
             "type": "canvas",
+            "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
             "cards": [
               {
                 "id": "a",
-                "title": "A",
-                "comments": 1000
+                "title": "A"
               }
             ]
           }
@@ -3986,7 +3983,40 @@
           "cv"
         ],
         "text": [
-          "node cv /cards/0/comments - the number is greater than the maximum 999 (maximum)"
+          "node cv /label - the string has 201 characters, the maximum is 200 (maxLength)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas thread needs its item",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ],
+            "threads": [
+              {
+                "id": "t",
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /threads/0 - missing required property \"item_id\" (required)"
         ]
       }
     },
@@ -4111,6 +4141,449 @@
         ],
         "text": [
           "node cv /cards/0/picture/bytes - only the host writes this property (readOnly)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas thread cannot exceed its message limit",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ],
+            "threads": [
+              {
+                "id": "t",
+                "item_id": "a",
+                "messages": [
+                  {
+                    "id": "0",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "1",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "2",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "3",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "4",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "5",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "6",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "7",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "8",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "9",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "10",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "11",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "12",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "13",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "14",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "15",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "16",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "17",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "18",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "19",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "20",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "21",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "22",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "23",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "24",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "25",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "26",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "27",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "28",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "29",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "30",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "31",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "32",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "33",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "34",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "35",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "36",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "37",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "38",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "39",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "40",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "41",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "42",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "43",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "44",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "45",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "46",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "47",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "48",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "49",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  },
+                  {
+                    "id": "50",
+                    "body": "Text",
+                    "author": {
+                      "kind": "agent"
+                    },
+                    "created_at": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /threads/0/messages - the array has 51 items, the maximum is 50 (maxItems)"
         ]
       }
     }
@@ -7961,9 +8434,6 @@
               "icon": "lightning",
               "animation": "bounce",
               "caption": "One step",
-              "author": "Ada",
-              "is_resolved": true,
-              "comments": 999,
               "progress": 1,
               "parent": "f",
               "media": {
@@ -8006,9 +8476,6 @@
             "icon": "lightning",
             "animation": "bounce",
             "caption": "One step",
-            "author": "Ada",
-            "is_resolved": true,
-            "comments": 999,
             "progress": 1,
             "parent": "f",
             "media": {
@@ -8030,6 +8497,667 @@
             ]
           }
         ]
+      }
+    },
+    {
+      "name": "a canvas thread op can name an item not here yet",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "cv",
+          "thread": {
+            "id": "t",
+            "item_id": "later",
+            "messages": []
+          }
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "threads"
+        ],
+        "value": [
+          {
+            "id": "t",
+            "item_id": "later",
+            "messages": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "a canvas remove drops the thread by id",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ],
+            "threads": [
+              {
+                "id": "t",
+                "item_id": "a",
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "remove",
+          "node_id": "cv",
+          "item_ids": [
+            "t"
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "threads"
+        ],
+        "value": []
+      }
+    },
+    {
+      "name": "a canvas remove drops the threads of the removed item",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ],
+            "threads": [
+              {
+                "id": "t",
+                "item_id": "a",
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "remove",
+          "node_id": "cv",
+          "item_ids": [
+            "a"
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "threads"
+        ],
+        "value": []
+      }
+    },
+    {
+      "name": "a thread op cannot exceed the canvas thread limit",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              }
+            ],
+            "threads": [
+              {
+                "id": "t0",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t1",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t2",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t3",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t4",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t5",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t6",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t7",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t8",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t9",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t10",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t11",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t12",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t13",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t14",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t15",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t16",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t17",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t18",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t19",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t20",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t21",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t22",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t23",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t24",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t25",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t26",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t27",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t28",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t29",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t30",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t31",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t32",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t33",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t34",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t35",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t36",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t37",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t38",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t39",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t40",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t41",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t42",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t43",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t44",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t45",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t46",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t47",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t48",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t49",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t50",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t51",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t52",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t53",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t54",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t55",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t56",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t57",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t58",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t59",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t60",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t61",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t62",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t63",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t64",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t65",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t66",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t67",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t68",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t69",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t70",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t71",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t72",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t73",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t74",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t75",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t76",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t77",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t78",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t79",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t80",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t81",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t82",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t83",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t84",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t85",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t86",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t87",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t88",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t89",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t90",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t91",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t92",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t93",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t94",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t95",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t96",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t97",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t98",
+                "item_id": "a",
+                "messages": []
+              },
+              {
+                "id": "t99",
+                "item_id": "a",
+                "messages": []
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "thread",
+          "node_id": "cv",
+          "thread": {
+            "id": "t",
+            "item_id": "a",
+            "messages": []
+          }
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node cv /threads - the array has 101 items, the maximum is 100 (maxItems)"
       }
     }
   ]

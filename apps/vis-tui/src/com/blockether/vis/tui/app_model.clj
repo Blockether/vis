@@ -889,11 +889,14 @@
 (defn draft-action
   "The gateway `draft` action that saves `body` for `target`
    `{:node-id :thread-id :anchor}` against the view state `view`."
-  [view {:keys [node-id thread-id anchor]} body]
+  [view {:keys [node-id thread-id anchor item-id]} body]
   (let [node (find-node view node-id)]
     (cond-> {:action :draft :node-id node-id :body (str body) :base-seq (:seq view)}
       thread-id
       (assoc :thread-id thread-id)
+
+      (and (nil? thread-id) item-id)
+      (assoc :item-id item-id)
 
       (and (nil? thread-id) anchor)
       (assoc :anchor anchor)

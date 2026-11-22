@@ -108,6 +108,24 @@
 
 (defdescribe
   thread-editor
+  (it "saves a new canvas draft on the selected item"
+      (let [canvas
+            (assoc view :nodes [{:type :canvas :id "board" :cards [{:id "item" :title "Review"}]}])
+
+            {:keys [press start calls]}
+            (harness canvas)
+
+            st
+            (-> start
+                (press (k KeyType/Enter))
+                (press (k \o false))
+                (press (k \k false))
+                (press (k \s true)))]
+
+        (expect (= [[:save
+                     {:action :draft :node-id "board" :item-id "item" :base-seq 4 :body "ok"}]]
+                   @calls))
+        (expect (= :saving (get-in st [:save :state])))))
   (it "opens on a line with no thread at that anchor"
       (let [{:keys [press start]}
             (harness view)

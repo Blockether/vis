@@ -27,6 +27,21 @@ function view(id: string, title: string, nodes: Wire[]): LiveView {
   return made;
 }
 
+/** One posted message of a story thread. The minutes keep the messages in order. */
+function message(id: string, kind: 'human' | 'agent' | 'extension', body: string, name?: string): Wire {
+  const minute = Number(id.replace(/\D/g, '')) || 0;
+  return {
+    id,
+    author: { kind, ...(name ? { name } : {}) },
+    body,
+    created_at: Date.UTC(2026, 10, 22, 9, minute),
+  };
+}
+
+function thread(id: string, itemId: string, messages: Wire[], more: Wire = {}): Wire {
+  return { id, item_id: itemId, messages, ...more };
+}
+
 function board(id: string, label: string, cards: Wire[], more: Wire = {}): Wire {
   return { id, type: 'canvas', label, flow: 'right', is_selectable: true, cards, ...more };
 }
@@ -67,7 +82,7 @@ export const STORY_CANVAS_COMPLEX = view('canvas-complex', 'One turn, end to end
 
       { id: 'engine', kind: 'frame', color: 'green', icon: 'settings', title: 'Engine', text: 'Plans the work and runs the code.' },
       { id: 'route', parent: 'engine', kind: 'shape', shape: 'diamond', color: 'orange', title: 'Model?', column: 1, edges: [{ from: 'turn', route: 'elbow' }] },
-      { id: 'plan', parent: 'engine', icon: 'checklist', title: 'Plan', text: 'Splits the request into **steps**.', tone: 'ok', comments: 2, edges: [{ from: 'route', label: 'ready' }] },
+      { id: 'plan', parent: 'engine', icon: 'checklist', title: 'Plan', text: 'Splits the request into **steps**.', tone: 'ok', edges: [{ from: 'route', label: 'ready' }] },
       { id: 'sandbox', parent: 'engine', kind: 'frame', color: 'orange', border: 'dashed', icon: 'shield', title: 'Sandbox' },
       { id: 'python', parent: 'sandbox', icon: 'code', title: 'Python', text: 'Runs each block of the step.', meta: '4 s', tone: 'running', progress: 0.6, animation: 'glow', badges: ['step 3 of 5'], edges: [{ from: 'plan', is_active: true, animation: 'flow', label: 'code' }] },
       { id: 'extensions', parent: 'sandbox', icon: 'tools', title: 'Extensions', meta: '28', edges: [{ from: 'python', line: 'dashed', start_mark: 'circle' }] },
@@ -81,11 +96,25 @@ export const STORY_CANVAS_COMPLEX = view('canvas-complex', 'One turn, end to end
       { id: 'answer', kind: 'shape', shape: 'document', color: 'blue', icon: 'book', title: 'Answer', edges: [{ from: 'python', route: 'elbow', color: 'blue' }, { from: 'primary', color: 'blue' }] },
       { id: 'live', icon: 'image', title: 'Live view', meta: 'PNG', picture: PICTURE, caption: 'The board of the turn, as the app draws it.', edges: [{ from: 'answer' }] },
       { id: 'replay', title: 'Replay', meta: '0:42', media: { kind: 'video', url: 'https://example.com/vis/turn-replay.mp4', alt: 'A recorded run of the turn' }, edges: [{ from: 'journal', line: 'dotted', end_mark: 'diamond' }] },
-      { id: 'question', kind: 'comment', color: 'pink', author: 'Ada', title: 'Review', comments: 1, text: 'Can the journal replay a turn after a restart?', edges: [{ from: 'journal', line: 'dotted', color: 'pink', end_mark: 'none' }] },
-      { id: 'reply', kind: 'comment', author: 'Lin', title: 'Answer', is_resolved: true, text: 'Yes. A resumed turn reads its events again.', edges: [{ from: 'question', line: 'dotted', end_mark: 'none' }] },
       { id: 'done', kind: 'shape', shape: 'ellipse', size: 'small', color: 'red', fill: 'solid', title: 'Done', edges: [{ from: 'answer', end_mark: 'triangle' }] },
     ],
-    { selected_ids: ['python'], flow: 'auto' },
+    {
+      selected_ids: ['python'],
+      flow: 'auto',
+      threads: [
+        thread('replay', 'journal', [
+          message('q1', 'human', 'Can the journal replay a turn after a restart?', 'Ada'),
+          message('q2', 'agent', 'Yes. A resumed turn reads its events again.'),
+          message('q3', 'human', 'Good. Then the queue needs no copy of its own.', 'Ada'),
+        ], { is_resolved: true }),
+        thread('steps', 'plan', [
+          message('p1', 'extension', 'The plan has 4 steps. Step 2 waits for the model.', 'planner'),
+        ]),
+        thread('limits', 'plan', [message('p2', 'human', 'How many steps can one plan hold?', 'Lin')], {
+          draft: 'Show the limit in the card.',
+        }),
+      ],
+    },
   ),
 ]);
 
@@ -183,7 +212,6 @@ const kinds = [
     icon: 'code',
     badges: ['one', 'two'],
     progress: 0.25 + row * 0.3,
-    comments: row + 1,
     size,
     column: 0,
     row,
@@ -199,25 +227,13 @@ const kinds = [
     row,
   })),
   ...CANVAS_SIZES.map((size, row) => ({
-    id: `comment-${size}`,
-    title: 'Review',
-    kind: 'comment',
-    author: ['Ada Lovelace', 'Lin', 'Grace Hopper'][row],
-    text: 'Does this step need a test?',
-    color: ['blue', 'green', 'purple'][row],
-    is_resolved: row === 1,
-    size,
-    column: 2,
-    row,
-  })),
-  ...CANVAS_SIZES.map((size, row) => ({
     id: `text-${size}`,
     title: `Text, ${size}`,
     kind: 'text',
     text: 'Words with no border.',
     caption: row === 2 ? 'A caption stands under each kind of item.' : undefined,
     size,
-    column: 3,
+    column: 2,
     row,
   })),
 ];
@@ -241,7 +257,17 @@ export const STORY_CANVAS_GALLERY = view('canvas-gallery', 'Canvas vocabulary', 
   board('shapes', 'Shapes', shapes),
   board('colors', 'Colours and fills', colors),
   board('borders', 'Borders', borders),
-  board('kinds', 'Kinds and sizes', kinds),
+  board('kinds', 'Kinds and sizes', kinds, {
+    // The three marks of a discussion: open, resolved, and with a saved draft.
+    threads: [
+      thread('open', 'card-small', [message('k1', 'human', 'Does this step need a test?', 'Ada Lovelace')]),
+      thread('closed', 'card-medium', [
+        message('k2', 'human', 'Does this step need a test?', 'Lin'),
+        message('k3', 'agent', 'It has one now.'),
+      ], { is_resolved: true }),
+      thread('draft', 'card-large', [], { draft: 'Make the title shorter.' }),
+    ],
+  }),
   board('nested', 'Frames in frames', nested),
   board('marks', 'Lines and marks', marks),
   board('routes', 'Routes', routes),

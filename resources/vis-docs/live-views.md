@@ -339,7 +339,7 @@ returns a typed handle that has only the verbs of its node type:
 | `vis.ui.button(id, label, is_disabled=False, variant=None)` | An action for the person. `variant` is `primary`, `secondary`, or `destructive`. `is_selected=True` or `False` makes the button one choice of a row, such as a tab, and the Companion app marks the current choice. | `.set(label=, is_disabled=)` |
 | `vis.ui.disclosure(id, label, *nodes, default_expanded=False)` | A column that collapses | Children update by their own IDs. |
 | `vis.ui.scene(id, width, height, objects=[vis.ui.scene_object(…)])` | A 3D world, which [each client draws](#draw-a-3d-scene) | `.put(object_id, **changes)`, `.mesh(mesh_id, vertices, faces)`, `.set(background=, fov=, is_wrapping=, tick_ms=)`, `.remove(*ids)`, `.clear()` |
-| `vis.ui.canvas(id, cards=[vis.ui.canvas_card(…)])` | A [board with items and arrows](#draw-a-board-on-a-canvas) | `.card(id, title, **keys)`, `.shape(…)`, `.note(…)`, `.comment(…)`, `.frame(…)`, `.text(…)`, `.put(*cards)`, `.focus(id, zoom=)`, `.fit()`, `.select(*ids)`, `.set(…)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.canvas(id, cards=[vis.ui.canvas.card(…)])` | A [board with items and arrows](#draw-a-board-on-a-canvas) | `.card(id, title, **keys)`, `.shape(…)`, `.note(…)`, `.frame(…)`, `.text(…)`, `.put(*cards)`, `.focus(id, zoom=)`, `.fit()`, `.select(*ids)`, `.set(…)`, `.remove(*ids)`, `.clear()` |
 
 `vis.ui.output(...)` builds a `log` node. The `output` name differs from `vis.log`, which writes
 a line to the engine log.
@@ -560,14 +560,14 @@ ui = vis.ui
 board = ui.canvas(
     "board",
     [
-        ui.canvas_frame("release", "Release", color="blue"),
-        ui.canvas_card("build", "Build", parent="release", icon="code", progress=0.6),
-        ui.canvas_frame("checks", "Checks", parent="release", border="dashed"),
-        ui.canvas_shape(
+        ui.canvas.frame("release", "Release", color="blue"),
+        ui.canvas.card("build", "Build", parent="release", icon="code", progress=0.6),
+        ui.canvas.frame("checks", "Checks", parent="release", border="dashed"),
+        ui.canvas.shape(
             "ready", "Ready?", parent="checks", shape="diamond", color="teal",
-            after=ui.canvas_edge("build", label="Artifact", route="elbow", end_mark="triangle"),
+            after=ui.canvas.edge("build", label="Artifact", route="elbow", end_mark="triangle"),
         ),
-        ui.canvas_note("notes", "Release notes", color="yellow", text="List the **changes**."),
+        ui.canvas.note("notes", "Release notes", color="yellow", text="List the **changes**."),
     ],
     flow="right",
     pattern="grid",
@@ -575,7 +575,6 @@ board = ui.canvas(
 )
 app = vis.attach(ui.app("Release", board, key="release"))
 canvas = app["board"]
-canvas.comment("review", "Review", parent="checks", author="Ada", text="Check size.")
 canvas.text("approval", "Approval required", parent="checks")
 ```
 
@@ -585,13 +584,13 @@ an **Artifact** label connects **Build** and **Ready?**. The terminal shows the 
 ### Add a picture or recording to a canvas
 
 To show an image in a card, change `release.png` to the path of your PNG file. You can also pass
-image bytes to `ui.canvas_picture`. Use `alt` to describe what the image shows. A recording uses
+image bytes to `ui.canvas.picture`. Use `alt` to describe what the image shows. A recording uses
 an HTTP or HTTPS URL. The Companion app loads the recording when a person starts playback.
 
 ```python
 canvas.card(
     "preview", "Preview", parent="release",
-    picture=ui.canvas_picture("release.png", alt="The release board on a phone", fit="contain"),
+    picture=ui.canvas.picture("release.png", alt="The release board on a phone", fit="contain"),
     caption="Figure 1. The board on a phone.",
 )
 canvas.card(
@@ -622,9 +621,35 @@ Use `.card(id, title, **keys)`, the other item methods, or `.put(*cards)` to add
 with an ID already on the board replaces the whole item. Use `.remove(*ids)` to remove items and
 `.clear()` to remove them all. Read `.cards` for the items that Vis holds, by ID.
 
+### Comment on a canvas item
+
+Open the board as an app. Select the comment control on an item to start a thread, or open an
+existing thread to reply. Write the comment, then press **Send** to send the drafts to the session.
+
+To answer as the app owner, use the comment's `thread_id` from the Send receipt. To start a thread
+on an item, pass its `item_id` instead. Read the threads with `canvas.threads`.
+
+```python
+canvas.reply("Check the size before release.", item_id="build")
+
+for receipt in app.submissions("delivered"):
+    for comment in receipt.get("comments", []):
+        if comment["node_id"] == "board" and comment.get("item_id"):
+            canvas.reply("I will check this.", thread_id=comment["thread_id"], submission_id=receipt["id"])
+```
+
+Call `canvas.resolve(thread_id)` when a thread needs no more work. Call `canvas.remove(thread_id)`
+to remove it. Removing an item also removes its threads. Replacing an item keeps its threads.
+
 ### Canvas options
 
-A board holds up to 200 items. Each item holds up to 16 incoming arrows.
+A board holds up to 200 items and 100 threads. Each item holds up to 16 incoming arrows and 8
+badges. Each thread holds up to 50 messages.
+
+IDs, the board label, item titles, and author names have a limit of 200 characters. Item details
+and arrow labels have a limit of 80 characters. Badge text has a limit of 40 characters. Item text
+and media URLs have a limit of 2,000 characters. Captions and alternative text have a limit of 300
+characters. Each draft and message has a limit of 4,000 characters.
 
 | Option | Values and effect |
 |---|---|
@@ -632,14 +657,13 @@ A board holds up to 200 items. Each item holds up to 16 incoming arrows.
 | `pattern` | `dots`, `grid`, `lines`, or `plain`. The default is `dots`. |
 | `column`, `row` | Set an item's step with `column` and its place in that step with `row`. An item without a fixed step goes one step after the last item that it comes from. |
 | `parent` | Names the frame that holds an item. Frames can nest to a depth of 4. An item with an unknown parent or a parent that is not a frame stays on the board. |
-| `kind`, `shape` | The item kinds are `card`, `shape`, `note`, `comment`, `frame`, and `text`. A `shape` item uses `rectangle`, `rounded`, `pill`, `ellipse`, `diamond`, `hexagon`, `parallelogram`, `cylinder`, or `document`. |
+| `kind`, `shape` | The item kinds are `card`, `shape`, `note`, `frame`, and `text`. A `shape` item uses `rectangle`, `rounded`, `pill`, `ellipse`, `diamond`, `hexagon`, `parallelogram`, `cylinder`, or `document`. |
 | `color`, `fill`, `border` | Choose `gray`, `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, or `pink`. Set `fill` to `none`, `soft`, or `solid`. Set `border` to `solid`, `dashed`, `dotted`, `double`, `thick`, or `none`. |
 | `size`, `icon`, `animation` | Use `small`, `medium`, or `large`. Use an app icon name such as `code`, `checklist`, or `image`. Choose `pulse`, `glow`, `bounce`, or `shake` for movement. |
 | `text`, `meta`, `tone`, `badges` | Add text with inline formatting, a detail line, a status, or up to 8 badges. |
 | `caption`, `progress` | Put a line below the item with `caption`. Set `progress` from 0 to 1 to show how much work is done. |
-| `author`, `is_resolved`, `comments` | Name the author of a comment. Set `is_resolved=True` when it needs no more work. Use `comments` to show a count on an item. |
 
-Pass an item ID, a `ui.canvas_edge(source_id, **keys)` value, or a list of both to `after`. Each
+Pass an item ID, a `ui.canvas.edge(source_id, **keys)` value, or a list of both to `after`. Each
 arrow ends at the item that holds it. An arrow from a missing item appears when that item arrives.
 
 | Arrow option | Values and effect |

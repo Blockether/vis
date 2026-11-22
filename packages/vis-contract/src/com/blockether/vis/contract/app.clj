@@ -23,6 +23,9 @@
 
 (def placement "Internal placement of an app attachment." :attachment)
 
+(def ^:private canvas-thread-limits
+  (get-in (component "canvas") ["properties" "threads" "items" "allOf" 1 "properties"]))
+
 (def bounds
   "How many receipts, threads, messages, Send values and Send comments an app
    holds, and the longest texts: a message body, a Send note and the note for the
@@ -32,6 +35,9 @@
    :messages (get-in (definition "thread") ["properties" "messages" "maxItems"])
    :values (get-in (definition "submission") ["properties" "values" "maxItems"])
    :comments (get-in (definition "submission") ["properties" "comments" "maxItems"])
+   :canvas-draft (get-in canvas-thread-limits ["draft" "maxLength"])
+   :canvas-messages (get-in canvas-thread-limits ["messages" "maxItems"])
+   :canvas-body (get-in canvas-thread-limits ["messages" "items" "properties" "body" "maxLength"])
    :body (get-in (definition "message") ["properties" "body" "maxLength"])
    :note (get-in (definition "submission") ["properties" "note" "maxLength"])
    :agent-note (get-in (definition "live_view") ["properties" "agent_note" "maxLength"])
@@ -159,7 +165,7 @@
 
 (def settled-statuses "Stages after which a receipt no longer changes." #{"answered" "failed"})
 
-(def thread-types "Node types that hold threads." #{:diff :thread})
+(def thread-types "Node types that hold threads." #{:canvas :diff :thread})
 
 (defn- refuse!
   [node-id reason]
@@ -177,7 +183,7 @@
   "The threads of node `node`: every thread of a diff, or the thread node itself."
   [node]
   (case (:type node)
-    :diff
+    (:canvas :diff)
     (vec (:threads node))
 
     :thread
@@ -233,7 +239,13 @@
   "Diff node `node` without the threads in `thread-ids`. A missing id changes nothing."
   [node thread-ids]
   (let [gone (set thread-ids)]
-    (update node :threads #(into [] (remove (comp gone :id)) %))))
+    (cond-> node
+      (contains? node :threads)
+      (update :threads
+              #(filterv (fn [thread]
+                          (not (or (gone (:id thread))
+                                   (and (= :canvas (:type node)) (gone (:item-id thread))))))
+                 %)))))
 
 (defn upsert-submission
   "View `view` with receipt `submission` in place. When the view holds too many
@@ -275,6 +287,23 @@
   [view k]
   (some #(when (= k (:idempotency-key %)) %) (:submissions view)))
 
+(defn- check-body!
+  [node body draft?]
+  (let [limit (long (get
+                      bounds
+                      (if (= :canvas (:type node)) (if draft? :canvas-draft :canvas-body) :body)))]
+    (when (and body (> (.codePointCount ^String body 0 (.length ^String body)) limit))
+      (refuse! (:id node)
+               (str (if draft? "a draft" "a reply") " holds at most " limit " characters")))))
+
+(defn- append-message
+  [node thread message]
+  (when (= :canvas (:type node))
+    (let [limit (long (:canvas-messages bounds))]
+      (when (>= (count (:messages thread)) limit)
+        (refuse! (:id node) (str "a canvas thread holds at most " limit " messages")))))
+  (update thread :messages (fnil conj []) message))
+
 (defn draft-op
   "The patch operation that saves `body` as the draft of a thread in `node`, or
    nil when nothing changes. `action` holds `:thread-id`, `:anchor` and `:body`.
@@ -282,7 +311,7 @@
    draft of a thread without messages, and a new blank thread is never created. On
    a thread with messages, blank text saves an empty draft: the human adds the
    messages to the next message of the session without a note."
-  [node {:keys [thread-id anchor body]} new-id]
+  [node {:keys [thread-id anchor item-id body]} new-id]
   (let [text
         (when-not (blank-text? body) (str body))
 
@@ -292,8 +321,7 @@
                 (and (some? body) (seq (:messages thread))) (assoc thread :draft "")
                 (contains? thread :draft) (dissoc thread :draft)))]
 
-    (when (and text (> (count text) (long (:body bounds))))
-      (refuse! (:id node) (str "a draft holds at most " (:body bounds) " characters")))
+    (check-body! node text true)
     (case (:type node)
       :thread
       (let [thread (first (threads node))]
@@ -302,7 +330,7 @@
         (when-let [after (saved thread)]
           (when (not= after thread) {:op :thread :node-id (:id node) :thread after})))
 
-      :diff
+      (:canvas :diff)
       (if thread-id
         (let [thread
               (or (find-thread node thread-id) (refuse! (:id node) "no such thread"))
@@ -314,12 +342,21 @@
                 {:op :remove :node-id (:id node) :item-ids [thread-id]}
                 (and after (not= after thread)) {:op :thread :node-id (:id node) :thread after}))
         (when text
-          (when-not (map? anchor) (refuse! (:id node) "a new diff thread needs an anchor"))
-          {:op :thread
-           :node-id (:id node)
-           :thread {:id new-id :anchor anchor :messages [] :draft text}}))
+          (let [target (if (= :canvas (:type node))
+                         (if (blank-text? item-id)
+                           (refuse! (:id node) "a new canvas thread needs an item id")
+                           {:item-id item-id})
+                         (if (map? anchor)
+                           {:anchor anchor}
+                           (refuse! (:id node) "a new diff thread needs an anchor")))]
+            {:op :thread
+             :node-id (:id node)
+             :thread (assoc target
+                       :id new-id
+                       :messages []
+                       :draft text)})))
 
-      (refuse! (:id node) "only a diff or a thread node takes a draft"))))
+      (refuse! (:id node) "only a canvas, a diff or a thread node takes a draft"))))
 
 (defn drafts
   "The saved drafts of the thread nodes in the component tree `nodes`: what the
@@ -340,6 +377,9 @@
             (:anchor thread)
             (assoc :anchor (:anchor thread))
 
+            (:item-id thread)
+            (assoc :item-id (:item-id thread))
+
             (seq (:messages thread))
             (assoc :quote (str/join "\n\n" (map :body (:messages thread))))))))
 
@@ -359,9 +399,8 @@
                           (assoc :submission-id submission-id))
 
                         posted
-                        (-> thread
-                            (dissoc :draft)
-                            (update :messages (fnil conj []) message))]
+                        (-> (append-message node thread message)
+                            (dissoc :draft))]
 
                     (-> acc
                         (update :ops conj {:op :thread :node-id (:id node) :thread posted})
@@ -372,7 +411,10 @@
                                          :message-id (:id message)
                                          :body (:body message)}
                                   (:anchor thread)
-                                  (assoc :anchor (:anchor thread))))))))
+                                  (assoc :anchor (:anchor thread))
+
+                                  (:item-id thread)
+                                  (assoc :item-id (:item-id thread))))))))
               acc
               (threads node)))
           {:ops [] :comments []}
@@ -381,16 +423,18 @@
 (defn reply-op
   "The patch operation that adds `message` to a thread of `node`. Without
    `:thread-id`, a diff starts thread `:new-thread-id` at `:anchor`."
-  [node {:keys [thread-id anchor new-thread-id]} message]
+  [node {:keys [thread-id anchor item-id new-thread-id]} message]
   (when (blank-text? (:body message)) (refuse! (:id node) "a reply needs text"))
-  (when (> (count (:body message)) (long (:body bounds)))
-    (refuse! (:id node) (str "a reply holds at most " (:body bounds) " characters")))
+  (check-body! node (:body message) false)
   (let [thread (cond (= :thread (:type node)) (first (threads node))
                      thread-id (or (find-thread node thread-id)
                                    (refuse! (:id node) "no such thread"))
-                     (map? anchor) {:id new-thread-id :anchor anchor :messages []}
+                     (and (= :canvas (:type node)) (not (blank-text? item-id)))
+                     {:id new-thread-id :item-id item-id :messages []}
+                     (and (= :diff (:type node)) (map? anchor))
+                     {:id new-thread-id :anchor anchor :messages []}
                      :else (refuse! (:id node) "a reply names a thread or an anchor"))]
-    {:op :thread :node-id (:id node) :thread (update thread :messages (fnil conj []) message)}))
+    {:op :thread :node-id (:id node) :thread (append-message node thread message)}))
 
 (defn revision
   "The reviewed revision of node `node`: the `new_revision` of a diff, else nil."

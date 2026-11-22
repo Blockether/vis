@@ -59,12 +59,8 @@
     (let [cards
           [{:id "comment"
             :title "Review"
-            :kind "comment"
             :parent "frame"
-            :author "Ada"
-            :is-resolved true
             :caption "Ready to ship"
-            :comments 2
             :progress 0.25
             :picture {:alt "Layout"}
             :media {:kind "audio" :url "https://example.com/a" :alt "Notes"}
@@ -77,7 +73,16 @@
           rows
           (filter :item-id
                   (lv/plan (lv/opened {:title "Canvas"
-                                       :nodes [{:id "g" :type :canvas :cards cards}]})
+                                       :nodes [{:id "g"
+                                                :type :canvas
+                                                :cards cards
+                                                :threads [{:id "review"
+                                                           :item-id "comment"
+                                                           :is-resolved true
+                                                           :draft "Saved text"
+                                                           :messages [{:author {:name "Ada"}
+                                                                       :body
+                                                                       "Check the layout"}]}]}]})
                            32))
 
           comment
@@ -90,8 +95,8 @@
       (expect (str/starts-with? (:text (first comment)) "  "))
       (expect (every? #(not (str/starts-with? (:text %) "  "))
                       (filter #(contains? #{"a" "b" "missing"} (:item-id %)) rows)))
-      (doseq [detail ["comment" "Ada" "Resolved" "Ready to ship" "2 comments" "25%" "Layout" "audio"
-                      "https://example.com/a" "Notes" "Shown"]]
+      (doseq [detail ["Ada" "Resolved thread" "Ready to ship" "Check the layout" "Draft: Saved text"
+                      "25%" "Layout" "audio" "https://example.com/a" "Notes" "Shown"]]
         (expect (str/includes? text detail) detail))
       (expect (not (str/includes? text "Hidden")))
       (expect (every? #(<= (p/display-width (:text %)) 32) rows))))

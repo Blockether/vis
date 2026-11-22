@@ -238,14 +238,17 @@
       (if (= :app/invalid (:type (ex-data e))) (invalid-patch! (:reason (ex-data e))) (throw e)))))
 
 (defn- apply-remove
-  "A node without the named items. Removing table rows or canvas cards also prunes
-   transient selection. A diff removes threads by id through the shared app rule."
+  "Remove the named items and threads."
   [node op]
-  (if (= :diff (:type node))
-    (app/remove-threads node (:item-ids op))
-    (cond-> (update node (:key (spec/item-bounds (:type node))) without-ids (:item-ids op))
-      (#{:table :canvas} (:type node))
-      prune-selected)))
+  (let [ids (:item-ids op)]
+    (if (= :diff (:type node))
+      (app/remove-threads node ids)
+      (cond-> (update node (:key (spec/item-bounds (:type node))) without-ids ids)
+        (= :canvas (:type node))
+        (app/remove-threads ids)
+
+        (#{:table :canvas} (:type node))
+        prune-selected))))
 
 (defn- apply-clear
   "A node emptied. Clearing a log empties the WINDOW and starts its RECORD over: the
@@ -260,6 +263,9 @@
         (dissoc :line-tones))
 
     (cond-> (assoc node (:key (spec/item-bounds (:type node))) [])
+      (and (= :canvas (:type node)) (contains? node :threads))
+      (assoc :threads [])
+
       (#{:table :canvas} (:type node))
       prune-selected)))
 
@@ -367,7 +373,11 @@
           :thread
           (app/upsert-thread node (:thread op)))]
 
-    (assoc-in view path (checked-node node patched))))
+    (assoc-in view
+      path
+      (if (and (= :canvas (:type node)) (spec/canvas-change-checked? patched op))
+        patched
+        (checked-node node patched)))))
 
 (defn- apply-shortcuts
   [view op]
@@ -723,7 +733,7 @@
   (marked-lines :canvas
                 (cons (data-line (select-keys (update node :cards #(mapv spec/canvas-card-facts %))
                                               [:flow :pattern :zoom :focus :is-locked :is-selectable
-                                               :selected-ids :cards]))
+                                               :selected-ids :cards :threads]))
                       (map (fn [{:keys [title meta tone edges]}]
                              (str "- "
                                   (tone-tag tone)

@@ -230,6 +230,60 @@ def test_reply_sends_only_the_given_keys(host):
     assert answer["message_id"] and answer["seq"] == 1
 
 
+def test_canvas_reply_sends_item_and_thread_references(host):
+    canvas = vis.ui.canvas
+    app = vis.attach(
+        vis.ui.app("Review", canvas("board", [canvas.card("item", "Plan")]))
+    )
+    app["board"].reply("Check the plan.", item_id="item")
+    app["board"].reply("Confirmed.", thread_id="thread-1", submission_id="sub-1")
+    start, answer = host.ops("reply")
+    assert start["item_id"] == "item" and "thread_id" not in start
+    assert answer["thread_id"] == "thread-1" and "item_id" not in answer
+    assert answer["submission_id"] == "sub-1"
+
+
+@pytest.mark.parametrize("field", ["body", "thread_id", "item_id", "submission_id"])
+def test_canvas_reply_rejects_oversize_text_before_the_host(host, field):
+    canvas = vis.ui.canvas
+    app = vis.attach(
+        vis.ui.app("Review", canvas("board", [canvas.card("item", "Plan")]))
+    )
+    _, shape = _contracts.component_variant("canvas")
+    rules = shape["properties"]["threads"]["items"]["allOf"][1]["properties"]
+    message = rules["messages"]["items"]["properties"]
+    limit = {
+        "body": message["body"],
+        "thread_id": rules["id"],
+        "item_id": rules["item_id"],
+        "submission_id": message["submission_id"],
+    }[field]["maxLength"]
+    reply = {"body": "Check the plan.", "item_id": "item"}
+    if field == "thread_id":
+        del reply["item_id"]
+    reply[field] = "x" * (limit + 1)
+    board = app["board"]
+    sent = len(host.sent)
+    with pytest.raises(ValueError, match=rf"{field}.*{limit}"):
+        board.reply(**reply)
+    assert len(host.sent) == sent
+
+
+def test_canvas_events_keep_the_draft_and_submitted_item():
+    location = {"node_id": "board", "item_id": "item", "thread_id": "review"}
+    draft = vis.LiveEvent._from_wire({"type": "draft", **location})
+    assert (draft.node_id, draft.item_id, draft.thread_id) == (
+        "board",
+        "item",
+        "review",
+    )
+    comment = {**location, "message_id": "m-1", "body": "Check the plan."}
+    submit = vis.LiveEvent._from_wire(
+        {"type": "submit", "submission_id": "sub-1", "comments": [comment]}
+    )
+    assert submit.comments == [comment]
+
+
 def test_reply_refuses_a_blank_or_non_text_body_before_the_host(host):
     app = vis.attach(vis.ui.app("Review", vis.ui.thread("general")))
     sent = len(host.sent)

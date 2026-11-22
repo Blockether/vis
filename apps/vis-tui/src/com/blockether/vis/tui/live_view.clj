@@ -1328,22 +1328,28 @@
 (defn- canvas-hint [text] {:text text :fg t/dialog-hint})
 
 (defn- canvas-details
-  [{:keys [kind shape author is-resolved comments progress picture media caption edges]} titles]
+  [{:keys [kind shape progress picture media caption edges]} titles threads]
   (concat
-    (when (= "comment"
-             (some-> kind
-                     name))
-      [(str (when author (str (flat-text author) " · ")) (if is-resolved "Resolved" "Open"))])
     (when (and shape
                (= "shape"
                   (some-> kind
                           name)))
       [(name shape)])
-    (when (pos? (long (or comments 0))) [(str comments (if (= 1 comments) " comment" " comments"))])
     (when (some? progress) [(str (Math/round (* 100.0 (double progress))) "%")])
     (when picture [(str "Picture: " (flat-text (:alt picture)))])
     (when media [(str (name (:kind media)) ": " (flat-text (:alt media))) (:url media)])
     (when caption [(flat-text caption)])
+    (mapcat (fn [{:keys [messages draft is-resolved]}]
+              (concat [(if is-resolved "Resolved thread" "Open thread")]
+                      (map (fn [{:keys [author body]}]
+                             (str (flat-text (or (:name author)
+                                                 (some-> (:kind author)
+                                                         name)))
+                                  ": "
+                                  (flat-text body)))
+                           messages)
+                      (when (some? draft) [(str "Draft: " (flat-text draft))])))
+            threads)
     (for [{:keys [from label line]}
           edges
 
@@ -1354,8 +1360,8 @@
       (str "← " (flat-text (get titles from from)) (when label (str " (" (flat-text label) ")"))))))
 
 (defn- canvas-card-rows
-  [[{:keys [id kind title text meta tone badges] :as card} depth] node-id titles selected fresh
-   text-w]
+  [[{:keys [id kind title text meta tone badges] :as card} depth] node-id titles threads selected
+   fresh text-w]
   (let [is-fresh
         (contains? fresh id)
 
@@ -1430,10 +1436,10 @@
          (concat headings
                  (map #(into [body-indent] (run-segments % t/dialog-hint []))
                       (md-lines text body-w))
-                 (mapcat detail-rows (canvas-details card titles))))))
+                 (mapcat detail-rows (canvas-details card titles (get threads id)))))))
 
 (defmethod node-rows :canvas
-  [{:keys [id cards selected-ids]} {:keys [text-w fresh is-expanded]}]
+  [{:keys [id cards selected-ids threads]} {:keys [text-w fresh is-expanded]}]
   (if (seq cards)
     (let [{:keys [shown behind]}
           (windowed (canvas-order cards) is-expanded false)
@@ -1442,9 +1448,12 @@
           (into {} (map (juxt :id :title)) cards)
 
           selected
-          (set selected-ids)]
+          (set selected-ids)
 
-      (cond-> (into [] (mapcat #(canvas-card-rows % id titles selected fresh text-w)) shown)
+          by-item
+          (group-by :item-id threads)]
+
+      (cond-> (into [] (mapcat #(canvas-card-rows % id titles by-item selected fresh text-w)) shown)
         (pos? (long behind))
         (conj (update (more-row id behind "card") :text p/ellipsize text-w))))
     [{:kind :empty :node-id id :text (p/ellipsize (empty-text :canvas) text-w)}]))

@@ -27,7 +27,7 @@ export function composerComments(views: readonly LiveView[]): ComposerComment[] 
             : anchor
               ? `${anchor.line}`
               : '';
-        const name = anchor ? `${anchor.path.split('/').pop()}:${lines}` : view.title;
+        const name = anchor ? `${anchor.path.split('/').pop()}:${lines}` : (draft.item_id ?? view.title);
         let reference = `[COMMENT ${name}]`;
         for (let n = 2; issued.has(reference); n++) reference = `[COMMENT ${name} #${n}]`;
         issued.add(reference);
@@ -37,7 +37,11 @@ export function composerComments(views: readonly LiveView[]): ComposerComment[] 
           view_id: view.id,
           node_id: draft.node_id,
           thread_id: draft.thread_id,
-          label: anchor ? `${anchor.path}:${lines}` : view.title,
+          label: anchor
+            ? `${anchor.path}:${lines}`
+            : draft.item_id
+              ? `${view.title} · ${draft.item_id}`
+              : view.title,
           detail: draft.body.trim() || draft.quote || '',
         };
       }),

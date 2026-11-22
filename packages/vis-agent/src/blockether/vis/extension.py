@@ -5587,7 +5587,8 @@ class LiveEvent:
     `activate` event of that node instead.
     A selection in a selectable table gives `item_ids`, the selected row ids.
     A draft that a person changed in a thread of an app gives `thread_id`. The event
-    has no text: read the draft from `state()` of the app.
+    has no text: read the draft from `state()` of the app. A canvas draft has an
+    `item_id`. On Send, each canvas comment has its `item_id` in `comments`.
     """
 
     type: str
@@ -5602,6 +5603,7 @@ class LiveEvent:
     key: str | None = None
     item_ids: list[str] | None = None
     thread_id: str | None = None
+    item_id: str | None = None
 
     @classmethod
     def _from_wire(cls, raw):
@@ -5618,6 +5620,7 @@ class LiveEvent:
             key=raw.get("key"),
             item_ids=None if raw.get("item_ids") is None else list(raw["item_ids"]),
             thread_id=raw.get("thread_id"),
+            item_id=raw.get("item_id"),
         )
 
 
@@ -6078,35 +6081,56 @@ class Canvas(_KeyedNode):
     def put(self, *cards):
         """Add items, or replace each item that has the same ID.
 
-        Build the items with `vis.ui.canvas_card`, `vis.ui.canvas_shape`,
-        `vis.ui.canvas_note`, `vis.ui.canvas_comment`, `vis.ui.canvas_frame`,
-        or `vis.ui.canvas_text`.
+        Build the items with `vis.ui.canvas.card`, `.shape`, `.note`, `.frame`,
+        or `.text`.
         """
         return self._op("append", cards=list(cards))
 
     def card(self, card_id, title, **spec):
-        """Add or replace one card. See `vis.ui.canvas_card`."""
+        """Add or replace one card. See `vis.ui.canvas.card`."""
         return self.put(_ui_canvas_card(card_id, title, **spec))
 
     def shape(self, item_id, title, **spec):
-        """Add or replace a shape. See `vis.ui.canvas_shape`."""
+        """Add or replace a shape. See `vis.ui.canvas.shape`."""
         return self.put(_ui_canvas_shape(item_id, title, **spec))
 
     def note(self, item_id, title, **spec):
-        """Add or replace a note. See `vis.ui.canvas_note`."""
+        """Add or replace a note. See `vis.ui.canvas.note`."""
         return self.put(_ui_canvas_note(item_id, title, **spec))
 
-    def comment(self, item_id, title, **spec):
-        """Add or replace a comment. See `vis.ui.canvas_comment`."""
-        return self.put(_ui_canvas_comment(item_id, title, **spec))
-
     def frame(self, item_id, title, **spec):
-        """Add or replace a frame. See `vis.ui.canvas_frame`."""
+        """Add or replace a frame. See `vis.ui.canvas.frame`."""
         return self.put(_ui_canvas_frame(item_id, title, **spec))
 
     def text(self, item_id, title, **spec):
-        """Add or replace text. See `vis.ui.canvas_text`."""
+        """Add or replace text. See `vis.ui.canvas.text`."""
         return self.put(_ui_canvas_text(item_id, title, **spec))
+
+    @property
+    def threads(self):
+        """The threads of the items on this canvas."""
+        return list(self._view._node_state(self.node_id).get("threads") or [])
+
+    def reply(self, body, *, thread_id=None, item_id=None, submission_id=None):
+        """Answer a thread or start a thread on an item. See `LiveAttachment.reply`."""
+        from blockether.vis import _contracts
+
+        _contracts.check_canvas_reply(body, thread_id, item_id, submission_id)
+        return self._view.reply(
+            self.node_id,
+            body,
+            thread_id=thread_id,
+            item_id=item_id,
+            submission_id=submission_id,
+        )
+
+    def resolve(self, thread_id, *, is_resolved=True):
+        """Set a thread's resolved state. The thread keeps its messages and draft."""
+        thread_id = str(thread_id)
+        for thread in self.threads:
+            if thread["id"] == thread_id:
+                return self._op("thread", thread=dict(thread, is_resolved=is_resolved))
+        raise KeyError(f"canvas {self.node_id!r} has no thread {thread_id!r}")
 
     def fit(self):
         """Show the whole board."""
@@ -7212,14 +7236,23 @@ class LiveAttachment(LiveView):
             self._seq = answer["seq"]
         return answer
 
-    def reply(self, node_id, body, *, thread_id=None, anchor=None, submission_id=None):
+    def reply(
+        self,
+        node_id,
+        body,
+        *,
+        thread_id=None,
+        anchor=None,
+        item_id=None,
+        submission_id=None,
+    ):
         """Answer people in a thread of node `node_id`, as the owner of the app.
 
         `thread_id` names an existing thread. On a diff without it, `anchor`
         (`{"path", "side", "line"}`) starts a thread on that line. Add
         `start_line` for a range of lines: `line` is then the last line. When the
-        range starts on the other side, `start_side` names that side. `submission_id`
-        names the Send that you answer, and its receipt moves to `answered`. The
+        range starts on the other side, `start_side` names that side. On a canvas,
+        `item_id` starts a thread on that item. `submission_id` names the Send that you answer, and its receipt moves to `answered`. The
         host sets the author. Answers `thread_id`, `message_id` and the new `seq`.
         """
         if not isinstance(body, str):
@@ -7234,6 +7267,7 @@ class LiveAttachment(LiveView):
                 "body": body,
                 "thread_id": None if thread_id is None else str(thread_id),
                 "anchor": anchor,
+                **({"item_id": str(item_id)} if item_id is not None else {}),
                 "submission_id": None if submission_id is None else str(submission_id),
             }
         )
@@ -7286,7 +7320,8 @@ class LiveAttachment(LiveView):
     def thread(self, node_id, thread_id=None):
         """One thread as a dict: `id`, `anchor`, `messages`, `draft`, `is_resolved`.
 
-        A thread node is its own thread. On a diff, `thread_id` names the thread.
+        A thread node is its own thread. On a diff or a canvas, `thread_id`
+        names the thread. A canvas thread has an `item_id`.
         """
         node = self._node_state(str(node_id))
         if node.get("type") == "thread":
@@ -8612,21 +8647,55 @@ def _ui_scene(node_id, width, height, *, objects=None, meshes=None, **spec):
     )
 
 
-def _ui_canvas(node_id, cards=None, **spec):
+class _CanvasValue(dict):
+    """A builder value with a record of the wire data that passed its check."""
+
+    def __init__(self, kind, value):
+        super().__init__(value)
+        self._kind = kind
+        self._checked = json.dumps(value)
+
+    @staticmethod
+    def checked(value, kind):
+        return (
+            type(value) is _CanvasValue
+            and value._kind == kind
+            and json.dumps(value) == value._checked
+        )
+
+
+def _ui_canvas(node_id, cards=None, *, threads=None, **spec):
     """A board of items with arrows that a person can pan and zoom.
 
-    Build items with `ui.canvas_card` or a builder for another item kind.
+    Build items with `ui.canvas.card` or a builder for another item kind.
     An item usually goes one step after the last item that it comes from.
     `flow` sets the direction of the steps. With `auto`, a wide window puts
     the steps from left to right. A narrow window puts them from top to bottom.
     `pattern` sets the background. `zoom` sets the scale. At 1 the items are
     full size. At 0 the board fits the focus. `focus` names the item in the center.
     Other options are `is_locked`, `is_selectable`, `selected_ids`, and `label`.
+    Pass opening threads with `threads`. Each has an ID, `item_id`, and messages.
     """
     from blockether.vis import _contracts
 
-    node = _live_node("canvas", node_id, dict(spec, cards=list(cards or [])))
-    if complaint := _contracts.live_node_fault(_contracts.deepcopy_json(node)):
+    node = _live_node(
+        "canvas",
+        node_id,
+        dict(
+            spec,
+            cards=list(cards or []),
+            threads=None if threads is None else list(threads),
+        ),
+    )
+    # Keep the IDs for the checks that use more than one item.
+    cards_for_check = [
+        {"id": card["id"], "title": card["title"]}
+        if _CanvasValue.checked(card, "card")
+        else card
+        for card in node["cards"]
+    ]
+    declaration = dict(node, cards=cards_for_check)
+    if complaint := _contracts.live_node_fault(_contracts.deepcopy_json(declaration)):
         raise ValueError(complaint)
     return node
 
@@ -8634,31 +8703,42 @@ def _ui_canvas(node_id, cards=None, **spec):
 def _ui_canvas_card(card_id, title, *, after=None, **spec):
     """Build an item with a title and optional text, style, and arrows.
 
-    Pass an item ID or a `ui.canvas_edge` value to `after`, or pass a list of
+    Pass an item ID or a `ui.canvas.edge` value to `after`, or pass a list of
     them. Each arrow ends at this item. `column` sets the step and `row` sets
     the place in that step. `parent` names the frame that holds this item.
     `kind` sets the item kind. The default is `card`.
     Use `color`, `fill`, `border`, `size`, and `icon` to set the style.
-    Build `picture` with `ui.canvas_picture`. For `media`, pass a dictionary
+    Build `picture` with `ui.canvas.picture`. For `media`, pass a dictionary
     with `kind`, `url`, and `alt`.
     """
-    from blockether.vis import _contracts
-
     if after is not None:
         if spec.get("edges") is not None:
             raise ValueError("use after or edges, not both")
         sources = [after] if isinstance(after, (str, Mapping)) else list(after)
         spec["edges"] = [
-            dict(one) if isinstance(one, Mapping) else _ui_canvas_edge(one)
+            one
+            if isinstance(one, dict)
+            else dict(one)
+            if isinstance(one, Mapping)
+            else {"from": str(one)}
             for one in sources
         ] or None
-    if isinstance(spec.get("picture"), Mapping):
-        spec["picture"] = dict(spec["picture"])
+    picture = spec.get("picture")
+    has_checked_picture = _CanvasValue.checked(picture, "picture")
+    if isinstance(picture, Mapping):
+        spec["picture"] = dict(picture)
     item: dict[str, Any] = _live_item(card_id, dict(spec, title=str(title)))
-    _ui_canvas(card_id, [item])
-    if "picture" in item:
-        item["picture"] = _contracts.read_picture(item["picture"])
-    return item
+    declaration = dict(item)
+    if has_checked_picture:
+        declaration.pop("picture")
+    edges = item.get("edges")
+    if isinstance(edges, (list, tuple)):
+        declaration["edges"] = [
+            {"from": edge["from"]} if _CanvasValue.checked(edge, "edge") else edge
+            for edge in edges
+        ]
+    _ui_canvas(card_id, [declaration])
+    return _CanvasValue("card", item)
 
 
 def _ui_canvas_shape(item_id, title, **spec):
@@ -8669,11 +8749,6 @@ def _ui_canvas_shape(item_id, title, **spec):
 def _ui_canvas_note(item_id, title, **spec):
     """Build a note. Set its content with `text`."""
     return _ui_canvas_card(item_id, title, kind="note", **spec)
-
-
-def _ui_canvas_comment(item_id, title, **spec):
-    """Build a comment. Set `author`, `text`, and `is_resolved`."""
-    return _ui_canvas_card(item_id, title, kind="comment", **spec)
 
 
 def _ui_canvas_frame(item_id, title, **spec):
@@ -8698,7 +8773,9 @@ def _ui_canvas_picture(data_or_path, *, alt, media_type=None, fit=None):
     picture = dict(_ui_picture(data_or_path, media_type=media_type), alt=alt)
     if fit is not None:
         picture["fit"] = fit
-    return _contracts.validate("view", "canvas_picture", picture)
+    return _CanvasValue(
+        "picture", _contracts.validate("view", "canvas_picture", picture)
+    )
 
 
 def _ui_canvas_edge(source_id, **spec):
@@ -8712,7 +8789,7 @@ def _ui_canvas_edge(source_id, **spec):
 
     edge = {"from": str(source_id)}
     edge.update({k: v for k, v in spec.items() if v is not None})
-    return _contracts.validate("view", "canvas_edge", edge)
+    return _CanvasValue("edge", _contracts.validate("view", "canvas_edge", edge))
 
 
 def _ui_scene_object(object_id, mesh, **spec):
@@ -8979,6 +9056,19 @@ def _ui_fit(items: Sequence[Any], node_type: str, field: str) -> tuple[list[Any]
     return kept[:limit], max(0, len(kept) - limit)
 
 
+class _CanvasUI:
+    """Build a canvas and its items, arrows, and pictures."""
+
+    __call__ = staticmethod(_ui_canvas)
+    card = staticmethod(_ui_canvas_card)
+    shape = staticmethod(_ui_canvas_shape)
+    note = staticmethod(_ui_canvas_note)
+    frame = staticmethod(_ui_canvas_frame)
+    text = staticmethod(_ui_canvas_text)
+    picture = staticmethod(_ui_canvas_picture)
+    edge = staticmethod(_ui_canvas_edge)
+
+
 class _UI:
     """Components for live views and forms.
 
@@ -9042,15 +9132,7 @@ class _UI:
     scene = staticmethod(_ui_scene)
     scene_object = staticmethod(_ui_scene_object)
     scene_mesh = staticmethod(_ui_scene_mesh)
-    canvas = staticmethod(_ui_canvas)
-    canvas_card = staticmethod(_ui_canvas_card)
-    canvas_shape = staticmethod(_ui_canvas_shape)
-    canvas_note = staticmethod(_ui_canvas_note)
-    canvas_comment = staticmethod(_ui_canvas_comment)
-    canvas_frame = staticmethod(_ui_canvas_frame)
-    canvas_text = staticmethod(_ui_canvas_text)
-    canvas_picture = staticmethod(_ui_canvas_picture)
-    canvas_edge = staticmethod(_ui_canvas_edge)
+    canvas = _CanvasUI()
 
     # Bounds
     bound = staticmethod(_ui_bound)

@@ -675,7 +675,6 @@
           ],
           "icon": "code",
           "progress": 0.6,
-          "comments": 3,
           "animation": "glow",
           "parent": "delivery",
           "edges": [
@@ -850,37 +849,6 @@
           ]
         },
         {
-          "id": "review",
-          "title": "Review",
-          "kind": "comment",
-          "author": "Ada",
-          "color": "pink",
-          "comments": 2,
-          "text": "Can the tests run on two machines?",
-          "edges": [
-            {
-              "from": "tests",
-              "line": "dotted",
-              "color": "pink",
-              "end_mark": "none"
-            }
-          ]
-        },
-        {
-          "id": "answer",
-          "title": "Answer",
-          "kind": "comment",
-          "author": "Lin",
-          "is_resolved": true,
-          "text": "Yes. The second machine takes the tests.",
-          "edges": [
-            {
-              "from": "review",
-              "line": "none"
-            }
-          ]
-        },
-        {
           "id": "board",
           "title": "Board",
           "meta": "PNG",
@@ -936,6 +904,48 @@
               "line": "none"
             }
           ]
+        }
+      ],
+      "threads": [
+        {
+          "id": "two-machines",
+          "item_id": "tests",
+          "messages": [
+            {
+              "id": "m-4",
+              "author": {
+                "kind": "human",
+                "name": "Ada"
+              },
+              "body": "Can the tests run on two machines?",
+              "created_at": 1787037270000
+            },
+            {
+              "id": "m-5",
+              "author": {
+                "kind": "extension",
+                "name": "release"
+              },
+              "body": "Yes. The second machine takes the tests.",
+              "created_at": 1787037271000
+            }
+          ],
+          "is_resolved": true
+        },
+        {
+          "id": "contract-first",
+          "item_id": "build",
+          "messages": [
+            {
+              "id": "m-6",
+              "author": {
+                "kind": "agent"
+              },
+              "body": "The contract changes first. The surfaces follow it.",
+              "created_at": 1787037272000
+            }
+          ],
+          "draft": "Add the fixture in the same change."
         }
       ]
     },

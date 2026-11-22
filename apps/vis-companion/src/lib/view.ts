@@ -125,6 +125,8 @@ export type ViewAction =
       node_id: string;
       thread_id?: string;
       anchor?: ViewAnchor;
+      /** The canvas item that a new thread of a canvas belongs to. */
+      item_id?: string;
       /**
        * Null removes the draft. Blank text removes the draft of a thread without
        * messages and creates no new thread; on a thread with messages it adds them

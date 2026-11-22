@@ -66,11 +66,11 @@ export function reviewedRevision(view: LiveView, nodeId: string): string | undef
   return node?.type === 'diff' ? node.new_revision : undefined;
 }
 
-/** The `draft` action of one thread or one new anchor, against the app's state version. */
+/** The `draft` action of one thread, one new anchor or one canvas item, against the app's state version. */
 export function draftAction(
   view: LiveView,
   nodeId: string,
-  target: { threadId?: string; anchor?: ViewAnchor; body: string | null },
+  target: { threadId?: string; anchor?: ViewAnchor; itemId?: string; body: string | null },
 ): ViewAction {
   const revision = reviewedRevision(view, nodeId);
   return {
@@ -78,6 +78,7 @@ export function draftAction(
     node_id: nodeId,
     ...(target.threadId ? { thread_id: target.threadId } : {}),
     ...(target.anchor && !target.threadId ? { anchor: target.anchor } : {}),
+    ...(target.itemId && !target.threadId ? { item_id: target.itemId } : {}),
     body: target.body,
     base_seq: view.seq,
     ...(revision ? { revision } : {}),

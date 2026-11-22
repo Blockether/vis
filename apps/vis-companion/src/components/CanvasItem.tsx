@@ -1,10 +1,11 @@
 /**
- * The items of a live `canvas`: a card, a shape, a sticky note, a comment, a frame
- * and a text. The layout gives each item its box, and the item draws its face in it.
+ * The items of a live `canvas`: a card, a shape, a sticky note, a frame and a text.
+ * The layout gives each item its box, and the item draws its face in it. The mark of
+ * its discussion stands at its corner.
  * The colours come from the `--cv-*` paints of the style sheet.
  */
 
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { memo, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { pictureFacts, pictureSource } from '../lib/app-image';
 import {
@@ -21,7 +22,7 @@ import type {
   LiveTone,
 } from '../lib/live-view';
 import { InlineMarkdown } from './ChatContent';
-import { AppIcon, CircleCheckIcon, ImageIcon, PlayIcon, SpeakerIcon } from './icons';
+import { AppIcon, CheckIcon, ImageIcon, PencilIcon, PlayIcon, PlusIcon, SpeakerIcon } from './icons';
 
 /** The mark of a tone, with its word for a screen reader. */
 export type CanvasToneMark = (tone: LiveTone, className?: string) => ReactNode;
@@ -82,16 +83,6 @@ const SHAPE_ROOM: Record<CanvasShape, { x: number; top: number; bottom: number }
   cylinder: { x: 0.08, top: 0.17, bottom: 0.08 },
   document: { x: 0.08, top: 0.06, bottom: 0.13 },
 };
-
-/** The first letters of the first two words of a name. */
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => [...word][0]?.toUpperCase() ?? '')
-    .join('');
-}
 
 /**
  * A picture. On the top edge of a box it fills the width; a loose picture, in an
@@ -205,13 +196,77 @@ function ItemProgress({ value, className }: { value: number; className: string }
   );
 }
 
-/** How many comments an item has, at its corner, in the colour of the item. */
-function CommentCount({ count }: { count: number }) {
+/** What the discussion of an item holds: a saved draft, open messages, or only resolved ones. */
+export type CanvasTalkState = 'draft' | 'open' | 'resolved';
+
+const TALK_WORD: Record<CanvasTalkState, string> = {
+  draft: 'with a saved draft',
+  open: 'open',
+  resolved: 'resolved',
+};
+
+/**
+ * The discussion of an item, at its corner. With messages it shows their count and
+ * the state by its icon. Without messages it is the control that starts a comment:
+ * it shows under a pointer, with the keyboard, and while the person adds comments.
+ */
+function TalkMark({
+  title,
+  count,
+  state,
+  isOpen,
+  onOpen,
+}: {
+  title: string;
+  count: number;
+  state?: CanvasTalkState;
+  isOpen: boolean;
+  onOpen: () => void;
+}) {
+  // The mark grows against the camera around the corner of its item.
+  const reach =
+    'origin-[calc(100%-0.625rem)_0.625rem] scale-[var(--cv-mark,1)] after:absolute after:-inset-3 after:content-[""] mouse:after:content-none';
+  const face = isOpen
+    ? 'border-accent bg-accent text-accent-foreground'
+    : 'border-[var(--cv-edge)] bg-ink text-[color:var(--cv-ink)] hover:border-accent';
+  if (!state) {
+    return (
+      <button
+        type="button"
+        data-canvas-talk="add"
+        aria-label={`Comment on ${title}`}
+        title="Comment"
+        aria-expanded={isOpen}
+        className={`pointer-events-none absolute -right-2.5 -top-2.5 z-10 flex size-5 cursor-pointer items-center justify-center border opacity-0 transition-opacity duration-150 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent group-data-[commenting=true]/canvas:pointer-events-auto group-data-[commenting=true]/canvas:opacity-100 mouse:group-hover/item:pointer-events-auto mouse:group-hover/item:opacity-100 motion-reduce:transition-none ${
+          isOpen ? 'pointer-events-auto opacity-100' : ''
+        } ${face} ${reach}`}
+        onClick={onOpen}
+      >
+        <PlusIcon className="size-3" />
+      </button>
+    );
+  }
   return (
-    <span className="absolute -right-2 -top-2 z-10 flex h-4 min-w-4 items-center justify-center bg-[var(--cv-solid)] px-1 font-mono text-meta font-bold tabular-nums text-[color:var(--cv-on)] ring-2 ring-ink">
+    <button
+      type="button"
+      data-canvas-talk={state}
+      aria-label={`${count} ${count === 1 ? 'comment' : 'comments'} on ${title}, ${TALK_WORD[state]}`}
+      title="Comments"
+      aria-expanded={isOpen}
+      className={`absolute -right-2.5 -top-2.5 z-10 flex h-5 min-w-5 cursor-pointer items-center gap-1 border px-1 font-mono text-meta font-bold tabular-nums transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent motion-reduce:transition-none ${
+        state === 'resolved' && !isOpen ? 'border-dashed' : ''
+      } ${face} ${reach}`}
+      onClick={onOpen}
+    >
+      {state === 'resolved' ? (
+        <CheckIcon className="size-3" />
+      ) : state === 'draft' ? (
+        <PencilIcon className="size-3" />
+      ) : (
+        <AppIcon name="chat" className="size-3" />
+      )}
       {count}
-      <span className="sr-only">{count === 1 ? ' comment' : ' comments'}</span>
-    </span>
+    </button>
   );
 }
 
@@ -351,47 +406,6 @@ function NoteFace({ card, mark }: { card: LiveCanvasCard; mark: CanvasToneMark }
   );
 }
 
-/** A remark of a person: who wrote it, the words, and a check mark when it is done. */
-function CommentFace({ card, mark }: { card: LiveCanvasCard; mark: CanvasToneMark }) {
-  const author = card.author ?? card.title;
-  return (
-    <>
-      <span
-        aria-hidden="true"
-        className="absolute -bottom-[5px] left-4 size-2 rotate-45 border-b border-r border-[var(--cv-edge)] bg-[var(--cv-fill)]"
-      />
-      <span className={`relative block ${PAD[card.size]} ${NEAR} ${MOVES} ${card.is_resolved ? 'opacity-60' : ''}`}>
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span
-            aria-hidden="true"
-            className="flex size-5 shrink-0 items-center justify-center bg-[var(--cv-solid)] font-mono text-meta font-bold text-[color:var(--cv-on)]"
-          >
-            {initials(author)}
-          </span>
-          {card.tone && mark(card.tone)}
-          <span className={`min-w-0 truncate text-ui font-semibold ${TITLE}`}>{author}</span>
-          {card.author && <span className={`min-w-0 truncate text-meta ${HINT}`}>{card.title}</span>}
-          {card.is_resolved ? (
-            <span className="ml-auto flex shrink-0 items-center text-ok">
-              <CircleCheckIcon className="size-3.5" />
-              <span className="sr-only">Resolved</span>
-            </span>
-          ) : (
-            card.meta && (
-              <span className={`ml-auto shrink-0 pl-2 font-mono text-meta tabular-nums ${HINT}`}>{card.meta}</span>
-            )
-          )}
-        </span>
-        {card.text && <Words text={card.text} lines="line-clamp-6" />}
-        {card.picture && <ItemPicture picture={card.picture} isLoose />}
-        {card.media && <ItemMedia media={card.media} />}
-        <Badges badges={card.badges} />
-      </span>
-      <FarTitle card={card} mark={mark} />
-    </>
-  );
-}
-
 /** A heading on the board: words with no border. */
 function TextFace({ card }: { card: LiveCanvasCard }) {
   return (
@@ -505,27 +519,38 @@ const MOTION = {
  * One item at its box. `data-canvas-card` is the body that the layout measures. A
  * frame is as large as its box, and the layout measures its header.
  */
-export function CanvasItem({
+function Item({
   card,
   box,
   mark,
-  sources,
+  after,
   isSelected,
   onSelect,
+  talkCount,
+  talkState,
+  isTalkOpen,
+  onTalk,
 }: {
   card: LiveCanvasCard;
   box: CanvasBox;
   mark: CanvasToneMark;
-  /** The titles of the items that the arrows of this item come from. */
-  sources: string[];
+  /** The titles of the items that the arrows of this item come from, as one line. */
+  after: string;
   isSelected: boolean;
   /** Absent on a board where a person selects nothing. */
-  onSelect?: () => void;
+  onSelect?: (itemId: string) => void;
+  /** How many messages and saved drafts the threads of the item hold. */
+  talkCount: number;
+  /** Absent for an item with no thread. */
+  talkState?: CanvasTalkState;
+  isTalkOpen: boolean;
+  /** Opens the discussion of the item. Absent when there is nothing to show or to write. */
+  onTalk?: (itemId: string) => void;
 }) {
   const { kind } = card;
   const isFrame = kind === 'frame';
   const isShape = kind === 'shape';
-  const isBoxed = kind === 'card' || kind === 'comment' || isFrame;
+  const isBoxed = kind === 'card' || isFrame;
   const room = SHAPE_ROOM[card.shape];
   const style: CSSProperties = isFrame
     ? { height: box.height }
@@ -572,7 +597,7 @@ export function CanvasItem({
             style={
               isShape ? { clipPath: `path('${canvasShapePath(card.shape, box.width, box.height)}')` } : undefined
             }
-            onClick={onSelect}
+            onClick={() => onSelect(card.id)}
           />
         )}
         {isShape && (
@@ -585,7 +610,6 @@ export function CanvasItem({
         <div className={`pointer-events-none ${isShape ? 'relative min-w-0 max-w-full' : ''}`}>
           {kind === 'card' && <CardFace card={card} mark={mark} />}
           {kind === 'note' && <NoteFace card={card} mark={mark} />}
-          {kind === 'comment' && <CommentFace card={card} mark={mark} />}
           {kind === 'text' && <TextFace card={card} />}
           {isShape && <ShapeFace card={card} mark={mark} />}
           {isFrame && (
@@ -607,9 +631,17 @@ export function CanvasItem({
               )}
             </div>
           )}
-          {sources.length > 0 && <span className="sr-only">After {sources.join(', ')}</span>}
+          {after && <span className="sr-only">After {after}</span>}
         </div>
-        {card.comments !== undefined && <CommentCount count={card.comments} />}
+        {onTalk && (
+          <TalkMark
+            title={card.title}
+            count={talkCount}
+            state={talkState}
+            isOpen={isTalkOpen}
+            onOpen={() => onTalk(card.id)}
+          />
+        )}
       </div>
       {card.caption && (
         <div
@@ -622,3 +654,29 @@ export function CanvasItem({
     </div>
   );
 }
+
+/**
+ * A pan, a zoom and a patch of another item draw this item again only when its own
+ * card, its box or its state changed. The layout makes each box again, so the boxes
+ * compare by their numbers.
+ */
+export const CanvasItem = memo(Item, (held, next) => {
+  const a = held.box;
+  const b = next.box;
+  return (
+    held.card === next.card &&
+    a.x === b.x &&
+    a.y === b.y &&
+    a.width === b.width &&
+    a.height === b.height &&
+    a.depth === b.depth &&
+    held.mark === next.mark &&
+    held.after === next.after &&
+    held.isSelected === next.isSelected &&
+    held.onSelect === next.onSelect &&
+    held.talkCount === next.talkCount &&
+    held.talkState === next.talkState &&
+    held.isTalkOpen === next.isTalkOpen &&
+    held.onTalk === next.onTalk
+  );
+});

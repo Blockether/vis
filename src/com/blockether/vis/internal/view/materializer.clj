@@ -289,14 +289,17 @@
     node))
 
 (defn- apply-remove
-  "A node without the named items. Removing table rows or canvas cards also prunes
-   transient selection, and a diff drops the named threads."
+  "Remove the named items and threads."
   [node op]
-  (if (= :diff (:type node))
-    (app/remove-threads node (:item-ids op))
-    (cond-> (update node (:key (spec/item-bounds (:type node))) without-ids (:item-ids op))
-      (#{:table :canvas} (:type node))
-      prune-selected)))
+  (let [ids (:item-ids op)]
+    (if (= :diff (:type node))
+      (app/remove-threads node ids)
+      (cond-> (update node (:key (spec/item-bounds (:type node))) without-ids ids)
+        (= :canvas (:type node))
+        (app/remove-threads ids)
+
+        (#{:table :canvas} (:type node))
+        prune-selected))))
 
 (defn- apply-clear
   "A node emptied. Clearing a log empties the WINDOW and starts its RECORD over: the
@@ -311,6 +314,9 @@
         (dissoc :line-tones))
 
     (cond-> (assoc node (:key (spec/item-bounds (:type node))) [])
+      (and (= :canvas (:type node)) (contains? node :threads))
+      (assoc :threads [])
+
       (#{:table :canvas} (:type node))
       prune-selected)))
 
@@ -423,7 +429,12 @@
     ;; The shared target table first, then one node check after each op, so a
     ;; patch is held to the same rules as a declaration.
     (checked-op! node op)
-    (assoc-in view path (checked-node (apply-node node op)))))
+    (let [after (apply-node node op)]
+      (assoc-in view
+        path
+        (if (and (= :canvas (:type node)) (spec/canvas-change-checked? after op))
+          after
+          (checked-node after))))))
 
 (defn- apply-op
   "The view after ONE operation."
@@ -729,7 +740,7 @@
                  (tagged-json "canvas"
                               (select-keys (update node :cards #(mapv spec/canvas-card-facts %))
                                            [:flow :pattern :zoom :focus :is-locked :is-selectable
-                                            :selected-ids :cards]))]))
+                                            :selected-ids :cards :threads]))]))
 
 (defmethod node->markdown :spinner
   [{:keys [text is-active]} _]
