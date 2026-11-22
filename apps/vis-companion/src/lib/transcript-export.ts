@@ -24,12 +24,18 @@ export interface SessionExport {
 }
 
 /**
+ * `Omit` that keeps the named keys of a type with an index signature. `Omit` maps over
+ * `keyof T`, which is only `string` for such a type, so each named key became `unknown`.
+ */
+type KnownOmit<T, K extends PropertyKey> = { [P in keyof T as P extends K ? never : P]: T[P] };
+
+/**
  * One turn of an export. The engine moves the steps of a turn to a chunk element of the page
  * and names it in `iterations_chunk`: the steps are most of an export, and the page reads them
  * only when the reader comes near the turn. A turn with `iterations` holds them inline. The bytes
  * of a request image are in the chunk element that its `chunk` names, else in its `base64`.
  */
-export type ExportTurn = Omit<TranscriptTurn, 'attachments'> & {
+export type ExportTurn = KnownOmit<TranscriptTurn, 'attachments'> & {
   iterations_chunk?: string;
   attachments?: (TranscriptAttachment & { chunk?: string })[];
 };
