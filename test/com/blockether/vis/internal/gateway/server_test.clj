@@ -5821,6 +5821,45 @@
          {:query-params {"limit" "20" "grouped" "aside" "root" "/repo"}})
         (expect (nil? (:group-ids (second @seen))))))))
 
+(defdescribe
+  sessions-window-grouped-etag
+  (it
+    "returns the new grouped title when the rest of the window is unchanged"
+    (let [grouped-row
+          (atom (fixture/session-row {"id" "filed" "title" "Before" "server_time_ms" 1}))
+
+          request
+          {:query-params {"grouped" "aside"}}
+
+          list-handler
+          #'sessions-api/list-sessions-handler]
+
+      (with-redefs [state/list-sessions-page
+                    (fn [_ _]
+                      {:sessions []
+                       :awaiting []
+                       :grouped [@grouped-row]
+                       :total 0
+                       :limit 20
+                       :has-more false})
+
+                    state/projects-overview
+                    (constantly {})]
+
+        (let [etag
+              (get-in (list-handler request) [:headers "ETag"])
+
+              revalidate
+              (assoc-in request [:headers "if-none-match"] etag)]
+
+          (swap! grouped-row assoc "server_time_ms" 2)
+          (expect (= 304 (:status (list-handler revalidate))))
+          (swap! grouped-row assoc "title" "After")
+          (let [response (list-handler revalidate)]
+            (expect (= 200 (:status response)))
+            (expect (= "After"
+                       (get-in (wire/parse-json (:body response)) ["grouped" 0 "title"])))))))))
+
 ;; Regression, this Vis session (paraphrased: "the TUI should use the limit on the session
 ;; list too"): the channel downloaded every session to answer two narrow questions - one
 ;; project's tab set, and which session a short id names.

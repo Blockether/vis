@@ -246,10 +246,9 @@
   ^String [payload]
   (http/weak-etag [(:total payload) (:limit payload) (:root payload) (:after payload)
                    (mapv #(dissoc % "server_time_ms") (:sessions payload))
-                   ;; The parked strip and project totals ride the same HEAD answer,
-                   ;; so both must ride its validator. Either can change while the
-                   ;; visible session rows remain byte-for-byte identical.
+                   ;; These rows can change even when the window rows stay the same.
                    (mapv #(dissoc % "server_time_ms") (:awaiting payload))
+                   (mapv #(dissoc % "server_time_ms") (:grouped payload))
                    (some-> (:overview payload)
                            (dissoc :server_time_ms))]))
 
