@@ -1187,7 +1187,28 @@
                   ;; the very same converted String, not merely an equal one: attachments
                   ;; replay on EVERY later turn, so an uncached gate would re-render the
                   ;; whole session's figures on every single request.
-                  (expect (identical? (:base64 a) (:base64 b))))))
+                  (expect (identical? (:base64 a) (:base64 b)))))
+            (it "keeps a verdict that each request uses while new payloads arrive"
+                ;; FIFO eviction dropped the screenshots that every request replays, so
+                ;; each later request downscaled them again: 12 s for one request.
+                (let [svg
+                      (fn [label]
+                        {:base64 (b64 (.getBytes (str/replace svg-doc "</svg>"
+                                                              (str "<desc>" label "</desc></svg>"))
+                                                 "UTF-8"))
+                         :media-type "image/svg+xml"})
+
+                      kept
+                      (svg (str "kept-" (random-uuid)))]
+
+                  (with-redefs-fn {#'attachments/wire-cache-max-entries 2}
+                    (fn []
+                      (let [first-send (attachments/wire-image kept)]
+                        (attachments/wire-image (svg (str "other-" (random-uuid))))
+                        (attachments/wire-image kept)
+                        (attachments/wire-image (svg (str "newer-" (random-uuid))))
+                        (expect (identical? (:base64 first-send)
+                                            (:base64 (attachments/wire-image kept))))))))))
   (describe "with conversion disabled (no imaging cdylib)"
             (it "still sends a wire-legal container, and only that"
                 ;; Fresh pixels on purpose: the verdict cache is content-keyed, so a

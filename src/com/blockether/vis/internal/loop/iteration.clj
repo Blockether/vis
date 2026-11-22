@@ -3702,7 +3702,9 @@
                                          (assoc :model-input-limit limit))
                        :code (or block-code "")
                        :forms forms-vec
-                       :attachments (attachment-storage/offload-attachments iteration-attachments)
+                       :attachments (perf/timed :apply/attachment-offload
+                                                (attachment-storage/offload-attachments
+                                                  iteration-attachments))
                        :duration-ms (long (or (form/envelope-duration-ms (:envelope first-block))
                                               0))
                        :llm-full-duration-ms (long (or (:duration-ms iteration-result) 0))

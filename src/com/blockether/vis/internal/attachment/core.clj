@@ -1383,7 +1383,7 @@
              (str/starts-with? mt "video/")
              (image-convert/svg-media-type? mt)))))
 
-(def ^:private wire-cache-max-entries "Distinct payloads whose send verdict is remembered." 64)
+(def ^:private wire-cache-max-entries "Distinct payloads whose send verdict is remembered." 256)
 
 (def ^:private wire-cache-max-bytes
   "Total base64 the verdict cache may hold. Only CONVERTED payloads cost
@@ -1406,6 +1406,22 @@
          "|" media-type
          "|" max-bytes
          "|" max-dimension)))
+
+(defn- cache-get!
+  "The cached verdict for `k`, or nil. A hit becomes the newest entry: eviction drops
+   the least recently USED payload, so the images that each request replays stay
+   cached while new payloads arrive."
+  [k]
+  (when-let [verdict (get-in @wire-cache [:entries k])]
+    (swap! wire-cache (fn [cache]
+                        (if (contains? (:entries cache) k)
+                          (assoc cache
+                            :order (conj (into clojure.lang.PersistentQueue/EMPTY
+                                               (remove #(= k %))
+                                               (:order cache))
+                                         k))
+                          cache)))
+    verdict))
 
 (defn- cache-put!
   [k verdict]
@@ -1591,7 +1607,7 @@
              (content-key payload declared (long max-bytes) (long max-dimension))
 
              verdict
-             (or (get-in @wire-cache [:entries k])
+             (or (cache-get! k)
                  (cache-put!
                    k
                    (wire-verdict payload declared (long max-bytes) (long max-dimension))))]
