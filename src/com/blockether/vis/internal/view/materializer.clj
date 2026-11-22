@@ -419,6 +419,11 @@
                                                "missing_node"
                                                {"ids" (str/join ", " (node-ids view))})]))))
 
+(defn- canvas-camera-op?
+  "True when `op` only changes how a canvas is shown, not its data."
+  [op]
+  (and (= :set (:op op)) (every? #{:op :node-id :zoom :focus :is-locked :flow :pattern} (keys op))))
+
 (defn- apply-node-op
   "The view after ONE operation on the node that `op` names; an unknown node is
    refused with the ids the view has."
@@ -439,9 +444,10 @@
     (let [after (apply-node node op)]
       (assoc-in view
         path
-        (if (and (= :canvas (:type node)) (spec/canvas-change-checked? after op))
-          after
-          (checked-node after))))))
+        (cond (and (= :canvas (:type node)) (canvas-camera-op? op))
+              (do (checked-node (assoc (dissoc after :threads :selected-ids) :cards [])) after)
+              (and (= :canvas (:type node)) (spec/canvas-change-checked? after op)) after
+              :else (checked-node after))))))
 
 (defn- apply-op
   "The view after ONE operation."
@@ -482,9 +488,13 @@
   "Normalize canvas references and expand thread resolution requests before storage.
    `prepare-op` applies owner rules to the state before each operation, when set."
   [view patch prepare-op]
-  (let [ops (:ops patch)
-        land (fn [current op]
-               (land-node-op current (if prepare-op (prepare-op current op) op)))]
+  (let [ops
+        (:ops patch)
+
+        land
+        (fn [current op]
+          (land-node-op current (if prepare-op (prepare-op current op) op)))]
+
     (assoc patch
       :ops (if (or (and prepare-op (some #(= :thread (:op %)) (rest ops)))
                    (some (comp app/resolution-only? :thread) ops)
@@ -513,12 +523,19 @@
                                         {"patch_view" (:view-id patch) "view" (:id view)})))
   (when-not (> (long (:seq patch)) (long (:seq view)))
     (invalid-patch! (document/rule-text "patch_seq" {"seq" (:seq patch) "view_seq" (:seq view)})))
-  ;; The view check runs after every op: a removed node or button takes its
-  ;; shortcut along only when the same patch replaces the shortcuts, and a node
-  ;; added with an id that is already in the view is refused here.
-  (let [patched (reduce apply-op view (:ops patch))]
-    (when-some [lines (seq (spec/live-view-lines (spec/wire-data patched) false))]
-      (invalid-patch! (spec/view-fault-text lines)))
+  (let [ops
+        (:ops patch)
+
+        patched
+        (reduce apply-op view ops)]
+
+    ;; Check the whole view after all ops. Camera values passed their node
+    ;; check and cannot change shortcuts, node ids or counts, or picture bytes.
+    (when-not (every? #(and (canvas-camera-op? %)
+                            (= :canvas (:type (get-in view (node-path view (:node-id %))))))
+                      ops)
+      (when-some [lines (seq (spec/live-view-lines (spec/wire-data patched) false))]
+        (invalid-patch! (spec/view-fault-text lines))))
     (assoc patched :seq (:seq patch))))
 
 ;; The model's surface

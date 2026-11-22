@@ -425,20 +425,33 @@
   "What Save does with the editor: `{:action a}` for the gateway, `{:skip reason}`
    when there is no draft to save, `{:blocked reason}` when the draft
    must stay here, or nil without an editor."
-  [view {:keys [target input remove?]}]
+  [view {:keys [target input remove? base-seq]}]
   (when target
-    (let [^String body (input/input->text input)
-          blank? (app/blank-text? body)
-          messages? (seq (:messages (target-thread view target)))
-          limit (long (:canvas-draft app/bounds))]
+    (let [view
+          (cond-> view
+            (some? base-seq)
+            (assoc :seq base-seq))
+
+          ^String body
+          (input/input->text input)
+
+          blank?
+          (app/blank-text? body)
+
+          messages?
+          (seq (:messages (target-thread view target)))
+
+          limit
+          (long (:canvas-draft app/bounds))]
+
       (cond (canvas-item-gone? view target) {:blocked canvas-item-gone-notice}
-            remove? (when (string? (:draft target))
-                      {:action (model/draft-action view target nil)})
+            remove? (when (string? (:draft target)) {:action (model/draft-action view target nil)})
             (and (not blank?) (:item-id target) (> (.codePointCount body 0 (.length body)) limit))
             {:blocked (str "Use at most " limit " characters in a canvas draft")}
             (and blank? (not messages?) (nil? (:draft target)))
             {:skip "Nothing saved: the comment is empty"}
-            :else {:action (model/draft-action view target (if blank? (when messages? "") body))}))))
+            :else {:action
+                   (model/draft-action view target (if blank? (when messages? "") body))}))))
 
 (defn send-key
   "The idempotency key of the next Send: the key of a Send that did not get a
@@ -447,17 +460,30 @@
   (if (and (:key send) (not= :sent (:state send))) (:key send) (fresh)))
 
 (defn- save-editor
-  [state view save! remove?]
+  [state view {:keys [save! reload!]} remove?]
   (if (= :saving (get-in state [:save :state]))
     state
-    (let [{:keys [action skip blocked]} (save-request view (assoc (:editor state) :remove? remove?))]
+    (let [retry-seq
+          (get-in state [:editor :retry-seq])
+
+          editor
+          (cond-> (:editor state)
+            retry-seq
+            (assoc :base-seq (:seq view)))
+
+          {:keys [action skip blocked]}
+          (if (and retry-seq (< (long (or (:seq view) 0)) (long retry-seq)))
+            (do (when reload! (reload!)) {:blocked "Wait for the app to reload, then save again"})
+            (save-request view (assoc editor :remove? remove?)))]
+
       (cond blocked (assoc state :notice blocked)
             skip (assoc state
                    :editor nil
                    :save {:state :skipped :message skip})
-            action (do (save! action (:editor state))
+            action (do (save! action editor)
                        (assoc (dissoc state :notice)
-                          :save {:state :saving :target (get-in state [:editor :target])}))
+                         :editor editor
+                         :save {:state :saving :target (:target editor)}))
             :else state))))
 
 (defn- save-shortcut?
@@ -484,17 +510,15 @@
       in)))
 
 (defn- editor-key
-  [state ^KeyStroke key view {:keys [save!]}]
+  [state ^KeyStroke key view effects]
   (cond (= KeyType/Escape (.getKeyType key)) (assoc state :editor nil)
-        (and (.isCtrlDown key) (#{\d \D} (.getCharacter key)))
-        (save-editor state view save! true)
-        (save-shortcut? key)
-        (let [{:keys [target input]} (:editor state)]
-          (if (and (= KeyType/Enter (.getKeyType key))
-                   (app/blank-text? (input/input->text input))
-                   (not (seq (:messages (target-thread view target)))))
-            state
-            (save-editor state view save! false)))
+        (and (.isCtrlDown key) (#{\d \D} (.getCharacter key))) (save-editor state view effects true)
+        (save-shortcut? key) (let [{:keys [target input]} (:editor state)]
+                               (if (and (= KeyType/Enter (.getKeyType key))
+                                        (app/blank-text? (input/input->text input))
+                                        (not (seq (:messages (target-thread view target)))))
+                                 state
+                                 (save-editor state view effects false)))
         :else (update-in state [:editor :input] edit-input-key key)))
 
 (defn- input-values
@@ -683,8 +707,12 @@
 
 (defn- enter-row
   [state {:keys [view rows]} effects]
-  (let [row (selected-row state rows)
-        entry (focused-entry row (:cell state))]
+  (let [row
+        (selected-row state rows)
+
+        entry
+        (focused-entry row (:cell state))]
+
     (case (:kind row)
       :file-item
       (if-let [i (file-row-of rows (:path row))]
@@ -698,13 +726,18 @@
       (toggle-fold state (:path row))
 
       (cond (= :disclosure (:kind entry))
-            (let [id (:node-id entry)
-                  node (model/find-node view id)]
-              (assoc-in state [:disclosures id]
-                        (not (get (:disclosures state) id (:default-expanded node)))))
+            (let [id
+                  (:node-id entry)
+
+                  node
+                  (model/find-node view id)]
+
+              (assoc-in state
+                [:disclosures id]
+                (not (get (:disclosures state) id (:default-expanded node)))))
             (model/read-only? view) (assoc state :save {:state :closed})
             :else (if-let [target (editor-target view row)]
-                    (open-editor state target)
+                    (assoc-in (open-editor state target) [:editor :base-seq] (:seq view))
                     (if (and entry (:is-selectable row))
                       (press state view (:node-id entry) (:item-id entry) effects)
                       state))))))
@@ -1667,18 +1700,19 @@
   "The keys of the hint bar. The automatic keys of an app stand in the bar: their
    buttons have no row, so no other place names them or shows the tab that holds.
    `? keys` is then the last pair, the one that a narrow bar keeps."
-  [state view rows legend]
+  [state {:keys [view rows legend] :as geom}]
   (let [enter
-        (when-let [label (enter-label state view (nth rows (:selected state) nil))]
-          [(hidden-key view "Enter" "Enter") label])
+        (when (or (not (:reading? state)) (cursor-in-view? state geom))
+          (when-let [label (enter-label state view (nth rows (:selected state) nil))]
+            [(hidden-key view "Enter" "Enter") label]))
 
         keys
         [(hidden-key view "?" "?") "keys"]]
 
     (cond (:editor state) (into [["C-Enter/C-s" "save"]]
-                                 (if (string? (get-in state [:editor :target :draft]))
-                                   [["C-d" "remove draft"] ["Esc" "cancel"]]
-                                   [["Esc" "cancel"]]))
+                                (if (string? (get-in state [:editor :target :draft]))
+                                  [["C-d" "remove draft"] ["Esc" "cancel"]]
+                                  [["Esc" "cancel"]]))
           (:search state) [["Enter/S-Enter" "find"] ["Esc" "back"]]
           (:prefix state) [["C-x" "surface key"] ["?" "keys"]]
           (and (:auto-keys? view) (vector? legend)) (-> legend
@@ -2058,15 +2092,17 @@
     cursor))
 
 (defn- fitted-footer
-  [state view rows legend width]
-  (let [pairs (footer state view rows legend)
-        fitted (dlg/fit-hint-keeping-last pairs width)]
-    (if (and (:editor state) (= 1 (count fitted)))
-      [["C-s" "save"]]
-      fitted)))
+  [state geom width]
+  (let [pairs
+        (footer state geom)
+
+        fitted
+        (dlg/fit-hint-keeping-last pairs width)]
+
+    (if (and (:editor state) (= 1 (count fitted))) [["C-s" "save"]] fitted)))
 
 (defn- paint!
-  [g state {:keys [bounds hint-row view rows] :as geom}]
+  [g state {:keys [bounds hint-row] :as geom}]
   (paint-chrome! g geom)
   (paint-body! g state geom)
   (when (:status? geom) (paint-status! g state geom))
@@ -2081,7 +2117,7 @@
                         left
                         hint-row
                         inner-w
-                        (fitted-footer state view rows (:legend geom) (max 0 (- (long inner-w) 2))))
+                        (fitted-footer state geom (max 0 (- (long inner-w) 2))))
     (if (:key-menu state) (paint-key-menu! g state geom) cursor)))
 
 ;;; ── Driver ─────────────────────────────────────────────────────────────────
@@ -2147,7 +2183,7 @@
   "Read the current state of the app and give it to the session state, and to `box`
    when a surface shows the app. One read of an app runs at a time. With `whole?`,
    the read ignores the held copy and takes the whole view."
-  [box session-id view-id & [whole?]]
+  [box session-id view-id & [whole? pane]]
   (let [app [session-id view-id]]
     (when (not= :running (get (first (swap-vals! reads* assoc app :running)) app))
       (vis/worker-future
@@ -2155,10 +2191,13 @@
         (fn []
           (try (when-let [view (read-app session-id
                                          view-id
-                                         (when-not whole? (:view (held-view session-id view-id))))]
+                                         (when-not whole?
+                                           (:view (or pane (held-view session-id view-id)))))]
                  (some-> (:view box)
                          (swap! newer view))
-                 (state/dispatch [(if session-id :app-view-loaded :global-app-open) view]))
+                 (state/dispatch [(cond pane :live-pane-loaded
+                                        session-id :app-view-loaded
+                                        :else :global-app-open) view]))
                (swap! reads* dissoc app)
                (catch Throwable e
                  (swap! reads* assoc app (System/currentTimeMillis))
@@ -2168,17 +2207,19 @@
 (defn- run-action!
   "Post `action` on a worker and hand the outcome to `on-outcome`."
   [box session-id view-id action on-outcome]
-  (vis/worker-future "vis-app-action"
-                     (fn []
-                       (let [outcome (if session-id
-                                       (vis/gateway-app-action! session-id view-id action)
-                                       (vis/gateway-global-app-action! view-id action))]
-                         (swap! (:outcomes box) conj [on-outcome outcome])
-                         ((:on-change box))
-                         (when (and (:is-accepted outcome)
-                                    (> (long (or (:seq outcome) 0))
-                                       (long (or (:seq @(:view box)) 0))))
-                           (read-view! box session-id view-id))))))
+  (vis/worker-future
+    "vis-app-action"
+    (fn []
+      (let [outcome (if session-id
+                      (vis/gateway-app-action! session-id view-id action)
+                      (vis/gateway-global-app-action! view-id action))]
+        (swap! (:outcomes box) conj [on-outcome outcome])
+        ((:on-change box))
+        (if (and (= :draft (:action action)) (= :conflict (model/outcome-state outcome)))
+          (read-view! box session-id view-id true)
+          (when (and (:is-accepted outcome)
+                     (> (long (or (:seq outcome) 0)) (long (or (:seq @(:view box)) 0))))
+            (read-view! box session-id view-id)))))))
 
 (defn refusal-notice
   "What the status line says when the gateway refuses an app action, or nil."
@@ -2217,6 +2258,15 @@
   [body st outcome]
   (let [save (saved (:save st) outcome)]
     (cond-> (assoc st :save save)
+      (and (= :conflict (:state save)) (:editor st))
+      (assoc-in [:editor :retry-seq] (:seq outcome))
+
+      (and (= :saved (:state save)) (:editor st))
+      (update :editor
+              #(-> %
+                   (dissoc :retry-seq)
+                   (assoc :base-seq (:seq save))))
+
       (and (= :saved (:state save)) (:editor st))
       (update-in [:editor :target]
                  #(cond-> (assoc % :draft body) (:thread-id save) (assoc :thread-id
@@ -2338,18 +2388,20 @@
     (read-view! box session-id view-id)))
 
 (defn refresh-gaps!
-  "Read each app of the tab in front that is behind the gateway, also without an open
-   surface: the transcript shows these apps, and the event stream leaves out a large
-   patch of an app. `session-id` is the session of the tab."
+  "Read each view of the tab in front that is behind the gateway."
   [session-id]
-  (doseq [[view-id held]
-          (:app-views @state/app-db)
+  (let [{:keys [app-views live-views]} @state/app-db]
+    (doseq [[view-id held] app-views
+            :let [sid (or (:session-id (:view held)) session-id)]
+            :when (and sid (:is-gap held))]
 
-          :let [sid
-                (or (:session-id (:view held)) session-id)]
-          :when (and sid (:is-gap held))]
+      (refresh-gap! nil sid view-id))
+    (doseq [pane live-views
+            :let [view-id (lv/view-id pane)
+                  sid (or (get-in pane [:view :session-id]) session-id)]
+            :when (and sid (:is-gap pane) (not (lv/settled? pane)) (gap-read-due? sid view-id))]
 
-    (refresh-gap! nil sid view-id)))
+      (read-view! nil sid view-id false pane))))
 
 (defn- connect-away!
   "Bring the owner of the app back for the person who has the app open: one `connect`

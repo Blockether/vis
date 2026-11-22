@@ -235,10 +235,11 @@ def test_canvas_reply_sends_item_and_thread_references(host):
     app = vis.attach(
         vis.ui.app("Review", canvas("board", [canvas.card("item", "Plan")]))
     )
-    app["board"].reply("Check the plan.", item_id="item")
+    app["board"].reply("\u00a0", item_id="item")
     app["board"].reply("Confirmed.", thread_id="thread-1", submission_id="sub-1")
     start, answer = host.ops("reply")
     assert start["item_id"] == "item" and "thread_id" not in start
+    assert start["body"] == "\u00a0"
     assert answer["thread_id"] == "thread-1" and "item_id" not in answer
     assert answer["submission_id"] == "sub-1"
 

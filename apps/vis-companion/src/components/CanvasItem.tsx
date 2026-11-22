@@ -82,19 +82,19 @@ const OUTLINE: Record<CanvasLine, { width: number; dash?: string; isRound?: bool
 };
 
 /**
- * The room between the outline of a shape and its words, as parts of the width: a
- * diamond and an ellipse are narrow at the top, and a slanted side takes room.
+ * The side inset is a part of the width. The top and bottom rows grow with the
+ * content row so that its corners stay inside the outline as the content wraps.
  */
 const SHAPE_ROOM: Record<CanvasShape, { x: number; top: number; bottom: number }> = {
-  rectangle: { x: 0.08, top: 0.06, bottom: 0.06 },
-  rounded: { x: 0.08, top: 0.06, bottom: 0.06 },
-  pill: { x: 0.12, top: 0.05, bottom: 0.05 },
-  ellipse: { x: 0.16, top: 0.1, bottom: 0.1 },
-  diamond: { x: 0.24, top: 0.2, bottom: 0.2 },
-  hexagon: { x: 0.17, top: 0.07, bottom: 0.07 },
-  parallelogram: { x: 0.16, top: 0.06, bottom: 0.06 },
-  cylinder: { x: 0.08, top: 0.17, bottom: 0.08 },
-  document: { x: 0.08, top: 0.06, bottom: 0.13 },
+  rectangle: { x: 0.08, top: 0, bottom: 0 },
+  rounded: { x: 0.08, top: 0, bottom: 0 },
+  pill: { x: 0.16, top: 0.22, bottom: 0.22 },
+  ellipse: { x: 0.16, top: 0.22, bottom: 0.22 },
+  diamond: { x: 0.26, top: 0.56, bottom: 0.56 },
+  hexagon: { x: 0.22, top: 0, bottom: 0 },
+  parallelogram: { x: 0.22, top: 0, bottom: 0 },
+  cylinder: { x: 0.08, top: 0.27, bottom: 0.2 },
+  document: { x: 0.08, top: 0, bottom: 0.24 },
 };
 
 /**
@@ -222,10 +222,10 @@ const TALK_WORD: Record<CanvasTalkState, string> = {
   resolved: 'resolved',
 };
 
-/** The place of the mark of a discussion on a shape. The mark centres 10 px in from its own corner. */
+/** Align the mark with the right side of the shape, but keep it above the content. */
 function cornerOf(card: LiveCanvasCard, box: CanvasBox): CSSProperties {
   const at = canvasShapeCorner(card.shape, box.width, box.height);
-  return { right: box.width - at.x - 10, top: at.y - 10 };
+  return { right: box.width - at.x - 10 };
 }
 
 /**
@@ -249,9 +249,9 @@ function TalkMark({
   /** The corner of a shape: its outline, not the empty corner of its box. */
   corner?: CSSProperties;
 }) {
-  // The mark grows against the camera around the corner of its item.
+  // Keep the lower edge above the item as the mark grows against the camera.
   const reach =
-    'origin-[calc(100%-0.625rem)_0.625rem] scale-[var(--cv-mark,1)] after:absolute after:left-1/2 after:top-1/2 after:min-h-full after:min-w-full after:w-[calc(44px*var(--cv-hit,1))] after:h-[calc(44px*var(--cv-hit,1))] after:-translate-x-1/2 after:-translate-y-1/2 mouse:after:w-[calc(24px*var(--cv-hit,1))] mouse:after:h-[calc(24px*var(--cv-hit,1))]';
+    'origin-[calc(100%-0.625rem)_100%] scale-[var(--cv-mark,1)] after:absolute after:left-1/2 after:top-1/2 after:min-h-full after:min-w-full after:w-[calc(44px*var(--cv-hit,1))] after:h-[calc(44px*var(--cv-hit,1))] after:-translate-x-1/2 after:-translate-y-1/2 mouse:after:w-[calc(24px*var(--cv-hit,1))] mouse:after:h-[calc(24px*var(--cv-hit,1))]';
   const face = isOpen
     ? 'border-accent bg-accent text-accent-foreground'
     : 'border-[var(--cv-edge)] bg-ink text-[color:var(--cv-ink)] hover:border-accent';
@@ -263,7 +263,7 @@ function TalkMark({
         aria-label={`Comment on ${title}`}
         title="Comment"
         aria-expanded={isOpen}
-        className={`pointer-events-none absolute -right-2.5 -top-2.5 z-10 flex size-5 cursor-pointer items-center justify-center border opacity-0 transition-opacity duration-150 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [[data-canvas][data-commenting=true]_&]:pointer-events-auto [[data-canvas][data-commenting=true]_&]:opacity-100 mouse:group-hover/item:pointer-events-auto mouse:group-hover/item:opacity-100 motion-reduce:transition-none ${
+        className={`pointer-events-none absolute -right-2.5 bottom-[calc(100%+2px)] z-10 flex size-5 cursor-pointer items-center justify-center border opacity-0 transition-opacity duration-150 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [[data-canvas][data-commenting=true]_&]:pointer-events-auto [[data-canvas][data-commenting=true]_&]:opacity-100 mouse:group-hover/item:pointer-events-auto mouse:group-hover/item:opacity-100 motion-reduce:transition-none ${
           isOpen ? 'pointer-events-auto opacity-100' : ''
         } ${face} ${reach}`}
         style={corner}
@@ -280,7 +280,7 @@ function TalkMark({
       aria-label={`${count} ${count === 1 ? 'comment' : 'comments'} on ${title}, ${TALK_WORD[state]}`}
       title="Comments"
       aria-expanded={isOpen}
-      className={`absolute -right-2.5 -top-2.5 z-10 flex h-5 min-w-5 cursor-pointer items-center gap-1 border px-1 font-mono text-meta font-bold tabular-nums transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent motion-reduce:transition-none ${
+      className={`absolute -right-2.5 bottom-[calc(100%+2px)] z-10 flex h-5 min-w-5 cursor-pointer items-center gap-1 border px-1 font-mono text-meta font-bold tabular-nums transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent motion-reduce:transition-none ${
         state === 'resolved' && !isOpen ? 'border-dashed' : ''
       } ${face} ${reach}`}
       style={corner}
@@ -394,13 +394,15 @@ function CardFace({ card, mark }: { card: LiveCanvasCard; mark: CanvasToneMark }
       {/* A picture reads at each distance, so a far camera keeps it. */}
       {card.picture && <ItemPicture picture={card.picture} />}
       <span className="relative block">
-        <span className={`block ${PAD[card.size]} ${NEAR} ${MOVES}`}>
-          <Heading card={card} mark={mark} titleClass={`${TITLE_SIZE[card.size]} ${TITLE}`} />
-          {card.text && <ItemText text={card.text} />}
+        <span className={`block ${PAD[card.size]} ${MOVES}`}>
+          <span className={`block ${NEAR}`}>
+            <Heading card={card} mark={mark} titleClass={`${TITLE_SIZE[card.size]} ${TITLE}`} />
+            {card.text && <ItemText text={card.text} />}
+          </span>
           {card.media && <ItemMedia media={card.media} />}
-          <Badges badges={card.badges} />
+          <span className={`block ${NEAR}`}><Badges badges={card.badges} /></span>
         </span>
-        <FarTitle card={card} mark={mark} />
+        <FarTitle card={card} mark={mark} place={card.media ? 'items-start px-3 pt-2' : undefined} />
       </span>
       {card.progress !== undefined && (
         <span className="absolute inset-x-0 bottom-0 block">
@@ -428,17 +430,21 @@ function NoteFace({ card, mark }: { card: LiveCanvasCard; mark: CanvasToneMark }
         className="absolute bottom-0 right-0 bg-[color-mix(in_oklab,var(--cv-fill)_72%,var(--fg))]"
         style={{ width: fold, height: fold, clipPath: 'polygon(0 0, 100% 0, 0 100%)' }}
       />
-      <span className={`relative block ${NEAR}`}>
-        {card.picture && <ItemPicture picture={card.picture} />}
+      <span className="relative block">
+        {card.picture && <span className={`block ${NEAR}`}><ItemPicture picture={card.picture} /></span>}
         <span className={`block ${PAD[card.size]} pb-4 ${MOVES}`}>
-          <Heading card={card} mark={mark} titleClass={`${TITLE_SIZE[card.size]} ${TITLE}`} />
-          {card.text && <ItemText text={card.text} />}
+          <span className={`block ${NEAR}`}>
+            <Heading card={card} mark={mark} titleClass={`${TITLE_SIZE[card.size]} ${TITLE}`} />
+            {card.text && <ItemText text={card.text} />}
+          </span>
           {card.media && <ItemMedia media={card.media} />}
-          <Badges badges={card.badges} />
-          {card.progress !== undefined && <ItemProgress value={card.progress} className="mt-2 h-[3px]" />}
+          <span className={`block ${NEAR}`}>
+            <Badges badges={card.badges} />
+            {card.progress !== undefined && <ItemProgress value={card.progress} className="mt-2 h-[3px]" />}
+          </span>
         </span>
       </span>
-      <FarTitle card={card} mark={mark} />
+      <FarTitle card={card} mark={mark} place={card.media ? 'items-start px-3 pt-2' : undefined} />
     </>
   );
 }
@@ -457,12 +463,8 @@ function TextFace({ card }: { card: LiveCanvasCard }) {
         {card.meta && <ItemMeta meta={card.meta} className={`ml-auto text-right ${NEAR}`} />}
       </span>
       {card.text && <ItemText text={card.text} className={`${HINT} ${NEAR}`} />}
-      {(card.picture || card.media) && (
-        <span className={`block ${NEAR}`}>
-          {card.picture && <ItemPicture picture={card.picture} isLoose />}
-          {card.media && <ItemMedia media={card.media} />}
-        </span>
-      )}
+      {card.picture && <span className={`block ${NEAR}`}><ItemPicture picture={card.picture} isLoose /></span>}
+      {card.media && <ItemMedia media={card.media} />}
       {(card.badges.length > 0 || card.progress !== undefined) && (
         <span className={`block ${NEAR}`}>
           <Badges badges={card.badges} />
@@ -476,20 +478,24 @@ function TextFace({ card }: { card: LiveCanvasCard }) {
 /** The title in the middle of an outline. The outline itself is `ShapeOutline`. */
 function ShapeFace({ card, mark }: { card: LiveCanvasCard; mark: CanvasToneMark }) {
   return (
-    <span className={`relative flex min-w-0 max-w-full flex-col items-center text-center ${NEAR} ${MOVES}`}>
-      <span className="flex min-w-0 max-w-full items-center gap-1.5">
+    <span className={`relative flex min-w-0 max-w-full flex-col items-center text-center ${MOVES}`}>
+      <span className={`flex min-w-0 max-w-full items-center gap-1.5 ${NEAR}`}>
         {card.icon && <AppIcon name={card.icon} className={`size-3.5 shrink-0 ${INK}`} />}
         {card.tone && mark(card.tone)}
         <span className={`min-w-0 font-semibold [overflow-wrap:anywhere] ${TITLE_SIZE[card.size]} ${TITLE}`}>
           {card.title}
         </span>
       </span>
-      {card.text && <ItemText text={card.text} className={`${TEXT} max-w-full [&_p]:text-center`} />}
-      {card.picture && <ItemPicture picture={card.picture} isLoose />}
-      {card.meta && <ItemMeta meta={card.meta} className="max-w-full" />}
+      {card.text && <ItemText text={card.text} className={`${TEXT} max-w-full [&_p]:text-center ${NEAR}`} />}
+      {card.picture && <span className={`max-w-full ${NEAR}`}><ItemPicture picture={card.picture} isLoose /></span>}
+      {card.meta && <ItemMeta meta={card.meta} className={`max-w-full ${NEAR}`} />}
       {card.media && <ItemMedia media={card.media} />}
-      <Badges badges={card.badges} />
-      {card.progress !== undefined && <ItemProgress value={card.progress} className="mt-1.5 h-[3px] w-14" />}
+      {(card.badges.length > 0 || card.progress !== undefined) && (
+        <span className={`flex max-w-full flex-col items-center ${NEAR}`}>
+          <Badges badges={card.badges} />
+          {card.progress !== undefined && <ItemProgress value={card.progress} className="mt-1.5 h-[3px] w-14 max-w-full" />}
+        </span>
+      )}
     </span>
   );
 }
@@ -595,7 +601,8 @@ function Item({
     : isShape
       ? {
           minHeight: canvasItemMinHeight(card),
-          padding: `${Math.round(box.width * room.top)}px ${Math.round(box.width * room.x)}px ${Math.round(box.width * room.bottom)}px`,
+          paddingInline: Math.round(box.width * room.x),
+          gridTemplateRows: `minmax(8px, ${room.top}fr) minmax(min-content, 1fr) minmax(8px, ${room.bottom}fr)`,
         }
       : { minHeight: canvasItemMinHeight(card) };
   const ring =
@@ -619,7 +626,7 @@ function Item({
         data-canvas-border={isBoxed ? card.border : undefined}
         className={`group/item relative text-left ${motion} ${ring} ${
           isBoxed ? 'border border-[var(--cv-edge)] bg-[var(--cv-fill)]' : ''
-        } ${isShape ? 'flex items-center justify-center' : ''} ${
+        } ${isShape ? 'grid' : ''} ${
           kind === 'note' ? '[filter:drop-shadow(2px_2px_0_var(--cv-edge))]' : ''
         }`}
         style={style}
@@ -648,7 +655,7 @@ function Item({
         {/* The camera sets the scale variables on the frame. The words do not use them,
             so they drop them here and a zoom does not style the words again. A value
             that the frame can also have, such as 1, does not stop that. */}
-        <div className={`pointer-events-none [--cv-mark:initial] [--cv-weight:initial] ${isShape ? 'relative min-w-0 max-w-full' : ''}`}>
+        <div className={`pointer-events-none [--cv-mark:initial] [--cv-weight:initial] ${isShape ? 'relative row-start-2 min-w-0 max-w-full self-center' : ''}`}>
           {kind === 'card' && <CardFace card={card} mark={mark} />}
           {kind === 'note' && <NoteFace card={card} mark={mark} />}
           {kind === 'text' && <TextFace card={card} />}
@@ -656,13 +663,13 @@ function Item({
           {isFrame && (
             <div data-canvas-head="" className="relative px-3 pb-2 pt-2.5">
               <span className={`block ${NEAR} ${MOVES}`}>
-                <Heading card={card} mark={mark} titleClass={`${TITLE_SIZE[card.size]} ${INK}`} />
+                <Heading card={card} mark={mark} titleClass={`${TITLE_SIZE[card.size]} ${TITLE}`} />
               </span>
-              <FarTitle card={card} mark={mark} titleClass={INK} />
+              <FarTitle card={card} mark={mark} place={card.media ? 'items-start px-3 pt-2.5' : undefined} />
               {card.text && <ItemText text={card.text} className={`${HINT} ${NEAR}`} />}
               {(card.picture || card.media) && (
-                <span className={`block max-w-80 ${NEAR}`}>
-                  {card.picture && <ItemPicture picture={card.picture} isLoose />}
+                <span className="block max-w-80">
+                  {card.picture && <span className={`block ${NEAR}`}><ItemPicture picture={card.picture} isLoose /></span>}
                   {card.media && <ItemMedia media={card.media} />}
                 </span>
               )}

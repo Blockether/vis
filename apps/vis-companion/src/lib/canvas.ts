@@ -103,8 +103,9 @@ export interface CanvasArrow {
   path: string;
   start: CanvasMarkPlace;
   end: CanvasMarkPlace;
-  /** The label position at half of the line length. */
+  /** The centre and free width of the label, in board pixels. */
   middle: Point;
+  labelWidth?: number;
   edge: LiveCanvasEdge;
 }
 
@@ -1083,7 +1084,7 @@ function corridorRoute(direct: Route, from: Port, to: Port, columns: Rect[], row
   return best && squareWay(best);
 }
 
-function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boolean) {
+function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boolean, width: number) {
   const groups = new Map<Item, Map<Side, Port[]>>();
   function add(item: Item, side: Side, other: Item): Port {
     let sides = groups.get(item);
@@ -1097,7 +1098,7 @@ function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boole
   }
   const arrows: {
     id: string; from: string; to: string; edge: LiveCanvasEdge;
-    start: CanvasMarkPlace; end: CanvasMarkPlace; route: Route; middle: Point;
+    start: CanvasMarkPlace; end: CanvasMarkPlace; route: Route; middle: Point; labelWidth?: number;
   }[] = [];
   const ports: { id: string; from: Port; to: Port; edge: LiveCanvasEdge }[] = [];
   for (const [id, { from, to, edge }] of links) {
@@ -1221,6 +1222,7 @@ function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boole
     const path = around ?? (corridor ? { ...direct, route: corridor } : direct);
     const runs = around || corridor ? straightRuns(path.route) : [];
     let middle = runs[0]?.middle ?? routePoint(path.route);
+    let labelWidth: number | undefined;
     if (edge.label) {
       const free = (p: Point) => !labelObstacles.some((r) => inside(p, r)) && !labels.some((q) => distance(p, q) < 1);
       if (runs.length && !free(middle)) {
@@ -1232,9 +1234,18 @@ function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boole
       for (let i = 1; i < 50 && !free(middle); i++) {
         middle = routePoint(path.route, 0.5 + (i % 2 ? 1 : -1) * Math.ceil(i / 2) / 52);
       }
+      // Leave room for one line of text and its background on both sides.
+      let reach = Math.min(middle.x, width - middle.x);
+      for (const rect of labelObstacles) {
+        if (middle.y + 10 <= rect.top || middle.y - 10 >= rect.bottom) continue;
+        const gap = Math.max(rect.left - middle.x, middle.x - rect.right, 0);
+        reach = Math.min(reach, gap - 3);
+        if (reach <= 0) break;
+      }
+      labelWidth = Math.max(0, 2 * reach);
       labels.push(middle);
     }
-    arrows.push({ id, from: from.item.box.id, to: to.item.box.id, edge, ...path, middle });
+    arrows.push({ id, from: from.item.box.id, to: to.item.box.id, edge, ...path, middle, labelWidth });
   }
   return arrows;
 }
@@ -1319,7 +1330,7 @@ export function canvasLayout(
     }
   }
   collect(roots, 0, 0);
-  const arrows = makeArrows(links, items.values(), down);
+  const arrows = makeArrows(links, items.values(), down, width);
   let minX = 0;
   let minY = 0;
   let maxX = width;

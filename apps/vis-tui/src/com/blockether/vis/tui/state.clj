@@ -4308,7 +4308,9 @@
 
         (cond (and held (> held-seq seq)) (update held :view owner-state)
               ;; A frame that came during the read can be newer than the copy that was read.
-              (not (:is-summary view)) {:view view :is-gap (< seq behind)}
+              (not (:is-summary view)) (if (< seq behind)
+                                         {:view view :is-gap true :behind-seq behind}
+                                         {:view view :is-gap false})
               (or (nil? held) (get-in held [:view :is-summary]))
               {:view view :is-gap true :behind-seq (max seq behind)}
               (= held-seq seq) (assoc held :view (with-body view-spec/live-summary-omitted-keys))
@@ -4335,21 +4337,24 @@
       workspace)))
 
 (defn- patch-app-view
-  "Apply `patch` to a held app view. A frame carries the patches `first-seq` to
-   its `:seq`, so only a frame that starts past the next seq is a gap, and a gap
-   marks the copy for a read."
+  "Apply a contiguous frame to a held app or mark the copy for a read."
   [workspace patch first-seq]
-  (if-let [held (get-in workspace [:app-views (:view-id patch)])]
-    (let [current (long (or (get-in held [:view :seq]) 0))
-          next-seq (long (or (:seq patch) 0))]
+  (if-let [{:keys [view is-gap]} (get-in workspace [:app-views (:view-id patch)])]
+    (case (lv/patch-position view first-seq (:seq patch))
+      :held
+      workspace
 
-      (cond (<= next-seq current) workspace
-            ;; A summary has no body that the patch can change.
-            (or (get-in held [:view :is-summary]) (> (long (or first-seq next-seq)) (inc current)))
-            (behind-app-view workspace (:view-id patch) next-seq)
-            :else (assoc-in workspace
-                    [:app-views (:view-id patch) :view]
-                    (:view (lv/patched (lv/opened (:view held)) patch)))))
+      :next
+      (if (or is-gap (:is-summary view))
+        (behind-app-view workspace (:view-id patch) (:seq patch))
+        (try (assoc-in workspace
+               [:app-views (:view-id patch) :view]
+               (:view (lv/patched (lv/opened view) patch)))
+             (catch clojure.lang.ExceptionInfo _
+               (behind-app-view workspace (:view-id patch) (:seq patch)))))
+
+      :read
+      (behind-app-view workspace (:view-id patch) (:seq patch)))
     workspace))
 
 (defn- close-app-view
@@ -4381,19 +4386,44 @@
                         (update-tab db target #(mount-app-view % view))
                         :else (update-tab db target #(mount-live-pane % view))))))
 
-(reg-event-db
-  :live-view-patch
-  (fn [db [_ patch first-seq]]
-    (across-tabs
-      (across-tabs db #(patch-app-view % patch first-seq))
-      (fn [workspace]
-        (if-let [pane (first (filter #(= (:view-id patch) (lv/view-id %)) (:live-views workspace)))]
-          (let [next-pane (lv/patched pane patch)]
-            (update workspace
-                    :live-views
-                    (fn [panes]
-                      (mapv #(if (= (:view-id patch) (lv/view-id %)) next-pane %) panes))))
-          workspace)))))
+(defn- patch-live-pane
+  [pane patch first-seq]
+  (let [behind (fn []
+                 (assoc pane
+                   :is-gap true
+                   :behind-seq (max (long (or (:behind-seq pane) 0)) (long (:seq patch)))))]
+    (if (lv/settled? pane)
+      pane
+      (case (lv/patch-position (:view pane) first-seq (:seq patch))
+        :held
+        pane
+
+        :read
+        (behind)
+
+        :next
+        (if (:is-gap pane)
+          (behind)
+          (try (lv/patched pane patch) (catch clojure.lang.ExceptionInfo _ (behind))))))))
+
+(reg-event-db :live-view-patch
+              (fn [db [_ patch first-seq]]
+                (update-live-pane (across-tabs db #(patch-app-view % patch first-seq))
+                                  (:view-id patch)
+                                  #(patch-live-pane % patch first-seq))))
+
+(reg-event-db :live-pane-loaded
+              (fn [db [_ view]]
+                (update-live-pane db
+                                  (:id view)
+                                  (fn [pane]
+                                    (if (or (lv/settled? pane)
+                                            (< (long (:seq view))
+                                               (long (get-in pane [:view :seq] 0))))
+                                      pane
+                                      (cond-> (assoc pane :view view)
+                                        (>= (long (:seq view)) (long (or (:behind-seq pane) 0)))
+                                        (dissoc :is-gap :behind-seq)))))))
 
 (reg-event-db :app-view-behind
               ;; An elided `view.patch`: the gateway left out a large patch of an app.

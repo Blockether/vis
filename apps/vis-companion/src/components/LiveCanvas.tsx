@@ -190,6 +190,8 @@ export function LiveCanvas({
   const world = useRef<HTMLDivElement>(null);
   const label = useRef<HTMLSpanElement>(null);
   const toolbar = useRef<HTMLDivElement>(null);
+  const talkOpener = useRef<HTMLElement | null>(null);
+  const boardComments = useRef<HTMLButtonElement>(null);
   const isGlidingNow = useRef(false);
   const markZoom = useRef<{ scale?: number; timer?: number }>({});
   const camera = useRef<CanvasCamera>({ x: 0, y: 0, scale: 1 });
@@ -204,6 +206,14 @@ export function LiveCanvas({
   const [talk, setTalk] = useState<{ itemId: string | null; isComposing: boolean } | null>(null);
   /** The person adds comments: each item shows the control that starts one. */
   const [isCommenting, setCommenting] = useState(false);
+  const isTalkOpen = talk !== null;
+  useLayoutEffect(() => {
+    if (isTalkOpen || !talkOpener.current) return;
+    const opener = talkOpener.current;
+    talkOpener.current = null;
+    const target = opener.isConnected && !opener.closest('[inert]') ? opener : boardComments.current ?? frame.current;
+    target?.focus({ preventScroll: true });
+  }, [isTalkOpen]);
 
   const canComment = Boolean(app) && !app?.isReadOnly;
   const talks = useMemo(() => talksOf(node.threads), [node.threads]);
@@ -337,6 +347,35 @@ export function LiveCanvas({
     paint(canGlide.current);
   }, [target, pointed, paint]);
 
+  // Only a locked board hides clipped items and controls from keyboard navigation.
+  // Read the settled camera, not each frame of its transition.
+  const markClipped = useCallback(() => {
+    if (!latest.current.isLocked || !frame.current || !world.current) return;
+    const bounds = frame.current.getBoundingClientRect();
+    const clipped = (box: DOMRect) =>
+      box.right <= bounds.left || box.bottom <= bounds.top ||
+      box.left >= bounds.left + frame.current!.clientWidth || box.top >= bounds.top + frame.current!.clientHeight;
+    const cards = world.current.querySelectorAll<HTMLElement>('[data-canvas-card]');
+    for (const card of cards) {
+      const controls = Array.from(card.querySelectorAll<HTMLElement>('button, a[href], summary, [tabindex]'));
+      const hidden = controls.map((control) => clipped(control.getBoundingClientRect()));
+      const hideCard = clipped(card.getBoundingClientRect()) && hidden.every(Boolean);
+      if (hideCard || hidden.some((isHidden, i) => isHidden && controls[i] === card.ownerDocument.activeElement)) {
+        if (card.contains(card.ownerDocument.activeElement) && !card.closest('[inert]')) {
+          (boardComments.current ?? frame.current)?.focus({ preventScroll: true });
+        }
+      }
+      card.toggleAttribute('inert', hideCard);
+      controls.forEach((control, index) => control.toggleAttribute('inert', !hideCard && hidden[index]));
+    }
+  }, []);
+  useLayoutEffect(() => {
+    const board = world.current;
+    if (!isLocked || !board) return;
+    markClipped();
+    return () => board.querySelectorAll('[inert]').forEach((item) => item.removeAttribute('inert'));
+  }, [isLocked, target, node.cards, talks, canComment, select, markClipped]);
+
   // The first picture stands at once. Each later move of the owner glides.
   const isSized = size.width > 0;
   useEffect(() => {
@@ -431,7 +470,7 @@ export function LiveCanvas({
   }, [measureCards]);
 
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-    if (isLocked || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    if (isLocked || (isTalkOpen && size.width < SHEET_WIDTH) || (event.pointerType === 'mouse' && event.button !== 0)) return;
     // A press on the camera bar or on a player is not a move of the board.
     if ((event.target as Element).closest('[data-canvas-bar], [data-canvas-control]')) return;
     const held = pointers.current;
@@ -486,14 +525,18 @@ export function LiveCanvas({
 
   /** The click that ends a drag belongs to the drag and not to the card under it. */
   function onClickCapture(event: ReactMouseEvent<HTMLDivElement>) {
-    if (!gesture.current.hasMoved) return;
-    gesture.current.hasMoved = false;
-    event.preventDefault();
-    event.stopPropagation();
+    if (gesture.current.hasMoved) {
+      gesture.current.hasMoved = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const mark = (event.target as Element).closest<HTMLElement>('[data-canvas-talk]');
+    if (mark) talkOpener.current = mark;
   }
 
   function onDoubleClick(event: ReactMouseEvent<HTMLDivElement>) {
-    if (isLocked) return;
+    if (isLocked || (isTalkOpen && size.width < SHEET_WIDTH)) return;
     const card = (event.target as Element).closest<HTMLElement>('[data-canvas-card]');
     const id = card?.dataset.canvasCard;
     if (id) move(canvasTarget(latest.current.layout, latest.current.room, 1, id), true);
@@ -524,8 +567,9 @@ export function LiveCanvas({
   useEffect(() => {
     const node = frame.current;
     if (!node) return;
+    const overSheet = (event: Event) => (event.target as Element | null)?.closest('[aria-modal="true"][data-canvas-threads]');
     const onWheel = (event: WheelEvent) => {
-      if (latest.current.isLocked || !(event.ctrlKey || event.metaKey)) return;
+      if (overSheet(event) || latest.current.isLocked || !(event.ctrlKey || event.metaKey)) return;
       event.preventDefault();
       move(
         canvasZoomedAt(
@@ -539,7 +583,7 @@ export function LiveCanvas({
     let base: CanvasCamera | null = null;
     let baseScale = 1;
     const onGestureStart = (event: SafariGestureEvent) => {
-      if (latest.current.isLocked) return;
+      if (overSheet(event) || latest.current.isLocked) return;
       event.preventDefault();
       base = readCamera();
       baseScale = event.scale || 1;
@@ -561,7 +605,7 @@ export function LiveCanvas({
     };
     // Two fingers are a pinch of the board and never a scroll of the page.
     const onTouchMove = (event: TouchEvent) => {
-      if (!latest.current.isLocked && event.touches.length > 1 && event.cancelable) {
+      if (!overSheet(event) && !latest.current.isLocked && event.touches.length > 1 && event.cancelable) {
         event.preventDefault();
       }
     };
@@ -588,6 +632,7 @@ export function LiveCanvas({
     <div
       ref={frame}
       role="group"
+      tabIndex={-1}
       aria-label={node.label || summary}
       data-canvas={node.id}
       data-far="false"
@@ -614,7 +659,10 @@ export function LiveCanvas({
         style={{ width: layout.width, height: layout.height }}
         onFocusCapture={onBoardFocus}
         onTransitionEnd={(event) => {
-          if (event.target === event.currentTarget && event.propertyName === 'transform') isGlidingNow.current = false;
+          if (event.target === event.currentTarget && event.propertyName === 'transform') {
+            isGlidingNow.current = false;
+            if (isLocked) markClipped();
+          }
         }}
       >
         <Board
@@ -670,8 +718,15 @@ export function LiveCanvas({
                 className="inline-flex min-w-11 items-center justify-center gap-1.5 tabular-nums"
                 aria-label={`Comments, ${node.threads.length} ${node.threads.length === 1 ? 'thread' : 'threads'}`}
                 title="Comments"
-                aria-pressed={talk !== null}
-                onClick={() => setTalk((held) => (held ? null : { itemId: null, isComposing: false }))}
+                ref={boardComments}
+                aria-expanded={isTalkOpen}
+                onClick={(event) => {
+                  if (isTalkOpen) setTalk(null);
+                  else {
+                    talkOpener.current = event.currentTarget;
+                    setTalk({ itemId: null, isComposing: false });
+                  }
+                }}
               >
                 <AppIcon name="chat" className="size-3" />
                 {node.threads.length}
@@ -707,6 +762,7 @@ export function LiveCanvas({
                 density="compact"
                 pressEffect="none"
                 className="min-w-11 tabular-nums"
+                style={{ color: 'var(--fg)' }}
                 aria-label="Full size"
                 title="Full size"
                 onClick={() => zoomBy()}
@@ -721,6 +777,7 @@ export function LiveCanvas({
                 density="compact"
                 pressEffect="none"
                 className="min-w-11"
+                style={{ color: 'var(--fg)' }}
                 aria-label="Fit the board"
                 title="Fit the board"
                 onClick={fit}

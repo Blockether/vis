@@ -7257,7 +7257,9 @@ class LiveAttachment(LiveView):
         """
         if not isinstance(body, str):
             raise TypeError("reply body must be a string")
-        if not body.strip():
+        from blockether.vis import _contracts
+
+        if _contracts.blank_live_text(body):
             raise ValueError("reply body must not be blank")
         return self._app_call(
             {
@@ -8665,6 +8667,16 @@ class _CanvasValue(dict):
         )
 
 
+def _canvas_list(value, argument):
+    """Read a collection while naming the argument in a type error."""
+    if not isinstance(value, (str, bytes, Mapping)):
+        try:
+            return list(value)
+        except TypeError as error:
+            raise TypeError(f"{argument} must be a collection") from error
+    raise TypeError(f"{argument} must be a collection")
+
+
 def _ui_canvas(node_id, cards=None, *, threads=None, **spec):
     """A board of items with arrows that a person can pan and zoom.
 
@@ -8684,8 +8696,8 @@ def _ui_canvas(node_id, cards=None, *, threads=None, **spec):
         node_id,
         dict(
             spec,
-            cards=list(cards or []),
-            threads=None if threads is None else list(threads),
+            cards=[] if cards is None else _canvas_list(cards, "cards"),
+            threads=None if threads is None else _canvas_list(threads, "threads"),
         ),
     )
     # Keep the IDs for the checks that use more than one item.
@@ -8715,15 +8727,19 @@ def _ui_canvas_card(card_id, title, *, after=None, **spec):
     if after is not None:
         if spec.get("edges") is not None:
             raise ValueError("use after or edges, not both")
-        sources = [after] if isinstance(after, (str, Mapping)) else list(after)
-        edges = [
-            one
-            if isinstance(one, dict)
-            else dict(one)
-            if isinstance(one, Mapping)
-            else {"from": str(one)}
-            for one in sources
-        ]
+        sources = (
+            [after]
+            if isinstance(after, (str, Mapping))
+            else _canvas_list(after, "after")
+        )
+        edges = []
+        for index, one in enumerate(sources):
+            if isinstance(one, str):
+                edges.append({"from": one})
+            elif isinstance(one, Mapping):
+                edges.append(one if isinstance(one, dict) else dict(one))
+            else:
+                raise TypeError(f"after[{index}] must be an item ID or an arrow")
         if all(isinstance(edge.get("from"), str) for edge in edges):
             from blockether.vis import _contracts
 
@@ -8795,6 +8811,8 @@ def _ui_canvas_edge(source_id, **spec):
     """
     from blockether.vis import _contracts
 
+    if "from" in spec:
+        raise ValueError("use source_id, not 'from', to set the arrow source")
     edge = {"from": str(source_id)}
     edge.update({k: v for k, v in spec.items() if v is not None})
     return _CanvasValue("edge", _contracts.validate("view", "canvas_edge", edge))

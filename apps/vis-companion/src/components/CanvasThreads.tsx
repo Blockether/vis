@@ -5,7 +5,8 @@
  * app the threads are read only.
  */
 
-import { useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { ReviewMemoryContext } from '../lib/review-memory';
 
 import type { AppActionStatus } from '../lib/app-actions';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
@@ -107,18 +108,34 @@ function Thread({
   nodeId: string;
   actions?: AppNodeActions;
 }) {
-  const [isEditing, setEditing] = useState(false);
+  const [edit, setEdit] = useState<{ seq?: number; draft?: string } | null>(null);
+  const [conflictSeq, setConflictSeq] = useState<number | null>(null);
+  const isEditing = edit !== null;
   const [status, setStatus] = useState<AppActionStatus>('idle');
   const canEdit = Boolean(actions) && !actions?.isReadOnly;
   const draft = thread.draft;
   const hasDraft = draft !== undefined;
   const count = thread.messages.length;
   // A blank reply adds the messages without a note.
-  const save = (body: string | null) =>
-    actions!.draft(nodeId, { threadId: thread.id, body: body === '' && count === 0 ? null : body });
+  const canRetry = conflictSeq !== null && actions?.baseSeq !== undefined && actions.baseSeq >= conflictSeq;
+  const draftChanged = edit !== null && draft !== edit.draft;
+  const save = (body: string | null, baseSeq?: number) => {
+    const target = { threadId: thread.id, body: body === '' && count === 0 ? null : body };
+    return baseSeq === undefined ? actions!.draft(nodeId, target) : actions!.draft(nodeId, target, baseSeq);
+  };
+  const saveEdit = async (body: string) => {
+    const base = canRetry ? actions?.baseSeq : edit?.seq;
+    if (canRetry) {
+      setConflictSeq(null);
+      setEdit((held) => held && { ...held, seq: base });
+    }
+    const result = await save(body, base);
+    if (result.status === 'conflict') setConflictSeq(result.seq ?? (base ?? 0) + 1);
+    return result;
+  };
   const remove = async () => {
     setStatus('saving');
-    const result = await save(null);
+    const result = await save(null, actions?.baseSeq);
     setStatus(result.status === 'saved' ? 'idle' : result.status);
   };
   return (
@@ -156,23 +173,37 @@ function Thread({
       {canEdit && (
         <div className={`border-t border-edge ${isEditing ? 'px-2.5 py-2' : 'px-1 py-0.5'}`}>
           {isEditing ? (
-            <DraftEditor
-              memoryId={`${nodeId}:${thread.id}:${draft ?? ''}`}
-              label={count > 0 ? 'Reply' : 'Edit comment'}
-              saved={draft ?? ''}
-              placeholder={count > 0 ? 'Add a note (optional)…' : undefined}
-              isBlankAllowed={count > 0}
-              maxLength={draftLimit}
-              showFailureReason
-              onSave={save}
-              onClose={() => setEditing(false)}
-            />
+            <>
+              {draftChanged && (
+                <div role="status" className="mb-2 break-words font-mono text-ui text-dialog-foreground">
+                  <p>{draft === undefined ? 'The saved draft was removed.' : 'The saved draft changed:'}</p>
+                  {draft !== undefined && <p className="whitespace-pre-wrap">{draft || 'No note'}</p>}
+                </div>
+              )}
+              <ReviewMemoryContext.Provider value={null}>
+                <DraftEditor
+                  memoryId={`${nodeId}:${thread.id}`}
+                  label={count > 0 ? 'Reply' : 'Edit comment'}
+                  saved={edit.draft ?? ''}
+                  placeholder={count > 0 ? 'Add a note (optional)…' : undefined}
+                  isBlankAllowed={count > 0}
+                  maxLength={draftLimit}
+                  showFailureReason
+                  canRetryConflict={canRetry}
+                  onSave={saveEdit}
+                  onClose={() => setEdit(null)}
+                />
+              </ReviewMemoryContext.Provider>
+            </>
           ) : (
             <div className="flex items-center gap-1">
               <IconButton
                 label={hasDraft ? 'Edit' : 'Reply'}
                 title={hasDraft ? 'Edit' : 'Reply'}
-                onClick={() => setEditing(true)}
+                onClick={() => {
+                  setConflictSeq(null);
+                  setEdit({ seq: actions?.baseSeq, draft });
+                }}
               >
                 <PencilIcon />
               </IconButton>
@@ -284,8 +315,33 @@ export function CanvasThreads({
   // The board order of the items is the order of the list.
   const talked = node.cards.filter((card) => byItem.has(card.id));
   const title = item ? item.title : 'Comments';
+  const panel = useRef<HTMLElement>(null);
+  // Move focus before a narrow sheet makes the background inert.
+  useLayoutEffect(() => {
+    const node = panel.current;
+    if (node && !node.contains(node.ownerDocument.activeElement)) {
+      node.querySelector<HTMLElement>('[aria-label="Close comments"]')?.focus({ preventScroll: true });
+    }
+  }, [itemId, isSheet]);
+  useLayoutEffect(() => {
+    const node = panel.current;
+    if (!node || !isSheet) return;
+    const behind: Element[] = [];
+    for (let branch: Element = node; branch.parentElement; branch = branch.parentElement) {
+      for (const sibling of branch.parentElement.children) {
+        if (sibling === branch || sibling.hasAttribute('inert')) continue;
+        sibling.setAttribute('inert', '');
+        behind.push(sibling);
+      }
+      if (branch.parentElement === node.ownerDocument.body) break;
+    }
+    return () => behind.forEach((other) => other.removeAttribute('inert'));
+  }, [isSheet]);
   return (
     <section
+      ref={panel}
+      role={isSheet ? 'dialog' : undefined}
+      aria-modal={isSheet || undefined}
       data-canvas-control=""
       data-canvas-threads={itemId ?? ''}
       aria-label={item ? `Comments on ${item.title}` : 'Comments on the board'}
@@ -294,7 +350,22 @@ export function CanvasThreads({
       }`}
       style={{ bottom, maxHeight: isSheet ? `min(62%, calc(100% - ${bottom + 8}px))` : undefined }}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') onClose();
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        } else if (isSheet && event.key === 'Tab') {
+          const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+            'button:enabled, a[href], textarea:enabled, input:enabled, select:enabled, [tabindex]:not([tabindex="-1"])',
+          )).filter((control) => control.getClientRects().length && getComputedStyle(control).visibility === 'visible');
+          const at = tabs.indexOf(event.currentTarget.ownerDocument.activeElement as HTMLElement);
+          const edge = event.shiftKey ? at <= 0 : at === -1 || at === tabs.length - 1;
+          if (edge) {
+            event.preventDefault();
+            (event.shiftKey ? tabs.at(-1) : tabs[0])?.focus();
+          }
+        }
       }}
     >
       <header className="flex min-w-0 shrink-0 items-center gap-2 border-b border-dialog-edge py-1 pl-3 pr-1">

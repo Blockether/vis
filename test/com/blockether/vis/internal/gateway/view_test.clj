@@ -935,6 +935,35 @@
   [f]
   (with-redefs-fn {live-flush-ms (* 60 1000)} f))
 
+(defdescribe canvas-selection-frame-test
+             (it "clears selection when one frame disables and enables it"
+                 (let [view
+                       (live/materialize (hi/normalize-live-view {:title "Board"
+                                                                  :nodes [{:id "board"
+                                                                           :type :canvas
+                                                                           :cards [{:id "a"
+                                                                                    :title "Plan"}]
+                                                                           :is-selectable true
+                                                                           :selected-ids ["a"]}]}))
+
+                       off
+                       {:op :set :node-id "board" :is-selectable false}
+
+                       on
+                       (assoc off :is-selectable true)
+
+                       ops
+                       (reduce @#'gw-hi/coalesce [] [off on])
+
+                       patch
+                       (hi/landed-patch view ops)
+
+                       board
+                       (first (:nodes (live/apply-patch view patch)))]
+
+                   (expect (true? (:is-selectable board)))
+                   (expect (empty? (:selected-ids board))))))
+
 (defdescribe
   the-app-watches-a-live-view-test
   (it

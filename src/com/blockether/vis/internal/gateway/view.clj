@@ -246,7 +246,11 @@
         (append-key op)]
 
     (cond (nil? prior) (conj ops op)
-          (= :set (:op op) (:op prior)) (assoc ops at (merge prior op))
+          ;; Disabling selection clears it, even if the next set enables it.
+          (and (= :set (:op op) (:op prior))
+               (not (false? (:is-selectable prior)))
+               (not (false? (:is-selectable op))))
+          (assoc ops at (merge prior op))
           (and (= :append (:op op) (:op prior))
                (some? k)
                (= k (append-key prior))

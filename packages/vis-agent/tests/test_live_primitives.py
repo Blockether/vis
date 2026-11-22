@@ -365,6 +365,32 @@ def test_canvas_rejects_invalid_values_at_the_call(build, field):
         build()
 
 
+@pytest.mark.parametrize(
+    "build, argument",
+    [
+        (lambda: vis.ui.canvas.card("item", "Item", after=4), "after"),
+        (
+            lambda: vis.ui.canvas.card("item", "Item", after=[None, False]),
+            r"after\[0\]",
+        ),
+        (
+            lambda: vis.ui.canvas.card("item", "Item", after=["ok", False]),
+            r"after\[1\]",
+        ),
+        (lambda: vis.ui.canvas("board", cards=False), "cards"),
+        (lambda: vis.ui.canvas("board", threads=4), "threads"),
+    ],
+)
+def test_canvas_names_invalid_collections_and_sources(build, argument):
+    with pytest.raises(TypeError, match=argument):
+        build()
+
+
+def test_canvas_edge_refuses_a_second_source():
+    with pytest.raises(ValueError, match="from"):
+        vis.ui.canvas.edge("item", **{"from": "other"})
+
+
 def test_canvas_item_builder_rejects_host_only_picture_bytes():
     picture = {"alt": "Board", "media_type": "image/png", "bytes": 32}
     with pytest.raises(ValueError, match=r"/cards/0/picture/bytes .*\(readOnly\)"):

@@ -631,16 +631,23 @@ with an ID already on the board replaces the whole item. Use `.remove(*ids)` to 
 Open the board as an app. Select the comment control on an item to start a thread, or open an
 existing thread to reply. Write the comment, then press **Send** to send the drafts to the session.
 
-To answer as the app owner, use the comment's `thread_id` from the Send receipt. To start a thread
-on an item, pass its `item_id` instead. Read the threads with `canvas.threads`.
+To answer as the app owner, use the comment's `thread_id` from the Send receipt if that thread
+has space for a reply. If the thread is full or no longer exists, use `item_id` to start a new
+thread on the same item. Read the threads with `canvas.threads`.
 
 ```python
 canvas.reply("Check the size before release.", item_id="build")
 
 for receipt in app.submissions("delivered"):
     for comment in receipt.get("comments", []):
-        if comment["node_id"] == "board" and comment.get("item_id"):
-            canvas.reply("I will check this.", thread_id=comment["thread_id"], submission_id=receipt["id"])
+        if comment["node_id"] != "board" or comment.get("item_id") not in canvas.cards:
+            continue
+        thread = next((t for t in canvas.threads if t["id"] == comment["thread_id"]), None)
+        if thread is not None and len(thread["messages"]) < 50:
+            target = {"thread_id": thread["id"]}
+        else:
+            target = {"item_id": comment["item_id"]}
+        canvas.reply("I will check this.", submission_id=receipt["id"], **target)
 ```
 
 Call `canvas.resolve(thread_id)` when a thread needs no more work. Pass `is_resolved=False`
@@ -657,7 +664,7 @@ badges. Each thread holds up to 50 messages. When a thread is full, you cannot s
 in that thread. You can still add its messages to your next session message without a note.
 
 If the thread fills after you save a reply, Send includes the reply in its receipt and gives it
-to the app. The reply does not appear in the full thread.
+to the app. The reply does not appear in the full thread. Answer it in a new thread on the same item.
 
 IDs, the board label, item titles, and author names have a limit of 200 characters. Item details
 and arrow labels have a limit of 80 characters. Badge text has a limit of 40 characters. Item text
@@ -682,7 +689,7 @@ arrow ends at the item that holds it. An arrow from a missing item appears when 
 | Arrow option | Values and effect |
 |---|---|
 | `label`, `tone`, `color` | Add a label or set the color. |
-| `route` | `curve`, `straight`, or `elbow`. The default is `elbow`. An elbow has only lines at right angles, and it goes around the items and the other arrows. |
+| `route` | `curve`, `straight`, or `elbow`. The default is `elbow`. An elbow uses right angles and tries to avoid items and other arrows. It may use a direct line if it cannot find a route. |
 | `line` | Uses the same values as `border`. `none` orders the items without drawing an arrow. |
 | `start_mark`, `end_mark` | `none`, `arrow`, `triangle`, `circle`, `diamond`, or `bar`. The defaults are `none` at the start and `arrow` at the end. |
 | `is_active`, `animation` | Set `is_active=True` to animate the arrow. Choose `flow`, `dash`, `dot`, or `pulse`. The default is `flow`. |

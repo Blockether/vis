@@ -53,6 +53,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Terminal: the editor of a canvas comment refuses text longer than the limit of the contract before it sends it.
 - Live views: an owner patch that removes a thread and adds it again does not bring back the draft of the old thread.
 - Live views: a saved canvas from before this version, where an item and a thread have the same ID, gets a new ID for the thread when Vis loads it. A remove of the ID then removes only the item. Vis, the terminal, and the Companion app give the same new ID.
+- Live views: when a canvas stops and starts selection in one burst of changes, the clients clear the selection, as Vis does.
+- Live views: a change of only the camera of a large canvas takes less than 1 ms in Vis instead of up to 100 ms.
+- Python SDK: `canvas.reply(...)` accepts a no-break space, as Vis does. The canvas builders name a wrong `after` value, a wrong collection, and a second arrow source.
+- Terminal: an arrow that is not active does not move. A canvas title that wraps keeps its space after the motion sign.
+- Terminal and Companion: a canvas comment keeps the sequence number of the board at the time that you opened it. When another change comes first, Vis refuses the save, you keep your text, and you save again on the new board.
+- Terminal: after an overlap or a gap in the changes of a view, the terminal reads the view again. Before, an overlap could stop the view and a gap left an old view.
+- Terminal: the footer shows Enter only when its item is on the screen.
+- Companion: on a narrow screen the comments panel is a dialog. It gets the focus, keeps it, closes with Escape, and gives the focus back to its button.
+- Companion: on a locked board, the keyboard skips the controls that are outside the board view.
+- Companion: a draft that arrives from another person does not replace the text that you write.
+- Companion: a long arrow label is cut to the space between its items. A screen reader reads the full label.
+- Companion: the text of a diamond and of the other shapes stays inside the shape. The comment mark does not cover the details of a small card.
+- Companion: you can play a recording on a locked board that is zoomed out.
+- Companion: the Fit and zoom controls in the dark theme and the title of an inner frame in the light theme have more contrast.
 - Companion: a reply that holds only a no-break space is text, as in the terminal and in Vis.
 - Companion: an emoji counts as one character of the limit of a canvas comment.
 - Companion: a delivered comment keeps the canvas item that it is about.

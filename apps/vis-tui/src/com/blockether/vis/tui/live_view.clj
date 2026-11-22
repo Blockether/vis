@@ -332,6 +332,20 @@
         (dissoc :log-fill-error)
         (assoc :fresh (touched patch)))))
 
+(defn patch-position
+  "Whether a frame is already held, starts at the next seq, or needs a read.
+   A frame has no seq for each op, so an overlap cannot be split."
+  [view first-seq last-seq]
+  (let [held
+        (long (or (:seq view) 0))
+
+        end
+        (long (or last-seq 0))]
+
+    (cond (<= end held) :held
+          (= (long (or first-seq end)) (inc held)) :next
+          :else :read)))
+
 (defn caught-up
   "App `view` after the frames `deltas` of a read with `since` (view.json
    `view_delta`, wire keys). A long string of a frame comes as edits of the string
@@ -339,30 +353,28 @@
    the whole view."
   [view deltas]
   (reduce (fn [view delta]
-            (let [held
-                  (long (or (:seq view) 0))
+            (case (patch-position view (get delta "first_seq") (get-in delta ["patch" "seq"]))
+              :held
+              view
 
-                  seq-after
-                  (long (or (get-in delta ["patch" "seq"]) 0))]
+              :read
+              (reduced nil)
 
-              (cond (<= seq-after held) view
-                    (> (long (or (get delta "first_seq") seq-after)) (inc held)) (reduced nil)
-                    :else
-                    (let [nodes
-                          (into {}
-                                (map (juxt :id identity))
-                                (tree-seq #(seq (:children %)) :children {:children (:nodes view)}))
+              :next
+              (let [nodes
+                    (into {}
+                          (map (juxt :id identity))
+                          (tree-seq #(seq (:children %)) :children {:children (:nodes view)}))
 
-                          patch
-                          (view-model/live-patch<-wire (hi-spec/resolved-delta
-                                                         (fn [id k]
-                                                           (get (get nodes id) (wire/engine-key k)))
-                                                         delta))]
+                    patch
+                    (view-model/live-patch<-wire (hi-spec/resolved-delta
+                                                   (fn [id k]
+                                                     (get (get nodes id) (wire/engine-key k)))
+                                                   delta))]
 
-                      (or (when patch
-                            (try (live/apply-patch view patch)
-                                 (catch clojure.lang.ExceptionInfo _ nil)))
-                          (reduced nil))))))
+                (or (when patch
+                      (try (live/apply-patch view patch) (catch clojure.lang.ExceptionInfo _ nil)))
+                    (reduced nil)))))
           view
           deltas))
 
@@ -1410,10 +1422,12 @@
     (into {} (map (fn [[kind id]] [kind (set (get-in defs [id "enum"]))]))
           [[:card "canvas_animation"] [:edge "canvas_edge_animation"]])))
 
-(defn- canvas-motion-mode [kind {:keys [animation is-active]}]
-  (let [mode (some-> animation name)]
-    (cond (contains? (get canvas-motion-modes kind) mode) mode
-          (and (= :edge kind) is-active) "flow")))
+(defn- canvas-motion-mode
+  [kind {:keys [animation is-active]}]
+  (let [mode (some-> animation
+                     name)]
+    (when (or (not= :edge kind) is-active)
+      (if (contains? (get canvas-motion-modes kind) mode) mode (when (= :edge kind) "flow")))))
 
 (defn- canvas-marker [mode ^long step]
   (case mode
@@ -1502,11 +1516,21 @@
         (canvas-motion-mode :card card)
 
         glyph
-        (cond-> {:text (str (get tone-glyph tone "•") " ") :fg (if tone ink t/dialog-hint) :styles styles}
-          motion (assoc :text "·" :motion motion))
+        (cond-> {:text (str (get tone-glyph tone "•") " ")
+                 :fg (if tone ink t/dialog-hint)
+                 :styles styles}
+          motion
+          (assoc :text
+            "·" :motion
+            motion))
+
+        head-prefix
+        (cond-> [head-indent glyph]
+          motion
+          (conj {:text " "}))
 
         title-run
-        {:text (str (when motion " ") (flat-text title) " · " (name (or kind :card))) :fg ink :styles styles}
+        {:text (str (flat-text title) " · " (name (or kind :card))) :fg ink :styles styles}
 
         hints
         (cond-> []
@@ -1517,7 +1541,7 @@
           (conj (str " [" (str/join "] [" (map flat-text badges)) "]")))
 
         head
-        (into [head-indent glyph title-run] (map canvas-hint) hints)
+        (into (conj head-prefix title-run) (map canvas-hint) hints)
 
         detail-rows
         (fn [detail]
@@ -1529,12 +1553,12 @@
         (if (<= (runs-width head) width)
           [head]
           (let [title-w
-                (max 1 (- width indent (runs-width [glyph])))
+                (max 1 (- width (runs-width head-prefix)))
 
                 [first-line & more-lines]
                 (p/word-wrap (:text title-run) title-w)]
 
-            (concat [[head-indent glyph (assoc title-run :text first-line)]]
+            (concat [(conj head-prefix (assoc title-run :text first-line))]
                     (map (fn [line]
                            [body-indent (assoc title-run :text line)])
                          more-lines)

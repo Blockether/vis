@@ -137,6 +137,32 @@
         (expect (= "  Line 17" (:text (scroll-row end))))
         (expect (< (:scroll start) (:scroll down)))
         (expect (= (:scroll start) (:scroll (press page (k KeyType/PageUp)))))))
+  (it "does not offer Enter for an item outside the reading window"
+      (let [v
+            (canvas-view {:is-selectable true
+                          :cards [{:id "a"
+                                   :title "One"
+                                   :text (str/join "\n\n" (repeat 22 "Read this line."))}]})
+
+            initial
+            (surface/initial-state)
+
+            geom
+            (surface/measure initial 45 18 v)
+
+            start
+            (surface/reconcile initial geom)
+
+            end
+            (surface/handle-key start (k KeyType/End) geom {})
+
+            hint
+            (fn [st]
+              (let [{:keys [geom cells]} (app-frame v st 45 18)]
+                (apply str (map :ch (nth cells (:hint-row geom))))))]
+
+        (expect (str/includes? (hint start) "Enter"))
+        (expect (not (str/includes? (hint end) "Enter")))))
   (it "keeps canvas text inside its right rail in a narrow terminal"
       (let [v (canvas-view {:cards [{:id "a" :title "One" :text "From the request to the release."}]})
             {:keys [geom cells]} (app-frame v (surface/initial-state) 20 24)
@@ -190,6 +216,81 @@
                   (expect (str/includes? frame reason))
                   (expect (str/includes? compact-text reason))
                   (expect (some? (:cursor compact)))))))))
+  (it
+    "keeps the open draft base until a conflict is read and the person saves again"
+    (let [view
+          (canvas-view {:threads [{:id "t" :item-id "a" :draft "Prior" :messages []}]})
+
+          competing
+          (-> view
+              (assoc :seq 5)
+              (assoc-in [:nodes 0 :threads 0 :draft] "Competing"))
+
+          calls
+          (atom [])
+
+          remote
+          (atom view)
+
+          press-save
+          (k \s true)]
+
+      (with-redefs [vis/worker-future
+                    (fn [_ f]
+                      (f))
+
+                    vis/gateway-app-read
+                    (fn [_ _ since]
+                      (swap! calls conj [:read since])
+                      {"view" @remote})
+
+                    view-model/live-view<-wire
+                    identity
+
+                    vis/gateway-app-action!
+                    (fn [_ _ action]
+                      (swap! calls conj [:save (:base-seq action) (:body action)])
+                      (if (= 5 (:base-seq action))
+                        {:is-accepted true :seq 6 :thread-id "t"}
+                        (do (reset! remote competing)
+                            {:reason "conflict" :seq 5 :http-status 409})))]
+
+        (let [{:keys [init measure reconcile on-key]}
+              (surface/component "conflict-session" (:id view) view)
+
+              key!
+              (fn [st key]
+                (on-key st key (measure st 80 24)))
+
+              sync!
+              (fn [st]
+                (reconcile st (measure st 80 24)))
+
+              start
+              (sync! init)
+
+              rows
+              (:rows (measure start 80 24))
+
+              thread-row
+              (first (keep-indexed #(when (= "t" (:thread-id %2)) %1) rows))
+
+              editor
+              (-> (assoc start :selected thread-row)
+                  (key! (k KeyType/Enter))
+                  (key! {:paste " mine"}))
+
+              newer-geom
+              (assoc (measure editor 80 24) :view competing)
+
+              refused
+              (sync! (on-key editor press-save newer-geom))]
+
+          (expect (= [[:read nil] [:save 4 "Prior mine"] [:read nil]] @calls))
+          (expect (= :conflict (get-in refused [:save :state])))
+          (expect (= (:input (:editor editor)) (get-in refused [:editor :input])))
+          (key! refused press-save)
+          (expect (= [:save 5 "Prior mine"] (last (filter #(= :save (first %)) @calls))))))))
   (it "opens each canvas thread and can start a new one"
       (let [v (canvas-view {:threads [{:id "one" :item-id "a" :messages [] :is-resolved true}
                                       {:id "two" :item-id "a" :messages [] :draft "unsent"}]})

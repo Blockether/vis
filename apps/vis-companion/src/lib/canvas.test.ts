@@ -351,6 +351,20 @@ describe('the arrows of a canvas', () => {
     expect(arrows[0].start.y).not.toBe(arrows[1].start.y);
   });
 
+  it('fits the label between its two cards', () => {
+    const label = 'Long arrow label that must not cover a card';
+    const layout = canvasLayout([
+      card('first'),
+      card('second', [], { edges: [edge('first', { route: 'straight', label })] }),
+    ]);
+    const [first, second] = layout.boxes;
+    const [{ middle, labelWidth, edge: link }] = layout.arrows;
+    expect(labelWidth).toBeGreaterThan(0);
+    expect(middle.x - labelWidth! / 2).toBeGreaterThan(first.x + first.width);
+    expect(middle.x + labelWidth! / 2).toBeLessThan(second.x);
+    expect(link.label).toBe(label);
+  });
+
   it('draws a straight line and centres its label on it', () => {
     const layout = canvasLayout([card('a'), card('b', [], { edges: [edge('a', { route: 'straight', end_mark: 'triangle' })] })]);
     const { path, middle, end } = layout.arrows[0];

@@ -1286,16 +1286,21 @@ def _ids(items: Any) -> list[Any]:
     return [one.get("id") if isinstance(one, dict) else None for one in items or []]
 
 
-# Java Character.isWhitespace, as used by Clojure's str/trim.
-_ID_WHITESPACE = (
+# Java Character.isWhitespace, as used by Clojure.
+_LIVE_WHITESPACE = (
     "\t\n\v\f\r\x1c\x1d\x1e\x1f \u1680\u2000\u2001\u2002\u2003\u2004"
     "\u2005\u2006\u2008\u2009\u200a\u2028\u2029\u205f\u3000"
 )
 
 
+def blank_live_text(value: str) -> bool:
+    """Check for only whitespace as the engine does."""
+    return not value.strip(_LIVE_WHITESPACE)
+
+
 def trim_live_id(value: Any) -> Any:
     """Trim a live id as the engine does, leaving a blank or invalid value as given."""
-    return (value.strip(_ID_WHITESPACE) or value) if isinstance(value, str) else value
+    return (value.strip(_LIVE_WHITESPACE) or value) if isinstance(value, str) else value
 
 
 def _canvas_card_ids(card: dict[str, Any]) -> dict[str, Any]:

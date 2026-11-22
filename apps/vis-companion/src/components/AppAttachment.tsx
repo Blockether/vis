@@ -403,7 +403,8 @@ export function AppSurface({
     if (!view) return undefined;
     return {
       isReadOnly,
-      draft: (nodeId, target) => act(draftAction(view, nodeId, target)),
+      baseSeq: view.seq,
+      draft: (nodeId, target, baseSeq = view.seq) => act(draftAction({ ...view, seq: baseSeq }, nodeId, target)),
     };
   }, [view, isReadOnly, act]);
 

@@ -147,26 +147,34 @@ export function CanvasArrowLabels({ layout }: { layout: CanvasLayout }) {
   if (labelled.length === 0) return null;
   return (
     <svg
-      aria-hidden="true"
-      className={`${LAYER} [[data-canvas][data-far=true]_&]:hidden`}
+      className={LAYER}
       width={layout.width}
       height={layout.height}
     >
-      {labelled.map(({ id, middle, edge }) => (
-        <text
-          key={id}
-          data-canvas-label={id}
-          data-canvas-color={edge.color}
-          x={middle.x}
-          y={middle.y}
-          textAnchor="middle"
-          dominantBaseline="central"
-          className={`stroke-ink font-mono text-meta [paint-order:stroke] [stroke-linejoin:round] [stroke-width:6px] ${
-            edge.color ? 'fill-[var(--cv-ink)]' : 'fill-dialog-hint'
-          }`}
-        >
-          {edge.label}
-        </text>
+      {labelled.map(({ id, middle, labelWidth = 0, edge }) => (
+        <g key={id} role="img" aria-label={edge.label}>
+          <title>{edge.label}</title>
+          {labelWidth >= 16 && (
+            <foreignObject
+              aria-hidden="true"
+              data-canvas-label={id}
+              data-canvas-color={edge.color}
+              x={middle.x - labelWidth / 2}
+              y={middle.y - 10}
+              width={labelWidth}
+              height={20}
+              className="[[data-canvas][data-far=true]_&]:hidden"
+            >
+              <div className="flex h-full items-center justify-center">
+                <span className={`max-w-full truncate bg-ink px-1 font-mono text-meta ${
+                  edge.color ? 'text-[color:var(--cv-ink)]' : 'text-dialog-hint'
+                }`}>
+                  {edge.label}
+                </span>
+              </div>
+            </foreignObject>
+          )}
+        </g>
       ))}
     </svg>
   );

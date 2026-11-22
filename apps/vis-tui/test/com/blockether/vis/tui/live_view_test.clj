@@ -5,6 +5,8 @@
    Every view here is DECLARED through the public builders and normalized by the
    engine, so a test can only paint shapes an extension can really produce."
   (:require [clojure.string :as str]
+            [com.blockether.vis.tui.app-surface :as surface]
+            [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.human-input :as hi]
@@ -138,6 +140,25 @@
             shown (into #{} (map (comp str/trim :text)) (rows-of (canvas-pane cards)))]
         (expect (every? shown ["← Source (End)" "→ Source (Start)" "↔ Source (Both)"
                                "— Source (Neither)"]))))
+             (it "does not animate an inactive canvas arrow"
+                 (let [pane (canvas-pane [{:id "a" :title "Source"}
+                                          {:id "b"
+                                           :title "Destination"
+                                           :edges
+                                           [{:from "a" :animation "dot" :is-active false}]}])]
+                   (expect (not (lv/animating? [pane])))
+                   (expect (= (lv/plan pane 80 1000) (lv/plan pane 80 1200)))))
+             (it "keeps the space before an animated card title when it wraps"
+                 (let [pane
+                       (canvas-pane [{:id "a"
+                                      :title "审核者审核者审核者审核者审核者审核者"
+                                      :animation "pulse"
+                                      :badges ["Waiting for a reply"]}])
+
+                       rows
+                       (lv/plan pane 40 1200)]
+
+                   (expect (some #(str/includes? (:text %) "• 审核者") rows))))
   (it "wraps an unbroken Markdown word inside the canvas frame"
       (let [word (apply str (repeat 12 "漢"))
             pane (canvas-pane [{:id "a" :title "Review" :text (str "**" word "**")}])
@@ -629,6 +650,64 @@
             (expect
               (lv/dormant? (first (:live-views @state/app-db)))
               "collapsed until the human presses it: the band's rows go back to the transcript")))))
+  (it
+    "reads a fresh canvas after an overlapping frame or a gap"
+    (doseq [placement
+            [:attachment :inline :panel]
+
+            first-seq
+            [1 3]]
+
+      (with-db
+        (fn []
+          (let [board
+                {:id "board" :type :canvas :cards [{:id "a" :title "Review"}]}
+
+                view
+                {:id "board-view"
+                 :session-id "s1"
+                 :title "Review"
+                 :seq 1
+                 :placement placement
+                 :nodes [board]}
+
+                fresh
+                (assoc-in (assoc view :seq 4) [:nodes 0 :zoom] 2.0)
+
+                held
+                (fn []
+                  (if (= :attachment placement)
+                    (get-in @state/app-db [:app-views "board-view"])
+                    (first (:live-views @state/app-db))))
+
+                patch
+                {:view-id "board-view"
+                 :seq 4
+                 :ops (cond-> []
+                        (= 1 first-seq)
+                        (conj {:op :add-node :node-spec board})
+
+                        true
+                        (conj {:op :set :node-id "board" :zoom 2.0}))}]
+
+            (state/dispatch [:live-view-open view])
+            (state/dispatch [:live-view-patch patch first-seq])
+            (expect (= 1 (get-in (held) [:view :seq])))
+            (expect (true? (:is-gap (held))))
+            (with-redefs [vis/worker-future
+                          (fn [_ f]
+                            (f))
+
+                          vis/gateway-app-read
+                          (fn [_ _ since]
+                            (if since
+                              {"patches" [{"first_seq" first-seq "patch" (wire/->wire patch)}]}
+                              {"view" (wire/->wire fresh)}))]
+
+              (surface/refresh-gaps! "s1"))
+            (expect (= 4 (get-in (held) [:view :seq])))
+            (expect (= 2.0 (get-in (held) [:view :nodes 0 :zoom])))
+            (expect (not (:is-gap (held)))))))))
   (it "one view mounted twice keeps the pane the human is scrolling"
       (with-db (fn []
                  (let [view (assoc (ci-view :rows 20) :session-id "s1")]

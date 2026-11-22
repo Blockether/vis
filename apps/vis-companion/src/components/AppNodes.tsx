@@ -80,7 +80,10 @@ export interface AppNodeActions {
   draft: (
     nodeId: string,
     target: { threadId?: string; anchor?: ViewAnchor; itemId?: string; body: string | null },
+    baseSeq?: number,
   ) => Promise<AppActionResult>;
+  /** The version of the draft shown by the app. */
+  baseSeq?: number;
   /** The app is closed or its owner is not connected: show, do not act. */
   isReadOnly: boolean;
 }
@@ -161,6 +164,8 @@ interface DraftEditorProps {
   /** The longest text. A thread on a board holds less than a thread of a diff. */
   maxLength?: number;
   showFailureReason?: boolean;
+  /** Wait for the read after a conflict, then let the person save against that version. */
+  canRetryConflict?: boolean;
   onSave: (body: string) => Promise<AppActionResult>;
   onClose: () => void;
 }
@@ -179,6 +184,7 @@ export function DraftEditor({
   isBlankAllowed = false,
   maxLength = LIVE_MESSAGE_CHARS,
   showFailureReason = false,
+  canRetryConflict,
   onSave,
   onClose,
 }: DraftEditorProps) {
@@ -191,11 +197,13 @@ export function DraftEditor({
   const { status } = outcome;
   const failureReason = showFailureReason && status === 'failed' ? outcome.message : undefined;
   const isBusy = status === 'saving';
+  const isConflict = canRetryConflict !== undefined && status === 'conflict';
+  const isWaiting = isConflict && !canRetryConflict;
   const saving = useRef(false);
   const isBlank = isBlankDraft(text);
   const isTooLong = text.length > maxLength && Array.from(text).length > maxLength;
   const save = async () => {
-    if (saving.current || isTooLong) return;
+    if (saving.current || isTooLong || isWaiting) return;
     if (isBlank && saved === '' && !isBlankAllowed) {
       onClose();
       return;
@@ -239,7 +247,7 @@ export function DraftEditor({
         disabled={isBusy}
         onChange={(event) => {
           setText(event.target.value);
-          if (status !== 'saving') setOutcome({ status: 'idle' });
+          if (!isBusy && !isConflict) setOutcome({ status: 'idle' });
         }}
         onKeyDown={(event) => {
           if (
@@ -269,9 +277,9 @@ export function DraftEditor({
         <Button
           type="submit"
           variant="primary"
-          disabled={isBusy || isTooLong || (submitLabel === 'Comment' && isBlank)}
+          disabled={isBusy || isWaiting || isTooLong || (submitLabel === 'Comment' && isBlank)}
         >
-          {isRetryable(status) ? 'Retry' : submitLabel}
+          {isConflict ? 'Retry save' : isRetryable(status) ? 'Retry' : submitLabel}
         </Button>
         {!failureReason && <ActionStatus status={status} />}
       </div>

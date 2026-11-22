@@ -176,6 +176,44 @@ describe('AppSurface', () => {
     await waitFor(() => expect(liveView).toHaveBeenCalledTimes(2));
   });
 
+  it('keeps a canvas edit and retries only after showing the competing draft', async () => {
+    const canvas = (seq: number, draft: string) => {
+      const parsed = liveViewFromWire({ ...wire(seq), nodes: [{
+        id: 'board', type: 'canvas', cards: [{ id: 'plan', title: 'Plan' }],
+        threads: [{ id: 'note', item_id: 'plan', messages: [], draft }],
+      }] });
+      if (!parsed) throw new Error('Expected a canvas app');
+      return parsed;
+    };
+    const { hub, emit } = fakeHub();
+    const { client, viewAction, liveView } = fakeClient([canvas(3, 'Saved A'), canvas(5, 'Saved C')], async (action) => {
+      if ('base_seq' in action && action.base_seq === 5) return { is_accepted: true, seq: 6 };
+      throw new GatewayError(409, 'conflict', { is_accepted: false, reason: 'conflict', seq: 5 });
+    });
+    open(client, hub);
+    fireEvent.click(await screen.findByRole('button', { name: /1 comment on Plan/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const field = screen.getByRole('textbox', { name: 'Edit comment' });
+    fireEvent.change(field, { target: { value: 'Local B' } });
+    act(() => emit({
+      type: VIEW_PATCH_EVENT, kind: 'live', view_id: 'app-1', first_seq: 4,
+      patch: { seq: 4, ops: [{ op: 'thread', node_id: 'board', thread: { id: 'note', item_id: 'plan', messages: [], draft: 'Saved B' } }] },
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(viewAction).toHaveBeenCalledTimes(1));
+    expect(viewAction).toHaveBeenCalledExactlyOnceWith('s1', 'app-1', {
+      action: 'draft', node_id: 'board', thread_id: 'note', body: 'Local B', base_seq: 3,
+    });
+    expect(await screen.findByText('Saved C')).toBeInTheDocument();
+    expect(field).toHaveValue('Local B');
+    expect(liveView).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+    await waitFor(() => expect(viewAction).toHaveBeenLastCalledWith('s1', 'app-1', {
+      action: 'draft', node_id: 'board', thread_id: 'note', body: 'Local B', base_seq: 5,
+    }));
+    await waitFor(() => expect(field).not.toBeInTheDocument());
+  });
+
   it('reads the app again after a reconnect', async () => {
     const { hub, connect } = fakeHub();
     const { client, liveView } = fakeClient([view(3), view(4)], async () => ({}));
