@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.30] - 2026-11-22
+
+Vis v0.5.29 was not published, because its native release check failed. v0.5.30 contains all v0.5.29 changes.
+
+### Fixed
+
+- Companion: the web build compiles again. The type of an exported transcript turn keeps all fields of the turn.
+
 ## [v0.5.29] - 2026-11-22
 
 ### Added
