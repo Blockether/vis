@@ -60,6 +60,8 @@ const CROSSING_COST = 48;
 const SEARCH_STEPS = 6000;
 /** The most steps of all the searches of one board. */
 const BOARD_STEPS = 60000;
+/** The steps of the plain searches for the arrows whose search ran out of steps. */
+const RESCUE_STEPS = 8000;
 const CAPTION_GAP = 6;
 const PORT_STEP = 12;
 /** Facing ends nearer than this come in line, so that a line has no small step. */
@@ -1117,7 +1119,7 @@ function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boole
   }
   // An arrow whose search ran out of steps does not go through an item. A plain
   // search with its own steps finds a way that can share lanes or cross arrows.
-  const rescue = { steps: BOARD_STEPS / 2, isCut: false };
+  const rescue = { steps: RESCUE_STEPS, isCut: false };
   for (const one of routed) {
     if (one.around || one.isClear || rescue.steps <= 0) continue;
     rescue.isCut = false;
