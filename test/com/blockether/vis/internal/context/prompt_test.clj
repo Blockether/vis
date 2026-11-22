@@ -187,60 +187,59 @@
                   agents/added-root-guidance-index
                   (constantly [])]
 
-      (let [model
-            "gpt-6-astra"
+      ;; GPT-6.2 sends no `instructions`: the first system message leads the input.
+      (doseq [model ["gpt-6-astra" "gpt-6.2-sol"]]
+        (let [built-in
+              {:ext/name "test.kernel"
+               :ext/engine {:ext.engine/alias 'kernel :ext.engine/builtin? true}
+               :ext/prompt-fn (constantly "Kernel rules that ride in the core surface.")}
 
-            built-in
-            {:ext/name "test.kernel"
-             :ext/engine {:ext.engine/alias 'kernel :ext.engine/builtin? true}
-             :ext/prompt-fn (constantly "Kernel rules that ride in the core surface.")}
+              installed
+              {:ext/name "test.drilldown"
+               :ext/engine {:ext.engine/alias 'demo}
+               :ext/prompt-fn (constantly "Demo extension guidance, pushed on every request.")}
 
-            installed
-            {:ext/name "test.drilldown"
-             :ext/engine {:ext.engine/alias 'demo}
-             :ext/prompt-fn (constantly "Demo extension guidance, pushed on every request.")}
+              stable
+              (prompt/assemble-stable-prompt-messages {:extensions (atom [built-in installed])}
+                                                      {:active-extensions [built-in installed]
+                                                       :session-context "session = {\"turn\": 1}"})
 
-            stable
-            (prompt/assemble-stable-prompt-messages {:extensions (atom [built-in installed])}
-                                                    {:active-extensions [built-in installed]
-                                                     :session-context "session = {\"turn\": 1}"})
+              messages
+              (conj (vec stable) {:role "user" :content "Which fixed context can I cut?"})
 
-            messages
-            (conj (vec stable) {:role "user" :content "Which fixed context can I cut?"})
+              tools
+              [{:name "run" :description "Run code" :schema {:type "object"}}]
 
-            tools
-            [{:name "run" :description "Run code" :schema {:type "object"}}]
+              accounting
+              (svar-router/responses-request-accounting
+                model
+                (#'svar-llm/build-openai-responses-request-body messages model {:svar/tools tools}))
 
-            accounting
-            (svar-router/responses-request-accounting
-              model
-              (#'svar-llm/build-openai-responses-request-body messages model {:svar/tools tools}))
+              health
+              (prompt/request-health {} messages tools model accounting)
 
-            health
-            (prompt/request-health {} messages tools model accounting)
+              rows
+              (:breakdown health)
 
-            rows
-            (:breakdown health)
+              row
+              (fn [label]
+                (first (filter #(= label (:label %)) rows)))]
 
-            row
-            (fn [label]
-              (first (filter #(= label (:label %)) rows)))]
-
-        (expect (= :prepared-request (:counted-projection health)))
-        (expect (= (:input-tokens accounting)
-                   (:estimated-input-tokens health)
-                   (reduce + 0 (map :tokens rows))))
-        (expect (= {:label "Main AGENTS.md" :path "/work/AGENTS.md"}
-                   (select-keys (row "Main AGENTS.md") [:label :path])))
-        (doseq [label ["Vis core system prompt" "Main AGENTS.md" "Built-in tools and rules"
-                       "Extension: demo" "Sandbox and Python runtime"
-                       "Session and environment context" "Conversation and tool results"
-                       "Tool declarations"]]
-          (expect (pos? (long (:tokens (row label) 0)))))
-        ;; What is left over is message framing, not the aggregate #268 reported.
-        (expect (< (long (:tokens (row "System instructions") 0))
-                   (long (:tokens (row "Vis core system prompt")))))
-        (expect (not (str/includes? (pr-str health) "house rule")))))))
+          (expect (= :prepared-request (:counted-projection health)))
+          (expect (= (:input-tokens accounting)
+                     (:estimated-input-tokens health)
+                     (reduce + 0 (map :tokens rows))))
+          (expect (= {:label "Main AGENTS.md" :path "/work/AGENTS.md"}
+                     (select-keys (row "Main AGENTS.md") [:label :path])))
+          (doseq [label ["Vis core system prompt" "Main AGENTS.md" "Built-in tools and rules"
+                         "Extension: demo" "Sandbox and Python runtime"
+                         "Session and environment context" "Conversation and tool results"
+                         "Tool declarations"]]
+            (expect (pos? (long (:tokens (row label) 0)))))
+          ;; What is left over is message framing, not the aggregate #268 reported.
+          (expect (< (long (:tokens (row "System instructions") 0))
+                     (long (:tokens (row "Vis core system prompt")))))
+          (expect (not (str/includes? (pr-str health) "house rule"))))))))
 
 (defdescribe
   request-health-tokenization-test

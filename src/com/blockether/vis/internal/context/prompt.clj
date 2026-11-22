@@ -970,10 +970,12 @@
 (defn- prepared-request-parts
   "Project Svar's content-free components into UI labels without rescaling them.
    Svar sends the first system message as Responses `instructions` and each later one
-   as an input message. Both totals are split across their labelled parts — core prompt,
-   each injected guidance file, runtime and extension prompts, session context — using
-   isolated Svar content counts. Rows are capped by the reported totals. The unattributed
-   remainders stay explicit `System instructions` and conversation rows."
+   as an input message. From GPT-6.2, Svar sends no `instructions`: every system message
+   is an input message, so all of them split the `:messages` total. Both totals are split
+   across their labelled parts — core prompt, each injected guidance file, runtime and
+   extension prompts, session context — using isolated Svar content counts. Rows are
+   capped by the reported totals. The unattributed remainders stay explicit
+   `System instructions` and conversation rows."
   [model messages {:keys [source projection input-tokens components] :as accounting}]
   (when-not (and (= :svar-estimate source)
                  (= :prepared-request projection)
@@ -984,7 +986,8 @@
                  (= input-tokens (reduce + 0 (vals components))))
     (throw (ex-info "Prepared request accounting unavailable" {})))
   (let [[first-system later]
-        (let [i (first (keep-indexed #(when (= "system" (:role %2)) %1) messages))]
+        (let [i (when (pos? (long (or (:instructions components) 0)))
+                  (first (keep-indexed #(when (= "system" (:role %2)) %1) messages)))]
           (if i
             [[(nth messages i)] (into (subvec (vec messages) 0 i) (subvec (vec messages) (inc i)))]
             [[] messages]))
