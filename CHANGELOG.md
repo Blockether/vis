@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Companion: when the owner changes the camera of a canvas or locks it, an active mouse drag or a pinch on Safari stops. Before, the gesture could change the new camera again.
+- Companion: Fit keeps the full canvas board in view when the panel changes size or the board changes, also when the owner sets a different camera.
+- Companion: after a cancelled drag on a canvas, the next press of a toolbar button works.
+- Companion: when a canvas change arrives during a reconnect, the app reads the view again. Before, the app could show a log line two times.
+- Python SDK: when a batch sets `is_selectable` of a canvas to false and then to true, the selection is removed, as in the engine.
 - Companion: on a dense canvas board, an arrow at right angles does not go through an item when the search for its way runs out of steps. A second, simpler search finds a way that can share a line with another arrow or cross it.
 - Companion: the boxes of a task list show in messages. Before, the page style hid them.
 - Live views: `canvas.resolve(...)` does not remove a message that arrives while it runs. A resolution changes only the state of the thread that Vis holds at that time.

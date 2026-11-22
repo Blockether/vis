@@ -474,6 +474,23 @@ describe('a patch frame', () => {
     expect(staleLiveViews([opened(), view]).map((one) => one.id)).toEqual([view.id]);
   });
 
+  it('does not duplicate lines when a coalesced canvas update overlaps a reconnect snapshot', () => {
+    const view = liveViewFromWire({
+      id: 'app', title: 'Build', seq: 1, nodes: [
+        { id: 'board', type: 'canvas', cards: [{ id: 'plan', title: 'Plan' }] },
+        { id: 'tail', type: 'log', lines: ['Planning'] },
+      ],
+    });
+    if (!view) throw new Error('Expected a view');
+    const overlap = patched(view, 2, [
+      { op: 'append', node_id: 'tail', lines: ['Planning', 'Building'] },
+      { op: 'append', node_id: 'board', cards: [{ id: 'build', title: 'Build' }] },
+    ], 1);
+    expect(nodeOfType(overlap, 'tail', 'log').lines).toEqual(['Planning']);
+    expect(overlap.is_stale).toBe(true);
+    expect(overlap.seq).toBe(1);
+  });
+
   it('folds a coalesced range that carries on where the picture stands', () => {
     const view = patched(opened(), 4, [{ op: 'set', node_id: 'now', text: 'Scanning db-3' }], 1);
     expect(view.is_stale).toBeUndefined();

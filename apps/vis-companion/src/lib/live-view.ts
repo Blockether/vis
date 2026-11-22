@@ -2594,7 +2594,8 @@ export function applyLivePatch(view: LiveView, frame: unknown): LiveView {
   const seq = count(patch.seq, 0);
   if (seq <= view.seq) return view;
   const firstSeq = count(envelope?.first_seq, seq);
-  if (firstSeq > view.seq + 1) return { ...view, is_stale: true };
+  // A gap lost operations. An overlap would apply some operations twice.
+  if (firstSeq !== view.seq + 1) return { ...view, is_stale: true };
   const ops = Array.isArray(patch.ops) ? patch.ops : [];
   const splices = Array.isArray(envelope?.splices) ? envelope.splices : [];
   const resolved = splices.length ? splicedOps(view, ops, splices) : ops;

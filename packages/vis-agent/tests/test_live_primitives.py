@@ -546,6 +546,29 @@ def test_canvas_draws_arrows_from_after_and_moves_its_camera(monkeypatch, host_k
 
 
 @pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_canvas_batch_clears_selection_when_it_disables_selection(
+    monkeypatch, host_kind
+):
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    canvas = vis.ui.canvas(
+        "board",
+        [vis.ui.canvas.card("plan", "Plan")],
+        is_selectable=True,
+        selected_ids=["plan"],
+    )
+    with vis.live("Board", [canvas], flush_ms=10000) as view:
+        board = view["board"]
+        assert board.selected_ids == ["plan"]
+        with view.batch():
+            board.set(is_selectable=False)
+            board.set(is_selectable=True)
+        assert board.selected_ids == []
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
 def test_a_batch_keeps_a_set_after_the_group_of_its_node_comes_again(
     monkeypatch, host_kind
 ):

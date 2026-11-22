@@ -195,9 +195,10 @@ export function LiveCanvas({
   const isGlidingNow = useRef(false);
   const markZoom = useRef<{ scale?: number; timer?: number }>({});
   const camera = useRef<CanvasCamera>({ x: 0, y: 0, scale: 1 });
-  const isHeld = useRef(false);
+  const cameraMode = useRef<'owner' | 'manual' | 'fit'>('owner');
   const canGlide = useRef(false);
   const pointers = useRef(new Map<number, Point>());
+  const safariPinch = useRef<{ camera: CanvasCamera; scale: number } | null>(null);
   const gesture = useRef({ hasMoved: false });
   const [barHeight, setBarHeight] = useState(0);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
@@ -261,6 +262,13 @@ export function LiveCanvas({
     return () => window.clearTimeout(mark.timer);
   }, []);
 
+  const isHeld = useCallback(() => {
+    if (cameraMode.current === 'manual') return true;
+    if (cameraMode.current !== 'fit') return false;
+    const { whole, target } = latest.current;
+    return whole.x !== target.x || whole.y !== target.y || whole.scale !== target.scale;
+  }, []);
+
   const paint = useCallback((isGliding: boolean, deferMarks = false) => {
     const frameNode = frame.current;
     const worldNode = world.current;
@@ -296,9 +304,9 @@ export function LiveCanvas({
     // A person who holds the camera moves the board with one finger. Before that,
     // one finger scrolls the page, so a board in a long page is not a trap.
     frameNode.style.touchAction =
-      latest.current.isLocked ? '' : isHeld.current ? 'none' : 'pan-x pan-y';
+      latest.current.isLocked ? '' : isHeld() ? 'none' : 'pan-x pan-y';
     if (label.current) label.current.textContent = `${Math.round(scale * 100)}%`;
-  }, []);
+  }, [isHeld]);
 
   // The destination can be ahead of the picture during a CSS transition.
   const readCamera = useCallback((): CanvasCamera => {
@@ -311,7 +319,7 @@ export function LiveCanvas({
   /** The person moves the camera and holds it. */
   const move = useCallback(
     (next: CanvasCamera, isGliding = false) => {
-      isHeld.current = true;
+      cameraMode.current = 'manual';
       camera.current = next;
       paint(isGliding, !isGliding);
     },
@@ -326,11 +334,8 @@ export function LiveCanvas({
 
   /** The whole board, also when the owner points the camera at one item. */
   const fit = () => {
-    const { whole, target } = latest.current;
-    // The person holds the camera only when the owner points it at another place.
-    isHeld.current =
-      whole.x !== target.x || whole.y !== target.y || whole.scale !== target.scale;
-    camera.current = whole;
+    cameraMode.current = 'fit';
+    camera.current = latest.current.whole;
     paint(true);
   };
 
@@ -340,12 +345,19 @@ export function LiveCanvas({
   useLayoutEffect(() => {
     if (seenPointed.current !== pointed) {
       seenPointed.current = pointed;
-      isHeld.current = false;
+      cameraMode.current = 'owner';
+      const node = frame.current;
+      for (const id of pointers.current.keys()) {
+        if (node?.hasPointerCapture(id)) node.releasePointerCapture(id);
+      }
+      pointers.current.clear();
+      safariPinch.current = null;
+      if (node) delete node.dataset.dragging;
     }
-    if (isHeld.current) return;
-    camera.current = target;
+    if (cameraMode.current === 'manual') return;
+    camera.current = cameraMode.current === 'fit' ? whole : target;
     paint(canGlide.current);
-  }, [target, pointed, paint]);
+  }, [target, whole, pointed, paint]);
 
   // Only a locked board hides clipped items and controls from keyboard navigation.
   // Read the settled camera, not each frame of its transition.
@@ -470,11 +482,11 @@ export function LiveCanvas({
   }, [measureCards]);
 
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    const held = pointers.current;
+    if (held.size === 0) gesture.current.hasMoved = false;
     if (isLocked || (isTalkOpen && size.width < SHEET_WIDTH) || (event.pointerType === 'mouse' && event.button !== 0)) return;
     // A press on the camera bar or on a player is not a move of the board.
     if ((event.target as Element).closest('[data-canvas-bar], [data-canvas-control]')) return;
-    const held = pointers.current;
-    if (held.size === 0) gesture.current.hasMoved = false;
     if (held.size < 2) held.set(event.pointerId, { x: event.clientX, y: event.clientY });
   }
 
@@ -490,7 +502,7 @@ export function LiveCanvas({
     const state = gesture.current;
     if (pointers.current.size === 1) {
       // One finger moves the board only for a person who holds the camera.
-      if (event.pointerType === 'touch' && !isHeld.current) return;
+      if (event.pointerType === 'touch' && !isHeld()) return;
       if (!state.hasMoved) {
         if (distance(from, point) < DRAG_START) return;
         state.hasMoved = true;
@@ -527,9 +539,11 @@ export function LiveCanvas({
   function onClickCapture(event: ReactMouseEvent<HTMLDivElement>) {
     if (gesture.current.hasMoved) {
       gesture.current.hasMoved = false;
-      event.preventDefault();
-      event.stopPropagation();
-      return;
+      if (event.detail > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
     }
     const mark = (event.target as Element).closest<HTMLElement>('[data-canvas-talk]');
     if (mark) talkOpener.current = mark;
@@ -580,28 +594,26 @@ export function LiveCanvas({
         ),
       );
     };
-    let base: CanvasCamera | null = null;
-    let baseScale = 1;
     const onGestureStart = (event: SafariGestureEvent) => {
       if (overSheet(event) || latest.current.isLocked) return;
       event.preventDefault();
-      base = readCamera();
-      baseScale = event.scale || 1;
+      safariPinch.current = { camera: readCamera(), scale: event.scale || 1 };
     };
     const onGestureChange = (event: SafariGestureEvent) => {
+      const base = safariPinch.current;
       if (!base) return;
       event.preventDefault();
       move(
         canvasZoomedAt(
-          base,
-          (event.scale || 1) / baseScale,
+          base.camera,
+          (event.scale || 1) / base.scale,
           inFrame(node, { x: event.clientX, y: event.clientY }),
           latest.current.whole.scale,
         ),
       );
     };
     const onGestureEnd = () => {
-      base = null;
+      safariPinch.current = null;
     };
     // Two fingers are a pinch of the board and never a scroll of the page.
     const onTouchMove = (event: TouchEvent) => {

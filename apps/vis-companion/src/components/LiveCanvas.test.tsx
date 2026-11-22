@@ -14,7 +14,7 @@ function board(withArrows = false) {
     }] : [])],
   }] })?.nodes[0];
   if (node?.type !== 'canvas') throw new Error('Expected a canvas');
-  render(<LiveCanvas node={node} mark={() => null} />);
+  const { rerender } = render(<LiveCanvas node={node} mark={() => null} />);
   const frame = screen.getByRole('group', { name: /^Canvas,/ });
   frame.setPointerCapture = vi.fn();
   frame.hasPointerCapture = () => false;
@@ -23,7 +23,9 @@ function board(withArrows = false) {
     const [x, y, scale] = world.style.transform.match(/-?[\d.]+/g)!.map(Number);
     return { x, y, scale };
   };
-  return { frame, pose };
+  return { frame, pose, point: (settings: Partial<typeof node>) => {
+    rerender(<LiveCanvas node={{ ...node, ...settings }} mark={() => null} />);
+  } };
 }
 
 it('does not pan when a mouse returns after release outside the board', () => {
@@ -31,6 +33,76 @@ it('does not pan when a mouse returns after release outside the board', () => {
   const original = pose();
   fireEvent.pointerDown(frame, { pointerId: 1, pointerType: 'mouse', buttons: 1, clientX: 100 });
   fireEvent.pointerMove(frame, { pointerId: 1, pointerType: 'mouse', buttons: 0, clientX: 180 });
+  expect(pose()).toEqual(original);
+});
+
+it('ends a Safari pinch when the owner locks the board', () => {
+  const { frame, pose, point } = board();
+  const gesture = (type: string, scale: number) => {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.assign(event, { scale, clientX: 100, clientY: 100 });
+    fireEvent(frame, event);
+  };
+  gesture('gesturestart', 1);
+  const original = pose();
+  gesture('gesturechange', 2);
+  expect(pose()).not.toEqual(original);
+  point({ is_locked: true });
+  const locked = pose();
+  gesture('gesturechange', 3);
+  expect(pose()).toEqual(locked);
+});
+
+it('ends a mouse drag when the owner points the camera again', () => {
+  const { frame, pose, point } = board();
+  const mouse = (clientX: number) => ({ pointerId: 1, pointerType: 'mouse', buttons: 1, clientX });
+  const original = pose();
+  fireEvent.pointerDown(frame, mouse(100));
+  fireEvent.pointerMove(frame, mouse(120));
+  expect(pose()).not.toEqual(original);
+  point({ zoom: 2 });
+  const owner = pose();
+  fireEvent.pointerMove(frame, mouse(140));
+  expect(pose()).toEqual(owner);
+});
+
+it('keeps the whole board fitted when the frame changes size', () => {
+  const sizes = new Map<Element, () => void>();
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320);
+  const height = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(200);
+  vi.stubGlobal('ResizeObserver', class {
+    private callback: () => void;
+    constructor(callback: () => void) { this.callback = callback; }
+    observe(element: Element) { sizes.set(element, this.callback); }
+    unobserve(element: Element) { sizes.delete(element); }
+    disconnect() {}
+  });
+  try {
+    const { frame, pose, point } = board();
+    point({ zoom: 2 });
+    fireEvent.click(screen.getByRole('button', { name: 'Fit the board' }));
+    const fitted = pose();
+    width.mockReturnValue(120);
+    act(() => sizes.get(frame)?.());
+    expect(pose().scale).toBeLessThan(fitted.scale);
+  } finally {
+    width.mockRestore();
+    height.mockRestore();
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each(['pointer', 'keyboard'])('lets the next %s toolbar activation through after a cancelled drag', (input) => {
+  const { frame, pose } = board();
+  const mouse = (clientX: number) => ({ pointerId: 1, pointerType: 'mouse', buttons: 1, clientX });
+  const original = pose();
+  fireEvent.pointerDown(frame, mouse(100));
+  fireEvent.pointerMove(frame, mouse(120));
+  fireEvent.pointerCancel(frame, mouse(120));
+  expect(pose()).not.toEqual(original);
+  const fit = screen.getByRole('button', { name: 'Fit the board' });
+  if (input === 'pointer') fireEvent.pointerDown(fit, mouse(20));
+  fireEvent.click(fit, { detail: input === 'pointer' ? 1 : 0 });
   expect(pose()).toEqual(original);
 });
 

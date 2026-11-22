@@ -6436,7 +6436,12 @@ class LiveView:
                 break
             if earlier.get("node_id") != op.get("node_id"):
                 continue
-            if earlier["op"] == op["op"] and op["op"] in ("set", "set-value"):
+            if (
+                earlier["op"] == op["op"]
+                and op["op"] in ("set", "set-value")
+                and earlier.get("is_selectable") is not False
+                and op.get("is_selectable") is not False
+            ):
                 earlier.update(op)
                 return
             if earlier["op"] == op["op"] == "append" and _merge_append(earlier, op):
