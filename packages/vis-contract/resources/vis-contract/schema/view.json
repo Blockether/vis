@@ -5806,6 +5806,7 @@
           "maxLength": 200
         },
         "text": {
+          "description": "The body of the item in Markdown. Each surface renders it as it renders a message of the session: headings, lists, task lists, tables, code blocks, quotes, and links.",
           "type": "string",
           "maxLength": 2000
         },

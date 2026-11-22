@@ -58,7 +58,7 @@ import {
   wholeSplit,
   type SplitPiece,
 } from '../lib/markdown-trees';
-import { AlertIcon, ArrowOutIcon, ChevronIcon, ForkIcon, PauseIcon, PlayIcon } from './icons';
+import { AlertIcon, ArrowOutIcon, CheckIcon, ChevronIcon, ForkIcon, PauseIcon, PlayIcon } from './icons';
 import { archiveOpenVerb, keepArchive } from '../lib/artifact-open';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
 import {
@@ -738,11 +738,29 @@ const MarkdownPiece = memo(function MarkdownPiece({
           </h6>
         ),
         hr: () => <hr className={`${compact ? 'my-3' : 'my-5'} border-answer-edge`} />,
-        li: ({ children: item }) => (
-          <JustifiedProse as="li" enabled={!nested} className={`my-0.5 ${runningText}`}>
+        // A task item shows its box in the marker column, as the TUI shows `[✓]`.
+        li: ({ children: item, className }) => (
+          <JustifiedProse
+            as="li"
+            enabled={!nested}
+            className={`my-0.5 ${runningText} ${className?.includes('task-list-item') ? 'before:!content-none' : ''}`}
+          >
             {item}
           </JustifiedProse>
         ),
+        // A task of a list: the box shows its state, and a screen reader reads it as words.
+        input: ({ type, checked }) =>
+          type === 'checkbox' ? (
+            <>
+              <span
+                aria-hidden="true"
+                className={`absolute left-0 top-[0.25lh] inline-flex size-[1.5ch] items-center justify-center border border-current ${checked ? 'bg-answer-edge' : 'opacity-70'}`}
+              >
+                {checked && <CheckIcon className="size-full" />}
+              </span>
+              <span className="sr-only">{checked ? 'Done:' : 'Not done:'}</span>
+            </>
+          ) : null,
         ol: ({ children: list, node, start }) => {
           // The markers share one column, so the widest number in the list sizes it:
           // "9." fits three characters, "10." four and "100." five.

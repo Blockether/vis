@@ -93,6 +93,12 @@ function inFrame(frame: HTMLElement | null, point: Point): Point {
 }
 
 /**
+ * A scale variable in steps of 0.05. Each new value styles the items of the board
+ * again, so a pinch changes it only at each step and not at each event.
+ */
+const scaleStep = (value: number) => String(Math.round(value * 20) / 20);
+
+/**
  * The items and the arrows at full size. The camera moves the element around this
  * board, so a pan or a zoom draws none of it again. The frames stand under the
  * arrows, the other items over them, and the words of the arrows over everything.
@@ -247,10 +253,10 @@ export function LiveCanvas({
     frameNode.dataset.far = String(scale < CANVAS_FAR_ZOOM);
     // A far camera makes each line thin. The arrows grow against the scale, so a
     // line stays near one pixel on the screen.
-    frameNode.style.setProperty('--cv-weight', String(Math.min(2.2, Math.max(1, 0.8 / scale))));
+    frameNode.style.setProperty('--cv-weight', scaleStep(Math.min(2.2, Math.max(1, 0.8 / scale))));
     // The mark of a discussion keeps its size on the screen, so a person can read
     // and press it on a board that shows whole.
-    frameNode.style.setProperty('--cv-mark', String(Math.min(3, Math.max(1, 1 / scale))));
+    frameNode.style.setProperty('--cv-mark', scaleStep(Math.min(3, Math.max(1, 1 / scale))));
     // A person who holds the camera moves the board with one finger. Before that,
     // one finger scrolls the page, so a board in a long page is not a trap.
     frameNode.style.touchAction =
@@ -325,22 +331,33 @@ export function LiveCanvas({
 
   // The height of an item is the height of its words, so the layout asks the browser.
   // A frame is as high as the layout makes it: only its header has a height of its own.
+  // A diagram or a picture gets its height after the first paint, so the bodies are
+  // also observed: a body that changes its height measures the board again.
+  const sizes = useRef<{ observer: ResizeObserver; bodies: Set<HTMLElement> } | null>(null);
   const measureCards = useCallback(() => {
     const cards = world.current?.querySelectorAll<HTMLElement>('[data-canvas-card]') ?? [];
+    const bodies = new Set<HTMLElement>();
+    const next = new Map<string, CanvasMeasure>();
+    for (const card of cards) {
+      const body =
+        card.dataset.canvasKind === 'frame'
+          ? card.querySelector<HTMLElement>('[data-canvas-head]')
+          : card;
+      if (body) bodies.add(body);
+      const caption = card.parentElement?.querySelector<HTMLElement>(':scope > [data-canvas-caption]');
+      if (!body || body.offsetHeight <= 0) continue;
+      next.set(card.dataset.canvasCard ?? '', {
+        height: body.offsetHeight,
+        ...(caption ? { caption: caption.offsetHeight } : {}),
+      });
+    }
+    const watch = sizes.current;
+    if (watch) {
+      for (const body of watch.bodies) if (!bodies.has(body)) watch.observer.unobserve(body);
+      for (const body of bodies) if (!watch.bodies.has(body)) watch.observer.observe(body);
+      watch.bodies = bodies;
+    }
     setMeasures((held) => {
-      const next = new Map<string, CanvasMeasure>();
-      for (const card of cards) {
-        const body =
-          card.dataset.canvasKind === 'frame'
-            ? card.querySelector<HTMLElement>('[data-canvas-head]')
-            : card;
-        const caption = card.parentElement?.querySelector<HTMLElement>(':scope > [data-canvas-caption]');
-        if (!body || body.offsetHeight <= 0) continue;
-        next.set(card.dataset.canvasCard ?? '', {
-          height: body.offsetHeight,
-          ...(caption ? { caption: caption.offsetHeight } : {}),
-        });
-      }
       const isSame =
         next.size === held.size &&
         [...next].every(([id, { height, caption }]) => {
@@ -350,6 +367,15 @@ export function LiveCanvas({
       return isSame ? held : next;
     });
   }, []);
+  useLayoutEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const watch = { observer: new ResizeObserver(() => measureCards()), bodies: new Set<HTMLElement>() };
+    sizes.current = watch;
+    return () => {
+      watch.observer.disconnect();
+      sizes.current = null;
+    };
+  }, [measureCards]);
   useLayoutEffect(measureCards, [measureCards, node.cards, flow]);
   useEffect(() => {
     let isMounted = true;
@@ -489,8 +515,8 @@ export function LiveCanvas({
       data-canvas={node.id}
       data-far="false"
       data-commenting={isCommenting}
-      className={`group/canvas relative max-h-[70vh] w-full select-none overflow-hidden border border-edge-strong bg-ink transition-[background-position,background-size] ${glide} ${
-        isLocked ? '' : 'cursor-grab data-[dragging=true]:cursor-grabbing'
+      className={`relative max-h-[70vh] w-full select-none overflow-hidden border border-edge-strong bg-ink transition-[background-position,background-size] ${glide} ${
+        isLocked ? '' : 'cursor-grab'
       }`}
       style={{
         height: canvasFrameHeight(layout, size.width, MAX_HEIGHT - barRoom) + barRoom,
@@ -519,6 +545,11 @@ export function LiveCanvas({
           onTalk={hasTalk ? openTalk : undefined}
         />
       </div>
+      {/* A drag shows its cursor on a cover and not on the frame. The words below
+          take the cursor of the frame, so a change there styles each of them again. */}
+      {!isLocked && (
+        <div aria-hidden="true" className="absolute inset-0 hidden cursor-grabbing [[data-dragging=true]>&]:block" />
+      )}
       {talk && (
         <CanvasThreads
           node={node}

@@ -581,6 +581,10 @@ canvas.text("approval", "Approval required", parent="checks")
 Open the app in the Companion app. The **Checks** frame appears inside **Release**. An arrow with
 an **Artifact** label connects **Build** and **Ready?**. The terminal shows the items as a list.
 
+The `text` of an item is Markdown. The Companion app and the terminal show it as they show a message
+of the session. Headings, lists, task lists, tables, code blocks, quotes, and links show in the item.
+When the board is far away, only the titles of the items show.
+
 ### Add a picture or recording to a canvas
 
 To show an image in a card, change `release.png` to the path of your PNG file. You can also pass

@@ -5,6 +5,7 @@ import {
   STORY_CANVAS_COMPLEX,
   STORY_CANVAS_FOCUSED,
   STORY_CANVAS_GALLERY,
+  STORY_CANVAS_MARKDOWN,
   STORY_CANVAS_SHOWCASE,
 } from '../dev/canvas-stories';
 import { applyLivePatch, liveThreads, type LiveView } from '../lib/live-view';
@@ -71,6 +72,12 @@ function Commented({ view: first }: { view: LiveView }) {
 
 /** The threads of the items, with an app: a person comments, replies and removes a draft. */
 export const Comments: Story = {
+  render: (args) => <Commented view={args.view as LiveView} />,
+};
+
+/** Each block of Markdown in an item: headings, lists, tasks, a table, code, a diagram and a quote. */
+export const MarkdownItems: Story = {
+  args: { view: STORY_CANVAS_MARKDOWN },
   render: (args) => <Commented view={args.view as LiveView} />,
 };
 

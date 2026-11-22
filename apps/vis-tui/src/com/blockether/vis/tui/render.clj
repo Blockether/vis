@@ -3738,6 +3738,36 @@
 (defrecord BubbleRow [bg-color fbx fg-color fill-iw in-answer? iw line meta right-inset x y
                       viewport-top zone-bg zone-fg cancelled? queued?])
 
+(defn paint-markdown-band-row!
+  "Paint one Markdown entry in a band with the transcript's block and link styles."
+  [^TextGraphics g x y width viewport-top {:keys [line meta]}]
+  (let [marker
+        (when (seq line) (subs line 0 1))
+
+        row
+        (->BubbleRow t/dialog-bg
+                     x
+                     t/dialog-fg
+                     width
+                     true
+                     width
+                     line
+                     meta
+                     0
+                     x
+                     y
+                     viewport-top
+                     t/dialog-bg
+                     t/dialog-fg
+                     false
+                     false)]
+
+    (p/clear-styles! g)
+    (cond (contains? answer-md-row-markers marker) (paint-answer-md-row! g row)
+          (contains? md-block-row-markers marker) (paint-md-block-row! g row)
+          :else (paint-plain-row! g row))
+    (paint-row-link-regions! g meta line viewport-top x y width 0 false)))
+
 (defn- draw-bubble-row!
   "Paint row `i` of a chat bubble: its fills, pointer regions, marker painter and left rail.
    Answer true after a painted row and nil for a row outside the lines window."

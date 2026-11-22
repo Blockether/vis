@@ -16,7 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Live views: the `comment` kind of a canvas item is removed, with the `author`, `is_resolved`, and `comments` keys of an item. Put a thread on the item.
 - Python SDK: the canvas builders are in `vis.ui.canvas`: `vis.ui.canvas.card`, `.shape`, `.note`, `.frame`, `.text`, `.edge`, and `.picture`. `vis.ui.canvas_card` and `vis.ui.canvas_edge` are removed. Use `vis.ui.canvas.card` and `vis.ui.canvas.edge`.
 - Live views: each text of a canvas node has a largest length. An ID, a title, and the label of the board hold at most 200 characters, and a message holds at most 4,000 characters. A board holds at most 100 threads of 50 messages. Vis refuses a larger value and keeps the board as it was.
+- Live views: the Companion app and the terminal show the text of a canvas item as full Markdown, as they show a message of the session. Headings, lists, task lists, tables, code blocks, diagrams, quotes, and links show in the item.
+- Companion: a large canvas board zooms, pans, and changes between near and far without stops. On a board of 200 items with long Markdown text, a step of a zoom takes less than 60 ms instead of about 300 ms, and the change to a far view takes about 20 ms instead of about 300 ms. An item with a diagram or a picture gets its full height when the content loads.
 - Companion: a large canvas board opens faster. The app lays out the largest board, 200 items with 16 arrows each, in less than 100 ms. On a board of that size, a long arrow can go in a straight line.
+
+### Fixed
+
+- Companion: the boxes of a task list show in messages. Before, the page style hid them.
 
 ## [v0.5.30] - 2026-11-22
 

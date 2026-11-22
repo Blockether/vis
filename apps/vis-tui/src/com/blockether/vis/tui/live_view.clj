@@ -52,8 +52,10 @@
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.markdown-layout :as layout]
+            [com.blockether.vis.tui.markers :as markers]
             [com.blockether.vis.tui.picture :as picture]
             [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.transient :as tr]
             [com.blockether.vis.tui.scene-motion :as scene-motion]
@@ -61,7 +63,8 @@
             [com.blockether.vis.tui.view-materializer :as live]
             [com.blockether.vis.contract.view :as hi-spec]
             [com.blockether.vis.contract.wire :as wire])
-  (:import [com.googlecode.lanterna TerminalPosition TextColor$RGB]
+  (:import [com.blockether.vis.render BoundedCache]
+           [com.googlecode.lanterna TerminalPosition TextColor$RGB]
            [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
            [com.googlecode.lanterna.input KeyStroke KeyType]))
@@ -1327,8 +1330,49 @@
 
 (defn- canvas-hint [text] {:text text :fg t/dialog-hint})
 
+(defonce ^:private ^BoundedCache canvas-markdown-cache (BoundedCache. 256))
+
+(defn- canvas-markdown-rows
+  "Keep the Markdown layout across scrolls and patches. The cache has room for
+   every card on one board and a small number of thread messages."
+  [text width indent]
+  (when-not (str/blank? text)
+    (let [key
+          [text width indent]
+
+          ^BoundedCache cache
+          canvas-markdown-cache]
+
+      (or (locking cache (.get cache key))
+          (let [pad
+                (apply str (repeat indent \space))
+
+                rows
+                (mapv (fn [{:keys [line] :as entry}]
+                        {:markdown entry
+                         :markdown-indent indent
+                         :markdown-width width
+                         :text (str pad (markers/plain-text line))})
+                      (layout/ast->entries (vis/markdown->ast text) (max 1 (- (long width) 4))))]
+
+            (locking cache (or (.get cache key) (.put cache key rows))))))))
+
+(defn- canvas-thread-rows
+  [threads detail-rows body-w body-indent]
+  (mapcat (fn [{:keys [messages draft is-resolved]}]
+            (concat (detail-rows (if is-resolved "Resolved thread" "Open thread"))
+                    (mapcat (fn [{:keys [author body]}]
+                              (concat (detail-rows (str (flat-text (or (:name author)
+                                                                       (some-> (:kind author)
+                                                                               name)))
+                                                        ":"))
+                                      (canvas-markdown-rows body body-w body-indent)))
+                            messages)
+                    (when (some? draft) (detail-rows (str "Draft: " (flat-text draft))))))
+          threads))
+
 (defn- canvas-details
-  [{:keys [kind shape progress picture media caption edges]} titles threads]
+  [{:keys [kind shape progress picture media caption edges]} titles]
   (concat
     (when (and shape
                (= "shape"
@@ -1339,17 +1383,6 @@
     (when picture [(str "Picture: " (flat-text (:alt picture)))])
     (when media [(str (name (:kind media)) ": " (flat-text (:alt media))) (:url media)])
     (when caption [(flat-text caption)])
-    (mapcat (fn [{:keys [messages draft is-resolved]}]
-              (concat [(if is-resolved "Resolved thread" "Open thread")]
-                      (map (fn [{:keys [author body]}]
-                             (str (flat-text (or (:name author)
-                                                 (some-> (:kind author)
-                                                         name)))
-                                  ": "
-                                  (flat-text body)))
-                           messages)
-                      (when (some? draft) [(str "Draft: " (flat-text draft))])))
-            threads)
     (for [{:keys [from label line]}
           edges
 
@@ -1422,21 +1455,28 @@
                     (map (fn [line]
                            [body-indent (assoc title-run :text line)])
                          more-lines)
-                    (mapcat detail-rows hints))))]
+                    (mapcat detail-rows hints))))
 
-    (map (fn [segments]
-           (let [shown (runs-cut segments width)]
-             {:kind :item
-              :node-id node-id
-              :item-id id
-              :tone tone
-              :is-fresh is-fresh
-              :segments shown
-              :text (segment-line shown)}))
-         (concat headings
-                 (map #(into [body-indent] (run-segments % t/dialog-hint []))
-                      (md-lines text body-w))
-                 (mapcat detail-rows (canvas-details card titles (get threads id)))))))
+        base
+        {:kind :item :node-id node-id :item-id id :tone tone :is-fresh is-fresh}
+
+        plain-row
+        (fn [segments]
+          (let [shown (runs-cut segments width)]
+            {:segments shown :text (segment-line shown)}))
+
+        details
+        (comp (mapcat detail-rows) (map plain-row))]
+
+    (map-indexed (fn [line row]
+                   (assoc (merge base row) :canvas-line line))
+                 (concat (map plain-row headings)
+                         (canvas-markdown-rows text body-w (+ indent 2))
+                         (sequence details (canvas-details card titles))
+                         (canvas-thread-rows (get threads id)
+                                             (comp (partial map plain-row) detail-rows)
+                                             body-w
+                                             (+ indent 2))))))
 
 (defmethod node-rows :canvas
   [{:keys [id cards selected-ids threads]} {:keys [text-w fresh is-expanded]}]
@@ -2383,9 +2423,11 @@
   [sections]
   (mapv (fn [row]
           (let [lead (first (filter :node-id (:cells row)))]
-            (assoc row
-              :node-id (:node-id lead)
-              :item-id (:item-id lead))))
+            (cond-> (assoc row
+                      :node-id (:node-id lead)
+                      :item-id (:item-id lead))
+              (:canvas-line lead)
+              (assoc :canvas-line (:canvas-line lead)))))
         (columns/zip-columns sections)))
 
 (defn- row-content-width
@@ -2797,12 +2839,14 @@
 ;;; ── Where the viewport sits ─────────────────────────────────────────────────
 
 (defn anchor-at
-  "The anchor of the row at `idx` — `[node-id item-id]`, the identity the eye is
-   on. Rows that belong to no node (the view's own prose) anchor on nothing, so
-   the viewport falls back to its offset for them."
+  "The node and item at `idx`. On a canvas, also keep the line inside the item.
+   A row with no node uses the raw viewport offset."
   [rows idx]
-  (when-let [row (get (vec rows) (long idx))]
-    (when (:node-id row) [(:node-id row) (:item-id row)])))
+  (when-let [{:keys [node-id item-id canvas-line]} (get (vec rows) (long idx))]
+    (when node-id
+      (cond-> [node-id item-id]
+        canvas-line
+        (conj canvas-line)))))
 
 (defn offset
   "Where the viewport starts in `rows`, `visible` rows tall.
@@ -2820,18 +2864,23 @@
         limit
         (max 0 (- (count rows) (long visible)))
 
-        [node-id item-id :as anchor]
+        [node-id item-id canvas-line :as anchor]
         (:anchor pane)
 
         found
         (when anchor
-          (or (first (keep-indexed
-                       (fn [idx row]
-                         (when (and (= node-id (:node-id row)) (= item-id (:item-id row))) idx))
-                       rows))
+          (let [same-item? (fn [row]
+                             (and (= node-id (:node-id row)) (= item-id (:item-id row))))]
+            (if-let [idx (first (keep-indexed (fn [idx row]
+                                                (when (same-item? row) idx))
+                                              rows))]
+              (if canvas-line
+                (loop [pos (min (dec (count rows)) (+ (long idx) (long canvas-line)))]
+                  (if (same-item? (rows pos)) pos (recur (dec pos))))
+                idx)
               (first (keep-indexed (fn [idx row]
                                      (when (= node-id (:node-id row)) idx))
-                                   rows))))]
+                                   rows)))))]
 
     (cond (:is-following pane) limit
           found (clamp (long found) 0 limit)
@@ -3547,7 +3596,21 @@
     ;; Everything that is prose — the view's description, a status detail, a node
     ;; that holds nothing, the count of what the record kept — speaks in the dim
     ;; italic voice the rest of the TUI reserves for explanation.
-    (cond (:segments entry) (paint-segments! g left row inner-w (:segments entry))
+    (cond (:markdown entry) (let [indent
+                                  (long (:markdown-indent entry))
+
+                                  width
+                                  (min (long (:markdown-width entry)) (- (long inner-w) 3 indent))]
+
+                              (fill! g left row inner-w t/dialog-fg)
+                              (when (pos? width)
+                                (render/paint-markdown-band-row! g
+                                                                 (+ (long left) 2 indent)
+                                                                 row
+                                                                 width
+                                                                 *hit-row-offset*
+                                                                 (:markdown entry))))
+          (:segments entry) (paint-segments! g left row inner-w (:segments entry))
           (:runs entry) (paint-runs! g left row inner-w t/dialog-hint [p/ITALIC] (:runs entry))
           :else (paint-styled! g left row inner-w t/dialog-hint [p/ITALIC] (:text entry)))))
 

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/live-primitives.json';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 import type { AppActionResult } from '../lib/app-actions';
+import { Markdown } from './ChatContent';
 import { LiveViewPanel } from './LiveView';
 import { applyLivePatch, liveViewFromWire, type LiveNode, type LiveView } from '../lib/live-view';
 
@@ -219,6 +220,7 @@ describe('a canvas', () => {
   };
   const wire = fixture.nodes.find((n) => n.id === 'canvas')!.cards! as {
     id: string;
+    text?: string;
     edges?: { from: string; line?: string }[];
   }[];
   const cards = () =>
@@ -249,6 +251,28 @@ describe('a canvas', () => {
     expect(pressed()).toEqual(['build']);
     fireEvent.click(document.querySelector('[data-canvas-select="verify"]')!);
     expect(onSelect).toHaveBeenCalledWith('canvas', ['verify']);
+  });
+
+  it('shows the Markdown of an item as a message of the session shows it', () => {
+    render(<LiveViewPanel view={board()} />);
+    const item = (id: string) => document.querySelector<HTMLElement>(`[data-canvas-card="${id}"]`)!;
+    const verify = within(item('verify'));
+    expect(verify.getAllByRole('listitem').map((task) => task.textContent)).toEqual([
+      'Done: clojure -M:test',
+      'Not done: npm test',
+    ]);
+    expect(verify.getByRole('table')).toBeVisible();
+    expect(verify.getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Part', 'Time']);
+    const ship = within(item('ship'));
+    expect(ship.getByRole('heading', { level: 3, name: 'Release' })).toBeVisible();
+    expect(item('ship').querySelector('pre code')?.textContent).toContain('clojure -T:build release');
+    expect(item('ship').querySelector('blockquote')?.textContent).toContain('after the checks pass');
+    // The item and a message draw the same text with the same renderer.
+    for (const id of ['verify', 'ship']) {
+      const text = wire.find((card) => card.id === id)!.text!;
+      const message = render(<Markdown compact nested>{text}</Markdown>).container;
+      expect(item(id).querySelector('[data-canvas-text]')?.innerHTML).toBe(message.innerHTML);
+    }
   });
 
   it('asks for no video and no sound before the person presses Play', () => {

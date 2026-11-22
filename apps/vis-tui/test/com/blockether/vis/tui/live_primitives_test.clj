@@ -10,6 +10,8 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.live-view :as lv]
+            [com.blockether.vis.tui.markers :as markers]
+            [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.view-materializer :as materializer]
             [com.blockether.vis.tui.theme :as theme]
@@ -117,6 +119,119 @@
 
         (expect (str/starts-with? (:text (nth rows limit)) "  "))
         (expect (not (str/starts-with? (:text (last rows)) "  ")))))
+  (it
+    "shows the same Markdown blocks on canvas cards and in the transcript"
+    (let [view
+          (fixture)
+
+          canvas
+          (first (filter #(= "canvas" (:id %))
+                         (tree-seq :children :children {:children (:nodes view)})))
+
+          pane
+          (lv/expanded (lv/opened (assoc view :nodes [canvas])) "canvas")]
+
+      (doseq [width
+              [60 100]
+
+              {:keys [id text]}
+              (:cards canvas)
+
+              :when (#{"verify" "ship"} id)]
+
+        (let [[head & body]
+              (filter #(= id (:item-id %)) (lv/plan pane width))
+
+              inset
+              (+ 2 (count (take-while #{\space} (:text head))))
+
+              transcript
+              (render/format-answer-markdown-data* (client/markdown->ast text) (- width inset) nil)
+
+              expected
+              (mapv markers/plain-text (rest (:lines transcript)))
+
+              actual
+              (mapv #(subs (:text %) (min inset (count (:text %)))) (take (count expected) body))]
+
+          (expect (= expected actual) (str width " columns, card " id))))))
+  (it "keeps the line of a canvas card in view when rows arrive above it"
+      (let [rows-for
+            (fn [first-text]
+              (lv/plan (lv/opened {:title "Canvas"
+                                   :nodes [{:id "g"
+                                            :type :canvas
+                                            :cards [{:id "first" :title "First" :text first-text}
+                                                    {:id "next"
+                                                     :title "Next"
+                                                     :text "- One\n- Two\n- Three"}]}]})
+                       60))
+
+            before
+            (rows-for "Start")
+
+            after
+            (rows-for "- Start\n- Continue")
+
+            line
+            (fn [rows]
+              (first (keep-indexed (fn [i row]
+                                     (when (str/includes? (:text row) "Two") i))
+                                   rows)))
+
+            anchor
+            (lv/anchor-at before (line before))]
+
+        (expect (= (line after) (lv/offset {:anchor anchor} after 1)))))
+  (it
+    "opens a Markdown link from a canvas thread quote"
+    (let [url
+          "https://example.com/checks"
+
+          pane
+          (lv/opened {:title "Canvas"
+                      :nodes [{:id "g"
+                               :type :canvas
+                               :cards [{:id "check" :title "Check"}]
+                               :threads [{:id "review"
+                                          :item-id "check"
+                                          :messages [{:author {:name "Ada"}
+                                                      :body
+                                                      (str "> [Read the checks](" url ")")}]}]}]})
+
+          hit-map
+          (interactions/create-hit-map)]
+
+      (with-open [terminal
+                  (-> (HtmlTerminal/builder)
+                      (.initialSize (TerminalSize. 60 32))
+                      (.build))
+
+                  screen
+                  (TerminalScreen. terminal)]
+
+        (.startScreen screen)
+        (binding [interactions/hit-map hit-map]
+          (.beginFrame hit-map)
+          (lv/paint! (.newTextGraphics screen) 60 32 [pane] 1 3)
+          (.commitFrame hit-map))
+        (let [rows
+              (mapv (fn [row]
+                      (apply str
+                        (map (fn [col]
+                               (.getCharacterString
+                                 (.getBackCharacter screen (TerminalPosition. col row))))
+                             (range 60))))
+                    (range 32))
+
+              [y x]
+              (first (keep-indexed (fn [idx row]
+                                     (when-let [col (str/index-of row "│ Read the checks")]
+                                       [idx (+ col 2)]))
+                                   rows))]
+
+          (expect (some? y))
+          (expect (= url (:url (.lookup hit-map (int x) (int y)))))))))
   (it "keeps each full media URL in the expanded canvas at 32 columns"
       (let [view
             (fixture)

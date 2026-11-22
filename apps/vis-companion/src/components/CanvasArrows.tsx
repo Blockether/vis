@@ -114,7 +114,7 @@ export function CanvasArrowLabels({ layout }: { layout: CanvasLayout }) {
   return (
     <svg
       aria-hidden="true"
-      className={`${LAYER} group-data-[far=true]/canvas:hidden`}
+      className={`${LAYER} [[data-canvas][data-far=true]_&]:hidden`}
       width={layout.width}
       height={layout.height}
     >

@@ -714,6 +714,7 @@
         {
           "id": "verify",
           "title": "Verify",
+          "text": "Run the checks before the release:\n\n- [x] `clojure -M:test`\n- [ ] `npm test`\n\n| Part | Time |\n| --- | ---: |\n| Engine | 4 min |\n| Companion | 1 min |",
           "meta": "waits",
           "tone": "idle",
           "badges": [
@@ -772,6 +773,7 @@
         {
           "id": "ship",
           "title": "Ship",
+          "text": "### Release\n\n```sh\nclojure -T:build release\n```\n\n> Tag the commit **after** the checks pass.",
           "icon": "rocket",
           "color": "green",
           "border": "thick",

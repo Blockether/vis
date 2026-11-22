@@ -21,7 +21,7 @@ import type {
   LiveCanvasPicture,
   LiveTone,
 } from '../lib/live-view';
-import { InlineMarkdown } from './ChatContent';
+import { Markdown } from './ChatContent';
 import { AppIcon, CheckIcon, ImageIcon, PencilIcon, PlayIcon, PlusIcon, SpeakerIcon } from './icons';
 
 /** The mark of a tone, with its word for a screen reader. */
@@ -31,8 +31,20 @@ const TITLE = 'text-[color:var(--cv-title)]';
 const TEXT = 'text-[color:var(--cv-text)]';
 const HINT = 'text-[color:var(--cv-hint)]';
 const INK = 'text-[color:var(--cv-ink)]';
-/** The part of an item that a far camera hides: only the title stays readable. */
-const NEAR = 'group-data-[far=true]/canvas:invisible';
+/**
+ * The part of an item that a far camera hides: only the title stays readable.
+ *
+ * The board variants select the frame by its attributes and not as a Tailwind group,
+ * and the words fade out instead of becoming invisible. A group variant, and an
+ * inherited property such as `visibility`, make the browser style each element of the
+ * board again, so a board with many words stops for a large part of a second. Only the
+ * controls in the faded words become invisible: they take no press and no keyboard focus.
+ * Each control kind has its own rule, because one `:is()` rule styles the board again.
+ * The scroll areas of tables and code keep their focus: they do no action, and to hide
+ * them styles each word of their code again.
+ */
+const NEAR =
+  '[[data-canvas][data-far=true]_&]:opacity-0 [[data-canvas][data-far=true]_&_a]:invisible [[data-canvas][data-far=true]_&_button]:invisible [[data-canvas][data-far=true]_&_summary]:invisible [[data-canvas][data-far=true]_&_audio]:invisible [[data-canvas][data-far=true]_&_video]:invisible [[data-canvas][data-far=true]_&_[data-canvas-control]]:invisible';
 /**
  * The words of an item move in a bounce and in a shake. The border stands still, so
  * each arrow stays on it.
@@ -237,7 +249,7 @@ function TalkMark({
         aria-label={`Comment on ${title}`}
         title="Comment"
         aria-expanded={isOpen}
-        className={`pointer-events-none absolute -right-2.5 -top-2.5 z-10 flex size-5 cursor-pointer items-center justify-center border opacity-0 transition-opacity duration-150 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent group-data-[commenting=true]/canvas:pointer-events-auto group-data-[commenting=true]/canvas:opacity-100 mouse:group-hover/item:pointer-events-auto mouse:group-hover/item:opacity-100 motion-reduce:transition-none ${
+        className={`pointer-events-none absolute -right-2.5 -top-2.5 z-10 flex size-5 cursor-pointer items-center justify-center border opacity-0 transition-opacity duration-150 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [[data-canvas][data-commenting=true]_&]:pointer-events-auto [[data-canvas][data-commenting=true]_&]:opacity-100 mouse:group-hover/item:pointer-events-auto mouse:group-hover/item:opacity-100 motion-reduce:transition-none ${
           isOpen ? 'pointer-events-auto opacity-100' : ''
         } ${face} ${reach}`}
         onClick={onOpen}
@@ -306,7 +318,7 @@ function FarTitle({
   return (
     <span
       aria-hidden="true"
-      className={`absolute inset-0 hidden items-center overflow-hidden group-data-[far=true]/canvas:flex ${isTight ? 'gap-2' : 'gap-3'} ${place}`}
+      className={`absolute inset-0 hidden items-center overflow-hidden [[data-canvas][data-far=true]_&]:flex ${isTight ? 'gap-2' : 'gap-3'} ${place}`}
     >
       {card.icon && <AppIcon name={card.icon} className={`shrink-0 ${isTight ? 'size-5' : 'size-6'} ${INK}`} />}
       {card.tone && mark(card.tone, isTight ? 'size-5' : 'size-6')}
@@ -343,11 +355,20 @@ function Heading({
   );
 }
 
-function Words({ text, lines }: { text: string; lines: string }) {
+/**
+ * The body of an item: Markdown, rendered as a message of the session. The item lets
+ * a press go through to the board, but a link or a button in the body takes it.
+ */
+function ItemText({ text, className = TEXT }: { text: string; className?: string }) {
   return (
-    <span className={`mt-1 block text-ui ${lines} ${TEXT} [overflow-wrap:anywhere]`}>
-      <InlineMarkdown>{text}</InlineMarkdown>
-    </span>
+    <div
+      data-canvas-text=""
+      className={`mt-1 min-w-0 [overflow-wrap:anywhere] [&_a]:pointer-events-auto [&_button]:pointer-events-auto ${className}`}
+    >
+      <Markdown compact nested>
+        {text}
+      </Markdown>
+    </div>
   );
 }
 
@@ -359,7 +380,7 @@ function CardFace({ card, mark }: { card: LiveCanvasCard; mark: CanvasToneMark }
       <span className="relative block">
         <span className={`block ${PAD[card.size]} ${NEAR} ${MOVES}`}>
           <Heading card={card} mark={mark} titleClass={`${TITLE_SIZE[card.size]} ${TITLE}`} />
-          {card.text && <Words text={card.text} lines="line-clamp-4" />}
+          {card.text && <ItemText text={card.text} />}
           {card.media && <ItemMedia media={card.media} />}
           <Badges badges={card.badges} />
         </span>
@@ -395,7 +416,7 @@ function NoteFace({ card, mark }: { card: LiveCanvasCard; mark: CanvasToneMark }
         {card.picture && <ItemPicture picture={card.picture} />}
         <span className={`block ${PAD[card.size]} pb-4 ${MOVES}`}>
           <Heading card={card} mark={mark} titleClass={`${TITLE_SIZE[card.size]} ${TITLE}`} />
-          {card.text && <Words text={card.text} lines="line-clamp-6" />}
+          {card.text && <ItemText text={card.text} />}
           {card.media && <ItemMedia media={card.media} />}
           <Badges badges={card.badges} />
           {card.progress !== undefined && <ItemProgress value={card.progress} className="mt-2 h-[3px]" />}
@@ -418,11 +439,7 @@ function TextFace({ card }: { card: LiveCanvasCard }) {
           {card.title}
         </span>
       </span>
-      {card.text && (
-        <span className={`mt-0.5 block text-ui ${HINT} [overflow-wrap:anywhere] ${NEAR}`}>
-          <InlineMarkdown>{card.text}</InlineMarkdown>
-        </span>
-      )}
+      {card.text && <ItemText text={card.text} className={`${HINT} ${NEAR}`} />}
       {(card.picture || card.media) && (
         <span className={`block ${NEAR}`}>
           {card.picture && <ItemPicture picture={card.picture} isLoose />}
@@ -444,11 +461,7 @@ function ShapeFace({ card, mark }: { card: LiveCanvasCard; mark: CanvasToneMark 
           {card.title}
         </span>
       </span>
-      {card.text && (
-        <span className={`mt-0.5 line-clamp-3 block text-meta ${TEXT} [overflow-wrap:anywhere]`}>
-          <InlineMarkdown>{card.text}</InlineMarkdown>
-        </span>
-      )}
+      {card.text && <ItemText text={card.text} className={`${TEXT} max-w-full [&_p]:text-center`} />}
       {card.picture && <ItemPicture picture={card.picture} isLoose />}
       {card.media && <ItemMedia media={card.media} />}
       {card.progress !== undefined && <ItemProgress value={card.progress} className="mt-1.5 h-[3px] w-14" />}
@@ -607,7 +620,10 @@ function Item({
             place="pointer-events-none justify-center px-2"
           />
         )}
-        <div className={`pointer-events-none ${isShape ? 'relative min-w-0 max-w-full' : ''}`}>
+        {/* The camera sets the scale variables on the frame. The words do not use them,
+            so they drop them here and a zoom does not style the words again. A value
+            that the frame can also have, such as 1, does not stop that. */}
+        <div className={`pointer-events-none [--cv-mark:initial] [--cv-weight:initial] ${isShape ? 'relative min-w-0 max-w-full' : ''}`}>
           {kind === 'card' && <CardFace card={card} mark={mark} />}
           {kind === 'note' && <NoteFace card={card} mark={mark} />}
           {kind === 'text' && <TextFace card={card} />}
@@ -618,11 +634,7 @@ function Item({
                 <Heading card={card} mark={mark} titleClass={`${TITLE_SIZE[card.size]} ${INK}`} />
               </span>
               <FarTitle card={card} mark={mark} titleClass={INK} />
-              {card.text && (
-                <span className={`mt-0.5 block truncate text-meta ${HINT} ${NEAR}`}>
-                  <InlineMarkdown>{card.text}</InlineMarkdown>
-                </span>
-              )}
+              {card.text && <ItemText text={card.text} className={`${HINT} ${NEAR}`} />}
               {(card.picture || card.media) && (
                 <span className={`block max-w-80 ${NEAR}`}>
                   {card.picture && <ItemPicture picture={card.picture} isLoose />}
