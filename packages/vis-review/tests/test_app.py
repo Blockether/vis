@@ -639,7 +639,9 @@ def test_uncommitted_compares_with_the_commit_and_falls_back_without_git(
     assert wait_for(lambda: recorder.node("diff")["old_revision"] == "#1")
 
 
-def test_a_session_review_shows_only_its_own_changes_by_default(tmp_path, recorder):
+def test_a_session_review_shows_only_its_own_changes_by_default(
+    tmp_path, recorder, caplog
+):
     # Goal dcc7197a: two sessions in one root saw each other's edits.
     root = tmp_path / "root"
     root.mkdir()
@@ -666,7 +668,10 @@ def test_a_session_review_shows_only_its_own_changes_by_default(tmp_path, record
     recorder.send("activate", "file:a.py")
     assert wait_for(lambda: app.path == "a.py")
     recorder.send("activate", "undo-file")
-    assert wait_for(lambda: (root / "a.py").read_text() == "a = 1 by them\n")
+    # Undo takes out only the own lines. Another session changed them again, so
+    # the file is a conflict and stays as it is.
+    assert wait_for(lambda: "changed again later, kept: a.py" in caplog.text)
+    assert (root / "a.py").read_text() == "a = 3 by them\n"
     assert (root / "theirs.py").read_text() == "x = 1\n"
 
 
