@@ -728,6 +728,9 @@
                         :ext/automations
                         #(and (vector-of? automation-entry? %) (apply distinct? nil (map :key %))))
        (optional-field? x :ext/keybindings #(vector-of? keybinding? %))
+       (optional-field? x
+                        :ext/session-app
+                        #(and (map? %) (every? (comp non-blank-string? %) [:key :title :hook])))
        (optional-field? x :ext/sandbox-shims #(vector-of? sandbox-shim? %))
        (optional-field? x :ext/engine engine?)
        (optional-field? x :ext/source-scope workspace/config-sources)
@@ -3457,6 +3460,20 @@
       (when (not= "off" (scoped/engine-mode env ext (delay (scoped/live-values env))))
         (with-context {:ext ext :env env} (run env app))
         true))))
+
+(defn session-apps
+  "The apps that extensions declare for each session: each `:ext/session-app` with its
+   `:extension` name, in extension order. With `env`, the extensions of that session
+   without those that its settings turn off. Without it, the registered extensions."
+  ([] (session-apps nil))
+  ([env]
+   (let [values (delay (scoped/live-values env))]
+     (into []
+           (keep (fn [ext]
+                   (when-let [app (:ext/session-app ext)]
+                     (when (or (nil? env) (not= "off" (scoped/engine-mode env ext values)))
+                       (assoc app :extension (:ext/name ext))))))
+           (if-let [rows (:extensions env)] @rows (registered-extensions))))))
 
 (defn keybindings
   "The TUI key bindings of the registered extensions: each `:ext/keybindings`

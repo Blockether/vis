@@ -114,6 +114,7 @@ SDK declarations and is stored as a tuple, not as a mutable registry.
 | `slash_commands` | `()` | `vis.SlashCommand` declarations for user commands |
 | `automations` | `()` | `vis.Automation` declarations for scheduled runs without a model (see [automations](#automations)) |
 | `keybindings` | `()` | `vis.Keybinding` declarations for terminal keys (see [key bindings](#key-bindings)) |
+| `session_app` | `None` | One `vis.SessionApp` that each session lists from its start (see [session apps](#session-apps)) |
 | `op_hooks` | `()` | `vis.OpHook` guards or observers |
 | `network_filters` | `()` | `vis.NetworkFilter` policy for requests and responses (see [network filters](jail.md#project-network-filters)) |
 | `providers` | `()` | `vis.Provider` declarations |
@@ -1167,6 +1168,51 @@ follows these rules:
 - Return `vis.ok(title, body)` or `vis.err(title, body)` for a message with a level.
 - An exception shows as an error message with the extension name.
 - Call `vis.notify` for progress while the function runs. Each client of the session shows it.
+
+## Session apps
+
+```python
+vis.SessionApp(key, title, open, icon=None, surfaces=None)
+```
+
+An app of an extension exists in a session only after the code of the extension opened it there.
+A session app shows in each session from the start of that session, before the extension runs.
+When the person opens the app, Vis starts the Python of the session and calls `open`. Declare
+one session app in `vis.Extension(session_app=...)`.
+
+```python
+import blockether.vis.extension as vis
+
+
+def open_board(app):
+    vis.attach(
+        vis.ui.app("Board", vis.ui.thread("general"), key="board", settings_name="board"),
+        on_event=lambda event: None,
+        on_reload=open_board,
+    )
+
+
+vis.register_extension(
+    vis.Extension(
+        name="board",
+        description="A board for each session.",
+        session_app=vis.SessionApp("board", "Board", open_board, icon="chat"),
+    )
+)
+```
+
+A session app follows these rules:
+
+- `open` is a function at module level. Vis finds the function by its name in a new process.
+- `open` gets one dict with `key`, `view_id`, `session_id`, `workspace_root`, and `project_root`.
+- The first app that the extension opens in the session replaces the listed app and keeps its
+  `view_id`. An open pane then shows the real app.
+- The session lists the app again after the person closed the real app.
+- `icon` and `surfaces` take the values of `vis.ui.app`. Give the same values to the real app.
+- `key` names the settings of the person for the listed app. Give the real app
+  `settings_name=key`, so both use the same settings.
+- While a turn runs in a session that has no Python yet, the app does not open. The app opens
+  when the extension opens it in that turn, or when the person opens it after the turn.
 
 ## Op hooks
 

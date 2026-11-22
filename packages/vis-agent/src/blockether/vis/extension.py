@@ -1331,6 +1331,8 @@ class Extension:
         prompt: Instructions as text or a host callback.
         slash_commands: `SlashCommand` declarations.
         keybindings: `Keybinding` declarations: TUI keys after C-x.
+        session_app: One `SessionApp`: an app that each session lists before
+            the extension runs there.
         automations: `Automation` declarations: scheduled runs that call a
             function of the extension and no model. Keys are unique.
         op_hooks: `OpHook` declarations for host lifecycle operations.
@@ -1364,6 +1366,7 @@ class Extension:
     prompt: str | Callable[..., Any] | None = None
     slash_commands: Sequence[SlashCommand] = ()
     keybindings: Sequence[Keybinding] = ()
+    session_app: SessionApp | None = None
     automations: Sequence[Automation] = ()
     op_hooks: Sequence[OpHook] = ()
     ctx: Callable[..., Any] | None = None
@@ -1415,6 +1418,10 @@ class Extension:
                     f"vis.Extension {name} must contain {cls.__name__} declarations"
                 )
             object.__setattr__(self, name, tuple(value))
+        if self.session_app is not None and not isinstance(
+            self.session_app, SessionApp
+        ):
+            raise TypeError("vis.Extension session_app must be a SessionApp")
         if not isinstance(self.env, (tuple, list)):
             raise ValueError(
                 "vis.Extension env must be a list or tuple of environment variable names"
@@ -1454,6 +1461,8 @@ class Extension:
                 if field.name in children
                 else list(self.env)
                 if field.name == "env"
+                else self.session_app._spec()
+                if field.name == "session_app" and self.session_app is not None
                 else getattr(self, field.name)
             )
             for field in fields(self)
@@ -3298,6 +3307,65 @@ class Keybinding:
                 for name in ("key", "command", "action", "label", "group", "run")
                 if getattr(self, name) is not None
             },
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SessionApp:
+    """An app that each session lists before the extension runs in that session.
+
+    The session shows the title and the icon at once. When the person opens the
+    app, Vis starts the Python of the session and calls `open`. `open` then opens
+    the real app with `vis.attach_app(...)`, and that app takes the place of the
+    listed one.
+
+    Args:
+        key: A short nonblank name of the app, unique in the extension.
+        title: The title that the session shows.
+        open: A function at module level. It receives a dict with `key`,
+            `view_id`, `session_id`, `workspace_root` and `project_root`.
+        icon: An app icon name, as for `vis.attach_app(...)`.
+        surfaces: Where the app shows, as for `vis.attach_app(...)`. Give the
+            same value to the real app. The `key` names the settings of the
+            person: give the real app `settings_name=key` to share them.
+
+    Raises:
+        ValueError: A text is blank, or the icon is unknown.
+        TypeError: `open` is not a function at module level, or `surfaces` is
+            wrong.
+    """
+
+    key: str
+    title: str
+    open: Callable[..., Any]
+    icon: str | None = None
+    surfaces: Mapping[str, Any] | None = None
+
+    def __post_init__(self):
+        for name in ("key", "title"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"vis.SessionApp {name} must be nonblank text")
+        _app_hook_ref("vis.SessionApp open", self.open)
+        if self.icon is not None:
+            from blockether.vis import _contracts
+
+            icons = _contracts.definition("view", "app_icon")["enum"]
+            if self.icon not in icons:
+                raise ValueError(
+                    "vis.SessionApp icon must be one of " + ", ".join(icons)
+                )
+        if self.surfaces is not None:
+            object.__setattr__(self, "surfaces", _app_surfaces(self.surfaces))
+
+    def _spec(self):
+        return {
+            "marker": "session_app",
+            "key": self.key,
+            "title": self.title,
+            "open": _app_hook_ref("vis.SessionApp open", self.open),
+            **({} if self.icon is None else {"icon": self.icon}),
+            **({} if self.surfaces is None else {"surfaces": dict(self.surfaces)}),
         }
 
 
@@ -6961,7 +7029,7 @@ def _app_hook_ref(name, fn):
             found = _app_hook_part(scope, qualname)
         except (KeyError, AttributeError):
             found = None
-    if found is not fn:
+    if not isinstance(scope, dict) or found is not fn:
         raise TypeError(
             f"{name} must be a function at module level: after a reload, Vis "
             "finds it by its name in the new code"

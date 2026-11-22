@@ -1137,6 +1137,8 @@ app keeps its state, but its owner does not listen yet.
 - An app of an extension with the [`on_reload` hook](#after-a-reload-of-your-extension) does not
   show as disconnected. When a person opens the app, Vis starts the Python sandbox of the session
   and calls the hook.
+- To show an app in a session before your extension runs there, declare a
+  [session app](extension-api.md#session-apps).
 - A program with `on_event` waits for the gateway and opens a keyed app again by itself. An app
   without a key cannot come back to its program. Vis then logs an error and stops the events of
   that app.

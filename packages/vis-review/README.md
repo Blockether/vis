@@ -28,7 +28,7 @@ Data is under `$VIS_HOME/review/`, else `~/.vis/review/`:
 
 ## The app
 
-The first Python block or patch of a session opens the app of that session, so the session apps always list it. `/review` (key `R`) opens it again after you closed it. After `/reload`, the open app connects again by itself. After a gateway restart, the app connects when you open it. The app shows:
+Each session lists the app from its start. The app opens when you open it, or at the first Python block or patch of the session. After you closed it, the session lists it again. After `/reload`, the open app connects again by itself. After a gateway restart, the app connects when you open it. The app shows:
 
 - The checkpoints. Pick one to see its changes, or pick **All changes**.
 - The changed files with their added and removed line counts. Pick one to see only its diff.
@@ -44,7 +44,7 @@ The terminal shows the keys in its key legend instead of a row of buttons.
 
 | Button | Key | Action |
 | --- | --- | --- |
-| This session | `1` | Show only the changes that this session made and that the base branch does not have yet. This is the first view of `/review`. Edits of other sessions in the same folder stay out. |
+| This session | `1` | Show only the changes that this session made and that the base branch does not have yet. This is the first view of the app. Edits of other sessions in the same folder stay out. |
 | All changes | `2` | Show every change since the first checkpoint, also the edits of other sessions. |
 | Latest change | `3` | Show only what the newest checkpoint changed. |
 | Uncommitted | `4` | Compare the files with the git commit `HEAD`. |

@@ -118,6 +118,7 @@ class ClientExtensions:
                     "network_filters",
                     "slash_commands",
                     "keybindings",
+                    "session_app",
                     "automations",
                     "settings",
                     "grants",

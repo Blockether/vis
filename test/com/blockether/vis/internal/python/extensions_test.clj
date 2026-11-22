@@ -7997,6 +7997,136 @@ vis.register_extension(vis.Extension(name='board', description='Board fixture.',
                            (finally (when view-id (human-input/close-live! view-id))))))
                  (finally (ep/dispose-python-context! ctx)))))))))
 
+(def ^:private declared-board-py
+  "An extension that declares the session app `board` and opens it as the keyed app
+   `board-1`."
+  "import blockether.vis.extension as vis
+
+def reopen(app):
+    _open()
+
+def _open():
+    vis.attach(vis.ui.app('Board', vis.ui.thread('general'), key='board-1'),
+               on_event=lambda event: None, on_reload=reopen)
+
+def open_board(app):
+    _open()
+
+vis.register_extension(vis.Extension(name='board', description='Board fixture.',
+    session_app=vis.SessionApp('board', 'Board', open_board, icon='review')))
+")
+
+(defdescribe
+  declared-session-app-test
+  ;; User request 2026-11-22: a session with no block had no Review app, so only
+  ;; `/review` opened it. An extension now declares the app, and each session lists it.
+  (it
+    "lists a declared app before the extension runs, and opens it under the same id"
+    (with-fresh-loaded
+      {"extension.py" declared-board-py}
+      (fn [loaded {:keys [store]}]
+        (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+        (let [root
+              (.getCanonicalPath ^java.io.File (temp-dir))
+
+              ws
+              (ps/db-workspace-insert! store {:repo-id "board" :root root})
+
+              sid
+              (ps/db-store-session! store {:channel :tui :workspace-id (:id ws) :title "board"})
+
+              ctx
+              (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+              env
+              {:python-context ctx
+               :db-info store
+               :session-id sid
+               :channel :tui
+               :extensions (atom [(registered "board")])
+               :active-extensions (atom [])
+               :workspace-atom (atom ws)}
+
+              pending
+              @#'human-input/pending]
+
+          (try
+            (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                             (constantly (io/file root "views"))
+                             #'loop-env/cache (atom {(loop-env/cache-key sid) {:environment env}})}
+              #(let [[declared :as listed] (human-input/session-apps (str sid)) view-id
+                     (:id declared)] (try (expect (= 1 (count listed)) (pr-str listed))
+                                          (expect (= {:title "Board"
+                                                      :icon "review"
+                                                      :is-stale true
+                                                      :is-reconnectable true}
+                                                     (select-keys declared
+                                                                  [:title :icon :is-stale
+                                                                   :is-reconnectable])))
+                                          (expect (nil? (get @pending view-id)))
+                                          (expect (= listed (human-input/session-apps (str sid))))
+                                          (expect (= {:is-accepted false :reason "disconnected"}
+                                                     (select-keys (human-input/action!
+                                                                    view-id
+                                                                    {:action "interrupt"})
+                                                                  [:is-accepted :reason])))
+                                          (let [outcome
+                                                (human-input/action! view-id {:action "connect"})
+
+                                                [opened :as after]
+                                                (human-input/session-apps (str sid))]
+
+                                            (expect (:is-accepted outcome) (pr-str outcome))
+                                            (expect (some? (:owner-context (get @pending view-id))))
+                                            (expect (= 1 (count after)) (pr-str after))
+                                            (expect (= {:id view-id :key "board-1" :title "Board"}
+                                                       (select-keys opened [:id :key :title])))
+                                            (expect (nil? (:is-stale opened))))
+                                          (finally (when (get @pending view-id)
+                                                     (human-input/close-live! view-id))))))
+            (finally (ep/dispose-python-context! ctx)))))))
+  (it
+    "lists the declared app of a session without an environment, and starts nothing"
+    (with-fresh-loaded
+      {"extension.py" declared-board-py}
+      (fn [loaded {:keys [store]}]
+        (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+        (let [root
+              (.getCanonicalPath ^java.io.File (temp-dir))
+
+              ws
+              (ps/db-workspace-insert! store {:repo-id "board" :root root})
+
+              sid
+              (ps/db-store-session! store {:channel :tui :workspace-id (:id ws) :title "board"})
+
+              cache
+              (atom {})]
+
+          (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                           (constantly (io/file root "views"))
+                           #'loop-env/cache cache
+                           #'ps/db-shared-connection! (constantly store)}
+            #(let [listed (human-input/session-apps (str sid))] (expect
+                                                                  (= [{:title "Board"
+                                                                       :key "board"
+                                                                       :is-reconnectable true}]
+                                                                     (mapv (fn [app]
+                                                                             (select-keys
+                                                                               app
+                                                                               [:title :key
+                                                                                :is-reconnectable]))
+                                                                           listed))
+                                                                  (pr-str listed))
+               ;; A restart: a pane that stayed open asks for the app by its id first.
+               (reset! @#'human-input/declared-apps {}) (expect (= "Board"
+                                                                   (:title (human-input/app-view
+                                                                             (str sid)
+                                                                             (:id (first
+                                                                                    listed))))))
+               (expect (empty? @cache)) (expect (empty? (human-input/session-apps
+                                                          (str (random-uuid))))))))))))
+
 (def ^:private stale-ctx-py
   "import blockether.vis.extension as vis
 

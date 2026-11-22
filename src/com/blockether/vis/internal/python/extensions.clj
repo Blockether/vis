@@ -3055,6 +3055,15 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                     (keybinding-adapter ext-name ctx (get binding "run")))))
               (get reg "keybindings"))
 
+        session-app
+        (when-let [app (get reg "session_app")]
+          (cond-> {:key (get app "key") :title (get app "title") :hook (get app "open")}
+            (get app "icon")
+            (assoc :icon (get app "icon"))
+
+            (get app "surfaces")
+            (assoc :surfaces (update-keys (get app "surfaces") keyword))))
+
         op-hooks
         (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
 
@@ -3131,6 +3140,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
       (seq keybindings)
       (assoc :ext/keybindings keybindings)
+
+      session-app
+      (assoc :ext/session-app session-app)
 
       (seq op-hooks)
       (assoc :ext/op-hooks op-hooks)

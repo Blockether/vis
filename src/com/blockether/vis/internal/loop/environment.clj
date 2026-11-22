@@ -2391,3 +2391,21 @@
 
 ;; Keep the Var so namespace reloads retain live wiring.
 (defonce ^:private _app-connect (view/set-connector! #'connect-app!))
+
+(defn- declared-apps
+  "The apps that the extensions of session `session-id` declare for each session. A
+   session with an environment answers from its own extensions. Another session
+   answers from the extensions of its saved workspace: nothing starts for it. An
+   unknown session has none."
+  [session-id]
+  (if-let [environment (:environment (get @cache (cache-key session-id)))]
+    (extension/session-apps environment)
+    (let [db-info (persistance/db-shared-connection! (config/resolve-db-spec))]
+      (when-let [workspace (saved-workspace db-info
+                                            (persistance/db-resolve-session-id db-info session-id))]
+        (extension/with-context {:env {:session-id session-id :workspace/root (:root workspace)}}
+                                (python-extensions/ensure-python-extensions-loaded!)
+                                (extension/session-apps))))))
+
+;; Keep the Var so namespace reloads retain live wiring.
+(defonce ^:private _app-declare (view/set-declarer! #'declared-apps))

@@ -2867,7 +2867,9 @@
         (:app-key entry)
 
         connected?
-        #(not (app-stale? (get @pending (:id entry))))]
+        #(some-> (get @pending (:id entry))
+                 app-stale?
+                 not)]
 
     (if (or (connected?)
             (and (reconnectable? entry)
@@ -2888,6 +2890,115 @@
       (assoc base
         :is-accepted false
         :reason "disconnected"))))
+
+(defonce ^:private declarer
+  ;; What lists the apps that the extensions of a session declare for each session.
+  ;; The layer that owns the session environments installs it.
+  (atom nil))
+
+(defn set-declarer!
+  "Install what lists the apps that the extensions of a session declare before they
+   run there: called with a session id, it answers maps of `:extension`, `:key`,
+   `:title`, `:icon`, `:surfaces` and `:hook`, the name of the function that opens the app."
+  [f]
+  (reset! declarer f))
+
+(defonce ^:private declared-apps
+  ;; View id -> the entry of an app that an extension declared and did not open yet.
+  ;; It has no record: the first app that the extension opens in the session takes
+  ;; its view id.
+  (atom {}))
+
+(defn- declared-entry
+  "The entry of the app that `declaration` lists in session `sid`, before its
+   extension opens it. `opened` counts the apps that the extension opened in the
+   session, so an app that comes after a closed one gets a new view id."
+  [sid {:keys [extension key title icon surfaces hook]} opened]
+  (let [id
+        (str (java.util.UUID/nameUUIDFromBytes (.getBytes (str sid "/" extension "/" key "/" opened)
+                                                          java.nio.charset.StandardCharsets/UTF_8)))
+
+        record
+        (binding [*live-owner* {:extension extension}]
+          (-> (cond-> {:title title
+                       :key key
+                       :placement (name app/placement)
+                       :session-id sid
+                       :nodes [{:id "opening"
+                                :type "paragraph"
+                                :text "The app opens when the Python of the session starts."}]}
+                icon
+                (assoc :icon icon)
+
+                surfaces
+                (assoc :surfaces surfaces))
+              normalize-live-view
+              materializer/redact-presentation
+              checked-live-view
+              materializer/record-view
+              (assoc :id id)))]
+
+    (assoc (app-entry (materializer/materialize record) nil {})
+      :hooks {"reload" hook}
+      :is-declared true)))
+
+(defn- declared-pictures
+  "The pictures of the apps that the extensions of session `sid` declare and that
+   wait for a person to open them. `apps` holds the pictures of the apps of the
+   session. An extension with an app that is not closed shows that app only."
+  [sid apps]
+  (let [entries
+        (try (vec (for [{:keys [extension] :as declaration}
+                        (some-> @declarer
+                                (apply [sid]))
+
+                        :let [mine
+                              (filterv #(= extension (:extension %)) apps)]
+                        :when (every? :is-closed mine)]
+
+                    (declared-entry sid declaration (count mine))))
+             (catch Throwable t
+               (tel/log! {:level :warn
+                          :id ::declared-apps-failed
+                          :data {:session-id sid :error (ex-message t)}
+                          :msg "The declared apps of a session did not list"})
+               nil))
+
+        ids
+        (into #{} (map :id) entries)
+
+        ;; An entry stays the same while it waits, so each read gives the same picture.
+        held
+        (swap! declared-apps (fn [held]
+                               (reduce #(cond-> %1 (not (contains? %1 (:id %2))) (assoc (:id %2)
+                                                                                   %2))
+                                       (into {}
+                                             (remove (fn [[id entry]]
+                                                       (and (= sid (:session-id entry))
+                                                            (not (ids id)))))
+                                             held)
+                                       entries)))]
+
+    (into [] (keep #(app-picture (get held (:id %)))) entries)))
+
+(defn- take-declared
+  "`record` of a new app, under the view id of the app that its extension declared in
+   its session, when one waits. The pane of that app then shows the new app."
+  [record]
+  (let [mine?
+        #(and (= (:session-id record) (:session-id %))
+              (= (:extension record) (second (:app-key %))))
+
+        id
+        (when (and (:session-id record) (:extension record))
+          (some #(when (mine? %) (:id %)) (vals @declared-apps)))
+
+        [held _]
+        (when id (swap-vals! declared-apps dissoc id))]
+
+    (cond-> record
+      (contains? held id)
+      (assoc :id id))))
 
 (defonce ^:private session-sends
   ;; Offers the Sends of sandbox apps to their sessions in order, away from the app lock.
@@ -3003,10 +3114,10 @@
               (some-> entry
                       app-picture))))))))
 
-(defn app-view
-  "App `view-id` of session `sid` as the surfaces paint it, open or closed, or
-   nil. A nil `sid` reads a global app. After a restart, the first read replays
-   its record."
+(defn- recorded-app
+  "App `view-id` of session `sid` that an owner opened, as the surfaces paint it, open
+   or closed, or nil. A nil `sid` reads a global app. After a restart, the first read
+   replays its record."
   [sid view-id]
   (let [sid
         (some-> sid
@@ -3027,9 +3138,22 @@
           (restore-app! sid view-id)))))
 
 (defn session-apps
-  "Every app of session `sid`, open or closed, in the order they opened."
+  "Every app of session `sid`, open or closed, in the order they opened. Then the
+   apps that its extensions declare and did not open yet."
   [sid]
-  (into [] (comp (map :view-id) (distinct) (keep #(app-view sid %))) (sink/app-index (str sid))))
+  (let [apps (into []
+                   (comp (map :view-id) (distinct) (keep #(recorded-app sid %)))
+                   (sink/app-index (str sid)))]
+    (into apps (declared-pictures (str sid) apps))))
+
+(defn app-view
+  "App `view-id` of session `sid` as the surfaces paint it, open or closed, or
+   nil. A nil `sid` reads a global app. After a restart, the first read replays
+   its record. An app that an extension declared and did not open yet answers too."
+  [sid view-id]
+  (or (recorded-app sid view-id)
+      (when (and sid (parse-uuid (str view-id)))
+        (some #(when (and (= (str view-id) (:id %)) (:is-stale %)) %) (session-apps sid)))))
 
 (defn global-apps
   "Every global app, open or closed, in the order they opened. A global app that
@@ -3225,7 +3349,10 @@
                    materializer/redact-presentation
                    checked-live-view
                    materializer/record-view)]
-    (or (when (app/app? record) (adopt-app! record)) (mount-live! record))))
+    (or (when (app/app? record) (adopt-app! record))
+        (mount-live! (cond-> record
+                       (app/app? record)
+                       take-declared)))))
 
 (defn- app-node
   "Node `node-id` anywhere in `view`, or nil."
@@ -4686,7 +4813,7 @@
         (normalize-view-action view-id raw)
 
         entry
-        (get @pending view-id)
+        (or (get @pending view-id) (get @declared-apps view-id))
 
         base
         {:action action :view-id view-id}]
@@ -4704,8 +4831,11 @@
       (nil? entry) (assoc base
                      :is-accepted false
                      :reason "unknown")
-      ;; Nobody hears a press until the owner of a restored app opens it again.
-      (and (app-stale? entry) (#{:activate :select :change :shortcut} action))
+      ;; Nobody hears a press until the owner of a restored app opens it again. A
+      ;; declared app takes only `connect`.
+      (and (app-stale? entry)
+           (or (#{:activate :select :change :shortcut} action)
+               (and (:is-declared entry) (not= :connect action))))
       (cond-> (assoc base
                 :is-accepted false
                 :reason "disconnected")
