@@ -72,6 +72,7 @@ def required_recovery_checks() -> set[str]:
         f"Verify release source / {name}"
         for name in (
             "lint / clj-kondo",
+            "companion / tsc",
             "classpath / .",
             "classpath / apps/vis-tui",
             "tests / linux python-cli",

@@ -376,6 +376,26 @@ jobs:
           restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
       - name: Lint the whole tree
         run: clojure -X:deps prep && clojure -M:lint
+
+  # The release builds the Companion web bundle with `tsc -b`. The Android workflow
+  # runs its type check only after its unit tests pass, and a release does not wait
+  # for that workflow. This job finds a type error in the main run, before a tag.
+  companion-typecheck:
+    name: companion / tsc
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/vis-companion
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/vis-companion/package-lock.json
+      - run: npm ci
+      - name: Type check the Companion
+        run: npm run typecheck
   # The official MCP client conformance suite, against the MCP client of Vis with
   # its real configuration and OAuth code. The suite brings its own MCP and
   # authorization servers on loopback, so the job needs no secret and no account.
