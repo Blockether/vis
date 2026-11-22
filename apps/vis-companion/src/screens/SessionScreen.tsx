@@ -130,7 +130,9 @@ import {
 import { isLayerUp } from '../lib/edge-back';
 import { shellHost } from '../lib/host';
 import {
+  cachedTerminalTurn,
   GatewayError,
+  isTerminalTurnStatus,
   mergeQueueBacklog,
   onSettingChange,
   queuedTurnFromWire,
@@ -290,7 +292,6 @@ const TURN_LIVENESS_IDLE_MS = 10000;
 const TURN_LIVENESS_PROBE_INTERVAL_MS = 5000;
 // A missing registry row can be temporary. Require two agreeing probes before replaying the stream.
 const TURN_UNKNOWN_CONFIRMATIONS = 2;
-const TURN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const INITIAL_VISIBLE_TURNS = 8;
 // Assistant turns can contain thousands of syntax-highlighted nodes. Twenty-four
 // such turns is still enough DOM to make keyboard resize and momentum scrolling
@@ -797,13 +798,16 @@ function cancelledTurnSeed(client: GatewayClient, sid: string): ReadonlyMap<stri
     ? new Map([[cached.id, cached]])
     : new Map();
 }
+type ScreenRunningTurn = RunningTurn & { terminalConfirmed?: true };
+
 function seedRunningTurn(
   client: GatewayClient,
   subscriptions: SessionSubscriptionHub,
   sid: string,
-): { turn: RunningTurn; seq: number } | null {
-  const cached = client.cachedRunningTurn<RunningTurn>(sid);
+): { turn: ScreenRunningTurn; seq: number } | null {
+  const cached = client.cachedRunningTurn<ScreenRunningTurn>(sid);
   if (!cached) return null;
+  if (cached.turn.id && cachedTerminalTurn(client.base, sid, cached.turn.id)) return null;
 
   // A settled row with this exact id is the canonical replacement for cached pixels.
   if (cached.turn.id && settledTurnRow(client.cachedTranscript(sid), cached.turn.id)) return null;
@@ -827,10 +831,11 @@ function seedRunningTurn(
     };
   }
 
-  // A screen can leave after applying the terminal frame but before the engine's
-  // persisted row reaches the transcript. Retain that completed/error bubble too
-  // — for as long as it still carries the pixels that made it worth retaining.
-  return runningTurnCarriesOutput(cached.turn) ? cached : null;
+  // Keep a confirmed end until a row can replace it, even if no output was streamed.
+  // Otherwise a stale session row can restart the turn on the next visit.
+  return cached.turn.terminalConfirmed || runningTurnCarriesOutput(cached.turn)
+    ? cached
+    : null;
 }
 
 /** The hub's state now: `subscribeConnection` reports it before it returns. */
@@ -1344,7 +1349,7 @@ export function SessionScreen({
   const resumePinRef = useRef(false);
   const showJumpRef = useRef(false);
   const remainingMessagesRef = useRef(0);
-  const runningTurnRef = useRef<RunningTurn | null>(runningTurnSeed?.turn ?? null);
+  const runningTurnRef = useRef<ScreenRunningTurn | null>(runningTurnSeed?.turn ?? null);
   // Journal cursor of the newest event already folded into the running-turn bubble. The
   // hub replays a still-streaming turn from its `turn.started` on every
   // (re)subscribe; when the bubble was seeded from cache those frames are
@@ -1361,6 +1366,7 @@ export function SessionScreen({
   // Turns that this screen settled from a terminal frame or a registry verdict. They
   // really ended, so a stale `live` session row must never reopen their bubbles.
   const endedTurnIdsRef = useRef(new Set<string>());
+  const probeTurnOnWakeRef = useRef<(() => void) | null>(null);
   // turn id -> what THIS device authored for a message it queued behind the running
   // turn. A user cancel drops the whole pre-cancel backlog server-side
   // (`drop-cancelled-backlog!`), so without a local copy the text, its pastes and its
@@ -1566,6 +1572,10 @@ export function SessionScreen({
     setQueued(client.cachedQueuedTurns(sid) ?? []);
     setQueuePaused(null);
     runningTurnRef.current = seed?.turn ?? null;
+    const seededTurn = seed?.turn;
+    endedTurnIdsRef.current = new Set(
+      seededTurn?.terminalConfirmed && seededTurn.id ? [seededTurn.id] : [],
+    );
     lastRunningTurnSeqRef.current = seed?.seq ?? -1;
     runningTurnSidRef.current = sid;
     setSession(client.cachedSession(sid));
@@ -2258,6 +2268,27 @@ export function SessionScreen({
     };
   }, [syncJump]);
 
+  const handOverSettledRow = useCallback(
+    (row: TranscriptTurn) => {
+      const streamed = runningTurnRef.current;
+      const tid = rowId(row);
+      if (!streamed || streamed.id !== tid) return;
+      if (stoppedTurnRow(row)) {
+        setCancelledTurnSnapshots((current) => withStoppedWork(current, streamed));
+      }
+      endedTurnIdsRef.current.add(tid);
+      runningTurnRef.current = null;
+      client.rememberRunningTurn(sid, null, lastRunningTurnSeqRef.current);
+      setRunning(false);
+      // The durable row inherits the streamed trace in the same render.
+      setHandedOverRowId(tid);
+      widenWindowForHandover();
+      setRunningTurn(null);
+      followThroughHandover();
+    },
+    [client, sid, widenWindowForHandover, followThroughHandover],
+  );
+
   // Pass the session's meta `row` and the transcript is re-read ONLY when that
   // row says a turn was persisted since the copy already on screen — a long
   // session's transcript is tens of megabytes, so a blind re-read is the most
@@ -2278,6 +2309,8 @@ export function SessionScreen({
         // A background warm can replace the cache while this screen holds older rows.
         // "Unchanged" confirms that cache, not necessarily the transcript already painted.
         const next = received ?? client.cachedTranscript(sid);
+        const finished = settledTurnRow(next, runningTurnRef.current?.id ?? '');
+        if (finished) handOverSettledRow(finished);
         if (!next || next === turnsRef.current) {
           setTurnsFresh(true);
           // Unchanged: keep the painted turns, their object identities, and the
@@ -2308,7 +2341,7 @@ export function SessionScreen({
         return null;
       }
     },
-    [client, sid],
+    [client, sid, handOverSettledRow],
   );
 
   // A live-only subscription cannot replay `turn.started`. When opening an already
@@ -2317,8 +2350,14 @@ export function SessionScreen({
   const adoptRunningTurn = useCallback(
     async (row: Session | null, signal?: AbortSignal, rows?: readonly TranscriptTurn[] | null) => {
       const tid = row?.live ? (row.current_turn_id ?? '') : '';
-      if (!tid) return;
-      const persisted = (rows ?? turnsRef.current)?.find((turn) => rowId(turn) === tid) ?? null;
+      const turnEnded = () =>
+        endedTurnIdsRef.current.has(tid) ||
+        subscriptions.hasEndedTurn(sid, tid) ||
+        cachedTerminalTurn(client.base, sid, tid) !== null;
+      if (!tid || turnEnded()) return;
+      const transcript = rows ?? turnsRef.current;
+      if (settledTurnRow(transcript, tid)) return;
+      const persisted = transcript.find((turn) => rowId(turn) === tid) ?? null;
 
       setRunning(true);
       // A streaming bubble owns deltas newer than the durable row. Adopt only when
@@ -2328,7 +2367,6 @@ export function SessionScreen({
         // The gateway still runs the turn that this bubble shows as settled, and nothing
         // proved that the turn ended: an earlier visit settled it too early. Reopen it,
         // or its running steps stay cancelled and its live views stay gone.
-        if (endedTurnIdsRef.current.has(tid) || subscriptions.hasEndedTurn(sid, tid)) return;
         const reopened: RunningTurn = { ...held, status: 'running', cancelling: false };
         runningTurnRef.current = reopened;
         setRunningTurn(reopened);
@@ -2347,7 +2385,7 @@ export function SessionScreen({
           return;
         }
       }
-      if (signal?.aborted) return;
+      if (signal?.aborted || turnEnded()) return;
       const now = runningTurnRef.current;
       if (now && (now.status === 'running' || now.id === tid)) return;
       // `running_started_at` is the GATEWAY's clock; the bubble's elapsed timer
@@ -2461,12 +2499,8 @@ export function SessionScreen({
         setQueuePaused(client.cachedQueuePaused(sid));
       }
       const gatewayRunning = next.live !== undefined ? next.live : next.status === 'running';
-      // Safety net: on wake we ALWAYS refetch the transcript and check whether
-      // the streamed running turn has already been persisted while we were
-      // backgrounded. iOS/Android suspend fetch-body streams silently, so the
-      // terminal event that would have cleared the running-turn bubble may have
-      // been dropped. If the persisted turn now exists, drop the running-turn bubble; if
-      // the gateway is idle but we still show work, do the same.
+      // A turn can finish while the socket is suspended. Revalidate the transcript
+      // even when no terminal frame arrived.
       const runningTurnId = runningTurnRef.current?.id ?? '';
       let nextTurns: TranscriptTurn[] | null = null;
       try {
@@ -2477,12 +2511,14 @@ export function SessionScreen({
         nextTurns = null;
       }
       if (cancelled) return;
-      const rowsNow = nextTurns ?? turnsRef.current;
+      // A warm read can already have moved the cache while the screen held old rows.
+      const rowsNow = nextTurns ?? client.cachedTranscript(sid) ?? turnsRef.current;
       const landedRow = settledTurnRow(rowsNow, runningTurnId);
       const covered = landedRow !== null;
-      if (nextTurns) {
-        setTurns(nextTurns);
+      if (rowsNow !== turnsRef.current) {
+        setTurns(rowsNow);
         setTurnsFresh(true);
+        setEarlierRemaining(client.transcriptWindow(sid).offset);
         // Turns that arrived while the app was away are exactly why the reader
         // came back. Pin AFTER they render, or the wake's pin lands on the old
         // height and the new tail sits below the fold.
@@ -2492,23 +2528,7 @@ export function SessionScreen({
       // canonical gateway state still reports that exact turn as running.
       const stillRunningThis =
         runningTurnId !== '' && gatewayRunning && (next.current_turn_id ?? '') === runningTurnId;
-      if (landedRow && !stillRunningThis && (runningTurnRef.current?.id ?? '') === runningTurnId) {
-        // A stopped row can land here before its `turn.cancelled` frame is applied.
-        if (stoppedTurnRow(landedRow)) {
-          const streamed = runningTurnRef.current;
-          setCancelledTurnSnapshots((current) => withStoppedWork(current, streamed));
-        }
-        setRunning(false);
-        // Same batch as the rows themselves: the row that takes the bubble's
-        // place must MOUNT knowing it inherits a painted trace.
-        setHandedOverRowId(rowId(landedRow));
-        widenWindowForHandover();
-        setRunningTurn(null);
-        runningTurnRef.current = null;
-        // The row's own pixels land over the frames AFTER this batch; carry a
-        // following reader across them.
-        followThroughHandover();
-      }
+      if (landedRow && !stillRunningThis) handOverSettledRow(landedRow);
       const currentRunningTurn = runningTurnRef.current;
       const showsWork =
         (currentRunningTurn !== null &&
@@ -2545,7 +2565,7 @@ export function SessionScreen({
       // another client started, or a stream that reconnected past `turn.started`.
       // A matching transcript row supplies an inline trace; otherwise the canonical
       // turn id addresses the gateway trace directly.
-      await adoptRunningTurn(next, undefined, nextTurns ?? turnsRef.current);
+      await adoptRunningTurn(next, undefined, rowsNow);
       // Consumed either way: with no new turns the wake's own pin was enough.
       resumePinRef.current = false;
     };
@@ -2603,6 +2623,7 @@ export function SessionScreen({
     const stopWake = onWake(({ awayMs }) => {
       inflightSince = null;
       subscriptions.resync('wake');
+      probeTurnOnWakeRef.current?.();
       reconcileWakeGeometry();
       // Native resume can precede WebKit's final viewport restoration by one paint.
       // Measure once more after that paint rather than trusting the suspended box.
@@ -2678,6 +2699,7 @@ export function SessionScreen({
     syncJump,
     acceptQueueBacklog,
     adoptRunningTurn,
+    handOverSettledRow,
   ]);
 
   const refreshSlashCommands = useCallback(
@@ -3015,11 +3037,11 @@ export function SessionScreen({
       // the last thinking band alive — for a turn the gateway already finished.
       // The terminal frame IS the end of the turn; that claim needs no transcript.
       // Mirrors the TUI's independent terminal path.
-      setRunningTurn((turn) => {
-        if (!turn || turn.status !== 'running' || !ownsTerminal(turn)) return turn;
-        const next: RunningTurn = {
-          ...turn,
+      if (streamedTurn && ownsTerminal(streamedTurn) && !streamedTurn.terminalConfirmed) {
+        const next: ScreenRunningTurn = {
+          ...streamedTurn,
           status: terminalStatus(type),
+          terminalConfirmed: true,
           progress: undefined,
           cancelling: false,
           // Completion can overtake the 150 ms body-delta queue in a browser.
@@ -3028,14 +3050,15 @@ export function SessionScreen({
           // A leader stop with no answer ships only its notice: add it to the streamed
           // blocks, because it does not replace them.
           content: !terminalBlocks?.length
-            ? turn.content
+            ? streamedTurn.content
             : terminalBlocks.every(isLeaderCancelNotice)
-              ? [...(turn.content ?? []), ...terminalBlocks]
+              ? [...(streamedTurn.content ?? []), ...terminalBlocks]
               : terminalBlocks,
         };
         runningTurnRef.current = next;
-        return next;
-      });
+        client.rememberRunningTurn(sid, next, lastRunningTurnSeqRef.current);
+        setRunningTurn(next);
+      }
       // Keep the streamed running turn on screen until the finished turn is
       // actually persisted in the transcript, otherwise it vanishes for a frame
       // (the persisted row lags the terminal event) and the view jumps.
@@ -3105,16 +3128,7 @@ export function SessionScreen({
         // that drained during the fetch owns the rail now.
         const landed = coveringRow(next);
         if (landed && ownsTerminal(runningTurnRef.current)) {
-          // In the SAME batched update as `setTurns` above: the row that takes
-          // the bubble's place has to MOUNT already knowing it inherits a trace
-          // the reader is looking at, or its own mount ramp empties the
-          // transcript for a frame and grows it back (see `IterationTrace`).
-          setHandedOverRowId(rowId(landed));
-          widenWindowForHandover();
-          setRunningTurn(null);
-          runningTurnRef.current = null;
-          // ...and the same carry as the stream's own handover above.
-          followThroughHandover();
+          handOverSettledRow(landed);
         } else if (landed && settlingTurnRef.current?.id === finishedId) {
           // A queued turn took the bubble before this row landed. Its retained copy
           // hands over here, in the same batch; the window was widened when it was kept.
@@ -3330,24 +3344,32 @@ export function SessionScreen({
     // during a tool call. Only the transport watchdog checks bytes and heartbeats.
     let lastEventAt = Date.now();
     let unknownStrikes = 0;
-    let probing = false;
-    const livenessTimer = window.setInterval(() => {
+    let activeProbe: object | null = null;
+    const probeTurn = (woke = false) => {
       const probedTurn = runningTurnRef.current;
-      if (probing || !probedTurn || probedTurn.status !== 'running' || !probedTurn.id) return;
+      if ((!woke && activeProbe) || probedTurn?.status !== 'running' || !probedTurn.id) return;
+      if (woke) unknownStrikes = 0;
       const quietSince = Math.max(lastEventAt, probedTurn.startedAt ?? 0);
       const silentFor = Date.now() - quietSince;
-      if (silentFor < TURN_LIVENESS_IDLE_MS) {
+      if (!woke && silentFor < TURN_LIVENESS_IDLE_MS) {
         // Frames are flowing: whatever the last probe suspected is disproved.
         unknownStrikes = 0;
         return;
       }
-      probing = true;
+      // A request suspended with the WebView cannot block the wake check.
+      const probe = {};
+      activeProbe = probe;
       void client
         .turnStatus(sid, probedTurn.id)
         .then((turn) => {
           const current = runningTurnRef.current;
-          if (!current || current.status !== 'running' || current.id !== probedTurn.id) return;
-          if (turn && !TURN_TERMINAL_STATUSES.has(String(turn.status ?? ''))) {
+          if (
+            disposed ||
+            activeProbe !== probe ||
+            current?.status !== 'running' ||
+            current.id !== probedTurn.id
+          ) return;
+          if (turn && !isTerminalTurnStatus(String(turn.status ?? ''))) {
             // A confirmed running turn does not prove a transport failure.
             unknownStrikes = 0;
             return;
@@ -3375,14 +3397,17 @@ export function SessionScreen({
           return settle({
             type,
             turn_id: probedTurn.id,
-            ...(type === 'turn.failed' && turn.content?.length ? { content: turn.content } : {}),
+            ...(turn.content?.length ? { content: turn.content } : {}),
           } as unknown as SseEvent);
         })
         .catch(() => undefined)
         .finally(() => {
-          probing = false;
+          if (activeProbe === probe) activeProbe = null;
         });
-    }, TURN_LIVENESS_PROBE_INTERVAL_MS);
+    };
+    const wakeProbe = () => probeTurn(true);
+    probeTurnOnWakeRef.current = wakeProbe;
+    const livenessTimer = window.setInterval(probeTurn, TURN_LIVENESS_PROBE_INTERVAL_MS);
 
     const unsubscribeConnection = subscriptions.subscribeConnection(setConnected);
     // A bubble seeded from the cache needs every frame after its cursor. A hub built
@@ -3403,6 +3428,14 @@ export function SessionScreen({
       // stream has to stay visibly silent. The `subscription.ready` listener above
       // is the one that acts on it.
       if (event.type === 'subscription.ready') return;
+      if (event.type === 'turn.started') {
+        const tid = eventString(event, 'turn_id');
+        if (
+          endedTurnIdsRef.current.has(tid) ||
+          cachedTerminalTurn(client.base, sid, tid) ||
+          settledTurnRow(turnsRef.current, tid)
+        ) return;
+      }
       lastEventAt = Date.now();
       // The hub replays a still-streaming turn from its `turn.started` on every
       // (re)subscribe. When the bubble was seeded from the in-memory cache those
@@ -3434,6 +3467,7 @@ export function SessionScreen({
       if (flushRunningTurnEventsBeforeRotationRestoreRef.current === flushEvents) {
         flushRunningTurnEventsBeforeRotationRestoreRef.current = null;
       }
+      if (probeTurnOnWakeRef.current === wakeProbe) probeTurnOnWakeRef.current = null;
       window.clearInterval(livenessTimer);
       if (timerId !== null) window.clearTimeout(timerId);
       eventQueue.length = 0;
@@ -3450,6 +3484,7 @@ export function SessionScreen({
     onBack,
     noteQueueDelta,
     restoreCancelledQueued,
+    handOverSettledRow,
   ]);
 
   // Drop the veil once the transcript underneath it HOLDS STILL. Whoever asks

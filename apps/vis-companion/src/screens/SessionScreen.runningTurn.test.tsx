@@ -310,7 +310,7 @@ describe('a running transcript row without canonical session state', () => {
         transcript: () => Promise.resolve([runningRow]),
       },
       subscriptions: {
-        hasEndedTurn: () => true,
+        hasEndedTurn: (_sid: string, tid?: string) => tid !== 't1',
         subscribeConnection: (on: (live: boolean) => void) => {
           on(true);
           return () => {};

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { WakeInfo } from './wake';
 const nativeCompressionStream = globalThis.CompressionStream;
 const nativeDecompressionStream = globalThis.DecompressionStream;
 const files = vi.hoisted(() => new Map<string, string>());
@@ -20,7 +21,7 @@ const shareArtifact = vi.hoisted(() =>
 );
 const lifecycle = vi.hoisted(() => ({
   away: null as (() => void) | null,
-  wake: null as ((info: { awayMs: number }) => void) | null,
+  wake: null as ((info: WakeInfo) => void) | null,
 }));
 
 vi.mock('./wake', () => ({
@@ -30,7 +31,7 @@ vi.mock('./wake', () => ({
       lifecycle.away = null;
     };
   },
-  onWake: (listener: (info: { awayMs: number }) => void) => {
+  onWake: (listener: (info: WakeInfo) => void) => {
     lifecycle.wake = listener;
     return () => {
       lifecycle.wake = null;
@@ -210,6 +211,19 @@ describe('persistent app diagnostics', () => {
       started_wake_id: 0,
       finished_wake_id: 1,
       crossed_background: true,
+    });
+  });
+
+  it('reports a foreground clock gap without a background signal', async () => {
+    const { flushDiagnostics, installDiagnostics } = await diagnostics();
+    installDiagnostics();
+    lifecycle.wake?.({ awayMs: 300_000, foregroundGapMs: 300_000 });
+    await flushDiagnostics();
+
+    const records = appendFile.mock.calls.map(([call]) => JSON.parse(call.data));
+    expect(records.find((record) => record.event === 'wake')?.details).toMatchObject({
+      away_ms: 300_000,
+      foreground_gap_ms: 300_000,
     });
   });
 

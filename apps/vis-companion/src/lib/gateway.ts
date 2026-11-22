@@ -999,6 +999,7 @@ const SNAPSHOT_KIND_LIMITS = new Map<string, number>([
   ['live', SESSION_CACHE_LIMIT],
   // Streaming bubbles are memory-only but can retain whole generated answers.
   ['running-turn', SESSION_CACHE_LIMIT],
+  ['terminal-turn', SESSION_CACHE_LIMIT * 2],
   // The last team of a session, so a switch back or a cold start shows its dock at once.
   ['agents', SESSION_CACHE_LIMIT],
   // The head list seeds model pins for up to one complete session-list window.
@@ -1282,6 +1283,21 @@ function readSnapshot<T>(key: string): T | null {
   snapshots.delete(key);
   snapshots.set(key, value);
   return value;
+}
+
+type TerminalTurnStatus = 'completed' | 'failed' | 'cancelled';
+
+export function isTerminalTurnStatus(status: string): status is TerminalTurnStatus {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+function terminalTurnKey(base: string, sid: string, tid: string): string {
+  return `${base}\u0000terminal-turn\u0000${sid}\u0000${tid}`;
+}
+
+/** The exact terminal status read from the registry, shared across screen visits. */
+export function cachedTerminalTurn(base: string, sid: string, tid: string): TerminalTurnStatus | null {
+  return readSnapshot<TerminalTurnStatus>(terminalTurnKey(base, sid, tid));
 }
 
 function writeSnapshot(key: string, value: unknown): void {
@@ -4102,6 +4118,8 @@ export class GatewayClient {
 
   rememberRunningTurn(sid: string, turn: unknown, seq: number): void {
     if (this.isSessionDeleted(sid)) return;
+    const tid = (turn as { id?: string } | null)?.id;
+    if (tid && cachedTerminalTurn(this.base, sid, tid)) return;
     const key = this.snapshotKey('running-turn', sid);
     snapshots.delete(key);
     if (turn === null) return;
@@ -4265,6 +4283,10 @@ export class GatewayClient {
     dropSnapshot(transcriptKey);
     snapshots.delete(this.snapshotKey('queued', sid));
     snapshots.delete(this.snapshotKey('running-turn', sid));
+    const verdictPrefix = terminalTurnKey(this.base, sid, '');
+    for (const key of snapshots.keys()) {
+      if (key.startsWith(verdictPrefix)) snapshots.delete(key);
+    }
     snapshots.delete(this.snapshotKey('model', sid));
     snapshots.delete(this.snapshotKey('agents', sid));
     // A session nothing holds any more has no stream left to resume either.
@@ -6247,6 +6269,17 @@ export class GatewayClient {
       );
       const status = String(row.status ?? '');
       if (status === '') return null;
+      if (isTerminalTurnStatus(status) && !this.isSessionDeleted(sid)) {
+        // This read can finish after its screen unmounts. Keep the verdict here,
+        // and retire only the bubble that belongs to the same turn.
+        const key = terminalTurnKey(this.base, sid, tid);
+        snapshots.delete(key);
+        snapshots.set(key, status);
+        trimSnapshotKind(key);
+        if (this.cachedRunningTurn<{ id?: string }>(sid)?.turn.id === tid) {
+          snapshots.delete(this.snapshotKey('running-turn', sid));
+        }
+      }
       return {
         status,
         content: Array.isArray(row.content)

@@ -95,11 +95,12 @@ describe('a finished turn handed to its persisted row', () => {
 
   it('keeps one canonical answer through terminal handover', async () => {
     const events = subscriptionHub();
+    let finished = false;
     renderSessionScreen({
       client: {
         cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
         cachedTranscript: () => [],
-        transcript: () => Promise.resolve([settledRow]),
+        transcript: () => Promise.resolve(finished ? [settledRow] : []),
       },
       subscriptions: {
         subscribeSession: events.subscribeSession,
@@ -107,6 +108,7 @@ describe('a finished turn handed to its persisted row', () => {
     });
 
     expect(await screen.findByText('explain the failure')).toBeInTheDocument();
+    finished = true;
     events.emit({
       type: 'turn.completed',
       turn_id: 'gw-1',
@@ -221,6 +223,7 @@ describe('a turn cancelled from this screen', () => {
   // the streamed trace with an emptier durable row, so work vanished and the rail jumped.
   it('keeps partial agent work when the cancelled row lands', async () => {
     const events = subscriptionHub();
+    let finished = false;
     const partial = {
       id: 'gw-partial-cancel',
       request: 'inspect the failure',
@@ -242,12 +245,13 @@ describe('a turn cancelled from this screen', () => {
       client: {
         cachedRunningTurn: () => ({ turn: partial, seq: 5 }),
         cachedTranscript: () => [],
-        transcript: () => Promise.resolve([cancelled]),
+        transcript: () => Promise.resolve(finished ? [cancelled] : []),
       },
       subscriptions: { subscribeSession: events.subscribeSession },
     });
 
     expect(await shownWork()).toBeInTheDocument();
+    finished = true;
     events.emit({
       type: 'turn.cancelled',
       turn_id: 'gw-partial-cancel',
@@ -266,6 +270,7 @@ describe('a turn cancelled from this screen', () => {
   // replaced the streamed ones position for position.
   it('keeps the work when the cancelled row lands as hollow shells', async () => {
     const events = subscriptionHub();
+    let finished = false;
     const partial = {
       id: 'gw-hollow-cancel',
       request: 'inspect the failure',
@@ -287,12 +292,13 @@ describe('a turn cancelled from this screen', () => {
       client: {
         cachedRunningTurn: () => ({ turn: partial, seq: 5 }),
         cachedTranscript: () => [],
-        transcript: () => Promise.resolve([cancelled]),
+        transcript: () => Promise.resolve(finished ? [cancelled] : []),
       },
       subscriptions: { subscribeSession: events.subscribeSession },
     });
 
     expect(await shownWork()).toBeInTheDocument();
+    finished = true;
     events.emit({
       type: 'turn.cancelled',
       turn_id: 'gw-hollow-cancel',
@@ -310,6 +316,7 @@ describe('a turn cancelled from this screen', () => {
   // It retired the bubble without the streamed copy, so the stopped work vanished.
   it('keeps the work when a reconcile lands the cancelled row before its frame', async () => {
     const events = subscriptionHub();
+    let finished = false;
     const partial = {
       id: 'gw-raced-cancel',
       request: 'inspect the race',
@@ -333,13 +340,14 @@ describe('a turn cancelled from this screen', () => {
         cachedRunningTurn: () => ({ turn: partial, seq: 5 }),
         cachedTranscript: () => [],
         session: () => Promise.resolve(sessionFixture({ live: false })),
-        transcriptIfMoved: () => Promise.resolve([cancelled]),
-        transcript: () => Promise.resolve([cancelled]),
+        transcriptIfMoved: () => Promise.resolve(finished ? [cancelled] : []),
+        transcript: () => Promise.resolve(finished ? [cancelled] : []),
       },
       subscriptions: { subscribeSession: events.subscribeSession },
     });
 
     expect(await shownWork()).toBeInTheDocument();
+    finished = true;
     window.dispatchEvent(new Event('online'));
     await waitFor(() => expect(document.querySelector('[data-live="true"]')).toBeNull());
     events.emit({
@@ -375,13 +383,14 @@ describe('a turn cancelled from this screen', () => {
       content: [],
       iterations: [],
     };
-    let rows: unknown[] = [];
+    let rows: typeof stopped[] = [];
+    let cached: typeof stopped[] = [];
 
     renderSessionScreen({
       client: {
         cachedRunningTurn: () => ({ turn: partial, seq: 5 }),
-        cachedTranscript: () => [],
-        transcript: () => Promise.resolve(rows),
+        cachedTranscript: () => cached,
+        transcript: async () => (cached = rows),
       },
       subscriptions: { subscribeSession: events.subscribeSession },
     });
@@ -428,11 +437,11 @@ describe('a handover the registry vetoed once', () => {
 
   it('retires the bubble on a later tick, with no new transcript page', async () => {
     let registryLive = true;
-    let reads = 0;
+    let cached: typeof answered[] = [];
     renderSessionScreen({
       client: {
         cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
-        cachedTranscript: () => [],
+        cachedTranscript: () => cached,
         session: () =>
           Promise.resolve(
             sessionFixture(
@@ -442,10 +451,11 @@ describe('a handover the registry vetoed once', () => {
         // The transcript moves exactly once; every later revalidation answers
         // `null`, the way a session that has stopped moving does.
         transcriptIfMoved: () => {
-          reads += 1;
-          return Promise.resolve(reads === 1 ? [answered] : null);
+          if (cached.length) return Promise.resolve(null);
+          cached = [answered];
+          return Promise.resolve(cached);
         },
-        transcript: () => Promise.resolve([answered]),
+        transcript: () => Promise.resolve([]),
       },
     });
 

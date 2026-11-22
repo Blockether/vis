@@ -2,10 +2,11 @@
 import { ReadableStream } from 'node:stream/web';
 import { TextEncoder } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup } from '@testing-library/react';
+import { act, cleanup, screen } from '@testing-library/react';
 
 import { GatewayClient } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
+import type { TranscriptTurn } from '../lib/types';
 import { renderSessionScreen, sessionFixture } from './session-screen-harness';
 
 let hub: SessionSubscriptionHub | undefined;
@@ -146,4 +147,160 @@ describe('quiet running turns', () => {
       expect(fetches).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+it('does not restore a turn whose status arrived after leaving the screen', async () => {
+  const client = new GatewayClient({ url: 'https://late-status.example.com' });
+  const tid = 'turn-1';
+  const meta = sessionFixture({ live: true, current_turn_id: tid, running_request: 'Wait for the result' });
+  let finish!: (response: Response) => void;
+  const fetchStatus = vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; }));
+  vi.stubGlobal('fetch', fetchStatus);
+  const mount = () => renderSessionScreen({
+    session: meta,
+    client: {
+      base: client.base,
+      cachedRunningTurn: client.cachedRunningTurn.bind(client),
+      rememberRunningTurn: client.rememberRunningTurn.bind(client),
+      turnStatus: client.turnStatus.bind(client),
+      turnTrace: async () => [],
+    },
+  });
+  const first = mount();
+  await act(() => vi.advanceTimersByTimeAsync(15_000));
+  expect(fetchStatus).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('Wait for the result')).toBeInTheDocument();
+  first.unmount();
+
+  await act(async () => {
+    finish(Response.json({ status: 'completed' }));
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  for (let visit = 0; visit < 2; visit++) {
+    const reopened = mount();
+    expect(screen.queryByText('Wait for the result')).not.toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.queryByText('Wait for the result')).not.toBeInTheDocument();
+    reopened.unmount();
+  }
+});
+
+describe('a cached turn with no terminal frame', () => {
+  const tid = 'missed-terminal';
+  const answer = 'The wait is over.';
+  const waiting = /Vis is waiting up to 290s/;
+  const connected = {
+    subscribeConnection: (listener: (connected: boolean) => void) => {
+      listener(true);
+      return () => {};
+    },
+  };
+  const completed: TranscriptTurn = {
+    turn_id: tid,
+    request: 'Wait for the result',
+    status: 'completed',
+    content: [{ id: 'answer', type: 'prose', markdown: answer }],
+    iterations: [],
+  };
+
+  function cachedTurn() {
+    const turn = {
+      id: tid,
+      request: completed.request,
+      answer: '',
+      iterations: [],
+      startedAt: Date.now(),
+      progress: { kind: 'tool-call', iteration: 1, phrase: 'waiting up to 290s' },
+      status: 'running',
+    };
+    let cached: { turn: typeof turn; seq: number } | null = { turn, seq: 5 };
+    return {
+      cachedRunningTurn: () => cached,
+      rememberRunningTurn: (_sid: string, next: typeof turn | null, seq: number) => {
+        cached = next && { turn: next, seq };
+      },
+    };
+  }
+
+  it('shows the persisted answer on the first open and the next open', async () => {
+    const previous = { ...completed, turn_id: 'previous', request: 'Earlier turn', content: [] };
+    let rows: TranscriptTurn[] = [previous];
+    const client = {
+      ...cachedTurn(),
+      cachedTranscript: () => rows,
+      transcriptIfMoved: async () => {
+        if (rows.length === 2) return null;
+        rows = [previous, completed];
+        return rows;
+      },
+      turnStatus: async () => ({ status: 'completed' }),
+    };
+    const first = renderSessionScreen({ client, subscriptions: connected });
+    expect(screen.getAllByText(waiting).length).toBeGreaterThan(0);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.queryByText(waiting)).not.toBeInTheDocument();
+    expect(screen.getByText(answer)).toBeInTheDocument();
+    first.unmount();
+
+    renderSessionScreen({ client, subscriptions: connected });
+    expect(screen.queryByText(waiting)).not.toBeInTheDocument();
+    expect(screen.getByText(answer)).toBeInTheDocument();
+  });
+
+  it('uses a completed row from a warm read when wake revalidation returns unchanged', async () => {
+    const previous = { ...completed, turn_id: 'previous', request: 'Earlier turn', content: [] };
+    let rows: TranscriptTurn[] = [previous];
+    const client = {
+      ...cachedTurn(),
+      cachedTranscript: () => rows,
+      transcriptIfMoved: async () => null,
+      turnStatus: async () => null,
+    };
+    renderSessionScreen({ client, subscriptions: connected });
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getAllByText(waiting).length).toBeGreaterThan(0);
+
+    rows = [previous, completed];
+    await act(async () => {
+      window.dispatchEvent(new Event('online'));
+      await vi.advanceTimersByTimeAsync(251);
+    });
+    expect(screen.queryByText(waiting)).not.toBeInTheDocument();
+    expect(screen.getByText(answer)).toBeInTheDocument();
+  });
+
+  it('checks the cached turn on wake before the transcript has its answer', async () => {
+    let finished = false;
+    const turnStatus = vi.fn(async () => ({ status: finished ? 'completed' : 'running' }));
+    const liveSession = sessionFixture({ live: true, current_turn_id: tid });
+    const client = {
+      ...cachedTurn(),
+      session: async () => liveSession,
+      turnStatus,
+      transcript: async () => (finished ? [completed] : []),
+    };
+    const first = renderSessionScreen({ session: liveSession, client, subscriptions: connected });
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getAllByText(waiting).length).toBeGreaterThan(0);
+
+    // The meta row still names the turn, but the registry already knows it ended.
+    finished = true;
+    await act(async () => {
+      window.dispatchEvent(new Event('online'));
+      await vi.advanceTimersByTimeAsync(251);
+    });
+    expect(turnStatus).toHaveBeenCalledWith('s1', tid);
+    expect(screen.queryByText(waiting)).not.toBeInTheDocument();
+    expect(screen.getByText(answer)).toBeInTheDocument();
+    first.unmount();
+
+    renderSessionScreen({
+      session: liveSession,
+      client: { ...client, cachedTranscript: () => [completed] },
+      subscriptions: connected,
+    });
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.queryByText(waiting)).not.toBeInTheDocument();
+    expect(screen.getByText(answer)).toBeInTheDocument();
+  });
 });

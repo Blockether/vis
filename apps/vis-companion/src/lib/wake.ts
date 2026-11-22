@@ -2,33 +2,51 @@ import { App } from '@capacitor/app';
 
 /**
  * Coalesce native resume, DOM visibility/pageshow and network recovery into one app-wide
- * wake event; native webviews do not reliably emit every DOM signal.
+ * wake event. A clock check also detects a pause without a lifecycle signal.
  */
 
-/** Time since the app last became inactive. */
-export type WakeInfo = { awayMs: number };
+/** Time the app was inactive or could not run JavaScript. */
+export type WakeInfo = { awayMs: number; foregroundGapMs?: number };
 
 type WakeListener = (info: WakeInfo) => void;
 type AwayListener = () => void;
 
 /** Collapse the burst of wake signals the platforms fire together. */
 const COALESCE_MS = 250;
+const CLOCK_CHECK_MS = 5_000;
+// Allow for normal timer delays, but do not wait for the SSE stall timeout.
+const FOREGROUND_GAP_MS = 15_000;
 
 const listeners = new Set<WakeListener>();
 const awayListeners = new Set<AwayListener>();
 let installed = false;
 let uninstallNative: (() => void) | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
+let clockCheck: ReturnType<typeof setInterval> | null = null;
+let lastClockCheckAt = 0;
+let foregroundGapMs = 0;
 // When the app went away, so a wake can say for how long. Null means "never
 // left" — a network `online` burst or a bfcache-less reload is a wake with no
 // absence behind it, and reporting 0 keeps those from being mistaken for one.
 let sleptAt: number | null = null;
 
+// Report a gap only when we did not get an away signal. Check from both the
+// timer and normal wake events so their order after a freeze does not matter.
+function checkClock(now: number): void {
+  const gap = now - lastClockCheckAt;
+  lastClockCheckAt = now;
+  if (sleptAt === null && gap >= FOREGROUND_GAP_MS) foregroundGapMs = gap;
+}
+
 function emit(): void {
   timer = null;
-  const awayMs = sleptAt === null ? 0 : Math.max(0, Date.now() - sleptAt);
+  const now = Date.now();
+  checkClock(now);
+  const info: WakeInfo = sleptAt === null && foregroundGapMs > 0
+    ? { awayMs: foregroundGapMs, foregroundGapMs }
+    : { awayMs: sleptAt === null ? 0 : Math.max(0, now - sleptAt) };
+  foregroundGapMs = 0;
   sleptAt = null;
-  const info: WakeInfo = { awayMs };
   for (const listener of [...listeners]) {
     try {
       listener(info);
@@ -43,6 +61,9 @@ function emit(): void {
 // before WebKit freezes them, while a duplicate signal has nothing left to do.
 function markAway(): void {
   if (sleptAt !== null) return;
+  if (timer !== null) clearTimeout(timer);
+  timer = null;
+  foregroundGapMs = 0;
   sleptAt = Date.now();
   for (const listener of [...awayListeners]) {
     try {
@@ -97,8 +118,18 @@ function install(): void {
   window.addEventListener('pagehide', markAway);
   window.addEventListener('focus', onVisibility);
   window.addEventListener('online', scheduleFromDom);
+  lastClockCheckAt = Date.now();
+  clockCheck = setInterval(() => {
+    const now = Date.now();
+    if (document.visibilityState === 'hidden') {
+      lastClockCheckAt = now;
+      return;
+    }
+    checkClock(now);
+    if (foregroundGapMs > 0) schedule();
+  }, CLOCK_CHECK_MS);
 
-  // Native resume: the one signal an iOS/Android webview always delivers.
+  // Native resume also works when DOM visibility is stale.
   // No-op on the web build, where the plugin is a stub.
   try {
     const pending: Array<{ remove: () => void }> = [];
@@ -138,6 +169,9 @@ function uninstall(): void {
   window.removeEventListener('online', scheduleFromDom);
   uninstallNative?.();
   uninstallNative = null;
+  if (clockCheck !== null) clearInterval(clockCheck);
+  clockCheck = null;
+  foregroundGapMs = 0;
   if (timer !== null) {
     clearTimeout(timer);
     timer = null;

@@ -5,7 +5,7 @@ import { Directory, Encoding, Filesystem, type FileInfo } from '@capacitor/files
 import { shareArtifact } from './artifact-share';
 import { APP_BUILD_COMMIT, APP_BUILD_NUMBER } from './build-info';
 import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL, APP_VERSION } from './compat';
-import { onAway, onWake } from './wake';
+import { onAway, onWake, type WakeInfo } from './wake';
 
 export type DiagnosticLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -420,7 +420,7 @@ function recordBackgrounded(): void {
   void flushDiagnostics();
 }
 
-function recordWake(awayMs: number): void {
+function recordWake({ awayMs, foregroundGapMs }: WakeInfo): void {
   const now = Date.now();
   const resumed = appState === 'background';
   if (resumed) wakeId += 1;
@@ -434,6 +434,7 @@ function recordWake(awayMs: number): void {
   recordDiagnostic('info', 'app', resumed ? 'resumed' : 'wake', {
     wake_id: wakeId,
     away_ms: Math.max(0, awayMs),
+    ...(foregroundGapMs === undefined ? {} : { foreground_gap_ms: foregroundGapMs }),
     inflight_request_count: inflightGatewayRequests.size,
     inflight_requests: inflightRequestDetails(now),
     // A white window after a return is either an empty tree or a page that does not paint.
@@ -620,7 +621,7 @@ export function installDiagnostics(): void {
   }
 
   onAway(recordBackgrounded);
-  onWake(({ awayMs }) => recordWake(awayMs));
+  onWake(recordWake);
 
   if (Capacitor.isNativePlatform()) {
     void CapacitorApp.getInfo()

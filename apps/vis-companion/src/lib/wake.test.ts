@@ -106,6 +106,16 @@ describe('foreground wake signals', () => {
     expect(wake).toHaveBeenCalledExactlyOnceWith({ awayMs: 0 });
   });
 
+  it('coalesces a foreground freeze with nearby lifecycle signals', async () => {
+    const { wake, away } = await subscribe();
+    vi.setSystemTime(Date.now() + 300_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+    window.dispatchEvent(new Event('online'));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(wake).toHaveBeenCalledExactlyOnceWith({ awayMs: 305_000, foregroundGapMs: 305_000 });
+    expect(away).not.toHaveBeenCalled();
+  });
+
   it('still refreshes after network recovery while visible', async () => {
     const { wake } = await subscribe();
     window.dispatchEvent(new Event('online'));

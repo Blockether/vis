@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { ReadableStream } from 'node:stream/web';
+import { TextEncoder } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayClient } from './gateway';
@@ -137,4 +139,53 @@ describe('gateway streams across native backgrounding', () => {
 
     hub.dispose();
   });
+});
+
+// A WebView can stop running JS with no native or DOM lifecycle event. After
+// it runs again, an open but silent stream must not hold the turn in flight.
+it('replays a missed turn completion after a silent foreground freeze', async () => {
+  const { GatewayClient } = await import('./gateway');
+  const { SessionSubscriptionHub } = await import('./subscriptions');
+  const attempts: { url: URL; signal: AbortSignal; send: (event: SseEvent) => void }[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: URL | string, { signal }: { signal: AbortSignal }) => ({
+    ok: true,
+    status: 200,
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        attempts.push({
+          url: new URL(url),
+          signal,
+          send: (event) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)),
+        });
+      },
+    }),
+  })));
+  const hub = new SessionSubscriptionHub(new GatewayClient({ url: 'https://gateway.example.com', token: 'test' }));
+  try {
+    const listener = vi.fn();
+    hub.subscribeSession('session-1', listener);
+    await vi.advanceTimersByTimeAsync(0);
+    const started: SseEvent = { type: 'turn.started', session_id: 'session-1', turn_id: 'turn-1', seq: 10 };
+    attempts[0]!.send(started);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(listener).toHaveBeenCalledExactlyOnceWith(started);
+
+    // Jump wall time without running any JS timers or firing lifecycle events.
+    vi.setSystemTime(Date.now() + 300_000);
+    expect(attempts).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(attempts[0]!.signal.aborted).toBe(true);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]!.url.searchParams.get('sids')).toBe('session-1:10');
+    const completed: SseEvent = { type: 'turn.completed', session_id: 'session-1', turn_id: 'turn-1', seq: 11 };
+    attempts[1]!.send(completed);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(listener).toHaveBeenLastCalledWith(completed);
+    expect(hub.hasEndedTurn('session-1', 'turn-1')).toBe(true);
+  } finally {
+    hub.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.unstubAllGlobals();
+  }
 });
