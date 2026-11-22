@@ -15,7 +15,8 @@
  * 3. TOKENS ONLY. Tailwind v4 utilities over the tokens in `index.css`: no
  *    component CSS, no inline styles, no hex. Surfaces and controls use square
  *    corners (`rounded-none`), including switches, chips, fields and sheets.
- * 4. TWO FACES, AND ONLY TWO. `sm:` answers "is there room" and owns layout;
+ * 4. TWO FACES, AND ONLY TWO. `sm:` answers "is there room" and owns layout
+ *    (in a live view, `narrow-pane:` asks the pane instead of the screen);
  *    only `mouse:` may make a control tighter (44px under a finger, 28px under a
  *    pointer). A control has no other responsive behaviour.
  * 5. IT SAYS ITS OWN NAME. Anything without a visible word takes a `label` and

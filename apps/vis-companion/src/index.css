@@ -20,12 +20,14 @@
    follows the POINTER, so the phone's touch sizes survive on iPad and a
    trackpad (`pointer: fine`, Magic Keyboard included) still gets the tight
    desktop rhythm. Layout — which columns exist, how wide the paper is — stays
-   on `sm:`, because that really is a question about room. */
+   on `sm:`, because that really is a question about room. In a live view the
+   pane answers it: see `narrow-pane:` below. */
 @custom-variant mouse (@media (width >= 40rem) and (pointer: fine));
 
 /* In a live view, "is there room" is a question about the pane, not the screen: a side
    panel is 360px wide on a 1280px screen. `narrow-pane:` asks the pane, at the width
-   where `sm:` asks the screen. */
+   where `sm:` asks the screen. Only `.live-view-panel` is this container, so the
+   variant matches nothing outside a live view. */
 @custom-variant narrow-pane (@container live-view (width < 40rem));
 
 /* Desktop hides scrollbar chrome everywhere, without disabling scrolling.
