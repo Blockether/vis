@@ -200,7 +200,7 @@ export function onGatewayIncompatible(listener: (error: GatewayError) => void): 
   };
 }
 
-const turnSubmissionListeners = new Set<(sid: string) => void>();
+const turnSubmissionListeners = new Set<(sid: string, gateway: string) => void>();
 
 /**
  * Hear each message that a gateway accepted from this device.
@@ -208,9 +208,9 @@ const turnSubmissionListeners = new Set<(sid: string) => void>();
  * The gateway ranks a session by its newest message as soon as it accepts it. A list
  * behind the open session hears this and reads its new order before the reader goes
  * back to it. Module-level on purpose: the composer and the list each hold their own
- * client.
+ * client. The base address identifies the gateway that accepted the message.
  */
-export function onTurnSubmitted(listener: (sid: string) => void): () => void {
+export function onTurnSubmitted(listener: (sid: string, gateway: string) => void): () => void {
   turnSubmissionListeners.add(listener);
   return () => {
     turnSubmissionListeners.delete(listener);
@@ -5985,7 +5985,7 @@ export class GatewayClient {
       idempotency_key: clientId,
       ...(options.comments?.length ? { comments: options.comments } : {}),
     });
-    for (const listener of turnSubmissionListeners) listener(sid);
+    for (const listener of turnSubmissionListeners) listener(sid, this.base);
     return submitted;
   }
 

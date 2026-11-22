@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, screen } from '@testing-library/react';
+import { act, fireEvent, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The fleet effects are the seam: `syncBadge` is keyed on the machines array itself, so
@@ -11,6 +11,7 @@ const badge = vi.hoisted(() => ({
 vi.mock('../lib/badge', () => badge);
 
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
+import { GatewayClient } from '../lib/gateway';
 
 import { forgetListScroll, parkedListScroll, rememberListScroll } from '../lib/list-scroll';
 
@@ -67,6 +68,49 @@ describe('a poll that changes nothing leaves the list alone', () => {
     expect(screen.getByText('First')).toBeVisible();
   });
 
+  it('reads only the changed project page after a poll', async () => {
+    const alpha = listSession({ id: 'a1', title: 'First', workspace: { root: '/work/alpha' } });
+    const beta = listSession({ id: 'b1', title: 'Second', workspace: { root: '/work/beta' } });
+    const view = renderSessionsScreen({ machines: [{ sessions: [alpha, beta] }] });
+    restore = view.restore;
+    await settle(50);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand beta' }));
+    await settle(50);
+
+    const pages = (root: string) => view.requests.filter(({ path }) =>
+      path.startsWith('/v1/sessions?') && path.includes(`root=${encodeURIComponent(root)}`),
+    ).length;
+    const before = [pages('/work/alpha'), pages('/work/beta')];
+    expect(before).toEqual([1, 1]);
+
+    view.setRows(0, [{ ...alpha, title: 'Changed' }, beta]);
+    await settle(5_000);
+
+    expect(screen.getByText('Changed')).toBeVisible();
+    expect([pages('/work/alpha'), pages('/work/beta')]).toEqual([2, 1]);
+  });
+
+  it('checks an open archive for edits the fleet window does not report', async () => {
+    const root = '/work/alpha';
+    const active = listSession({ id: 'active', title: 'Active', workspace: { root } });
+    const archived = listSession({ id: 'archived', title: 'Old title', workspace: { root }, archived_at: 1 });
+    const view = renderSessionsScreen({ machines: [{ sessions: [active, archived] }] });
+    restore = view.restore;
+    await settle(50);
+
+    fireEvent.click(screen.getByRole('button', { name: `Actions for sessions in ${root}` }));
+    fireEvent.click(screen.getByText('Show archived sessions'));
+    await settle(50);
+    expect(screen.getByText('Old title')).toBeVisible();
+
+    view.setRows(0, [active, { ...archived, title: 'New title' }]);
+    await settle(30_000);
+    expect(screen.getByText('Old title')).toBeVisible();
+    await settle(30_000);
+    expect(screen.getByText('New title')).toBeVisible();
+  });
+
   it('keeps polling while an iOS webview reports the document hidden', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
     const view = renderSessionsScreen({
@@ -103,6 +147,33 @@ describe('the list parked behind an open session', () => {
       isVisible: false,
       machines: [{ label: 'alpha', sessions: [listSession({ id: 'a1', title: 'First' })] }],
     });
+
+  it('reads only the accepting gateway after a turn is sent', async () => {
+    const view = renderSessionsScreen({
+      isVisible: false,
+      machines: [
+        { label: 'alpha', sessions: [listSession({ id: 'same', title: 'First' })] },
+        {
+          label: 'beta',
+          sessions: [listSession({ id: 'same', title: 'Second' })],
+          routes: { '/v1/sessions/same/turns': { turn_id: 'turn-1', status: 'queued' } },
+        },
+      ],
+    });
+    restore = view.restore;
+    await settle(50);
+    const reads = () => view.conns.map((conn) =>
+      listReads(view.requests.filter(({ machine }) => machine === conn.url)),
+    );
+    expect(reads()).toEqual([1, 1]);
+
+    await act(async () => {
+      await new GatewayClient(view.conns[1]!).submitTurn('same', 'Next question');
+    });
+    await settle(50);
+
+    expect(reads()).toEqual([1, 2]);
+  });
 
   it('reads its rows while nobody is looking at it', async () => {
     const view = parkedList();

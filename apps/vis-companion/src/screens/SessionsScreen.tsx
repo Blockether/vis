@@ -78,6 +78,7 @@ import {
   machineLabel,
   machineRead,
   projectGroups,
+  projectPath,
   readSinceCounted,
   searchGroups,
   reconcileMachines,
@@ -130,6 +131,8 @@ const STALE_POLL_MS = 20_000;
 // It stays a net — a stream can stop without saying so — just a slack one, and a
 // stream that drops puts the five-second cadence back on the very next tick.
 const STREAMED_POLL_MS = 30_000;
+// The fleet head does not report every edit on a deeper project page.
+const PROJECT_PAGE_CHECK_MS = 60_000;
 
 // Searching is a FLEET round trip — one ranked FTS query per paired machine, and on a
 // large store the gateway spends ~130ms in SQLite before it answers. Firing that per
@@ -393,11 +396,7 @@ export function SessionsScreen({
   // owns the session groups and sends no fleet frame when one is renamed, so this list's
   // own read is the only thing that revalidates the wall of a project already on screen.
   const [machineReads, setMachineReads] = useState<ReadonlyMap<string, number>>(() => new Map());
-  // ONLY THE SNAPSHOTS THAT MOVED SOMETHING, which is what a project's deeper page
-  // windows are revalidated from. An idle poll that answers with the rows already on
-  // screen is not news (see `settle`), and it must not charge the machine a full prefetch
-  // of every project on screen to learn that.
-  const [machineMoves, setMachineMoves] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const [pageCheck, setPageCheck] = useState(0);
   // READS ASKED FOR ONE PROJECT, by machine and then by root: a session was created or forked
   // there. Only that project reads its page and wall again; the others keep theirs.
   const [projectNudges, setProjectNudges] = useState<
@@ -472,7 +471,7 @@ export function SessionsScreen({
       superseded: boolean;
     }>(),
   );
-  const fleetRefreshQueued = useRef(false);
+  const gatewayRefreshes = useRef(new Set<string>());
   // The row action belongs to one session on one machine. Renaming edits its title
   // inline; deleting asks through `ConfirmRow` exactly where that session row stood.
   // Forking from the row copies the whole conversation; a turn cuts it in the transcript.
@@ -687,7 +686,6 @@ export function SessionsScreen({
             countedStopped === held.countedStopped
           )
             return;
-          if (!quiet) setMachineMoves((current) => new Map(current).set(key, (current.get(key) ?? 0) + 1));
           patchMachine(key, (machine) => ({
             ...machine,
             sessions: merged,
@@ -745,6 +743,14 @@ export function SessionsScreen({
     [patchMachine],
   );
 
+  const nudgeProject = useCallback((key: string, root: string) => {
+    setProjectNudges((current) => {
+      const roots = new Map(current.get(key) ?? []);
+      roots.set(root, (roots.get(root) ?? 0) + 1);
+      return new Map(current).set(key, roots);
+    });
+  }, []);
+
   // Optimistically update the star, revert on failure, then reload gateway-owned order.
   const toggleStar = useCallback(
     (session: Session, conn: GatewayConn) => {
@@ -771,11 +777,13 @@ export function SessionsScreen({
           await loadMachine(conn);
           // The gateway ranks a star first. The pages read that order again even when
           // the machine window looks unchanged, or the row waits for the next message.
-          setMachineMoves((current) => new Map(current).set(key, (current.get(key) ?? 0) + 1));
+          const overview = api.projectsOverview();
+          const root = overview?.projects.find((project) => project.project_id === session.project_id)?.root;
+          nudgeProject(key, (session.project_id && root) || projectPath(session));
         })
         .catch(() => patchMachine(key, withRank(before)));
     },
-    [loadMachine, patchMachine],
+    [loadMachine, nudgeProject, patchMachine],
   );
 
   // A down machine tile retries in place and reports only active progress or failure.
@@ -853,7 +861,9 @@ export function SessionsScreen({
       background = false,
       // Which paired machines this load reads. A partial poll skips the streamed one.
       only: (conn: GatewayConn) => boolean = () => true,
+      eventGateway?: string,
     ) => {
+      if (eventGateway !== undefined) gatewayRefreshes.current.add(eventGateway);
       if (background) {
         const started = pollStartedAt.current;
         if (started !== null && Date.now() - started < STALE_POLL_MS) return;
@@ -864,7 +874,6 @@ export function SessionsScreen({
       // is not in.
       const paired = connsRef.current;
       const dark = (conn: GatewayConn) => machineOutage(machineKey(conn)) !== null;
-      for (const conn of paired.filter(only).filter(dark)) reconnectMachine(conn);
       // A machine that has not answered in THIS run is read under `COLD_PROBE_TIMEOUT_MS`:
       // its cached rows are on screen behind an outline, and the outline must resolve.
       const unconfirmed = (conn: GatewayConn) =>
@@ -872,19 +881,22 @@ export function SessionsScreen({
           ?.answered !== true;
       try {
         do {
-          // A queued refresh asks for the whole fleet, also when it lands in a partial poll.
-          const reading = background && fleetRefreshQueued.current ? () => true : only;
-          if (background) fleetRefreshQueued.current = false;
+          // Read an event's own gateway, also when the event arrives during a partial poll.
+          const queued = background ? new Set(gatewayRefreshes.current) : null;
+          if (background) gatewayRefreshes.current.clear();
+          const selected = paired.filter((conn) => only(conn) || queued?.has(clientFor(conn).base));
+          only = () => false;
+          for (const conn of selected.filter(dark)) reconnectMachine(conn);
           await Promise.all(
-            paired
-              .filter((conn) => reading(conn) && !dark(conn))
+            selected
+              .filter((conn) => !dark(conn))
               .map((conn) =>
                 loadMachine(conn, signal, unconfirmed(conn) ? COLD_PROBE_TIMEOUT_MS : undefined),
               ),
           );
           // A terminal or reconnect during a slow poll still needs one fresh read.
           // Ordinary timer ticks remain droppable, and every response can paint.
-        } while (background && fleetRefreshQueued.current && !signal?.aborted);
+        } while (background && gatewayRefreshes.current.size > 0 && !signal?.aborted);
       } finally {
         if (background) pollStartedAt.current = null;
       }
@@ -977,6 +989,12 @@ export function SessionsScreen({
     // A connection identity change should preserve the existing frame until its data arrives.
   }, [dirtyOverlay, fleetKey, isVisible, load]);
 
+  useEffect(() => {
+    if (!isVisible) return;
+    const timer = window.setInterval(() => setPageCheck((check) => check + 1), PROJECT_PAGE_CHECK_MS);
+    return () => window.clearInterval(timer);
+  }, [isVisible]);
+
   // Apply a successful gateway deletion to exactly the machine that owned it. The
   // gateway already answered which ids disappeared, so neither a session nor a project
   // removal re-downloads the fleet merely to rediscover that answer.
@@ -1024,7 +1042,7 @@ export function SessionsScreen({
   // refresh the canonical window as well. A settled frame also needs that read to
   // warm the finished transcript before replacing LIVE with NEW.
   const applyFleetFrame = useCallback(
-    (event: SseEvent): boolean => {
+    (event: SseEvent, gateway: string): boolean => {
       // A copied title frame lives in every watched session's replay ring. Its
       // `session_id` names that ring; `titled_session_id` names the row that changed.
       const sid =
@@ -1036,8 +1054,11 @@ export function SessionsScreen({
               ? event.sid
               : '';
       if (!sid) return false;
+      const keys = new Set(connsRef.current
+        .filter((conn) => clientFor(conn).base === gateway)
+        .map(machineKey));
       const holders = machinesRef.current.filter((machine) =>
-        machine.sessions?.some((row) => row.id === sid),
+        keys.has(machineKey(machine.conn)) && machine.sessions?.some((row) => row.id === sid),
       );
       let update: Partial<Session>;
       if (event.type === 'session.status') {
@@ -1046,7 +1067,9 @@ export function SessionsScreen({
           machine.sessions?.some((row) => row.id === sid && row.live === true),
         );
         if (isSettling) {
-          for (const { updates } of fleetReads.current) updates.set(sid, null);
+          for (const { key, updates } of fleetReads.current) {
+            if (keys.has(key)) updates.set(sid, null);
+          }
           return false;
         }
         update = {
@@ -1061,7 +1084,8 @@ export function SessionsScreen({
       } else {
         return false;
       }
-      for (const { updates } of fleetReads.current) {
+      for (const { key, updates } of fleetReads.current) {
+        if (!keys.has(key)) continue;
         const previous = updates.get(sid);
         if (previous !== null || event.type === 'session.status')
           updates.set(sid, { ...previous, ...update });
@@ -1087,6 +1111,13 @@ export function SessionsScreen({
     [patchMachine],
   );
 
+  const refreshGateway = useCallback(
+    (gateway: string) => {
+      void load(undefined, true, () => false, gateway);
+    },
+    [load],
+  );
+
   useEffect(() => {
     // Same rule as the poll above: a lifecycle event cannot move a list nobody is
     // looking at, and the load on becoming visible answers with the gateway's
@@ -1096,10 +1127,7 @@ export function SessionsScreen({
     const readWindow = () => {
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
       // Coalesce lifecycle bursts, then ask the gateway for its canonical order.
-      refreshTimer = window.setTimeout(() => {
-        fleetRefreshQueued.current = true;
-        void load(undefined, true);
-      }, 120);
+      refreshTimer = window.setTimeout(() => refreshGateway(subscriptions.gatewayUrl), 120);
     };
     const stopState = subscriptions.subscribeFleetState((streaming) => {
       if (streaming && !fleetStreamingRef.current) {
@@ -1141,17 +1169,11 @@ export function SessionsScreen({
           return;
         }
         const key = machineKey(machine.conn);
-        void loadMachine(machine.conn, undefined, undefined, true).then(() =>
-          setProjectNudges((current) => {
-            const roots = new Map(current.get(key) ?? []);
-            roots.set(root, (roots.get(root) ?? 0) + 1);
-            return new Map(current).set(key, roots);
-          }),
-        );
+        void loadMachine(machine.conn, undefined, undefined, true).then(() => nudgeProject(key, root));
         return;
       }
       if (FLEET_ROW_EVENTS.has(event.type)) {
-        if (!applyFleetFrame(event)) readWindow();
+        if (!applyFleetFrame(event, subscriptions.gatewayUrl)) readWindow();
         return;
       }
       // The multiplexed SESSION stream reaches only what this device has VISITED, and
@@ -1167,19 +1189,15 @@ export function SessionsScreen({
       fleetStreamingRef.current = false;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [applyFleetFrame, forgetSessions, isVisible, load, loadMachine, subscriptions]);
+  }, [applyFleetFrame, forgetSessions, isVisible, loadMachine, nudgeProject, refreshGateway, subscriptions]);
 
   // A SENT MESSAGE MOVES ITS ROW AT ONCE, also behind the open session. The gateway
   // ranks a session by its newest message as soon as it accepts it, so read the window
   // now: the reader goes back to a list that already shows the new order. This is one
   // read for each message, not a poll, so a hidden list still does no repeated work.
   useEffect(
-    () =>
-      onTurnSubmitted(() => {
-        fleetRefreshQueued.current = true;
-        void load(undefined, true);
-      }),
-    [load],
+    () => onTurnSubmitted((_sid, gateway) => refreshGateway(gateway)),
+    [refreshGateway],
   );
 
   useLayoutEffect(() => {
@@ -1897,8 +1915,8 @@ export function SessionsScreen({
         reading: {
           pageSize,
           isVisible,
-          revision: machineMoves.get(machineKey(entry.machine.conn)) ?? 0,
           reads: machineReads.get(machineKey(entry.machine.conn)) ?? 0,
+          pageCheck,
           nudges: projectNudges.get(machineKey(entry.machine.conn)),
         },
         // Keep canonical gateway paths for identity and creation; shorten only for paint.
@@ -1910,7 +1928,7 @@ export function SessionsScreen({
           stoppedReadSinceCounted(entry.machine, (session) => isRowSeen(entry.machine.conn, session)),
         ),
       })),
-    [listed, pageSize, isVisible, isRowUnread, isRowSeen, machineMoves, machineReads, projectNudges],
+    [listed, pageSize, isVisible, isRowUnread, isRowSeen, machineReads, pageCheck, projectNudges],
   );
   const foundSections = useMemo(
     () =>

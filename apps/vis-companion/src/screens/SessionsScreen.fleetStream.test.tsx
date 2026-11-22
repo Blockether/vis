@@ -400,6 +400,7 @@ describe('a session list carried by the fleet stream', () => {
       subscriptions: fleet.hub as never,
     });
     restore = view.restore;
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
     await settle(50);
 
     await fleet.emit({
@@ -529,6 +530,7 @@ describe('a session list carried by the fleet stream', () => {
       subscriptions: fleet.hub as never,
     });
     restore = view.restore;
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
     await settle(200);
     expect(screen.queryByText('LIVE')).toBeNull();
     if (signal === 'connection') await fleet.streaming(false);
@@ -550,6 +552,7 @@ describe('a session list carried by the fleet stream', () => {
       subscriptions: fleet.hub as never,
     });
     restore = view.restore;
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
     await settle();
     routes['/v1/sessions'] = sessionsWindow(
       [{ ...row, live: true }],
@@ -577,6 +580,7 @@ describe('a session list carried by the fleet stream', () => {
       machines: [{ sessions: [listSession({ id: 's1', title: 'First', live: true })] }],
       subscriptions: fleet.hub as never,
     });
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
     restore = () => {
       read.mockRestore();
       view.restore();
@@ -608,6 +612,7 @@ describe('a session list carried by the fleet stream', () => {
       subscriptions: fleet.hub as never,
     });
     restore = view.restore;
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
     await settle(cold ? 0 : 200);
     if (!cold) {
       expect(screen.queryByText('LIVE')).toBeNull();
@@ -694,6 +699,7 @@ describe('a session list carried by the fleet stream', () => {
       subscriptions: fleet.hub as never,
     });
     restore = view.restore;
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
     await settle(200);
     view.holdList();
     await settle(30_000);
@@ -788,6 +794,7 @@ describe('a session list carried by the fleet stream', () => {
     restore = view.restore;
     await settle(200);
     const streamed = machineReads(view, 0);
+    const other = machineReads(view, 1);
     // The five-second tick starts a partial poll, and the list read stays open.
     view.holdList();
     await settle(5_000);
@@ -797,5 +804,6 @@ describe('a session list carried by the fleet stream', () => {
     view.releaseList();
     await settle(0);
     expect(machineReads(view, 0)).toBe(streamed + 1);
+    expect(machineReads(view, 1)).toBe(other + 1);
   });
 });

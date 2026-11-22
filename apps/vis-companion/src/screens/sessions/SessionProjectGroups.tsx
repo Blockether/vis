@@ -628,18 +628,16 @@ export type SessionRowsContext = {
 export type ProjectGroupReading = {
   pageSize: number;
   isVisible: boolean;
-  /**
-   * Snapshots of this machine that MOVED something: a page window outside the unchanged
-   * head window may have moved with them, so the pages are read again.
-   */
+  /** Ask this project to read its page again. */
   revision?: number;
   /**
    * Every accepted snapshot of this machine, moved or not. The gateway owns the session
    * groups and announces no frame for them, so the list's own read is the only safety net
-   * a renamed, added or removed band has. It revalidates the WALL and nothing else: the
-   * page windows beside it cost three reads a poll and are driven by `revision`.
+   * a renamed, added or removed band has. It checks the wall, not the page windows.
    */
   reads?: number;
+  /** Check pages occasionally for edits outside the machine's window. */
+  pageCheck?: number;
   /**
    * Reads asked for ONE project, by its root: a session was created or forked there. Each
    * step reads that project's page and wall again, and leaves the other projects alone.
@@ -739,13 +737,18 @@ export const ProjectGroup = memo(function ProjectGroup({
 }) {
   const { label: project, root, sessions, tally } = group;
   const { conn } = machine;
-  // The rows this project holds in the machine's window. Its pages are read again when
-  // these change, not when a row of another project does.
+  // Read this project's page when its rows or counts change, not for a change in
+  // a different project.
   const ownRows = useMemo(() => JSON.stringify(sessions), [sessions]);
   const { getClient, drafts, needle, actions: rowActions, openRow, previewId, preview, readFloors } = context;
   const { pageSize, isVisible, nudges } = reading;
   const nudge = nudges?.get(root) ?? 0;
-  const revision = (reading.revision ?? 0) + nudge;
+  // The overview counts the whole project, including rows outside the fleet window.
+  const revision = useMemo(
+    () => JSON.stringify([tally, reading.revision, nudge]) + ownRows,
+    [tally, reading.revision, nudge, ownRows],
+  );
+  const pageCheck = reading.pageCheck;
   const reads = (reading.reads ?? 0) + nudge;
   const { state: creating, start: onNewSession, importSnapshot } = creation;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
@@ -1058,7 +1061,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     };
   }, [
     conn, root, start, pageSize, isVisible, isShowing, searching, archived, bandWindow,
-    bandOffset, ownRows, getClient, groupsRead, revision, noteRefresh,
+    bandOffset, getClient, groupsRead, revision, pageCheck, noteRefresh,
   ]);
   // Tail pages omit grouped rows. Read them separately there and when archive views differ.
   // The limit applies to loose rows; grouped rows cover the complete band window.
@@ -1098,7 +1101,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     };
   }, [
     conn, root, isVisible, isShowing, searching, groupArchived, readGroupsAside, bandWindow,
-    bandOffset, ownRows, getClient, groupsRead, revision, noteRefresh,
+    bandOffset, getClient, groupsRead, revision, pageCheck, noteRefresh,
   ]);
   // The count under the header and the pages beside it are ONE number — the
   // project's own total, as the gateway counted it. Under a query the complete
