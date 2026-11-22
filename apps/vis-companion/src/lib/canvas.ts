@@ -212,6 +212,29 @@ function outline(width: number, height: number, shape: CanvasShape, rounded = 12
   return segments;
 }
 
+/** The point of the outline of a shape nearest the top right corner of its box. */
+export function canvasShapeCorner(shape: CanvasShape, width: number, height: number): Point {
+  let best = xy(width, 0);
+  let nearest = Infinity;
+  for (const seg of outline(width, height, shape)) {
+    for (let i = 0; i <= 32; i++) {
+      const t = i / 32;
+      let p: Point;
+      if (seg.kind === 'arc') {
+        const angle = (seg.quadrant + t) * Math.PI / 2;
+        p = xy(seg.centre.x + seg.rx * Math.cos(angle), seg.centre.y + seg.ry * Math.sin(angle));
+      } else if (seg.kind === 'quad') {
+        const s = 1 - t;
+        p = xy(s * s * seg.a.x + 2 * s * t * seg.control.x + t * t * seg.b.x,
+          s * s * seg.a.y + 2 * s * t * seg.control.y + t * t * seg.b.y);
+      } else p = xy(seg.a.x + (seg.b.x - seg.a.x) * t, seg.a.y + (seg.b.y - seg.a.y) * t);
+      const d = (p.x - width) ** 2 + p.y ** 2;
+      if (d < nearest) { nearest = d; best = p; }
+    }
+  }
+  return best;
+}
+
 export function canvasShapePath(shape: CanvasShape, width: number, height: number): string {
   const segments = outline(width, height, shape);
   const commands = segments.map((seg) => {

@@ -11,6 +11,7 @@ import { pictureFacts, pictureSource } from '../lib/app-image';
 import {
   canvasItemMinHeight,
   canvasShapeDetail,
+  canvasShapeCorner,
   canvasShapePath,
   type CanvasBox,
 } from '../lib/canvas';
@@ -217,6 +218,12 @@ const TALK_WORD: Record<CanvasTalkState, string> = {
   resolved: 'resolved',
 };
 
+/** The place of the mark of a discussion on a shape. The mark centres 10 px in from its own corner. */
+function cornerOf(card: LiveCanvasCard, box: CanvasBox): CSSProperties {
+  const at = canvasShapeCorner(card.shape, box.width, box.height);
+  return { right: box.width - at.x - 10, top: at.y - 10 };
+}
+
 /**
  * The discussion of an item, at its corner. With messages it shows their count and
  * the state by its icon. Without messages it is the control that starts a comment:
@@ -228,12 +235,15 @@ function TalkMark({
   state,
   isOpen,
   onOpen,
+  corner,
 }: {
   title: string;
   count: number;
   state?: CanvasTalkState;
   isOpen: boolean;
   onOpen: () => void;
+  /** The corner of a shape: its outline, not the empty corner of its box. */
+  corner?: CSSProperties;
 }) {
   // The mark grows against the camera around the corner of its item.
   const reach =
@@ -252,6 +262,7 @@ function TalkMark({
         className={`pointer-events-none absolute -right-2.5 -top-2.5 z-10 flex size-5 cursor-pointer items-center justify-center border opacity-0 transition-opacity duration-150 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [[data-canvas][data-commenting=true]_&]:pointer-events-auto [[data-canvas][data-commenting=true]_&]:opacity-100 mouse:group-hover/item:pointer-events-auto mouse:group-hover/item:opacity-100 motion-reduce:transition-none ${
           isOpen ? 'pointer-events-auto opacity-100' : ''
         } ${face} ${reach}`}
+        style={corner}
         onClick={onOpen}
       >
         <PlusIcon className="size-3" />
@@ -268,6 +279,7 @@ function TalkMark({
       className={`absolute -right-2.5 -top-2.5 z-10 flex h-5 min-w-5 cursor-pointer items-center gap-1 border px-1 font-mono text-meta font-bold tabular-nums transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent motion-reduce:transition-none ${
         state === 'resolved' && !isOpen ? 'border-dashed' : ''
       } ${face} ${reach}`}
+      style={corner}
       onClick={onOpen}
     >
       {state === 'resolved' ? (
@@ -652,6 +664,7 @@ function Item({
             state={talkState}
             isOpen={isTalkOpen}
             onOpen={() => onTalk(card.id)}
+            corner={isShape ? cornerOf(card, box) : undefined}
           />
         )}
       </div>
