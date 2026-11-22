@@ -1382,13 +1382,15 @@
     (let [ext-ns (:ext/name ext)
           sym (:ext.symbol/symbol sym-entry)
           t0 (System/nanoTime)
-          _ (log-hook! :warn
+          ;; An interrupt is a stop that the caller asked for, not a problem. An
+          ;; exception without a message is named by its class.
+          _ (log-hook! (if (instance? InterruptedException err) :info :warn)
                        ::on-error-fn
                        ext-ns
                        sym
                        :on-error-fn
                        nil
-                       (str "handling: " (ex-message err)))
+                       (str "handling: " (or (ex-message err) (.getName (class err)))))
           ret (try (call-hook ":on-error-fn" sym on-error [err env f args])
                    (catch Throwable e
                      (if (identical? e err)

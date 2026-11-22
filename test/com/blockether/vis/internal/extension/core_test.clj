@@ -14,7 +14,8 @@
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.workspace.core :as workspace]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]]
+            [taoensso.telemere :as tel]))
 
 (defn- sample-channel-fn [& _] nil)
 
@@ -1460,6 +1461,11 @@
   [_]
   (throw (InterruptedException. "cancelled")))
 
+(defn activity-interrupt-probe
+  "Observed test operation that a stop interrupts: the exception has no message."
+  [_]
+  (throw (InterruptedException.)))
+
 (defn activity-diff-probe
   "Observed write operation whose internal envelope carries renderer metadata."
   [_]
@@ -1585,6 +1591,26 @@
         (expect (= [:start :terminal] (mapv :phase @events)))
         (expect (true? (:failed (second @events))))
         (expect (nil? (:cancelled (second @events))))))
+  ;; Log triage 2026-11-22: a stopped `_shell-wait` logged a warning that ended in
+  ;; `handling: ` with no text, because an interrupt has no message.
+  (it "logs an interrupted call below the problem levels and names the exception"
+      (let [sym
+            (extension/symbol #'activity-interrupt-probe
+                              {:tag :observation
+                               :on-error-fn (fn [_err _env _f _args]
+                                              {:result (extension/success {:result nil})})})
+
+            ext
+            {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
+
+            {:keys [signals]}
+            (tel/with-signals (extension/invoke-symbol-wrapper ext sym [{}] {}))
+
+            handled
+            (first (filter #(= ::extension/on-error-fn (:id %)) signals))]
+
+        (expect (= :info (:level handled)))
+        (expect (str/ends-with? (:msg_ handled) "handling: java.lang.InterruptedException"))))
   ;; Regression, issue td-e72bfd: the generic live ticker truncated a path at 64
   ;; characters before the width-aware Activity row could use available columns.
   (it "preserves the primary path until the bounded Activity event boundary"
