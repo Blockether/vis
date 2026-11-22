@@ -4,7 +4,8 @@
             [com.blockether.vis.tui.canvas-map :as map*]
             [com.blockether.vis.tui.primitives :as p]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna TerminalPosition]
+  (:import [com.googlecode.lanterna TerminalPosition TextColor$ANSI]
+           [com.googlecode.lanterna.graphics BasicTextImage]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]))
 
 (defn- board
@@ -341,3 +342,27 @@
                                  (mapv + (:position camera) point)))]
       (expect (= :near (:level zoomed)))
       (expect (= "5" (under camera) (under zoomed))))))
+
+(defdescribe map-selection
+  (it "marks selection separately from focus even when the inks match"
+    (let [[w h :as viewport] [80 20]
+          node (assoc (board 12) :focus "0")
+          camera (map*/reconcile {} node viewport 0)
+          ink TextColor$ANSI/WHITE
+          inks {:paper TextColor$ANSI/BLACK :card ink :edge ink :selected ink}
+          marker (fn [camera selected id]
+                   (let [plan (map*/plan-for node (:level camera) viewport)
+                         image (BasicTextImage. (int w) (int h))
+                         {:keys [x y h]} (get-in plan [:boxes id])
+                         [left top] (map*/clamp-camera plan viewport (map*/camera-at camera 0))
+                         offset (if (> (long h) 1) 1 0)]
+                     (map*/paint! (.newTextGraphics image) plan camera [0 0] viewport 0 nil inks selected)
+                     (.getCharacterString (.getCharacterAt image
+                                                           (int (+ (- (long x) (long left)) offset))
+                                                           (int (+ (- (long y) (long top)) offset))))))
+          overview (map*/fit camera node viewport 0)]
+      (expect (= :overview (:level (map*/plan-for node (:level overview) viewport))))
+      (expect (not= (marker camera #{} "1") (marker camera #{"1"} "1")))
+      (expect (= (marker camera #{} "0") (marker camera #{"1"} "0")))
+      (expect (not= (marker overview #{} "1") (marker overview #{"1"} "1")))
+      (expect (not= (marker overview #{} "0") (marker overview #{"0"} "0"))))))

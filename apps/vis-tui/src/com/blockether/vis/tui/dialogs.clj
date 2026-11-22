@@ -207,31 +207,28 @@
           rows
           (.getRows size)
 
-          snapshot
-          (mapv (fn [row]
-                  (mapv (fn [col]
-                          (.getBackCharacter screen (int col) (int row)))
-                        (range cols)))
-                (range rows))]
+          ^"[Lcom.googlecode.lanterna.TextCharacter;" snapshot
+          (make-array TextCharacter (* (long cols) (long rows)))]
 
-      (fn restore! ([] (restore! 0 0 (dec (long cols)) (dec (long rows)))) ([from to] (restore! 0
-                                                                                        from
-                                                                                        (dec
-                                                                                          (long
-                                                                                            cols))
-                                                                                        to))
-        ([left top right bottom] (doseq [row
-                                         (range (max 0 (long top))
-                                                (min (long rows) (inc (long bottom))))
-
-                                         col
-                                         (range (max 0 (long left))
-                                                (min (long cols) (inc (long right))))]
-
-                                   (.setCharacter screen
-                                                  (int col)
-                                                  (int row)
-                                                  ^TextCharacter (get-in snapshot [row col]))))))))
+      (dotimes [row rows]
+        (let [offset (* row (long cols))]
+          (dotimes [col cols]
+            (aset snapshot (+ offset col) (.getBackCharacter screen (int col) (int row))))))
+      (fn restore!
+        ([] (restore! 0 0 (dec (long cols)) (dec (long rows))))
+        ([from to] (restore! 0 from (dec (long cols)) to))
+        ([left top right bottom]
+         (let [start (max 0 (long left))
+               end (min (long cols) (inc (long right)))
+               stop (min (long rows) (inc (long bottom)))]
+           (loop [row (max 0 (long top))]
+             (when (< row stop)
+               (let [offset (* row (long cols))]
+                 (loop [col start]
+                   (when (< col end)
+                     (.setCharacter screen (int col) (int row) (aget snapshot (+ offset col)))
+                     (recur (inc col)))))
+               (recur (inc row))))))))))
 
 (defn- capture-modal-background
   "Capture the host's cells and cursor before a modal starts painting."
@@ -1180,7 +1177,13 @@
         (when (< (inc box-bottom) rows) (p/fill-rect! g box-left (inc box-bottom) 2 1)))
       (when (and (pos? shd-w) (pos? shd-h))
         (p/set-bg! g t/dialog-shadow)
-        (p/fill-rect! g shd-left shd-top shd-w shd-h)))
+        (let [right-start (max shd-left (inc box-right))
+              right-w (- (+ shd-left shd-w) right-start)
+              right-h (min shd-h (- (inc box-bottom) shd-top))]
+          (when (and (pos? right-w) (pos? right-h))
+            (p/fill-rect! g right-start shd-top right-w right-h))
+          (when (> shd-h right-h)
+            (p/fill-rect! g shd-left (+ shd-top right-h) shd-w (- shd-h right-h))))))
     ;; Background
     (p/set-bg! g t/dialog-bg)
     (p/fill-rect! g box-left box-top box-w box-h)

@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Terminal: a selected item on the canvas map shows the sign `●` before its title. Before, only a colour marked it, and some themes showed no difference.
 - Terminal: a sideways touchpad swipe does not scroll down. Lanterna 3.1.5-vis.65 reports it as a horizontal wheel step, and it keeps Shift, Alt, and Ctrl on a mouse event.
 - Companion: when the owner changes the camera of a canvas or locks it, an active mouse drag or a pinch on Safari stops. Before, the gesture could change the new camera again.
 - Companion: Fit keeps the full canvas board in view when the panel changes size or the board changes, also when the owner sets a different camera.

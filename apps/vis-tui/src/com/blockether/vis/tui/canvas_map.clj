@@ -4,7 +4,8 @@
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.tui.primitives :as p])
   (:import [com.blockether.vis.render BoundedCache]
-           [com.googlecode.lanterna TerminalTextUtils]))
+           [com.googlecode.lanterna TerminalTextUtils]
+           [com.googlecode.lanterna.graphics TextGraphics]))
 
 (set! *warn-on-reflection* true)
 
@@ -1121,18 +1122,39 @@
     (into [] (keep #(crop-run % left top right)) visible)))
 
 (defn selected-run?
-  [r focus selected]
-  (if (#{:edge :edge-label} (:kind r))
-    (boolean (some #{focus} (:id r)))
-    (or (= focus (:id r)) (contains? selected (:id r)))))
+  [{:keys [kind id]} focus selected]
+  (case kind
+    (:edge :edge-label) (let [[from to] id] (or (= focus from) (= focus to)))
+    (or (= focus id) (contains? selected id))))
+
+(defn- paint-selection!
+  [g plan st [left top] [w h :as viewport] now ink paper mods selected]
+  (let [[cx cy] (clamp-camera plan viewport (camera-at st now))
+        boxes (:boxes plan)
+        overview? (= :overview (:level plan))
+        focused (get boxes (:focus st))]
+    (doseq [id selected]
+      (when-let [{:keys [x y] bh :h :as box} (get boxes id)]
+        (let [tile? (= 1 bh)
+              col (- (+ (long x) (if tile? 0 1)) (long cx))
+              row (- (+ (long y) (if (or tile? (frame? box)) 0 1)) (long cy))
+              mark (if (and overview? (= x (:x focused)) (= y (:y focused))) "◈" "●")]
+          (when (and (<= 0 col) (< col (long w)) (<= 0 row) (< row (long h)))
+            (p/blit-line! g (+ (long left) col) (+ (long top) row) mark ink paper mods)))))))
 
 (defn paint!
-  "Paint the visible map without measuring card content."
-  [g plan st [left top] viewport now step inks selected]
-  (doseq [{:keys [x y text kind] :as r} (runs plan st viewport now step)]
-    (p/set-colors! g
-                   (get inks (cond (selected-run? r (:focus st) selected) :selected
-                               (= kind :edge-label) :edge
-                               :else kind))
-                   (:paper inks))
-    (p/put-str! g (+ (long left) (long x)) (+ (long top) (long y)) text)))
+  "Paint the visible map and mark selected cards."
+  [^TextGraphics g plan st [left top :as origin] viewport now step inks selected]
+  (let [mods (.getActiveModifiers g)
+        paper (:paper inks)
+        focus (:focus st)
+        left (long left)
+        top (long top)]
+    (doseq [{:keys [x y text kind] :as r} (runs plan st viewport now step)]
+      (let [ink (get inks (cond (selected-run? r focus selected) :selected
+                            (= kind :edge-label) :edge
+                            :else kind))]
+        (p/blit-line! g (+ left (long x)) (+ top (long y))
+                      (TerminalTextUtils/sanitizeForPaint text) ink paper mods)))
+    (when (seq selected)
+      (paint-selection! g plan st origin viewport now (:selected inks) paper mods selected))))
