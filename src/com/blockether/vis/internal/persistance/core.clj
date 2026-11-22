@@ -63,6 +63,7 @@
   "Every operation a persistence backend implements. The first argument is the
    store `db-create-connection!` opened, or nil when there is none; every value
    dispatches to the SQLite backend."
+  (db-store-version [db-info])
   (db-workspace-insert! [db-info opts])
   (db-workspace-update-state! [db-info workspace-id new-state])
   ;; Label override + focus stamp + per-repo focus pointer.

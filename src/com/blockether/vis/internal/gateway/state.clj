@@ -176,6 +176,19 @@
 ;;                :last-active epoch-ms}
 (defonce ^:private registry (atom {}))
 
+(defonce ^:private session-list-generation (atom 0))
+
+(doseq [source [registry loop-env/cache]]
+  (add-watch source ::session-list
+             (fn [_ _ before after]
+               (when-not (identical? before after) (swap! session-list-generation inc)))))
+
+(def ^:dynamic ^:private *session-list-validation* nil)
+
+(defn- skip-session-list-cache!
+  []
+  (when *session-list-validation* (vreset! (:valid? *session-list-validation*) false)))
+
 (defn- sid-key
   "THE key one session has in the registry, whatever spelling the caller holds.
 
@@ -200,7 +213,7 @@
 (defn- session-entry
   "`sid`'s registry record, or nil when this process never touched the session."
   [sid]
-  (get @registry (sid-key sid)))
+  (get (or (:registry *session-list-validation*) @registry) (sid-key sid)))
 
 (defn- client-subscriber?
   "True for the sink of a client stream. An in-process turn waiter (`gateway-sync-…`,
@@ -249,7 +262,7 @@
 (defn- turn-record
   "One turn's internal, keyword-keyed record."
   [sid tid]
-  (get-in @registry [(sid-key sid) :turns tid]))
+  (get-in (or (:registry *session-list-validation*) @registry) [(sid-key sid) :turns tid]))
 
 (defn- read-turn-record
   ([turn]
@@ -490,7 +503,7 @@
                                                   (update-in entry [:turns tid] merge metadata)
                                                   entry))))
                   metadata))
-              (catch Exception _ nil)))))))
+              (catch Exception _ (skip-session-list-cache!) nil)))))))
 
 (def ^:private turn-execution-keys
   "Execution inputs and hooks of a turn record. `:engine-opts` holds the settings snapshot
@@ -1721,7 +1734,9 @@
   "The session's LIVE env, or nil. A cache lookup only: hot render paths must not
    build or resume an environment for an idle session."
   [sid]
-  (try (lp/live-env-for sid) (catch Throwable _ nil)))
+  (if *session-list-validation*
+    (:environment (get (:envs *session-list-validation*) (loop-env/cache-key sid)))
+    (try (lp/live-env-for sid) (catch Throwable _ nil))))
 
 (defn- resolve-state-id
   "Latest session_state id for soul `sid`, falling back to the id stamped on the
@@ -1748,7 +1763,7 @@
    clients group the list by, so a `root=` window is exactly one project's
    column of the navigator."
   [db id]
-  (try (:root (resolve-workspace db id)) (catch Throwable _ nil)))
+  (try (:root (resolve-workspace db id)) (catch Throwable _ (skip-session-list-cache!) nil)))
 
 (defn- group-project-root
   "Folder of the project that owns session group `group-id`, or nil."
@@ -1759,14 +1774,16 @@
                 (persistance/db-get-project (lp/db-info))
                 :workspace-root
                 not-empty)
-       (catch Throwable _ nil)))
+       (catch Throwable _ (skip-session-list-cache!) nil)))
 
 (defn- session-project-roots
   "The project root of each session by string id, read in one batch: the value that
    `session-project-root` reads with two queries for one session. A session that is
    missing here, such as a new one with only a live env, keeps the single read."
   [db]
-  (or (try (persistance/db-session-workspace-roots db) (catch Throwable _ nil)) {}))
+  (or (try (persistance/db-session-workspace-roots db)
+           (catch Throwable _ (skip-session-list-cache!) nil))
+      {}))
 
 (defn- listed-project-root
   "Folder of the project that lists session `id`. A session in a group is in the
@@ -1857,7 +1874,9 @@
 (defn- root-agent-name
   "The agent name configured for workspace `root`, or the global name for nil."
   [root]
-  ((or *agent-name-for-root* config/agent-name) root))
+  (let [agent-name ((or *agent-name-for-root* config/agent-name) root)]
+    (when *session-list-validation* (vswap! (:names *session-list-validation*) assoc root agent-name))
+    agent-name))
 
 (defn session-agent-name
   "Resolve identity on the gateway from this session's workspace, never a client's cwd."
@@ -2901,6 +2920,7 @@
   [data fallback f]
   (try (f)
        (catch Throwable t
+         (skip-session-list-cache!)
          (tel/log!
            {:level :warn :id ::read-failed :data (assoc data :error (ex-message t)) :error t}
            "gateway: a store read failed; the answer uses its fallback")
@@ -7915,7 +7935,9 @@
           ;; A marker naming a turn THIS registry already holds at a terminal is a
           ;; stale announcement (the write that retracts it never landed): heal it
           ;; instead of reporting the ended turn as running until the gateway dies.
-          live-turn-id (bus/live-turn-id sid)
+          live-turn-id (if *session-list-validation*
+                          (get (:live *session-list-validation*) (str sid))
+                          (bus/live-turn-id sid))
           current-turn-id (or (:current-turn entry)
                               (when live-turn-id
                                 (if (contains? #{"completed" "failed" "cancelled" "suspended"}
@@ -7951,8 +7973,13 @@
           ;; read — no extra query, so every list row carries it and a client never
           ;; has to follow up with `GET /v1/sessions/:sid/model` to name the model it
           ;; will run on. An unflushed pick (600ms debounce) still wins over the row.
-          model-pref (let [[pending? v] (smodel/pending-pref sid)]
-                       (if pending? v (:model-pref session)))]
+          model-pref (let [[pending? v :as pending] (smodel/pending-pref sid)]
+                        (when *session-list-validation*
+                          (let [models (:models *session-list-validation*)
+                                id (str sid)]
+                            (when (not= pending (get @models id pending)) (skip-session-list-cache!))
+                            (vswap! models assoc id pending)))
+                        (if pending? v (:model-pref session)))]
 
       (wire/canonical
         (cond-> {:id (str (:id session))
@@ -8000,11 +8027,15 @@
                  ;; that will move it is the operator. Cross-process (see
                  ;; `bus/waiting-requests`), so the phone, the TUI picker and this
                  ;; gateway's own list all say INPUT NEEDED about the same session.
-                 :is_awaiting_input (bus/session-waiting? sid)
+                 :is_awaiting_input (if *session-list-validation*
+                                       (boolean (seq (get (:waiting *session-list-validation*) (str sid))))
+                                       (bus/session-waiting? sid))
                  ;; …and HOW MANY. One boolean for N open requests is why
                  ;; answering one of two left INPUT NEEDED lit with nothing
                  ;; saying a second request was still parked behind it.
-                 :awaiting_input_count (bus/session-waiting-count sid)
+                 :awaiting_input_count (if *session-list-validation*
+                                          (count (get (:waiting *session-list-validation*) (str sid)))
+                                          (bus/session-waiting-count sid))
                  :current_turn_id current-turn-id
                  :turn_count (long (or (:turn-count stats) 0))
                  :answer_count (long (or (:answer-count stats) 0))
@@ -9283,7 +9314,9 @@
                           (remove (fn [[id _]]
                                     (contains? marks id))))
                     rows)]
-    (when (seq fresh) (try (lp/seed-session-read-marks! reader-id fresh) (catch Throwable _ nil)))))
+    (when (seq fresh)
+      (skip-session-list-cache!)
+      (try (lp/seed-session-read-marks! reader-id fresh) (catch Throwable _ nil)))))
 
 (defn- session-scope-rows
   "Apply root, project and OR-group membership before search or list budgets."
@@ -9311,6 +9344,54 @@
       (some? groups)
       (filterv (fn [row]
                  (contains? groups (str (:group-id row))))))))
+
+(defn- session-list-live
+  []
+  (or (:live *session-list-validation*) (read-or {:read :live-turns} {} bus/live-turns)))
+
+(defn- session-list-waiting
+  []
+  (or (:waiting *session-list-validation*) (bus/waiting-requests)))
+
+(defn session-list-version
+  "Read the shared list inputs. Return nil if the store has no stable version."
+  []
+  (try (when-let [db (persistance/db-store-version (lp/db-info))]
+         {:db db
+          :generation @session-list-generation
+          :overview-epoch @projects-overview-epoch
+          :workspace-epoch (workspace/root-change-count)
+          :registry @registry
+          :envs @loop-env/cache
+          :live (bus/live-turns)
+          :waiting (bus/waiting-requests)})
+       (catch Exception _ nil)))
+
+(defn same-session-list-version?
+  "Compare two probes without comparing registry entries."
+  [before after]
+  (and before
+       after
+       (identical? (:registry before) (:registry after))
+       (identical? (:envs before) (:envs after))
+       (= (dissoc before :registry :envs) (dissoc after :registry :envs))))
+
+(defn session-list-inputs-current?
+  "Check the names and model picks that the list used."
+  [{:keys [names models]}]
+  (try (and (every? (fn [[root agent-name]] (= agent-name (config/agent-name root))) names)
+            (every? (fn [[id pref]] (= pref (smodel/pending-pref id))) models))
+       (catch Exception _ false)))
+
+(defn capture-session-list-inputs
+  "Build the list and record the configuration and model picks that it used."
+  [version build]
+  (let [names (volatile! {})
+        models (volatile! {})
+        valid? (volatile! true)
+        answer (binding [*session-list-validation* (assoc version :names names :models models :valid? valid?)]
+                 (build))]
+    [answer (when @valid? {:names @names :models @models})]))
 
 (defn list-sessions-page
   "A WINDOW of the navigator list, in the gateway's own order:
@@ -9447,7 +9528,7 @@
          ;; A running session is never empty, so liveness decides whether a
          ;; title-less row is in the list at all. Cached per `bus/live-turns`.
          live
-         (read-or {:read :live-turns} {} bus/live-turns)
+         (session-list-live)
 
          unsent
          (into #{} (comp (map str) (remove str/blank?)) dirty)
@@ -9550,7 +9631,7 @@
                     #(persistance/db-session-page-facts db
                                                         (concat (map :id window)
                                                                 (when-not cursor (map :id filed))
-                                                                (keys (bus/waiting-requests))))))
+                                                                (keys (session-list-waiting))))))
 
          page-soul
          (fn [sid]
@@ -9580,7 +9661,7 @@
          ;; which is a handful, and cut to the same channel/root as the listing.
          awaiting
          (let [listed (into #{} (map :id) ranked)]
-           (-> (into [] (comp (filter listed) (keep page-soul)) (keys (bus/waiting-requests)))
+           (-> (into [] (comp (filter listed) (keep page-soul)) (keys (session-list-waiting)))
                (session-summary-extras stats marks)
                order-session-summaries))
 
@@ -9733,13 +9814,13 @@
              (if db (read-or {:read :turn-stats} {} #(persistance/db-listed-session-turn-stats db)) {}))
 
          live
-         (or (:live facts) (read-or {:read :live-turns} {} bus/live-turns))
+         (or (:live facts) (session-list-live))
 
          ranked
          (or (:ranking facts) (session-ranking channel stats live unsent))
 
          waiting
-         (into #{} (map str) (keys (bus/waiting-requests)))
+         (into #{} (map str) (keys (session-list-waiting)))
 
          ;; The asking reader's watermarks, read ONCE for the whole answer, and NEW
          ;; decided by the same rule the rows use: an answer that landed after the
@@ -9770,7 +9851,7 @@
                (keep (fn [p]
                        (when-let [r (not-empty (str (:workspace-root p)))]
                          [r p])))
-               (try (lp/projects {}) (catch Throwable _ nil)))
+               (read-or {:read :projects} nil #(lp/projects {})))
 
          fingerprint
          (projects-overview-fingerprint channel unsent ranked live waiting named unread? stopped?)

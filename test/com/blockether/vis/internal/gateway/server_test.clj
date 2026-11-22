@@ -20,6 +20,7 @@
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.external-opener :as external-opener]
     [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
+    [com.blockether.vis.internal.gateway.bus :as bus]
     [com.blockether.vis.internal.gateway.client :as client]
     [com.blockether.vis.internal.gateway.discovery :as discovery]
     [com.blockether.vis.internal.gateway.server :as server]
@@ -5822,6 +5823,107 @@
         (expect (nil? (:group-ids (second @seen))))))))
 
 (defdescribe
+  session-list-fast-revalidation
+  (it
+    "answers an unchanged request without building the list again"
+    (let [dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-session-etag"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          db
+          (persistance/db-create-connection! (.getPath dir))
+
+          builds
+          (atom 0)
+
+          build
+          state/list-sessions-page
+
+          handler
+          #'sessions-api/list-sessions-handler]
+
+      (try
+        (h/store-session! db {:channel :api :title "A session"})
+        (with-redefs [lp/db-info (constantly db)
+                      state/list-sessions-page (fn [channel opts]
+                                                 (swap! builds inc)
+                                                 (build channel opts))]
+          (handler {})
+          (let [etag (get-in (handler {}) [:headers "ETag"])
+                again (handler {:headers {"if-none-match" etag}})]
+            (expect (= 304 (:status again)))
+            (expect (nil? (:body again)))
+            (expect (= 2 @builds))))
+        (finally
+          (persistance/db-dispose-connection! db)
+          (doseq [file (reverse (file-seq dir))] (io/delete-file file true)))))))
+
+(defdescribe
+  session-list-validator-inputs
+  (it
+    "does not hide changes to persisted rows, marks, live turns, waiting requests or agent names"
+    (let [dir (.toFile (java.nio.file.Files/createTempDirectory
+                        "vis-session-validator-inputs"
+                        (make-array java.nio.file.attribute.FileAttribute 0)))
+          db (persistance/db-create-connection! (.getPath dir))
+          writer (persistance/db-create-connection! (.getPath dir))
+          handler #'sessions-api/list-sessions-handler
+          live (atom {})
+          waiting (atom {})
+          agent-name (atom "Vis")
+          request {:query-params {"grouped" "aside"}}]
+      (try
+        (let [project (persistance/db-create-project! writer {:name "Project"})
+              group (persistance/db-create-session-group! writer (:id project) {:name "Group"})
+              sid (h/store-session! writer {:channel :api :title "Before"})
+              id (str sid)
+              tid (str (random-uuid))
+              builds (atom 0)
+              build state/list-sessions-page
+              etag (fn [response] (get-in response [:headers "ETag"]))
+              fresh (fn [validator] (assoc-in request [:headers "if-none-match"] validator))
+              check-change (fn [read change! path expected]
+                             (let [before (etag (read request))
+                                   count-before @builds]
+                               (expect (= 304 (:status (read (fresh before)))))
+                               (expect (= count-before @builds))
+                               (change!)
+                               (let [after (read (fresh before))]
+                                 (expect (= 200 (:status after)))
+                                 (expect (not= before (etag after)))
+                                 (expect (= expected (get-in (wire/parse-json (:body after)) path))))))]
+          (persistance/db-set-session-group! writer sid (:id group))
+          (with-redefs [lp/db-info (constantly db)
+                        bus/live-turns (fn [] @live)
+                        bus/waiting-requests (fn [] @waiting)
+                        config/agent-name (fn [_] @agent-name)
+                        state/list-sessions-page (fn [channel opts]
+                                                   (swap! builds inc)
+                                                   (build channel opts))]
+            ;; The first read writes the reader's first watermark.
+            (handler request)
+            (check-change handler #(persistance/db-update-session-title! writer sid "After")
+                          ["grouped" 0 "title"] "After")
+            (check-change handler #(reset! live {id tid}) ["grouped" 0 "live"] true)
+            (check-change handler #(reset! waiting {id [{"id" "input"}]}) ["awaiting" 0 "id"] id)
+            (check-change handler #(reset! waiting {}) ["awaiting"] [])
+            (check-change handler #(reset! live {}) ["grouped" 0 "live"] false)
+            (check-change handler #(reset! agent-name "Assistant") ["grouped" 0 "agent_name"] "Assistant")
+            (persistance/db-store-session-turn! writer {:parent-session-id sid :user-request "Work" :status :done})
+            (check-change handler #(persistance/db-mark-session-read! writer "local" sid 1)
+                          ["grouped" 0 "is_unread"] false)
+            (let [before (etag (handler request))
+                  after (handler (assoc-in (fresh before) [:query-params "limit"] "1"))]
+              (expect (= 200 (:status after)))
+              (expect (not= before (etag after)))
+              (expect (= 1 (get (wire/parse-json (:body after)) "limit"))))))
+        (finally
+          (persistance/db-dispose-connection! writer)
+          (persistance/db-dispose-connection! db)
+          (doseq [file (reverse (file-seq dir))] (io/delete-file file true)))))))
+
+(defdescribe
   sessions-window-grouped-etag
   (it
     "returns the new grouped title when the rest of the window is unchanged"
@@ -5834,7 +5936,8 @@
           list-handler
           #'sessions-api/list-sessions-handler]
 
-      (with-redefs [state/list-sessions-page
+      (with-redefs [persistance/db-store-version (constantly nil)
+                    state/list-sessions-page
                     (fn [_ _]
                       {:sessions []
                        :awaiting []

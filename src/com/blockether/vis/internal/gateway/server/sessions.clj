@@ -258,6 +258,70 @@
    time per ask; a client that wants more walks `next_cursor`."
   20)
 
+(defonce ^:private session-list-validators (atom nil))
+
+(defn- session-list-not-modified
+  [etag]
+  {:status 304 :headers {"ETag" etag "Cache-Control" "no-cache"} :body nil})
+
+(defn- remember-session-list-validator!
+  [version request-key entry]
+  (swap! session-list-validators
+         (fn [{seen :version entries :entries}]
+           (let [entries (when (and (state/same-session-list-version? version seen)
+                                    (< (count entries) 32))
+                           entries)]
+             {:version version :entries (assoc entries request-key entry)}))))
+
+(defn- revalidate-session-list
+  [request request-key build]
+  (let [validator (get-in request [:headers "if-none-match"])
+        version (state/session-list-version)
+        cached @session-list-validators
+        entry (when (and validator (state/same-session-list-version? version (:version cached)))
+                (get (:entries cached) request-key))]
+    (if (and entry (= validator (:etag entry)) (state/session-list-inputs-current? (:inputs entry)))
+      (session-list-not-modified validator)
+      (let [[payload inputs] (if version
+                               (state/capture-session-list-inputs version build)
+                               [(build) nil])
+            etag (sessions-etag payload)]
+        (when (and inputs (state/same-session-list-version? version (state/session-list-version)))
+          (remember-session-list-validator! version request-key {:etag etag :inputs inputs}))
+        (if (= etag validator)
+          (session-list-not-modified etag)
+          (update (http/json-response payload) :headers merge {"ETag" etag "Cache-Control" "no-cache"}))))))
+
+(defn- session-list-payload
+  [{:keys [root project-id grouped archived dirty after] :as opts} group-limit group-offset]
+  (let [;; The shelves follow the same page as the group list.
+        group-ids
+        (when (and (= "aside" grouped) (some? group-limit))
+          (let [pid (or (some-> project-id parse-uuid)
+                        (some-> (when (seq root) (state/get-project-by-root "local" root))
+                                (get "id")
+                                parse-uuid))]
+            (when pid
+              (mapv #(get % "id")
+                    (:groups (state/list-session-groups-page pid
+                                                             {:archived archived
+                                                              :limit group-limit
+                                                              :offset group-offset}))))))
+
+        page
+        (state/list-sessions-page :all (assoc opts :group-ids group-ids))]
+
+    (cond-> {:sessions (:sessions page)
+             :awaiting (:awaiting page)
+             :root root
+             :total (:total page)
+             :limit (:limit page)
+             :after after
+             :next-cursor (:next-cursor page)
+             :has-more (:has-more page)}
+      (seq grouped) (assoc :grouped (:grouped page))
+      (nil? after) (assoc :overview (state/projects-overview :all dirty (:facts page))))))
+
 (defn- list-sessions-handler
   "GET /v1/sessions[?limit=&after=&root=&project_id=&id_prefix=&ids=&grouped=&include_empty=] —
    sessions in
@@ -432,67 +496,20 @@
 
     (if refusal
       refusal
-      (let [;; The bands that window names, resolved ONCE: the shelves beside the
-            ;; window are cut to exactly the groups the client is painting. Only a
-            ;; read that asked for a band window pays for this.
-            group-ids
-            (when (and (= "aside" grouped) (some? group-limit))
-              (let [pid (or (some-> project-id
-                                    parse-uuid)
-                            (some-> (when (seq root) (state/get-project-by-root "local" root))
-                                    (get "id")
-                                    parse-uuid))]
-                (when pid
-                  (mapv #(get % "id")
-                        (:groups (state/list-session-groups-page pid
-                                                                 {:archived archived
-                                                                  :limit group-limit
-                                                                  :offset group-offset}))))))
-
-            page
-            (state/list-sessions-page :all
-                                      {:limit window-limit
-                                       :after after
-                                       :root root
-                                       :project-id project-id
-                                       :id-prefix id-prefix
-                                       :group-id group-id
-                                       :group-ids group-ids
-                                       :ids ids
-                                       :dirty dirty
-                                       :grouped grouped
-                                       :archived archived
-                                       :include-empty (= "true" include-empty)})
-
-            payload
-            (cond-> {:sessions (:sessions page)
-                     ;; Beside the window, never inside it: `state/list-sessions-page`.
-                     :awaiting (:awaiting page)
-                     :root root
-                     :total (:total page)
-                     :limit (:limit page)
-                     ;; Echoed so the validator identifies WHICH window these rows are, and
-                     ;; handed on so the next request is the client's own last row.
-                     :after after
-                     :next-cursor (:next-cursor page)
-                     :has-more (:has-more page)}
-              (seq grouped)
-              (assoc :grouped (:grouped page))
-
-              ;; One request owns the first paint. Recomputing this for every tail
-              ;; window would add work while conveying the same fleet-wide fact.
-              (nil? after)
-              (assoc :overview (state/projects-overview :all dirty (:facts page))))
-
-            etag
-            (sessions-etag payload)
-
-            base
-            {"ETag" etag "Cache-Control" "no-cache"}]
-
-        (if (= etag (get-in request [:headers "if-none-match"]))
-          {:status 304 :headers base :body nil}
-          (update (http/json-response payload) :headers merge base))))))
+      (let [opts {:limit window-limit
+                  :after after
+                  :root root
+                  :project-id project-id
+                  :id-prefix id-prefix
+                  :group-id group-id
+                  :ids ids
+                  :dirty dirty
+                  :grouped grouped
+                  :archived archived
+                  :include-empty (= "true" include-empty)}
+            request-key [opts group-limit group-offset]]
+        (revalidate-session-list request request-key
+                                 #(session-list-payload opts group-limit group-offset))))))
 
 (def ^:private search-session-window
   "Rows one search answer carries when the caller names no window: a dialog's worth of

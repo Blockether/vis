@@ -1051,6 +1051,13 @@
              (when (.next rs) (.getLong rs 1)))))
        (catch Throwable _ nil)))
 
+(defn db-store-version
+  "Return the pool and its data version, or nil when the store has no version probe."
+  [db-info]
+  (let [pool (ds db-info)]
+    (when (and (instance? HikariDataSource pool) (= :persistent (:mode db-info)))
+      (when-let [version (data-version pool)] [pool version]))))
+
 (defn- read-at-version
   "Answer `(f)` from the last answer for `read-key` while the file is unchanged.
    Only whole-store reads of a pooled disk file are cached; every other store
