@@ -42,6 +42,53 @@ export const STORY_CANVAS_FOCUSED = view('canvas-focused', 'Release board', [
   { ...SHOWCASE, zoom: 1, focus: 'verify' },
 ]);
 
+const PICTURE = (SHOWCASE.cards as Wire[]).find((card) => card.picture)?.picture;
+
+/** A large board: five frames, two of them in a frame, and each kind of item and arrow. */
+export const STORY_CANVAS_COMPLEX = view('canvas-complex', 'One turn, end to end', [
+  board(
+    'turn',
+    'How a request becomes an answer',
+    [
+      { id: 'heading', kind: 'text', size: 'large', title: 'One turn', text: 'From the request of a person to the answer.' },
+      { id: 'person', kind: 'shape', shape: 'pill', size: 'small', color: 'green', fill: 'solid', icon: 'users', title: 'Person' },
+
+      { id: 'clients', kind: 'frame', color: 'blue', icon: 'app', title: 'Clients', text: 'Each client speaks to the gateway over HTTP.' },
+      { id: 'tui', parent: 'clients', icon: 'terminal', title: 'TUI', meta: 'terminal', tone: 'ok', edges: [{ from: 'person' }] },
+      { id: 'companion', parent: 'clients', icon: 'app', title: 'Companion', meta: 'phone and desk', text: 'Shows the live view of a turn.', edges: [{ from: 'person' }] },
+      { id: 'sdk', parent: 'clients', icon: 'code', title: 'SDK', meta: 'Python', border: 'dashed', edges: [{ from: 'person', line: 'dashed' }] },
+
+      { id: 'gateway', kind: 'frame', color: 'purple', icon: 'server', title: 'Gateway', text: 'One daemon for each machine.' },
+      { id: 'auth', parent: 'gateway', kind: 'shape', shape: 'hexagon', color: 'purple', icon: 'lock', title: 'Auth', edges: [{ from: 'tui' }, { from: 'companion' }, { from: 'sdk', line: 'dashed' }] },
+      { id: 'sessions', parent: 'gateway', icon: 'users', title: 'Sessions', text: 'One queue for each session.', badges: ['12 open'], edges: [{ from: 'auth', route: 'straight', end_mark: 'triangle' }] },
+      { id: 'queue', parent: 'gateway', kind: 'frame', color: 'teal', border: 'dotted', title: 'Queue' },
+      { id: 'turn', parent: 'queue', icon: 'clock', title: 'Turn', meta: '2 wait', tone: 'running', progress: 0.35, edges: [{ from: 'sessions', label: 'next' }] },
+      { id: 'journal', parent: 'gateway', kind: 'shape', shape: 'cylinder', color: 'purple', icon: 'database', title: 'Journal', edges: [{ from: 'sessions', label: 'events', line: 'dashed', start_mark: 'circle' }] },
+
+      { id: 'engine', kind: 'frame', color: 'green', icon: 'settings', title: 'Engine', text: 'Plans the work and runs the code.' },
+      { id: 'route', parent: 'engine', kind: 'shape', shape: 'diamond', color: 'orange', title: 'Model?', column: 1, edges: [{ from: 'turn', route: 'elbow' }] },
+      { id: 'plan', parent: 'engine', icon: 'checklist', title: 'Plan', text: 'Splits the request into **steps**.', tone: 'ok', comments: 2, edges: [{ from: 'route', label: 'ready' }] },
+      { id: 'sandbox', parent: 'engine', kind: 'frame', color: 'orange', border: 'dashed', icon: 'shield', title: 'Sandbox' },
+      { id: 'python', parent: 'sandbox', icon: 'code', title: 'Python', text: 'Runs each block of the step.', meta: '4 s', tone: 'running', progress: 0.6, animation: 'glow', badges: ['step 3 of 5'], edges: [{ from: 'plan', is_active: true, animation: 'flow', label: 'code' }] },
+      { id: 'extensions', parent: 'sandbox', icon: 'tools', title: 'Extensions', meta: '28', edges: [{ from: 'python', line: 'dashed', start_mark: 'circle' }] },
+      { id: 'jail', parent: 'sandbox', kind: 'shape', shape: 'hexagon', size: 'small', color: 'red', icon: 'lock', title: 'Jail', edges: [{ from: 'python', line: 'dotted', end_mark: 'bar' }] },
+
+      { id: 'providers', kind: 'frame', color: 'yellow', icon: 'cloud', title: 'Providers' },
+      { id: 'primary', parent: 'providers', icon: 'cloud', title: 'Primary', meta: '1.2 s', tone: 'ok', edges: [{ from: 'route', label: 'ask', color: 'green', line: 'thick', end_mark: 'triangle', is_active: true, animation: 'dot' }] },
+      { id: 'fallback', parent: 'providers', icon: 'cloud', title: 'Fallback', meta: 'waits', border: 'dashed', tone: 'idle', edges: [{ from: 'route', label: 'on a refusal', line: 'dashed' }] },
+      { id: 'retry', kind: 'note', size: 'small', title: 'Retry', text: 'A dropped connection gets **one** more try.', edges: [{ from: 'primary', line: 'dashed', end_mark: 'none' }] },
+
+      { id: 'answer', kind: 'shape', shape: 'document', color: 'blue', icon: 'book', title: 'Answer', edges: [{ from: 'python', route: 'elbow', color: 'blue' }, { from: 'primary', color: 'blue' }] },
+      { id: 'live', icon: 'image', title: 'Live view', meta: 'PNG', picture: PICTURE, caption: 'The board of the turn, as the app draws it.', edges: [{ from: 'answer' }] },
+      { id: 'replay', title: 'Replay', meta: '0:42', media: { kind: 'video', url: 'https://example.com/vis/turn-replay.mp4', alt: 'A recorded run of the turn' }, edges: [{ from: 'journal', line: 'dotted', end_mark: 'diamond' }] },
+      { id: 'question', kind: 'comment', color: 'pink', author: 'Ada', title: 'Review', comments: 1, text: 'Can the journal replay a turn after a restart?', edges: [{ from: 'journal', line: 'dotted', color: 'pink', end_mark: 'none' }] },
+      { id: 'reply', kind: 'comment', author: 'Lin', title: 'Answer', is_resolved: true, text: 'Yes. A resumed turn reads its events again.', edges: [{ from: 'question', line: 'dotted', end_mark: 'none' }] },
+      { id: 'done', kind: 'shape', shape: 'ellipse', size: 'small', color: 'red', fill: 'solid', title: 'Done', edges: [{ from: 'answer', end_mark: 'triangle' }] },
+    ],
+    { selected_ids: ['python'], flow: 'auto' },
+  ),
+]);
+
 const VISIBLE_LINES = CANVAS_LINES.filter((line) => line !== 'none');
 
 const shapes = CANVAS_SHAPES.map((shape, index) => ({

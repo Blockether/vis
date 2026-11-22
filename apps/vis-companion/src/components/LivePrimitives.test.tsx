@@ -288,6 +288,23 @@ describe('a canvas', () => {
     }
   });
 
+  it('fits the whole board when the owner points the camera at one item', () => {
+    const sizes = {
+      clientWidth: vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(900),
+      clientHeight: vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(500),
+    };
+    try {
+      render(<LiveViewPanel view={board({ zoom: 1, focus: 'verify' })} />);
+      const scale = () => screen.getByRole('button', { name: 'Full size' }).textContent;
+      expect(scale()).toBe('100%');
+      fireEvent.click(screen.getByRole('button', { name: 'Fit the board' }));
+      expect(Number.parseInt(scale() ?? '', 10)).toBeLessThan(100);
+    } finally {
+      sizes.clientWidth.mockRestore();
+      sizes.clientHeight.mockRestore();
+    }
+  });
+
   it('gives a person no camera control on a locked board', () => {
     const mounted = render(<LiveViewPanel view={board()} />);
     expect(screen.getByRole('button', { name: 'Fit the board' })).toBeVisible();

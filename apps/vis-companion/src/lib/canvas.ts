@@ -35,7 +35,8 @@ const ITEM_GAP = 32;
 const DETOUR_CLEARANCE = 14;
 const DETOUR_LANE_GAP = 10;
 const DETOUR_LEAD = 18;
-const DETOUR_RADIUS = 8;
+/** The room past the clearance that a detour first tries to keep from an item. */
+const DETOUR_BERTH = 8;
 const CAPTION_GAP = 6;
 const PORT_STEP = 12;
 const MAX_DEPTH = viewSchema.$defs.canvas_card.properties.parent['x-vis-max-depth'];
@@ -102,12 +103,6 @@ const sizeKind = (card: LiveCanvasCard) => card.kind === 'shape' && card.shape =
 
 export function canvasItemWidth(card: LiveCanvasCard): number {
   return widths[sizeKind(card)][sizeIndex[card.size]];
-}
-
-/** The corner radius of an item that does not use an SVG outline. */
-export function canvasItemRadius(card: LiveCanvasCard): number {
-  if (card.kind === 'shape' || card.kind === 'text') return 0;
-  return card.kind === 'frame' ? 12 : card.kind === 'note' ? 2 : 8;
 }
 
 export function canvasItemMinHeight(card: LiveCanvasCard): number {
@@ -536,7 +531,7 @@ function elbows(start: Point, end: Point, direction: Point, enter: Point, free?:
   const opposed = direction[axis] !== enter[axis];
   const turn = opposed ? free ?? (start[axis] + end[axis]) / 2 :
     direction[axis] * (Math.max(start[axis] * direction[axis], end[axis] * direction[axis]) + 18);
-  return roundTurns([start, part(turn, start[cross]), part(turn, end[cross]), end]);
+  return squareWay([start, part(turn, start[cross]), part(turn, end[cross]), end]);
 }
 
 function straightWay(points: Point[]): Point[] {
@@ -548,19 +543,10 @@ function straightWay(points: Point[]): Point[] {
   });
 }
 
-function roundTurns(points: Point[], maxRadius = 8): Route {
-  const distinct = straightWay(points);
-  const parts: Part[] = [];
-  for (let i = 1; i < distinct.length - 1; i++) {
-    const [before, corner, after] = distinct.slice(i - 1, i + 2);
-    const left = distance(before, corner);
-    const right = distance(corner, after);
-    const radius = Math.min(maxRadius, left / 2, right / 2);
-    parts.push({ to: between(corner, before, radius / left) });
-    parts.push({ to: between(corner, after, radius / right), controls: [corner] });
-  }
-  parts.push({ to: points.at(-1)! });
-  return { start: points[0], parts };
+/** A way of straight runs with square turns, as each line of the app has. */
+function squareWay(points: Point[]): Route {
+  const [start, ...rest] = straightWay(points);
+  return { start, parts: rest.map((to) => ({ to })) };
 }
 
 interface Rect { left: number; right: number; top: number; bottom: number }
@@ -773,13 +759,13 @@ function detour(edge: LiveCanvasEdge, from: Port, to: Port, obstacles: Rect[], u
   const end = { ...to.point, angle: angle(to.direction) };
   const a = shift(start, from.direction, marks[edge.start_mark].trim);
   const b = shift(end, to.direction, marks[edge.end_mark].trim);
-  const first = shift(a, from.direction, DETOUR_LEAD + DETOUR_RADIUS);
-  const last = shift(b, to.direction, DETOUR_LEAD + DETOUR_RADIUS);
+  const first = shift(a, from.direction, DETOUR_LEAD + DETOUR_BERTH);
+  const last = shift(b, to.direction, DETOUR_LEAD + DETOUR_BERTH);
   let holder = from.item.parent;
   while (holder && !hasAncestor(to.item, holder)) holder = holder.parent;
   const limit = holder ? bounds(holder.box, -DETOUR_CLEARANCE) : undefined;
-  for (const radius of [DETOUR_RADIUS, 4, 0]) {
-    const margin = DETOUR_CLEARANCE + radius;
+  for (const berth of [DETOUR_BERTH, 4, 0]) {
+    const margin = DETOUR_CLEARANCE + berth;
     const rails = obstacles.map((r) => ({ left: r.left - margin, right: r.right + margin,
       top: r.top - margin, bottom: r.bottom + margin }));
     if (!hasAncestor(to.item, from.item)) rails.push(bounds(from.item.box));
@@ -790,7 +776,7 @@ function detour(edge: LiveCanvasEdge, from: Port, to: Port, obstacles: Rect[], u
       const points = findLanes(first, last, rails, used, room, separate, limit, from.direction, to.direction);
       if (!points) continue;
       const way = straightWay([a, ...points, b]);
-      const route = radius ? roundTurns(way, radius) : { start: a, parts: way.slice(1).map((to) => ({ to })) };
+      const route = squareWay(way);
       const clear = obstacles.map((r) => ({ left: r.left - DETOUR_CLEARANCE, right: r.right + DETOUR_CLEARANCE,
         top: r.top - DETOUR_CLEARANCE, bottom: r.bottom + DETOUR_CLEARANCE }));
       if (hitsRoute(route, clear)) continue;
@@ -803,9 +789,7 @@ function detour(edge: LiveCanvasEdge, from: Port, to: Port, obstacles: Rect[], u
 
 function outlineOf(item: Item): Segment[] {
   const { card, box: b } = item;
-  if (card.kind === 'shape') return outline(b.width, b.height, card.shape);
-  const radius = canvasItemRadius(card);
-  return outline(b.width, b.height, radius === 0 ? 'rectangle' : 'rounded', radius);
+  return outline(b.width, b.height, card.kind === 'shape' ? card.shape : 'rectangle');
 }
 
 function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boolean) {

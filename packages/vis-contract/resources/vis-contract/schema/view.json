@@ -5905,7 +5905,7 @@
         "cylinder",
         "document"
       ],
-      "default": "rounded"
+      "default": "rectangle"
     },
     "canvas_color": {
       "description": "A colour by name. Each surface has its own shade of the colour for a light and a dark theme.",

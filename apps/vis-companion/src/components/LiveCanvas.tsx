@@ -196,9 +196,14 @@ export function LiveCanvas({
     move(canvasZoomedAt(camera.current, factor, { x: width / 2, y: height / 2 }), true);
   };
 
+  /** The whole board, also when the owner points the camera at one item. */
   const fit = () => {
-    isHeld.current = false;
-    camera.current = latest.current.target;
+    const { layout, room, target } = latest.current;
+    const whole = canvasTarget(layout, room, 0, '');
+    // The person holds the camera only when the owner points it at another place.
+    isHeld.current =
+      whole.x !== target.x || whole.y !== target.y || whole.scale !== target.scale;
+    camera.current = whole;
     paint(true);
   };
 
@@ -439,7 +444,7 @@ export function LiveCanvas({
           </IconButton>
           <Button
             variant="quiet"
-            density="inline"
+            density="compact"
             pressEffect="none"
             className="min-w-11 tabular-nums"
             aria-label="Full size"
@@ -453,8 +458,9 @@ export function LiveCanvas({
           </IconButton>
           <Button
             variant="quiet"
-            density="inline"
+            density="compact"
             pressEffect="none"
+            className="min-w-11"
             aria-label="Fit the board"
             title="Fit the board"
             onClick={fit}

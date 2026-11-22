@@ -8662,7 +8662,7 @@ def _ui_canvas_card(card_id, title, *, after=None, **spec):
 
 
 def _ui_canvas_shape(item_id, title, **spec):
-    """Build a shape. `shape` sets the outline. The default is `rounded`."""
+    """Build a shape. `shape` sets the outline. The default is `rectangle`."""
     return _ui_canvas_card(item_id, title, kind="shape", **spec)
 
 
