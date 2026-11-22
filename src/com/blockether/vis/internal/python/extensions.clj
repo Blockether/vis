@@ -1701,6 +1701,21 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                  "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
                  "            and (__vis_pathos__.path.exists(__vis_top__)\n"
                  "                 or __vis_pathos__.path.exists(__vis_top__ + '.py'))):\n"
+                 "        del __vis_pathsys__.modules[__vis_name__]\n"
+                 ;; A module that this site provides but another site loaded first must load
+                 ;; again from this site: each extension gets the versions that it installed.
+                 "__vis_site__ = __vis_pathos__.path.realpath(__vis_packages__)\n"
+                 "try:\n"
+                 "    __vis_tops__ = {__vis_e__.name.removesuffix('.py')\n"
+                 "                    for __vis_e__ in __vis_pathos__.scandir(__vis_site__)\n"
+                 "                    if __vis_e__.is_dir() or __vis_e__.name.endswith('.py')}\n"
+                 "except OSError:\n"
+                 "    __vis_tops__ = set()\n"
+                 "for __vis_name__, __vis_mod__ in list(__vis_pathsys__.modules.items()):\n"
+                 "    __vis_file__ = getattr(__vis_mod__, '__file__', None) or ''\n"
+                 "    if (__vis_file__ and __vis_name__.partition('.')[0] in __vis_tops__\n"
+                 "            and not __vis_pathos__.path.realpath(__vis_file__).startswith(\n"
+                 "                __vis_site__ + __vis_pathos__.sep)):\n"
                  "        del __vis_pathsys__.modules[__vis_name__]\n"))
           (exec-in! ctx stale-sdk-modules-python)
           (exec-in! ctx bootstrap-python)

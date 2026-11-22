@@ -9402,6 +9402,47 @@ vis.register_extension(vis.Extension(
                    (expect (registered "order-probe"))))
                (finally (pyx/reload-python-extensions! {:dirs []}))))))))
 
+(defdescribe
+  project-site-module-isolation-test
+  ;; One worker holds every extension. A package that an earlier extension imported from its
+  ;; own environment stayed in sys.modules, and a later extension got that version, not the
+  ;; version of its own environment (vis-review 3.3.2 hid call_env from vis-lang-clojure).
+  (it
+    "imports each package from the environment of its own extension"
+    (with-shared-packages
+      (fn [_]
+        (let [ext-dir (temp-dir)
+              probe (fn [n]
+                      (let [project (io/file ext-dir (str "project" n))]
+                        (write-ext! project
+                                    ".venv/lib/site-packages/site_probe_pkg/__init__.py"
+                                    (str "VALUE = " n "\n"))
+                        (write-ext! project
+                                    "pyproject.toml"
+                                    (str "[project]\nname='site-probe" n "'\nversion='1.0.0'\n"))
+                        (write-ext! project "uv.lock" "version = 1\n")
+                        (write-ext! ext-dir
+                                    (str ".vis/extensions/site_probe" n ".py")
+                                    (str "# /// script\n# [tool.vis]\n# project = '../../project"
+                                         n "'\n# ///\n"
+                                         "import blockether.vis.extension as vis\n"
+                                         "import site_probe_pkg\n"
+                                         "assert site_probe_pkg.VALUE == " n
+                                         ", site_probe_pkg.VALUE\n"
+                                         "vis.register_extension(vis.Extension(name='site-probe"
+                                         n "',\n    description='Imports its own package'))\n"))))]
+          (probe 1)
+          (probe 2)
+          (try (with-redefs [python-runtime/prepared-project
+                             (fn [^java.io.File project]
+                               (.getCanonicalFile (io/file project ".venv/lib/site-packages")))]
+                 (let [loaded (pyx/reload-python-extensions!
+                                {:dirs [(str (io/file ext-dir ".vis/extensions"))]})
+                       failed @@#'pyx/failures]
+                   (expect (= {:loaded 2 :failed 0} (select-keys loaded [:loaded :failed]))
+                           (pr-str failed))))
+               (finally (pyx/reload-python-extensions! {:dirs []}))))))))
+
 ;; Issue #378: `python.environment: shared` prepares the project's own uv projects like
 ;; `vis-agent python --shared uv sync`; packages outside the project tree keep their environment.
 (defdescribe
