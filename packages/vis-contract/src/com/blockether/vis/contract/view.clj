@@ -262,6 +262,7 @@
   "Bounds of a canvas node and of one canvas card."
   {:max-cards (get-in live-nodes ["canvas" "properties" "cards" "maxItems"])
    :max-edges (get-in (definition "canvas_card") ["properties" "edges" "maxItems"])
+   :max-depth (get-in (definition "canvas_card") ["properties" "parent" "x-vis-max-depth"])
    :max-zoom (get-in live-nodes ["canvas" "properties" "zoom" "maximum"])})
 
 (def scene-meshes
@@ -1066,7 +1067,7 @@
           (not (matches-magic? decoded media-type)) {:error (str "data is not " media-type " data")}
           (not (and w h (pos? (long w)) (pos? (long h))))
           {:error "the picture header does not give its size"}
-          (> (* (long w) (long h)) (long (:pixels picture-bounds)))
+          (> (long w) (quot (long (:pixels picture-bounds)) (long h)))
           {:error (str "the picture has " w "x" h " pixels; the most is " (:pixels picture-bounds))}
           (or (and width (not= (long width) (long w))) (and height (not= (long height) (long h))))
           {:error
@@ -1086,14 +1087,31 @@
       (- (quot (* 3 n) 4) pad))
     0))
 
+(defn canvas-card-facts
+  "A card with its picture size in bytes in place of the data."
+  [card]
+  (if-let [data (get-in card [:picture :data])]
+    (update card :picture #(assoc (dissoc % :data) :bytes (picture-byte-count data)))
+    card))
+
 (defn- view-picture-bytes
   [nodes]
-  (transduce (comp (filter #(contains? #{"image" :image} (:type %)))
-                   (map #(+ (picture-byte-count (:data %))
-                            (picture-byte-count (get-in % [:before :data])))))
-             +
-             0
-             nodes))
+  (transduce
+    (map (fn [node]
+           (case (:type node)
+             ("image" :image)
+             (+ (picture-byte-count (:data node))
+                (picture-byte-count (get-in node [:before :data])))
+
+             ("canvas" :canvas)
+             (if (sequential? (:cards node))
+               (transduce (map #(picture-byte-count (get-in % [:picture :data]))) + 0 (:cards node))
+               0)
+
+             0)))
+    +
+    0
+    nodes))
 
 (defn- live-tree
   [nodes]
@@ -1360,6 +1378,22 @@
             (range)
             children)))
 
+(defn- canvas-picture-lines
+  "Faults in the pictures of the canvas cards at JSON pointer `path`."
+  [cards path decl?]
+  (when (sequential? cards)
+    (mapcat (fn [i card]
+              (when-let [raw (get card "picture")]
+                (when (map? raw)
+                  (let [at (str path "/" i "/picture")]
+                    (cond (and decl? (contains? raw "bytes"))
+                          [(document/named-line (str at "/bytes") "read_only")]
+                          (or decl? (contains? raw "data"))
+                          (when-let [reason (:error (read-picture (wire/->engine raw)))]
+                            [(document/named-line at "picture" {"reason" reason})]))))))
+            (range)
+            cards)))
+
 (defn- hand-lines
   "The rules of filled node `node` that JSON Schema cannot say. Each one is a case
    of `live-view-checks.json`."
@@ -1500,8 +1534,9 @@
                   (when (contains? node "selected_ids")
                     (cond (not (true? (get node "is_selectable"))) [(line "/selected_ids"
                                                                           "not_selectable")]
-                          (not-every? cards (get node "selected_ids"))
-                          [(line "/selected_ids" "canvas_selection")]))))
+                          (not-every? cards (get node "selected_ids")) [(line "/selected_ids"
+                                                                              "canvas_selection")]))
+                  (canvas-picture-lines (get node "cards") "/cards" decl?)))
 
         "image"
         (for [[path raw]
@@ -1834,12 +1869,14 @@
    op, which names the node. Each case is in `live-view-checks.json`."
   [path op]
   (if-let [index (when (map? op) (get live-op-index (get op "op")))]
-    (document/explain-lines
-      (update (document/explain "view" (str "live_op/oneOf/" index) op)
-              :errors
-              (partial remove #(str/starts-with? (str (:instanceLocation %)) "/node_spec")))
-      op
-      path)
+    (let [lines (document/explain-lines
+                  (update (document/explain "view" (str "live_op/oneOf/" index) op)
+                          :errors
+                          (partial remove
+                                   #(str/starts-with? (str (:instanceLocation %)) "/node_spec")))
+                  op
+                  path)]
+      (if (seq lines) lines (canvas-picture-lines (get op "cards") (str path "/cards") true)))
     (let [table (get (document/message-table) "keywords")]
       (if (map? op)
         [(document/rule-line (str path "/op")

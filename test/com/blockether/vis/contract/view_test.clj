@@ -148,17 +148,23 @@
     (it "refuses each refused picture"
         (doseq [{:strs [name picture]} (get fixture "refused")]
           (expect (string? (:error (contract/read-picture (fixture-picture picture)))) name)))
-    (it "refuses a view whose pictures pass the byte bound"
-        (let [most (long (:view-bytes contract/picture-bounds))
-              half (apply str (repeat (* 4 (inc (quot most 6))) "A"))
-              image (fn [id]
-                      {:id id :type "image" :data half})]
+    (it
+      "refuses a view whose pictures pass the byte bound"
+      (let [most (long (:view-bytes contract/picture-bounds))
+            half (apply str (repeat (* 4 (inc (quot most 6))) "A"))
+            image (fn [id]
+                    {:id id :type "image" :data half})]
 
-          (expect (nil? (contract/picture-budget-error {:nodes [(image "a")]})))
-          (expect (string? (contract/picture-budget-error
-                             {:nodes [(image "a")
-                                      {:id "row" :type "row" :children [(image "b")]}]}))
-                  "a picture inside a layout group counts too")))
+        (expect (nil? (contract/picture-budget-error {:nodes [(image "a")]})))
+        (expect (string? (contract/picture-budget-error
+                           {:nodes [(image "a") {:id "row" :type "row" :children [(image "b")]}]}))
+                "a picture inside a layout group counts too")
+        (expect (string? (contract/picture-budget-error
+                           {:nodes [(image "a")
+                                    {:id "canvas"
+                                     :type :canvas
+                                     :cards [{:id "b" :title "Picture" :picture {:data half}}]}]}))
+                "a picture inside a canvas card counts too")))
     (it "refuses data over the length bound before it decodes it"
         ;; Review audit (goal 4b41c770): a valid picture with 4 MB of padding was
         ;; decoded and accepted.

@@ -6040,41 +6040,73 @@ class Scene(_KeyedNode):
 
 
 class Canvas(_KeyedNode):
-    """A board of cards with arrows that a person pans and zooms."""
+    """A board of items and arrows that a person pans and zooms."""
 
     def set(
         self,
         *,
         zoom=None,
         focus=None,
+        flow=None,
+        pattern=None,
         is_locked=None,
         is_selectable=None,
         label=None,
     ):
-        """Move the camera or change the controls.
+        """Move the camera or change the layout and controls.
 
-        `zoom=0` fits the focus in the surface and `focus=""` shows the whole
-        board. `is_locked=True` stops a person from moving the board.
+        `zoom=0` fits the focus and `focus=""` shows the whole board.
+        `is_locked=True` stops a person from moving the board. `flow` sets the
+        direction of the steps. `pattern` sets the background of the board.
         """
+        from blockether.vis import _contracts
+
+        for key, value in (("flow", flow), ("pattern", pattern)):
+            if value is not None:
+                _contracts.validate("view", f"canvas_{key}", value)
         return self._op(
             "set",
             zoom=zoom,
             focus=None if focus is None else str(focus),
+            flow=flow,
+            pattern=pattern,
             is_locked=is_locked,
             is_selectable=is_selectable,
             label=label,
         )
 
     def put(self, *cards):
-        """Add cards, or replace each card that has the same id.
+        """Add items, or replace each item that has the same ID.
 
-        Build each card with `vis.ui.canvas_card`.
+        Build the items with `vis.ui.canvas_card`, `vis.ui.canvas_shape`,
+        `vis.ui.canvas_note`, `vis.ui.canvas_comment`, `vis.ui.canvas_frame`,
+        or `vis.ui.canvas_text`.
         """
         return self._op("append", cards=list(cards))
 
     def card(self, card_id, title, **spec):
         """Add or replace one card. See `vis.ui.canvas_card`."""
         return self.put(_ui_canvas_card(card_id, title, **spec))
+
+    def shape(self, item_id, title, **spec):
+        """Add or replace a shape. See `vis.ui.canvas_shape`."""
+        return self.put(_ui_canvas_shape(item_id, title, **spec))
+
+    def note(self, item_id, title, **spec):
+        """Add or replace a note. See `vis.ui.canvas_note`."""
+        return self.put(_ui_canvas_note(item_id, title, **spec))
+
+    def comment(self, item_id, title, **spec):
+        """Add or replace a comment. See `vis.ui.canvas_comment`."""
+        return self.put(_ui_canvas_comment(item_id, title, **spec))
+
+    def frame(self, item_id, title, **spec):
+        """Add or replace a frame. See `vis.ui.canvas_frame`."""
+        return self.put(_ui_canvas_frame(item_id, title, **spec))
+
+    def text(self, item_id, title, **spec):
+        """Add or replace text. See `vis.ui.canvas_text`."""
+        return self.put(_ui_canvas_text(item_id, title, **spec))
 
     def fit(self):
         """Show the whole board."""
@@ -6090,7 +6122,7 @@ class Canvas(_KeyedNode):
 
     @property
     def cards(self):
-        """The cards of this canvas as the host holds them, by id."""
+        """The items of this canvas as the host holds them, by ID."""
         held = self._view._node_state(self.node_id).get("cards") or []
         return {one["id"]: one for one in held}
 
@@ -8581,41 +8613,106 @@ def _ui_scene(node_id, width, height, *, objects=None, meshes=None, **spec):
 
 
 def _ui_canvas(node_id, cards=None, **spec):
-    """A board of cards with arrows between them, for a graph of your own.
+    """A board of items with arrows that a person can pan and zoom.
 
-    A surface puts the cards in steps: a card goes one step after the last
-    card that it comes from. A wide surface puts the steps from left to right
-    and a narrow surface puts them from top to bottom. A person pans and zooms
-    the board. `zoom` sets the scale (1 is full size, 0 fits the focus) and
-    `focus` names the card in the centre. Build items with `ui.canvas_card` and
-    `ui.canvas_edge`. Options: `zoom`, `focus`, `is_locked`, `is_selectable`,
-    `selected_ids`, `label`.
+    Build items with `ui.canvas_card` or a builder for another item kind.
+    An item usually goes one step after the last item that it comes from.
+    `flow` sets the direction of the steps. With `auto`, a wide window puts
+    the steps from left to right. A narrow window puts them from top to bottom.
+    `pattern` sets the background. `zoom` sets the scale. At 1 the items are
+    full size. At 0 the board fits the focus. `focus` names the item in the center.
+    Other options are `is_locked`, `is_selectable`, `selected_ids`, and `label`.
     """
-    return _live_node("canvas", node_id, dict(spec, cards=list(cards or [])))
+    from blockether.vis import _contracts
+
+    node = _live_node("canvas", node_id, dict(spec, cards=list(cards or [])))
+    if complaint := _contracts.live_node_fault(_contracts.deepcopy_json(node)):
+        raise ValueError(complaint)
+    return node
 
 
 def _ui_canvas_card(card_id, title, *, after=None, **spec):
-    """One card of a canvas: a title, and the cards that it comes after.
+    """Build an item with a title and optional text, style, and arrows.
 
-    `after` takes card ids or `ui.canvas_edge(...)` values: each one draws an
-    arrow to this card. Keys: text, meta, tone, badges, and column and row to
-    put the card in a fixed step and at a fixed place in that step.
+    Pass an item ID or a `ui.canvas_edge` value to `after`, or pass a list of
+    them. Each arrow ends at this item. `column` sets the step and `row` sets
+    the place in that step. `parent` names the frame that holds this item.
+    `kind` sets the item kind. The default is `card`.
+    Use `color`, `fill`, `border`, `size`, and `icon` to set the style.
+    Build `picture` with `ui.canvas_picture`. For `media`, pass a dictionary
+    with `kind`, `url`, and `alt`.
     """
-    sources = [after] if isinstance(after, (str, dict)) else list(after or [])
-    edges = [one if isinstance(one, dict) else _ui_canvas_edge(one) for one in sources]
-    return _live_item(
-        card_id, dict(spec, title=str(title), edges=edges if edges else None)
-    )
+    from blockether.vis import _contracts
+
+    if after is not None:
+        if spec.get("edges") is not None:
+            raise ValueError("use after or edges, not both")
+        sources = [after] if isinstance(after, (str, Mapping)) else list(after)
+        spec["edges"] = [
+            dict(one) if isinstance(one, Mapping) else _ui_canvas_edge(one)
+            for one in sources
+        ] or None
+    if isinstance(spec.get("picture"), Mapping):
+        spec["picture"] = dict(spec["picture"])
+    item: dict[str, Any] = _live_item(card_id, dict(spec, title=str(title)))
+    _ui_canvas(card_id, [item])
+    if "picture" in item:
+        item["picture"] = _contracts.read_picture(item["picture"])
+    return item
+
+
+def _ui_canvas_shape(item_id, title, **spec):
+    """Build a shape. `shape` sets the outline. The default is `rounded`."""
+    return _ui_canvas_card(item_id, title, kind="shape", **spec)
+
+
+def _ui_canvas_note(item_id, title, **spec):
+    """Build a note. Set its content with `text`."""
+    return _ui_canvas_card(item_id, title, kind="note", **spec)
+
+
+def _ui_canvas_comment(item_id, title, **spec):
+    """Build a comment. Set `author`, `text`, and `is_resolved`."""
+    return _ui_canvas_card(item_id, title, kind="comment", **spec)
+
+
+def _ui_canvas_frame(item_id, title, **spec):
+    """Build a frame. Its items use this ID as their `parent`."""
+    return _ui_canvas_card(item_id, title, kind="frame", **spec)
+
+
+def _ui_canvas_text(item_id, title, **spec):
+    """Build a text label. Add a second line with `text`."""
+    return _ui_canvas_card(item_id, title, kind="text", **spec)
+
+
+def _ui_canvas_picture(data_or_path, *, alt, media_type=None, fit=None):
+    """Build an item picture from bytes or a file path.
+
+    `alt` says what the picture shows. The media type and size come from the
+    picture. A given `media_type` must match. `fit="contain"` keeps the whole
+    picture visible. The default, `cover`, fills the area and can cut the edges.
+    """
+    from blockether.vis import _contracts
+
+    picture = dict(_ui_picture(data_or_path, media_type=media_type), alt=alt)
+    if fit is not None:
+        picture["fit"] = fit
+    return _contracts.validate("view", "canvas_picture", picture)
 
 
 def _ui_canvas_edge(source_id, **spec):
-    """An arrow from card `source_id` to the card that holds this value.
+    """Build an arrow from `source_id` to the item that holds it.
 
-    Keys: label, tone and is_active (work moves along the arrow now).
+    Pass the arrow to the item's `after`. Set its appearance with `label`,
+    `tone`, `color`, `route`, `line`, `start_mark`, and `end_mark`. Set
+    `is_active=True` to animate it. `animation` sets the type of movement.
     """
+    from blockether.vis import _contracts
+
     edge = {"from": str(source_id)}
     edge.update({k: v for k, v in spec.items() if v is not None})
-    return edge
+    return _contracts.validate("view", "canvas_edge", edge)
 
 
 def _ui_scene_object(object_id, mesh, **spec):
@@ -8947,6 +9044,12 @@ class _UI:
     scene_mesh = staticmethod(_ui_scene_mesh)
     canvas = staticmethod(_ui_canvas)
     canvas_card = staticmethod(_ui_canvas_card)
+    canvas_shape = staticmethod(_ui_canvas_shape)
+    canvas_note = staticmethod(_ui_canvas_note)
+    canvas_comment = staticmethod(_ui_canvas_comment)
+    canvas_frame = staticmethod(_ui_canvas_frame)
+    canvas_text = staticmethod(_ui_canvas_text)
+    canvas_picture = staticmethod(_ui_canvas_picture)
     canvas_edge = staticmethod(_ui_canvas_edge)
 
     # Bounds

@@ -8,7 +8,6 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
 } from 'react';
 import {
   CANVAS_FAR_ZOOM,
@@ -19,43 +18,34 @@ import {
   canvasZoomedAt,
   type CanvasCamera,
   type CanvasLayout,
+  type CanvasMeasure,
 } from '../lib/canvas';
-import type { LiveCanvasCard, LiveCanvasNode, LiveTone } from '../lib/live-view';
+import type { CanvasPattern } from '../lib/canvas-vocabulary';
+import type { LiveCanvasNode } from '../lib/live-view';
 import { distance, midpoint, wheelFactor, type Point, type Size } from '../lib/zoom-pan';
-import { InlineMarkdown } from './ChatContent';
+import { CanvasArrowLabels, CanvasArrows } from './CanvasArrows';
+import { CanvasItem, type CanvasToneMark } from './CanvasItem';
 import { MinusIcon, PlusIcon } from './icons';
 import { Button, IconButton } from './ui';
 
 /** The tallest frame. The style sheet also holds the frame under 70% of the screen. */
-const MAX_HEIGHT = 520;
+const MAX_HEIGHT = 640;
 /** The band at the bottom of the frame that the camera bar stands in. */
 const BAR_ROOM = 44;
-/** The dots of the paper stand this far apart at full size. */
+/** The marks of the paper stand this far apart at full size. */
 const GRID = 24;
 /** A pointer that travelled less than this pressed a card and did not move the board. */
 const DRAG_START = 4;
 /** One press of a zoom button. */
 const ZOOM_STEP = 1.25;
 
-/** The ink of an arrow. A plain arrow takes the ink of a field edge. */
-const ARROW_INK: Record<LiveTone, string> = {
-  idle: 'text-dialog-hint',
-  running: 'text-accent-ink',
-  ok: 'text-ok',
-  warn: 'text-warn',
-  error: 'text-err',
+/** The paper of the board for each pattern. `plain` has none. */
+const PAPER: Record<CanvasPattern, string | undefined> = {
+  dots: 'radial-gradient(var(--line2) 1px, transparent 1px)',
+  grid: 'linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px)',
+  lines: 'linear-gradient(var(--line) 1px, transparent 1px)',
+  plain: undefined,
 };
-
-/** The edge of a card. A card that waits has a dashed edge on the paper of the page. */
-const CARD_EDGE: Record<LiveTone, string> = {
-  idle: 'border-dashed border-field-edge bg-ink',
-  running: 'border-accent-ink/60 bg-panel',
-  ok: 'border-ok/45 bg-panel',
-  warn: 'border-warn/60 bg-panel',
-  error: 'border-err bg-panel',
-};
-
-type Mark = (tone: LiveTone, className?: string) => ReactNode;
 
 /**
  * Safari's own trackpad pinch. No other engine sends it, and the desktop app is a
@@ -69,60 +59,10 @@ function inFrame(frame: HTMLElement | null, point: Point): Point {
   return box ? { x: point.x - box.left, y: point.y - box.top } : point;
 }
 
-function CardFace({
-  card,
-  sources,
-  mark,
-}: {
-  card: LiveCanvasCard;
-  sources: string[];
-  mark: Mark;
-}) {
-  return (
-    <>
-      <span className="block group-data-[far=true]/canvas:invisible">
-        <span className="flex min-w-0 items-center gap-1.5">
-          {card.tone && mark(card.tone)}
-          <span className="min-w-0 truncate text-body font-semibold text-white">{card.title}</span>
-          {card.meta && (
-            <span className="ml-auto shrink-0 pl-2 font-mono text-meta tabular-nums text-dialog-hint">
-              {card.meta}
-            </span>
-          )}
-        </span>
-        {card.text && (
-          <span className="mt-1 line-clamp-3 block text-ui text-dialog-foreground [overflow-wrap:anywhere]">
-            <InlineMarkdown>{card.text}</InlineMarkdown>
-          </span>
-        )}
-        {card.badges.length > 0 && (
-          <span className="mt-1.5 flex flex-wrap gap-1">
-            {card.badges.map((badge) => (
-              <span
-                key={badge}
-                className="border border-edge-strong px-1.5 font-mono text-meta text-dialog-hint"
-              >
-                {badge}
-              </span>
-            ))}
-          </span>
-        )}
-      </span>
-      {sources.length > 0 && <span className="sr-only">After {sources.join(', ')}</span>}
-      <span
-        aria-hidden="true"
-        className="absolute inset-0 hidden items-center gap-3 px-3 group-data-[far=true]/canvas:flex"
-      >
-        {card.tone && mark(card.tone, 'size-6')}
-        <span className="min-w-0 truncate text-display font-semibold text-white">{card.title}</span>
-      </span>
-    </>
-  );
-}
-
 /**
- * The cards and the arrows at full size. The camera moves the element around this
- * board, so a pan or a zoom draws none of it again.
+ * The items and the arrows at full size. The camera moves the element around this
+ * board, so a pan or a zoom draws none of it again. The frames stand under the
+ * arrows, the other items over them, and the words of the arrows over everything.
  */
 const Board = memo(function Board({
   node,
@@ -132,87 +72,37 @@ const Board = memo(function Board({
 }: {
   node: LiveCanvasNode;
   layout: CanvasLayout;
-  mark: Mark;
+  mark: CanvasToneMark;
   onSelect?: (nodeId: string, itemIds: string[]) => void;
 }) {
-  const titles = new Map(node.cards.map((card) => [card.id, card.title]));
-  const boxes = new Map(layout.boxes.map((box) => [box.id, box]));
+  const cards = new Map(node.cards.map((card) => [card.id, card]));
   const selected = new Set(node.selected_ids);
   const isSelectable = node.is_selectable && Boolean(onSelect);
+  const items = (isFrame: boolean) =>
+    layout.boxes.map((box) => {
+      const card = cards.get(box.id);
+      if (!card || (card.kind === 'frame') !== isFrame) return null;
+      const sources = card.edges
+        .filter((edge) => cards.has(edge.from) && edge.line !== 'none')
+        .map((edge) => `${cards.get(edge.from)?.title}${edge.label ? ` (${edge.label})` : ''}`);
+      return (
+        <CanvasItem
+          key={card.id}
+          card={card}
+          box={box}
+          mark={mark}
+          sources={sources}
+          isSelected={selected.has(card.id)}
+          onSelect={isSelectable ? () => onSelect?.(node.id, [card.id]) : undefined}
+        />
+      );
+    });
   return (
     <>
-      <svg
-        aria-hidden="true"
-        className="pointer-events-none absolute left-0 top-0 overflow-visible"
-        width={layout.width}
-        height={layout.height}
-      >
-        {layout.arrows.map(({ id, path, head, middle, edge }) => (
-          <g
-            key={id}
-            data-canvas-arrow={id}
-            className={edge.tone ? ARROW_INK[edge.tone] : 'text-field-edge'}
-          >
-            <path
-              d={path}
-              className={`fill-none stroke-current [stroke-width:1.25] [vector-effect:non-scaling-stroke] ${
-                edge.is_active
-                  ? 'animate-canvas-flow [stroke-dasharray:4_5] motion-reduce:animate-none'
-                  : edge.tone === 'idle'
-                    ? '[stroke-dasharray:2_5]'
-                    : ''
-              }`}
-            />
-            <polygon points={head} className="fill-current" />
-            {edge.is_active && (
-              <circle r="2.5" className="fill-current motion-reduce:hidden">
-                <animateMotion dur="1.6s" repeatCount="indefinite" path={path} />
-              </circle>
-            )}
-            {edge.label && (
-              <text
-                x={middle.x}
-                y={middle.y}
-                textAnchor="middle"
-                dominantBaseline="central"
-                className="fill-dialog-hint stroke-ink font-mono text-meta [paint-order:stroke] [stroke-linejoin:round] [stroke-width:5px] group-data-[far=true]/canvas:hidden"
-              >
-                {edge.label}
-              </text>
-            )}
-          </g>
-        ))}
-      </svg>
-      {node.cards.map((card) => {
-        const box = boxes.get(card.id);
-        if (!box) return null;
-        const isSelected = selected.has(card.id);
-        const sources = card.edges
-          .filter((edge) => titles.has(edge.from))
-          .map((edge) => `${titles.get(edge.from)}${edge.label ? ` (${edge.label})` : ''}`);
-        const face = `absolute overflow-hidden border px-2.5 py-2 text-left ${
-          card.tone ? CARD_EDGE[card.tone] : 'border-edge-strong bg-panel'
-        } ${isSelected ? 'outline outline-2 -outline-offset-1 outline-accent' : ''}`;
-        const place = { left: box.x, top: box.y, width: box.width };
-        const body = <CardFace card={card} sources={sources} mark={mark} />;
-        return isSelectable ? (
-          <button
-            key={card.id}
-            type="button"
-            data-canvas-card={card.id}
-            aria-pressed={isSelected}
-            className={`${face} cursor-pointer transition-colors duration-150 hover:bg-hover focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none`}
-            style={place}
-            onClick={() => onSelect?.(node.id, [card.id])}
-          >
-            {body}
-          </button>
-        ) : (
-          <div key={card.id} data-canvas-card={card.id} className={face} style={place}>
-            {body}
-          </div>
-        );
-      })}
+      {items(true)}
+      <CanvasArrows layout={layout} />
+      {items(false)}
+      <CanvasArrowLabels layout={layout} />
     </>
   );
 });
@@ -232,7 +122,7 @@ export function LiveCanvas({
 }: {
   node: LiveCanvasNode;
   /** The mark of a tone, with its word for a screen reader. */
-  mark: Mark;
+  mark: CanvasToneMark;
   onSelect?: (nodeId: string, itemIds: string[]) => void;
 }) {
   const frame = useRef<HTMLDivElement>(null);
@@ -244,12 +134,12 @@ export function LiveCanvas({
   const pointers = useRef(new Map<number, Point>());
   const gesture = useRef({ hasMoved: false, spread: 0 });
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
-  const [heights, setHeights] = useState<ReadonlyMap<string, number>>(new Map());
+  const [measures, setMeasures] = useState<ReadonlyMap<string, CanvasMeasure>>(new Map());
 
-  const flow = canvasFlow(size.width);
+  const flow = canvasFlow(size.width, node.flow);
   const layout = useMemo(
-    () => canvasLayout(node.cards, heights, flow),
-    [node.cards, heights, flow],
+    () => canvasLayout(node.cards, measures, flow),
+    [node.cards, measures, flow],
   );
   const isLocked = node.is_locked;
   // The board stands in the part of the frame above the camera bar.
@@ -281,6 +171,9 @@ export function LiveCanvas({
     frameNode.style.backgroundSize = `${grid}px ${grid}px`;
     frameNode.style.backgroundPosition = `${x}px ${y}px`;
     frameNode.dataset.far = String(scale < CANVAS_FAR_ZOOM);
+    // A far camera makes each line thin. The arrows grow against the scale, so a
+    // line stays near one pixel on the screen.
+    frameNode.style.setProperty('--cv-weight', String(Math.min(2.2, Math.max(1, 0.8 / scale))));
     // A person who holds the camera moves the board with one finger. Before that,
     // one finger scrolls the page, so a board in a long page is not a trap.
     frameNode.style.touchAction =
@@ -348,20 +241,34 @@ export function LiveCanvas({
     return () => observer.disconnect();
   }, []);
 
-  // The height of a card is the height of its words, so the layout asks the browser.
+  // The height of an item is the height of its words, so the layout asks the browser.
+  // A frame is as high as the layout makes it: only its header has a height of its own.
   const measureCards = useCallback(() => {
     const cards = world.current?.querySelectorAll<HTMLElement>('[data-canvas-card]') ?? [];
-    setHeights((held) => {
-      const next = new Map<string, number>();
+    setMeasures((held) => {
+      const next = new Map<string, CanvasMeasure>();
       for (const card of cards) {
-        if (card.offsetHeight > 0) next.set(card.dataset.canvasCard ?? '', card.offsetHeight);
+        const body =
+          card.dataset.canvasKind === 'frame'
+            ? card.querySelector<HTMLElement>('[data-canvas-head]')
+            : card;
+        const caption = card.parentElement?.querySelector<HTMLElement>(':scope > [data-canvas-caption]');
+        if (!body || body.offsetHeight <= 0) continue;
+        next.set(card.dataset.canvasCard ?? '', {
+          height: body.offsetHeight,
+          ...(caption ? { caption: caption.offsetHeight } : {}),
+        });
       }
       const isSame =
-        next.size === held.size && [...next].every(([id, height]) => held.get(id) === height);
+        next.size === held.size &&
+        [...next].every(([id, { height, caption }]) => {
+          const one = held.get(id);
+          return one?.height === height && one.caption === caption;
+        });
       return isSame ? held : next;
     });
   }, []);
-  useLayoutEffect(measureCards, [measureCards, node.cards]);
+  useLayoutEffect(measureCards, [measureCards, node.cards, flow]);
   useEffect(() => {
     let isMounted = true;
     document.fonts?.ready.then(() => isMounted && measureCards());
@@ -373,7 +280,8 @@ export function LiveCanvas({
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     gesture.current.hasMoved = false;
     if (isLocked || (event.pointerType === 'mouse' && event.button !== 0)) return;
-    if ((event.target as Element).closest('[data-canvas-bar]')) return;
+    // A press on the camera bar or on a player is not a move of the board.
+    if ((event.target as Element).closest('[data-canvas-bar], [data-canvas-control]')) return;
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     gesture.current.spread = 0;
   }
@@ -489,7 +397,7 @@ export function LiveCanvas({
     };
   }, [move]);
 
-  const summary = `Canvas, ${node.cards.length} ${node.cards.length === 1 ? 'card' : 'cards'}`;
+  const summary = `Canvas, ${node.cards.length} ${node.cards.length === 1 ? 'item' : 'items'}`;
   const glide = 'duration-300 ease-out motion-reduce:transition-none';
   return (
     <div
@@ -503,7 +411,7 @@ export function LiveCanvas({
       }`}
       style={{
         height: canvasFrameHeight(layout, size.width, MAX_HEIGHT - barRoom) + barRoom,
-        backgroundImage: 'radial-gradient(var(--line2) 1px, transparent 1px)',
+        backgroundImage: PAPER[node.pattern],
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

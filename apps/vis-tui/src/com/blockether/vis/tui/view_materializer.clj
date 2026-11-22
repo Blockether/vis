@@ -721,9 +721,9 @@
 (defmethod node->markdown :canvas
   [{:keys [cards] :as node} _]
   (marked-lines :canvas
-                (cons (data-line (select-keys node
-                                              [:zoom :focus :is-locked :is-selectable :selected-ids
-                                               :cards]))
+                (cons (data-line (select-keys (update node :cards #(mapv spec/canvas-card-facts %))
+                                              [:flow :pattern :zoom :focus :is-locked :is-selectable
+                                               :selected-ids :cards]))
                       (map (fn [{:keys [title meta tone edges]}]
                              (str "- "
                                   (tone-tag tone)
@@ -1078,7 +1078,7 @@
                      (if (> (count cards) limit) (subvec cards 0 limit) cards)]
 
                  (with-meta (-> node
-                                (assoc :cards shown)
+                                (assoc :cards (mapv spec/canvas-card-facts shown))
                                 (dissoc :is-selectable :selected-ids))
                    {:elided (- (count cards) (count shown))}))
 

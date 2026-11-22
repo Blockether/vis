@@ -1271,71 +1271,183 @@
         (conj (more-row id behind "item"))))
     [{:kind :empty :node-id id :text (empty-text :list)}]))
 
-;; A terminal has no board to pan. A canvas paints as a list: each card, then its
-;; text, then the cards that it comes from.
+(defn- canvas-order
+  "Cards in frame order, with their nesting depth. An item in a cycle has no parent."
+  [cards]
+  (let [frames
+        (into #{}
+              (keep #(when (= "frame"
+                              (some-> (:kind %)
+                                      name))
+                       (:id %)))
+              cards)
+
+        parents
+        (into {}
+              (keep (fn [{:keys [id parent]}]
+                      (when (frames parent) [id parent])))
+              cards)
+
+        in-cycle?
+        (fn [id]
+          (loop [p
+                 (parents id)
+
+                 seen
+                 #{}]
+
+            (cond (= p id) true
+                  (or (nil? p) (seen p)) false
+                  :else (recur (parents p) (conj seen p)))))
+
+        groups
+        (let [parents
+              (into {} (remove (comp in-cycle? key)) parents)
+
+              limit
+              (long (:max-depth hi-spec/canvas-defaults))]
+
+          (group-by (fn [{:keys [id]}]
+                      (loop [p
+                             (parents id)
+
+                             depth
+                             0]
+
+                        (cond (nil? p) (parents id)
+                              (>= (long depth) limit) nil
+                              :else (recur (parents p) (inc (long depth))))))
+                    cards))]
+
+    (letfn [(walk [parent depth]
+              (mapcat (fn [card]
+                        (cons [card depth] (walk (:id card) (inc (long depth)))))
+                      (get groups parent)))]
+      (vec (walk nil 0)))))
+
+(defn- canvas-hint [text] {:text text :fg t/dialog-hint})
+
+(defn- canvas-details
+  [{:keys [kind shape author is-resolved comments progress picture media caption edges]} titles]
+  (concat
+    (when (= "comment"
+             (some-> kind
+                     name))
+      [(str (when author (str (flat-text author) " · ")) (if is-resolved "Resolved" "Open"))])
+    (when (and shape
+               (= "shape"
+                  (some-> kind
+                          name)))
+      [(name shape)])
+    (when (pos? (long (or comments 0))) [(str comments (if (= 1 comments) " comment" " comments"))])
+    (when (some? progress) [(str (Math/round (* 100.0 (double progress))) "%")])
+    (when picture [(str "Picture: " (flat-text (:alt picture)))])
+    (when media [(str (name (:kind media)) ": " (flat-text (:alt media))) (:url media)])
+    (when caption [(flat-text caption)])
+    (for [{:keys [from label line]}
+          edges
+
+          :when (not= "none"
+                      (some-> line
+                              name))]
+
+      (str "← " (flat-text (get titles from from)) (when label (str " (" (flat-text label) ")"))))))
+
+(defn- canvas-card-rows
+  [[{:keys [id kind title text meta tone badges] :as card} depth] node-id titles selected fresh
+   text-w]
+  (let [is-fresh
+        (contains? fresh id)
+
+        ink
+        (tone-fg tone)
+
+        styles
+        (if (or is-fresh (contains? selected id)) [p/BOLD] [])
+
+        width
+        (long text-w)
+
+        indent
+        (min (* 2 (long depth)) (quot width 3))
+
+        head-indent
+        {:text (apply str (repeat indent " "))}
+
+        body-indent
+        {:text (str (:text head-indent) "  ")}
+
+        body-w
+        (max 1 (- width indent 2))
+
+        glyph
+        {:text (str (get tone-glyph tone "•") " ") :fg (if tone ink t/dialog-hint) :styles styles}
+
+        title-run
+        {:text (str (flat-text title) " · " (name (or kind :card))) :fg ink :styles styles}
+
+        hints
+        (cond-> []
+          meta
+          (conj (str " — " (flat-text meta)))
+
+          (seq badges)
+          (conj (str " [" (str/join "] [" (map flat-text badges)) "]")))
+
+        head
+        (into [head-indent glyph title-run] (map canvas-hint) hints)
+
+        detail-rows
+        (fn [detail]
+          (map (fn [line]
+                 [body-indent (canvas-hint line)])
+               (p/word-wrap detail body-w)))
+
+        headings
+        (if (<= (runs-width head) width)
+          [head]
+          (let [title-w
+                (max 1 (- width indent (runs-width [glyph])))
+
+                [first-line & more-lines]
+                (p/word-wrap (:text title-run) title-w)]
+
+            (concat [[head-indent glyph (assoc title-run :text first-line)]]
+                    (map (fn [line]
+                           [body-indent (assoc title-run :text line)])
+                         more-lines)
+                    (mapcat detail-rows hints))))]
+
+    (map (fn [segments]
+           (let [shown (runs-cut segments width)]
+             {:kind :item
+              :node-id node-id
+              :item-id id
+              :tone tone
+              :is-fresh is-fresh
+              :segments shown
+              :text (segment-line shown)}))
+         (concat headings
+                 (map #(into [body-indent] (run-segments % t/dialog-hint []))
+                      (md-lines text body-w))
+                 (mapcat detail-rows (canvas-details card titles))))))
+
 (defmethod node-rows :canvas
   [{:keys [id cards selected-ids]} {:keys [text-w fresh is-expanded]}]
   (if (seq cards)
     (let [{:keys [shown behind]}
-          (windowed cards is-expanded false)
+          (windowed (canvas-order cards) is-expanded false)
 
           titles
           (into {} (map (juxt :id :title)) cards)
 
           selected
-          (set selected-ids)
+          (set selected-ids)]
 
-          body-w
-          (max 1 (- (long text-w) 2))
-
-          hint
-          (fn [text]
-            {:text text :fg t/dialog-hint})]
-
-      (cond-> (vec
-                (mapcat
-                  (fn [{:keys [title text meta tone badges edges] :as card}]
-                    (let [is-fresh
-                          (contains? fresh (:id card))
-
-                          ink
-                          (tone-fg tone)
-
-                          styles
-                          (if (or is-fresh (contains? selected (:id card))) [p/BOLD] [])
-
-                          head
-                          (cond-> [{:text (str (get tone-glyph tone "•") " ")
-                                    :fg (if tone ink t/dialog-hint)
-                                    :styles styles}
-                                   {:text (flat-text title) :fg ink :styles styles}]
-                            meta
-                            (conj (hint (str " — " (flat-text meta))))
-
-                            (seq badges)
-                            (conj (hint (str " [" (str/join "] [" badges) "]"))))]
-
-                      (map (fn [segments]
-                             {:kind :item
-                              :node-id id
-                              :item-id (:id card)
-                              :tone tone
-                              :is-fresh is-fresh
-                              :segments segments
-                              :text (segment-line segments)})
-                           (concat [head]
-                                   (map #(into [{:text "  "}] (run-segments % t/dialog-hint []))
-                                        (md-lines text body-w))
-                                   (map (fn [{:keys [from label]}]
-                                          [(hint (str "  ← "
-                                                      (flat-text (get titles from from))
-                                                      (when label
-                                                        (str " (" (flat-text label) ")"))))])
-                                        edges)))))
-                  shown))
+      (cond-> (into [] (mapcat #(canvas-card-rows % id titles selected fresh text-w)) shown)
         (pos? (long behind))
-        (conj (more-row id behind "card"))))
-    [{:kind :empty :node-id id :text (empty-text :canvas)}]))
+        (conj (update (more-row id behind "card") :text p/ellipsize text-w))))
+    [{:kind :empty :node-id id :text (p/ellipsize (empty-text :canvas) text-w)}]))
 
 (def ^:private bar-eighths
   "The cells that end a bar: one to seven eighths of a column."

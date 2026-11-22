@@ -44,13 +44,92 @@
         (expect (str/includes? (str/join "\n" (map :text rows)) "# <button> is literal text"))
         (expect (lv/animating? [pane]))
         (expect (= #{"refresh" "target" "token" "notes" "region" "tags" "notify" "risk" "due" "pin"
-                     "apply" "plan-small" "details" "table"}
+                     "apply" "plan-small" "details" "table" "canvas"}
                    (set (map :node-id (lv/controls [pane])))))
         (expect (not (lv/animating? [(lv/settled pane {:reason :completed})])))
         (expect (not (lv/animating? [(lv/minimized pane)])))
         (let [markdown (materializer/->markdown view)]
           (expect (= markdown
                      (materializer/->markdown (:view (materializer/parse-markdown markdown)))))))))
+
+(defdescribe
+  canvas-rows-test
+  (it
+    "shows nested items and the details of a resolved comment"
+    (let [cards
+          [{:id "comment"
+            :title "Review"
+            :kind "comment"
+            :parent "frame"
+            :author "Ada"
+            :is-resolved true
+            :caption "Ready to ship"
+            :comments 2
+            :progress 0.25
+            :picture {:alt "Layout"}
+            :media {:kind "audio" :url "https://example.com/a" :alt "Notes"}
+            :edges [{:from "frame" :line "none" :label "Hidden"} {:from "frame" :label "Shown"}]}
+           {:id "frame" :title "Group" :kind "frame"}
+           {:id "a" :title "Cycle A" :kind "frame" :parent "b"}
+           {:id "b" :title "Cycle B" :kind "frame" :parent "a"}
+           {:id "missing" :title "Unknown parent" :kind "note" :parent "absent"}]
+
+          rows
+          (filter :item-id
+                  (lv/plan (lv/opened {:title "Canvas"
+                                       :nodes [{:id "g" :type :canvas :cards cards}]})
+                           32))
+
+          comment
+          (filter #(= "comment" (:item-id %)) rows)
+
+          text
+          (str/join "\n" (map :text comment))]
+
+      (expect (= ["frame" "comment" "a" "b" "missing"] (vec (distinct (map :item-id rows)))))
+      (expect (str/starts-with? (:text (first comment)) "  "))
+      (expect (every? #(not (str/starts-with? (:text %) "  "))
+                      (filter #(contains? #{"a" "b" "missing"} (:item-id %)) rows)))
+      (doseq [detail ["comment" "Ada" "Resolved" "Ready to ship" "2 comments" "25%" "Layout" "audio"
+                      "https://example.com/a" "Notes" "Shown"]]
+        (expect (str/includes? text detail) detail))
+      (expect (not (str/includes? text "Hidden")))
+      (expect (every? #(<= (p/display-width (:text %)) 32) rows))))
+  (it "puts a card under a frame past the depth limit back on the board"
+      (let [limit
+            (:max-depth spec/canvas-defaults)
+
+            cards
+            (mapv (fn [i]
+                    {:id (str i) :title (str "Frame " i) :kind "frame" :parent (str (dec i))})
+                  (range (+ 2 (long limit))))
+
+            rows
+            (filter :item-id
+                    (lv/plan (lv/opened {:title "Canvas"
+                                         :nodes [{:id "g" :type :canvas :cards cards}]})
+                             80))]
+
+        (expect (str/starts-with? (:text (nth rows limit)) "  "))
+        (expect (not (str/starts-with? (:text (last rows)) "  ")))))
+  (it "keeps each full media URL in the expanded canvas at 32 columns"
+      (let [view
+            (fixture)
+
+            canvas
+            (first (filter #(= "canvas" (:id %))
+                           (tree-seq :children :children {:children (:nodes view)})))
+
+            pane
+            (lv/expanded (lv/opened (assoc view :nodes [canvas])) "canvas")
+
+            rows
+            (filter :item-id (lv/plan pane 32))]
+
+        (doseq [{:keys [id media]} (filter :media (:cards canvas))]
+          (let [text (str/join (map (comp str/trim :text) (filter #(= id (:item-id %)) rows)))]
+            (expect (str/includes? text (:url media)) id)))
+        (expect (every? #(<= (p/display-width (:text %)) 32) rows)))))
 
 (defdescribe
   badge-list-chart-rows-test
@@ -324,7 +403,7 @@
                            (lv/expanded "details")
                            (lv/expanded "a"))]
 
-                   (expect (= #{"details"} (set (map :node-id (lv/controls [pane])))))
+                   (expect (= #{"details" "canvas"} (set (map :node-id (lv/controls [pane])))))
                    (expect (not-any? #(= :log (:kind %)) (entries pane)))
                    (expect (some #(= "A started" (:text %)) (entries open)))
                    (expect (not-any? #(= "B started" (:text %)) (entries open)))

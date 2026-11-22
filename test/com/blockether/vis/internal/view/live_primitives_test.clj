@@ -70,6 +70,22 @@
           (materializer/materialize (engine/normalize-live-view (engine/spec<-json raw)))]
 
       (expect (nil? (spec/live-view-error view)))
+      (let [canvas
+            (first (filter #(= "canvas" (get % "id"))
+                           (tree-seq #(get % "children")
+                                     #(get % "children")
+                                     {"children" (get raw "nodes")})))
+
+            picture
+            (some :picture (:cards (node (:view (materializer/picture view)) "canvas")))
+
+            data
+            (some #(get-in % ["picture" "data"]) (get canvas "cards"))]
+
+        (expect (= canvas (wire/->wire (node view "canvas"))))
+        (expect (= (spec/picture-byte-count data) (:bytes picture)))
+        (expect (not (contains? picture :data)))
+        (expect (not (str/includes? (materializer/->markdown view) data))))
       (let [types (set (map :type (remove #(= :group (:type %)) (nodes view))))]
         (expect (every? types (vals spec/live-node-types)))
         (expect (some types (vals spec/field-types))))

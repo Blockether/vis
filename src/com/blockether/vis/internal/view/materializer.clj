@@ -727,9 +727,9 @@
   (marked-lines :canvas
                 [(str "Canvas · " (count cards) " cards")
                  (tagged-json "canvas"
-                              (select-keys node
-                                           [:zoom :focus :is-locked :is-selectable :selected-ids
-                                            :cards]))]))
+                              (select-keys (update node :cards #(mapv spec/canvas-card-facts %))
+                                           [:flow :pattern :zoom :focus :is-locked :is-selectable
+                                            :selected-ids :cards]))]))
 
 (defmethod node->markdown :spinner
   [{:keys [text is-active]} _]
@@ -1047,7 +1047,7 @@
         (if (> (count cards) limit) (subvec cards 0 limit) cards)]
 
     (with-meta (-> node
-                   (assoc :cards shown)
+                   (assoc :cards (mapv spec/canvas-card-facts shown))
                    (dissoc :is-selectable :selected-ids))
       {:elided (- (count cards) (count shown))})))
 

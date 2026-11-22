@@ -14,6 +14,7 @@ import {
   VIEW_SHORTCUT_LABEL_MAX,
   VIEW_SHORTCUT_NAMED_KEYS,
   VIEW_SHORTCUTS_MAX,
+  APP_ICONS,
   appIconName,
   viewButtonVariant,
   viewCommandIcon,
@@ -33,6 +34,40 @@ import {
   type LiveSceneObject,
 } from './scene';
 import { CANVAS_MAX_ZOOM } from './canvas';
+import {
+  CANVAS_DEFAULT_FLOW,
+  CANVAS_DEFAULT_PATTERN,
+  CANVAS_MAX_COMMENTS,
+  canvasAnimation,
+  canvasColor,
+  canvasEdgeAnimation,
+  canvasEndMark,
+  canvasFill,
+  canvasFlowSetting,
+  canvasKind,
+  canvasLine,
+  canvasMediaKind,
+  canvasPattern,
+  canvasPictureFit,
+  canvasRoute,
+  canvasShape,
+  canvasSize,
+  canvasStartMark,
+  type CanvasAnimation,
+  type CanvasColor,
+  type CanvasEdgeAnimation,
+  type CanvasFill,
+  type CanvasFlowSetting,
+  type CanvasKind,
+  type CanvasLine,
+  type CanvasMark,
+  type CanvasMediaKind,
+  type CanvasPattern,
+  type CanvasPictureFit,
+  type CanvasRoute,
+  type CanvasShape,
+  type CanvasSize,
+} from './canvas-vocabulary';
 import {
   HUMAN_INPUT_FIELD_TYPES,
   humanInputFieldFromWire,
@@ -488,9 +523,30 @@ export interface LiveCanvasEdge {
   /** Absent on a plain arrow. `idle` is an arrow that waits. */
   tone?: LiveTone;
   is_active: boolean;
+  route: CanvasRoute;
+  /** `none` draws nothing: the arrow only orders the items. */
+  line: CanvasLine;
+  color?: CanvasColor;
+  start_mark: CanvasMark;
+  end_mark: CanvasMark;
+  /** How the arrow moves while `is_active` is true. */
+  animation: CanvasEdgeAnimation;
 }
 
-/** One card of a canvas (`view.json` `canvas_card`). */
+/** The picture of a canvas item (`view.json` `canvas_picture`). */
+export interface LiveCanvasPicture extends LivePicture {
+  alt: string;
+  fit: CanvasPictureFit;
+}
+
+/** A video or a sound of a canvas item. Nothing loads before the person starts it. */
+export interface LiveCanvasMedia {
+  kind: CanvasMediaKind;
+  url: string;
+  alt: string;
+}
+
+/** One item of a canvas (`view.json` `canvas_card`). `kind` says what it is. */
 export interface LiveCanvasCard {
   id: string;
   title: string;
@@ -502,6 +558,28 @@ export interface LiveCanvasCard {
   column?: number;
   row?: number;
   edges: LiveCanvasEdge[];
+  kind: CanvasKind;
+  /** The outline of an item of kind `shape`. */
+  shape: CanvasShape;
+  color?: CanvasColor;
+  fill: CanvasFill;
+  border: CanvasLine;
+  size: CanvasSize;
+  icon?: AppIconName;
+  picture?: LiveCanvasPicture;
+  media?: LiveCanvasMedia;
+  /** A line under the item, outside its border. */
+  caption?: string;
+  /** Who wrote an item of kind `comment`. */
+  author?: string;
+  is_resolved: boolean;
+  /** The count on the comment mark. Absent or 0 shows no mark. */
+  comments?: number;
+  /** From 0 to 1. Absent shows no bar. */
+  progress?: number;
+  animation?: CanvasAnimation;
+  /** The id of the frame that holds the item. */
+  parent?: string;
 }
 
 /** A board of cards and arrows. The owner moves its camera with `zoom` and `focus`. */
@@ -514,6 +592,10 @@ export interface LiveCanvasNode extends LiveNodeBase {
   is_locked: boolean;
   is_selectable: boolean;
   selected_ids: string[];
+  /** The direction of the steps. `auto` follows the width of the surface. */
+  flow: CanvasFlowSetting;
+  /** The texture of the board behind the items. */
+  pattern: CanvasPattern;
   cards: LiveCanvasCard[];
 }
 
@@ -908,7 +990,36 @@ function canvasEdgeFromWire(raw: Record<string, unknown>): LiveCanvasEdge | null
     ...(label ? { label } : {}),
     ...(raw.tone === undefined ? {} : { tone: tone(raw.tone) }),
     is_active: raw.is_active === true,
+    route: canvasRoute(raw.route),
+    line: canvasLine(raw.line),
+    ...optional('color', canvasColor(raw.color)),
+    start_mark: canvasStartMark(raw.start_mark),
+    end_mark: canvasEndMark(raw.end_mark),
+    animation: canvasEdgeAnimation(raw.animation),
   };
+}
+
+/** `{ [key]: value }`, or nothing for an absent value. */
+function optional<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
+  return (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
+}
+
+/** The picture of a canvas item, or nothing without a known format and an alt text. */
+function canvasPictureFromWire(raw: unknown): LiveCanvasPicture | undefined {
+  const picture = pictureFromWire(raw);
+  const alt = optionalText(record(raw)?.alt);
+  if (!picture || alt === undefined) return undefined;
+  return { ...picture, alt, fit: canvasPictureFit(record(raw)?.fit) };
+}
+
+/** The media of a canvas item, or nothing without a kind, a web address and an alt text. */
+function canvasMediaFromWire(raw: unknown): LiveCanvasMedia | undefined {
+  const media = record(raw);
+  const kind = canvasMediaKind(media?.kind);
+  const url = text(media?.url).trim();
+  const alt = optionalText(media?.alt);
+  if (kind === undefined || alt === undefined || !/^https?:\/\/\S+$/.test(url)) return undefined;
+  return { kind, url, alt };
 }
 
 function canvasCardFromWire(raw: Record<string, unknown>): LiveCanvasCard | null {
@@ -916,6 +1027,9 @@ function canvasCardFromWire(raw: Record<string, unknown>): LiveCanvasCard | null
   if (id === '') return null;
   const column = optionalNumber(raw.column);
   const row = optionalNumber(raw.row);
+  const comments = optionalNumber(raw.comments);
+  const progress = optionalNumber(raw.progress);
+  const parent = optionalText(raw.parent);
   return {
     id,
     title: text(raw.title) || id,
@@ -926,6 +1040,27 @@ function canvasCardFromWire(raw: Record<string, unknown>): LiveCanvasCard | null
     ...(column === undefined ? {} : { column }),
     ...(row === undefined ? {} : { row }),
     edges: keyed(raw.edges, canvasEdgeFromWire),
+    kind: canvasKind(raw.kind),
+    shape: canvasShape(raw.shape),
+    ...optional('color', canvasColor(raw.color)),
+    fill: canvasFill(raw.fill),
+    border: canvasLine(raw.border),
+    size: canvasSize(raw.size),
+    ...((APP_ICONS as readonly unknown[]).includes(raw.icon)
+      ? { icon: raw.icon as AppIconName }
+      : {}),
+    ...optional('picture', canvasPictureFromWire(raw.picture)),
+    ...optional('media', canvasMediaFromWire(raw.media)),
+    ...optional('caption', optionalText(raw.caption)),
+    ...optional('author', optionalText(raw.author)),
+    is_resolved: raw.is_resolved === true,
+    ...(comments === undefined || comments < 1
+      ? {}
+      : { comments: Math.min(CANVAS_MAX_COMMENTS, Math.trunc(comments)) }),
+    ...(progress === undefined ? {} : { progress: Math.min(1, Math.max(0, progress)) }),
+    ...optional('animation', canvasAnimation(raw.animation)),
+    // An item cannot stand in itself.
+    ...(parent === undefined || parent === id ? {} : { parent }),
   };
 }
 
@@ -1466,7 +1601,13 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
       return {
         ...base,
         type: 'canvas',
-        ...canvasCamera(node, { zoom: 0, focus: '', is_locked: false }),
+        ...canvasSettings(node, {
+          zoom: 0,
+          focus: '',
+          is_locked: false,
+          flow: CANVAS_DEFAULT_FLOW,
+          pattern: CANVAS_DEFAULT_PATTERN,
+        }),
         is_selectable: isSelectable,
         selected_ids: isSelectable ? selectedIds(node.selected_ids, cards) : [],
         cards,
@@ -1475,15 +1616,17 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
   }
 }
 
-type CanvasCamera = Pick<LiveCanvasNode, 'zoom' | 'focus' | 'is_locked'>;
+type CanvasSettings = Pick<LiveCanvasNode, 'zoom' | 'focus' | 'is_locked' | 'flow' | 'pattern'>;
 
-/** The camera keys of a canvas that `raw` carries, the others from `held`. */
-function canvasCamera(raw: Record<string, unknown>, held: CanvasCamera): CanvasCamera {
+/** The camera and board keys of a canvas that `raw` carries, the others from `held`. */
+function canvasSettings(raw: Record<string, unknown>, held: CanvasSettings): CanvasSettings {
   const zoom = optionalNumber(raw.zoom);
   return {
     zoom: zoom !== undefined && zoom >= 0 ? Math.min(CANVAS_MAX_ZOOM, zoom) : held.zoom,
     focus: typeof raw.focus === 'string' ? raw.focus.trim() : held.focus,
     is_locked: typeof raw.is_locked === 'boolean' ? raw.is_locked : held.is_locked,
+    flow: canvasFlowSetting(raw.flow) ?? held.flow,
+    pattern: canvasPattern(raw.pattern) ?? held.pattern,
   };
 }
 
@@ -1938,7 +2081,7 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
       return {
         ...node,
         label: 'label' in op ? optionalText(op.label) : node.label,
-        ...canvasCamera(op, node),
+        ...canvasSettings(op, node),
         is_selectable: isSelectable,
         selected_ids: !isSelectable
           ? []

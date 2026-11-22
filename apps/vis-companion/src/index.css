@@ -498,15 +498,203 @@
 }
 
 /* An arrow of a live canvas with work on it: the dashes run toward the card where the
-   arrow ends. One period of the dash pattern, so the loop has no seam. */
+   arrow ends. One period of the dash pattern, so the loop has no seam. The other
+   motions draw the eye to one item or one arrow of the board. */
 @theme {
   --animate-canvas-flow: canvas-flow 700ms linear infinite;
+  --animate-canvas-edge-pulse: canvas-edge-pulse 1400ms ease-in-out infinite;
+  --animate-canvas-pulse: canvas-pulse 1600ms ease-in-out infinite;
+  --animate-canvas-glow: canvas-glow 2200ms ease-in-out infinite;
+  --animate-canvas-bounce: canvas-bounce 1400ms cubic-bezier(0.3, 0, 0.3, 1) infinite;
+  --animate-canvas-shake: canvas-shake 2400ms ease-in-out infinite;
 
   @keyframes canvas-flow {
     to {
       stroke-dashoffset: -9;
     }
   }
+  @keyframes canvas-edge-pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+  @keyframes canvas-pulse {
+    50% {
+      transform: scale(1.04);
+    }
+  }
+  @keyframes canvas-glow {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 0 transparent);
+    }
+    50% {
+      filter: drop-shadow(0 0 9px var(--cv-glow));
+    }
+  }
+  @keyframes canvas-bounce {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-6px);
+    }
+  }
+  /* A short shake, then a rest: a shake that never stops is noise. */
+  @keyframes canvas-shake {
+    0%,
+    24%,
+    100% {
+      transform: translateX(0);
+    }
+    4%,
+    12%,
+    20% {
+      transform: translateX(-3px);
+    }
+    8%,
+    16% {
+      transform: translateX(3px);
+    }
+  }
+}
+
+/* The colours of a live canvas. An item or an arrow names one hue (`--cv`) with
+   `data-canvas-color`, or takes the hue of its tone. Each paint comes from that hue
+   and the palette of the theme, so one name reads on a light page and on a dark one:
+   the ink bends toward the text colour, and a fill bends toward the surface.
+   An item with no hue and no tone keeps the plain paints of the board. */
+[data-canvas] {
+  --cv-ink: var(--fg);
+  --cv-edge: color-mix(in oklab, var(--fg) 26%, var(--surface));
+  --cv-soft: var(--surface);
+  --cv-faint: color-mix(in oklab, var(--fg) 4%, transparent);
+  --cv-tint: color-mix(in oklab, var(--fg) 7%, var(--surface));
+  --cv-solid: var(--fg);
+  --cv-on: var(--bg);
+  --cv-glow: color-mix(in oklab, var(--fg) 55%, transparent);
+}
+[data-canvas-tone='running'] {
+  --cv: var(--warning);
+}
+[data-canvas-tone='ok'] {
+  --cv: var(--ok);
+}
+[data-canvas-tone='warn'] {
+  --cv: var(--warning-border);
+}
+[data-canvas-tone='error'] {
+  --cv: var(--err);
+}
+[data-canvas-color='gray'] {
+  --cv: #8b93a1;
+}
+[data-canvas-color='red'] {
+  --cv: #ef4444;
+}
+[data-canvas-color='orange'] {
+  --cv: #f97316;
+}
+[data-canvas-color='yellow'] {
+  --cv: #eab308;
+}
+[data-canvas-color='green'] {
+  --cv: #22c55e;
+}
+[data-canvas-color='teal'] {
+  --cv: #14b8a6;
+}
+[data-canvas-color='blue'] {
+  --cv: #3b82f6;
+}
+[data-canvas-color='purple'] {
+  --cv: #a855f7;
+}
+[data-canvas-color='pink'] {
+  --cv: #ec4899;
+}
+/* A page with one ink has no hues: a colour is the ink, and a solid fill is the ink
+   with the words in the colour of the page. */
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) :is([data-canvas-color], [data-canvas-tone]) {
+  --cv: var(--fg);
+}
+:is(
+    [data-canvas-color],
+    [data-canvas-tone='running'],
+    [data-canvas-tone='ok'],
+    [data-canvas-tone='warn'],
+    [data-canvas-tone='error']
+  ) {
+  --cv-ink: color-mix(in oklab, var(--cv) 68%, var(--fg));
+  --cv-edge: color-mix(in oklab, var(--cv) 62%, var(--surface));
+  --cv-soft: color-mix(in oklab, var(--cv) 11%, var(--surface));
+  --cv-faint: color-mix(in oklab, var(--cv) 10%, transparent);
+  --cv-tint: color-mix(in oklab, var(--cv) 24%, var(--surface));
+  --cv-solid: var(--cv);
+  --cv-on: #12141a;
+  --cv-glow: color-mix(in oklab, var(--cv) 70%, transparent);
+}
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) :is([data-canvas-color], [data-canvas-tone]) {
+  --cv-on: var(--bg);
+}
+/* A card that waits stands back: the paper of the page and a quiet edge. */
+[data-canvas-tone='idle']:not([data-canvas-color]) {
+  --cv-edge: var(--field-edge);
+  --cv-soft: var(--bg);
+}
+/* How much of the colour fills an item. A solid item has its words, its icon and its
+   bar in the ink that reads on the colour. A sticky note is a sheet of the colour,
+   and a frame stays faint so that its items stand out. */
+[data-canvas] {
+  --cv-title: var(--fg);
+  --cv-text: var(--dialog-fg);
+  --cv-hint: var(--dialog-hint);
+}
+[data-canvas-fill='none'] {
+  --cv-fill: transparent;
+}
+[data-canvas-fill='soft'] {
+  --cv-fill: var(--cv-soft);
+}
+[data-canvas-fill='solid'] {
+  --cv-fill: var(--cv-solid);
+}
+[data-canvas-kind='note'][data-canvas-fill='soft'] {
+  --cv-fill: var(--cv-tint);
+}
+[data-canvas-kind='frame'][data-canvas-fill='soft'] {
+  --cv-fill: var(--cv-faint);
+}
+[data-canvas-kind='frame'][data-canvas-fill='solid'] {
+  --cv-fill: var(--cv-soft);
+}
+[data-canvas-kind][data-canvas-fill='solid']:not([data-canvas-kind='frame']) {
+  --cv-title: var(--cv-on);
+  --cv-text: var(--cv-on);
+  --cv-hint: color-mix(in oklab, var(--cv-on) 74%, var(--cv-solid));
+  --cv-ink: var(--cv-on);
+  --cv-edge: color-mix(in oklab, var(--cv-solid) 78%, var(--fg));
+  --cv-tint: color-mix(in oklab, var(--cv-on) 22%, var(--cv-solid));
+}
+/* The line of an item border. `double` needs three pixels to show two lines, and
+   `dotted` needs two pixels to show round dots. */
+[data-canvas-border='dashed'] {
+  border-style: dashed;
+}
+[data-canvas-border='dotted'] {
+  border-style: dotted;
+  border-width: 2px;
+}
+[data-canvas-border='double'] {
+  border-style: double;
+  border-width: 3px;
+}
+[data-canvas-border='thick'] {
+  border-width: 2px;
+}
+[data-canvas-border='none'] {
+  border-color: transparent;
 }
 
 /* The reading column owns its padding; a notch widens it through the safe-area insets. */

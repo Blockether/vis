@@ -24,8 +24,8 @@ and a person can stop it at any time.
   limits](#stay-inside-the-limits), and [test the view](#testing-a-view) at its limits.
 - **People must act in an app with single keys.** Add [shortcuts](#add-shortcuts-to-an-app).
 - **Your program must show a moving 3D world, such as a game.** Draw a [scene](#draw-a-3d-scene).
-- **Your extension must show a graph of its own, such as a plan or a pipeline.** Draw a
-  [canvas](#draw-a-graph-on-a-canvas).
+- **You need to show the steps of a plan, with notes and pictures.** Draw a
+  [board on a canvas](#draw-a-board-on-a-canvas).
 - **The model must know what people do in an app or an HTML page.** Give it a
   [note](#tell-the-model-what-people-see).
 - **Your own program, not an extension, must own an app.** [Run it from your
@@ -339,7 +339,7 @@ returns a typed handle that has only the verbs of its node type:
 | `vis.ui.button(id, label, is_disabled=False, variant=None)` | An action for the person. `variant` is `primary`, `secondary`, or `destructive`. `is_selected=True` or `False` makes the button one choice of a row, such as a tab, and the Companion app marks the current choice. | `.set(label=, is_disabled=)` |
 | `vis.ui.disclosure(id, label, *nodes, default_expanded=False)` | A column that collapses | Children update by their own IDs. |
 | `vis.ui.scene(id, width, height, objects=[vis.ui.scene_object(…)])` | A 3D world, which [each client draws](#draw-a-3d-scene) | `.put(object_id, **changes)`, `.mesh(mesh_id, vertices, faces)`, `.set(background=, fov=, is_wrapping=, tick_ms=)`, `.remove(*ids)`, `.clear()` |
-| `vis.ui.canvas(id, cards=[vis.ui.canvas_card(…)])` | Cards with arrows on a board, which [people pan and zoom](#draw-a-graph-on-a-canvas) | `.card(card_id, title, **keys)`, `.put(*cards)`, `.focus(card_id, zoom=)`, `.fit()`, `.select(*card_ids)`, `.set(zoom=, focus=, is_locked=, is_selectable=, label=)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.canvas(id, cards=[vis.ui.canvas_card(…)])` | A [board with items and arrows](#draw-a-board-on-a-canvas) | `.card(id, title, **keys)`, `.shape(…)`, `.note(…)`, `.comment(…)`, `.frame(…)`, `.text(…)`, `.put(*cards)`, `.focus(id, zoom=)`, `.fit()`, `.select(*ids)`, `.set(…)`, `.remove(*ids)`, `.clear()` |
 
 `vis.ui.output(...)` builds a `log` node. The `output` name differs from `vis.log`, which writes
 a line to the engine log.
@@ -550,61 +550,105 @@ the smooth motion, give it a new ID.
 The terminal draws the same scene in true color, and each character shows two pixels with the `▀`
 half block.
 
-### Draw a graph on a canvas
+### Draw a board on a canvas
 
-A `canvas` node shows cards with arrows between them, such as the steps of a plan or the jobs of a
-pipeline. Your Python code names the cards and the arrows, and Vis puts them in place.
+To show the steps of a release, put the build and its checks in a frame. Use arrows to show which
+steps depend on others. Give each item a unique ID so that you can update it or draw an arrow to it.
 
 ```python
-board = vis.ui.canvas(
+ui = vis.ui
+board = ui.canvas(
     "board",
     [
-        vis.ui.canvas_card("plan", "Plan", tone="ok", meta="12s"),
-        vis.ui.canvas_card("build", "Build", after="plan", tone="running", badges=["arm64"]),
-        vis.ui.canvas_card(
-            "test", "Test", tone="idle",
-            after=[vis.ui.canvas_edge("build", label="binary", is_active=True)],
+        ui.canvas_frame("release", "Release", color="blue"),
+        ui.canvas_card("build", "Build", parent="release", icon="code", progress=0.6),
+        ui.canvas_frame("checks", "Checks", parent="release", border="dashed"),
+        ui.canvas_shape(
+            "ready", "Ready?", parent="checks", shape="diamond", color="teal",
+            after=ui.canvas_edge("build", label="Artifact", route="elbow", end_mark="triangle"),
         ),
+        ui.canvas_note("notes", "Release notes", color="yellow", text="List the **changes**."),
     ],
-    label="Release",
+    flow="right",
+    pattern="grid",
     is_selectable=True,
 )
-app = vis.attach(vis.ui.app("Release", board, key="release"))
-
-app["board"].card("test", "Test", after="build", tone="running")  # Replaces the whole card.
-app["board"].focus("test", zoom=1)
-app["board"].fit()
+app = vis.attach(ui.app("Release", board, key="release"))
+canvas = app["board"]
+canvas.comment("review", "Review", parent="checks", author="Ada", text="Check size.")
+canvas.text("approval", "Approval required", parent="checks")
 ```
 
-- `after` takes card IDs or `vis.ui.canvas_edge(source_id, label=, tone=, is_active=)` values. Each
-  one draws an arrow to the card.
-- A card goes one step after the last card that it comes from. To fix the place of a card, give
-  it `column` for the step and `row` for the place in that step.
-- A card has a `title`. It can also have `text` with inline formatting, `meta`, `tone`, and at most
-  8 `badges`.
-- A card or an arrow with `tone="idle"` has a dashed line, which shows that it waits. An arrow with
-  `is_active=True` moves.
-- A canvas holds at most 200 cards, and a card holds at most 16 arrows.
+Open the app in the Companion app. The **Checks** frame appears inside **Release**. An arrow with
+an **Artifact** label connects **Build** and **Ready?**. The terminal shows the items as a list.
 
-`.card(card_id, title, **keys)` and `.put(*cards)` add cards. A card with the ID of a card on the
-board replaces that whole card. `.remove(*ids)` removes cards. An arrow from a card that the board
-does not hold shows when that card arrives. `.cards` returns the cards as Vis holds them, by ID.
+### Add a picture or recording to a canvas
 
-In the Companion app, people drag the board to move it and pinch to zoom. With a mouse, they hold
-Ctrl or Command and turn the wheel. The buttons in the corner of the board zoom in, zoom out, show
-the cards at full size, and fit the whole board. A double click on a card puts that card in the
-center at full size. In a window narrower than 560 pixels, the steps go from top to bottom.
+To show an image in a card, change `release.png` to the path of your PNG file. You can also pass
+image bytes to `ui.canvas_picture`. Use `alt` to describe what the image shows. A recording uses
+an HTTP or HTTPS URL. The Companion app loads the recording when a person starts playback.
 
-Your code moves the camera too. `.focus(card_id, zoom=)` puts one card in the center, and `.fit()`
-shows the whole board. `zoom` is the scale from 0 to 4, where 1 is full size and 0 fits the focus.
-After a person moves the board, it stays there until the person presses **Fit** or your code sends
-a different `zoom` or `focus`. `.set(is_locked=True)` stops people from moving the board.
+```python
+canvas.card(
+    "preview", "Preview", parent="release",
+    picture=ui.canvas_picture("release.png", alt="The release board on a phone", fit="contain"),
+    caption="Figure 1. The board on a phone.",
+)
+canvas.card(
+    "demo", "Demo", after="preview",
+    media={"kind": "video", "url": "https://example.com/release.mp4", "alt": "A release walkthrough"},
+)
+```
 
-With `is_selectable=True`, people can select a card. Read the selection with `.selected_ids`, and
-set it with `.select(*card_ids)`.
+Use `kind="audio"` in `media` for a sound recording. Change the example URL to the address of
+your recording. Use `fit="contain"` to show the whole picture. The default, `cover`, fills the
+picture area and can cut the edges. The pictures in canvas items count toward the view's picture
+byte limit.
 
-The terminal shows a canvas as a list. Each card has its title, its text, and one line for each
-card that it comes from.
+### Move or update a canvas
+
+In the Companion app, drag to move the board and pinch to zoom. With a mouse, hold Ctrl or Command
+and turn the wheel. The board controls zoom in, zoom out, show the items at full size, and fit the
+whole board. Double-click an item to put it in the center at full size.
+
+Call `.focus(item_id, zoom=)` to put an item in the center. Call `.fit()` to show the whole board.
+`zoom` is a scale from 0 to 4. Use 1 for full size or 0 to fit the focus. After a person moves the
+board, it stays there until the person presses **Fit** or you send a different `zoom` or `focus`.
+
+Use `.set(is_locked=True)` to stop people from moving the board. With `is_selectable=True`, read
+the selection with `.selected_ids` and set it with `.select(*ids)`.
+
+Use `.card(id, title, **keys)`, the other item methods, or `.put(*cards)` to add items. An item
+with an ID already on the board replaces the whole item. Use `.remove(*ids)` to remove items and
+`.clear()` to remove them all. Read `.cards` for the items that Vis holds, by ID.
+
+### Canvas options
+
+A board holds up to 200 items. Each item holds up to 16 incoming arrows.
+
+| Option | Values and effect |
+|---|---|
+| `flow` | `right` puts the steps from left to right, and `down` puts them from top to bottom. `auto`, the default, uses `down` on windows narrower than 560 pixels and `right` otherwise. |
+| `pattern` | `dots`, `grid`, `lines`, or `plain`. The default is `dots`. |
+| `column`, `row` | Set an item's step with `column` and its place in that step with `row`. An item without a fixed step goes one step after the last item that it comes from. |
+| `parent` | Names the frame that holds an item. Frames can nest to a depth of 4. An item with an unknown parent or a parent that is not a frame stays on the board. |
+| `kind`, `shape` | The item kinds are `card`, `shape`, `note`, `comment`, `frame`, and `text`. A `shape` item uses `rectangle`, `rounded`, `pill`, `ellipse`, `diamond`, `hexagon`, `parallelogram`, `cylinder`, or `document`. |
+| `color`, `fill`, `border` | Choose `gray`, `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, or `pink`. Set `fill` to `none`, `soft`, or `solid`. Set `border` to `solid`, `dashed`, `dotted`, `double`, `thick`, or `none`. |
+| `size`, `icon`, `animation` | Use `small`, `medium`, or `large`. Use an app icon name such as `code`, `checklist`, or `image`. Choose `pulse`, `glow`, `bounce`, or `shake` for movement. |
+| `text`, `meta`, `tone`, `badges` | Add text with inline formatting, a detail line, a status, or up to 8 badges. |
+| `caption`, `progress` | Put a line below the item with `caption`. Set `progress` from 0 to 1 to show how much work is done. |
+| `author`, `is_resolved`, `comments` | Name the author of a comment. Set `is_resolved=True` when it needs no more work. Use `comments` to show a count on an item. |
+
+Pass an item ID, a `ui.canvas_edge(source_id, **keys)` value, or a list of both to `after`. Each
+arrow ends at the item that holds it. An arrow from a missing item appears when that item arrives.
+
+| Arrow option | Values and effect |
+|---|---|
+| `label`, `tone`, `color` | Add a label or set the color. |
+| `route` | `curve`, `straight`, or `elbow`. The default is `curve`. |
+| `line` | Uses the same values as `border`. `none` orders the items without drawing an arrow. |
+| `start_mark`, `end_mark` | `none`, `arrow`, `triangle`, `circle`, `diamond`, or `bar`. The defaults are `none` at the start and `arrow` at the end. |
+| `is_active`, `animation` | Set `is_active=True` to animate the arrow. Choose `flow`, `dash`, `dot`, or `pulse`. The default is `flow`. |
 
 ## Layout and text
 

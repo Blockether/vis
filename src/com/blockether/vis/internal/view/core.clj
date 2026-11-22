@@ -893,6 +893,8 @@
        (if (and (sequential? value) (every? sequential? value)) (mapv #(mapv f %) value) value))]
     {:vertices (triples vertices scene-number) :faces (triples faces schema-long)}))
 
+(declare picture)
+
 (defn- canvas-edges
   "The arrows that end at one canvas card. A value of another shape stays as it is, so
    the schema refuses it."
@@ -1012,7 +1014,13 @@
             ;; One card of a canvas. Its place is optional: a surface lays out a card
             ;; that names no column or row.
             :cards
-            (cond-> {:id id :title (schema-text (:title item)) :tone tone}
+            (cond-> (assoc item
+                      :id id
+                      :title (schema-text (:title item))
+                      :tone tone)
+              (map? (:picture item))
+              (update :picture #(merge % (picture %)))
+
               (some? (:text item))
               (assoc :text (:text item))
 
@@ -1452,7 +1460,7 @@
                  :objects (items :objects))
 
                :canvas
-               (cond-> (assoc base :cards (items :cards))
+               (cond-> (merge base (select-keys node [:flow :pattern]) {:cards (items :cards)})
                  (some? (:zoom node))
                  (assoc :zoom (schema-fraction (:zoom node)))
 
@@ -1947,6 +1955,10 @@
              (normalize-live-items :meshes value))
    :cards (fn [_ value]
             (normalize-live-items :cards value))
+   :flow (fn [_ value]
+           value)
+   :pattern (fn [_ value]
+              value)
    :zoom (fn [_ value]
            (schema-fraction value))
    :focus (fn [_ value]

@@ -2188,7 +2188,7 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "description": "A board of cards with arrows between them, which a person can pan and zoom. A surface puts the cards in columns: a card goes one column after the last card that it comes from. `column` and `row` put a card in a fixed place.",
+          "description": "A board of items with arrows between them, which a person can pan and zoom. An item is a card, a shape, a sticky note, a comment, a frame or a text. A surface puts the items in steps: an item goes one step after the last item that it comes from. `column` and `row` put an item in a fixed place.",
           "properties": {
             "id": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -2213,6 +2213,12 @@
             "is_locked": {
               "type": "boolean",
               "description": "True when a person cannot pan or zoom the board. The owner still moves it with `zoom` and `focus`."
+            },
+            "flow": {
+              "$ref": "#/$defs/canvas_flow"
+            },
+            "pattern": {
+              "$ref": "#/$defs/canvas_pattern"
             },
             "is_selectable": {
               "type": "boolean"
@@ -3348,7 +3354,7 @@
           "diff": ["label", "new_revision", "old_revision", "patch"],
           "image": ["label"],
           "scene": ["background", "fov", "is_wrapping", "label", "tick_ms"],
-          "canvas": ["focus", "is_locked", "is_selectable", "label", "selected_ids", "zoom"],
+          "canvas": ["flow", "focus", "is_locked", "is_selectable", "label", "pattern", "selected_ids", "zoom"],
           "thread": ["label"],
           "checkbox": ["label"],
           "datetime": ["label"],
@@ -3591,6 +3597,12 @@
             },
             "is_locked": {
               "type": "boolean"
+            },
+            "flow": {
+              "$ref": "#/$defs/canvas_flow"
+            },
+            "pattern": {
+              "$ref": "#/$defs/canvas_pattern"
             }
           },
           "required": [
@@ -5701,7 +5713,7 @@
       ]
     },
     "canvas_card": {
-      "description": "One card of a canvas. An append with the id of a card replaces that whole card.",
+      "description": "One item of a canvas. An append with the id of an item replaces that whole item.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -5738,7 +5750,72 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1000,
-          "description": "The place of the card among the cards of its step. Without it, the cards of a step keep the order of the canvas."
+          "description": "The place of the card among the cards of its step. Without it, a surface puts the card near the cards that it comes from, and cards with the same place keep the order of the canvas."
+        },
+        "kind": {
+          "$ref": "#/$defs/canvas_kind"
+        },
+        "shape": {
+          "description": "The outline of an item of kind `shape`. Other kinds ignore it.",
+          "$ref": "#/$defs/canvas_shape"
+        },
+        "color": {
+          "description": "The colour of the border, the fill and the icon. Without it, the item has the neutral colour of its tone.",
+          "$ref": "#/$defs/canvas_color"
+        },
+        "fill": {
+          "$ref": "#/$defs/canvas_fill"
+        },
+        "border": {
+          "description": "The line of the border. `none` draws no border.",
+          "$ref": "#/$defs/canvas_line"
+        },
+        "size": {
+          "$ref": "#/$defs/canvas_size"
+        },
+        "icon": {
+          "description": "A picture before the title.",
+          "$ref": "#/$defs/app_icon"
+        },
+        "picture": {
+          "$ref": "#/$defs/canvas_picture"
+        },
+        "media": {
+          "$ref": "#/$defs/canvas_media"
+        },
+        "caption": {
+          "description": "A short line under the item, outside its border.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "author": {
+          "description": "Who wrote an item of kind `comment`. A surface shows the name and its first letters.",
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "is_resolved": {
+          "type": "boolean",
+          "description": "True when a comment needs no more work. A surface shows it dimmed with a check mark."
+        },
+        "comments": {
+          "description": "How many comments the item has. A surface shows the number in a mark at the corner of the item. 0 or no value shows no mark.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 999
+        },
+        "progress": {
+          "description": "The part of the work that is done, from 0 to 1. A surface shows a bar in the item.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "animation": {
+          "$ref": "#/$defs/canvas_animation"
+        },
+        "parent": {
+          "description": "The id of the item of kind `frame` that holds this item. An item whose parent the canvas does not hold, or whose parent is not a frame, stands on the board itself. A frame can hold frames, to a depth of 4. An item under a deeper frame stands on the board itself.",
+          "$ref": "common.json#/$defs/non_blank_string",
+          "x-vis-max-depth": 4
         },
         "edges": {
           "description": "The arrows that end at this card.",
@@ -5772,11 +5849,245 @@
         "is_active": {
           "type": "boolean",
           "description": "True when work moves along the arrow now. A surface animates it."
+        },
+        "route": {
+          "$ref": "#/$defs/canvas_route"
+        },
+        "line": {
+          "description": "The line of the arrow. `none` draws nothing: the arrow only orders the cards.",
+          "$ref": "#/$defs/canvas_line"
+        },
+        "color": {
+          "$ref": "#/$defs/canvas_color"
+        },
+        "start_mark": {
+          "description": "The mark at the card where the arrow starts.",
+          "$ref": "#/$defs/canvas_mark",
+          "default": "none"
+        },
+        "end_mark": {
+          "description": "The mark at the card where the arrow ends.",
+          "$ref": "#/$defs/canvas_mark",
+          "default": "arrow"
+        },
+        "animation": {
+          "description": "How a surface animates the arrow while `is_active` is true. The default is `flow`.",
+          "$ref": "#/$defs/canvas_edge_animation"
         }
       },
       "required": [
         "from"
       ]
+    },
+    "canvas_kind": {
+      "description": "What an item of a canvas is. `card` has a title line, text, badges and a picture. `shape` has its title in the middle of an outline. `note` is a sticky note. `comment` is a remark of a person, with its author. `frame` is a titled area that holds other items. `text` is a title and text with no border, such as a heading on the board.",
+      "type": "string",
+      "enum": [
+        "card",
+        "shape",
+        "note",
+        "comment",
+        "frame",
+        "text"
+      ],
+      "default": "card"
+    },
+    "canvas_shape": {
+      "type": "string",
+      "enum": [
+        "rectangle",
+        "rounded",
+        "pill",
+        "ellipse",
+        "diamond",
+        "hexagon",
+        "parallelogram",
+        "cylinder",
+        "document"
+      ],
+      "default": "rounded"
+    },
+    "canvas_color": {
+      "description": "A colour by name. Each surface has its own shade of the colour for a light and a dark theme.",
+      "type": "string",
+      "enum": [
+        "gray",
+        "red",
+        "orange",
+        "yellow",
+        "green",
+        "teal",
+        "blue",
+        "purple",
+        "pink"
+      ]
+    },
+    "canvas_fill": {
+      "description": "How much of the colour fills the item: `none` leaves it clear, `soft` tints it and `solid` paints it.",
+      "type": "string",
+      "enum": [
+        "none",
+        "soft",
+        "solid"
+      ],
+      "default": "soft"
+    },
+    "canvas_line": {
+      "type": "string",
+      "enum": [
+        "solid",
+        "dashed",
+        "dotted",
+        "double",
+        "thick",
+        "none"
+      ],
+      "default": "solid"
+    },
+    "canvas_size": {
+      "description": "The width of the item.",
+      "type": "string",
+      "enum": [
+        "small",
+        "medium",
+        "large"
+      ],
+      "default": "medium"
+    },
+    "canvas_animation": {
+      "description": "A motion that draws the eye to the item. A surface stops it for a person who asks for reduced motion.",
+      "type": "string",
+      "enum": [
+        "pulse",
+        "glow",
+        "bounce",
+        "shake"
+      ]
+    },
+    "canvas_picture": {
+      "description": "A picture in an item, as base64 data. It follows the rules of `picture` and counts in the picture bytes of the view.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "alt": {
+          "description": "What the picture shows, for a person who cannot see it.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "media_type": {
+          "$ref": "#/$defs/picture/properties/media_type"
+        },
+        "data": {
+          "$ref": "#/$defs/picture/properties/data"
+        },
+        "bytes": {
+          "$ref": "#/$defs/picture/properties/bytes"
+        },
+        "width": {
+          "$ref": "#/$defs/picture/properties/width"
+        },
+        "height": {
+          "$ref": "#/$defs/picture/properties/height"
+        },
+        "fit": {
+          "description": "`cover` fills the picture area and cuts the edges. `contain` shows the whole picture.",
+          "type": "string",
+          "enum": [
+            "cover",
+            "contain"
+          ],
+          "default": "cover"
+        }
+      },
+      "required": [
+        "alt",
+        "media_type"
+      ]
+    },
+    "canvas_media": {
+      "description": "A video or a sound in an item, by its web address. A surface loads nothing until the person starts it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "video",
+            "audio"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://\\S+$",
+          "maxLength": 2000
+        },
+        "alt": {
+          "description": "What the video or the sound holds, for a person who cannot play it.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      },
+      "required": [
+        "kind",
+        "url",
+        "alt"
+      ]
+    },
+    "canvas_route": {
+      "description": "The path of an arrow: a curve, a straight line, or an elbow of lines at right angles.",
+      "type": "string",
+      "enum": [
+        "curve",
+        "straight",
+        "elbow"
+      ],
+      "default": "curve"
+    },
+    "canvas_mark": {
+      "description": "The mark at one end of an arrow.",
+      "type": "string",
+      "enum": [
+        "none",
+        "arrow",
+        "triangle",
+        "circle",
+        "diamond",
+        "bar"
+      ]
+    },
+    "canvas_edge_animation": {
+      "description": "`flow` moves dashes and a dot along the arrow. `dash` moves only dashes, `dot` moves only a dot and `pulse` makes the arrow glow.",
+      "type": "string",
+      "enum": [
+        "flow",
+        "dash",
+        "dot",
+        "pulse"
+      ],
+      "default": "flow"
+    },
+    "canvas_flow": {
+      "description": "The direction of the steps. `auto` puts them from left to right on a wide surface and from top to bottom on a narrow one.",
+      "type": "string",
+      "enum": [
+        "auto",
+        "right",
+        "down"
+      ],
+      "default": "auto"
+    },
+    "canvas_pattern": {
+      "description": "The pattern on the background of the board.",
+      "type": "string",
+      "enum": [
+        "dots",
+        "grid",
+        "lines",
+        "plain"
+      ],
+      "default": "dots"
     }
   },
   "oneOf": [

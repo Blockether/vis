@@ -564,13 +564,22 @@ def picture_byte_count(data: Any) -> int:
 
 
 def node_picture_bytes(node: dict[str, Any]) -> int:
-    """The picture bytes of one image node, its `before` picture included."""
-    if node.get("type") != "image":
-        return 0
-    before = node.get("before")
-    return picture_byte_count(node.get("data")) + picture_byte_count(
-        before.get("data") if isinstance(before, dict) else None
-    )
+    """The picture bytes of one live node, including pictures in its items."""
+    kind = node.get("type")
+    if kind == "image":
+        before = node.get("before")
+        return picture_byte_count(node.get("data")) + picture_byte_count(
+            before.get("data") if isinstance(before, dict) else None
+        )
+    if kind == "canvas":
+        cards = node.get("cards")
+        return sum(
+            picture_byte_count(picture.get("data"))
+            for card in (cards if isinstance(cards, list) else [])
+            if isinstance(card, dict)
+            and isinstance(picture := card.get("picture"), dict)
+        )
+    return 0
 
 
 def picture_budget_error(nodes: list[dict[str, Any]]) -> str | None:
@@ -788,9 +797,10 @@ def _live_op_lines(path: str, op: Any) -> list[str]:
     name = op.get("op") if isinstance(op, dict) else None
     index = _live_op_index().get(name) if isinstance(name, str) else None
     if index is not None:
-        return _explain_lines(
+        lines = _explain_lines(
             "view", f"live_op/oneOf/{index}", op, prefix=path, skip="node_spec"
         )
+        return lines or _canvas_picture_lines(op.get("cards"), f"{path}/cards", True)
     table = _messages()["keywords"]
     if isinstance(op, dict):
         allowed = ", ".join(_live_op_index())
@@ -1272,6 +1282,22 @@ def _ids(items: Any) -> list[Any]:
     return [one.get("id") if isinstance(one, dict) else None for one in items or []]
 
 
+def _canvas_picture_lines(cards: Any, path: str, is_declaration: bool) -> list[str]:
+    """Faults in the pictures of the cards at `path`."""
+    lines = []
+    for i, card in enumerate(cards if isinstance(cards, list) else []):
+        raw = card.get("picture") if isinstance(card, dict) else None
+        if not isinstance(raw, dict):
+            continue
+        at = f"{path}/{i}/picture"
+        if is_declaration and "bytes" in raw:
+            lines.append(named_line(f"{at}/bytes", "read_only"))
+        elif is_declaration or "data" in raw:
+            if (reason := _picture_reason(raw)) is not None:
+                lines.append(named_line(at, "picture", {"reason": reason}))
+    return lines
+
+
 def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
     """The rules of filled node `node` that JSON Schema cannot say. Each one is a
     case of `live-view-checks.json`."""
@@ -1361,6 +1387,7 @@ def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
                 lines.append(named_line("/selected_ids", "not_selectable"))
             elif not all(one in cards for one in node["selected_ids"]):
                 lines.append(named_line("/selected_ids", "canvas_selection"))
+        lines += _canvas_picture_lines(node.get("cards"), "/cards", is_declaration)
     elif kind == "scene":
         meshes, objects = node.get("meshes") or [], node.get("objects") or []
         builtin = scene_meshes()

@@ -216,21 +216,76 @@ describe('a canvas', () => {
     if (!node) throw new Error('the fixture holds a canvas');
     return { ...view(), nodes: [{ ...node, ...more }] };
   };
+  const wire = fixture.nodes.find((n) => n.id === 'canvas')!.cards! as {
+    id: string;
+    edges?: { from: string; line?: string }[];
+  }[];
   const cards = () =>
-    [...document.querySelectorAll<HTMLElement>('[data-canvas-card]')].map((card) => card.dataset.canvasCard);
+    [...document.querySelectorAll<HTMLElement>('[data-canvas-card]')]
+      .map((card) => card.dataset.canvasCard)
+      .sort();
   const arrows = () =>
-    [...document.querySelectorAll<SVGElement>('[data-canvas-arrow]')].map((arrow) => arrow.dataset.canvasArrow);
+    [...document.querySelectorAll<SVGElement>('[data-canvas-arrow]')]
+      .map((arrow) => arrow.dataset.canvasArrow)
+      .sort();
+  const pressed = () =>
+    screen.getAllByRole('button', { pressed: true }).map((card) => card.dataset.canvasSelect);
 
-  it('draws each card with its arrows and sends the card that a person presses', () => {
+  it('draws each item with its arrows and sends the item that a person presses', () => {
     const onSelect = vi.fn();
     render(<LiveViewPanel view={board()} onSelect={onSelect} />);
-    expect(cards()).toEqual(['plan', 'build', 'docs', 'verify', 'ship']);
-    expect(arrows()).toEqual(['plan>build', 'plan>docs', 'build>verify', 'docs>verify', 'verify>ship']);
-    expect(
-      screen.getAllByRole('button', { pressed: true }).map((card) => card.dataset.canvasCard),
-    ).toEqual(['build']);
-    fireEvent.click(document.querySelector('[data-canvas-card="verify"]')!);
+    expect(cards()).toEqual(wire.map((card) => card.id).sort());
+    // An edge with the line `none` only orders the items: it has no arrow.
+    expect(arrows()).toEqual(
+      wire
+        .flatMap((card) =>
+          (card.edges ?? [])
+            .filter((edge) => edge.line !== 'none')
+            .map((edge) => `${edge.from}>${card.id}`),
+        )
+        .sort(),
+    );
+    expect(pressed()).toEqual(['build']);
+    fireEvent.click(document.querySelector('[data-canvas-select="verify"]')!);
     expect(onSelect).toHaveBeenCalledWith('canvas', ['verify']);
+  });
+
+  it('asks for no video and no sound before the person presses Play', () => {
+    render(<LiveViewPanel view={board()} />);
+    expect(screen.getByRole('img', { name: 'A blue, purple and pink gradient' })).toBeVisible();
+    expect(document.querySelector('video, audio')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Play the video: A recorded run of the release' }));
+    expect(document.querySelector('video')?.getAttribute('src')).toBe(
+      'https://example.com/vis/canvas-demo.mp4',
+    );
+    expect(document.querySelector('audio')).toBeNull();
+  });
+
+  it('shows the picture and the Play button of each kind of item', () => {
+    const kinds = ['card', 'note', 'comment', 'text', 'shape', 'frame'];
+    const canvas = fixture.nodes.find((n) => n.id === 'canvas')!;
+    const pictured = (canvas.cards as { id: string; picture?: object }[]).find((card) => card.picture)!;
+    const wireBoard = {
+      ...fixture,
+      nodes: [
+        {
+          ...canvas,
+          selected_ids: [],
+          cards: kinds.map((kind) => ({
+            id: kind,
+            title: kind,
+            kind,
+            picture: { ...pictured.picture, alt: `A picture of the ${kind}` },
+            media: { kind: 'audio', url: `https://example.com/${kind}.mp3`, alt: `The ${kind} sound` },
+          })),
+        },
+      ],
+    };
+    render(<LiveViewPanel view={liveViewFromWire(wireBoard)!} />);
+    for (const kind of kinds) {
+      expect(screen.getByRole('img', { name: `A picture of the ${kind}` })).toBeVisible();
+      expect(screen.getByRole('button', { name: `Play the sound: The ${kind} sound` })).toBeVisible();
+    }
   });
 
   it('gives a person no camera control on a locked board', () => {
@@ -262,11 +317,13 @@ describe('a canvas', () => {
       },
     });
     mounted.rerender(<LiveViewPanel view={v} onSelect={vi.fn()} />);
-    expect(cards()).toEqual(['plan', 'build', 'verify', 'ship', 'note']);
-    expect(arrows()).toEqual(['plan>build', 'build>verify', 'build>ship', 'ship>note']);
-    expect(
-      screen.getAllByRole('button', { pressed: true }).map((card) => card.dataset.canvasCard),
-    ).toEqual(['note']);
+    expect(cards()).toEqual(
+      [...wire.map((card) => card.id).filter((id) => id !== 'docs'), 'note'].sort(),
+    );
+    // The new `ship` replaces the whole old item, and the arrows of `docs` go with it.
+    expect(arrows()).toEqual(expect.arrayContaining(['build>ship', 'ship>note', 'build>verify']));
+    expect(arrows().filter((id) => /docs|ready>ship/.test(id ?? ''))).toEqual([]);
+    expect(pressed()).toEqual(['note']);
     v = applyLivePatch(v, {
       view_id: v.id,
       patch: { seq: 2, ops: [{ op: 'clear', node_id: 'canvas' }] },

@@ -3336,6 +3336,783 @@
           "node cv /cards/1/edges/0 - unknown property \"to\" (additionalProperties)"
         ]
       }
+    },
+    {
+      "name": "canvas items accept the board vocabulary",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "flow": "down",
+            "pattern": "grid",
+            "cards": [
+              {
+                "id": "a",
+                "title": "Reviewer",
+                "kind": "shape",
+                "shape": "hexagon",
+                "color": "teal",
+                "fill": "solid",
+                "border": "double",
+                "size": "large",
+                "icon": "lightning",
+                "animation": "bounce",
+                "caption": "One step",
+                "author": "Ada",
+                "is_resolved": true,
+                "comments": 999,
+                "progress": 1,
+                "parent": "f",
+                "media": {
+                  "kind": "audio",
+                  "url": "https://example.com/a",
+                  "alt": "Notes"
+                },
+                "edges": [
+                  {
+                    "from": "f",
+                    "route": "elbow",
+                    "line": "dotted",
+                    "color": "purple",
+                    "start_mark": "circle",
+                    "end_mark": "diamond",
+                    "animation": "dot",
+                    "is_active": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown flow",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "flow": "invalid"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /flow - the value is not one of auto, right, down (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown pattern",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "pattern": "invalid"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /pattern - the value is not one of dots, grid, lines, plain (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown kind",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "kind": "invalid"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/kind - the value is not one of card, shape, note, comment, frame, text (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown shape",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "shape": "invalid"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/shape - the value is not one of rectangle, rounded, pill, ellipse, diamond, hexagon, parallelogram, cylinder, document (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown color",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "color": "invalid"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/color - the value is not one of gray, red, orange, yellow, green, teal, blue, purple, pink (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown fill",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "fill": "invalid"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/fill - the value is not one of none, soft, solid (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown border",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "border": "invalid"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/border - the value is not one of solid, dashed, dotted, double, thick, none (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown size",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "size": "invalid"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/size - the value is not one of small, medium, large (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown icon",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "icon": "invalid"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/icon - the value is not one of app, review, code, terminal, files, search, git, branch, checklist, chart, dashboard, activity, calendar, clock, mail, chat, users, globe, database, cloud, server, shield, lock, key, settings, tools, rocket, flask, music, image, book, lightning (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown animation",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "animation": "invalid"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/animation - the value is not one of pulse, glow, bounce, shake (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown edge route",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "edges": [
+                  {
+                    "from": "f",
+                    "route": "invalid",
+                    "line": "dotted",
+                    "color": "purple",
+                    "start_mark": "circle",
+                    "end_mark": "diamond",
+                    "animation": "dot",
+                    "is_active": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/edges/0/route - the value is not one of curve, straight, elbow (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown edge line",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "edges": [
+                  {
+                    "from": "f",
+                    "route": "elbow",
+                    "line": "invalid",
+                    "color": "purple",
+                    "start_mark": "circle",
+                    "end_mark": "diamond",
+                    "animation": "dot",
+                    "is_active": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/edges/0/line - the value is not one of solid, dashed, dotted, double, thick, none (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown edge color",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "edges": [
+                  {
+                    "from": "f",
+                    "route": "elbow",
+                    "line": "dotted",
+                    "color": "invalid",
+                    "start_mark": "circle",
+                    "end_mark": "diamond",
+                    "animation": "dot",
+                    "is_active": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/edges/0/color - the value is not one of gray, red, orange, yellow, green, teal, blue, purple, pink (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown edge start mark",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "edges": [
+                  {
+                    "from": "f",
+                    "route": "elbow",
+                    "line": "dotted",
+                    "color": "purple",
+                    "start_mark": "invalid",
+                    "end_mark": "diamond",
+                    "animation": "dot",
+                    "is_active": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/edges/0/start_mark - the value is not one of none, arrow, triangle, circle, diamond, bar (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown edge end mark",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "edges": [
+                  {
+                    "from": "f",
+                    "route": "elbow",
+                    "line": "dotted",
+                    "color": "purple",
+                    "start_mark": "circle",
+                    "end_mark": "invalid",
+                    "animation": "dot",
+                    "is_active": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/edges/0/end_mark - the value is not one of none, arrow, triangle, circle, diamond, bar (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown edge animation",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "edges": [
+                  {
+                    "from": "f",
+                    "route": "elbow",
+                    "line": "dotted",
+                    "color": "purple",
+                    "start_mark": "circle",
+                    "end_mark": "diamond",
+                    "animation": "invalid",
+                    "is_active": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/edges/0/animation - the value is not one of flow, dash, dot, pulse (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown media kind",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "media": {
+                  "kind": "invalid",
+                  "url": "https://example.com/a",
+                  "alt": "Notes"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/media/kind - the value is not one of video, audio (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects an unknown picture fit",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "picture": {
+                  "alt": "A blue, purple and pink gradient",
+                  "media_type": "image/png",
+                  "data": "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",
+                  "width": 64,
+                  "height": 36,
+                  "fit": "invalid"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/picture/fit - the value is not one of cover, contain (enum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects comments outside its limits",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "comments": 1000
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/comments - the number is greater than the maximum 999 (maximum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas rejects progress outside its limits",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "progress": -0.1
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/progress - the number is less than the minimum 0 (minimum)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas media item needs alt text",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "media": {
+                  "kind": "audio",
+                  "url": "https://example.com/a"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/media - missing required property \"alt\" (required)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas picture must match its media type",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "picture": {
+                  "alt": "Layout",
+                  "media_type": "image/png",
+                  "data": "AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/picture - data is not image/png data (picture)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas picture declaration cannot stamp its size in bytes",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "picture": {
+                  "alt": "Layout",
+                  "media_type": "image/png",
+                  "data": "AAAA",
+                  "bytes": 3
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/0/picture/bytes - only the host writes this property (readOnly)"
+        ]
+      }
     }
   ],
   "patches": [
@@ -7095,6 +7872,164 @@
       ],
       "expect": {
         "refusal": "Invalid live-view patch: node cv /selected_ids - a selected id names no card of the canvas (selection)"
+      }
+    },
+    {
+      "name": "a set changes the canvas pattern",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": []
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "cv",
+          "pattern": "plain",
+          "flow": "right"
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "pattern"
+        ],
+        "value": "plain"
+      }
+    },
+    {
+      "name": "a set changes the canvas flow",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": []
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "cv",
+          "pattern": "plain",
+          "flow": "right"
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "flow"
+        ],
+        "value": "right"
+      }
+    },
+    {
+      "name": "an append keeps the canvas item vocabulary",
+      "view": {
+        "title": "Canvas",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": []
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "cv",
+          "cards": [
+            {
+              "id": "a",
+              "title": "Reviewer",
+              "kind": "shape",
+              "shape": "hexagon",
+              "color": "teal",
+              "fill": "solid",
+              "border": "double",
+              "size": "large",
+              "icon": "lightning",
+              "animation": "bounce",
+              "caption": "One step",
+              "author": "Ada",
+              "is_resolved": true,
+              "comments": 999,
+              "progress": 1,
+              "parent": "f",
+              "media": {
+                "kind": "audio",
+                "url": "https://example.com/a",
+                "alt": "Notes"
+              },
+              "edges": [
+                {
+                  "from": "f",
+                  "route": "elbow",
+                  "line": "dotted",
+                  "color": "purple",
+                  "start_mark": "circle",
+                  "end_mark": "diamond",
+                  "animation": "dot",
+                  "is_active": true
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "cards"
+        ],
+        "value": [
+          {
+            "id": "a",
+            "title": "Reviewer",
+            "kind": "shape",
+            "shape": "hexagon",
+            "color": "teal",
+            "fill": "solid",
+            "border": "double",
+            "size": "large",
+            "icon": "lightning",
+            "animation": "bounce",
+            "caption": "One step",
+            "author": "Ada",
+            "is_resolved": true,
+            "comments": 999,
+            "progress": 1,
+            "parent": "f",
+            "media": {
+              "kind": "audio",
+              "url": "https://example.com/a",
+              "alt": "Notes"
+            },
+            "edges": [
+              {
+                "from": "f",
+                "route": "elbow",
+                "line": "dotted",
+                "color": "purple",
+                "start_mark": "circle",
+                "end_mark": "diamond",
+                "animation": "dot",
+                "is_active": true
+              }
+            ]
+          }
+        ]
       }
     }
   ]

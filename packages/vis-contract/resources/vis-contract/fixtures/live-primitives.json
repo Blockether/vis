@@ -621,6 +621,23 @@
       ],
       "cards": [
         {
+          "id": "heading",
+          "title": "Release 0.6",
+          "kind": "text",
+          "size": "large",
+          "text": "From the request to the release."
+        },
+        {
+          "id": "start",
+          "title": "Start",
+          "kind": "shape",
+          "shape": "pill",
+          "color": "green",
+          "fill": "solid",
+          "size": "small",
+          "icon": "lightning"
+        },
+        {
           "id": "plan",
           "title": "Plan",
           "text": "Split the work into three tasks.",
@@ -628,7 +645,24 @@
           "tone": "ok",
           "badges": [
             "lead"
+          ],
+          "icon": "checklist",
+          "edges": [
+            {
+              "from": "start",
+              "route": "straight",
+              "end_mark": "triangle"
+            }
           ]
+        },
+        {
+          "id": "delivery",
+          "title": "Delivery",
+          "kind": "frame",
+          "color": "blue",
+          "border": "dashed",
+          "text": "Two tasks run at the same time.",
+          "icon": "branch"
         },
         {
           "id": "build",
@@ -639,6 +673,11 @@
           "badges": [
             "implement"
           ],
+          "icon": "code",
+          "progress": 0.6,
+          "comments": 3,
+          "animation": "glow",
+          "parent": "delivery",
           "edges": [
             {
               "from": "plan",
@@ -652,11 +691,26 @@
           "title": "Docs",
           "text": "Write the page for extension authors.",
           "tone": "running",
+          "icon": "book",
+          "border": "dashed",
+          "parent": "delivery",
           "edges": [
             {
-              "from": "plan"
+              "from": "plan",
+              "route": "elbow",
+              "line": "dashed",
+              "is_active": true,
+              "animation": "dash"
             }
           ]
+        },
+        {
+          "id": "checks",
+          "title": "Checks",
+          "kind": "frame",
+          "color": "teal",
+          "fill": "none",
+          "parent": "delivery"
         },
         {
           "id": "verify",
@@ -666,6 +720,8 @@
           "badges": [
             "verify"
           ],
+          "icon": "shield",
+          "parent": "checks",
           "edges": [
             {
               "from": "build",
@@ -679,11 +735,205 @@
           ]
         },
         {
-          "id": "ship",
-          "title": "Ship",
+          "id": "tests",
+          "title": "Tests",
+          "kind": "shape",
+          "shape": "hexagon",
+          "color": "teal",
+          "icon": "flask",
+          "parent": "checks",
           "edges": [
             {
-              "from": "verify"
+              "from": "build",
+              "line": "dotted",
+              "end_mark": "circle",
+              "is_active": true,
+              "animation": "dot"
+            }
+          ]
+        },
+        {
+          "id": "ready",
+          "title": "Ready?",
+          "kind": "shape",
+          "shape": "diamond",
+          "color": "orange",
+          "animation": "pulse",
+          "edges": [
+            {
+              "from": "verify",
+              "route": "straight"
+            },
+            {
+              "from": "tests",
+              "route": "straight"
+            }
+          ]
+        },
+        {
+          "id": "ship",
+          "title": "Ship",
+          "icon": "rocket",
+          "color": "green",
+          "border": "thick",
+          "caption": "The release goes to all channels.",
+          "edges": [
+            {
+              "from": "ready",
+              "label": "yes",
+              "tone": "ok",
+              "line": "thick",
+              "end_mark": "triangle"
+            }
+          ]
+        },
+        {
+          "id": "done",
+          "title": "Done",
+          "kind": "shape",
+          "shape": "ellipse",
+          "color": "red",
+          "fill": "solid",
+          "size": "small",
+          "edges": [
+            {
+              "from": "ship",
+              "start_mark": "bar"
+            }
+          ]
+        },
+        {
+          "id": "store",
+          "title": "Artifacts",
+          "kind": "shape",
+          "shape": "cylinder",
+          "color": "purple",
+          "icon": "database",
+          "edges": [
+            {
+              "from": "tests",
+              "label": "report",
+              "route": "elbow",
+              "line": "dashed",
+              "color": "purple",
+              "start_mark": "circle"
+            }
+          ]
+        },
+        {
+          "id": "changelog",
+          "title": "Changelog",
+          "kind": "shape",
+          "shape": "document",
+          "color": "gray",
+          "border": "double",
+          "edges": [
+            {
+              "from": "ship",
+              "line": "dotted",
+              "end_mark": "diamond"
+            }
+          ]
+        },
+        {
+          "id": "reminder",
+          "title": "Remember",
+          "kind": "note",
+          "color": "yellow",
+          "text": "Add the entry to the **changelog** before the release.",
+          "edges": [
+            {
+              "from": "ready",
+              "line": "dashed",
+              "end_mark": "none"
+            }
+          ]
+        },
+        {
+          "id": "review",
+          "title": "Review",
+          "kind": "comment",
+          "author": "Ada",
+          "color": "pink",
+          "comments": 2,
+          "text": "Can the tests run on two machines?",
+          "edges": [
+            {
+              "from": "tests",
+              "line": "dotted",
+              "color": "pink",
+              "end_mark": "none"
+            }
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "kind": "comment",
+          "author": "Lin",
+          "is_resolved": true,
+          "text": "Yes. The second machine takes the tests.",
+          "edges": [
+            {
+              "from": "review",
+              "line": "none"
+            }
+          ]
+        },
+        {
+          "id": "board",
+          "title": "Board",
+          "meta": "PNG",
+          "icon": "image",
+          "picture": {
+            "alt": "A blue, purple and pink gradient",
+            "media_type": "image/png",
+            "data": "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",
+            "width": 64,
+            "height": 36,
+            "fit": "cover"
+          },
+          "caption": "Figure 1. The board on a phone.",
+          "edges": [
+            {
+              "from": "ship",
+              "route": "elbow",
+              "color": "blue"
+            }
+          ]
+        },
+        {
+          "id": "demo",
+          "title": "Demo",
+          "meta": "0:42",
+          "media": {
+            "kind": "video",
+            "url": "https://example.com/vis/canvas-demo.mp4",
+            "alt": "A recorded run of the release"
+          },
+          "caption": "The recorded run.",
+          "edges": [
+            {
+              "from": "ship",
+              "line": "dashed",
+              "color": "gray"
+            }
+          ]
+        },
+        {
+          "id": "notes-audio",
+          "title": "Release notes",
+          "size": "small",
+          "icon": "music",
+          "media": {
+            "kind": "audio",
+            "url": "https://example.com/vis/release-notes.mp3",
+            "alt": "The release notes, read aloud"
+          },
+          "edges": [
+            {
+              "from": "ship",
+              "line": "none"
             }
           ]
         }
