@@ -2444,71 +2444,14 @@
   [db-info channel query]
   (mapv :id (db-search-session-matches db-info channel query)))
 
-(def ^:private human-answer-expression
-  "1 per HUMAN turn that has SETTLED, read at its newest state version.
-
-   Settled includes errors and interruptions (cancellation or an orphan swept on
-   restart). Both leave something for the reader, so a watermark that skips them
-   hides the stopped turn in the session list."
-  [:sum
-   [:case
-    [:and [:= :ts.request_kind "user"]
-     [:exists
-      {:select [1]
-       :from [[:session_turn_state :answer]]
-       :where [:and [:= :answer.session_turn_soul_id :ts.id]
-               [:in :answer.status (mapv normalize-status [:success :error :interrupted])]
-               [:= :answer.version
-                {:select [[[:max :latest_answer.version]]]
-                 :from [[:session_turn_state :latest_answer]]
-                 :where [:= :latest_answer.session_turn_soul_id :ts.id]}]]}]] 1 :else 0]])
-
-(def ^:private latest-turn-status-expression
-  "The newest human turn's persisted status, including failures and interruptions.
-
-   Read the highest state version so a retried turn answers with the attempt in
-   the transcript. The gateway registry loses this verdict on restart."
-  {:select [:final.status]
-   :from [[:session_turn_soul :last_turn]]
-   :join [[:session_state :last_turn_state] [:= :last_turn_state.id :last_turn.session_state_id]
-          [:session_turn_state :final] [:= :final.session_turn_soul_id :last_turn.id]]
-   :where [:and [:= :last_turn_state.session_soul_id :ss.session_soul_id]
-           [:= :last_turn.request_kind "user"]
-           [:= :final.version
-            {:select [[[:max :final_version.version]]]
-             :from [[:session_turn_state :final_version]]
-             :where [:= :final_version.session_turn_soul_id :last_turn.id]}]]
-   :order-by [[:last_turn.created_at :desc] [:last_turn.position :desc]]
-   :limit 1})
-
-(defn- grouped-session-turn-stats-sql
-  "Turn stats without transcript reads. The single MAX(version) selects id and
-   status from the same newest state. The ordered aggregate selects the newest
-   human status without a second scan. Bind the settled statuses in order."
-  [sessions-sql]
-  (str "WITH sessions AS MATERIALIZED (" sessions-sql "), "
-       "t AS ("
-       "SELECT ss.session_soul_id AS sid, ts.request_kind AS kind, ts.created_at AS created_at, "
-       "ts.position AS position, f.id AS id, f.status AS status, MAX(f.version) AS version "
-       "FROM session_turn_soul ts JOIN sessions ss ON ss.id = ts.session_state_id "
-       "LEFT JOIN session_turn_state f ON f.session_turn_soul_id = ts.id GROUP BY ts.id) "
-       "SELECT sid, COUNT(*) AS n, "
-       "SUM(CASE WHEN kind = 'user' AND status IN (?, ?, ?) THEN 1 ELSE 0 END) AS answers, "
-       "json_extract(json_group_array(status ORDER BY created_at DESC, position DESC) "
-       "FILTER (WHERE kind = 'user' AND status IS NOT NULL), '$[0]') AS last_status, "
-       "MAX("
-       turn-state-reply-at-sql
-       ") AS latest FROM t f GROUP BY sid"))
-
-(def ^:private all-session-turn-stats-sql
-  (grouped-session-turn-stats-sql "SELECT id, session_soul_id FROM session_state"))
+(def ^:private session-turn-stats-select-sql
+  "SELECT s.session_soul_id AS sid, s.turn_count AS n, s.answer_count AS answers,
+          s.last_status, s.latest_turn_at AS latest FROM session_turn_stats s")
 
 (def ^:private listed-session-turn-stats-sql
-  ;; Match the top-level and claim filters in `db-list-sessions`.
-  (grouped-session-turn-stats-sql
-    (str "SELECT ss.id, ss.session_soul_id FROM session_state ss "
-        "JOIN session_soul cs ON cs.id = ss.session_soul_id "
-        "WHERE cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL")))
+  (str session-turn-stats-select-sql
+       " JOIN session_soul cs ON cs.id = s.session_soul_id"
+       " WHERE cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL"))
 
 (defn- turn-stats-row
   [row]
@@ -2525,11 +2468,9 @@
     (read-at-version db-info
                      cache-key
                      #(into {}
-                            (map (fn [row] [(str (:sid row)) (turn-stats-row row)]))
-                            (query-sql! db-info
-                                        (into [sql]
-                                              (map normalize-status)
-                                              [:success :error :interrupted]))))
+                            (map (fn [row]
+                                   [(str (:sid row)) (turn-stats-row row)]))
+                            (query-sql! db-info [sql])))
     {}))
 
 (defn db-session-turn-stats
@@ -2537,20 +2478,15 @@
    newest agent reply, nil before any reply. answer-count counts settled
    human turns (done, error, or interrupted), excluding Council, in-flight turns
    and superseded retries. The newest human turn's persisted status distinguishes
-   failed and interrupted runs from ordinary idle sessions. The all-session arity
-   uses one grouped query, never N+1 transcript reads."
+   failed and interrupted runs from ordinary idle sessions."
   ([db-info]
-   (grouped-session-turn-stats db-info ::session-turn-stats all-session-turn-stats-sql))
+   (grouped-session-turn-stats db-info ::session-turn-stats session-turn-stats-select-sql))
   ([db-info session-id]
    (when (and (ds db-info) session-id)
-     (when-let [row (query-one! db-info
-                                {:select [[[:count :ts.id] :n] [human-answer-expression :answers]
-                                          [latest-turn-status-expression :last_status]
-                                          [[:max [:raw turn-reply-at-sql]] :latest]]
-                                 :from [[:session_turn_soul :ts]]
-                                 :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
-                                 :where [:= :ss.session_soul_id (->ref session-id)]})]
-       (turn-stats-row row)))))
+     (turn-stats-row (first (query-sql! db-info
+                                        [(str session-turn-stats-select-sql
+                                              " WHERE s.session_soul_id = ?")
+                                         (->ref session-id)]))))))
 
 (defn db-listed-session-turn-stats
   [db-info]

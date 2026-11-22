@@ -243,6 +243,7 @@ CREATE TABLE session_team (
 
 CREATE INDEX idx_session_agent_team ON session_agent(team_id, created_at);
 CREATE INDEX idx_session_agent_parent ON session_agent(parent_id, created_at);
+CREATE INDEX idx_session_agent_leader_status ON session_agent(leader_id, status);
 CREATE UNIQUE INDEX idx_session_agent_ordinal ON session_agent(parent_id, ordinal)
   WHERE ordinal IS NOT NULL;
 
@@ -634,6 +635,183 @@ BEGIN
     WHEN NEW.session_turn_state_id <> OLD.session_turn_state_id OR NEW.position <> OLD.position
     THEN RAISE(ABORT, 'session_turn_iteration turn-state/position are immutable')
   END;
+END;
+
+-- Turn counts and reply times for the session lists, across all states of a soul.
+-- Each trigger refreshes only the affected session. The migration fills older
+-- stores before they read the table. Keep both results equal to the transcript.
+CREATE TABLE session_turn_stats (
+  session_soul_id TEXT PRIMARY KEY NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
+  turn_count INTEGER NOT NULL DEFAULT 0,
+  answer_count INTEGER NOT NULL DEFAULT 0,
+  last_status TEXT,
+  latest_turn_at INTEGER
+);
+
+CREATE TRIGGER trg_session_turn_stats_refresh
+AFTER INSERT ON session_turn_stats
+BEGIN
+  UPDATE session_turn_stats
+  SET (turn_count, answer_count, last_status, latest_turn_at) = (
+    SELECT COUNT(*),
+           COALESCE(SUM(CASE WHEN ts.request_kind = 'user'
+                            AND f.status IN ('done', 'error', 'interrupted') THEN 1 ELSE 0 END), 0),
+           json_extract(json_group_array(f.status ORDER BY ts.created_at DESC, ts.position DESC, ts.id)
+             FILTER (WHERE ts.request_kind = 'user' AND f.status IS NOT NULL), '$[0]'),
+           MAX(CASE WHEN f.status <> 'running' THEN (
+             SELECT MAX(i.created_at) FROM session_turn_iteration i WHERE i.session_turn_state_id = f.id
+           ) END)
+    FROM session_state ss
+    JOIN session_turn_soul ts ON ts.session_state_id = ss.id
+    LEFT JOIN session_turn_state f ON f.session_turn_soul_id = ts.id AND f.version = (
+      SELECT MAX(fs.version) FROM session_turn_state fs WHERE fs.session_turn_soul_id = ts.id
+    )
+    WHERE ss.session_soul_id = NEW.session_soul_id
+  )
+  WHERE session_soul_id = NEW.session_soul_id;
+
+  DELETE FROM session_turn_stats WHERE session_soul_id = NEW.session_soul_id AND turn_count = 0;
+END;
+
+CREATE TRIGGER trg_session_turn_stats_turn_soul_ai
+AFTER INSERT ON session_turn_soul
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = (SELECT session_soul_id FROM session_state WHERE id = NEW.session_state_id);
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = (SELECT session_soul_id FROM session_state WHERE id = NEW.session_state_id);
+END;
+
+CREATE TRIGGER trg_session_turn_stats_turn_soul_ad
+AFTER DELETE ON session_turn_soul
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = (SELECT session_soul_id FROM session_state WHERE id = OLD.session_state_id);
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = (SELECT session_soul_id FROM session_state WHERE id = OLD.session_state_id);
+END;
+
+CREATE TRIGGER trg_session_turn_stats_turn_soul_au
+AFTER UPDATE OF request_kind, created_at ON session_turn_soul
+WHEN OLD.request_kind IS NOT NEW.request_kind OR OLD.created_at IS NOT NEW.created_at
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = (SELECT session_soul_id FROM session_state WHERE id = NEW.session_state_id);
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = (SELECT session_soul_id FROM session_state WHERE id = NEW.session_state_id);
+END;
+
+CREATE TRIGGER trg_session_turn_stats_turn_state_ai
+AFTER INSERT ON session_turn_state
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = (SELECT ss.session_soul_id FROM session_turn_soul ts
+       JOIN session_state ss ON ss.id = ts.session_state_id WHERE ts.id = NEW.session_turn_soul_id);
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = (SELECT ss.session_soul_id FROM session_turn_soul ts
+       JOIN session_state ss ON ss.id = ts.session_state_id WHERE ts.id = NEW.session_turn_soul_id);
+END;
+
+CREATE TRIGGER trg_session_turn_stats_turn_state_ad
+AFTER DELETE ON session_turn_state
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = (SELECT ss.session_soul_id FROM session_turn_soul ts
+       JOIN session_state ss ON ss.id = ts.session_state_id WHERE ts.id = OLD.session_turn_soul_id);
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = (SELECT ss.session_soul_id FROM session_turn_soul ts
+       JOIN session_state ss ON ss.id = ts.session_state_id WHERE ts.id = OLD.session_turn_soul_id);
+END;
+
+CREATE TRIGGER trg_session_turn_stats_turn_state_au
+AFTER UPDATE OF status, version, session_turn_soul_id ON session_turn_state
+WHEN OLD.status IS NOT NEW.status OR OLD.version IS NOT NEW.version OR OLD.session_turn_soul_id IS NOT NEW.session_turn_soul_id
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = (SELECT ss.session_soul_id FROM session_turn_soul ts
+       JOIN session_state ss ON ss.id = ts.session_state_id WHERE ts.id = NEW.session_turn_soul_id);
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = (SELECT ss.session_soul_id FROM session_turn_soul ts
+       JOIN session_state ss ON ss.id = ts.session_state_id WHERE ts.id = NEW.session_turn_soul_id);
+END;
+
+CREATE TRIGGER trg_session_turn_stats_turn_state_move
+AFTER UPDATE OF session_turn_soul_id ON session_turn_state
+WHEN OLD.session_turn_soul_id IS NOT NEW.session_turn_soul_id
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = (SELECT ss.session_soul_id FROM session_turn_soul ts
+       JOIN session_state ss ON ss.id = ts.session_state_id WHERE ts.id = OLD.session_turn_soul_id);
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = (SELECT ss.session_soul_id FROM session_turn_soul ts
+       JOIN session_state ss ON ss.id = ts.session_state_id WHERE ts.id = OLD.session_turn_soul_id);
+END;
+
+CREATE TRIGGER trg_session_turn_stats_turn_iteration_ai
+AFTER INSERT ON session_turn_iteration
+WHEN EXISTS (SELECT 1 FROM session_turn_state WHERE id = NEW.session_turn_state_id AND status <> 'running')
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = (SELECT ss.session_soul_id FROM session_turn_state f
+       JOIN session_turn_soul ts ON ts.id = f.session_turn_soul_id
+       JOIN session_state ss ON ss.id = ts.session_state_id
+       WHERE f.id = NEW.session_turn_state_id AND f.status <> 'running');
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = (SELECT ss.session_soul_id FROM session_turn_state f
+       JOIN session_turn_soul ts ON ts.id = f.session_turn_soul_id
+       JOIN session_state ss ON ss.id = ts.session_state_id
+       WHERE f.id = NEW.session_turn_state_id AND f.status <> 'running');
+END;
+
+CREATE TRIGGER trg_session_turn_stats_turn_iteration_ad
+AFTER DELETE ON session_turn_iteration
+WHEN EXISTS (SELECT 1 FROM session_turn_state WHERE id = OLD.session_turn_state_id AND status <> 'running')
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = (SELECT ss.session_soul_id FROM session_turn_state f
+       JOIN session_turn_soul ts ON ts.id = f.session_turn_soul_id
+       JOIN session_state ss ON ss.id = ts.session_state_id
+       WHERE f.id = OLD.session_turn_state_id AND f.status <> 'running');
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = (SELECT ss.session_soul_id FROM session_turn_state f
+       JOIN session_turn_soul ts ON ts.id = f.session_turn_soul_id
+       JOIN session_state ss ON ss.id = ts.session_state_id
+       WHERE f.id = OLD.session_turn_state_id AND f.status <> 'running');
+END;
+
+CREATE TRIGGER trg_session_turn_stats_turn_iteration_au
+AFTER UPDATE OF created_at ON session_turn_iteration
+WHEN EXISTS (SELECT 1 FROM session_turn_state WHERE id = NEW.session_turn_state_id AND status <> 'running')
+  AND OLD.created_at IS NOT NEW.created_at
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = (SELECT ss.session_soul_id FROM session_turn_state f
+       JOIN session_turn_soul ts ON ts.id = f.session_turn_soul_id
+       JOIN session_state ss ON ss.id = ts.session_state_id
+       WHERE f.id = NEW.session_turn_state_id AND f.status <> 'running');
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = (SELECT ss.session_soul_id FROM session_turn_state f
+       JOIN session_turn_soul ts ON ts.id = f.session_turn_soul_id
+       JOIN session_state ss ON ss.id = ts.session_state_id
+       WHERE f.id = NEW.session_turn_state_id AND f.status <> 'running');
+END;
+
+CREATE TRIGGER trg_session_turn_stats_state_ad
+AFTER DELETE ON session_state
+WHEN EXISTS (SELECT 1 FROM session_soul WHERE id = OLD.session_soul_id)
+  AND EXISTS (SELECT 1 FROM session_turn_stats WHERE session_soul_id = OLD.session_soul_id)
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = OLD.session_soul_id;
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = OLD.session_soul_id;
+END;
+
+CREATE TRIGGER trg_session_turn_stats_state_au
+AFTER UPDATE OF session_soul_id ON session_state
+WHEN OLD.session_soul_id IS NOT NEW.session_soul_id
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = OLD.session_soul_id;
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = OLD.session_soul_id;
+END;
+
+CREATE TRIGGER trg_session_turn_stats_state_move
+AFTER UPDATE OF session_soul_id ON session_state
+WHEN OLD.session_soul_id IS NOT NEW.session_soul_id
+BEGIN
+  DELETE FROM session_turn_stats WHERE session_soul_id = NEW.session_soul_id;
+  INSERT INTO session_turn_stats (session_soul_id)
+  SELECT id FROM session_soul WHERE id = NEW.session_soul_id;
 END;
 
 -- =============================================================================

@@ -603,6 +603,25 @@
   (with-open [st (.createStatement conn)]
     (.executeUpdate st sql)))
 
+(def ^:private derived-table-fills
+  "Statements that fill derived tables from their source rows."
+  {"session_turn_stats"
+   "INSERT INTO session_turn_stats (session_soul_id, turn_count, answer_count, last_status, latest_turn_at)
+    WITH sessions AS MATERIALIZED (SELECT id, session_soul_id FROM session_state), t AS (
+      SELECT ss.session_soul_id AS sid, ts.request_kind AS kind, ts.created_at AS created_at,
+             ts.position AS position, ts.id AS turn_id, f.id AS id, f.status AS status, MAX(f.version) AS version
+      FROM session_turn_soul ts JOIN sessions ss ON ss.id = ts.session_state_id
+      LEFT JOIN session_turn_state f ON f.session_turn_soul_id = ts.id GROUP BY ts.id
+    )
+    SELECT sid, COUNT(*) AS n,
+           SUM(CASE WHEN kind = 'user' AND status IN ('done','error','interrupted') THEN 1 ELSE 0 END) AS answers,
+           json_extract(json_group_array(status ORDER BY created_at DESC, position DESC, turn_id)
+             FILTER (WHERE kind = 'user' AND status IS NOT NULL), '$[0]') AS last_status,
+           MAX(CASE WHEN f.status <> 'running' THEN
+             (SELECT MAX(i.created_at) FROM session_turn_iteration i WHERE i.session_turn_state_id = f.id)
+           END) AS latest
+    FROM t f GROUP BY sid"})
+
 (defn- install-missing-canonical-tables!
   "Install newly added V1 tables and their indexes from the canonical DDL, atomically.
    Existing tables are left to the additive-column pass; no rows or objects are replaced."
@@ -611,6 +630,7 @@
     (with-open [conn (.getConnection ds)]
       (let [missing (into #{}
                           (comp (filter #(= "table" (:kind %)))
+                                (remove #(contains? derived-table-fills (:name %)))
                                 (filter #(empty? (existing-columns conn (:name %))))
                                 (map :name))
                           objects)
@@ -630,6 +650,54 @@
                (.commit conn)
                (catch Throwable error (.rollback conn) (throw error))
                (finally (.setAutoCommit conn true))))))))
+
+(defn- schema-sql-key
+  [^String sql]
+  (mapv (fn [^String token]
+          (if (= \' (.charAt token 0)) token (str/lower-case token)))
+        (re-seq #"'(?:''|[^'])*'|[\w]+|[^\s]" sql)))
+
+(defn- derived-schema-match?
+  [^java.sql.Connection conn objects]
+  (with-open [st (.prepareStatement conn
+                                    "SELECT sql FROM sqlite_master WHERE type = ? AND name = ?")]
+    (every? (fn [{:keys [kind name sql]}]
+              (.setString st 1 kind)
+              (.setString st 2 name)
+              (with-open [rs (.executeQuery st)]
+                (and (.next rs)
+                     (or (= "table" kind)
+                         (= (schema-sql-key sql) (schema-sql-key (.getString rs "sql")))))))
+            objects)))
+
+(defn- install-derived-tables!
+  "Install or repair each derived table, its triggers, and its data in one transaction.
+   An older Vis can drop a trigger during column repair. Restore it and fill the table
+   again so writes made without the trigger are included. A current store needs no write."
+  [^DataSource ds locations]
+  (let [objects (canonical-objects (migration-sql-texts locations))]
+    (with-open [conn (.getConnection ds)]
+      (doseq [[^String table fill] derived-table-fills
+              :let [ddl (some #(when (and (= "table" (:kind %)) (= table (:name %))) %) objects)
+                    trigger-prefix (str "trg_" table "_")
+                    triggers (filterv #(and (= "trigger" (:kind %))
+                                            (str/starts-with? (:name %) trigger-prefix))
+                               objects)
+                    schema (into [ddl] triggers)]
+              :when (and ddl (not (derived-schema-match? conn schema)))]
+
+        (with-open [transaction (.createStatement conn)]
+          (.executeUpdate transaction "BEGIN IMMEDIATE")
+          (try (when-not (derived-schema-match? conn schema)
+                 (when (empty? (existing-columns conn table)) (execute-ddl! conn (:sql ddl)))
+                 (doseq [{:keys [name]} triggers]
+                   (execute-ddl! conn (str "DROP TRIGGER IF EXISTS " name)))
+                 (execute-ddl! conn (str "DELETE FROM " table))
+                 (execute-ddl! conn fill)
+                 (doseq [{:keys [sql]} triggers]
+                   (execute-ddl! conn sql)))
+               (.executeUpdate transaction "COMMIT")
+               (catch Throwable error (.executeUpdate transaction "ROLLBACK") (throw error))))))))
 
 (defn- existing-index-names
   "Lower-cased names of every index a store already holds."
@@ -902,4 +970,5 @@
        (copy-retired-values! ds)
        (drop-retired-columns! ds locs)
        (record-generation! ds))
+     (install-derived-tables! ds locs)
      ds)))

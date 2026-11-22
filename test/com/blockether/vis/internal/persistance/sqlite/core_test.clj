@@ -25,6 +25,7 @@
             [honey.sql :as sql]
             [lazytest.core :refer [defdescribe it expect]]
             [next.jdbc :as jdbc]
+            [next.jdbc.result-set :as rs]
             [taoensso.nippy :as nippy])
   (:import (java.io File)
            (java.util.concurrent CountDownLatch TimeUnit)))
@@ -6504,6 +6505,97 @@
                            (get-in (persistance/db-session-turn-stats s)
                                    [(str sid) :latest-turn-at]))))
       (expect (= 5000 (get (#'sqlite-core/session-activity-at s [(str sid)]) (str sid)))))))
+
+(def ^:private live-turn-stats-sql
+  "Read turn stats directly from the transcript tables, as older Vis stores do."
+  "WITH sessions AS MATERIALIZED (SELECT id, session_soul_id FROM session_state), t AS (
+     SELECT ss.session_soul_id AS sid, ts.request_kind AS kind, ts.created_at AS created_at,
+            ts.position AS position, f.id AS id, f.status AS status, MAX(f.version) AS version
+     FROM session_turn_soul ts JOIN sessions ss ON ss.id = ts.session_state_id
+     LEFT JOIN session_turn_state f ON f.session_turn_soul_id = ts.id GROUP BY ts.id
+   )
+   SELECT sid, COUNT(*) AS n,
+          SUM(CASE WHEN kind = 'user' AND status IN ('done','error','interrupted') THEN 1 ELSE 0 END) AS answers,
+          json_extract(json_group_array(status ORDER BY created_at DESC, position DESC)
+            FILTER (WHERE kind = 'user' AND status IS NOT NULL), '$[0]') AS last_status,
+          MAX(CASE WHEN f.status <> 'running' THEN
+            (SELECT MAX(i.created_at) FROM session_turn_iteration i WHERE i.session_turn_state_id = f.id)
+          END) AS latest
+   FROM t f GROUP BY sid")
+
+(defdescribe
+  persisted-session-turn-stats-test
+  (it
+    "matches the transcript after new turns, retries, forks, and deletes"
+    (let [store
+          (h/store)
+
+          sid
+          (h/store-session! store {:channel :api})
+
+          sql!
+          (fn [statement & params]
+            (jdbc/execute! (:datasource store)
+                           (into [statement] params)
+                           {:builder-fn rs/as-unqualified-lower-maps}))
+
+          check!
+          (fn [step]
+            (let [expected (into {}
+                                 (map (juxt :sid #'sqlite-core/turn-stats-row))
+                                 (sql! live-turn-stats-sql))]
+              (expect (= expected (persistance/db-session-turn-stats store)) step)
+              (expect (= expected (persistance/db-listed-session-turn-stats store)) step)
+              (expect (= (get expected (str sid) (#'sqlite-core/turn-stats-row {}))
+                         (persistance/db-session-turn-stats store sid))
+                      step)
+              (expect (= expected
+                         (into {}
+                               (map (juxt :sid #'sqlite-core/turn-stats-row))
+                               (sql! (str "SELECT session_soul_id AS sid, turn_count AS n, "
+                                          "answer_count AS answers, last_status, "
+                                          "latest_turn_at AS latest FROM session_turn_stats"))))
+                      step)))]
+
+      (check! "empty session")
+      (let [turn (persistance/db-store-session-turn! store
+                                                     {:parent-session-id sid
+                                                      :user-request "first"})]
+        (check! "new running turn")
+        (let [iteration (h/store-iteration! store
+                                            {:session-turn-id turn :status :done :code "print(1)"})]
+          (check! "iteration of a running turn")
+          (expect (persistance/db-update-session-turn! store turn {:status :done}))
+          (check! "done reply")
+          (sql! "UPDATE session_turn_iteration SET created_at = 1 WHERE id = ?" (str iteration))
+          (check! "changed reply time"))
+        (let [retry (persistance/db-retry-session-turn! store turn {})]
+          (check! "retry hides the previous reply")
+          (expect (persistance/db-update-session-turn! store turn {:status :error}))
+          (check! "error reply without an iteration")
+          (let [late (h/store-iteration! store
+                                         {:session-turn-id turn :status :done :code "print(1)"})]
+            (check! "iteration added to a settled turn")
+            (sql! "DELETE FROM session_turn_iteration WHERE id = ?" (str late))
+            (check! "iteration removed from a settled turn"))
+          (sql! "DELETE FROM session_turn_state WHERE id = ?" (str retry))
+          (check! "deleted retry exposes the previous reply"))
+        (let [next-turn (persistance/db-store-session-turn! store
+                                                            {:parent-session-id sid
+                                                             :user-request "next"})]
+          (expect (persistance/db-update-session-turn! store next-turn {:status :interrupted}))
+          (check! "interrupted reply")
+          (sql! "UPDATE session_turn_soul SET created_at = 0 WHERE id = ?" (str next-turn))
+          (check! "change the newest turn")
+          (let [fork (h/fork-session-at-turn! store sid {:through-turn-id next-turn})]
+            (expect (some? fork))
+            (check! "fork copies the transcript and its stats")
+            (sql! "DELETE FROM session_soul WHERE id = ?" (str fork))
+            (check! "delete a session and its transcript"))
+          (sql! "DELETE FROM session_turn_soul WHERE id = ?" (str next-turn))
+          (check! "delete a turn"))
+        (sql! "DELETE FROM session_state WHERE session_soul_id = ?" (str sid))
+        (check! "delete a session state and its last turn")))))
 
 ;; Regression, this Vis session (paraphrased: "the same conversation is NEW on
 ;; one surface and read on another"): every client kept a private watermark, so
