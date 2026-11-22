@@ -1,7 +1,7 @@
-"""Vis entrypoint: a write journal of every block and patch, and the Review app.
+"""Vis entrypoint: a write journal of every block, and the Review app.
 
 Before each Python block, the journal records the changes made since the last
-block, by a person or another program. After each block and each patch, it
+block, by a person or another program. After each block, it
 records what that step changed. Each session lists the app from its start: the
 checkpoints, the changed files and their diff, the checks, an AI review and undo.
 The app opens when a person opens it, or at the first step of the session. After a
@@ -20,8 +20,6 @@ from vis_review.recorder import (
     Recorder,
     block_label,
     block_wrote,
-    patch_label,
-    patch_wrote,
 )
 
 LOG = logging.getLogger("vis_review")
@@ -60,21 +58,13 @@ def before_block(call):
 
 
 def after_step(call):
-    """Record what a block or a patch changed."""
+    """Record what a block changed."""
     try:
-        if call.get("op") == "patch":
-            if call.get("result") is not None:
-                _record(
-                    "patch",
-                    lambda root: patch_label(call.get("args"), root),
-                    lambda root: patch_wrote(call.get("args"), root),
-                )
-        else:
-            _record(
-                "block",
-                lambda _root: block_label(call.get("args")),
-                lambda _root: block_wrote(call.get("args")),
-            )
+        _record(
+            "block",
+            lambda _root: block_label(call.get("args")),
+            lambda _root: block_wrote(call.get("args")),
+        )
     except Exception:  # noqa: BLE001 - a journal error must never stop a block
         LOG.exception("vis-review: after %s", call.get("op"))
 
@@ -146,7 +136,7 @@ vis.register_extension(
         ),
         op_hooks=[
             vis.OpHook(["py3"], before_block),
-            vis.OpHook(["py3", "patch"], after_step, phase="after"),
+            vis.OpHook(["py3"], after_step, phase="after"),
         ],
     )
 )
