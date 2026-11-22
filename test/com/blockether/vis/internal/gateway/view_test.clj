@@ -2321,30 +2321,33 @@
   ;; Review: the frame took the string that its own `add-node` gave as the string
   ;; before the frame. No reader holds it, so each reader took the whole app.
   (it "gives a reader a patch for a node that one frame adds and then changes"
-      (with-large-app
-        (fn [sid view-id first-read]
-          (let [text
-                (apply str (repeat 3600 "ten chars "))
+      ;; The tick publishes a frame 100 ms after its first patch. Stop the tick, so that a
+      ;; slow machine cannot put the two patches into two frames.
+      (with-redefs-fn {#'gw-hi/live-flush-ms 3600000}
+        #(with-large-app
+           (fn [sid view-id first-read]
+             (let [text
+                   (apply str (repeat 3600 "ten chars "))
 
-                _
-                (app-op! {"op" "patch"
-                          "view_id" view-id
-                          "patch" {"ops" [{"op" "add-node"
-                                           "node_spec"
-                                           {"id" "note" "type" "paragraph" "text" text}}]}})
+                   _
+                   (app-op! {"op" "patch"
+                             "view_id" view-id
+                             "patch" {"ops" [{"op" "add-node"
+                                              "node_spec"
+                                              {"id" "note" "type" "paragraph" "text" text}}]}})
 
-                _
-                (app-patch! view-id [{"op" "set" "node_id" "note" "text" (str text "more")}])
+                   _
+                   (app-patch! view-id [{"op" "set" "node_id" "note" "text" (str text "more")}])
 
-                [delta]
-                (get (json-body
-                       (app-answer sid view-id (get-in (json-body first-read) ["view" "seq"])))
-                     "patches")
+                   [delta]
+                   (get (json-body
+                          (app-answer sid view-id (get-in (json-body first-read) ["view" "seq"])))
+                        "patches")
 
-                patch
-                (hi-spec/resolved-delta (held-in first-read) delta)]
+                   patch
+                   (hi-spec/resolved-delta (held-in first-read) delta)]
 
-            (expect (= (str text "more") (get-in patch ["ops" 1 "text"])))))))
+               (expect (= (str text "more") (get-in patch ["ops" 1 "text"]))))))))
   (it "gives the whole app to a reader after a new owner changes its icon"
       (gw-hi/install!)
       (recorded
