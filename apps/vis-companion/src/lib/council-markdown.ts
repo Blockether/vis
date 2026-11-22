@@ -55,13 +55,15 @@ const LINE_BREAKS = new Set(['paragraph', 'heading', 'code', 'listItem', 'blockq
 
 /**
  * Council text on one line without its Markdown markers, as a row shows it. A space parts
- * two blocks, and a list item starts with `• `. Mirrors the row text of the TUI agent team.
+ * two blocks, a list item starts with `• ` and inline code keeps its backticks. Mirrors the
+ * row text of the TUI agent team.
  */
 export function councilLine(text: string): string {
   let out = '';
   const walk = (node: MarkdownNode) => {
     if (node.type === 'listItem') out += ' • ';
     if (node.type === 'image') out += node.alt ?? '';
+    else if (node.type === 'inlineCode') out += `\`${node.value}\``;
     else if (node.type !== 'html' && typeof node.value === 'string') out += node.value;
     node.children?.forEach(walk);
     if (LINE_BREAKS.has(node.type)) out += ' ';

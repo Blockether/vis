@@ -1106,11 +1106,12 @@
 
 (defdescribe
   row-markdown-test
-  (it "shows a Markdown note in its row without the markers"
+  ;; User report 2026-11-22: a quoted `: ping\\n\\n` read as broken escapes without its backticks.
+  (it "shows a Markdown note in its row without the markers, except inline code"
       (let [row (first (team/team-rows "turn-1"
-                                       [(agent-row 1 "running" "note" "**Fixing** the `parser`")]))]
+                                       [(agent-row 1 "running" "note" "**Fixing** the `ping\\n`")]))]
         (expect (str/includes? (first (team/row-lines row (team/row-columns [row]) 120 now-ms))
-                               "Fixing the parser")))))
+                               "Fixing the `ping\\n`")))))
 
 (defdescribe
   child-breadcrumb-test

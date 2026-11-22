@@ -5,6 +5,7 @@
    started a team, before its answer, and the breadcrumb of a child session. None of them
    fetches during painting."
   (:require [clojure.string :as str]
+            [clojure.walk :as walk]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
@@ -334,9 +335,14 @@
 (defn- one-line [text] (str/trim (str/replace (str text) #"\s+" " ")))
 
 (defn- markdown-line
-  "Agent Markdown `text` on one line without its markers, as a row shows it."
+  "Agent Markdown `text` on one line without its markers, as a row shows it. Inline code
+   keeps its backticks, so a quoted `\\n` does not read as part of the sentence."
   [text]
-  (one-line (presentation/render (presentation/council->ast (str text)) :plain)))
+  (one-line (presentation/render (walk/postwalk #(if (and (vector? %) (= :c (first %)))
+                                                   (str "`" (last %) "`")
+                                                   %)
+                                                (presentation/council->ast (str text)))
+                                 :plain)))
 
 (defn agent-label
   "The title of `agent`, or `#n` when it has no title. `n` is its start order in its team."
