@@ -55,7 +55,7 @@ formatters change layout, not program structure.
 The sandbox keeps your helpers and variables while you work, for any number of turns. The sandbox
 process stops only in these cases:
 
-- The session was idle for 15 minutes. To change this time, set `VIS_ENV_IDLE_TTL_MS` on the
+- The session was idle for 30 minutes. To change this time, set `VIS_ENV_IDLE_TTL_MS` on the
   gateway.
 - You changed settings that need a new sandbox, for example with `/reload`.
 - The gateway released memory for other sessions. Read
