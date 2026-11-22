@@ -114,9 +114,9 @@
                                        {:event/type :llm.routing/provider-fallback :status 503}]}})
               _ (h/store-iteration! s
                                     {:session-turn-id turn
-                                     :code "(python_execution \"fixture\")"
+                                     :code "(py3 \"fixture\")"
                                      :forms [{:vis/tool-name "cat" :success? true}
-                                             {:vis/tool-name "python_execution" :timeout? true}]
+                                             {:vis/tool-name "py3" :timeout? true}]
                                      :tokens {"input" 80 "output" 10 "reasoning" 2 "cached" 20}
                                      :cache-created-tokens 10
                                      :cost-usd 0.0021
@@ -139,7 +139,7 @@
               turn-row (first (get ledger "turns"))
               iteration-row (first (get turn-row "iterations"))
               cat-row (first (filter #(= "cat" (get % "tool")) (get ledger "tools")))
-              python-row (first (filter #(= "python_execution" (get % "tool"))
+              python-row (first (filter #(= "py3" (get % "tool"))
                                         (get ledger "tools")))
               errors (get ledger "tool_errors")
               routing (get ledger "routing")
@@ -269,7 +269,7 @@
 
 (defdescribe
   read-session-python-boundary-test
-  ;; Regression, td-ba1627: awaiting `read_session()` inside `python_execution`
+  ;; Regression, td-ba1627: awaiting `read_session()` inside `py3`
   ;; never resolved, so the following shell call was never reached.
   (it "settles read_session before running the next host call"
       (let [s (persistance/db-create-connection! :memory)]
@@ -325,7 +325,7 @@
                     {:session-turn-id turn
                      :code (if (= n 1) code "print('raw transcript marker')")
                      :forms [(cond-> {:src (if (= n 1) code "print('raw transcript marker')")
-                                      :vis/tool-name "python_execution"}
+                                      :vis/tool-name "py3"}
                                (= n 1)
                                (assoc :error {:message message})
 
@@ -611,7 +611,7 @@
                                          {:session-turn-id turn
                                           :code code
                                           :forms [{:src code
-                                                   :vis/tool-name "python_execution"
+                                                   :vis/tool-name "py3"
                                                    :error {:message "KeyError: 'palettes.ts'"}}]
                                           :duration-ms 5})
                    data (:result
@@ -623,7 +623,7 @@
                (expect (= "code" (get failure "source")))
                (expect (= code (get failure "code")))
                (expect (str/includes? (get failure "message") "KeyError"))
-               (expect (= "python_execution" (get failure "tool")))
+               (expect (= "py3" (get failure "tool")))
                ;; and the raw attempt keeps its error, so the documented
                ;; [a for a in attempts if a["error"]] derivation works.
                (expect (some? (get attempt "error")))
@@ -647,7 +647,7 @@
                        s
                        {:session-turn-id turn
                         :code code
-                        :forms [{:src code :vis/tool-name "python_execution" :error error}]
+                        :forms [{:src code :vis/tool-name "py3" :error error}]
                         :duration-ms 0})
                    data (:result (introspection/read-session {:session-id cid :db-info s} cid))
                    failure (first (get data "failures"))
@@ -1040,7 +1040,7 @@
            :stdout "value\n"
            :duration-ms 12
            :svar-tool-call-id "call-fixture"
-           :vis-tool-name "python_execution"
+           :vis-tool-name "py3"
            :scope "t1/i1"
            :error {:message "diagnostic"}
            :op "shell"}
@@ -1095,7 +1095,7 @@
                   "stdout" "value\n"
                   "duration_ms" 12
                   "svar_tool_call_id" "call-fixture"
-                  "vis_tool_name" "python_execution"
+                  "vis_tool_name" "py3"
                   "scope" "t1/i1"
                   "error" {"message" "diagnostic"}
                   "position" 0}

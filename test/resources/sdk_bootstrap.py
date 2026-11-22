@@ -65,7 +65,7 @@ def test_explicit_extension_host_is_not_reused_by_sandbox(source):
 
     for name in dir(sandbox.Host):
         if not name.startswith("_"):
-            with raises("unavailable in python_execution"):
+            with raises("unavailable in py3"):
                 getattr(sandbox._host, name)
     assert sandbox._registration["spec"] is None
     assert "blockether.vis._outside" not in sys.modules

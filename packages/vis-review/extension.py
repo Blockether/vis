@@ -56,7 +56,7 @@ def before_block(call):
     try:
         _record("outside", lambda _root: "Changes between blocks")
     except Exception:  # noqa: BLE001 - a journal error must never stop a block
-        LOG.exception("vis-review: before python_execution")
+        LOG.exception("vis-review: before py3")
 
 
 def after_step(call):
@@ -145,8 +145,8 @@ vis.register_extension(
             surfaces={"inline": False, "session": "sidebar"},
         ),
         op_hooks=[
-            vis.OpHook(["python_execution"], before_block),
-            vis.OpHook(["python_execution", "patch"], after_step, phase="after"),
+            vis.OpHook(["py3"], before_block),
+            vis.OpHook(["py3", "patch"], after_step, phase="after"),
         ],
     )
 )

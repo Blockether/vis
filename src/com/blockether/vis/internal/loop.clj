@@ -397,7 +397,7 @@
 
 (defn run-block!
   "Run one Python block `code` in the sandbox of session `id`, as the
-   `python_execution` tool of the agent runs it, but with no model and no turn. The
+   `py3` tool of the agent runs it, but with no model and no turn. The
    block waits for a running turn of the session. Returns `{:result text :error?
    bool}`. `text` is what the agent sees ([[transcript/block-text]])."
   [id code]

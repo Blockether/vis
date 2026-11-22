@@ -109,13 +109,13 @@ describe('the failed tool calls of an export', () => {
           {
             forms: [
               {
-                tool_name: 'python_execution',
+                tool_name: 'py3',
                 scope: 't1/i2',
                 src: 'raw()',
                 display_code: '\npatch(path, edits)\n',
                 error: { message: '\npatch refused\nedit 3/3' },
               },
-              { tool_name: 'python_execution', scope: 't1/i2', stdout: 'ok' },
+              { tool_name: 'py3', scope: 't1/i2', stdout: 'ok' },
               { scope: 't1/i3', error: 'no tool' },
             ],
           },
@@ -123,7 +123,7 @@ describe('the failed tool calls of an export', () => {
       },
       {
         turn_id: 'b',
-        iterations: [{ forms: [{ tool_name: 'python_execution', src: 'sleep(9)', display_language: 'clojure', error: 'timed out' }] }],
+        iterations: [{ forms: [{ tool_name: 'py3', src: 'sleep(9)', display_language: 'clojure', error: 'timed out' }] }],
       },
     ]);
 

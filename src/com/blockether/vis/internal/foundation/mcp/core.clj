@@ -2254,7 +2254,7 @@
       :result
       "String-keyed `{op,server,tool,content,is_error,structured_content?,input_schema?}`. The text of each content block is at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}],methods?}`. With an MCP request as `tool`: `{op,server,method}` plus the keys of the MCP result."
       :description
-      "Call a tool on an MCP server, with the names as strings. The call connects automatically. In `python_execution`, each server is a name of the sandbox, the `python_name` of its row in `session[\"env\"][\"mcp\"][\"servers\"]`: write `await <python_name>.<tool>(**arguments)`. Omit `tool` to get the input schemas of that server. For resources and prompts, pass an MCP request as `tool`: `resources/list`, `resources/templates/list`, `resources/read`, `prompts/list` or `prompts/get`. A tool name also matches when it has `_` for each character that an identifier cannot have."
+      "Call a tool on an MCP server, with the names as strings. The call connects automatically. In `py3`, each server is a name of the sandbox, the `python_name` of its row in `session[\"env\"][\"mcp\"][\"servers\"]`: write `await <python_name>.<tool>(**arguments)`. Omit `tool` to get the input schemas of that server. For resources and prompts, pass an MCP request as `tool`: `resources/list`, `resources/templates/list`, `resources/read`, `prompts/list` or `prompts/get`. A tool name also matches when it has `_` for each character that an identifier cannot have."
       :call {:pos ["server"] :opt-pos ["tool" "args"]}
       :tag :mutation
       :inject-env? true

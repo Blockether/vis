@@ -2,7 +2,7 @@
   "Built-in sandbox SHIM: `ls` — the DIRECTORY listing available inside Python.
 
    Mapping a tree is the cheapest question there is and the one a model asks
-   most, so `ls(dir)` runs inside the `python_execution` block already in flight.
+   most, so `ls(dir)` runs inside the `py3` block already in flight.
    It answers with one compact tree STRING, ready to print. Structured rows would
    cost the reader a second rendering step and the context every quoted brace; the
    tree is the shortest form that still says name, kind, size and shape.

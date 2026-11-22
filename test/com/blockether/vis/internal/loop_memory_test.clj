@@ -347,7 +347,7 @@
                                           (if code
                                             {:stop-reason :tool-calls
                                              :tool-calls [{:id (str "call-" i)
-                                                           :name "python_execution"
+                                                           :name "py3"
                                                            :input {:code code}}]}
                                             {:stop-reason :end :tool-calls [] :content "done"}))))}
                 #(iteration/iteration-loop env "fold large output" {:session-turn-id tid}))

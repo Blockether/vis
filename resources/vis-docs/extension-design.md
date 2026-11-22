@@ -416,7 +416,7 @@ passed check.
 
 ### Know what this checks
 
-- A `python_execution` hook runs when the whole Python block returns, also after a normal Python
+- A `py3` hook runs when the whole Python block returns, also after a normal Python
   error that follows a write. So it covers `Path.write_text()` and `with open(..., "w")`. Each run
   replaces the report.
 - The hook checks writes at these boundaries, not at every filesystem write. It does not watch
@@ -567,7 +567,7 @@ vis.register_extension(
             )
         ],
         ctx=context,
-        op_hooks=[vis.OpHook(["patch", "python_execution"], after_edit, phase="after")],
+        op_hooks=[vis.OpHook(["patch", "py3"], after_edit, phase="after")],
     )
 )
 ```

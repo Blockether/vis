@@ -246,7 +246,7 @@
 
                (cond-> {:expr src :block-lang (:lang b) :render-segments segments}
                  (str/blank? src)
-                 (assoc :vis/preflight-error "python_execution requires non-blank code.")
+                 (assoc :vis/preflight-error "py3 requires non-blank code.")
 
                  ;; Carry the originating tool-call identity onto the
                  ;; entry so it survives into the executed form / envelope
@@ -267,7 +267,7 @@
 
      empty-code-error
      (when (zero? parsed-total-blocks)
-       "Your reply was empty — no tool call and no answer. To ACT, make a tool call (e.g. python_execution); to FINISH, reply with plain prose (your answer).")
+       "Your reply was empty — no tool call and no answer. To ACT, make a tool call (e.g. py3); to FINISH, reply with plain prose (your answer).")
 
      ;; Normalized concat of all surviving block sources — also the
      ;; identity used for iteration-hash dedup in the trailer.
@@ -804,7 +804,7 @@
           ask-opts
           (rt/with-default-ask-code-idle-timeout
             (cond-> {;; ONE tool on the wire: the model takes every action
-                     ;; by calling `python_execution` with a Python
+                     ;; by calling `py3` with a Python
                      ;; program; a reply with NO tool call is the
                      ;; final answer (its text). svar returns
                      ;; {:stop-reason :tool-calls|:end :tool-calls :content
@@ -1016,13 +1016,13 @@
           prompt-cache-continuity (:continuity prompt-cache-sample)
           prompt-cache-reuse-kind (:reuse-kind prompt-cache-sample)
           reasoning-effort-resolution (:routed/reasoning-effort ask-result)
-          ;; The model either CALLS `python_execution`
+          ;; The model either CALLS `py3`
           ;; (`:stop-reason :tool-calls`) or, with NO tool call
           ;; (`:stop-reason :end`), returns its final answer as `:content`.
           ;; An answer reply finalizes the turn directly (finalize-answer!
           ;; records it; the FINAL path below stores/renders it) and runs no
           ;; code. A tool-call reply becomes the executable blocks: one
-          ;; `python_execution` call → one block, carrying the tool_use `:id` so the
+          ;; `py3` call → one block, carrying the tool_use `:id` so the
           ;; driver can pair its result into a `tool_result` message.
           presentation-content (:presentation-content ask-result)
           tool-calls (transcript/normalize-tool-calls (:tool-calls ask-result))
@@ -1037,7 +1037,7 @@
           answer-md (when (and (empty? tool-calls) (= :end (:stop-reason ask-result)))
                       (or prose-md (when (:presentation-content ask-result) "")))
           ;; Show the prose ONLY when it adds something the code doesn't already
-          ;; say — otherwise it's a dim duplicate of the python_execution block.
+          ;; say — otherwise it's a dim duplicate of the py3 block.
           ;; #216: persist and stream why a reasoning-only/empty response did no work.
           ;; This is engine feedback, not fabricated provider prose or a Python error.
           assistant-prose
@@ -1057,7 +1057,7 @@
           _ (when (and assistant-prose on-chunk)
               (on-chunk
                 {:phase :assistant-prose :iteration iteration-position :text assistant-prose}))
-          ;; The ONE advertised tool is `python_execution`, so a tool call IS a
+          ;; The ONE advertised tool is `py3`, so a tool call IS a
           ;; Python block: its `code` argument is the program, verbatim.
           blocks (if answer-md
                    []
@@ -1594,7 +1594,7 @@
 
 (defn- emergency-fold-activity
   "Mechanical activity count for the omitted iterations, derived only from the
-   tool calls they recorded. `python_execution` is the only call there is, so the
+   tool calls they recorded. `py3` is the only call there is, so the
    COUNT is the whole shape — no tool family is left to name."
   [call-counts scopes]
   (let [n (long (reduce + 0 (keep call-counts scopes)))]
@@ -3635,7 +3635,7 @@
           py-name->tag (ctx-renderer/fold-op-index (extension/op-tag-index))
           head-tag-resolver (fn [head-sym]
                               (when head-sym (get py-name->tag (str head-sym))))
-          ;; A provider reply is either one or more python_execution calls
+          ;; A provider reply is either one or more py3 calls
           ;; (executable blocks → forms) or a plain-text terminal answer. A
           ;; no-block iteration therefore has an empty form vector, never a
           ;; synthetic error artifact.

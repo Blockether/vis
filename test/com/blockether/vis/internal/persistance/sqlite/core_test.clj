@@ -6043,7 +6043,7 @@
                            :status :done
                            :idx 0
                            :code "fold twice"
-                           :forms [{:vis/tool-name "python_execution"
+                           :forms [{:vis/tool-name "py3"
                                     :src (str "fold_session('t1/i1', 'first')\n"
                                               "fold_session('t1/i2', 'second')")
                                     :vis/fold-count 2
@@ -6054,7 +6054,7 @@
                            :status :done
                            :idx 1
                            :code "mention only"
-                           :forms [{:vis/tool-name "python_execution"
+                           :forms [{:vis/tool-name "py3"
                                     :src "example = \"fold_session('t1/i3', 'not run')\""
                                     :stdout "folded t1/i3 → not run"}]})
       (persistance/db-update-session-turn! s

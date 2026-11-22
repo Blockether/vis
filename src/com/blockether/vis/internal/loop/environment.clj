@@ -97,7 +97,7 @@
           :else true)))
 
 (defn- ext-tool-names
-  "The names that `python_execution` binds for the symbols of `ext`. A door has no
+  "The names that `py3` binds for the symbols of `ext`. A door has no
    name here: a block calls its handles."
   [ext]
   (into []
@@ -2026,13 +2026,13 @@
 
     (cond (some #(some #{tool-name} (door-tool-names %)) (extension/registered-extensions))
           (str "A tool list names the tools that " tool-name
-               " runs, by the name that python_execution calls"
+               " runs, by the name that py3 calls"
                (when (seq handles) (str ", such as " (first handles)))
                ".")
           (and (str/includes? tool-name ".") (seq same))
           (str "Tools of " prefix ": " (str/join ", " same) ".")
           (seq selectable)
-          (str "Use the name that python_execution binds, such as " (first selectable) ".")
+          (str "Use the name that py3 binds, such as " (first selectable) ".")
           :else "No optional extension has tools in this session.")))
 
 (defn selectable-tools

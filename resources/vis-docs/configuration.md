@@ -713,7 +713,7 @@ a failed handshake without verification. STRICT covers several X.509 requirement
 security trade-off, not a certificate repair. Prefer a correctly issued CA when your administrator
 can provide one.
 
-The merged value applies to `python_execution`, trusted Python extensions, and `vis-agent python`,
+The merged value applies to `py3`, trusted Python extensions, and `vis-agent python`,
 with or without `--shared`. Language extension REPLs that run `vis-agent python` get it too. It
 affects the `ssl` contexts of Python, also those that stdlib clients and libraries create with
 `ssl.SSLContext`. It does not affect JVM TLS, `gh`, `curl`, uv, external Python processes, or
@@ -780,7 +780,7 @@ neither case does the CLI fall back to shared packages. To use the interpreter o
 Activation happens inside the sandbox, so editable source and custom environments must be inside
 allowed filesystem roots. Activate only environments that you trust, because editable import hooks
 can run code. The standalone CLI does not add the environment of the project to agent
-`python_execution`.
+`py3`.
 
 `vis-agent python` also puts declared source roots on `sys.path`. So
 `vis-agent python -m pytest tests/` imports a `src/` layout without `PYTHONPATH`. Vis reads the

@@ -3106,7 +3106,7 @@
 
 (defdescribe
   app-sandbox-seam-test
-  ;; #421: `attach(ui.app(...))` in the python_execution sandbox opens and drives
+  ;; #421: `attach(ui.app(...))` in the py3 sandbox opens and drives
   ;; apps through `app-json!`, and only the apps of its own session.
   (it "opens and drives an app of its own session"
       (recorded
@@ -4171,7 +4171,7 @@
                  (expect (= 403 (door-status #(touch sid global-id))))
                  (expect (nil? (door-status #(touch nil global-id))))
                  (finally (hi/close-live! session-app) (hi/close-live! global-id)))))))
-  (it "refuses a global app from the python_execution sandbox"
+  (it "refuses a global app from the py3 sandbox"
       (expect (str/includes? (str (live-refusal #(app-seam! (str (random-uuid))
                                                             (global-app {"scope" "global"}))))
                              "SDK program"))))

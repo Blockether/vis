@@ -238,7 +238,7 @@
                        "__vis_sequence_field__" "rows"}}
             (dissoc (call (exts "client") 'client.records) "op"))))))
   (it "drives the process of a shell answer through its handle"
-      ;; The handle reads `_shell_wait` and `_shell_logs`, which only `python_execution` bound.
+      ;; The handle reads `_shell_wait` and `_shell_logs`, which only `py3` bound.
       (foundation/register!)
       (with-tools
         (fn [exts]

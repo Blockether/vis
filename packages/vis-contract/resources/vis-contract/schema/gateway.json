@@ -5612,7 +5612,7 @@
     },
     "session_block_request": {
       "type": "object",
-      "description": "One Python block to run in the session sandbox, as the `python_execution` tool of the agent runs it. No model is called.",
+      "description": "One Python block to run in the session sandbox, as the `py3` tool of the agent runs it. No model is called.",
       "properties": {
         "code": {
           "type": "string",

@@ -18,7 +18,7 @@
   [stream?]
   (let [call {:id "native-history-call"
               :type "function"
-              :function {:name "python_execution"
+              :function {:name "py3"
                          :arguments (json/write-json-str {:code python-code})}}]
     (if stream?
       (str (#'binary/json-chunk
@@ -240,7 +240,7 @@
                      (expect (= 0 exit) output)
                      (expect (seq results))
                      (doseq [result results]
-                       (expect (not (str/includes? result "python_execution failed")) result)
+                       (expect (not (str/includes? result "py3 failed")) result)
                        (expect (str/includes? result "native-shell-pages-done") result)
                        (expect (not (str/includes? result "Activity history could not be saved"))
                                result)))

@@ -549,7 +549,7 @@ project. The function returns 1200 cents, and the Activity reads **Quote deliver
 After one call, your application prints `Quoted weights: [1200]`.
 
 The agent finds the contract through `apropos` and `doc`, calls the function through
-`python_execution`, and uses the result in the answer.
+`py3`, and uses the result in the answer.
 
 ### Add or change a function between turns
 

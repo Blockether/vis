@@ -186,7 +186,7 @@ class Host(Protocol):
     def call_tool(
         self, tool: str, args: Sequence[Any], kwargs: Mapping[str, Any]
     ) -> Any:
-        """Run one active session tool by the name `python_execution` calls."""
+        """Run one active session tool by the name `py3` calls."""
         ...
 
     def read_session(self, target: str | None) -> Mapping[str, Any]:
@@ -477,7 +477,7 @@ class _Tools:
     as `spel.reserve(...)`, including another extension's object methods.
     `vis.tools["spel.reserve"]("x-login")` takes the name as a string. The call runs in
     the bound session and shows its own Activity. An extension object answers as a
-    frozen class of the same name with its public fields, as in python_execution. Other
+    frozen class of the same name with its public fields, as in py3. Other
     answers are JSON data. Arguments are JSON data, and a dataclass argument travels as
     its fields.
 
@@ -4018,7 +4018,7 @@ def block(reason, hint=None):
 def repair(source, *, notes):
     """Return repaired source from a before hook, without writing or running it.
 
-    Only patch accepts this decision. Vis repairs python_execution blocks
+    Only patch accepts this decision. Vis repairs py3 blocks
     itself with parinferish. The host validates the request and reports the
     notes with the result. A patch still checks the complete original file
     before it writes the repaired text once.
@@ -5170,7 +5170,7 @@ def forget(handle):
 
 # -- Attachments ----------------------------------------------------------------
 # ONE implementation of the five attachment verbs. It serves `vis.attach` of an
-# extension, the `attach` of `python_execution` and the host outside Vis. Only
+# extension, the `attach` of `py3` and the host outside Vis. Only
 # the host door differs. The engine owns each rule that needs the bytes: the media
 # type, the kind, the size limit and the audience of a document.
 
@@ -5335,8 +5335,8 @@ def _attachment_verbs(host, *, present=None, app_door=None):
     """Build the five attachment verbs over one host door.
 
     `host()` answers the host of the call. `present(row, **facts)`, when given,
-    shows a stored artifact to the person: `python_execution` prints a transcript
-    fence. `app_door` is the app door of a `python_execution` session.
+    shows a stored artifact to the person: `py3` prints a transcript
+    fence. `app_door` is the app door of a `py3` session.
     """
 
     def attach(
@@ -5354,7 +5354,7 @@ def _attachment_verbs(host, *, present=None, app_door=None):
         """Store an artifact as a durable attachment of the running block, or open an app.
 
         `source` is required: a path, bytes, a Matplotlib figure or a Pillow image.
-        The engine stores the artifact with the running `python_execution` block.
+        The engine stores the artifact with the running `py3` block.
         A second attachment under the same `filename` is the next version of that
         artifact. `audience` is `both`, `user` or `model`; a PDF or HTML document
         is for the user only.
@@ -5410,7 +5410,7 @@ def _attachment_verbs(host, *, present=None, app_door=None):
                 if hook is not None and app_door is not None:
                     raise TypeError(
                         f"attach: {name} is only for an extension: the app door of "
-                        "python_execution takes no callback."
+                        "py3 takes no callback."
                     )
             return LiveAttachment._from(
                 source, door=app_door, on_event=on_event, on_reload=on_reload
@@ -6265,7 +6265,7 @@ class LiveView:
 
     _door = None
     # The host function that carries the envelopes of this handle. None is the
-    # extension host. The python_execution sandbox gives its own app door.
+    # extension host. The py3 sandbox gives its own app door.
 
     def _live(self, envelope, listener=None):
         """Cross one envelope to the host and answer the decoded reply."""
@@ -7122,7 +7122,7 @@ class LiveAttachment(LiveView):
             if self._door is not None:
                 raise TypeError(
                     "on_reload is only for an extension that Vis loads: a reload "
-                    "does not end an SDK program or the python_execution sandbox"
+                    "does not end an SDK program or the py3 sandbox"
                 )
             if not str(request.get("key") or "").strip():
                 raise ValueError(

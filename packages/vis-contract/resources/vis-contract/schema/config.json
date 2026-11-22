@@ -695,7 +695,7 @@
         "pattern": "^[A-Za-z_*][A-Za-z0-9_.*]*$",
         "maxLength": 200
       },
-      "description": "Tool names as python_execution binds them, such as memo.recall. * matches any characters."
+      "description": "Tool names as py3 binds them, such as memo.recall. * matches any characters."
     },
     "tools": {
       "type": "object",

@@ -106,7 +106,7 @@
     (:tag envelope)
     (assoc :tag (:tag envelope))
 
-    ;; Printed output is the primary content of a `python_execution` block and
+    ;; Printed output is the primary content of a `py3` block and
     ;; can coexist with an error when the block printed before it threw.
     (some? (:stdout envelope))
     (assoc :stdout (:stdout envelope))
@@ -471,7 +471,7 @@
         n-iters
         (long (or (:iterations totals) 0))
 
-        ;; Each executed block is one python_execution call.
+        ;; Each executed block is one py3 call.
         n-calls
         (reduce + 0 (map (comp count :blocks) (mapcat :iterations turns)))
 
@@ -598,7 +598,7 @@
          "\n"
          (when (not (str/blank? comment)) (str comment "\n"))
          (render-block-code-segments code render-segments)
-         ;; What the block PRINTED — the primary output of a python_execution
+         ;; What the block PRINTED — the primary output of a py3
          ;; block; rendered verbatim so forensic review sees the real content.
          (when (not (str/blank? stdout)) (str "\n_stdout:_\n" (render-fenced "text" stdout)))
          (when error (str "\n_error:_\n" (render-fenced "text" error)))

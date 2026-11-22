@@ -1315,11 +1315,11 @@
     {:role "assistant"
      :content
      [{:type "text" :text "reading the tree"}
-      {:type "tool_use" :id "tc-1" :name "python_execution" :input {"code" "print(ls('src'))"}}]}
+      {:type "tool_use" :id "tc-1" :name "py3" :input {"code" "print(ls('src'))"}}]}
     :llm-provider :openai
     :llm-model priced-model
     :preserved-thinking/replay? true
-    :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" "print(ls('src'))"}}]
+    :tool-calls [{:id "tc-1" :name "py3" :input {"code" "print(ls('src'))"}}]
     :forms-vec [{:scope "t1/i1" :svar/tool-call-id "tc-1" :code "print(ls('src'))" :stdout out}]}])
 
 (defn- suffix-tokens
@@ -1606,7 +1606,7 @@
         (expect (not-any? #(contains? % "note") (get @ctx "session_summaries")))
         (expect (= "# ⋯ folded t1/i1 · big cat dump" (:content (irm (second (first out))))))))
   (it "a fold breadcrumb carries no recovery coordinate"
-      ;; Regression guard for the `ntr` removal: `python_execution` PRINTS, so
+      ;; Regression guard for the `ntr` removal: `py3` PRINTS, so
       ;; nothing stores a result the breadcrumb could point at. A pointer here
       ;; would promise a recovery path that cannot exist.
       (let [tr
@@ -1691,7 +1691,7 @@
 
         assistant
         {:role "assistant"
-         :content [{:type "tool_use" :id "tc-1" :name "python_execution" :input {"code" code}}]}
+         :content [{:type "tool_use" :id "tc-1" :name "py3" :input {"code" code}}]}
 
         results
         {:role "user"

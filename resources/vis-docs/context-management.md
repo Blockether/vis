@@ -64,7 +64,7 @@ dependencies, preconditions, and tests.
 
 ### One tool, many functions
 
-`python_execution` gives the model search, reads, edits, and tests as Python. Only printed output
+`py3` gives the model search, reads, edits, and tests as Python. Only printed output
 returns to the model. Other results stay in variables, and related work shares one call. Before
 each block, Vis builds `session` again with the latest turn, workspace roots, budget, and
 extension context.

@@ -66,7 +66,7 @@
                            :api-usage {:input-tokens 6 :output-tokens 3}
                            :tool-calls
                            [{:id "goal-update"
-                             :name "python_execution"
+                             :name "py3"
                              :input
                              {:code
                               "print(session['goal_status'])\nprint(update_goal('complete'))"}}]}
@@ -111,10 +111,10 @@
                             {:stop-reason :tool-calls
                              :api-usage {:input-tokens 100000 :output-tokens 5}
                              :tool-calls [{:id "last-tools"
-                                           :name "python_execution"
+                                           :name "py3"
                                            :input {:code "print('last iteration ran')"}}
                                           {:id "more-tools"
-                                           :name "python_execution"
+                                           :name "py3"
                                            :input {:code
                                                    "print('second tool in same iteration')"}}]})]
 
@@ -158,10 +158,10 @@
                             1
                             {:stop-reason :tool-calls
                              :tool-calls [{:id "resolve"
-                                           :name "python_execution"
+                                           :name "py3"
                                            :input {:code (str "print(update_goal('" status "'))")}}
                                           {:id "finish-current-tools"
-                                           :name "python_execution"
+                                           :name "py3"
                                            :input {:code
                                                    "print('Current iteration tools finished.')"}}]}
 
@@ -269,7 +269,7 @@
                               1 (if (= "complete" status)
                                   {:stop-reason :tool-calls
                                    :tool-calls [{:id "finish-goal"
-                                                 :name "python_execution"
+                                                 :name "py3"
                                                  :input {:code "print(update_goal('complete'))"}}]}
                                   {:stop-reason :end :content "Progress so far."})
                               question {:stop-reason :end :content "Do you want a local fix only?"}
@@ -329,7 +329,7 @@
                                   2
                                   {:stop-reason :tool-calls
                                    :tool-calls [{:id "finish-resumed-goal"
-                                                 :name "python_execution"
+                                                 :name "py3"
                                                  :input {:code "print(update_goal('complete'))"}}]}
 
                                   3
@@ -511,7 +511,7 @@
                                 (= n (inc progress-count))
                                 {:stop-reason :tool-calls
                                  :tool-calls [{:id "complete-goal"
-                                               :name "python_execution"
+                                               :name "py3"
                                                :input {:code "print(update_goal('complete'))"}}]}
                                 (= n (+ 2 progress-count)) {:stop-reason :end
                                                             :content "All requested checks passed."}
@@ -587,7 +587,7 @@
             python
             (fn [id code]
               {:stop-reason :tool-calls
-               :tool-calls [{:id id :name "python_execution" :input {:code code}}]})]
+               :tool-calls [{:id id :name "py3" :input {:code code}}]})]
 
         (try (with-redefs [svar/ask-code!
                            (fn [_ opts]
@@ -671,7 +671,7 @@
                                               {:stop-reason :tool-calls
                                                :tool-calls
                                                [{:id "finish-goal"
-                                                 :name "python_execution"
+                                                 :name "py3"
                                                  :input {:code "print(update_goal('complete'))"}}]}
                                               {:stop-reason :end :content "Done."}))]
                (turn/run-turn! env "hello" {})

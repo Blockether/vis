@@ -1111,7 +1111,7 @@
    (let [src
          (or (:code block) (:src block) "")
 
-         ;; ITERATION scope `tN/iM`. One record = one python_execution call,
+         ;; ITERATION scope `tN/iM`. One record = one py3 call,
          ;; identified by `:svar/tool-call-id`; there is no `/fK` index.
          scope
          (str "t" (:turn cursor) "/i" (:iter cursor))
@@ -1138,7 +1138,7 @@
            ;; Tool-call identity: which tool_use (svar id) this form answers, plus
            ;; its name. `iteration-results-message` groups forms by this id so EACH
            ;; tool_use gets its OWN tool_result carrying its own output — one reply
-           ;; may carry several `python_execution` calls.
+           ;; may carry several `py3` calls.
            (some? (:svar/tool-call-id block))
            (assoc :svar/tool-call-id (:svar/tool-call-id block))
 

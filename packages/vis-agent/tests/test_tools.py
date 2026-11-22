@@ -15,7 +15,7 @@ from blockether.vis import _outside
 from blockether.vis.activity import ActivityGroup
 
 
-def test_calls_the_tool_python_execution_names_and_answers_the_host_value(monkeypatch):
+def test_calls_the_tool_py3_names_and_answers_the_host_value(monkeypatch):
     calls = []
     answer = object()
 

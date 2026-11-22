@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.foundation.shim-attach
   "Built-in sandbox SHIM: `attach` — the ONE way a block hands an artifact it
-   produced to the engine. A tool running in `python_execution`
+   produced to the engine. A tool running in `py3`
    writes any artifact (a PNG it rendered, a CSV/JSON/PDF/wav it built, whatever)
    and hands it to `attach(path)` (or `attach(data, filename)` for bytes it
    never wrote out), getting back the stored artifact's DESCRIPTOR; the
@@ -207,7 +207,7 @@
   []
   (let [reader mpl-capture/*attachment-reader*]
     (when-not (or reader mpl-capture/*attachment-sink*)
-      (throw (ex-info "list_attachments: call inside python_execution." {})))
+      (throw (ex-info "list_attachments: call inside py3." {})))
     (into (vec (when reader (or ((:list reader)) []))) (pending-descriptors))))
 
 (defn- locate-attachment
@@ -349,7 +349,7 @@
                                " cannot see it.")
                           {}))
           (nil? mpl-capture/*attachment-sink*)
-          (throw (ex-info "attach: call inside python_execution." {}))
+          (throw (ex-info "attach: call inside py3." {}))
           (nil? root) (throw (ex-info "attach: the session has no workspace to read the file from."
                                       {}))
           :else (let [{:keys [^java.io.File file refusal]}
@@ -402,7 +402,7 @@
                              " attachment limit. Write the bytes to a file and attach its path:"
                              " a larger file stays on disk as a reference.")
                         {}))
-        (nil? mpl-capture/*attachment-sink*) (throw (ex-info "attach: call inside python_execution."
+        (nil? mpl-capture/*attachment-sink*) (throw (ex-info "attach: call inside py3."
                                                              {}))
         :else (let [info
                     (display-info (str media-type) (str b64))
@@ -432,7 +432,7 @@
                                        (assoc :is-document true))))))
 
 (defn- attach-call
-  "Body of `attach` for each door: `python_execution` and `vis.attach` of a Python
+  "Body of `attach` for each door: `py3` and `vis.attach` of a Python
    extension send the same options map. It holds `base64` and the optional
    `filename`, `media_type`, `media_type_hint`, `kind`, `audience` and `label`.
    `kind` and `media_type` are the explicit choices of the caller, and the hint is
@@ -547,7 +547,7 @@
 (defn ^:no-doc extension-host-doors
   "The attachment doors of a Python extension, as `{guest-name fn}`. They are the
    doors of the sandbox `attach` verbs under the names of the SDK host. They use
-   the bindings of the running `python_execution` block, so an extension tool
+   the bindings of the running `py3` block, so an extension tool
    stores and reads the same artifacts as the block that calls it."
   []
   (let [bridge (attach-bridge-bindings)]

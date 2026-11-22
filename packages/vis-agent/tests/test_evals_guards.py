@@ -69,7 +69,7 @@ class ScenarioFilesTest(unittest.TestCase):
         scenario = load_scenarios(["session-helper-reuse"])[0]
         self.assertEqual(2, scenario["want_helper_reuse"])
         self.assertIs(True, scenario["measurement"])
-        self.assertIn("one log per python_execution block", scenario["prompt"])
+        self.assertIn("one log per py3 block", scenario["prompt"])
         self.assertEqual(["187", "23", "charlie", "18.5"], scenario["want_answer"])
         with tempfile.TemporaryDirectory() as work:
             seed_files(scenario, work)

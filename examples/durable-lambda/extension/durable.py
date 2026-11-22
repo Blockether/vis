@@ -385,7 +385,7 @@ PROMPT = """Software factory runs on AWS Lambda. The work directory of this sess
 - `durable.workflows()` and `durable.run_workflow(name, input)` list and start the workflows. A run makes its own session. With `session="current"` it works in this session after this turn."""
 
 # The operations that can write a file.
-STEPS = ["python_execution", "patch", "shell"]
+STEPS = ["py3", "patch", "shell"]
 
 vis.register_extension(
     vis.Extension(

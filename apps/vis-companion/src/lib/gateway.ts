@@ -6228,7 +6228,7 @@ export class GatewayClient {
    *
    * A still-`running`/`queued` turn is REPORTED, never flattened to `null`: a
    * caller that cannot tell "still working" from "never heard of it" has to
-   * assume the worst about every quiet moment. One `shell` or `python_execution`
+   * assume the worst about every quiet moment. One `shell` or `py3`
    * call blocks its iteration for as long as the command runs and emits no
    * frame at all until it returns, so that assumption tore the SSE stream down
    * every few seconds for the whole length of a long tool call.

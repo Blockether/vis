@@ -648,7 +648,7 @@
   (boolean (get-in ext [:ext/engine :ext.engine/exact-symbol-names?])))
 
 (defn symbol-binding
-  "The name `sym` of `ext` is bound under in `python_execution`.
+  "The name `sym` of `ext` is bound under in `py3`.
 
    Clojure extensions bind `<alias>/<name>`, which Python spells `<alias>_<name>`.
    Python-authored extensions declare their public names verbatim: the registry
@@ -661,7 +661,7 @@
       sym)))
 
 (defn sandbox-binding
-  "The name that `python_execution` binds `sym` of `ext` under: the
+  "The name that `py3` binds `sym` of `ext` under: the
    `:ext.symbol/binding` of the symbol when it declares one, else its
    [[symbol-binding]]. A symbol declares a name for a door that only its sandbox
    shim calls. Tool lists and operations keep the `symbol-binding`.
@@ -1452,7 +1452,7 @@
 
 (defn- tool-op-keywords
   "Each operation name that an op hook can give for the tool `sym-entry` of `ext`:
-   the operation name `alias/sym`, then the name that `python_execution` calls.
+   the operation name `alias/sym`, then the name that `py3` calls.
    A door (`:ext.symbol/binding`) has none: a block calls its handles, and
    `:ext.symbol/handles` names each call."
   [ext sym-entry]
@@ -1857,14 +1857,19 @@
   [op]
   (if (keyword? op) (subs (str op) 1) (str op)))
 
+(def ^:private LEGACY_HOOK_OPS
+  "Operation names of an older Vis that an op hook can still give."
+  {"python_execution" :py3})
+
 (defn- hook-op
   "The operation keyword that the hook operation `op` names: its gate op, else its
-   name. A dotted name is a name that `python_execution` calls, so each character
+   name. A dotted name is a name that `py3` calls, so each character
    that a Python identifier cannot have means `_`: a block calls the tool
    `get-issue` of the MCP server `figma-dev` as `figma_dev.get_issue`, and a hook
    can give either name."
   [op]
   (or (gate-op op)
+      (get LEGACY_HOOK_OPS (op-text op))
       (let [text (op-text op)]
         (if (and (str/includes? text ".") (not (str/includes? text "/")))
           (keyword (str/replace text #"[^A-Za-z0-9_*.]" "_"))
@@ -1990,7 +1995,7 @@
 
 (defn- pattern-op-hooks
   "The hooks whose operation is a pattern that matches `call-kw`, the name that
-   `python_execution` calls. Each carries that name as `::matched`, so its function
+   `py3` calls. Each carries that name as `::matched`, so its function
    gets the name of the call and not the pattern."
   [call-kw env]
   (let [call-name
@@ -2011,7 +2016,7 @@
 
 (defn- call-op-hooks
   "The hooks of one tool call. `names` are the operation names of the call, and the
-   last is the name that `python_execution` calls. A hook on one of the names runs,
+   last is the name that `py3` calls. A hook on one of the names runs,
    then a hook whose operation is a pattern that matches the last name."
   [names env]
   (vec (concat (mapcat #(environment-op-hooks % env) names)
@@ -2165,7 +2170,7 @@
 
 (defn- folded-kwargs->positional
   "Re-expand folded kwargs for the DIRECT-python surface. When the agent calls a
-   symbol in a `python_execution` block with KEYWORD args (`tool(id=…, n=…)`,
+   symbol in a `py3` block with KEYWORD args (`tool(id=…, n=…)`,
    `cat(path, start=…, end=…)`), the host door appends them as ONE TRAILING dict
    positional (see `internal.python.host`). A fixed-arity impl `[env id n]` would
    then receive the whole `{id n}` map in its `id` slot, and `cat`'s
@@ -3314,7 +3319,7 @@
 (def host-operations
   "Operations that are not tools but run op hooks: the Python block. With the
    tools and `gate-ops`, they are every name that an op hook can match."
-  #{:python_execution})
+  #{:py3})
 
 (defn handle-roots
   "The first name of each handle that a door of `ext` has now, such as `linear`.

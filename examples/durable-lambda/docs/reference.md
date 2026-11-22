@@ -170,7 +170,7 @@ repository.
 
 ## Temporary work goes to S3
 
-The extension has a hook after each `python_execution`, `patch` and `shell` operation.
+The extension has a hook after each `py3`, `patch` and `shell` operation.
 The hook finds the files that changed in `/tmp` and in the work directory and sends
 them to `tmp/<session>/tmp/` and `tmp/<session>/project/`. The Files tab of a session
 shows them below the attached files. S3 removes them after 7 days. The hook copies only regular files. It does

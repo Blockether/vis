@@ -171,7 +171,7 @@ def model_endpoint(*, tool_code=None, before_reply=None, refuse=None, stall=None
                                 "id": f"call_{position}",
                                 "type": "function",
                                 "function": {
-                                    "name": "python_execution",
+                                    "name": "py3",
                                     "arguments": json.dumps({"code": code}),
                                 },
                             }

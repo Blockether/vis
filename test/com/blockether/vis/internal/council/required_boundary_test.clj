@@ -97,7 +97,7 @@
                         {:stop-reason :tool-calls
                          :tokens {}
                          :tool-calls
-                         [{:id (str "reply-" n) :name "python_execution" :input {:code code}}]}
+                         [{:id (str "reply-" n) :name "py3" :input {:code code}}]}
                         {:stop-reason :end :tokens {} :content "done" :tool-calls []})))]
                  (iteration/iteration-loop b "Continue your task" {:session-turn-id tid}))
                iterations (ps/db-list-session-turn-iterations db tid)
@@ -190,7 +190,7 @@
                                        :tokens {}
                                        :tool-calls
                                        [{:id "reply"
-                                         :name "python_execution"
+                                         :name "py3"
                                          :input {:code (str "await council.publish('Keep it.', "
                                                             "reply_to="
                                                             entry-id

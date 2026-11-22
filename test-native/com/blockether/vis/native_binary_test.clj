@@ -551,7 +551,7 @@
   [stream? call-id code]
   (let [call {:id call-id
               :type "function"
-              :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}]
+              :function {:name "py3" :arguments (json/write-json-str {:code code})}}]
     (if stream?
       (str (json-chunk (json/write-json-str {:index 0
                                              :delta {:role "assistant"
@@ -571,7 +571,7 @@
   native-sandbox-extension-sdk-test
   ;; Issue #253: exercise the SDK bundled in the image through a real model tool call.
   (it
-    "imports declarations in python_execution without trusted host or process access"
+    "imports declarations in py3 without trusted host or process access"
     (let [dir
           (temp-dir "vis-native-sdk-")
 
@@ -594,7 +594,7 @@
             "lambda: sdk.state.get('key'), lambda: sdk.shell({'command': 'exit 0'})]:\n"
             "    try:\n"
             "        operation()\n" "    except RuntimeError as error:\n"
-            "        assert 'unavailable in python_execution' in str(error)\n" "    else:\n"
+            "        assert 'unavailable in py3' in str(error)\n" "    else:\n"
             "        raise AssertionError('Extension host operation allowed')\n"
             "assert sdk._registration['spec'] is None\n"
             "assert 'blockether.vis._outside' not in sys.modules\n" "try:\n"
@@ -653,7 +653,7 @@
 (defdescribe
   native-sequence-result-test
   (it
-    "restores opted-in collections through an installed extension and python_execution"
+    "restores opted-in collections through an installed extension and py3"
     (let [dir
           (temp-dir "vis-native-sequence-")
 
@@ -981,7 +981,7 @@
   [code call-number stream?]
   (let [call {:id (str "native-interrupt-" call-number)
               :type "function"
-              :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}]
+              :function {:name "py3" :arguments (json/write-json-str {:code code})}}]
     (if stream?
       (str (json-chunk (json/write-json-str {:index 0
                                              :delta {:role "assistant"

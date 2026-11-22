@@ -78,7 +78,7 @@
                "for operation in operations:\n"
                "    try:\n" "        operation()\n"
                "    except RuntimeError as error:\n"
-               "        assert 'unavailable in python_execution' in str(error), str(error)\n"
+               "        assert 'unavailable in py3' in str(error), str(error)\n"
                "    else:\n" "        raise AssertionError('Host operation was allowed')\n"
                "for name in dir(sdk.Host):\n" "    if name.startswith('_'):\n"
                "        continue\n" "    try:\n"

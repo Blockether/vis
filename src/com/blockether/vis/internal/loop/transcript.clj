@@ -3,7 +3,7 @@
 
    Replays prior turns as conversation, freezes iteration results into append-only
    messages, replays images and preserved reasoning, exposes the single
-   `python_execution` tool, places prompt-cache breakpoints, tracks cache reuse,
+   `py3` tool, places prompt-cache breakpoints, tracks cache reuse,
    and sends an assembled request through the session's LLM client."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
@@ -1134,7 +1134,8 @@
 
         call-ids
         (into []
-              (comp (filter #(contains? #{nil "python_execution"}
+              ;; An older Vis stored the tool name python_execution.
+              (comp (filter #(contains? #{nil "py3" "python_execution"}
                                         (some-> (:vis/tool-name %)
                                                 name)))
                     (keep :svar/tool-call-id)
@@ -1147,7 +1148,7 @@
         calls
         (mapv (fn [id]
                 {:id (id-of id)
-                 :name "python_execution"
+                 :name "py3"
                  :input {"code" (str/join "\n\n"
                                           (keep #(when (= id (:svar/tool-call-id %))
                                                    (not-empty
@@ -1481,7 +1482,7 @@
    any `summarize`/`drop` fold lines.
    One `tool_result` block per `tool_use`, each carrying ITS OWN forms' output (forms are grouped
    by `:svar/tool-call-id`), because one reply may carry several
-   `python_execution` calls.
+   `py3` calls.
    Falls back to a plain text user message when no tool calls are recorded.
    `:echo-source?` on the record also prefixes each form's output with the source
    that produced it, for the degraded replays where the assistant message
@@ -1629,7 +1630,7 @@
                                   {:role "user" :content body})
       ;; Native/tool-call iteration: emit ONE `tool_result` per `tool_use` (the
       ;; API requires every call be answered), each carrying ITS OWN forms'
-      ;; output. One of the calls may be python_execution, the rest direct
+      ;; output. One of the calls may be py3, the rest direct
       ;; file tools, and each owns its result.
       tool-calls
       {:role "user"
@@ -1666,7 +1667,7 @@
                                          "Tool call was not executed or its result is unavailable."
                                          (when-not (str/blank? c) (str "\n" c)))
                     (str/blank? c)
-                    "(no return — python_execution returns what it print()s; this call printed nothing. print() what you want to see.)"
+                    "(no return — py3 returns what it print()s; this call printed nothing. print() what you want to see.)"
                     :else c)}
                  errored?
                  (assoc :is_error true))))
@@ -2262,18 +2263,18 @@
          "engine_turn_weights" (persistent! turn-weights))))))
 
 ;; ── The model-facing surface: ONE tool ───────────────────────────────────────
-;; `python_execution` is the only call the provider ever sees. Every capability is
+;; `py3` is the only call the provider ever sees. Every capability is
 ;; a plain Python name bound into CPython inside it, so confinement, rendering and
 ;; docs have exactly one home and the model never routes between surfaces.
 ;; Replying with plain text and NO tool call ends the turn.
 
 (defn- python-execution-tool
-  "The engine-level `python_execution` tool schema — the ONLY tool the provider
+  "The engine-level `py3` tool schema — the ONLY tool the provider
    is given. It states what the tool runs and returns. Working rules live in the
    core prompt, the shell handle in the `sandbox-shims` block and the access
    policy in `session[\"access\"]`."
   []
-  {:name "python_execution"
+  {:name "py3"
    :description
    "Run Python in the session sandbox. The block runs as a script. Each Vis capability is a plain Python name."
    :result
@@ -2284,7 +2285,7 @@
             :additionalProperties false}})
 
 (defn model-facing-tools
-  "The ONE provider-visible tool. `python_execution` IS the model-facing surface:
+  "The ONE provider-visible tool. `py3` IS the model-facing surface:
    every other capability is already a bare Python name inside that sandbox, so a
    second JSON schema advertises a door the model can open anyway — and charges
    for it on every request. Discovery of the rest is pulled, not pushed:
@@ -2474,12 +2475,12 @@
 (defn prose-beyond-code
   "The assistant `prose` (a model `:content` string streamed ALONGSIDE a tool
    call) is worth showing ONLY when it carries commentary BEYOND the code it's
-   about to run. Models frequently restate the exact `python_execution` code in their
+   about to run. Models frequently restate the exact `py3` code in their
    message — as a ```fenced``` block or verbatim — which then renders as a dim
    DUPLICATE of the real code block. So strip any fenced code from the prose and
    compare what's left (and the whole prose, de-whitespaced) against the
    concatenated tool-call code; return the prose when it still says something,
-   else nil. `tool-calls` are the model's `python_execution` calls; their `:input` carries
+   else nil. `tool-calls` are the model's `py3` calls; their `:input` carries
    `code`."
   [prose tool-calls]
   (when-let [p (some-> prose

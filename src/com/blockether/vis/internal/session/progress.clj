@@ -113,7 +113,7 @@
 
 (defn- form-result-kind
   "Classify a form chunk for the channel's result gate. A form is a tool call
-   when its python_execution channel recorded provider operations; otherwise it
+   when its py3 channel recorded provider operations; otherwise it
    is an ordinary Python value/output form."
   [chunk]
   (cond (:error chunk) :error
@@ -299,7 +299,7 @@
 
     :tool-start
     ;; A sandbox function (`shell`, `grep`, …) began executing INSIDE a
-    ;; python_execution block. `:form-start` cleared `:activity` to nil, so a
+    ;; py3 block. `:form-start` cleared `:activity` to nil, so a
     ;; long-running nested call (e.g. a multi-minute `shell` run) would otherwise
     ;; leave the bubble frozen with no sign anything is happening. Surface it as
     ;; coarse `:tool-call` activity naming the op, so the spinner reads

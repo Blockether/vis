@@ -6,7 +6,7 @@
 
      user step      the prompt
      agent step     one for each iteration: thinking, prose, model and effort
-     tool call      one `python_execution` call for each code block, with its `code`
+     tool call      one `py3` call for each code block, with its `code`
      observation    the stdout and the error of that block
      final_metrics  the token and cost totals of the run
      subagents      one embedded trajectory for each Council child
@@ -141,7 +141,7 @@
   [call-id block ref]
   (let [envelope (get block "envelope")]
     {:call {:tool-call-id call-id
-            :function-name (or (get block "tool_name") "python_execution")
+            :function-name (or (get block "tool_name") "py3")
             :arguments {"code" (str (or (get block "code") (get block "src")))}
             :extra (compact {:status (get envelope "status")
                              :ref (or (get envelope "ref") ref)

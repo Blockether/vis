@@ -56,7 +56,7 @@
 (defn- code-response
   [code]
   {:stop-reason :tool-calls
-   :tool-calls [{:id "agent-boundary" :name "python_execution" :input {:code code}}]})
+   :tool-calls [{:id "agent-boundary" :name "py3" :input {:code code}}]})
 
 (defn- requested-model
   "The model one provider request asks for: its forced route, else the router root."

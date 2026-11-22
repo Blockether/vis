@@ -1495,7 +1495,7 @@
           "tool_calls": [
             {
               "tool_call_id": "vis-1",
-              "function_name": "python_execution",
+              "function_name": "py3",
               "arguments": {
                 "code": "print(1)"
               },

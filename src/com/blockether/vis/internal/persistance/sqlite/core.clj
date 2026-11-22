@@ -5143,7 +5143,7 @@
 (defn- store-iteration-attachments!
   "Insert one `session_attachment` row per OUTBOUND artifact a tool call produced
    inside this iteration (the canonical case: an `attach` payload from
-   `python_execution`). Each attachment is `{:tool-call-id? :media-type :base64
+   `py3`). Each attachment is `{:tool-call-id? :media-type :base64
    :filename? :size? :kind?}` (INLINE), or `{... :storage-uri ...}` when the
    offload rail parked its bytes in a storage backend.
 

@@ -455,7 +455,7 @@
                                                           :encrypted_content (apply str
                                                                                (repeat size "A"))
                                                           :summary []})}
-               {:type "tool_use" :id "call_1" :name "python_execution" :input {:code "print(1)"}}]}
+               {:type "tool_use" :id "call_1" :name "py3" :input {:code "print(1)"}}]}
              {:role "user"
               :content [{:type "tool_result"
                          :tool_use_id "call_1"
@@ -753,7 +753,7 @@
                                                :idx 0
                                                :code "compact()"
                                                :status :done
-                                               :forms [{:vis/tool-name "python_execution"
+                                               :forms [{:vis/tool-name "py3"
                                                         :src "compact()"
                                                         :stdout ""
                                                         :vis/fold-count prior-folds}]})))
@@ -807,7 +807,7 @@
                                 (if code
                                   {:stop-reason :tool-calls
                                    :tool-calls [{:id (str "call-" idx)
-                                                 :name "python_execution"
+                                                 :name "py3"
                                                  :input {:code code}}]}
                                   {:stop-reason :end :tool-calls [] :content "done"}))))]
 
@@ -3090,7 +3090,7 @@
       (expect (throws? clojure.lang.ExceptionInfo #(loop-env/create-environment nil {})))))
 
 (defdescribe prose-beyond-code-test
-             ;; The model often restates its python_execution code in its message prose; that
+             ;; The model often restates its py3 code in its message prose; that
              ;; prose must be SUPPRESSED so it doesn't render as a dim duplicate of the
              ;; real code block. Only genuine commentary survives.
              ;; The door (`normalize-tool-calls`) already stringified every argument key,
@@ -3635,7 +3635,7 @@
                           svar/ask-code! (fn [_ _]
                                            {:stop-reason :tool-calls
                                             :tool-calls [{:id "follow_up"
-                                                          :name "python_execution"
+                                                          :name "py3"
                                                           :input {:code code}}]})]
 
               (let [result (try (iteration/run-iteration environment
@@ -3771,7 +3771,7 @@
                               (if (= 1 (swap! calls inc))
                                 {:stop-reason :tool-calls
                                  :tool-calls
-                                 [{:id "call_0" :name "python_execution" :input {:code "print(1)"}}]
+                                 [{:id "call_0" :name "py3" :input {:code "print(1)"}}]
                                  :api-usage {:input-tokens 1000 :output-tokens 10}}
                                 {:stop-reason :end
                                  :content "done"
@@ -3808,7 +3808,7 @@
                        {:stop-reason :tool-calls
                         :tool-calls (mapv (fn [idx code]
                                             {:id (str "call_" idx)
-                                             :name "python_execution"
+                                             :name "py3"
                                              :input {:code code}})
                                           (range)
                                           codes)})]
@@ -3888,7 +3888,7 @@
                                                       {:stop-reason :tool-calls
                                                        :tool-calls (mapv (fn [idx code]
                                                                            {:id (str "call_" idx)
-                                                                            :name "python_execution"
+                                                                            :name "py3"
                                                                             :input {:code code}})
                                                                          (range)
                                                                          (cond-> [timeout-code]
@@ -3940,7 +3940,7 @@
                                           (reset! cancelled true)
                                           {:stop-reason :tool-calls
                                            :tool-calls [{:id "cancelled_call"
-                                                         :name "python_execution"
+                                                         :name "py3"
                                                          :input {:code "print(42)"}}]})]
 
                             (iteration/iteration-loop environment
@@ -4265,7 +4265,7 @@
              ;; number of args (1) passed to clojure.core/assoc"). 120+ loop tests stayed green
              ;; because none drove a real tool-call response through `run-iteration`. This does.
              (it
-               "executes a python_execution tool call through run-iteration without throwing"
+               "executes a py3 tool call through run-iteration without throwing"
                (let [env
                      (loop-env/create-environment ::router {:db :memory})
 
@@ -4280,7 +4280,7 @@
                                  (fn [_router _opts]
                                    {:stop-reason :tool-calls
                                     :tool-calls [{:id "call_1"
-                                                  :name "python_execution"
+                                                  :name "py3"
                                                   :input {:code "print(6*7)"}}]
                                     :content nil
                                     :reasoning "computing"
@@ -4304,9 +4304,9 @@
                        ;; tool-call iteration (not a final answer)
                        (expect (nil? (:final-result result)))
                        (expect (= 1 (count tool-calls)))
-                       (expect (= "python_execution" (:name (first tool-calls))))
+                       (expect (= "py3" (:name (first tool-calls))))
                        ;; the call ACTUALLY executed in the sandbox (env was passed correctly):
-                       ;; python_execution returns what it print()s.
+                       ;; py3 returns what it print()s.
                        (expect (some? form-res))
                        (expect (nil? (:error form-res)))
                        (expect (str/includes? (str (:stdout form-res)) "42"))))
@@ -4326,7 +4326,7 @@
                    {"type" "function_call"
                     "id" (str "fc_" n)
                     "call_id" (str "call_" n)
-                    "name" "python_execution"
+                    "name" "py3"
                     "arguments" (json/write-json-str {"code" code})})
             calls [(call "one") (call "two")]
             events (conj (vec (map-indexed (fn [idx item]
@@ -4395,7 +4395,7 @@
                         {:stop-reason :tool-calls
                          :tool-calls
                          [{:id "call_activity"
-                           :name "python_execution"
+                           :name "py3"
                            :input {:code "grep({'query': 'defproject', 'paths': ['deps.edn']})"}}]
                          :content nil
                          :reasoning "checking"
@@ -4860,7 +4860,7 @@
                       :content [{:type "text" :text "Patching the chat view."}
                                 {:type "tool_use"
                                  :id "vis_t1_i1_0"
-                                 :name "python_execution"
+                                 :name "py3"
                                  :input {"code" "patch(\"ChatContent.tsx\", edits)"}}]}
                      (:assistant-message step)))
           (expect (= ["vis_t1_i1_0"] (mapv :svar/tool-call-id (:forms-vec step))))
@@ -5972,13 +5972,13 @@
                                        :thinking-signature (str "sig-" id)}
                                       {:type "tool_use"
                                        :id (str "tc-" id)
-                                       :name "python_execution"
+                                       :name "py3"
                                        :input {"query" "lmstudio"}}])}
     :llm-provider provider
     :llm-model model
     :preserved-thinking/replay? replay?
     :attachments attachments
-    :tool-calls [{:id (str "tc-" id) :name "python_execution" :input {"query" "lmstudio"}}]
+    :tool-calls [{:id (str "tc-" id) :name "py3" :input {"query" "lmstudio"}}]
     :forms-vec [{:scope (str "t1/i" id)
                  :svar/tool-call-id (str "tc-" id)
                  :src "print(json.dumps(inventory))"
@@ -5997,7 +5997,7 @@
           failed
           (-> rec
               (assoc-in [:assistant-message :content 1 :input] {"code" source})
-              (assoc :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" source}}]
+              (assoc :tool-calls [{:id "tc-1" :name "py3" :input {"code" source}}]
                      :forms-vec [{:scope "t1/i1"
                                   :svar/tool-call-id "tc-1"
                                   :src source
@@ -6031,8 +6031,8 @@
           mixed
           (->
             rec
-            (assoc :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" "print('ok')"}}
-                                {:id "tc-2" :name "python_execution" :input {"code" failed-source}}]
+            (assoc :tool-calls [{:id "tc-1" :name "py3" :input {"code" "print('ok')"}}
+                                {:id "tc-2" :name "py3" :input {"code" failed-source}}]
                    :forms-vec
                    [{:scope "t1/i1" :svar/tool-call-id "tc-1" :src "print('ok')" :stdout "ok"}
                     {:scope "t1/i1"
@@ -6043,7 +6043,7 @@
             (update-in
               [:assistant-message :content]
               conj
-              {:type "tool_use" :id "tc-2" :name "python_execution" :input {"code" failed-source}}))
+              {:type "tool_use" :id "tc-2" :name "py3" :input {"code" failed-source}}))
 
           suffix
           (conversation-suffix [[pos mixed]] {:provider :lmstudio :model "google/gemma-4-12b-qat"})
@@ -6072,7 +6072,7 @@
 
        failed
        (assoc rec
-         :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" source}}]
+         :tool-calls [{:id "tc-1" :name "py3" :input {"code" source}}]
          :forms-vec [{:scope "t1/i4"
                       :svar/tool-call-id "tc-1"
                       :src source
@@ -6097,7 +6097,7 @@
 
             failed
             (assoc rec
-              :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" source}}]
+              :tool-calls [{:id "tc-1" :name "py3" :input {"code" source}}]
               :forms-vec [{:scope "t1/i2"
                            :svar/tool-call-id "tc-1"
                            :src source
@@ -7535,7 +7535,7 @@
 
         body
         (fn [form]
-          (get-in (irm {:tool-calls [{:id "A" :name "python_execution"}]
+          (get-in (irm {:tool-calls [{:id "A" :name "py3"}]
                         :forms-vec [(merge {:scope "t1/i1/f1" :svar/tool-call-id "A"} form)]})
                   [:content 0 :content]))]
 
@@ -7558,7 +7558,7 @@
 
 (defdescribe
   tool-result-pairing-test
-  "An iteration is a list of `python_execution` calls. Each tool_use gets its own
+  "An iteration is a list of `py3` calls. Each tool_use gets its own
    tool_result containing exactly what that call printed, grouped by
    `:svar/tool-call-id`."
   (let [irm
@@ -7569,9 +7569,9 @@
 
     (it "answers each parallel tool_use with its own stdout"
         (let [m
-              (irm {:tool-calls [{:id "A" :name "python_execution"}
-                                 {:id "B" :name "python_execution"}
-                                 {:id "P" :name "python_execution"}]
+              (irm {:tool-calls [{:id "A" :name "py3"}
+                                 {:id "B" :name "py3"}
+                                 {:id "P" :name "py3"}]
                     :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :stdout "AAA"}
                                 {:scope "t1/i1/f2" :svar/tool-call-id "B" :stdout "BBB"}
                                 {:scope "t1/i1/f3" :svar/tool-call-id "P" :stdout "PPP"}]})
@@ -7586,8 +7586,8 @@
           (expect (str/includes? (by-id "P") "PPP"))))
     (it "advertises no recovery handle for printed output"
         (let [m
-              (irm {:tool-calls [{:id "toolu_A" :name "python_execution"}
-                                 {:id "P" :name "python_execution"}]
+              (irm {:tool-calls [{:id "toolu_A" :name "py3"}
+                                 {:id "P" :name "py3"}]
                     :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :stdout "AAA"}
                                 {:scope "t1/i1/f2" :svar/tool-call-id "P" :stdout "PPP"}]})
 
@@ -7600,8 +7600,8 @@
           (expect (not (str/includes? all "# saved:")))))
     (it "flags a failed call's tool_result and leaves successful output unflagged"
         (let [m
-              (irm {:tool-calls [{:id "ok" :name "python_execution"}
-                                 {:id "bad" :name "python_execution"}]
+              (irm {:tool-calls [{:id "ok" :name "py3"}
+                                 {:id "bad" :name "py3"}]
                     :forms-vec
                     [{:scope "t1/i1/f1" :svar/tool-call-id "ok" :stdout "FILE"}
                      {:scope "t1/i1/f2" :svar/tool-call-id "bad" :error "No such file"}]})
@@ -7615,12 +7615,12 @@
           (expect (true? (:is_error (by-id "bad"))))
           (expect (str/includes? (:content (by-id "bad")) "No such file"))))
     (it "returns the no-output hint when Python printed nothing"
-        (let [m (irm {:tool-calls [{:id "P" :name "python_execution"}]
+        (let [m (irm {:tool-calls [{:id "P" :name "py3"}]
                       :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "P"}]})]
           (expect (str/includes? (get-in m [:content 0 :content]) "no return"))))
     (it "folds an unpaired summary onto the first call"
         (let [m
-              (irm {:tool-calls [{:id "A" :name "python_execution"}]
+              (irm {:tool-calls [{:id "A" :name "py3"}]
                     :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :stdout "body"}
                                 {:summary? true :summary-iters ["t1/i0"] :summary-gist "ctx"}]})
 
@@ -7649,7 +7649,7 @@
   ;; Python printed nothing.
   (let [call
         (fn [id]
-          {:id id :name "python_execution" :input {"code" "print(123)"}})
+          {:id id :name "py3" :input {"code" "print(123)"}})
 
         blocks
         (fn [calls]
@@ -7722,7 +7722,7 @@
 
         wire
         (fn [out]
-          (str (:content (first (:content (irm {:tool-calls [{:id "P" :name "python_execution"}]
+          (str (:content (first (:content (irm {:tool-calls [{:id "P" :name "py3"}]
                                                 :forms-vec [{:scope "t1/i1/f1"
                                                              :svar/tool-call-id "P"
                                                              :stdout out}]}))))))]
@@ -7760,7 +7760,7 @@
         (fn [form error]
           (get-in (#'transcript/iteration-results-message
                    {:llm-model "glm-5.3"
-                    :tool-calls [{:id (:svar/tool-call-id form) :name "python_execution"}]
+                    :tool-calls [{:id (:svar/tool-call-id form) :name "py3"}]
                     :forms-vec [(cond-> form
                                   error
                                   (assoc :error {:message error}))]})
@@ -7789,8 +7789,8 @@
                 :stdout (str (apply str (repeat 5000 "second\n")) "SECOND-ONLY"))
 
               calls
-              [{:id "call_A|fc_123" :name "python_execution"}
-               {:id "call_B|fc_456" :name "python_execution"}]
+              [{:id "call_A|fc_123" :name "py3"}
+               {:id "call_B|fc_456" :name "py3"}]
 
               [a b]
               (binding [toggles/*overrides* {"introspection" true}]
@@ -7844,7 +7844,7 @@
                              (if (<= (swap! calls inc) 4)
                                {:stop-reason :tool-calls
                                 :tool-calls [{:id (str "repeat-" @calls)
-                                              :name "python_execution"
+                                              :name "py3"
                                               :input {:code "print(1)"}}]
                                 :tokens {}}
                                {:stop-reason :end :tool-calls [] :content "finished" :tokens {}}))]
@@ -8818,7 +8818,7 @@
     (it "a bare string program is rejected and points at native answering, not :answer/:code"
         (let [m (err "\"just prose\"")]
           (expect (some? m))
-          (expect (str/includes? m "python_execution"))
+          (expect (str/includes? m "py3"))
           (expect (not (str/includes? m ":answer")))))
     (it "a comment-only block references `#` (Python), not `;;`/`#_`"
         (let [m (err "# only a comment")]
@@ -8832,14 +8832,14 @@
              ;; called from inside a block — so a second JSON schema advertises a door the
              ;; model can open anyway and charges for it on every single request.
              (it
-               "advertises exactly one tool, and it is python_execution"
+               "advertises exactly one tool, and it is py3"
                (let [tools
                      (@#'transcript/model-facing-tools)
 
                      tool
                      (first tools)]
 
-                 (expect (= ["python_execution"] (mapv :name tools)))
+                 (expect (= ["py3"] (mapv :name tools)))
                  ;; No extension can add a tool: `model-facing-tools` does not take extensions
                  ;; at all any more, which is the proof rather than an assertion about them.
                  (expect (= 1 (count tools)))
@@ -11026,7 +11026,7 @@
               (apply str (repeat 8000 "x"))
 
               content
-              [{:type "tool_use" :id "tc" :name "python_execution" :input {"code" large}}]
+              [{:type "tool_use" :id "tc" :name "py3" :input {"code" large}}]
 
               trailer
               [(stub-tool-iter {:id 1 :content content}) (stub-tool-iter {:id 2 :content content})]
@@ -11299,7 +11299,7 @@
                                     (if (= 1 idx)
                                       {:stop-reason :tool-calls
                                        :tool-calls [{:id "call-1"
-                                                     :name "python_execution"
+                                                     :name "py3"
                                                      :input {:code "print('settled evidence')"}}]}
                                       {:stop-reason :end :tool-calls [] :content "done"}))))]
 
@@ -11383,7 +11383,7 @@
                              (str "call-" (swap! successes inc))
 
                              call
-                             {:id id :name "python_execution" :input {:code code}}]
+                             {:id id :name "py3" :input {:code code}}]
 
                          (merge {:api-usage {:input-tokens n :output-tokens 1} :tokens {}}
                                 (if code
@@ -12837,7 +12837,7 @@
                      (expect (= {"edits" [{"path" "a.clj" "from_anchor" "1:aa"}]} (:input tc)))))
                (it "lets downstream consumers read string keys only — no keyword fallback"
                    (let [[tc] (#'transcript/normalize-tool-calls
-                               [{:id "w" :name "python_execution" :input {:code "print(1)"}}])]
+                               [{:id "w" :name "py3" :input {:code "print(1)"}}])]
                      (expect (= {"code" "print(1)"} (:input tc)))))))
 
 ;; A tool call whose arguments were CORRUPTED inside the provider's own
@@ -12853,7 +12853,7 @@
     "a leaked tool-call tag is not an argument value"
     (it "drops the mangled closing tag and runs the call the model meant"
         (let [[tc] (#'transcript/normalize-tool-calls
-                    [{:id "a" :name "python_execution" :input {"code" "</antmlutparameter>\n"}}])]
+                    [{:id "a" :name "py3" :input {"code" "</antmlutparameter>\n"}}])]
           (expect (= {} (:input tc)))))
     (it "drops a `</invoke>` value carried under an entity-escaped key"
         (let [[tc] (#'transcript/normalize-tool-calls
@@ -12899,7 +12899,7 @@
   (describe "an arguments payload that is not an object at all"
             (it "drops a bare string payload and runs the call the model meant"
                 (let [[tc] (#'transcript/normalize-tool-calls
-                            [{:id "a" :name "python_execution" :input "</invoke>"}])]
+                            [{:id "a" :name "py3" :input "</invoke>"}])]
                   (expect (= {} (:input tc)))))
             (it "records the payload it refused"
                 (let [{:keys [signals]}
@@ -13855,7 +13855,7 @@
                                         {:stop-reason :tool-calls :tool-calls [] :tokens {}}
                                         code {:stop-reason :tool-calls
                                               :tool-calls [{:id "council-block"
-                                                            :name "python_execution"
+                                                            :name "py3"
                                                             :input {:code code}}]
                                               :tokens {}}
                                         :else {:stop-reason :end

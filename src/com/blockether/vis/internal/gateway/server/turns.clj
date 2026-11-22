@@ -204,7 +204,7 @@
 
 (defn- run-block-handler
   "POST /sessions/:sid/run — run one Python block `code` in the session sandbox,
-   as the `python_execution` tool of the agent runs it, with no model call. The
+   as the `py3` tool of the agent runs it, with no model call. The
    block waits for a running turn of the session. The answer is `result`, the text
    that the agent sees, and `is_error`. A failed block is a 200 answer with
    `is_error` true: the failure is the result."

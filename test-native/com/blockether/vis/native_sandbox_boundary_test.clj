@@ -57,10 +57,10 @@
            "for _ in range(10001):\n    list(scan_root.rglob('*.missing'))")
          tools [{:id "sandbox-native"
                  :type "function"
-                 :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}
+                 :function {:name "py3" :arguments (json/write-json-str {:code code})}}
                 {:id "sandbox-recovery"
                  :type "function"
-                 :function {:name "python_execution"
+                 :function {:name "py3"
                             :arguments (json/write-json-str
                                          {:code (str "assert scan_kept == 279\n"
                                                      "assert len(list(scan_root.iterdir())) == 1\n"

@@ -11,7 +11,7 @@
   (:require [com.blockether.vis.internal.util :as util]))
 
 (def DEFAULT_EVAL_TIMEOUT_MS
-  "Default wall-clock backstop around ONE `python_execution` block — five minutes.
+  "Default wall-clock backstop around ONE `py3` block — five minutes.
 
    It stops guest code that never ends on its own, such as `while True:` or a regex
    with catastrophic backtracking. Tool calls (shell, MCP, extensions) park this

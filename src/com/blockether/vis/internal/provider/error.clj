@@ -89,7 +89,7 @@
   (boolean (and (string? message) (re-find #"(?i)invalid.*signature.*thinking.*block" message))))
 
 (defn tool-schema-rejection-message?
-  "True when a provider rejected the `python_execution` tool because its
+  "True when a provider rejected the `py3` tool because its
    input-schema root uses a JSON Schema union that provider APIs forbid."
   [message]
   (let [text (some-> message

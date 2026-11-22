@@ -61,11 +61,11 @@
                      {"jsonrpc" "2.0"
                       "id" 3
                       "method" "tools/call"
-                      "params" {"name" "python_execution" "arguments" {"code" "x = 2"}}}
+                      "params" {"name" "py3" "arguments" {"code" "x = 2"}}}
                      {"jsonrpc" "2.0"
                       "id" 4
                       "method" "tools/call"
-                      "params" {"name" "python_execution" "arguments" {"code" "print(x + 2)"}}}
+                      "params" {"name" "py3" "arguments" {"code" "print(x + 2)"}}}
                      {"jsonrpc" "2.0" "id" 5 "method" "ping"}]
                     (gateway [[200 {"result" "" "is_error" false}]
                               [200 {"result" "4" "is_error" false}]]))
@@ -81,7 +81,7 @@
       (expect (= "vis" (get-in by-id [1 "result" "serverInfo" "name"])))
       (let [[tool :as tools] (get-in by-id [2 "result" "tools"])]
         (expect (= 1 (count tools)))
-        (expect (= "python_execution" (get tool "name")))
+        (expect (= "py3" (get tool "name")))
         (expect (= {"type" "object"
                     "properties" {"code" {"type" "string" "description" "Python source."}}
                     "required" ["code"]
@@ -101,7 +101,7 @@
             [{"jsonrpc" "2.0"
               "id" 1
               "method" "tools/call"
-              "params" {"name" "python_execution" "arguments" {"code" "1/0"}}}
+              "params" {"name" "py3" "arguments" {"code" "1/0"}}}
              {"jsonrpc" "2.0" "id" 2 "method" "tools/call" "params" {"name" "bash" "arguments" {}}}
              {"jsonrpc" "2.0" "id" 3 "method" "resources/list"} "{not json"]
             (gateway [[200 {"result" "✗ runtime error: division by zero" "is_error" true}]]))]
@@ -115,7 +115,7 @@
       (let [[_ replies requests] (exchange [{"jsonrpc" "2.0"
                                              "id" 1
                                              "method" "tools/call"
-                                             "params" {"name" "python_execution"
+                                             "params" {"name" "py3"
                                                        "arguments" {"code" "1"}}}]
                                            (gateway [[404 {"error" {"message" "unknown session"}}]
                                                      [200 {"result" "" "is_error" false}]]))]

@@ -1153,7 +1153,7 @@
                  :reasoning-content clipped
                  :extra {:is-final true :attachments [attachment]}
                  :tool-calls [{:tool-call-id "first"
-                               :function-name "python_execution"
+                               :function-name "py3"
                                :arguments {:code clipped}
                                :extra {:stdout-chars 20123}}]
                  :observation {:results [{:source-call-id "first" :content clipped}]}}

@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.python.door-parity-test
-  "One Python verb, three doors, one answer. A verb of `python_execution` and its
+  "One Python verb, three doors, one answer. A verb of `py3` and its
    twin in the extension SDK must give the same value, the same printed text and
    the same error. Each row of [[cases]] runs at three doors with no mock: the
    sandbox in the engine process, the sandbox in a worker process, and a real
@@ -370,13 +370,13 @@
   [{:door :extension
     :fields {"printed" ""}
     :reason (str "`attach` and `show_attachment` print a preview only in the block of "
-                 "`python_execution`. A tool of an extension has no channel into the output "
+                 "`py3`. A tool of an extension has no channel into the output "
                  "of the block that called it, so the same code prints nothing there.")}
    {:door :extension
     :rows #{:ls-pages}
     :answer {"error" "VisToolError"
              "message" (str "vis.tools: no active tool is named `ls` in this session; pass the "
-                            "name python_execution calls, such as `alias_name` or `alias.method`")
+                            "name py3 calls, such as `alias_name` or `alias.method`")
              "printed" ""}
     :reason
     "`ls` is a shim of the sandbox, not a tool of the session, so `vis.tools` has no `ls`."}])

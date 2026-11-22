@@ -518,7 +518,7 @@
   (str (get PROCESS_SURFACE "off") " " (get PROCESS_SURFACE "extension")))
 
 (def AUTO_IMPORTED_PYTHON_NAMES
-  "Python names installed into builtins for every `python_execution` context.
+  "Python names installed into builtins for every `py3` context.
    This is the model-facing inventory; keep it synchronized with
    `auto-imports-python` and its real-context regression test."
   ["json" "shlex" "re" "hashlib" "glob" "os" "sys" "collections" "Counter" "pathlib" "Path"

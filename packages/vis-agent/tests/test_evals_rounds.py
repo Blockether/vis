@@ -14,7 +14,7 @@ def step(step_id, iteration, *, error=None, tokens=10):
         calls.append(
             {
                 "tool_call_id": f"call-{step_id}",
-                "function_name": "python_execution",
+                "function_name": "py3",
                 "arguments": {},
                 "extra": {"error": {"type": error, "message": "a log line"}},
             }

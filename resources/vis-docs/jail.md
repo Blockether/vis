@@ -45,7 +45,7 @@ processes.
 | Execution path | Enforcement |
 |---|---|
 | `shell(...)` and its child processes | OS process jail and gateway egress policy |
-| `python_execution` | CPython filesystem, process, and socket guards while the jail is enabled. HTTP then uses the gateway policy |
+| `py3` | CPython filesystem, process, and socket guards while the jail is enabled. HTTP then uses the gateway policy |
 | Python extension code and its ordinary `subprocess` calls | Trusted host code, outside the session jail |
 
 A trusted extension can start a jailed child with `vis.jailed_shell(...)`. That call reads the
@@ -148,7 +148,7 @@ the normalized path, with symlinks resolved. So a denied file stays denied throu
 a relative path, or a link.
 
 The rules cover the host tools (`ls`, `grep`, and the other readers and writers),
-`python_execution`, and each child process that Vis starts. When a call names many paths and one is
+`py3`, and each child process that Vis starts. When a call names many paths and one is
 denied, Vis refuses the whole call.
 
 A rule also covers files that appear later. On macOS, a secret that is written after the session
@@ -158,7 +158,7 @@ still refuse every path that the rule covers.
 
 The deny rules are separate from `jail.enabled`, which turns the OS sandbox on and off. With the
 jail off, the tools of Vis still refuse each denied path. But nothing confines the commands and
-code that Vis starts, so a shell child or `python_execution` can open the file. When a rule must
+code that Vis starts, so a shell child or `py3` can open the file. When a rule must
 hold against code that Vis does not run itself, keep the jail on.
 
 ## Environment filtering
@@ -308,7 +308,7 @@ On macOS, `ps` does not run in the jail. To learn if a process that you started 
 
 A trusted Python extension can register gateway `network_filters` for HTTP requests, responses,
 and SOCKS connections. An exception in a filter denies the request. `/net-probe` checks the host
-policy and the registered filters, and it opens no socket. In `python_execution`,
+policy and the registered filters, and it opens no socket. In `py3`,
 `network_filter(...)` and `network_probe(...)` test filters that are local to the session. Those
 filters do not change the gateway network policy.
 [Registration](extension-api.md#registration) in the Extension API describes `network_filters`.

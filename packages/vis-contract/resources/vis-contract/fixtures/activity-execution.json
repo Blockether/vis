@@ -13,7 +13,7 @@
       "summary": "Sandbox",
       "signal": "observation",
       "sequence": 1,
-      "operation": "python_execution",
+      "operation": "py3",
       "presentation": {
         "headline": "Executed",
         "summary": "Sandbox Python",
@@ -75,7 +75,7 @@
       "summary": "Sandbox",
       "signal": "observation",
       "sequence": 2,
-      "operation": "python_execution",
+      "operation": "py3",
       "presentation": {
         "headline": "Executed",
         "summary": "Sandbox Python",
@@ -137,7 +137,7 @@
       "summary": "Sandbox",
       "signal": "observation",
       "sequence": 3,
-      "operation": "python_execution",
+      "operation": "py3",
       "presentation": {
         "headline": "Execution failed",
         "summary": "Sandbox Python",
@@ -182,7 +182,7 @@
       "summary": "Sandbox",
       "signal": "observation",
       "sequence": 4,
-      "operation": "python_execution",
+      "operation": "py3",
       "presentation": {
         "headline": "Execution failed",
         "summary": "Sandbox Python",
@@ -227,7 +227,7 @@
       "summary": "Sandbox",
       "signal": "observation",
       "sequence": 5,
-      "operation": "python_execution",
+      "operation": "py3",
       "presentation": {
         "headline": "Execution timed out",
         "summary": "Sandbox Python",

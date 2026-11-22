@@ -317,11 +317,11 @@
   "The progress-note rule. A one-shot `:cli` run has no reader for that prose, so its
    prompt leaves this rule out."
   (str
-    "- Next to each `python_execution` call, write one sentence for the user: the next step, the change or a "
+    "- Next to each `py3` call, write one sentence for the user: the next step, the change or a "
     "finding that changes the plan.\n"))
 
 (def ^:private CORE_SYSTEM_PROMPT
-  "Cross-tool contract for an autonomous agent. `python_execution` is the only
+  "Cross-tool contract for an autonomous agent. `py3` is the only
    call; registered callable signatures own call shape and `doc(name)` owns semantics.
    It is a state machine: each state names its rules and its exit."
   (str
@@ -572,7 +572,7 @@
                                           " — guidance: " (paths/abbreviate-home path)))
                                    added))
                     "\nBefore any action in an added root, read its exact guidance path in "
-                    "`python_execution`. The read activates its rules for that root; obey them. "
+                    "`py3`. The read activates its rules for that root; obey them. "
                     "Until that read, do not change files, run commands or use browser automation "
                     "there."))
 
@@ -587,7 +587,7 @@
                                 nested))
                  "\nThese projects supply extensions of this session. Before you use their tools "
                  "or act in one of these projects, read its exact guidance path in "
-                 "`python_execution`. The read activates its rules for that project; obey them."))]
+                 "`py3`. The read activates its rules for that project; obey them."))]
 
             {:content (prompt-block "project-instructions"
                                     (str/join "\n\n"

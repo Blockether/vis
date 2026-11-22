@@ -41,7 +41,7 @@
            environment
            model
            (merge {:messages [{:role "user" :content "Check it"}]
-                   :tools [{:name "python_execution"}]
+                   :tools [{:name "py3"}]
                    :on-chunk identity
                    :cancel-fn (constantly false)}
                   ask-opts)
@@ -131,7 +131,7 @@
   (it "does not execute tool calls returned by a repair"
       (let [{:keys [result calls]} (present "done"
                                             {:stop-reason :tool-calls
-                                             :tool-calls [{:name "python_execution"
+                                             :tool-calls [{:name "py3"
                                                            :input {:code "print(42)"}}]})]
         (expect (= 1 (count calls)))
         (expect (= :failed (:presentation-status result)))
@@ -169,7 +169,7 @@
                       result))))))
   (it "never repairs a tool iteration"
       (let [result
-            {:stop-reason :tool-calls :tool-calls [{:name "python_execution"}] :content progress}
+            {:stop-reason :tool-calls :tool-calls [{:name "py3"}] :content progress}
 
             presented
             (#'iteration/final-presentation environment model {} result)]

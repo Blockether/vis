@@ -1034,7 +1034,7 @@
             checkpoint [{:role :system :content "Rules"} {:role :user :content "Parent request"}
                         {:role :assistant
                          :content [{:type "text" :text "Note"}
-                                   {:type "tool_use" :id "t1" :name "python_execution" :input {}}]}
+                                   {:type "tool_use" :id "t1" :name "py3" :input {}}]}
                         {:role :user
                          :content [{:type "tool_result" :tool_use_id "t1" :content "Tool output"}]}
                         {:role :assistant :content "Answer"}
@@ -1254,11 +1254,11 @@
                      {:role "assistant"
                       :content [{:type "thinking" :thinking "Hidden" :signature "s"}
                                 {:type "text" :text "Plan"}
-                                {:type "tool_use" :id "t1" :name "python_execution" :input {}}]}
+                                {:type "tool_use" :id "t1" :name "py3" :input {}}]}
                      {:role "user"
                       :content [{:type "tool_result" :tool_use_id "t1" :content "Output"}]}
                      {:role "assistant"
-                      :content [{:type "tool_use" :id "t2" :name "python_execution" :input {}}]}
+                      :content [{:type "tool_use" :id "t2" :name "py3" :input {}}]}
                      {:role "user"
                       :content [{:type "tool_result" :tool_use_id "t2" :content "More"}]}
                      {:role "assistant" :content "Answer"}

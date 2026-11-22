@@ -21,7 +21,7 @@
   (let [body (str "HEAD\n" (apply str (repeat 6000 "source path: \"quoted\"\n")) "TAIL")]
     (mapv (fn [i]
             (let [id (str "call_" i)
-                  call {:id id :name "python_execution" :input {:code "print(result)"}}]
+                  call {:id id :name "py3" :input {:code "print(result)"}}]
 
               [i
                {:scope (str "t1/i" i)

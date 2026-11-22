@@ -781,7 +781,7 @@ keep the group hierarchy and the current log window.
 | `panel` | In the side panel of one session | Until your extension closes it or unloads |
 | `attachment` | In the transcript and the attachments of the session, as an app | Until your code closes or archives it, also after a gateway restart |
 
-Only extension code can open a `panel` view, and the `python_execution` sandbox refuses it. A panel
+Only extension code can open a `panel` view, and the `py3` sandbox refuses it. A panel
 view needs a `key`. Your extension and the key own one view, so a second `vis.live` with the same
 key replaces the first view.
 
@@ -874,7 +874,7 @@ vis.ui.plaintext("port", label="Port",
   good value, or the error message.
 - Your code runs the function when the person submits, before Vis accepts the submit. The function
   never leaves your process.
-- An extension and an SDK program get the question from the host. In the `python_execution`
+- An extension and an SDK program get the question from the host. In the `py3`
   sandbox, your code answers it while it reads events with `events`, `sleep`, or `run`.
 - If your code does not answer in 5 seconds, Vis refuses the submit. The submit button then shows
   "The app did not answer. Try again."
@@ -947,7 +947,7 @@ An app uses these builders and calls:
   of the app. An app takes no other argument of `vis.attach`.
 - With `key`, `vis.attach` returns the open app of your extension with the same key in the same
   session. The app keeps its state, and you patch it to change it.
-- In the `python_execution` sandbox, import the builders with
+- In the `py3` sandbox, import the builders with
   `from blockether.vis.extension import ui`. Then call `attach(ui.app(...))`.
 
 ### Use an app
@@ -987,7 +987,7 @@ def answer_sends(app):
                   thread_id=first["thread_id"], submission_id=event.submission_id)
 ```
 
-An app that the agent opens in `python_execution` has no code that waits for events. When a person
+An app that the agent opens in `py3` has no code that waits for events. When a person
 sends it, Vis adds one short message to the session of the agent. The message names the app, the
 receipt, and the calls that read the receipt, but not the comments. If the agent is busy, the
 message waits in the queue of the session.
@@ -1220,7 +1220,7 @@ def reopen(app):
 - Open the app again with the same `key`, and give `on_reload` again. The module globals of the old
   worker are gone, so read your data first.
 - The hook needs an app with a `key`. Only an extension that Vis loads takes the hook. An SDK
-  program and `python_execution` raise `TypeError`.
+  program and `py3` raise `TypeError`.
 - Vis does not call the hook for an app that a person closed.
 - After a gateway restart, the Python sandbox of the session does not run. Vis then calls the hook
   when a person opens the app, or you open the app at the next call of your extension.
@@ -1248,7 +1248,7 @@ with that best score.
 ### Keep and end an app
 
 - `vis.attach(row)` with the app row from `vis.list_attachments()` returns a new handle for the
-  same app. Use it after a gateway restart or in a later `python_execution` block.
+  same app. Use it after a gateway restart or in a later `py3` block.
 - `app.close()` ends the app. People can still read it, but they cannot comment or send.
 - `app.archive()` ends the app and moves it to the archived list of the session.
 - While an app of an extension is open, Vis keeps that extension active in the session, also when

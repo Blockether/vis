@@ -11,7 +11,7 @@
    and one kind-independent REST resource; the engine owns the closed action
    vocabulary and capability checks.
 
-   A `:view/send` envelope carries a Send of an app of the python_execution sandbox.
+   A `:view/send` envelope carries a Send of an app of the py3 sandbox.
    It becomes one bounded notification turn of the session that owns the app.
 
    An input View is shown in one session: its [[input-home]]. For a managed

@@ -360,7 +360,7 @@
 
 (defdescribe
   form-envelope-stdout-test
-  "Regression for #40: a `python_execution` block's printed output rides
+  "Regression for #40: a `py3` block's printed output rides
    `:stdout` on the envelope. The forensic projection must surface it (data +
    Markdown) without inventing a second success channel."
   (let [->block

@@ -73,7 +73,7 @@
 
 (def ^:dynamic *live-owner*
   "The extension whose host door opens or drives a live view, as `{:extension name
-   :context ctx :listener f}`, or nil. Only an owner opens a `panel` view. The `python_execution` sandbox has no owner, so it never opens one.
+   :context ctx :listener f}`, or nil. Only an owner opens a `panel` view. The `py3` sandbox has no owner, so it never opens one.
 
    `:listener` receives each human event as `(listener event session-id)` on a
    thread of its own. The door that made it binds that session for the callback.
@@ -1106,7 +1106,7 @@
 
 (defn- owner-author
   "The author of a message that the current owner writes: its extension by name,
-   or the agent of the `python_execution` sandbox."
+   or the agent of the `py3` sandbox."
   []
   (if-let [extension-name (:extension *live-owner*)]
     {:kind "extension" :name extension-name}
@@ -1752,7 +1752,7 @@
         (cond owned? (or (trimmed (:extension *live-owner*))
                          (invalid-live-view! (str "only extension code can open a "
                                                   (name placement)
-                                                  " view; the python_execution sandbox cannot")))
+                                                  " view; the py3 sandbox cannot")))
               app? (trimmed (:extension *live-owner*)))
 
         _
@@ -3018,7 +3018,7 @@
 
 (defn- offer-send!
   "Offer Send `receipt` of open app `entry` to the session that owns the app. Only
-   an app of the python_execution sandbox needs it: an extension gets its Sends
+   an app of the py3 sandbox needs it: an extension gets its Sends
    through its listener or its events. The gateway queues one notification turn
    and marks the receipt delivered. Without a gateway, the receipt stays accepted."
   [entry receipt]
@@ -5351,7 +5351,7 @@
       (invalid-live-patch! (str "app " view-id
                                 " belongs to " (if-let [owner (:extension app)]
                                                  (str "extension " owner)
-                                                 "the python_execution sandbox"))))
+                                                 "the py3 sandbox"))))
     (when (and sid (:session-id app) (not= sid (:session-id app)))
       (invalid-live-patch! (str "app " view-id " belongs to another session")))
     app))
@@ -5649,7 +5649,7 @@
            wire/json-str)))))
 
 (defn app-json!
-  "The app seam of the `python_execution` sandbox: [[live-json!]] without an owner.
+  "The app seam of the `py3` sandbox: [[live-json!]] without an owner.
    The sandbox opens only apps, and it drives only the apps of its own session."
   [envelope-json]
   (let [envelope (json/read-json (str envelope-json) :key-fn identity)]
@@ -5659,7 +5659,7 @@
         (if (= "open" op)
           (when-not (= (name app/placement) (get-in envelope ["view" "placement"]))
             (invalid-live-view!
-              "the python_execution sandbox opens only apps: attach(ui.app(...))"))
+              "the py3 sandbox opens only apps: attach(ui.app(...))"))
           (let [view-id (live-handle-id envelope op)]
             (recorded-app! view-id)
             (app-only! view-id op))))
@@ -5738,7 +5738,7 @@
                             (str "app " view-id
                                  " belongs to " (if-let [other (:extension app)]
                                                   (str "extension " other)
-                                                  "the python_execution sandbox"))))
+                                                  "the py3 sandbox"))))
             (when (and (= "events" op)
                        (let [timeout (get envelope "timeout_ms" 0)]
                          (and (integer? timeout) (< sdk-events-wait-ms (long timeout)))))

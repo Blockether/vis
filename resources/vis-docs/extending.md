@@ -117,7 +117,7 @@ at the next turn boundary. If the load fails, run `vis-agent doctor` in your ter
 ### 3. Discover and call it
 
 Ask Vis: "Use the hello tool to greet Ada, first normally and then in uppercase." The agent
-inspects and calls the tool in `python_execution`:
+inspects and calls the tool in `py3`:
 
 ```python
 print(apropos(r"^hello$"))

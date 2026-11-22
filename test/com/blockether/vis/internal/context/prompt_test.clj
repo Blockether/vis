@@ -22,7 +22,7 @@
             [{:role "user" :content "question"}
              {:role "assistant"
               :content
-              [{:type "tool_use" :id "call-1" :name "python_execution" :input {"code" payload}}]}
+              [{:type "tool_use" :id "call-1" :name "py3" :input {"code" payload}}]}
              {:role "user"
               :content [{:type "tool_result"
                          :tool_use_id "call-1"
@@ -281,7 +281,7 @@
              {:role "assistant"
               :content
               [{:type "thinking" :thinking "Consider the result"}
-               {:type "tool_use" :id "call-1" :name "python_execution" :input {:code "print(42)"}}]}
+               {:type "tool_use" :id "call-1" :name "py3" :input {:code "print(42)"}}]}
              {:role "user"
               :content
               [{:type "tool_result" :tool_use_id "call-1" :content [{:type "text" :text "42"}]}
@@ -461,7 +461,7 @@
         (doseq [ch [:web nil]]
           (expect (= text (text-for ch)) (str ch)))
         (expect (= cli (str/replace text (var-get #'prompt/PROGRESS_NOTE_RULES) "")))
-        (doseq [rule ["Next to each `python_execution` call" "a finding that changes the plan"]]
+        (doseq [rule ["Next to each `py3` call" "a finding that changes the plan"]]
           (expect (not (str/includes? cli rule)) rule)))))
 
 (defdescribe prompt-core-test

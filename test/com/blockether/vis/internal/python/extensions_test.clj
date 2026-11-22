@@ -3969,7 +3969,7 @@ def before(call):
 
 vis.register_extension(vis.Extension(
     name='repair-hook', description='Repair hook fixture.',
-    op_hooks=[vis.OpHook(['python_execution', 'patch', 'shell'], before)]))
+    op_hooks=[vis.OpHook(['py3', 'patch', 'shell'], before)]))
 ")
 
 (defdescribe
@@ -4007,7 +4007,7 @@ vis.register_extension(vis.Extension(
                            result
                            ((:fn hook)
                              {}
-                             :python_execution
+                             :py3
                              [{:code "print(42"}]
                              (fn [_]
                                (reset! ran true)
@@ -4064,7 +4064,7 @@ vis.register_extension(vis.Extension(
                          (expect (false? @ran))
                          (expect (extension/envelope-failure? result)))))))
   (it "repairs a block itself when a language hook only observes the block"
-      ;; Regression for Beta Native run 37197183840: a `python_execution` hook of a
+      ;; Regression for Beta Native run 37197183840: a `py3` hook of a
       ;; language extension must not replace the host parinferish repair.
       (with-fresh-loaded
         {"repair_hook.py" (str/replace repair-hook-py
@@ -4117,8 +4117,8 @@ vis.register_extension(vis.Extension(
     description=\"Observe and guard Python blocks.\",
     ctx=context,
     op_hooks=[
-        vis.OpHook([\"python_execution\"], before, phase=\"before\"),
-        vis.OpHook([\"python_execution\"], after, phase=\"after\"),
+        vis.OpHook([\"py3\"], before, phase=\"before\"),
+        vis.OpHook([\"py3\"], after, phase=\"after\"),
     ],))
 ")
 
@@ -4164,7 +4164,7 @@ vis.register_extension(vis.Extension(
 
                  (expect (nil? (:error result)) (pr-str result))
                  (expect (= "observed\n" (:stdout result)))
-                 (expect (= {"op" "python_execution" "args" [{"code" code}]} (get state "before")))
+                 (expect (= {"op" "py3" "args" [{"code" code}]} (get state "before")))
                  (expect (= "observed\n" (get-in state ["after" "result" "stdout"])))
                  (expect (= 1 (get state "completed"))))
                ;; A failed block can still have written files; the after hook must see it.
@@ -4320,7 +4320,7 @@ vis.register_extension(vis.Extension(name='name-hook', description='Name fixture
   op-hook-python-name-test
   ;; Issue #459: a hook on `clj.repl_start`, the name that the model and the
   ;; extension code call, never ran.
-  (it "runs a hook that names an extension tool as python_execution calls it"
+  (it "runs a hook that names an extension tool as py3 calls it"
       (expect (= "hooked nst.repl_start" (hooked-ops ["nst.repl_start"])))
       (expect (= "hooked flat" (hooked-ops ["flat"])))
       (expect (= "hooked nst/nst.repl_start" (hooked-ops ["nst/nst.repl_start"])))
@@ -4341,14 +4341,14 @@ def before(call):
     return None
 
 vis.register_extension(vis.Extension(name='name-hook', description='Name fixture.',
-    op_hooks=[vis.OpHook(['nst.repl_start', 'nst/repl_start', 'nst.repl_strat', 'python_execution'], before)]))
+    op_hooks=[vis.OpHook(['nst.repl_start', 'nst/repl_start', 'nst.repl_strat', 'py3'], before)]))
 "}
       (fn [_ _]
         (expect
           (=
-            [["`nst/repl_start`" "Write `nst.repl_start`, the name that python_execution calls."]
+            [["`nst/repl_start`" "Write `nst.repl_start`, the name that py3 calls."]
              ["`nst.repl_strat`"
-              "Write the name that python_execution calls, or load the extension that owns the tool."]]
+              "Write the name that py3 calls, or load the extension that owns the tool."]]
             (for [{:keys [check-id message remediation]}
                   (#'com.blockether.vis.internal.python.extensions/doctor-fn {})
 
@@ -8427,7 +8427,7 @@ vis.register_extension(vis.Extension(name=\"stale-ctx\", description=\"Stale ctx
   ;; Regression, issue #104: `vis.ask` raised from an extension SYMBOL was
   ;; reported to reach nobody — no dialog on any channel and not one
   ;; `view.open` in the gateway journal — on the theory that a symbol
-  ;; invoked from a `python_execution` block has no ambient session binding, so
+  ;; invoked from a `py3` block has no ambient session binding, so
   ;; the request had to name its session through an undocumented `session_id=`
   ;; kwarg. Called the way the sandbox actually binds it (`wrap-extension` over
   ;; the live session env) the ask names its session with no kwarg at all, on

@@ -54,9 +54,9 @@ describe('the expanded session card', () => {
     duration_ms: 47_000,
     provider: 'anthropic-coding-plan',
     model: 'claude-opus-5',
-    top_tools: [{ name: 'python_execution', count: 59 }],
+    top_tools: [{ name: 'py3', count: 59 }],
     error_count: 3,
-    top_errors: [{ name: 'python_execution', count: 3 }],
+    top_errors: [{ name: 'py3', count: 3 }],
   };
 
   const open = async (body: Record<string, unknown> = usage) => {

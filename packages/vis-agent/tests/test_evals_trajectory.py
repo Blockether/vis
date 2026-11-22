@@ -105,7 +105,7 @@ def _document():
                 "tool_calls": [
                     {
                         "tool_call_id": "call-1",
-                        "function_name": "python_execution",
+                        "function_name": "py3",
                         "arguments": {"code": "print(len(ls('.')))"},
                         "extra": {
                             "status": "success",
@@ -121,7 +121,7 @@ def _document():
                     },
                     {
                         "tool_call_id": "call-2",
-                        "function_name": "python_execution",
+                        "function_name": "py3",
                         "arguments": {"code": "shell('make test')"},
                         "extra": {
                             "status": "error",
@@ -183,7 +183,7 @@ def _document():
                         "tool_calls": [
                             {
                                 "tool_call_id": "call-9",
-                                "function_name": "python_execution",
+                                "function_name": "py3",
                                 "arguments": {"code": "ls('.')"},
                                 "extra": {"activity": LS_ACTIVITY},
                             }

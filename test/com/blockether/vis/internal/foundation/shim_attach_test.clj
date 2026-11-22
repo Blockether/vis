@@ -552,7 +552,7 @@
   (it "raises when called with no active capture sink (outside a driven block)"
       (let [pctx (ctx-with-root (temp-root))]
         ;; a bare .eval does NOT bind the per-block sink, so the bridge refuses
-        (expect (re-find #"attach: call inside python_execution"
+        (expect (re-find #"attach: call inside py3"
                          (ev pctx
                              (str "\ntry:\n" "    attach(b'x', 'y.txt')\n"
                                   "    _r = 'NO-RAISE'\n" "except Exception as e:\n"
@@ -803,7 +803,7 @@
         (expect (nil? (:error out)))
         (expect (re-find #"solo\.txt" (str (:stdout out))))))
   (it "raises where there is neither a reader nor a sink (outside a driven block)"
-      (expect (= "list_attachments: call inside python_execution."
+      (expect (= "list_attachments: call inside py3."
                  (try ((get (#'shim-attach/attach-bridge-bindings) "__vis_list_attachments__"))
                       (catch clojure.lang.ExceptionInfo e (ex-message e)))))))
 
@@ -1273,7 +1273,7 @@
         (binding [mpl-capture/*attachment-sink* (atom [])]
           (expect (str/includes? (extension-attach {"base64" pdf "audience" "model"})
                                  "documents require audience='user'")))
-        (expect (str/includes? (extension-attach {"base64" pdf}) "call inside python_execution")))))
+        (expect (str/includes? (extension-attach {"base64" pdf}) "call inside py3")))))
 
 (def ^:private door-cases
   "`[label python-bytes filename expected-media-type]` rows for both attach doors.

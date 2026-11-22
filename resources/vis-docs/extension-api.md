@@ -48,7 +48,7 @@ guidance, read [Extension design](extension-design.md).
 
 ## Build metadata
 
-Extension entry files and `python_execution` get these globals without an import:
+Extension entry files and `py3` get these globals without an import:
 
 | Global | Meaning |
 | --- | --- |
@@ -59,7 +59,7 @@ Extension entry files and `python_execution` get these globals without an import
 
 The model's system context reports the same values. They describe the loaded build, which is not
 always a published release, and a source build can report `dev`. Use them for diagnostics.
-Extensions and `python_execution` always use the bundled SDK. A copy from pip or an editable
+Extensions and `py3` always use the bundled SDK. A copy from pip or an editable
 install changes neither that nor these globals.
 
 ### Editor types
@@ -84,7 +84,7 @@ Then run `uv lock --upgrade-package vis-agent` and `uv sync`.
 A `dev` value, or a value that ends in `+dirty`, comes from a source run or a local build. PyPI
 does not have these versions. Install `packages/vis-agent` from the same checkout.
 
-In `python_execution`, `blockether.vis.extension` is the only import under `blockether.vis`. Use
+In `py3`, `blockether.vis.extension` is the only import under `blockether.vis`. Use
 it to inspect public types and to build declarations. No host exists there:
 
 - Registration and host callbacks such as `state` and `shell` raise `RuntimeError`.
@@ -96,7 +96,7 @@ example.
 ## Registration
 
 The examples on this page use `import blockether.vis.extension as vis` in a trusted extension,
-not in `python_execution`. Call `vis.register_extension(vis.Extension(...))` one time in each
+not in `py3`. Call `vis.register_extension(vis.Extension(...))` one time in each
 entry file. The declaration constructors validate and copy values without IO. Registration
 applies them and resolves the declared environment.
 
@@ -337,7 +337,7 @@ presentation](#activity-presentation). `activity=None` leaves only the execution
 engine and creates no result view. Do not ship a tool that way.
 
 A source function can use `def` or `async def`. The model calls its proxy with `await` in
-`python_execution`. The trusted worker awaits an asynchronous result before it returns, and the
+`py3`. The trusted worker awaits an asynchronous result before it returns, and the
 execution watchdog parks during that wait. Each async call uses its own event loop, so create
 and close loop-bound resources within that call.
 
@@ -1220,8 +1220,8 @@ A session app follows these rules:
 vis.OpHook(ops, fn, phase="before")
 ```
 
-`ops` names operations such as `"patch"`, `"shell"`, or `"python_execution"`. A hook also works
-on a tool of another extension or of an MCP server. Write the name that `python_execution`
+`ops` names operations such as `"patch"`, `"shell"`, or `"py3"`. A hook also works
+on a tool of another extension or of an MCP server. Write the name that `py3`
 calls. The hook receives the name of the call as `call["op"]`, never a pattern.
 
 | Target | Name in `ops` | `args` that the hook receives |
@@ -1229,11 +1229,11 @@ calls. The hook receives the name of the call as `call["op"]`, never a pattern.
 | Extension tool | `"clj.repl_start"` | The positional arguments, then one dict with the keyword arguments. `clj.repl_start("app", aliases=["dev"])` gives `["app", {"aliases": ["dev"]}]`. |
 | MCP tool | `"linear.get_issue"` | One dict with the arguments. `linear.get_issue(id="ENG-1")` gives `[{"id": "ENG-1"}]`. |
 | MCP prompt | `"linear.prompts.<name>"` | One dict with the arguments. |
-| Python block | `"python_execution"` | `[{"code": <Python source>}]` |
+| Python block | `"py3"` | `[{"code": <Python source>}]` |
 
 A name with `*` is a pattern, and `*` matches any characters. `"gh.*"` matches each tool of
 `gh`, and `"gh.watch"` matches one. `"linear.*"` matches each tool and prompt of the server
-`linear`. A pattern matches only tools, not `"python_execution"`.
+`linear`. A pattern matches only tools, not `"py3"`.
 
 A hook on a name that no loaded tool or operation has never runs. `vis-agent doctor` and the log
 then show a warning with the correct name, when Vis can find one. A name such as `"linear.*"`
@@ -1265,12 +1265,12 @@ candidate before it returns the repair.
 
 `vis.repair` needs string source and a nonempty list or tuple of nonblank notes. An invalid
 repair marker fails, and the operation does not run. Only `"patch"` accepts a repair. Vis
-repairs `"python_execution"` blocks by itself, so a block hook that returns `vis.repair` fails
+repairs `"py3"` blocks by itself, so a block hook that returns `vis.repair` fails
 the block.
 
 ### Observe a Python block
 
-For `"python_execution"`, the before hook runs before the block. The after hook runs when the
+For `"py3"`, the before hook runs before the block. The after hook runs when the
 evaluation returns. `result` is the execution result map, with the captured `stdout`, the
 evaluated `forms`, and any `error`. The after hook also runs when a normal Python exception ends
 the block, because earlier statements may have written files. If a before hook refuses the
@@ -1279,7 +1279,7 @@ block, the after hook receives `result=None`.
 The hook marks the boundary of a block, not each `open()` or `Path.write_text()`. It does not
 observe background work, and it does not guarantee a callback after a process is killed.
 
-For checks after each edit, register for both `"patch"` and `"python_execution"`, to cover host
+For checks after each edit, register for both `"patch"` and `"py3"`, to cover host
 patches and plain Python writes. The return value of the callback does not reach the model. To
 give findings to the next model request, use `vis.state` and a `ctx` contribution. Read the
 [complexity-check example](extension-design.md#check-code-complexity-after-edits).
@@ -1710,7 +1710,7 @@ extension created. A refused call raises `GatewayError` with the status 403:
 | `forbidden-session` | The session belongs to another extension or to a person. |
 | `session-not-bound` | The call changes something, but no session called your extension. |
 
-These calls are for trusted extension code. The model cannot use them from `python_execution`. A
+These calls are for trusted extension code. The model cannot use them from `py3`. A
 read shows no Activity. Each change shows its own Activity under your tool's Activity.
 
 Vis runs each call to its end. The `timeout` argument of one request does not stop the request.
@@ -1720,7 +1720,7 @@ A wait, such as `Turn.wait(timeout=...)`, checks its deadline between two reques
 ## Call other session tools
 
 `vis.tools` calls a tool that the session already has. Name
-the tool as the model calls it in `python_execution`:
+the tool as the model calls it in `py3`:
 
 ```python
 import blockether.vis.extension as vis
@@ -1731,7 +1731,7 @@ reservation = vis.tools["spel.reserve"]("x-login")  # the same call, named by a 
 issue = vis.tools.linear.get_issue(id="ENG-1")      # a tool of the MCP server linear
 ```
 
-An MCP server has the name that `python_execution` gives it: the `python_name` of its row in
+An MCP server has the name that `py3` gives it: the `python_name` of its row in
 `session["env"]["mcp"]["servers"]`.
 
 The call runs in the session that called your extension, as the model's call would. It uses only
@@ -1749,7 +1749,7 @@ A result has the shape that the model sees:
 - Text and list answers support `.get()` and `.keys()`, as sandbox results do.
 - Search pages support `next(page)`, `page.pages()`, and `page.all()`. Each next page calls the
   host with the original search options.
-- The answer of `vis.tools.shell(...)` is the live handle that `python_execution` gets.
+- The answer of `vis.tools.shell(...)` is the live handle that `py3` gets.
   `sh.wait()`, `sh.logs()`, and `sh.stop()` control the process.
 
 The record is a copy in your extension's process, not an instance of the other extension's
@@ -1772,9 +1772,9 @@ the other package directly.
 ## Attachments
 
 `vis.attach` stores a file that your tool makes, such as a chart, a CSV table, or a PDF report.
-The session keeps the file as a durable attachment of the `python_execution` block that called
+The session keeps the file as a durable attachment of the `py3` block that called
 your tool. People see it in the transcript, and an image can also go to the model. The functions
-match the `attach` functions of `python_execution`:
+match the `attach` functions of `py3`:
 
 ```python
 import blockether.vis.extension as vis
@@ -1812,7 +1812,7 @@ These limits and differences apply:
   `title=` for `label`.
 - Vis does not copy a file larger than the attachment limit. It keeps a reference to the path. A
   reference is for people only, and `read_attachment` and `show_attachment` refuse it.
-- In `python_execution`, `attach` also prints a preview of the file in the block output.
+- In `py3`, `attach` also prints a preview of the file in the block output.
 - Only `vis.attach` in an extension accepts `on_event` for an app.
 
 The read functions take the same target: a filename, an `id`, or a descriptor. A filename means
@@ -1820,7 +1820,7 @@ the latest version, unless you give `version`. A negative version counts back fr
 version. `read_attachment` is the only function that returns the bytes. `show_attachment` shows
 a stored image to the model for the next request only.
 
-If no `python_execution` block runs your code, for example in a slash command, these functions
+If no `py3` block runs your code, for example in a slash command, these functions
 raise an error.
 
 Outside Vis, for example in plain unit tests, the functions keep the files in process memory. Some answers differ from the answers of Vis:

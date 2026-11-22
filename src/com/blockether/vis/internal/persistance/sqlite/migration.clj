@@ -391,7 +391,7 @@
    value into the narrower column, and one refused value rolls it all back.
 
    `council_entry.source = 'autocomplain'` marked the complaint that the host
-   published itself after a failed `python_execution`. The host wrote it, so it
+   published itself after a failed `py3`. The host wrote it, so it
    reads as `host` now that Council has no complaints."
   [["council_entry" "source" "autocomplain" "host"]])
 

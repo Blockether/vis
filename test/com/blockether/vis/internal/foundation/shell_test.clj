@@ -2201,7 +2201,7 @@
                     (resources/stop-all! (:session-id env))
                     (run! #(io/delete-file % true) (reverse (file-seq ws))))))))
 
-;; The PYTHON SANDBOX surface — `python_execution` is the model's one call, so
+;; The PYTHON SANDBOX surface — `py3` is the model's one call, so
 ;; shell must be usable directly from ordinary Python.
 
 (defn- py-ctx

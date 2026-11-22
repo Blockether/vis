@@ -20,7 +20,7 @@
      :thinking "Add the numbers."
      :assistant-prose "I compute it."
      :blocks [{:role "tool"
-               :tool-name "python_execution"
+               :tool-name "py3"
                :tool-call-id "toolu_1"
                :code "print(1 + 1)"
                :stdout "2\n"
@@ -95,11 +95,11 @@
                     :cost-usd 0.125
                     :extra {:cache-creation-tokens 100 :reasoning-tokens 12}}
                    (:metrics step)))))
-  (it "maps each code block to one python_execution call and its output"
+  (it "maps each code block to one py3 call and its output"
       (let [step (second (:steps document))]
         (expect
           (= [{:tool-call-id "toolu_1"
-               :function-name "python_execution"
+               :function-name "py3"
                :arguments {"code" "print(1 + 1)"}
                :extra {:status "done"
                        :ref "turn/t1/iteration/1/block/1"
@@ -129,7 +129,7 @@
       (expect (= "session-1" (:session-id document)))
       (expect (= "vis" (get-in document [:agent :name])))
       (expect (= "claude-test" (get-in document [:agent :model-name])))
-      (expect (= ["python_execution"]
+      (expect (= ["py3"]
                  (mapv #(get-in % [:function :name]) (get-in document [:agent :tool-definitions]))))
       (expect (= {:name "cli"} (get-in document [:agent :extra :profile])))
       (expect (= "anthropic-coding-plan" (get-in document [:agent :extra :provider])))
@@ -219,7 +219,7 @@
                       "forms" [{"src" "print(len(ls()))"
                                 "stdout" "3\n"
                                 "tool_call_id" "toolu_c1"
-                                "tool_name" "python_execution"
+                                "tool_name" "py3"
                                 "duration_ms" 12}]}]}]})
 
 (def ^:private grandchild
@@ -350,13 +350,13 @@
     "input_tokens" 1200
     "output_tokens" 80
     "forms"
-    [{"src" "print(1 + 1)" "stdout" "2\n" "tool_call_id" "toolu_1" "tool_name" "python_execution"}]}
+    [{"src" "print(1 + 1)" "stdout" "2\n" "tool_call_id" "toolu_1" "tool_name" "py3"}]}
    {"position" 2
     "created_at" 2000
     "forms" [{"src" "print('done')"
               "stdout" "done\n"
               "tool_call_id" "toolu_2"
-              "tool_name" "python_execution"}]}])
+              "tool_name" "py3"}]}])
 
 (def ^:private persisted-document
   "A persisted run: the result has no trace, so the iterations of its turn come

@@ -812,6 +812,14 @@
                      (vec (extension/unmatched-op-hooks
                             [(assoc-in ext [:ext/engine :ext.engine/symbols] [entry])
                              {:ext/name "test.hyphen-hooks" :ext/op-hooks (map hook ops)}]))))))
+    (it "runs a hook that names the Python block by the name of an older Vis"
+        ;; Released language extensions hook `python_execution`, the old name of `py3`.
+        (let [hook
+              {:op "python_execution" :owner :legacy :phase :before :fn (fn [_ _ args] args)}]
+
+          (try (expect (= :py3 (extension/register-op-hook! hook)))
+               (finally (extension/unregister-op-hooks-for-owner! :legacy)))
+          (expect (= [] (vec (extension/unmatched-op-hooks [{:ext/name "test.legacy" :ext/op-hooks [hook]}]))))))
     (it
       "asks the tool lists about the handle of a door, and never about the door"
       (let [asked
@@ -1887,7 +1895,7 @@
 
 (defdescribe
   symbol-binding-test
-  (it "names each symbol as python_execution binds it"
+  (it "names each symbol as py3 binds it"
       (expect (= 'gh/runs (extension/symbol-binding {:ext/engine {:ext.engine/alias 'gh}} 'runs)))
       (expect (= 'spel.reserve
                  (extension/symbol-binding {:ext/engine {:ext.engine/alias 'spel

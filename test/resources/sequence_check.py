@@ -1,4 +1,4 @@
-# Issue #256: runs unchanged in a JVM worker and the native binary's python_execution.
+# Issue #256: runs unchanged in a JVM worker and the native binary's py3.
 # Sandbox blocks allow top-level await and inject the declared tools plus doc().
 # ruff: noqa: F704, F821
 import collections.abc

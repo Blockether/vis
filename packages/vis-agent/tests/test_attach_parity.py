@@ -1,4 +1,4 @@
-"""`vis.attach` takes the same call forms as `attach` in `python_execution`.
+"""`vis.attach` takes the same call forms as `attach` in `py3`.
 
 `vis-contract/fixtures/attachment-verbs.json` holds calls of the five verbs and the
 engine answers. The engine test `door-parity-test` runs the same cases at its doors.
@@ -249,7 +249,7 @@ def test_the_app_door_of_a_session_takes_no_callback():
 
     assert str(refusal.value) == (
         "attach: on_event is only for an extension: the app door of "
-        "python_execution takes no callback."
+        "py3 takes no callback."
     )
 
 

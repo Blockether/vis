@@ -1633,7 +1633,7 @@
                  (finally (hi/close-live! id))))))))
 
 (defn- app-op!
-  "Cross one owner envelope of the python_execution sandbox through the live seam."
+  "Cross one owner envelope of the py3 sandbox through the live seam."
   [envelope]
   (wire/parse-json (hi/live-json! (wire/json-str envelope) nil)))
 

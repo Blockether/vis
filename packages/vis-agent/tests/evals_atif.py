@@ -60,7 +60,7 @@ def block(ref, code="", *, stdout="", error=None, activity=None, call_id=None):
     return {
         "tool_call": {
             "tool_call_id": call_id,
-            "function_name": "python_execution",
+            "function_name": "py3",
             "arguments": {"code": code},
             "extra": extra,
         },

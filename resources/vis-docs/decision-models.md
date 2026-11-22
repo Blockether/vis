@@ -67,7 +67,7 @@ Only the gateway needs the inference bundle. For a client on a different machine
 
 Call gateway inference with `Decisions` from the vis-decisions package. Install the package in
 your application environment, or in the project interpreter that the `py` extension uses. The
-vis-decisions extension also gives local training tools in `python_execution`.
+vis-decisions extension also gives local training tools in `py3`.
 
 Set `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` as the
 [Python SDK gateway guide](python-sdk.md#connect-to-a-gateway-and-run-a-task) describes. Do not

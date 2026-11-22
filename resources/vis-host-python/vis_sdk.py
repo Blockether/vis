@@ -31,7 +31,7 @@ class _SandboxHost:
 
     def __getattr__(self, name):
         raise RuntimeError(
-            f"Extension host operation {name!r} is unavailable in python_execution. "
+            f"Extension host operation {name!r} is unavailable in py3. "
             "You can inspect SDK types and construct declarations here; "
             "load an extension to use its host APIs."
         )

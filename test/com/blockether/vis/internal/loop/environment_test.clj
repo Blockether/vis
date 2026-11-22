@@ -374,7 +374,7 @@
                  (mapv door-checked [["door_call"] ["__door__"] ["srvx.read"]])))
       (expect
         (=
-          "Unknown tool: door_call. A tool list names the tools that door_call runs, by the name that python_execution calls, such as srv.*."
+          "Unknown tool: door_call. A tool list names the tools that door_call runs, by the name that py3 calls, such as srv.*."
           (with-door #(try (loop-env/check-tool-selection! ["-door_call"])
                            (catch clojure.lang.ExceptionInfo e (ex-message e)))))))))
 

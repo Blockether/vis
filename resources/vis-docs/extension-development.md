@@ -276,12 +276,12 @@ edits before a reload, and a cached import can keep old code. Use `/reload` as t
 step.
 
 Build backends and executable `.pth` lines are trusted code. A failed load cannot roll back changes
-to project packages or shared packages. An import in `python_execution` never installs a package,
+to project packages or shared packages. An import in `py3` never installs a package,
 and the shared directory is read-only there.
 
 ## Install a project into shared packages
 
-To make the libraries of a uv project available in `python_execution`, sync the project into the
+To make the libraries of a uv project available in `py3`, sync the project into the
 shared packages of Vis.
 
 A shared install can change the versions that every shared consumer uses. Sync only a project that

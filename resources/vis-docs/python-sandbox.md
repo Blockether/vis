@@ -87,7 +87,7 @@ variable from the snapshot and release its memory, run `del name`.
 
 ## Experiment with extension declarations
 
-Ask Vis to inspect an SDK type or to prototype a tool declaration in `python_execution`. The
+Ask Vis to inspect an SDK type or to prototype a tool declaration in `py3`. The
 sandbox includes the bundled `blockether.vis.extension` module, so the import needs no installed
 `vis-agent`:
 
@@ -136,12 +136,12 @@ which drives Vis from your own program. Install `vis-agent` and run that code in
 interpreter.
 
 A name in the bundled module that starts with `_` is internal. No extension registers in
-`python_execution`, also when you run an extension entry file yourself with `importlib`. The file
+`py3`, also when you run an extension entry file yourself with `importlib`. The file
 stops at its first host operation while it declares itself:
 
 ```text
 RuntimeError: Extension host operation 'declare_env' is unavailable in
-python_execution. You can inspect SDK types and construct declarations here;
+py3. You can inspect SDK types and construct declarations here;
 load an extension to use its host APIs.
 ```
 
@@ -233,12 +233,12 @@ Imports do not install packages. A missing import raises `ModuleNotFoundError`.
 
 | Code | Packages |
 | --- | --- |
-| `python_execution` | The shared packages in `~/.vis/python/packages`, which you install explicitly |
+| `py3` | The shared packages in `~/.vis/python/packages`, which you install explicitly |
 | An extension without a declared uv project | The same shared directory. Every project on the gateway shares it |
 | An extension package or a declared uv project | Its own uv environment, which Vis prepares when it loads the extension. No fallback to shared packages |
 
 The dependencies of an extension with its own environment do not become available in
-`python_execution`.
+`py3`.
 
 ### Install shared packages
 
@@ -256,7 +256,7 @@ only in an extension.
 From a terminal, `vis-agent python` runs programs as the `python` command does. `-c CODE`,
 `-m MODULE`, a script path, or `-` for standard input runs as `__main__`, with the remaining
 arguments in `sys.argv`. An uncaught error prints its traceback to stderr, and the command exits
-with the status of your program. Unlike `python_execution`, the command has no tool functions and
+with the status of your program. Unlike `py3`, the command has no tool functions and
 no automatic imports. `vis-agent python --version` prints the Python version. Other interpreter
 options, such as `-u` or `-X`, are not supported.
 

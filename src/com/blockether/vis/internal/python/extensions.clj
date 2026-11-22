@@ -787,7 +787,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
 (defn- tool-candidates
   "`[python-name ext entry]` for each callable symbol of `session-env`'s active
-   extensions, named as `python_execution` binds it."
+   extensions, named as `py3` binds it."
   [session-env]
   (let [active (set (map :ext/name
                          (some-> (:active-extensions session-env)
@@ -820,11 +820,11 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                "` in this session"
                (if (seq similar)
                  (str "; similar: " (str/join ", " similar))
-                 "; pass the name python_execution calls, such as `alias_name` or `alias.method`"))
+                 "; pass the name py3 calls, such as `alias_name` or `alias.method`"))
              {:error :unknown-tool :tool tool})))
 
 (defn- call-tool!
-  "Run the tool `python_execution` binds as `tool` for a calling extension: a
+  "Run the tool `py3` binds as `tool` for a calling extension: a
    symbol by its name, or a handle of a sandbox shim through the
    `:ext.symbol/handles` of its door.
 
@@ -2129,7 +2129,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         (assoc :session-id session-id)))))
 
 (defn- op-name
-  "Python spelling of an op: `\"patch\"` for a tool, `\"python_execution\"` for
+  "Python spelling of an op: `\"patch\"` for a tool, `\"py3\"` for
    a host operation — the same string an `OpHook` registers with."
   [op-kw]
   (subs (str op-kw) 1))
@@ -5165,7 +5165,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
        :check-id ::op-hook-target
        :message (str hook "is a host verb and not a tool, so the hook never runs.")
        :remediation
-       "Write the name that python_execution calls, such as `linear.get_issue` for one tool of an MCP server or `linear.*` for all."}
+       "Write the name that py3 calls, such as `linear.get_issue` for one tool of an MCP server or `linear.*` for all."}
 
       :scoped
       {:level :info
@@ -5181,8 +5181,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
        :message (str hook "names no loaded tool or host operation, so the hook never runs.")
        :remediation
        (if suggestion
-         (str "Write `" suggestion "`, the name that python_execution calls.")
-         "Write the name that python_execution calls, or load the extension that owns the tool.")})))
+         (str "Write `" suggestion "`, the name that py3 calls.")
+         "Write the name that py3 calls, or load the extension that owns the tool.")})))
 
 (defn- warn-unmatched-op-hooks!
   "Log each op hook that does not run now, after a load that changed the extensions."

@@ -73,7 +73,7 @@
                            {:body {"code" code} :timeout-ms block-timeout-ms}))
 
 (defn- python-execution!
-  "Run one `python_execution` call in the session of `state`. Create the session on
+  "Run one `py3` call in the session of `state`. Create the session on
    the first call, and again when the gateway does not know it any more."
   [state code]
   (let [sid-of
@@ -99,7 +99,7 @@
         code
         (get-in params ["arguments" "code"])]
 
-    (cond (not= "python_execution" tool) {:error [-32602 (str "Unknown tool: " tool)]}
+    (cond (not= "py3" tool) {:error [-32602 (str "Unknown tool: " tool)]}
           (not (string? code)) {:error [-32602 "The argument code must be a string"]}
           :else {:result (try (python-execution! state code)
                               (catch Exception e

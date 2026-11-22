@@ -49,11 +49,11 @@
   [python-context expr]
   (cond
     (bare-string-code-block? expr)
-    "Your python_execution code is just a bare string literal. To ANSWER, reply with plain text and DON'T call python_execution — never pass a quoted string as the program."
+    "Your py3 code is just a bare string literal. To ANSWER, reply with plain text and DON'T call py3 — never pass a quoted string as the program."
     (markdown-fence-block? expr)
-    "A Markdown fence (` ```… `) leaked into your python_execution code. Pass ONLY executable Python statements — no fence markers."
+    "A Markdown fence (` ```… `) leaked into your py3 code. Pass ONLY executable Python statements — no fence markers."
     (comment-only-block? python-context expr)
-    "Your python_execution code is only `#` comments with no executable statement. Add a statement to run, or reply with plain text instead of calling python_execution."))
+    "Your py3 code is only `#` comments with no executable statement. Add a statement to run, or reply with plain text instead of calling py3."))
 
 ;; The engine is full-Python: a block's source is the program verbatim and
 ;; passes through to eval untouched — no parsing, unwrapping, or reformatting.
@@ -211,7 +211,7 @@
              (str
                "Time limit reached: Vis stopped this block after "
                limit
-               ". This is the normal time limit for one python_execution block, not a fault. "
+               ". This is the normal time limit for one py3 block, not a fault. "
                "Extension calls have no time limit and do not count toward it. "
                (case python-state
                  :kept
@@ -627,7 +627,7 @@
                   ;; imports, vars) carry across calls/turns NATURALLY.
                   (let [result
                         (extension/invoke-operation
-                          :python_execution
+                          :py3
                           env
                           (fn [{:keys [code]}]
                             (let [out (env/run-python-block python-context

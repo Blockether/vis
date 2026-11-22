@@ -3206,7 +3206,7 @@
 ;;
 ;; Cross-check both native listing sources against the OS, minus hidden and ignored entries.
 ;;
-;; And `python_execution` is the model's main hand: reading a file is an ORDINARY
+;; And `py3` is the model's main hand: reading a file is an ORDINARY
 ;; Python call (`cat`, engine-bound), and listing a directory is the `ls` SHIM — a
 ;; plain function in the sandbox globals, costing no tool result at all.
 ;; =============================================================================
@@ -3236,7 +3236,7 @@
 
 (defdescribe
   python-sandbox-read-surface-test
-  "`ls` is a sandbox SHIM: an ordinary call inside a `python_execution` block,
+  "`ls` is a sandbox SHIM: an ordinary call inside a `py3` block,
    documented there, and really callable. Reading a file's bytes is plain Python."
   (it "lists a real directory from real Python"
       (tpc/with-own [ctx (extension/builtin-sandbox-bindings (constantly nil))]

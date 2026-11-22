@@ -29,7 +29,7 @@
                   :forms [{:scope "t1/i1/f1"
                            :tag :observation
                            :src "print('line one')"
-                           :vis/tool-name "python_execution"
+                           :vis/tool-name "py3"
                            :stdout "line one
 "
                            :activity {:rows [{:operation :print :summary "line one"}]}

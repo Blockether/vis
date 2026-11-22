@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Live views: canvas boards support shapes, notes, comments, nested frames, text, pictures, media, and captions. You can set item colors, borders, and motion, and set arrow routes, lines, and marks.
 
+### Changed
+
+- Agent: the model tool `python_execution` is now `py3`. The shorter name uses fewer tokens in each request. Old sessions replay, and an op hook that names `python_execution` still runs on `py3`.
+
 ## [v0.5.28] - 2026-11-22
 
 Vis v0.5.27 was not published, because its native release check failed. v0.5.28 contains all v0.5.27 changes.

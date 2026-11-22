@@ -31,10 +31,10 @@ def recipe(tmp_path, monkeypatch):
 def test_recipe_registers_both_edit_boundaries_and_supplies_context(recipe):
     module, registration = recipe
     (hook,) = registration["op_hooks"]
-    assert hook["ops"] == ["patch", "python_execution"]
+    assert hook["ops"] == ["patch", "py3"]
     assert hook["phase"] == "after"
     assert "not been checked" in module.context({})["code_quality"]["findings"][0]
-    hook["fn"]({"op": "python_execution", "args": [], "result": {"stdout": ""}})
+    hook["fn"]({"op": "py3", "args": [], "result": {"stdout": ""}})
     assert module.context({})["code_quality"] == {
         "checked": 0,
         "limit": 3,

@@ -620,7 +620,7 @@
          "iteration_id" "iteration-2"
          "iteration" 1
          "source" "code"
-         "tool" "python_execution"
+         "tool" "py3"
          "classification" "python-error"
          "user_request" request
          "code" "raise ValueError(\"Fixture failure\")"

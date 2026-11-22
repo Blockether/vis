@@ -1305,7 +1305,7 @@
         (update :outcomes #(merge-with + % (tool-outcomes calls))))))
 
 (defn- usage-tools
-  "Group model iterations by the python_execution operations they invoked. Usage
+  "Group model iterations by the py3 operations they invoked. Usage
    intentionally overlaps across operations, so grouped rows must not be summed."
   [iterations]
   (let [by-tool (reduce (fn [by-tool usage]
@@ -1615,7 +1615,7 @@
        "Read one whole conversation. `read_session()` is the current session, and "
        "`read_session(target)` is another session. `target` takes a bare id, an unambiguous prefix "
        "or the copied `vis_session_id#<uuid>` marker. Filter "
-       "`transcript`/`turns`/`iterations`/`blocks` (`code`/`stdout`/`error`) in python_execution "
+       "`transcript`/`turns`/`iterations`/`blocks` (`code`/`stdout`/`error`) in py3 "
        "instead of printing all of it. Read the current state from the live `session` map.\n\n"
        "This is the recovery path for raw folded content of this session, but it does not undo a "
        "fold intent or restore it. Find ids with `list_sessions(search=…)`, and read one row with "
@@ -1671,7 +1671,7 @@
        "in the title (`rank` 0), request (1), reply (2) and thinking (3). It gives the best band "
        "first and the newest first inside a band. Keep that order and never sort it again.\n\n"
        "Read one row with `get_session(id)` and its content with `read_session(id)`. Filter the rows "
-       "in python_execution, and do not convert them to a string or slice them blindly.")
+       "in py3, and do not convert them to a string or slice them blindly.")
      :result
      (str
        "String-keyed rows `{id, channel, title, goal_status, turn_count, created_at, modified_at}`. "
@@ -1716,6 +1716,6 @@
     "- Other sessions: `await list_sessions(search=\"…\")` ranks like the TUI and app search. Then use `get_session(id)` for one row and `read_session(id)` for its content. One search round settles it. A new spelling of a miss is not new evidence: with no useful match, end the lookup and answer from your own knowledge.\n"
     "- The snippets `request_snippet` and `reply_snippet` are optional. Read them with `row.get(\"request_snippet\")` and `row.get(\"reply_snippet\")`; these return None for an absent field.\n"
     "- A session id copied from the TUI or the companion app has the form `vis_session_id#<uuid>`, which marks a Vis session. Pass it unchanged, or the bare id, to `read_session` or `get_session`.\n"
-    "- Filter in `python_execution`; print the fields the question needs.\n"))
+    "- Filter in `py3`; print the fields the question needs.\n"))
 
 (defn prompt [env] (when (introspection-enabled? env) INTROSPECTION_PROMPT))

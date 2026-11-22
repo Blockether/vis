@@ -716,7 +716,7 @@ files, and installs the dependencies before it runs the entry.
   directory. Use narrow source roots such as `src`, not the whole checkout or a virtual environment.
 - `dependencies` accepts standard package requirements, with version pins, extras, and environment
   markers. Vis uses its bundled pip to install only wheels into `~/.vis/python/packages`.
-  `python_execution` and other extensions share that directory. Vis does not change the `.venv` of
+  `py3` and other extensions share that directory. Vis does not change the `.venv` of
   the project.
 - Set the index with [`python.index_url` in `vis.yml`](configuration.md#python-package-index).
   Normal pip authentication and certificate settings still apply. A missing wheel or a failed
