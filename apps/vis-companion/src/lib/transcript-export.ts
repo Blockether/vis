@@ -1,4 +1,5 @@
-import type { Session, SessionUsage, Subagent, TranscriptIteration, TranscriptTurn } from './types';
+import { inflateSync, strFromU8 } from 'fflate';
+import type { Session, SessionUsage, Subagent, TranscriptAttachment, TranscriptIteration, TranscriptTurn } from './types';
 
 /**
  * WHAT AN HTML EXPORT CARRIES FOR ONE SESSION.
@@ -25,9 +26,13 @@ export interface SessionExport {
 /**
  * One turn of an export. The engine moves the steps of a turn to a chunk element of the page
  * and names it in `iterations_chunk`: the steps are most of an export, and the page reads them
- * only when the reader comes near the turn. A turn with `iterations` holds them inline.
+ * only when the reader comes near the turn. A turn with `iterations` holds them inline. The bytes
+ * of a request image are in the chunk element that its `chunk` names, else in its `base64`.
  */
-export type ExportTurn = TranscriptTurn & { iterations_chunk?: string };
+export type ExportTurn = Omit<TranscriptTurn, 'attachments'> & {
+  iterations_chunk?: string;
+  attachments?: (TranscriptAttachment & { chunk?: string })[];
+};
 
 /** One row of `failed_tools`, as the engine writes it. */
 export interface WireFailedToolCall {
@@ -101,15 +106,17 @@ function chunkText(id: string): string {
   return text;
 }
 
+const fromBase64 = (Uint8Array as { fromBase64?: (text: string) => Uint8Array<ArrayBuffer> }).fromBase64;
+
 /** The bytes of base64 `text`. */
 function base64Bytes(text: string): Uint8Array<ArrayBuffer> {
+  if (fromBase64) return fromBase64(text);
   const binary = atob(text);
   const bytes = new Uint8Array(binary.length);
   for (let at = 0; at < binary.length; at++) bytes[at] = binary.charCodeAt(at);
   return bytes;
 }
 
-const readSteps = new Map<string, Promise<TranscriptIteration[]>>();
 const heldSteps = new Map<string, TranscriptIteration[]>();
 
 /**
@@ -122,22 +129,47 @@ export function heldTurnSteps(turn: ExportTurn): TranscriptIteration[] | undefin
 
 /**
  * The steps of `turn`: inline, else read from its chunk element, which holds them as raw
- * DEFLATE in base64. A chunk is read one time; each later call gets the same answer.
+ * DEFLATE in base64. The read is synchronous, so a turn that comes into view draws before the
+ * next frame shows it. A chunk is read one time; each later call gets the same answer.
  */
-export function turnSteps(turn: ExportTurn): Promise<TranscriptIteration[]> {
+export function turnSteps(turn: ExportTurn): TranscriptIteration[] {
   const id = turn.iterations_chunk;
-  if (!id) return Promise.resolve(turn.iterations ?? []);
-  let steps = readSteps.get(id);
+  if (!id) return turn.iterations ?? [];
+  let steps = heldSteps.get(id);
   if (!steps) {
-    steps = (async () => {
-      const inflated = new Response(base64Bytes(chunkText(id))).body!.pipeThrough(new DecompressionStream('deflate-raw'));
-      const read = JSON.parse(await new Response(inflated).text()) as TranscriptIteration[];
-      heldSteps.set(id, read);
-      return read;
-    })();
-    readSteps.set(id, steps);
+    steps = JSON.parse(strFromU8(inflateSync(base64Bytes(chunkText(id))))) as TranscriptIteration[];
+    heldSteps.set(id, steps);
   }
   return steps;
+}
+
+const readingSteps = new Map<string, Promise<void>>();
+
+/**
+ * Reads the steps of `turn` ahead of its draw: the browser's stream inflates them, and the parse
+ * runs in a task of its own, so neither adds to the frame that draws the turn. Each later
+ * `turnSteps` call answers at once. A defect shows when `turnSteps` reads the chunk again.
+ */
+export function readTurnSteps(turn: ExportTurn): Promise<void> {
+  const id = turn.iterations_chunk;
+  if (!id || heldSteps.has(id) || typeof DecompressionStream === 'undefined') return Promise.resolve();
+  let reading = readingSteps.get(id);
+  if (!reading) {
+    reading = (async () => {
+      const inflated = new Response(base64Bytes(chunkText(id))).body!.pipeThrough(new DecompressionStream('deflate-raw'));
+      const text = await new Response(inflated).text();
+      if (!heldSteps.has(id)) heldSteps.set(id, JSON.parse(text) as TranscriptIteration[]);
+    })().catch(() => {});
+    readingSteps.set(id, reading);
+  }
+  return reading;
+}
+
+/** The request images of `turn`, each with its bytes in `base64`, as the session screen draws them. */
+export function turnAttachments(turn: ExportTurn): TranscriptAttachment[] | undefined {
+  return turn.attachments?.map(({ chunk, ...attachment }) =>
+    chunk && !attachment.base64 ? { ...attachment, base64: chunkText(chunk) } : attachment,
+  );
 }
 
 /** One tool call of the export that failed, as the Failed tools list shows it. */

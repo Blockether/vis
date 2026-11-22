@@ -1,5 +1,5 @@
 {
-  "description": "The JSON document of an HTML transcript export (gateway/transcript_export.clj): a leader, its subagent and the subagent of that subagent. The engine writes these keys and the Companion export page reads them. The steps of each turn are not in the document: `iterations_chunk` names the chunk element of the page that holds them as raw DEFLATE in base64. `chunks` holds the text of each chunk element, keyed by its id.",
+  "description": "The JSON document of an HTML transcript export (gateway/transcript_export.clj): a leader, its subagent and the subagent of that subagent. The engine writes these keys and the Companion export page reads them. The steps of each turn are not in the document: `iterations_chunk` names the chunk element of the page that holds them as raw DEFLATE in base64. The bytes of a request image are not in the document either: its `chunk` names the chunk element that holds them in base64. `chunks` holds the text of each chunk element, keyed by its id.",
   "export": {
     "session": {
       "id": "lead",
@@ -10,6 +10,16 @@
       {
         "turn_id": "lead-turn",
         "request": "ship the parser",
+        "attachments": [
+          {
+            "id": "shot",
+            "filename": "shot.png",
+            "media_type": "image/png",
+            "kind": "image",
+            "size": 68,
+            "chunk": "vis-chunk-4"
+          }
+        ],
         "status": "completed",
         "created_at": 1794819600000,
         "agents": [
@@ -127,6 +137,7 @@
   "chunks": {
     "vis-chunk-1": "i65WKsgvzizJzM9TsjLQUUrMKy5PLVKyUgrJSFUoSCwqTi1SKM7ILCjWU6qNBQA=",
     "vis-chunk-2": "i65WKsgvzizJzM9TsjLQUUrMKy5PLVKyUgrJSFUoSCwqTi1SyCxWSMusSE3RU6qNBQA=",
-    "vis-chunk-3": "i65WKsgvzizJzM9TsjLQUUrMKy5PLVKyUgrJSFXIyU8vVkgsSlVIzklNzNNTqo0FAA=="
+    "vis-chunk-3": "i65WKsgvzizJzM9TsjLQUUrMKy5PLVKyUgrJSFXIyU8vVkgsSlVIzklNzNNTqo0FAA==",
+    "vis-chunk-4": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
   }
 }

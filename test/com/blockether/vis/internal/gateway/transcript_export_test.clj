@@ -170,6 +170,40 @@
                                                            (get turn "iterations_chunk"))))))))))
         (finally (ps/db-dispose-connection! db))))))
 
+;; A page with many request images held their bytes in the JSON, so the page parsed megabytes of
+;; base64 before it drew anything.
+(defdescribe
+  request-image-test
+  (it
+    "puts the bytes of each request image in a chunk, and equal bytes in one chunk"
+    (let [page
+          (io/file (test-temp/temp-dir "transcript-export") transcript-export/page-name)
+
+          image
+          {"id" "a1" "filename" "shot.png" "media_type" "image/png" "base64" "iVBORw0K"}]
+
+      (spit page template)
+      (with-redefs [transcript-export/template-file
+                    (constantly page)
+
+                    transcript-export/export-data
+                    (constantly {"session" {"id" "s1"}
+                                 "turns" [{"turn_id" "t1" "attachments" [image]}
+                                          {"turn_id" "t2" "attachments" [(assoc image "id" "a2")]}]
+                                 "child_session_ids" []
+                                 "attachments" {}})]
+
+        (let [exported
+              (transcript-export/html "s1")
+
+              attachments
+              (mapcat #(get % "attachments") (get (wire/parse-json (data-json exported)) "turns"))]
+
+          (expect (= ["a1" "a2"] (mapv #(get % "id") attachments)))
+          (expect (not-any? #(contains? % "base64") attachments))
+          (expect (= 1 (count (into #{} (map #(get % "chunk")) attachments))))
+          (expect (= "iVBORw0K" (chunk-text exported (get (first attachments) "chunk")))))))))
+
 (defn- form
   "A form of a finished step with Activity rows of `signals` in `state`."
   [signals & {:keys [state error duration-ms] :or {state "succeeded"}}]

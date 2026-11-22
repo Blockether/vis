@@ -13,8 +13,9 @@
 
    The steps of the turns and the artifact bytes are most of an export, so they are not in the
    JSON. Each one is in its own chunk element after the data element ([[chunk-prefix]]): the
-   steps of a turn as raw DEFLATE in base64, an artifact as its bytes in base64. The JSON names
-   the chunk of each turn (`iterations_chunk`) and of each artifact (`chunk`). Thus the page
+   steps of a turn as raw DEFLATE in base64, an artifact or an image of a request as its bytes in
+   base64. The JSON names the chunk of each turn (`iterations_chunk`), of each artifact and of each
+   request image (`chunk`). Equal texts share one chunk. Thus the page
    parses only a small JSON when it opens, reads the steps of a turn when the reader comes near
    it, and no single string of the page grows with the session.
 
@@ -82,11 +83,11 @@
 
 (defn deflate-base64
   "`text` in UTF-8, compressed as raw DEFLATE (the `deflate-raw` format of the browser's
-   `DecompressionStream`), in base64. The fastest level: it compresses transcript JSON almost as
-   well as the default level, in much less time."
+   `DecompressionStream`), in base64. The default level: transcript JSON is most of a large
+   export, and this level makes it about a fifth smaller than the fastest level does."
   ^String [^String text]
   (let [deflater
-        (Deflater. Deflater/BEST_SPEED true)
+        (Deflater. Deflater/DEFAULT_COMPRESSION true)
 
         out
         (ByteArrayOutputStream.)]
@@ -196,20 +197,30 @@
        "language" (or (not-empty (str/trim (str (get form "display_language")))) "python")})))
 
 (defn- page-document
-  "The export document `doc` as the page holds it: the steps of each turn and the bytes of each
-   artifact move to chunk elements, and the JSON names them. `chunk!` writes one chunk and
-   answers its id. `failed_tools` holds the rows of the Failed tools list, because the page
+  "The export document `doc` as the page holds it: the steps of each turn, the bytes of each
+   artifact and the bytes of each request image move to chunk elements, and the JSON names them.
+   `chunk!` writes one chunk and answers its id. `failed_tools` holds the rows of the Failed tools list, because the page
    reads the steps of a turn only when the reader comes near it."
   [doc chunk!]
   (assoc doc
-    "turns" (mapv (fn [turn]
-                    (if (seq (get turn "iterations"))
-                      (-> turn
-                          (dissoc "iterations")
-                          (assoc "iterations_chunk"
-                                 (chunk! (deflate-base64 (wire/json-str (get turn "iterations"))))))
-                      turn))
-                  (get doc "turns"))
+    "turns" (mapv
+              (fn [turn]
+                (cond-> turn
+                  (seq (get turn "iterations"))
+                  (-> (dissoc "iterations")
+                      (assoc "iterations_chunk"
+                             (chunk! (deflate-base64 (wire/json-str (get turn "iterations"))))))
+
+                  (seq (get turn "attachments"))
+                  (update "attachments"
+                          (partial mapv
+                                   (fn [attachment]
+                                     (if-let [encoded (not-empty (get attachment "base64"))]
+                                       (-> attachment
+                                           (dissoc "base64")
+                                           (assoc "chunk" (chunk! encoded)))
+                                       attachment))))))
+              (get doc "turns"))
     "attachments" (update-vals (get doc "attachments")
                                (fn [file]
                                  {"media_type" (get file "media_type")
@@ -229,16 +240,18 @@
                                  {:type :transcript-export/no-template})))]
     (when-let [data (export-data sid)]
       (let [chunks (StringBuilder.)
-            n (volatile! 0)
+            ids (volatile! {})
             chunk! (fn [^String text]
-                     (let [id (str chunk-prefix (vswap! n inc))]
-                       (-> chunks
-                           (.append "<script type=\"application/octet-stream\" id=\"")
-                           (.append id)
-                           (.append "\">")
-                           (.append text)
-                           (.append "</script>"))
-                       id))
+                     (or (get @ids text)
+                         (let [id (str chunk-prefix (inc (count @ids)))]
+                           (vswap! ids assoc text id)
+                           (-> chunks
+                               (.append "<script type=\"application/octet-stream\" id=\"")
+                               (.append id)
+                               (.append "\">")
+                               (.append text)
+                               (.append "</script>"))
+                           id)))
             page (assoc (page-document data chunk!)
                    "descendants" (update-vals (subagent-documents data) #(page-document % chunk!)))]
 

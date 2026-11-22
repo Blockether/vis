@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { constants, deflateRawSync } from 'node:zlib';
 import tailwindcss from '@tailwindcss/vite';
 import babel from '@rolldown/plugin-babel';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
@@ -34,6 +35,19 @@ const escapeHtml = (text: string) =>
 // beside the web bundle. The engine copies that one file and writes a session's JSON into it, so
 // the page must hold all its code, styles and fonts: an export opens without a gateway or network.
 const EXPORT_PAGE = 'transcript-export.html';
+// The code of the export page is raw DEFLATE in base64, in one element: it is most of a small
+// export, and a third of its size this way. The loader inflates it and runs it as the module.
+// The styles stay inline, so the first frame of the page already has its colors.
+const EXPORT_CODE_ID = 'vis-app-code';
+const EXPORT_CODE_LOADER = [
+  `const packed = document.getElementById('${EXPORT_CODE_ID}').textContent;`,
+  'const bytes = Uint8Array.from(atob(packed), (char) => char.charCodeAt(0));',
+  "const inflated = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));",
+  "const app = document.createElement('script');",
+  "app.type = 'module';",
+  'app.textContent = await new Response(inflated).text();',
+  'document.head.append(app);',
+].join('\n');
 function inlineExportPage(): Plugin {
   return {
     name: 'vis-export-single-file',
@@ -45,9 +59,14 @@ function inlineExportPage(): Plugin {
       let html = String(page.source);
       for (const [name, file] of Object.entries(bundle)) {
         if (file.type === 'chunk' && file.isEntry) {
-          // Module scripts run after the parse, as the external file did. `</script` would end the element.
-          const code = file.code.replaceAll('</script', '<\\/script');
-          html = html.replace(new RegExp(`<script type="module" crossorigin src="[^"]*${name}"></script>`), () => `<script type="module">${code}</script>`);
+          // Module scripts run after the parse, as the external file did. Base64 holds no `<`.
+          const packed = deflateRawSync(file.code, { level: constants.Z_BEST_COMPRESSION }).toString('base64');
+          html = html.replace(
+            new RegExp(`<script type="module" crossorigin src="[^"]*${name}"></script>`),
+            () =>
+              `<script type="application/octet-stream" id="${EXPORT_CODE_ID}">${packed}</script>` +
+              `<script type="module">${EXPORT_CODE_LOADER}</script>`,
+          );
           delete bundle[name];
         } else if (file.type === 'asset' && name.endsWith('.css')) {
           html = html.replace(new RegExp(`<link rel="stylesheet" crossorigin href="[^"]*${name}">`), () => `<style>${String(file.source)}</style>`);

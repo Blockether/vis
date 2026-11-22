@@ -4,7 +4,6 @@
 // conversation of each subagent below the leader, and a row opens it without a gateway.
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DecompressionStream } from 'node:stream/web';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import exportFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/transcript-export.json';
@@ -18,9 +17,8 @@ import { TranscriptExport } from './TranscriptExport';
 // shows its answer only when the page reads its chunk.
 const EXPORT = exportFixture.export;
 
-// jsdom has no `DecompressionStream`, and its observer never reports: each turn comes near at once.
+// The observer of jsdom never reports: each turn comes near at once, after its commit, as in a browser.
 beforeEach(() => {
-  vi.stubGlobal('DecompressionStream', DecompressionStream);
   vi.stubGlobal(
     'IntersectionObserver',
     class {
@@ -29,7 +27,7 @@ beforeEach(() => {
         this.report = report;
       }
       observe(target: Element) {
-        this.report([{ target, isIntersecting: true } as IntersectionObserverEntry], this as never);
+        queueMicrotask(() => this.report([{ target, isIntersecting: true } as IntersectionObserverEntry], this as never));
       }
       unobserve() {}
       disconnect() {}
@@ -81,6 +79,14 @@ describe('the subagent rows of an HTML export', () => {
     await user.click(within(path()).getByRole('button', { name: /leader/i }));
     expect(await screen.findByText('The parser ships.')).toBeInTheDocument();
     expect(screen.queryByRole('navigation', { name: 'Subagent path' })).not.toBeInTheDocument();
+  });
+
+  // A request image was inline base64 in the document, so a page with many of them parsed megabytes
+  // before it drew anything. Its bytes are now in a chunk element.
+  it('draw a request image from its chunk', async () => {
+    renderExport(EXPORT);
+    const image = await screen.findByRole('img', { name: 'shot.png' });
+    expect(image.getAttribute('src')).toContain(exportFixture.chunks['vis-chunk-4']);
   });
 
   // An export from before this change holds only the leader. Its rows are the same controls.
