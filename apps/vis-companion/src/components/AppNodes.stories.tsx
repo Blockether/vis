@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
-import { expect, fn, userEvent, within } from 'storybook/test';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import { LiveViewPanel } from './LiveView';
@@ -202,6 +202,34 @@ export const Split: Story = {
         await expect(height % 20).toBeLessThan(0.5);
       }
     }
+  },
+};
+
+/** Report: on a phone, unwrapped split numbers lay over the code of the other side. */
+export const SplitPhone: Story = {
+  decorators: width('390px'),
+  args: { view: review(), app },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: 'Split' }));
+    if (!hasLayout(canvasElement)) return;
+    await waitFor(() => expect(canvasElement.querySelector('.diff-table td:nth-child(4)')).not.toBeNull());
+    const scroller = canvasElement.querySelector<HTMLElement>('[data-diff-scroll]')!;
+    await expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth);
+    let checked = 0;
+    for (const left of [0, 400, scroller.scrollWidth]) {
+      scroller.scrollLeft = left;
+      for (const row of canvasElement.querySelectorAll('.diff-table tr')) {
+        const cells = [...row.children].map((cell) => cell.getBoundingClientRect());
+        if (cells.length !== 4) continue;
+        checked += 1;
+        // Each column starts where the column before it ends.
+        for (let at = 1; at < 4; at += 1) {
+          await expect(cells[at]!.left).toBeGreaterThanOrEqual(cells[at - 1]!.right - 1);
+        }
+      }
+    }
+    await expect(checked).toBeGreaterThan(0);
   },
 };
 

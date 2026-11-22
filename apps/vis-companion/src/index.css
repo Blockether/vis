@@ -1065,6 +1065,12 @@ ol.markdown-list > li::before {
   right: calc(50% - var(--diff-number-width, 49px));
   border-left: 1px solid var(--dialog-border);
 }
+/* Unwrapped split sides share one scroller, so a sticky number would lie over the other side. */
+.app-diff[data-split='true'][data-wrap='false'] .diff-gutter {
+  position: relative;
+  left: auto;
+  right: auto;
+}
 .diff-threads {
   position: sticky;
   left: 0;
