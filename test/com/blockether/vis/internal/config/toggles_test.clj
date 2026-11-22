@@ -367,7 +367,23 @@
            (expect (nil? (t/toggle-spec "test_project_local")))
            (expect (= {:value "slow"} (t/wire-value root "test_project_local" "SLOW")))
            (expect (nil? (t/wire-value "test_project_local" "slow")))
-           (finally (t/set-project-toggles! root [] []) (t/unregister-owner! "test.overridden"))))))
+           (finally (t/set-project-toggles! root [] []) (t/unregister-owner! "test.overridden")))))
+
+  (it "keeps the Auto/On/Off setting of an extension that a project extension replaces"
+    ;; Regression: `--extensions` in a project with its own copy of an installed
+    ;; extension failed with "Unknown setting".
+    (let [root "/tmp/vis-project-engine-toggles"]
+      (try (t/register-toggle! {:id "engines_test_replaced"
+                                :label "test.replaced"
+                                :type :enum
+                                :choices ["auto" "on" "off"]
+                                :default "auto"
+                                :group :engines
+                                :owner "test.replaced"})
+           (t/set-project-toggles! root ["test.replaced"] [])
+           (expect (= "test.replaced" (:label (t/target-toggle-spec root "engines_test_replaced"))))
+           (expect (some #(= "engines_test_replaced" (:id %)) (t/target-toggles root)))
+           (finally (t/set-project-toggles! root [] []) (t/unregister-owner! "test.replaced"))))))
 
 (defdescribe
   string-toggle-test

@@ -299,6 +299,13 @@
     (swap! project-registry assoc root {:owners (set owners) :specs specs})
     specs))
 
+(defn- replaced?
+  "True when a project extension in `owners` replaces the declaration `spec`. The
+   Auto/On/Off setting of an extension is never replaced: its id comes from the
+   extension name, so the project copy has the same setting."
+  [owners spec]
+  (and (contains? owners (:owner spec)) (not= :engines (:group spec))))
+
 (defn target-toggles
   "Every setting where `root` runs: registered toggles without those of replaced global
    extensions, then the project's own declarations, which replace any of the same id.
@@ -310,7 +317,7 @@
         ids
         (into #{} (map :id) specs)]
 
-    (into (filterv #(not (or (ids (:id %)) (contains? owners (:owner %)))) (registered-toggles))
+    (into (filterv #(not (or (ids (:id %)) (replaced? owners %))) (registered-toggles))
           specs)))
 
 (defn target-toggle-spec
@@ -320,7 +327,7 @@
   (let [{:keys [owners specs]} (get @project-registry root)]
     (or (some #(when (= id (:id %)) %) specs)
         (let [spec (toggle-spec id)]
-          (when-not (contains? owners (:owner spec)) spec)))))
+          (when-not (replaced? owners spec) spec)))))
 
 ;; State ops
 
