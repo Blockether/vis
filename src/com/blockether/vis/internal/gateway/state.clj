@@ -1761,12 +1761,22 @@
                 not-empty)
        (catch Throwable _ nil)))
 
+(defn- session-project-roots
+  "The project root of each session by string id, read in one batch: the value that
+   `session-project-root` reads with two queries for one session. A session that is
+   missing here, such as a new one with only a live env, keeps the single read."
+  [db]
+  (or (try (persistance/db-session-workspace-roots db) (catch Throwable _ nil)) {}))
+
 (defn- listed-project-root
   "Folder of the project that lists session `id`. A session in a group is in the
    project of that group, also when it works in another folder. `group-root` gives
-   the project folder of a group id."
-  [db id group-id group-root]
-  (or (when (seq (str group-id)) (group-root group-id)) (session-project-root db id)))
+   the project folder of a group id. `roots` is a `session-project-roots` map."
+  ([db id group-id group-root] (listed-project-root db id group-id group-root nil))
+  ([db id group-id group-root roots]
+   (or (when (seq (str group-id)) (group-root group-id))
+       (get roots (str id))
+       (session-project-root db id))))
 
 (defn- publish-session-created!
   "Tell fleet watchers that the wire `session` now exists, then return it.
@@ -9283,13 +9293,17 @@
         (when (some? group-ids) (into #{} (comp (map str) (remove str/blank?)) group-ids))
 
         group-root
-        (memoize group-project-root)]
+        (memoize group-project-root)
+
+        ;; One read for every row: a read for each row cost about 70 ms on 3000 sessions.
+        roots
+        (delay (session-project-roots db))]
 
     (cond->> (vec rows)
       (and db (some? root))
       (filterv (fn [row]
                  (= (str root)
-                    (str (listed-project-root db (:id row) (:group-id row) group-root)))))
+                    (str (listed-project-root db (:id row) (:group-id row) group-root @roots)))))
 
       (seq (str project-id))
       (filterv (fn [row]
@@ -9781,13 +9795,17 @@
              group-root
              (memoize group-project-root)
 
+             roots
+             (when db (session-project-roots db))
+
              groups
              (reduce (fn [acc row]
                        (let [sid
                              (:id row)
 
                              root
-                             (or (when db (listed-project-root db sid (:group-id row) group-root))
+                             (or (when db
+                                   (listed-project-root db sid (:group-id row) group-root roots))
                                  "")
 
                              g

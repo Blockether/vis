@@ -2963,6 +2963,24 @@
       (some-> (latest-state-id-for db-info soul-id-s)
               ->uuid))))
 
+(def ^:private session-workspace-roots-sql
+  (str "SELECT s.session_soul_id AS sid, w.root AS root FROM session_state s "
+       "JOIN (SELECT session_soul_id, MAX(version) AS version FROM session_state "
+       "GROUP BY session_soul_id) latest ON latest.session_soul_id = s.session_soul_id "
+       "AND latest.version = s.version JOIN workspace w ON w.id = s.workspace_id"))
+
+(defn db-session-workspace-roots
+  "The workspace root of the latest state of each session, keyed by string session id.
+   One read gives what [[db-latest-session-state-id]] and [[db-workspace-for-session]]
+   give for one session. A session without a workspace or a root has no entry."
+  [db-info]
+  (if (ds db-info)
+    (into {}
+          (keep (fn [{:keys [sid root]}]
+                  (when (and sid (seq root)) [(str sid) root])))
+          (query-sql! db-info [session-workspace-roots-sql]))
+    {}))
+
 (defn db-update-session-title!
   [db-info session-id title]
   (when (and (ds db-info) session-id)

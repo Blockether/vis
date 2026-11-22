@@ -103,6 +103,8 @@
   (db-lock-routing! [db-info session-id locked?])
   (db-list-session-states [db-info session-id])
   (db-latest-session-state-id [db-info session-id])
+  (db-session-workspace-roots [db-info]
+    "Workspace root of the latest state of each session in one read, keyed by string session id.")
   (db-get-session-prompt-cache-state [db-info session-state-id])
   (db-set-session-prompt-cache-state! [db-info session-state-id state])
   ;; Per-session model preference (session_soul.llm_pref_provider + llm_pref_model) — shared by every

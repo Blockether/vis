@@ -156,6 +156,38 @@
                  (expect (= {} (persistance/db-session-page-facts s [])))
                  (expect (= {} (persistance/db-session-page-facts nil [leader]))))))
 
+(defdescribe session-workspace-roots-test
+             ;; A `root=` page of the session list read the workspace of each session with
+             ;; two queries: about 3500 queries and 70 ms for one page on a large store.
+             (it "reads the root of every session the same as one read for each"
+                 (let [s
+                       (h/store)
+
+                       sessions
+                       [(h/store-session! s {:channel :api}) (h/store-session! s {:channel :tui})]
+
+                       forked
+                       (first sessions)
+
+                       workspace
+                       (persistance/db-workspace-insert! s {:repo-id "repo" :root "/repo/fork"})
+
+                       single
+                       (fn [sid]
+                         (some->> (persistance/db-latest-session-state-id s sid)
+                                  (persistance/db-workspace-for-session s)
+                                  :root))]
+
+                   (persistance/db-fork-session! s forked {:workspace-id (:id workspace)})
+                   (expect (= (into {}
+                                    (map (fn [sid]
+                                           [(str sid) (single sid)]))
+                                    sessions)
+                              (persistance/db-session-workspace-roots s)))
+                   (expect (= "/repo/fork"
+                              (get (persistance/db-session-workspace-roots s) (str forked))))
+                   (expect (= {} (persistance/db-session-workspace-roots nil))))))
+
 (defdescribe routing-lock-query-test
              (it "reads current routing locks with bound ids and no SQL recompilation"
                  ;; SDK profiling found repeated HoneySQL formatting in routing-lock reads.
