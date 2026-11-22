@@ -12,6 +12,7 @@
             [com.blockether.vis.tui.app-log :as app-log]
             [com.blockether.vis.tui.app-model :as model]
             [com.blockether.vis.tui.app-surfaces :as app-surfaces]
+            [com.blockether.vis.tui.canvas-map :as cm]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.columns :as columns]
             [com.blockether.vis.tui.dialogs :as dlg]
@@ -300,7 +301,7 @@
    or nil. A diff line with a thread edits that thread; else it starts one."
   [view row]
   (let [node (model/find-node view (:node-id row))]
-    (cond (and (= :canvas (:type node)) (:is-selectable row) (:item-id row)
+    (cond (and (= :canvas (:type node)) (not (:is-transient view)) (:is-selectable row) (:item-id row)
                (not= :canvas-select (:kind row)))
           (cond-> {:node-id (:id node) :item-id (:item-id row)}
             (:thread-id row)
@@ -907,6 +908,130 @@
 
                (and (= y (long row)) (<= (long col) x) (< x (+ (long col) (long width))))))))
 
+(defn- map-node [state geom]
+  (when-let [id (get-in state [:canvas-map :id])]
+    (some #(when (= id (:id %)) %) (:canvases geom))))
+
+(defn- map-viewport [{:keys [bounds list-h]}]
+  [(max 1 (long (:inner-w bounds))) (max 1 (dec (long list-h)))])
+
+(defn- map-choice [state {:keys [canvases rows]}]
+  (let [id (:node-id (nth rows (:selected state) nil))]
+    (or (some #(when (= id (:id %)) %) canvases) (first canvases))))
+
+(defn- toggle-map [state geom]
+  (cond (:canvas-map state) (dissoc state :canvas-map)
+        :else (if-let [node (map-choice state geom)]
+                (let [item (:item-id (nth (:rows geom) (:selected state) nil))
+                      focus (when (and (nil? (:focus node)) item) item)
+                      viewport (map-viewport geom)
+                      now (System/currentTimeMillis)]
+                  (assoc state :canvas-map (cm/reconcile {:focus focus} node viewport now)))
+                state)))
+
+(defn- map-enter [state geom node effects comment?]
+  (if-let [id (get-in state [:canvas-map :focus])]
+    (let [{:keys [view items]} geom
+          index (get items [(:id node) id])
+          comment? (or comment? (not (:is-selectable node)))
+          thread (when comment? (first (filter #(= id (:item-id %)) (:threads node))))]
+      (cond (and (:is-locked node)
+                 (let [camera (:canvas-map state)
+                       viewport (map-viewport geom)
+                       plan (cm/plan-for node (:level camera) viewport)]
+                   (not (cm/card-visible? plan camera viewport id (System/currentTimeMillis))))) state
+            (and (:is-transient view) comment?) state
+            (model/read-only? view) (assoc state :save {:state :closed})
+            comment? (let [target (editor-target view (cond-> {:node-id (:id node) :item-id id
+                                                               :kind :canvas-comment :is-selectable true}
+                                                        thread (assoc :thread-id (:id thread))))]
+                       (assoc-in (open-editor state target) [:editor :base-seq] (:seq view)))
+            index (enter-row (assoc state :selected index :cell nil) geom effects)
+            :else (press state view (:id node) id effects)))
+    state))
+
+(defn- map-key [state ^KeyStroke key geom effects]
+  (when-let [node (map-node state geom)]
+    (let [kt (.getKeyType key)
+          shift? (.isShiftDown key)
+          ch (when (and (= kt KeyType/Character) (not (.isCtrlDown key)) (not (.isAltDown key)))
+               (.getCharacter key))
+          [w h :as viewport] (map-viewport geom)
+          now (System/currentTimeMillis)
+          dx (max 1 (quot (long w) (if shift? 1 4)))
+          dy (max 1 (quot (long h) (if shift? 1 4)))
+          camera (:canvas-map state)
+          next (cond (or (= KeyType/ArrowLeft kt) (#{\h \H} ch)) (cm/pan camera node viewport (- dx) 0 now)
+                     (or (= KeyType/ArrowRight kt) (#{\l \L} ch)) (cm/pan camera node viewport dx 0 now)
+                     (or (= KeyType/ArrowUp kt) (#{\k \K} ch)) (cm/pan camera node viewport 0 (- dy) now)
+                     (or (= KeyType/ArrowDown kt) (#{\j \J} ch)) (cm/pan camera node viewport 0 dy now)
+                     (#{\+ \=} ch) (cm/zoom camera node viewport 1 nil now)
+                     (= \- ch) (cm/zoom camera node viewport -1 nil now)
+                     (or (= \0 ch) (= KeyType/Home kt)) (cm/fit camera node viewport now)
+                     (or (= \r ch) (= KeyType/End kt)) (cm/reset-camera camera node viewport now)
+                     (= KeyType/Tab kt) (cm/tab-card camera node viewport (if shift? -1 1) now)
+                     (= KeyType/ReverseTab kt) (cm/tab-card camera node viewport -1 now)
+                     :else nil)]
+      (cond next (assoc state :canvas-map next)
+            (= KeyType/Enter kt) (map-enter state geom node effects shift?)
+            (#{KeyType/F4 KeyType/Escape} kt) (toggle-map state geom)
+            :else nil))))
+
+(defn map-mouse-target?
+  "True if the pointer is on the map or the map holds its drag."
+  [state {:keys [bounds content-top list-h]} x y]
+  (and (:canvas-map state) (not (or (:editor state) (:key-menu state) (:search state)))
+       (or (get-in state [:canvas-map :drag])
+           (and bounds (< (long (:left bounds)) (long x) (long (:right bounds)))
+                (<= (long content-top) (long y)) (< (long y) (+ (long content-top) (dec (long list-h))))))))
+
+(defn- map-mouse [state ^MouseAction key geom]
+  (let [pos (.getPosition key)
+        x (.getColumn pos) y (.getRow pos)
+        action (.getActionType key)
+        amount (.getScrollDelta key)
+         horizontal (.getHorizontalScrollDelta key)]
+    (when-let [node (and (map-mouse-target? state geom x y) (map-node state geom))]
+      (let [camera (:canvas-map state)
+            [w h :as viewport] (map-viewport geom)
+            point [(- x (inc (long (get-in geom [:bounds :left])))) (- y (long (:content-top geom)))]
+            now (System/currentTimeMillis)
+            drag (:drag camera)
+            next (cond
+                   (and (= action MouseActionType/CLICK_DOWN) (= 1 (.getButton key)))
+                   (assoc camera :drag {:point point :position (cm/camera-at camera now)})
+                   (and (= action MouseActionType/DRAG) drag (not (:is-locked node)))
+                   (let [[[sx sy] [px py] [cx cy]] [(:point drag) point (:position drag)]
+                         plan (cm/plan-for node (:level camera) viewport)
+                         next (cm/clamp-camera plan viewport [(+ (long cx) (- (long sx) (long px)))
+                                                               (+ (long cy) (- (long sy) (long py)))])]
+                     (-> camera (assoc :position next :manual? true) (assoc-in [:drag :moved?] true)
+                         (dissoc :started :from)))
+                   (= action MouseActionType/CLICK_RELEASE)
+                   (if (and drag (not (:moved? drag)))
+                     (let [plan (cm/plan-for node (:level camera) viewport)
+                           [left top] (cm/clamp-camera plan viewport (cm/camera-at camera now))
+                           [px py] point]
+                       (cm/focus-card (dissoc camera :drag) node viewport
+                                      (cm/hit-card plan [(+ (long left) (long px)) (+ (long top) (long py))]) now))
+                     (dissoc camera :drag))
+                   (and (.isCtrlDown key) (not (zero? amount)))
+                    (cm/zoom camera node viewport (- (Long/signum amount)) point now)
+                    (or (not (zero? horizontal)) (and (.isShiftDown key) (not (zero? amount))))
+                    (cm/pan camera node viewport (* (if (zero? horizontal) amount horizontal)
+                                                     (max 1 (quot (long w) 8))) 0 now)
+                    (not (zero? amount))
+                    (cm/pan camera node viewport 0 (* amount (max 1 (quot (long h) 6))) now)
+                    :else camera)]
+        (assoc state :canvas-map next)))))
+
+(defn- map-letter?
+  [state {:keys [view rows]}]
+  (and (not (:is-transient view))
+       (not-any? #(= "m" (:key %)) (:shortcuts view))
+       (or (:canvas-map state)
+           (not= :field (:kind (focused-entry (nth rows (:selected state) nil) (:cell state)))))))
+
 (defn- command-key
   [state ^KeyStroke key {:keys [view] :as geom} effects]
   (let [^KeyStroke key
@@ -924,7 +1049,8 @@
 
     (cond (:prefix state) (if (or (= KeyType/Escape kt) (= \g ctrl-ch))
                             (dissoc state :prefix)
-                            (surface-key (dissoc state :prefix) key geom effects))
+                            (or (map-key (dissoc state :prefix) key geom effects)
+                                 (surface-key (dissoc state :prefix) key geom effects)))
           (= \x ctrl-ch) (assoc state :prefix true)
           (= \h ctrl-ch) (open-key-menu state geom)
           (= \f ctrl-ch) (assoc state
@@ -932,7 +1058,11 @@
                            :notice "Find: ")
           :else (if-let [s (shortcut-for view (shortcut-key key))]
                   (press-shortcut state view s effects)
-                  (surface-key state key geom effects)))))
+                  (or (map-key state key geom effects)
+                       (when (or (= KeyType/F4 kt)
+                                 (and (= "m" (shortcut-key key)) (map-letter? state geom)))
+                         (toggle-map state geom))
+                       (surface-key state key geom effects))))))
 
 (defn- pasted-key? [key] (and (map? key) (:paste key)))
 
@@ -998,7 +1128,7 @@
         (cond (pasted-key? key) (paste-key state (:paste key) paste)
               (not (instance? KeyStroke key)) state
               (log-chip-click? key (:log-chip geom)) (do ((:log! effects)) state)
-              (instance? MouseAction key) (mouse-key state key geom effects)
+              (instance? MouseAction key) (or (map-mouse state key geom) (mouse-key state key geom effects))
               (:key-menu state) (menu-key state key geom effects)
               (:editor state) (editor-key state key view effects)
               (:search state) (search-key state key (:rows geom))
@@ -1696,6 +1826,16 @@
                         (assoc-in [:key-menu :menu-state] next)
                         (update :key-menu dissoc :prefix :pane-prefix)))))))
 
+(defn- map-footer [state geom]
+  (let [node (map-node state geom)
+        wide? (> (long (get-in geom [:bounds :inner-w])) 66)
+        camera (:canvas-map state)
+        toggle (if (map-letter? state geom) "F4/m" "F4")]
+    (cond (:is-locked node) [[toggle "list"] ["Tab" "cards"] ["" "Locked"]]
+          wide? (cond-> [[toggle "list"] ["↑↓←→" "pan"] ["+/-" "zoom"] ["0" "fit"] ["Tab" "cards"] ["S-wheel" "sideways"] ["C-wheel" "zoom"]]
+                  (:manual? camera) (conj ["End" "owner view"]))
+          :else [[(str toggle " list   ↑↓←→ +/- 0 Tab") ""]])))
+
 (defn- footer
   "The keys of the hint bar. The automatic keys of an app stand in the bar: their
    buttons have no row, so no other place names them or shows the tab that holds.
@@ -1707,7 +1847,10 @@
             [(hidden-key view "Enter" "Enter") label]))
 
         keys
-        [(hidden-key view "?" "?") "keys"]]
+        [(hidden-key view "?" "?") "keys"]
+
+        map-hint
+        (when (seq (:canvases geom)) [(if (map-letter? state geom) "F4/m" "F4") "map"])]
 
     (cond (:editor state) (into [["C-Enter/C-s" "save"]]
                                 (if (string? (get-in state [:editor :target :draft]))
@@ -1715,12 +1858,14 @@
                                   [["Esc" "cancel"]]))
           (:search state) [["Enter/S-Enter" "find"] ["Esc" "back"]]
           (:prefix state) [["C-x" "surface key"] ["?" "keys"]]
+          (map-node state geom) (map-footer state geom)
           (and (:auto-keys? view) (vector? legend)) (-> legend
                                                         (cond->
                                                           enter
                                                           (conj enter))
-                                                        (conj keys))
+                                                        (conj (or map-hint keys)))
           :else (cond-> [keys]
+                  map-hint (conj map-hint)
                   enter
                   (conj enter)))))
 
@@ -1777,7 +1922,8 @@
             static? (not-any? #(or (#{:timeline :scene} (:type %))
                                   (and (= :spinner (:type %)) (:is-active %))) nodes)
             plan {:view view* :rows rows :stops stops :anchors anchors :items items
-                  :canvas? (boolean (seq anchors)) :static? static? :legend (shortcut-legend view*)
+                  :canvas? (boolean (seq anchors)) :canvases (cm/cards-in view*)
+                   :static? static? :legend (shortcut-legend view*)
                   :paint-version (Object.)}]
         (when static?
           (reset! surface-plan-cache {:source view :inputs inputs :plan plan}))
@@ -1868,7 +2014,7 @@
 
 (defn reconcile
   "Keep the cursor on a stop and in view."
-  [state {:keys [rows list-h view canvas? anchors items stops]}]
+  [state {:keys [rows list-h view canvas? anchors items stops] :as geom}]
   (let [stops
         (or stops (selectable-indexes rows))
 
@@ -1903,6 +2049,11 @@
               :cell cell
               :scroll scroll
               :canvas-focus (canvas-focus (nth rows selected nil)))
+      (map-node state geom)
+      (update :canvas-map cm/reconcile (map-node state geom) (map-viewport geom) (System/currentTimeMillis))
+
+      (and (:canvas-map state) (not (map-node state geom))) (dissoc :canvas-map)
+
       (canvas-item-gone? view (get-in state [:editor :target]))
       (assoc :notice canvas-item-gone-notice)
 
@@ -1980,12 +2131,52 @@
 (defn- paint-chrome! [g geom] (paint-frame-chrome! g geom) (paint-log-chip! g geom))
 
 (defn canvas-moving?
-  "True if a marker is visible in the app list."
-  [state {:keys [view rows list-h canvas?]}]
-  (when (and canvas? (not (:is-closed view)) (not (:key-menu state)))
-    (let [start (min (count rows) (long (:scroll state)))
-          end (min (count rows) (+ start (long list-h)))]
-      (some #(lv/canvas-motion-row? (:entry %)) (subvec rows start end)))))
+  "True when the canvas needs another frame."
+  [state {:keys [view rows list-h canvas?] :as geom}]
+  (when-not (:key-menu state)
+    (if-let [node (map-node state geom)]
+      (or (cm/gliding? (:canvas-map state) (System/currentTimeMillis))
+          (and (not (:is-closed view))
+               (let [viewport (map-viewport geom)
+                     camera (:canvas-map state)]
+                 (cm/moving? (cm/plan-for node (:level camera) viewport) camera viewport
+                             (System/currentTimeMillis)))))
+      (when (and canvas? (not (:is-closed view)))
+        (let [start (min (count rows) (long (:scroll state)))
+              end (min (count rows) (+ start (long list-h)))]
+          (some #(lv/canvas-motion-row? (:entry %)) (subvec rows start end)))))))
+
+(defn- surface-paint-key [st geom]
+  (when (and (seq (:canvases geom)) (:static? geom))
+    (let [now (System/currentTimeMillis)
+          camera (:canvas-map st)]
+      [st (:bounds geom) (:paint-version geom)
+       (when (canvas-moving? st geom) (lv/canvas-step now))
+       (when camera (cm/camera-at camera now))])))
+
+(defn- paint-map! [g state geom node]
+  (let [camera (:canvas-map state)
+        [w h :as viewport] (map-viewport geom)
+        plan (cm/plan-for node (:level camera) viewport)
+        left (inc (long (get-in geom [:bounds :left])))
+        top (long (:content-top geom))
+        now (System/currentTimeMillis)
+        [x y] (cm/clamp-camera plan viewport (cm/camera-at camera now))
+        card (get-in plan [:boxes (:focus camera)])
+        level (case (:level plan) :overview "Overview" :far "Far" :near "Near" "Normal")
+        status (str level (when (:is-locked node) " · Locked")
+                    (when card (str " · " (p/ellipsize (:title card) (max 2 (- (long w) 24)))))
+                    (when (and (:manual? camera) (not (:is-locked node))) " · End: reset"))]
+    (cm/paint! g plan camera [left top] viewport now
+               (when-not (get-in geom [:view :is-closed]) (lv/canvas-step now))
+               {:paper t/dialog-bg :card t/dialog-fg :edge t/dialog-hint :selected t/dialog-hint-key}
+               (set (:selected-ids node)))
+    (when (> (long (:list-h geom)) 1)
+      (p/set-colors! g t/dialog-hint t/dialog-bg)
+      (p/put-str! g left (+ top (long h)) (p/ellipsize (str status
+                             (when (> (long w) 66)
+                               (str " · " (max 0 (long x)) "," (max 0 (long y)) " / " (:w plan) "×" (:h plan))))
+                           (long w))))))
 
 (defn- paint-body-rows!
   [g state {:keys [bounds content-top rows list-h view]}]
@@ -2020,10 +2211,12 @@
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) top inner-w content-h)
     (when (pos? (long (:list-h geom)))
-      (if (empty? rows)
-        (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-            (p/put-str! g (+ left 2) top (p/ellipsize "This app shows nothing yet" (max 1 (- (long inner-w) 3)))))
-        (paint-body-rows! g state geom)))))
+      (if-let [node (map-node state geom)]
+        (paint-map! g state geom node)
+        (if (empty? rows)
+          (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+              (p/put-str! g (+ left 2) top (p/ellipsize "This app shows nothing yet" (max 1 (- (long inner-w) 3)))))
+          (paint-body-rows! g state geom))))))
 
 (defn- status-state [state] (or (get-in state [:save :state]) (get-in state [:send :state])))
 
@@ -2499,14 +2692,27 @@
                      (connect-away! box session-id view-id)
                      (pane-measure st left top width height (current)))
      :reconcile (partial reconcile-outcomes! box)
-     :paint-key (fn [st geom]
-                  (when (and (:canvas? geom) (:static? geom))
-                    [st (:bounds geom) (:paint-version geom)
-                     (when (canvas-moving? st geom) (lv/canvas-step (System/currentTimeMillis)))]))
+     :paint-key surface-paint-key
      :paint paint!
      :on-key (fn [st key geom]
                (if (= ::reveal key) {::dlg/done nil} (handle-key st key geom effects)))
      :read-key (partial read-component-key! box session-id view-id)}))
+
+(defn show-transcript-map!
+  "Open a mounted transcript view in map mode."
+  [^TerminalScreen screen current node-id effects]
+  (let [init (assoc (initial-state) :canvas-map {:id node-id})]
+    (in-app-region
+      #(dlg/run-modal! screen
+                       {:init init
+                        :measure (fn [st cols rows] (measure st cols rows (current)))
+                        :reconcile reconcile
+                        :paint-key surface-paint-key
+                        :paint paint!
+                        :on-key (fn [st key geom] (handle-key st key geom effects))
+                        :read-key (fn [screen]
+                                    (if (dlg/modal-input-pending? screen) (modal-key! screen)
+                                      (idle-paint!)))}))))
 
 (defn show-app!
   "Open app `view-id` of `session-id`, or global app `view-id` without `session-id`,

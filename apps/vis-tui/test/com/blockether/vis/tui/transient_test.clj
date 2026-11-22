@@ -743,7 +743,7 @@
 
                        drift
                        [MouseActionType/MOVE MouseActionType/DRAG MouseActionType/SCROLL_UP
-                        MouseActionType/SCROLL_DOWN]]
+                        MouseActionType/SCROLL_DOWN MouseActionType/SCROLL_LEFT MouseActionType/SCROLL_RIGHT]]
 
                    (doseq [^MouseActionType a drift]
                      (.addInput terminal (MouseAction. a 1 (TerminalPosition. 4 4))))

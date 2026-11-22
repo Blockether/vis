@@ -9552,7 +9552,9 @@
          (or (= a MouseActionType/MOVE)
              (= a MouseActionType/DRAG)
              (= a MouseActionType/SCROLL_UP)
-             (= a MouseActionType/SCROLL_DOWN)))))
+             (= a MouseActionType/SCROLL_DOWN)
+              (= a MouseActionType/SCROLL_LEFT)
+              (= a MouseActionType/SCROLL_RIGHT)))))
 
 (defn- read-chord-key!
   "The next event that can ANSWER a chord: keep reading past pointer drift.

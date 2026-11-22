@@ -579,11 +579,25 @@ canvas.text("approval", "Approval required", parent="checks")
 ```
 
 Open the app in the Companion app. The **Checks** frame appears inside **Release**. An arrow with
-an **Artifact** label connects **Build** and **Ready?**. The terminal shows the items as a list.
+an **Artifact** label connects **Build** and **Ready?**.
 
-The `text` of an item is Markdown. The Companion app and the terminal show it as they show a message
-of the session. Headings, lists, task lists, tables, code blocks, quotes, and links show in the item.
-When the board is far away, only the titles of the items show.
+In the terminal, press `F4` in an app to change between the list and the map. You can also press
+`m` if the app does not use that key and you are not in a text field. For a board in a live
+view, open its transcript entry first, then press `F4`.
+
+- Press the arrow keys or `h`, `j`, `k`, and `l` to move the map. Hold `Shift` with an arrow key to
+  move by one screen. Drag the map or turn the mouse wheel to move it. Hold `Shift` and turn the
+  wheel to move sideways, or swipe sideways on a touchpad.
+- Press `+` or `-` to change the scale. Hold `Ctrl` and turn the wheel to zoom at the pointer.
+  Press `0` or `Home` to fit the board, or `End` to return to
+  the app owner's view. When the titles do not fit, the overview shows dots instead.
+- Press `Tab` or `Shift+Tab` to focus an item. In an app, press `Enter` to select the item or open
+  its comment editor. Press `Shift+Enter` to open the comment editor on a selectable item if your
+  terminal sends that key. Use the list to read all threads.
+- If the app owner locks the board, you cannot move or change the scale of the map.
+
+The `text` of an item is Markdown. The Companion app and the terminal list render it as a session
+message. The terminal map shows a text preview. Zoom in to see more, or use the list for formatting.
 
 ### Add a picture or recording to a canvas
 

@@ -49,7 +49,7 @@
 (defn chat-cols [db cols] (or (:chat-cols (geometry db cols 0)) cols))
 
 (defn chat-key
-  "Translate a physical pointer into chat-local coordinates, retaining wheel counts."
+  "Translate a physical pointer into chat-local coordinates, retaining wheel counts and modifiers."
   [key offset]
   (if (and (instance? MouseAction key) (pos? (long offset)))
     (let [^MouseAction mouse
@@ -62,7 +62,10 @@
                     (.getButton mouse)
                     (TerminalPosition. (int (- (.getColumn position) (long offset)))
                                        (.getRow position))
-                    (.getCount mouse)))
+                    (.getCount mouse)
+                     (.isCtrlDown mouse)
+                     (.isAltDown mouse)
+                     (.isShiftDown mouse)))
     key))
 
 (defn with-gateway-counts

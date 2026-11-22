@@ -47,6 +47,7 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.canvas-map :as cm]
             [com.blockether.vis.tui.columns :as columns]
             [com.blockether.vis.tui.dialogs :as dialogs]
             [com.blockether.vis.tui.human-input :as hi]
@@ -3209,7 +3210,9 @@
   [pane others]
   (cond (:log-search pane) [["Enter" "search / refresh"] ["↑/↓" "scroll"] ["PgUp/PgDn" "matches"]
                             ["Esc" "back"]]
-        (:is-viewer pane) [["F3" "controls"] ["Esc" "close view"]]
+        (:is-viewer pane) (cond-> [["F3" "controls"]]
+                             (seq (cm/cards-in (:view pane))) (conj ["F4" "map"])
+                             true (conj ["Esc" "close view"]))
         :else (let [open (remove settled? others)]
                 (if-let [note (stopping pane)]
                   (if (str/blank? note)

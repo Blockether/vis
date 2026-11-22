@@ -23,6 +23,7 @@
     [com.blockether.vis.tui.app-model :as app-model]
     [com.blockether.vis.tui.app-surface :as app-surface]
     [com.blockether.vis.tui.app-surfaces :as app-surfaces]
+    [com.blockether.vis.tui.canvas-map :as cm]
     [com.blockether.vis.tui.human-input :as hi]
     [com.blockether.vis.tui.input :as input]
     [com.blockether.vis.tui.live-view :as lv]
@@ -3011,6 +3012,15 @@
       (let [{:keys [box geom state]} (current-app-pane)]
         (app-surfaces/pane-click box geom (or (:scroll state) 0) (count (:rows geom)) mx my)))))
 
+(defn- app-pane-map-mouse!
+  [db key mx my action]
+  (when (get-in db [:live-panel :app])
+    (let [{:keys [state geom]} (current-app-pane)]
+      (when (and (not= action MouseActionType/MOVE)
+                 (app-surface/map-mouse-target? state geom mx my))
+        (when (= action MouseActionType/CLICK_DOWN) (state/dispatch [:focus-area :panel]))
+        (app-pane-key! db key)))))
+
 (defn- app-pane-wheel!
   "Send wheel rows inside the canvas list to the app, not to the chat."
   [db key mx my]
@@ -3064,6 +3074,32 @@
                    :level
                    :error)))))))
   true)
+
+(defn- transcript-map!
+  [screen db]
+  (let [pane (or (first (filter #(seq (cm/cards-in (:view %))) (viewer-panes db)))
+                 (last (filter #(seq (cm/cards-in (:view %))) (:live-views db))))
+        view-id (lv/view-id pane)
+        initial (:view pane)
+        session-id (:session-id initial)]
+    (when-let [node (first (cm/cards-in initial))]
+      (with-dialog-lock
+        #(app-surface/show-transcript-map!
+           screen
+           (fn []
+             (let [current (or (live-pane @state/app-db view-id) pane)]
+               (assoc (:view current) :is-transient true :is-closed (lv/settled? current))))
+           (:id node)
+           {:select! (fn [action]
+                       (vis/worker-future "vis-canvas-select"
+                         (fn []
+                           (try
+                             (vis/gateway-view-action! session-id view-id action)
+                             (catch Throwable _
+                               (vis/notify! "Could not select that card" :level :error))))))
+            :activate! (constantly nil) :reload! (constantly nil) :log! (constantly nil)
+            :inspect! (constantly nil) :copy! input/clipboard-copy! :edit! (constantly nil)}))
+      true)))
 
 (defn- live-controls!
   "F3 controls belong to the explicitly opened viewer, never a hidden receipt. The
@@ -10298,6 +10334,7 @@
       (do (state/dispatch [:move-slash-command-selection (long wheel-delta)
                            (count slash-suggestions)])
           ::recur)
+      (app-pane-map-mouse! db key mx my atype) ::recur
       (and (not (zero? (long (or wheel-delta 0)))) (app-pane-wheel! db key mx my)) ::recur
       ;; The wheel over the agent dock scrolls its agent table with its own
       ;; momentum. At an end of the table the wheel stops there.
@@ -11345,6 +11382,11 @@
              (live-panel-key! screen db key))
         ::recur
         (live-log-search-key! db key) ::recur
+        (and (instance? KeyStroke key)
+             (= KeyType/F4 (.getKeyType ^KeyStroke key))
+             (not (overlay-locked? db))
+             (not @paste-buffer)
+             (transcript-map! screen db)) ::recur
         ;; An ARMED stop swallows it next: the human is typing the
         ;; comment that travels with the interrupt, so no stroke of it
         ;; may reach the chat editor. A form outranks it — the form owns

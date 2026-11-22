@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Terminal: a canvas board has a map. Press `F4` (or `m` in an app, when the app does not use `m`) to change between the list and the map. The map shows the items as boxes in their frames, with the arrows between them. Pan with the arrow keys, `hjkl`, a mouse drag, the wheel, Shift and the wheel, or a sideways touchpad swipe. Zoom with `+`, `-`, or Ctrl and the wheel, about the pointer or the selected item. `0` fits the board, and `End` goes back to the camera of the owner. `Tab` moves to the next item, and the camera moves to it with a short glide. A locked board does not move, and `Tab` stays on the items that you can see.
 - Live views: people comment on the items of a canvas board. A comment starts a thread on its item, and one item can hold more than one thread. A mark on the item shows the number of comments and the state of the thread. Your code reads the threads with `board.threads` and answers with `board.reply(...)` and `board.resolve(...)`. The Companion app and the TUI show the threads.
 
 ### Changed
@@ -32,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Terminal: a sideways touchpad swipe does not scroll down. Lanterna 3.1.5-vis.65 reports it as a horizontal wheel step, and it keeps Shift, Alt, and Ctrl on a mouse event.
 - Companion: when the owner changes the camera of a canvas or locks it, an active mouse drag or a pinch on Safari stops. Before, the gesture could change the new camera again.
 - Companion: Fit keeps the full canvas board in view when the panel changes size or the board changes, also when the owner sets a different camera.
 - Companion: after a cancelled drag on a canvas, the next press of a toolbar button works.

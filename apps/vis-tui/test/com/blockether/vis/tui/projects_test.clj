@@ -994,14 +994,16 @@
                                            (first (projects/key-action (fixture-db) mouse))))))})]
           (expect (nil? (:error capture)))))
       (let [mouse
-            (MouseAction. MouseActionType/SCROLL_DOWN 0 (TerminalPosition. 70 8) 7)
+            (MouseAction. MouseActionType/SCROLL_RIGHT 7 (TerminalPosition. 70 8) 7 true true true)
 
             local
             ^MouseAction (projects/chat-key mouse 40)]
 
         (expect (= (TerminalPosition. 30 8) (.getPosition local)))
         (expect (= 7 (.getCount local)))
-        (expect (= (.getScrollDelta mouse) (.getScrollDelta local)))
+        (expect (zero? (.getScrollDelta local)))
+        (expect (= 7 (.getHorizontalScrollDelta local)))
+        (expect (and (.isShiftDown local) (.isAltDown local) (.isCtrlDown local)))
         (expect (identical? mouse (projects/chat-key mouse 0))))
       (expect (= (cap/key-stroke \a) (projects/chat-key (cap/key-stroke \a) 40)))))
 
