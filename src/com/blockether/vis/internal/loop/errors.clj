@@ -352,13 +352,20 @@
             non-correctable?
             user-error?)
 
+        ;; A stop interrupted the provider call. The loop ends the turn as
+        ;; cancelled, so the interrupt is not a failure of the provider.
+        cancelled?
+        (boolean (:cancelled? ctx))
+
         iteration-error-data
         (exception->iteration-error-data
           (or retired-context output-budget-exhaustion worker-failure e)
           ctx)]
 
     (tel/log!
-      {:level (if fatal? :error :warn)
+      {:level (cond cancelled? :info
+                    fatal? :error
+                    :else :warn)
        :data (let [base
                    (assoc (format-exception-short e) :iteration iteration)
 
@@ -379,6 +386,7 @@
                  (and body (not (str/blank? body)))
                  (assoc :body-snippet (util/truncate body 1000))))}
       (cond
+        cancelled? "Turn cancelled - the stop interrupted the provider call"
         retired-context "Python environment retired - ending turn without replaying code"
         hopeless-overflow?
         "Hopeless preflight context overflow - failing turn (feeding it back can never reach the model and only grows the input; VIS-9)"

@@ -3365,6 +3365,7 @@
                                                 :routing @iteration-routing
                                                 :reasoning-level reasoning-level
                                                 :log-id (:request-id request-context)
+                                                :cancelled? (boolean (and cancel-atom @cancel-atom))
                                                 :stream-recovery (stream-recovery-outcome
                                                                    e
                                                                    @provider-replay-evidence)})]

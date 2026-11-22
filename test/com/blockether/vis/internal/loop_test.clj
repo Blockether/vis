@@ -8419,6 +8419,19 @@
             (expect (true? (:com.blockether.vis.internal.loop.errors/fatal-iteration-error
                              result))))))))
 
+(defdescribe
+  cancelled-turn-log-test
+  ;; A stop interrupts the provider call. The problem log recorded each one as a
+  ;; provider infrastructure error, next to a turn that ended as cancelled.
+  (let [level (fn [ctx]
+                (:level (tel/with-signal (loop-errors/handle-iteration-exception!
+                                           (ex-info "Stream cancelled by caller."
+                                                    {:type :svar.core/stream-cancelled})
+                                           ctx))))]
+    (it "records the interrupt of a cancelled turn below the problem levels"
+        (expect (= :info (level {:iteration 5 :messages [] :cancelled? true})))
+        (expect (= :error (level {:iteration 5 :messages []}))))))
+
 (defn- anthropic-sse-event
   [type payload]
   (str "event: " type "\ndata: " (json/write-json-str (assoc payload "type" type)) "\n\n"))
