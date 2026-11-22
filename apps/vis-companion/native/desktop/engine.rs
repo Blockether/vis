@@ -150,17 +150,111 @@ fn components() -> String {
 }
 
 /// An app that Finder or a desktop entry opens has only the system directories on
-/// PATH. Add the directory of the command and the usual directories of local tools.
+/// PATH. Add the directory of the command and the usual directories of local tools
+/// to the PATH of the login shell.
 fn path_env() -> OsString {
     let mut dirs = vec![
         bin_dir(),
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),
     ];
-    dirs.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
+    let path = login_env()
+        .iter()
+        .find(|(name, _)| name == "PATH")
+        .map(|(_, value)| value.clone())
+        .or_else(|| std::env::var_os("PATH"))
+        .unwrap_or_default();
+    dirs.extend(std::env::split_paths(&path));
     std::env::join_paths(dirs).unwrap_or_default()
+}
+
+/// The mark before the variables that the login shell prints.
+const LOGIN_ENV_MARK: &str = "__VIS_LOGIN_ENV__";
+/// The longest time that the profiles of the login shell can take.
+const LOGIN_ENV_TIMEOUT: Duration = Duration::from_secs(10);
+/// The variables that describe the shell that reads them, not the person.
+const SHELL_STATE: [&str; 4] = ["_", "PWD", "OLDPWD", "SHLVL"];
+
+/// The variables of the person's login shell. An app that Finder or a desktop entry
+/// opens does not have them: no JDK from SDKMAN, no Node from nvm, no JAVA_HOME.
+/// The gateway and each tool that it starts get only what this app gives them.
+fn login_env() -> &'static [(OsString, OsString)] {
+    static ENV: OnceLock<Vec<(OsString, OsString)>> = OnceLock::new();
+    ENV.get_or_init(|| {
+        let shell = env_dir("SHELL").unwrap_or_else(|| PathBuf::from("/bin/sh"));
+        read_login_env(&shell, LOGIN_ENV_TIMEOUT)
+    })
+}
+
+/// Give `command` the variables of the login shell and the PATH of `path_env`.
+fn with_login_env(command: &mut Command) -> &mut Command {
+    for (name, value) in login_env() {
+        command.env(name, value);
+    }
+    command.env("PATH", path_env())
+}
+
+/// The variables that `shell` has after it reads its login and interactive profiles.
+/// A profile can print text, so the variables come after a mark. A shell that fails
+/// or does not stop within `timeout` gives no variables.
+#[cfg(unix)]
+fn read_login_env(shell: &Path, timeout: Duration) -> Vec<(OsString, OsString)> {
+    let script = format!("printf '\\0{LOGIN_ENV_MARK}\\0'; exec env -0");
+    let mut command = Command::new(shell);
+    command
+        .args(["-l", "-i", "-c", &script])
+        .current_dir(home())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    own_group(&mut command);
+    let Ok(child) = command.spawn() else {
+        return Vec::new();
+    };
+    let pid = child.id();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(child.wait_with_output());
+    });
+    match receiver.recv_timeout(timeout) {
+        Ok(Ok(output)) if output.status.success() => parse_login_env(&output.stdout),
+        Ok(_) => Vec::new(),
+        Err(_) => {
+            let _ = Command::new("/bin/kill")
+                .args(["-KILL", &format!("-{pid}")])
+                .status();
+            Vec::new()
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn read_login_env(_shell: &Path, _timeout: Duration) -> Vec<(OsString, OsString)> {
+    Vec::new()
+}
+
+/// The `NAME=value` entries that follow the mark in `output`, without `SHELL_STATE`.
+#[cfg(unix)]
+fn parse_login_env(output: &[u8]) -> Vec<(OsString, OsString)> {
+    use std::os::unix::ffi::OsStringExt;
+    let mark = format!("\0{LOGIN_ENV_MARK}\0").into_bytes();
+    let Some(start) = output.windows(mark.len()).position(|part| part == mark) else {
+        return Vec::new();
+    };
+    output[start + mark.len()..]
+        .split(|byte| *byte == 0)
+        .filter_map(|entry| {
+            let equals = entry.iter().position(|byte| *byte == b'=')?;
+            let name = &entry[..equals];
+            let skip = name.is_empty() || SHELL_STATE.iter().any(|state| state.as_bytes() == name);
+            (!skip).then(|| {
+                (
+                    OsString::from_vec(name.to_vec()),
+                    OsString::from_vec(entry[equals + 1..].to_vec()),
+                )
+            })
+        })
+        .collect()
 }
 
 /// Give the process its own group: a stop ends the whole task, and a gateway does
@@ -233,10 +327,9 @@ pub async fn engine_run(task: String) -> Result<(), String> {
         return Err("Another task is in progress".into());
     }
     let mut command = Command::new("/bin/bash");
-    command
+    with_login_env(&mut command)
         .args(["-c", script])
         .current_dir(home())
-        .env("PATH", path_env())
         .env("VIS_INSTALLER", INSTALLER)
         .env("VIS_AGENT", launcher())
         .env("VIS_TRACK", track())
@@ -340,10 +433,9 @@ pub async fn engine_gateway_start() -> Result<(), String> {
     let output = fs::File::create(&log).map_err(|e| e.to_string())?;
     let errors = output.try_clone().map_err(|e| e.to_string())?;
     let mut command = Command::new(launcher());
-    command
+    with_login_env(&mut command)
         .args(["gateway", "start"])
         .current_dir(home())
-        .env("PATH", path_env())
         .stdin(Stdio::null())
         .stdout(output)
         .stderr(errors);
@@ -453,4 +545,81 @@ pub async fn engine_latest() -> Option<EngineLatest> {
     .await
     .ok()
     .flatten()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("vis-login-env-{name}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        /// A shell that runs `profile`, then the command that it gets after `-c`.
+        fn shell(&self, profile: &str) -> PathBuf {
+            let path = self.0.join("shell");
+            fs::write(
+                &path,
+                format!("#!/bin/sh\n{profile}\nexec /bin/sh -c \"$4\"\n"),
+            )
+            .unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn value(env: &[(OsString, OsString)], name: &str) -> Option<String> {
+        env.iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn reads_the_variables_that_the_profile_sets() {
+        let scratch = Scratch::new("profile");
+        let shell = scratch.shell(
+            "echo 'Using java version 25 in this shell.'\n\
+             export JAVA_HOME=/sdkman/java/current\n\
+             export PATH=/sdkman/java/current/bin:$PATH",
+        );
+        let env = read_login_env(&shell, Duration::from_secs(10));
+        assert_eq!(
+            value(&env, "JAVA_HOME").as_deref(),
+            Some("/sdkman/java/current")
+        );
+        assert!(value(&env, "PATH")
+            .unwrap()
+            .starts_with("/sdkman/java/current/bin:"));
+        assert_eq!(value(&env, "PWD"), None);
+    }
+
+    #[test]
+    fn gives_no_variables_when_the_profile_does_not_stop() {
+        let scratch = Scratch::new("hang");
+        let shell = scratch.shell("sleep 30");
+        let started = std::time::Instant::now();
+        assert!(read_login_env(&shell, Duration::from_millis(300)).is_empty());
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn gives_no_variables_when_the_profile_fails() {
+        let scratch = Scratch::new("fail");
+        let shell = scratch.shell("exit 3");
+        assert!(read_login_env(&shell, Duration::from_secs(10)).is_empty());
+    }
 }
