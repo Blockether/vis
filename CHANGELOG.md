@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Live views: the Companion app and the terminal show the text of a canvas item as full Markdown, as they show a message of the session. Headings, lists, task lists, tables, code blocks, diagrams, quotes, and links show in the item.
 - Companion: a large canvas board zooms, pans, and changes between near and far without stops. On a board of 200 items with long Markdown text, a step of a zoom takes less than 60 ms instead of about 300 ms, and the change to a far view takes about 20 ms instead of about 300 ms. An item with a diagram or a picture gets its full height when the content loads.
 - Companion: a large canvas board opens faster. The app lays out the largest board, 200 items with 16 arrows each, in less than 100 ms. On a board of that size, a long arrow can go in a straight line.
+- Live views: the default route of a canvas arrow is `elbow`. An elbow has only lines at right angles. It goes around the items and the other arrows, and it crosses another arrow only when no other way is free. In the Companion app, arrows into one item do not go on top of each other.
 
 ### Fixed
 

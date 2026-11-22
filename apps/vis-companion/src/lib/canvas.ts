@@ -54,12 +54,16 @@ const DETOUR_LANE_GAP = 10;
 const DETOUR_LEAD = 18;
 /** The room past the clearance that a detour first tries to keep from an item. */
 const DETOUR_BERTH = 8;
+/** A crossing of another arrow costs as much as a detour of this length. */
+const CROSSING_COST = 48;
 /** The most steps of one search for a way around the items. */
 const SEARCH_STEPS = 6000;
 /** The most steps of all the searches of one board. */
 const BOARD_STEPS = 60000;
 const CAPTION_GAP = 6;
 const PORT_STEP = 12;
+/** Facing ends nearer than this come in line, so that a line has no small step. */
+const ALIGN_REACH = 2 * PORT_STEP;
 const MAX_DEPTH = viewSchema.$defs.canvas_card.properties.parent['x-vis-max-depth'];
 
 export type CanvasFlow = 'right' | 'down';
@@ -665,6 +669,19 @@ function cutGaps(stops: number[], spans: [low: number, high: number][]): Uint8Ar
   return gaps;
 }
 
+/**
+ * The lanes in use that each gap of one rail crosses. A lane on a stop counts in the
+ * gap after it, so a run that goes on through the stop counts it once.
+ */
+function crossGaps(stops: number[], ats: number[]): Uint16Array {
+  const gaps = new Uint16Array(stops.length);
+  for (const at of ats) {
+    const gap = indexAbove(stops, at, false) - 1;
+    if (gap >= 0 && gap < stops.length - 1) gaps[gap]++;
+  }
+  return gaps;
+}
+
 interface Lane { axis: Axis; at: number; low: number; high: number }
 
 /** The lanes that the arrows of a board already use. */
@@ -673,6 +690,10 @@ interface Lanes {
   add: (lane: Lane) => void;
   /** The lanes along `axis` that are too near `at` to share, in the order of use. */
   near: (axis: Axis, at: number) => Lane[];
+  /** Each lane in use, in the order of use. */
+  all: Lane[];
+  /** Give back the lanes of one arrow, so that it can search again. */
+  remove: (gone: Lane[]) => void;
 }
 
 /** An index by place, so a step of a search reads the lanes of one rail only. */
@@ -681,12 +702,24 @@ function laneIndex(): Lanes {
   const key = (axis: Axis, at: number) => 2 * Math.floor(at / DETOUR_LANE_GAP) + (axis === 'x' ? 0 : 1);
   const lanes: Lanes = {
     count: 0,
+    all: [],
     add(lane) {
+      lanes.all.push(lane);
       const id = key(lane.axis, lane.at);
       const bucket = buckets.get(id);
       const entry = { lane, order: lanes.count++ };
       if (bucket) bucket.push(entry);
       else buckets.set(id, [entry]);
+    },
+    remove(gone) {
+      const set = new Set(gone);
+      lanes.all = lanes.all.filter((one) => !set.has(one));
+      for (const one of gone) {
+        const id = key(one.axis, one.at);
+        const bucket = buckets.get(id)?.filter(({ lane }) => lane !== one);
+        if (bucket?.length) buckets.set(id, bucket);
+        else buckets.delete(id);
+      }
     },
     near(axis, at) {
       const id = key(axis, at);
@@ -733,11 +766,20 @@ function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lanes, roo
   const relevant = obstacles.filter((r) => r.left < local.right && r.right > local.left && r.top < local.bottom && r.bottom > local.top);
   // The rails of a search cost as its steps do.
   budget.steps -= relevant.length;
+  // The lanes that a step can cross: a run along `x` crosses the lanes along `y`.
+  const across = (axis: Axis) => used.all.filter((r) => r.axis !== axis && (axis === 'x'
+    ? r.at > local.left && r.at < local.right && r.high > local.top && r.low < local.bottom
+    : r.at > local.top && r.at < local.bottom && r.high > local.left && r.low < local.right));
+  const crossable = { x: across('x'), y: across('y') };
   const rail = (axis: Axis): number[] => {
     const [lo, hi] = axis === 'x' ? ['left', 'right'] as const : ['top', 'bottom'] as const;
-    const values = [start[axis], end[axis]];
+    // A lane beside each end lets two arrows from one side turn one after the other.
+    const values = [start[axis], end[axis], start[axis] - DETOUR_LANE_GAP, start[axis] + DETOUR_LANE_GAP,
+      end[axis] - DETOUR_LANE_GAP, end[axis] + DETOUR_LANE_GAP];
     if (limit) values.push(limit[lo], limit[hi]);
     for (const r of relevant) values.push(r[lo] - DETOUR_LANE_GAP, r[lo], r[hi], r[hi] + DETOUR_LANE_GAP);
+    // A lane beside each arrow in the box lets a way pass on either side of it.
+    for (const r of crossable[axis]) values.push(r.at - DETOUR_LANE_GAP, r.at + DETOUR_LANE_GAP);
     return [...new Set(values.filter((n) => n >= local[lo] && n <= local[hi]))].sort((a, b) => a - b);
   };
   const xs = rail('x');
@@ -779,6 +821,8 @@ function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lanes, roo
   const columnCuts: Uint8Array[] = [];
   const rowLanes: Lane[][] = [];
   const columnLanes: Lane[][] = [];
+  const rowCrossings: Uint16Array[] = [];
+  const columnCrossings: Uint16Array[] = [];
   let steps = Math.min(budget.steps, SEARCH_STEPS);
   push({ cell: cellOf(start), axis: 2, cost: 0, score: heuristic(start) });
   while (pending.length && steps > 0) {
@@ -810,10 +854,17 @@ function findLanes(start: Point, end: Point, obstacles: Rect[], used: Lanes, roo
         : (columnCuts[i] ??= cutGaps(ys, relevant.filter((r) => here.x > r.left && here.x < r.right).map((r) => [r.top, r.bottom])));
       if (cuts[axis === 0 ? Math.min(i, i + di) : Math.min(j, j + dj)]) continue;
       const track = lane(here, there);
-      const lanes = axis === 0 ? (rowLanes[j] ??= used.near('x', here.y)) : (columnLanes[i] ??= used.near('y', here.x));
+      const lanes = axis === 0
+        ? (rowLanes[j] ??= used.near('x', here.y).filter((r) => r.high > local.left && r.low < local.right))
+        : (columnLanes[i] ??= used.near('y', here.x).filter((r) => r.high > local.top && r.low < local.bottom));
       const overlap = lanes.reduce((n, r) => n + Math.max(0, Math.min(r.high, track.high) - Math.max(r.low, track.low)), 0);
       if (separate && overlap > 1e-7) continue;
-      const cost = node.cost + track.high - track.low + (node.axis !== 2 && axis !== node.axis ? 16 : 0) + 20 * overlap;
+      const gap = axis === 0 ? Math.min(i, i + di) : Math.min(j, j + dj);
+      const crossings = axis === 0
+        ? (rowCrossings[j] ??= crossGaps(xs, crossable.x.filter((r) => here.y > r.low && here.y < r.high).map((r) => r.at)))[gap]
+        : (columnCrossings[i] ??= crossGaps(ys, crossable.y.filter((r) => here.x > r.low && here.x < r.high).map((r) => r.at)))[gap];
+      const cost = node.cost + track.high - track.low + (node.axis !== 2 && axis !== node.axis ? 16 : 0) + 20 * overlap +
+        CROSSING_COST * crossings;
       const key = cell * 3 + axis;
       if (cost >= (costs.get(key) ?? Infinity)) continue;
       costs.set(key, cost);
@@ -908,11 +959,31 @@ function detour(edge: LiveCanvasEdge, from: Port, to: Port, obstacles: Rect[], u
       const clear = obstacles.map((r) => ({ left: r.left - DETOUR_CLEARANCE, right: r.right + DETOUR_CLEARANCE,
         top: r.top - DETOUR_CLEARANCE, bottom: r.bottom + DETOUR_CLEARANCE }));
       if (hitsRoute(route, clear)) continue;
-      for (let i = 1; i < way.length; i++) if (distance(way[i - 1], way[i]) > 0) used.add(lane(way[i - 1], way[i]));
-      return { route, start, end };
+      const lanes: Lane[] = [];
+      for (let i = 1; i < way.length; i++) if (distance(way[i - 1], way[i]) > 0) lanes.push(lane(way[i - 1], way[i]));
+      return { route, start, end, lanes };
     }
   }
   return undefined;
+}
+
+/** The lanes of the straight runs of a route that run along an axis. */
+function lanesOf({ start, parts }: Route): Lane[] {
+  const lanes: Lane[] = [];
+  for (const { to, controls } of parts) {
+    if (!controls && (start.x === to.x) !== (start.y === to.y)) lanes.push(lane(start, to));
+    start = to;
+  }
+  return lanes;
+}
+
+/** How many times the lanes of one arrow cross the lanes in use. */
+function crossingsOf(mine: Lane[], used: Lane[]): number {
+  let n = 0;
+  for (const a of mine) for (const b of used) {
+    if (a.axis !== b.axis && b.at > a.low && b.at < a.high && a.at > b.low && a.at < b.high) n++;
+  }
+  return n;
 }
 
 function outlineOf(item: Item): Segment[] {
@@ -956,16 +1027,89 @@ function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boole
       }
     }
   }
+  // A small step near an end reads as a fault. When two ends face each other, one moves
+  // in line with the other if its side has room and keeps the step to its other ends.
+  const align = (port: Port, cross: number) => {
+    const b = port.item.box;
+    const axis = acrossAxis(port.side);
+    const length = axis === 'x' ? b.width : b.height;
+    const at = cross - b[axis];
+    const others = groups.get(port.item)!.get(port.side)!.filter((one) => one !== port);
+    if (at < 6 || at > length - 6 || others.some((one) => Math.abs(one.point[axis] - cross) < PORT_STEP)) return false;
+    port.point = portPoint(b, outlineOf(port.item), port.side, at);
+    return true;
+  };
+  for (const { from, to } of ports) {
+    if (from.side !== opposite[to.side] || from.direction !== outward[from.side] || to.direction !== outward[to.side]) continue;
+    const axis = acrossAxis(from.side);
+    const step = Math.abs(from.point[axis] - to.point[axis]);
+    if (step > 1e-3 && step <= ALIGN_REACH) align(to, from.point[axis]) || align(from, to.point[axis]);
+  }
   const bodies = Array.from(items, (item) => ({ item, rect: bounds(item.box) }));
   const labelObstacles = bodies.filter(({ item }) => item.card.kind !== 'frame').map(({ rect }) => rect);
   const labels: Point[] = [];
   const used = laneIndex();
   const budget = { steps: BOARD_STEPS, isCut: false };
-  for (const { id, from, to, edge } of ports) {
+  const routed = ports.map(({ id, from, to, edge }) => {
     const obstacles = bodies.filter(({ item }) => item !== from.item && item !== to.item &&
       !hasAncestor(from.item, item) && !hasAncestor(to.item, item)).map(({ rect }) => rect);
     const direct = makeRoute(edge, from, to);
-    const around = budget.steps > 0 && hitsRoute(direct.route, obstacles) ? detour(edge, from, to, obstacles, used, budget) : undefined;
+    const lanes = lanesOf(direct.route);
+    const isClear = !hitsRoute(direct.route, obstacles);
+    // An elbow searches when it crosses or shares a lane of an arrow before it.
+    const isElbow = edge.route === 'elbow';
+    const isSearched = !isClear || (isElbow && (crossingsOf(lanes, used.all) > 0 || lanes.some((one) =>
+      used.near(one.axis, one.at).some((r) => Math.min(r.high, one.high) - Math.max(r.low, one.low) > 1e-7))));
+    let around = budget.steps > 0 && isSearched ? detour(edge, from, to, obstacles, used, budget) : undefined;
+    // A clear elbow keeps its direct way, and an arrow after it can still move it.
+    if (!around && isElbow && isClear) around = { ...direct, lanes };
+    // A direct way holds its lanes too, so that the arrows after it see it.
+    (around?.lanes ?? lanes).forEach(used.add);
+    return { id, from, to, edge, obstacles, direct, around };
+  });
+  // An arrow did not see the arrows after it. When two arrows cross, both search
+  // again in each order, and the pair keeps the ways with the fewest crossings.
+  type Routed = (typeof routed)[number];
+  // A crossing of the two arrows counts once, as a crossing with a third arrow does.
+  const crossingsOfWays = (a: Lane[], b: Lane[]) => crossingsOf(a, used.all) + crossingsOf(b, used.all) - crossingsOf(a, b);
+  const tried = new Set<string>();
+  // The second look costs at most as many steps as the first, or as one search.
+  const again = { steps: Math.min(budget.steps, Math.max(SEARCH_STEPS, BOARD_STEPS - budget.steps)), isCut: false };
+  for (const one of routed) {
+    if (!one.around || again.steps <= 0 || !crossingsOf(one.around.lanes, used.all)) continue;
+    const other = routed.find((two) => two !== one && two.around && crossingsOf(one.around!.lanes, two.around.lanes));
+    if (!other || tried.has(`${other.id} ${one.id}`)) continue;
+    tried.add(`${one.id} ${other.id}`);
+    const pair = [one, other];
+    let best = pair.map((two) => two.around!);
+    let fewest = crossingsOfWays(one.around.lanes, other.around!.lanes);
+    // One of the two searches again, then the other, then both in each order.
+    for (const order of [[one], [other], [other, one], [one, other]]) {
+      if (!fewest || again.steps <= 0) break;
+      order.forEach((two) => used.remove(two.around!.lanes));
+      const ways = new Map<Routed, NonNullable<Routed['around']>>();
+      for (const two of order) {
+        const way = detour(two.edge, two.from, two.to, two.obstacles, used, again);
+        if (!way) break;
+        ways.set(two, way);
+        way.lanes.forEach(used.add);
+      }
+      if (ways.size === order.length) {
+        const count = crossingsOfWays((ways.get(one) ?? one.around).lanes, (ways.get(other) ?? other.around!).lanes);
+        if (count < fewest) {
+          fewest = count;
+          best = pair.map((two) => ways.get(two) ?? two.around!);
+        }
+      }
+      ways.forEach((way) => used.remove(way.lanes));
+      pair.filter((two) => !order.includes(two)).forEach((two) => used.remove(two.around!.lanes));
+      pair.forEach((two, i) => {
+        two.around = best[i];
+        two.around.lanes.forEach(used.add);
+      });
+    }
+  }
+  for (const { id, from, to, edge, direct, around } of routed) {
     const path = around ?? direct;
     const runs = around ? straightRuns(around.route) : [];
     let middle = runs[0]?.middle ?? routePoint(path.route);

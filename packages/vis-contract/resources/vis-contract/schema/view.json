@@ -6109,14 +6109,14 @@
       ]
     },
     "canvas_route": {
-      "description": "The path of an arrow: a curve, a straight line, or an elbow of lines at right angles.",
+      "description": "The path of an arrow. An elbow has only lines at right angles, and it goes around the items and the other arrows. A curve and a straight line take the shortest path.",
       "type": "string",
       "enum": [
         "curve",
         "straight",
         "elbow"
       ],
-      "default": "curve"
+      "default": "elbow"
     },
     "canvas_mark": {
       "description": "The mark at one end of an arrow.",

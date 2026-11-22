@@ -650,7 +650,6 @@
           "edges": [
             {
               "from": "start",
-              "route": "straight",
               "end_mark": "triangle"
             }
           ]
@@ -761,12 +760,10 @@
           "animation": "pulse",
           "edges": [
             {
-              "from": "verify",
-              "route": "straight"
+              "from": "verify"
             },
             {
-              "from": "tests",
-              "route": "straight"
+              "from": "tests"
             }
           ]
         },

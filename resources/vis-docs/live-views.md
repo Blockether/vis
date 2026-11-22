@@ -673,7 +673,7 @@ arrow ends at the item that holds it. An arrow from a missing item appears when 
 | Arrow option | Values and effect |
 |---|---|
 | `label`, `tone`, `color` | Add a label or set the color. |
-| `route` | `curve`, `straight`, or `elbow`. The default is `curve`. |
+| `route` | `curve`, `straight`, or `elbow`. The default is `elbow`. An elbow has only lines at right angles, and it goes around the items and the other arrows. |
 | `line` | Uses the same values as `border`. `none` orders the items without drawing an arrow. |
 | `start_mark`, `end_mark` | `none`, `arrow`, `triangle`, `circle`, `diamond`, or `bar`. The defaults are `none` at the start and `arrow` at the end. |
 | `is_active`, `animation` | Set `is_active=True` to animate the arrow. Choose `flow`, `dash`, `dot`, or `pulse`. The default is `flow`. |
