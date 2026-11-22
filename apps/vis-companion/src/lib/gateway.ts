@@ -138,6 +138,7 @@ import {
   type GatewayRequestDiagnosticStart,
   type GatewayStreamReason,
 } from './diagnostics';
+import { checkForegroundClock } from './wake';
 
 export class GatewayError extends Error {
   status: number;
@@ -674,14 +675,23 @@ async function readSseFrames(
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  // A CR at the end of a read can start a CRLF that the next read ends.
+  let carriedCr = '';
   for (;;) {
     const { value, done } = await reader.read();
     // A reader retired during a network handoff can wake after its replacement.
     // Its bytes belong to the old attempt and must never enter the current cursor.
     if (signal?.aborted) break;
     if (done) break;
-    if (value?.byteLength) onChunk?.();
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+    if (value?.byteLength) {
+      // After a silent WebView freeze, a read can run before any timer.
+      checkForegroundClock();
+      onChunk?.();
+    }
+    let text = carriedCr + decoder.decode(value, { stream: true });
+    carriedCr = text.endsWith('\r') ? '\r' : '';
+    if (carriedCr) text = text.slice(0, -1);
+    buffer += text.replace(/\r\n/g, '\n');
     let boundary: number;
     while ((boundary = buffer.indexOf('\n\n')) >= 0) {
       const frame = buffer.slice(0, boundary);

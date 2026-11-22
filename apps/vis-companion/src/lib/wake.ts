@@ -38,6 +38,21 @@ function checkClock(now: number): void {
   if (sleptAt === null && gap >= FOREGROUND_GAP_MS) foregroundGapMs = gap;
 }
 
+/**
+ * Check for a foreground freeze now. The interval calls this, and so does the first
+ * stream read after a freeze, which can run before the overdue interval.
+ */
+export function checkForegroundClock(): void {
+  if (!installed) return;
+  const now = Date.now();
+  if (document.visibilityState === 'hidden') {
+    lastClockCheckAt = now;
+    return;
+  }
+  checkClock(now);
+  if (foregroundGapMs > 0) schedule();
+}
+
 function emit(): void {
   timer = null;
   const now = Date.now();
@@ -119,15 +134,7 @@ function install(): void {
   window.addEventListener('focus', onVisibility);
   window.addEventListener('online', scheduleFromDom);
   lastClockCheckAt = Date.now();
-  clockCheck = setInterval(() => {
-    const now = Date.now();
-    if (document.visibilityState === 'hidden') {
-      lastClockCheckAt = now;
-      return;
-    }
-    checkClock(now);
-    if (foregroundGapMs > 0) schedule();
-  }, CLOCK_CHECK_MS);
+  clockCheck = setInterval(checkForegroundClock, CLOCK_CHECK_MS);
 
   // Native resume also works when DOM visibility is stale.
   // No-op on the web build, where the plugin is a stub.

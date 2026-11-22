@@ -90,6 +90,18 @@ describe.each<StreamKind>(['sessions', 'fleet'])('%s stream diagnostics', (kind)
     expect(diagnostics).not.toContain('private-token');
   });
 
+  // A proxy can end a CRLF frame in one read and send its last LF in the next.
+  // The frame then waited for the next frame, up to one heartbeat later.
+  it('delivers a CRLF frame at once when its last LF comes in the next read', async () => {
+    const stream = responseStream();
+    const onEvent = subscribe(kind);
+    await vi.advanceTimersByTimeAsync(0);
+    stream.write('data: {"type":"private-event"}\r\n\r');
+    stream.write('\n');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onEvent).toHaveBeenCalledTimes(1);
+  });
+
   it('distinguishes a stalled body from a connect timeout', async () => {
     const stream = responseStream();
     subscribe(kind);
