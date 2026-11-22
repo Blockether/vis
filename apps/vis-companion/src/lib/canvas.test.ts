@@ -111,7 +111,7 @@ describe('the layout of a canvas', () => {
       card('second-bottom', [], { edges: [edge('bottom', { line: 'none' })] }),
       card('second-top', ['top']),
     ]);
-    expect(layout.arrows.map((arrow) => arrow.id)).toEqual(['top>second-top']);
+    expect(layout.arrows.map((arrow) => [arrow.from, arrow.to])).toEqual([['top', 'second-top']]);
     expect(box(layout, 'top').x).toBe(box(layout, 'bottom').x);
     expect(box(layout, 'second-top').x).toBeGreaterThan(box(layout, 'top').x);
     expect(box(layout, 'second-top').x).toBe(box(layout, 'second-bottom').x);
@@ -124,7 +124,14 @@ describe('the layout of a canvas', () => {
       edges: [edge('plan'), edge('plan', { route: 'elbow' }), edge('gone'), edge('build')],
     })];
     const { arrows } = canvasLayout(cards);
-    expect(arrows.map((arrow) => [arrow.id, arrow.edge.route])).toEqual([['plan>build', 'elbow']]);
+    expect(arrows.map((arrow) => [arrow.from, arrow.to, arrow.edge.route])).toEqual([['plan', 'build', 'elbow']]);
+  });
+
+  it('draws one arrow for each pair when the ids hold the joining sign', () => {
+    const cards = [card('a'), card('a>b'), card('b>c', ['a']), card('c', ['a>b'])];
+    const arrows = canvasLayout(cards).arrows.map((arrow) => [arrow.from, arrow.to]);
+    expect(arrows).toEqual(expect.arrayContaining([['a', 'b>c'], ['a>b', 'c']]));
+    expect(arrows).toHaveLength(2);
   });
 
   it.each(['right', 'down'] as const)('holds the showcase and its captions in the %s flow', (flow) => {

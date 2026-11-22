@@ -55,7 +55,7 @@ function Mark({ mark, x, y, angle }: { mark: CanvasMark; x: number; y: number; a
 }
 
 function Arrow({ arrow }: { arrow: CanvasArrow }) {
-  const { id, path, edge, start, end } = arrow;
+  const { from, to, path, edge, start, end } = arrow;
   const { width, dash, isRound } = LINE[edge.line];
   const isMoving = edge.is_active && (edge.animation === 'flow' || edge.animation === 'dash');
   const hasDot = edge.is_active && (edge.animation === 'flow' || edge.animation === 'dot');
@@ -64,7 +64,7 @@ function Arrow({ arrow }: { arrow: CanvasArrow }) {
   const lineDash = isMoving ? WORK_DASH : (dash ?? (edge.tone === 'idle' ? '2 5' : undefined));
   return (
     <g
-      data-canvas-arrow={id}
+      data-canvas-arrow={`${from}>${to}`}
       data-canvas-color={edge.color}
       className={`${ink(edge)} ${
         isPulsing

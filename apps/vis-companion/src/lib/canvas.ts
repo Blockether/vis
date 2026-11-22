@@ -93,7 +93,7 @@ export interface CanvasBox extends Size, Point {
 export interface CanvasMarkPlace extends Point { angle: number }
 
 export interface CanvasArrow {
-  /** `<source>><target>`: the last edge of a pair wins. */
+  /** The source and the target as JSON, see `arrowId`: the last edge of a pair wins. */
   id: string;
   from: string;
   to: string;
@@ -1109,8 +1109,8 @@ function makeArrows(links: Map<string, Link>, items: Iterable<Item>, down: boole
   for (const one of routed) {
     if (!one.around || again.steps <= 0 || !crossingsOf(one.around.lanes, used.all)) continue;
     const other = routed.find((two) => two !== one && two.around && crossingsOf(one.around!.lanes, two.around.lanes));
-    if (!other || tried.has(`${other.id} ${one.id}`)) continue;
-    tried.add(`${one.id} ${other.id}`);
+    if (!other || tried.has(other.id + one.id)) continue;
+    tried.add(one.id + other.id);
     const pair = [one, other];
     let best = pair.map((two) => two.around!);
     let fewest = crossingsOfWays(one.around.lanes, other.around!.lanes);
@@ -1192,6 +1192,9 @@ function layoutKey(cards: readonly LiveCanvasCard[], measures: ReadonlyMap<strin
  * as a progress or a tone, gives the last layout again with the new edges. Then the
  * board draws again only the items and the arrows that changed.
  */
+/** One key for each pair of items. An id can hold any text, so a joined text such as `a>b` is not unique. */
+const arrowId = (from: string, to: string) => JSON.stringify([from, to]);
+
 export function keptCanvasLayout() {
   let held: { key: string; layout: CanvasLayout } | undefined;
   return (cards: readonly LiveCanvasCard[], measures?: ReadonlyMap<string, CanvasMeasure>,
@@ -1203,7 +1206,7 @@ export function keptCanvasLayout() {
     }
     // The last edge of a pair wins, as in the layout.
     const edges = new Map<string, LiveCanvasEdge>();
-    for (const card of cards) for (const edge of card.edges) edges.set(`${edge.from}>${card.id}`, edge);
+    for (const card of cards) for (const edge of card.edges) edges.set(arrowId(edge.from, card.id), edge);
     const { layout } = held;
     if (layout.arrows.every((arrow) => edges.get(arrow.id) === arrow.edge)) return layout;
     held = { key, layout: { ...layout, arrows: layout.arrows.map((arrow) => {
@@ -1234,7 +1237,7 @@ export function canvasLayout(
   const links = new Map<string, Link>();
   for (const to of items.values()) for (const edge of to.card.edges) {
     const from = items.get(edge.from);
-    if (from && from !== to) links.set(`${from.box.id}>${to.box.id}`, { from, to, edge });
+    if (from && from !== to) links.set(arrowId(from.box.id, to.box.id), { from, to, edge });
   }
   for (const link of links.values()) orderLink(link);
   const { width, height } = arrange(roots, down);
