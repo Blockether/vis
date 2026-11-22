@@ -173,6 +173,51 @@
                              ext
                              (env/sym->py-name (extension/symbol-binding ext tool)))))
 
+(defn- sync-plan!
+  "Bind and remove the sandbox names of `plan`, then record `plan-key` in `sync-atom`."
+  [python-context environment plan sync-atom plan-key]
+  (let [bound
+        (keep (fn [[op value]]
+                (when (= op :bind) value))
+              plan)
+
+        bound-names
+        (set (map (comp env/sym->py-name :sym) bound))
+
+        ;; A reload can drop a row, or a symbol of a row, so no step of `plan` removes
+        ;; its name. Remove each name that the last sync bound and this one does not (#415).
+        ;; Keep a name that the sandbox now reserves, for example for a new root. Its value
+        ;; replaced the tool, so the reset below also stops tracking the name.
+        unbound
+        (some->> (:bound-extension-symbols environment)
+                 deref
+                 (remove #(bound-names (env/sym->py-name %)))
+                 not-empty
+                 (env/unowned-bindings python-context))]
+
+    ;; A failed sync leaves no key, so the next sync binds again.
+    (some-> sync-atom (reset! {:env environment}))
+    ;; One batch for each direction, so a sandbox build pays a few guest calls, not
+    ;; several for each symbol. A name that an active extension binds stays bound.
+    (env/set-python-bindings! python-context bound)
+    (env/remove-python-bindings!
+      python-context
+      (concat (keep (fn [[op value]]
+                      (when (and (= op :remove) (not (bound-names (env/sym->py-name value))))
+                        value))
+                    plan)
+              unbound))
+    (some-> (:bound-extension-symbols environment)
+            (reset! (set (keep :sym bound))))
+    (some-> sync-atom (swap! assoc :key plan-key))
+    nil))
+
+(defn- plan-shape
+  "A sync plan step without its tool fn. Each sync wraps the tools again, so the fn
+   is new each time; the extension rows in the plan key decide a changed tool."
+  [[op value]]
+  (if (and (= op :bind) (fn? (:val value))) [op (dissoc value :val)] [op value]))
+
 (defn sync-extension-symbols-into!
   "The symbol sync itself, against a context handed in EXPLICITLY.
 
@@ -180,9 +225,19 @@
    that builds a session's sandbox runs this with its own fresh context. That
    caller cannot reach the context through `environment`, because doing so
    would re-enter the very delay it is running inside, and a Clojure delay
-   answers re-entry with a deadlock — the session's first turn would hang."
+   answers re-entry with a deadlock — the session's first turn would hang.
+
+   With an `:extension-sync` atom, the tools read the environment of the last sync at
+   call time. A sync whose plan is the same as the last one for this context then makes
+   no guest call: it only gives the tools the new environment."
   [python-context environment active-extensions]
-  (let [installed
+  (let [sync-atom
+        (:extension-sync environment)
+
+        env-thunk
+        (if sync-atom #(or (:env @sync-atom) environment) (constantly environment))
+
+        installed
         (vec (or (some-> (:extensions environment)
                          deref)
                  []))
@@ -199,7 +254,7 @@
                       (into {}
                             (map (juxt :ext.symbol/symbol identity) (extension/ext-symbols ext)))]
                 [sym f]
-                (try (extension/wrap-extension ext environment) (catch Throwable _ nil))]
+                (try (extension/wrap-extension-thunked ext env-thunk) (catch Throwable _ nil))]
 
             (let [target
                   (extension/sandbox-binding ext sym)
@@ -229,37 +284,12 @@
                   :result (extension/symbol-result-line entry)}]
                 [:remove target]))))
 
-        bound
-        (keep (fn [[op value]]
-                (when (= op :bind) value))
-              plan)
+        plan-key
+        [python-context installed (mapv plan-shape plan)]]
 
-        bound-names
-        (set (map (comp env/sym->py-name :sym) bound))
-
-        ;; A reload can drop a row, or a symbol of a row, so no step of `plan` removes
-        ;; its name. Remove each name that the last sync bound and this one does not (#415).
-        ;; Keep a name that the sandbox now reserves, for example for a new root. Its value
-        ;; replaced the tool, so the reset below also stops tracking the name.
-        unbound
-        (some->> (:bound-extension-symbols environment)
-                 deref
-                 (remove #(bound-names (env/sym->py-name %)))
-                 not-empty
-                 (env/unowned-bindings python-context))]
-
-    ;; One batch for each direction, so a sandbox build pays a few guest calls, not
-    ;; several for each symbol. A name that an active extension binds stays bound.
-    (env/set-python-bindings! python-context bound)
-    (env/remove-python-bindings!
-      python-context
-      (concat (keep (fn [[op value]]
-                      (when (and (= op :remove) (not (bound-names (env/sym->py-name value))))
-                        value))
-                    plan)
-              unbound))
-    (some-> (:bound-extension-symbols environment)
-            (reset! (set (keep :sym bound))))))
+    (if (and sync-atom (= plan-key (:key @sync-atom)))
+      (swap! sync-atom assoc :env environment)
+      (sync-plan! python-context environment plan sync-atom plan-key))))
 
 (defn sync-active-extension-symbols!
   "Make the Python sandbox's callable globals match active extension state.
@@ -908,7 +938,8 @@
                   :session-title-atom session-title-atom
                   :extensions (atom [])
                   :active-extensions (atom [])
-                  :bound-extension-symbols (atom #{}))]
+                  :bound-extension-symbols (atom #{})
+                  :extension-sync (atom nil))]
 
         (reset! environment-atom env)
         (swap! state-atom assoc :environment env :session-id session-id)

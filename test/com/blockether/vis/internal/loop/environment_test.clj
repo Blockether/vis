@@ -127,7 +127,7 @@
         ext
         (py-extension)]
 
-    (with-redefs [extension/wrap-extension
+    (with-redefs [extension/wrap-extension-thunked
                   (fn [ext _]
                     (into {}
                           (map (fn [entry]
@@ -468,7 +468,7 @@
           names
           #(set (map env/sym->py-name %))]
 
-      (with-redefs [extension/wrap-extension
+      (with-redefs [extension/wrap-extension-thunked
                     (fn [ext _]
                       (into {}
                             (map (fn [entry]
@@ -503,3 +503,49 @@
           (sync!)
           (expect (= (disj bound "py.lint_code" "py.repl_stop") @removed))
           (expect (empty? @(:bound-extension-symbols environment))))))))
+
+(defdescribe
+  unchanged-sync-test
+  (it
+    "binds nothing again for an unchanged plan, and the tools read the new environment"
+    (let [bind-calls
+          (atom 0)
+
+          tools
+          (atom {})
+
+          ext
+          (py-extension)
+
+          base
+          {:extensions (atom [ext]) :bound-extension-symbols (atom #{}) :extension-sync (atom nil)}
+
+          sync!
+          #(loop-env/sync-extension-symbols-into! ::context % @(:extensions %))]
+
+      (with-redefs [extension/wrap-extension-thunked
+                    (fn [ext env-thunk]
+                      (into {}
+                            (map (fn [entry]
+                                   [(:ext.symbol/symbol entry)
+                                    (fn []
+                                      (env-thunk))]))
+                            (extension/ext-symbols ext)))
+
+                    env/set-python-bindings!
+                    (fn [_ entries]
+                      (swap! bind-calls inc)
+                      (swap! tools into (map (juxt (comp env/sym->py-name :sym) :val)) entries))
+
+                    env/remove-python-bindings!
+                    (fn [_ _])]
+
+        (sync! (assoc base :turn 1))
+        (sync! (assoc base :turn 2))
+        (expect (= 1 @bind-calls))
+        (expect (= 2 (:turn ((get @tools "py.lint_code")))))
+        ;; A reload gives new rows, so the tools bind again.
+        (swap! (:extensions base) (fn [[row]]
+                                    [(assoc row :reloaded true)]))
+        (sync! (assoc base :turn 3))
+        (expect (= 2 @bind-calls))))))

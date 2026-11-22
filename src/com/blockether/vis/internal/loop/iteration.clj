@@ -2262,7 +2262,8 @@
         (prompt/extensions-snapshot active-exts)
 
         _
-        (loop-env/sync-active-extension-symbols! environment active-exts)
+        (perf/timed :turn/sync-symbols
+                    (loop-env/sync-active-extension-symbols! environment active-exts))
 
         session-snapshot
         (fn []
