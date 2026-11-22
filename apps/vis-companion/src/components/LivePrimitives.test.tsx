@@ -210,6 +210,72 @@ describe('the complete live vocabulary', () => {
   });
 });
 
+describe('a canvas', () => {
+  const board = (more: object = {}): LiveView => {
+    const node = all(view().nodes).find((n) => n.type === 'canvas');
+    if (!node) throw new Error('the fixture holds a canvas');
+    return { ...view(), nodes: [{ ...node, ...more }] };
+  };
+  const cards = () =>
+    [...document.querySelectorAll<HTMLElement>('[data-canvas-card]')].map((card) => card.dataset.canvasCard);
+  const arrows = () =>
+    [...document.querySelectorAll<SVGElement>('[data-canvas-arrow]')].map((arrow) => arrow.dataset.canvasArrow);
+
+  it('draws each card with its arrows and sends the card that a person presses', () => {
+    const onSelect = vi.fn();
+    render(<LiveViewPanel view={board()} onSelect={onSelect} />);
+    expect(cards()).toEqual(['plan', 'build', 'docs', 'verify', 'ship']);
+    expect(arrows()).toEqual(['plan>build', 'plan>docs', 'build>verify', 'docs>verify', 'verify>ship']);
+    expect(
+      screen.getAllByRole('button', { pressed: true }).map((card) => card.dataset.canvasCard),
+    ).toEqual(['build']);
+    fireEvent.click(document.querySelector('[data-canvas-card="verify"]')!);
+    expect(onSelect).toHaveBeenCalledWith('canvas', ['verify']);
+  });
+
+  it('gives a person no camera control on a locked board', () => {
+    const mounted = render(<LiveViewPanel view={board()} />);
+    expect(screen.getByRole('button', { name: 'Fit the board' })).toBeVisible();
+    mounted.rerender(<LiveViewPanel view={board({ is_locked: true })} />);
+    expect(screen.queryByRole('group', { name: 'Canvas camera' })).toBeNull();
+  });
+
+  it('moves the cards, the arrows and the selection with their patches', () => {
+    let v = board();
+    const mounted = render(<LiveViewPanel view={v} onSelect={vi.fn()} />);
+    v = applyLivePatch(v, {
+      view_id: v.id,
+      patch: {
+        seq: 1,
+        ops: [
+          {
+            op: 'append',
+            node_id: 'canvas',
+            cards: [
+              { id: 'ship', title: 'Publish', edges: [{ from: 'build' }] },
+              { id: 'note', title: 'Note', edges: [{ from: 'ship' }] },
+            ],
+          },
+          { op: 'remove', node_id: 'canvas', item_ids: ['docs'] },
+          { op: 'set', node_id: 'canvas', selected_ids: ['note', 'docs'] },
+        ],
+      },
+    });
+    mounted.rerender(<LiveViewPanel view={v} onSelect={vi.fn()} />);
+    expect(cards()).toEqual(['plan', 'build', 'verify', 'ship', 'note']);
+    expect(arrows()).toEqual(['plan>build', 'build>verify', 'build>ship', 'ship>note']);
+    expect(
+      screen.getAllByRole('button', { pressed: true }).map((card) => card.dataset.canvasCard),
+    ).toEqual(['note']);
+    v = applyLivePatch(v, {
+      view_id: v.id,
+      patch: { seq: 2, ops: [{ op: 'clear', node_id: 'canvas' }] },
+    });
+    mounted.rerender(<LiveViewPanel view={v} onSelect={vi.fn()} />);
+    expect(screen.getByText('no cards yet')).toBeVisible();
+  });
+});
+
 describe('a timeline and a line of separated items', () => {
   const lanes = () => {
     const node = all(view().nodes).find((n) => n.type === 'timeline');

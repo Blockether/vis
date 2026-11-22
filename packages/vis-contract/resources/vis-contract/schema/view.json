@@ -2188,6 +2188,61 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "description": "A board of cards with arrows between them, which a person can pan and zoom. A surface puts the cards in columns: a card goes one column after the last card that it comes from. `column` and `row` put a card in a fixed place.",
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "canvas"
+            },
+            "zoom": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 4,
+              "description": "The scale of the board: 1 shows a card at its full size. 0 or no value fits the focus in the surface."
+            },
+            "focus": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "The id of the card that the surface puts in the centre. An empty string or no value shows the whole board. An id that no card has shows the whole board until that card arrives."
+            },
+            "is_locked": {
+              "type": "boolean",
+              "description": "True when a person cannot pan or zoom the board. The owner still moves it with `zoom` and `focus`."
+            },
+            "is_selectable": {
+              "type": "boolean"
+            },
+            "selected_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              },
+              "uniqueItems": true
+            },
+            "cards": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/canvas_card"
+              },
+              "minItems": 0,
+              "maxItems": 200
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "cards"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "properties": {
             "id": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -3293,6 +3348,7 @@
           "diff": ["label", "new_revision", "old_revision", "patch"],
           "image": ["label"],
           "scene": ["background", "fov", "is_wrapping", "label", "tick_ms"],
+          "canvas": ["focus", "is_locked", "is_selectable", "label", "selected_ids", "zoom"],
           "thread": ["label"],
           "checkbox": ["label"],
           "datetime": ["label"],
@@ -3314,7 +3370,8 @@
           "chart": ["series"],
           "table": ["rows", "groups"],
           "link": ["links"],
-          "scene": ["objects", "meshes"]
+          "scene": ["objects", "meshes"],
+          "canvas": ["cards"]
         },
         "remove": {
           "stat": ["item_ids"],
@@ -3326,6 +3383,7 @@
           "table": ["item_ids"],
           "link": ["item_ids"],
           "scene": ["item_ids"],
+          "canvas": ["item_ids"],
           "diff": ["item_ids"]
         },
         "clear": {
@@ -3338,7 +3396,8 @@
           "chart": [],
           "table": [],
           "link": [],
-          "scene": []
+          "scene": [],
+          "canvas": []
         },
         "replace": {
           "table": ["rows"]
@@ -3520,6 +3579,18 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 2000
+            },
+            "zoom": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 4
+            },
+            "focus": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "is_locked": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -3628,6 +3699,14 @@
               },
               "minItems": 0,
               "maxItems": 32
+            },
+            "cards": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/canvas_card"
+              },
+              "minItems": 0,
+              "maxItems": 200
             }
           },
           "required": [
@@ -5619,6 +5698,84 @@
       },
       "required": [
         "id"
+      ]
+    },
+    "canvas_card": {
+      "description": "One card of a canvas. An append with the id of a card replaces that whole card.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "title": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "meta": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "tone": {
+          "$ref": "#/$defs/tone"
+        },
+        "badges": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "maxItems": 8
+        },
+        "column": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "The step of the card in the flow. A wide surface puts the steps from left to right and a narrow surface puts them from top to bottom. Without it, the card goes one step after the last card that it comes from."
+        },
+        "row": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "The place of the card among the cards of its step. Without it, the cards of a step keep the order of the canvas."
+        },
+        "edges": {
+          "description": "The arrows that end at this card.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/canvas_edge"
+          },
+          "maxItems": 16
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ]
+    },
+    "canvas_edge": {
+      "description": "An arrow to the card that holds it. An arrow from a card that the canvas does not hold shows when that card arrives.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "description": "The id of the card where the arrow starts.",
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "label": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "tone": {
+          "$ref": "#/$defs/tone"
+        },
+        "is_active": {
+          "type": "boolean",
+          "description": "True when work moves along the arrow now. A surface animates it."
+        }
+      },
+      "required": [
+        "from"
       ]
     }
   },

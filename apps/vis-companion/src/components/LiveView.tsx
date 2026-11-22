@@ -35,6 +35,7 @@ import {
 import { InlineMarkdown } from './ChatContent';
 import { HumanInputFieldRow } from './HumanInputPrompt';
 import { DiffNodeView, ThreadNodeView, type AppNodeActions } from './AppNodes';
+import { LiveCanvas } from './LiveCanvas';
 import { LiveScene } from './LiveScene';
 import { ImageNodeView } from './AppImage';
 import { humanInputDefaultValue, type HumanInputValue } from '../lib/human-input';
@@ -167,6 +168,7 @@ const EMPTY_LINE = {
   log: 'no output yet',
   table: 'no rows yet',
   link: 'no links',
+  canvas: 'no cards yet',
 } as const;
 
 /** How many matching lines one page of search results holds. */
@@ -253,6 +255,16 @@ const TONE_MARK: Record<LiveTone, typeof CircleDotIcon> = {
 export function ToneMark({ tone, className = 'size-3' }: { tone: LiveTone; className?: string }) {
   const Drawn = TONE_MARK[tone];
   return <Drawn className={`${className} shrink-0 ${MARK_INK[tone]}`} />;
+}
+
+/** The mark of a canvas card or arrow, with the word of its state for a screen reader. */
+function canvasMark(tone: LiveTone, className?: string) {
+  return (
+    <>
+      <ToneMark tone={tone} className={className} />
+      <span className="sr-only">{TONE_WORD[tone]}</span>
+    </>
+  );
 }
 
 /**
@@ -2327,6 +2339,12 @@ function NodeCell({
           )}
           {node.type === 'thread' && <ThreadNodeView node={node} actions={presentation.app} />}
           {node.type === 'scene' && <LiveScene node={node} />}
+          {node.type === 'canvas' &&
+            (node.cards.length === 0 ? (
+              <Empty>{EMPTY_LINE.canvas}</Empty>
+            ) : (
+              <LiveCanvas node={node} mark={canvasMark} onSelect={onSelect} />
+            ))}
           {node.type === 'image' && <ImageNodeView node={node} />}
         </div>
       )}

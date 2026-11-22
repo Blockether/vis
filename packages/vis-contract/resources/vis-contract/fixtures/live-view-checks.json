@@ -603,6 +603,84 @@
             ]
           },
           {
+            "id": "canvas",
+            "type": "canvas",
+            "label": "Canvas",
+            "is_selectable": true,
+            "selected_ids": [
+              "build"
+            ],
+            "cards": [
+              {
+                "id": "plan",
+                "title": "Plan",
+                "text": "Split the work into three tasks.",
+                "meta": "12 s",
+                "tone": "ok",
+                "badges": [
+                  "lead"
+                ]
+              },
+              {
+                "id": "build",
+                "title": "Build",
+                "text": "Add the canvas node to the contract.",
+                "meta": "2 min",
+                "tone": "running",
+                "badges": [
+                  "implement"
+                ],
+                "edges": [
+                  {
+                    "from": "plan",
+                    "label": "spec",
+                    "tone": "ok"
+                  }
+                ]
+              },
+              {
+                "id": "docs",
+                "title": "Docs",
+                "text": "Write the page for extension authors.",
+                "tone": "running",
+                "edges": [
+                  {
+                    "from": "plan"
+                  }
+                ]
+              },
+              {
+                "id": "verify",
+                "title": "Verify",
+                "meta": "waits",
+                "tone": "idle",
+                "badges": [
+                  "verify"
+                ],
+                "edges": [
+                  {
+                    "from": "build",
+                    "label": "diff",
+                    "is_active": true
+                  },
+                  {
+                    "from": "docs",
+                    "tone": "warn"
+                  }
+                ]
+              },
+              {
+                "id": "ship",
+                "title": "Ship",
+                "edges": [
+                  {
+                    "from": "verify"
+                  }
+                ]
+              }
+            ]
+          },
+          {
             "id": "general",
             "type": "thread",
             "label": "General discussion",
@@ -3085,6 +3163,177 @@
         ],
         "text": [
           "node d /value - the value is outside the domain of the input (input)"
+        ]
+      }
+    },
+    {
+      "name": "two canvas cards with one id are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "x",
+                "title": "One"
+              },
+              {
+                "id": "x",
+                "title": "Two"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards - two items have the id \"x\" (unique)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas selection that names no card is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "text": "old",
+                "tone": "ok"
+              },
+              {
+                "id": "b",
+                "title": "B",
+                "edges": [
+                  {
+                    "from": "a"
+                  }
+                ]
+              }
+            ],
+            "is_selectable": true,
+            "selected_ids": [
+              "zz"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /selected_ids - a selected id names no card of the canvas (selection)"
+        ]
+      }
+    },
+    {
+      "name": "selected ids on a canvas that is not selectable are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "text": "old",
+                "tone": "ok"
+              },
+              {
+                "id": "b",
+                "title": "B",
+                "edges": [
+                  {
+                    "from": "a"
+                  }
+                ]
+              }
+            ],
+            "selected_ids": [
+              "a"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /selected_ids - only a selectable table, card or canvas takes this property (selection)"
+        ]
+      }
+    },
+    {
+      "name": "a canvas edge with a key that the contract does not have is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A"
+              },
+              {
+                "id": "b",
+                "title": "B",
+                "edges": [
+                  {
+                    "from": "a",
+                    "to": "b"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "cv"
+        ],
+        "text": [
+          "node cv /cards/1/edges/0 - unknown property \"to\" (additionalProperties)"
         ]
       }
     }
@@ -6622,6 +6871,230 @@
           "value"
         ],
         "value": "2026-06-30"
+      }
+    },
+    {
+      "name": "an append replaces a whole canvas card by id and adds a new card after it",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "text": "old",
+                "tone": "ok"
+              },
+              {
+                "id": "b",
+                "title": "B",
+                "edges": [
+                  {
+                    "from": "a"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "append",
+          "node_id": "cv",
+          "cards": [
+            {
+              "id": "a",
+              "title": "A2"
+            },
+            {
+              "id": "c",
+              "title": "C",
+              "edges": [
+                {
+                  "from": "b",
+                  "is_active": true
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "cards"
+        ],
+        "value": [
+          {
+            "id": "a",
+            "title": "A2"
+          },
+          {
+            "id": "b",
+            "title": "B",
+            "edges": [
+              {
+                "from": "a"
+              }
+            ]
+          },
+          {
+            "id": "c",
+            "title": "C",
+            "edges": [
+              {
+                "from": "b",
+                "is_active": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a remove of a canvas card drops it from the selection",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "text": "old",
+                "tone": "ok"
+              },
+              {
+                "id": "b",
+                "title": "B",
+                "edges": [
+                  {
+                    "from": "a"
+                  }
+                ]
+              }
+            ],
+            "is_selectable": true,
+            "selected_ids": [
+              "a",
+              "b"
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "remove",
+          "node_id": "cv",
+          "item_ids": [
+            "a"
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "selected_ids"
+        ],
+        "value": [
+          "b"
+        ]
+      }
+    },
+    {
+      "name": "a set moves the camera of a canvas",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "text": "old",
+                "tone": "ok"
+              },
+              {
+                "id": "b",
+                "title": "B",
+                "edges": [
+                  {
+                    "from": "a"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "cv",
+          "zoom": 1.5,
+          "focus": "b",
+          "is_locked": true
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "zoom"
+        ],
+        "value": 1.5
+      }
+    },
+    {
+      "name": "a selection of a card that the canvas does not hold is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "cv",
+            "type": "canvas",
+            "cards": [
+              {
+                "id": "a",
+                "title": "A",
+                "text": "old",
+                "tone": "ok"
+              },
+              {
+                "id": "b",
+                "title": "B",
+                "edges": [
+                  {
+                    "from": "a"
+                  }
+                ]
+              }
+            ],
+            "is_selectable": true
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "cv",
+          "selected_ids": [
+            "zz"
+          ]
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node cv /selected_ids - a selected id names no card of the canvas (selection)"
       }
     }
   ]

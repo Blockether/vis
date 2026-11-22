@@ -370,7 +370,7 @@
         (str/includes?
           (refusal #(patched (view (assoc (table-node :insertion) :rows [(row "a" "A" "1")]))
                              {:op :set :node-id "t" :selected-ids ["a"]}))
-          "node t /selected_ids - only a selectable table or card takes this property (selection)")))))
+          "node t /selected_ids - only a selectable table, card or canvas takes this property (selection)")))))
 
 ;; Regression, issue #428: a table refreshed with clear and upsert lost the person's
 ;; selection, because clear prunes it before the new rows arrive.
@@ -886,6 +886,63 @@
       (expect (str/starts-with? (str (refusal #(live/parse-markdown
                                                  "# T\n\n> **exploded**\n\n### X\n[ok] **hi**")))
                                 "no view ends \"exploded\""))))
+
+(defn- canvas-node
+  []
+  {:id "g"
+   :type :canvas
+   :is-selectable true
+   :selected-ids ["build"]
+   :cards [{:id "plan" :title "Plan" :tone :ok}
+           {:id "build"
+            :title "Build"
+            :tone :running
+            :meta "2 m"
+            :edges [{:from "plan" :label "spec" :tone :ok :is-active true}]}]})
+
+(defdescribe
+  canvas-test
+  (it "replaces a whole card by id and adds a new card after the cards before it"
+      (let [v (patched (view (canvas-node))
+                       {:op :append
+                        :node-id "g"
+                        :cards [{:id "build" :title "Build" :tone :ok}
+                                {:id "ship" :title "Ship" :edges [{:from "build"}]}]})]
+        (expect (= [{:id "plan" :title "Plan" :tone :ok} {:id "build" :title "Build" :tone :ok}
+                    {:id "ship" :title "Ship" :edges [{:from "build"}]}]
+                   (:cards (node v "g"))))))
+  (it "drops a removed card from the selection, so no surface marks a card that is gone"
+      (let [removed
+            (patched (view (canvas-node)) {:op :remove :node-id "g" :item-ids ["build"]})
+
+            cleared
+            (patched (view (canvas-node)) {:op :clear :node-id "g"})]
+
+        (expect (= [] (:selected-ids (node removed "g"))))
+        (expect (= {:cards [] :selected-ids []}
+                   (select-keys (node cleared "g") [:cards :selected-ids])))))
+  (it "refuses a selection that names no card, and a selection on a canvas that is not selectable"
+      (expect (str/includes?
+                (refusal #(patched (view (canvas-node))
+                                   {:op :set :node-id "g" :selected-ids ["missing"]}))
+                "node g /selected_ids - a selected id names no card of the canvas (selection)"))
+      (expect (some? (refusal #(patched (view (dissoc (canvas-node) :is-selectable :selected-ids))
+                                        {:op :set :node-id "g" :selected-ids ["plan"]})))))
+  (it "lets the owner move the camera and lock it"
+      (let [v (patched (view (canvas-node))
+                       {:op :set :node-id "g" :zoom 1.5 :focus "plan" :is-locked true})]
+        (expect (= {:zoom 1.5 :focus "plan" :is-locked true}
+                   (select-keys (node v "g") [:zoom :focus :is-locked])))))
+  (it "reads its markdown back to the same cards, arrows and camera"
+      (let [v
+            (view (assoc (canvas-node)
+                    :zoom 1.0
+                    :focus "build"))
+
+            back
+            (live/parse-markdown (live/->markdown v))]
+
+        (expect (= (dissoc (node v "g") :id) (dissoc (first (:nodes (:view back))) :id))))))
 
 (defn- scene-node
   []

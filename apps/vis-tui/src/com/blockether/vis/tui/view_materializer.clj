@@ -221,12 +221,12 @@
               (sort given)))))
 
 (defn- prune-selected
-  "Drop selected ids whose rows no longer exist, without adding selection metadata to a
-   table that never declared the control."
+  "Drop selected ids whose rows or cards no longer exist, without adding selection
+   metadata to a node that never declared the control."
   [node]
   (if (contains? node :selected-ids)
-    (let [row-ids (set (map :id (:rows node)))]
-      (update node :selected-ids #(filterv row-ids %)))
+    (let [held (set (map :id (get node (:key (spec/item-bounds (:type node))))))]
+      (update node :selected-ids #(filterv held %)))
     node))
 
 (defn- app-rule
@@ -238,13 +238,13 @@
       (if (= :app/invalid (:type (ex-data e))) (invalid-patch! (:reason (ex-data e))) (throw e)))))
 
 (defn- apply-remove
-  "A node without the named items. Removing table rows also prunes transient
-   selection. A diff removes threads by id through the shared app rule."
+  "A node without the named items. Removing table rows or canvas cards also prunes
+   transient selection. A diff removes threads by id through the shared app rule."
   [node op]
   (if (= :diff (:type node))
     (app/remove-threads node (:item-ids op))
     (cond-> (update node (:key (spec/item-bounds (:type node))) without-ids (:item-ids op))
-      (= :table (:type node))
+      (#{:table :canvas} (:type node))
       prune-selected)))
 
 (defn- apply-clear
@@ -260,7 +260,7 @@
         (dissoc :line-tones))
 
     (cond-> (assoc node (:key (spec/item-bounds (:type node))) [])
-      (= :table (:type node))
+      (#{:table :canvas} (:type node))
       prune-selected)))
 
 (defn- apply-replace
@@ -718,6 +718,20 @@
                              (str label ": " (str/join ", " (map plain-number values))))
                            series))))
 
+(defmethod node->markdown :canvas
+  [{:keys [cards] :as node} _]
+  (marked-lines :canvas
+                (cons (data-line (select-keys node
+                                              [:zoom :focus :is-locked :is-selectable :selected-ids
+                                               :cards]))
+                      (map (fn [{:keys [title meta tone edges]}]
+                             (str "- "
+                                  (tone-tag tone)
+                                  title
+                                  (when meta (str " — " meta))
+                                  (when (seq edges) (str " ← " (str/join ", " (map :from edges))))))
+                           cards))))
+
 (defmethod node->markdown :scene
   [{:keys [width height objects] :as node} _]
   (marked-lines :scene
@@ -1053,6 +1067,21 @@
                  (with-meta (assoc node :objects shown)
                    {:elided (- (count objects) (count shown))}))
 
+               :canvas
+               (let [cards
+                     (:cards node)
+
+                     limit
+                     (long table-rows)
+
+                     shown
+                     (if (> (count cards) limit) (subvec cards 0 limit) cards)]
+
+                 (with-meta (-> node
+                                (assoc :cards shown)
+                                (dissoc :is-selectable :selected-ids))
+                   {:elided (- (count cards) (count shown))}))
+
                node))
            (leaf-nodes (:nodes view)))]
 
@@ -1207,7 +1236,7 @@
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
   (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image
-          :badge :list :chart}
+          :badge :list :chart :canvas}
         (vals spec/field-types)))
 
 (def ^:private presentation-marker
@@ -1384,6 +1413,13 @@
   "The items of a data line, each `:tone` a keyword again."
   [items]
   (mapv #(cond-> % (:tone %) (update :tone keyword)) items))
+
+(defmethod markdown->node :canvas
+  [_ {:keys [at lines]}]
+  (update (merge {:type :canvas :cards []} (read-data at (second lines)))
+          :cards
+          (fn [cards]
+            (mapv #(cond-> % (:edges %) (update :edges toned)) (toned cards)))))
 
 (defmethod markdown->node :badge
   [_ {:keys [at lines]}]

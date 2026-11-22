@@ -781,7 +781,8 @@
    :groups view-spec/live-table-group-keys
    :objects view-spec/live-scene-object-keys
    :object-changes view-spec/live-scene-object-keys
-   :meshes view-spec/live-scene-mesh-keys})
+   :meshes view-spec/live-scene-mesh-keys
+   :cards view-spec/live-canvas-card-keys})
 
 (defn- live-term
   "The entry `value` names in a CLOSED wire table, in either spelling. A term
@@ -892,9 +893,27 @@
        (if (and (sequential? value) (every? sequential? value)) (mapv #(mapv f %) value) value))]
     {:vertices (triples vertices scene-number) :faces (triples faces schema-long)}))
 
+(defn- canvas-edges
+  "The arrows that end at one canvas card. A value of another shape stays as it is, so
+   the schema refuses it."
+  [edges]
+  (if (and (sequential? edges) (every? map? edges))
+    (mapv (fn [edge]
+            (cond-> edge
+              (some? (:from edge))
+              (update :from schema-text)
+
+              (some? (:label edge))
+              (update :label schema-text)
+
+              (some? (:tone edge))
+              (update :tone #(schema-term view-spec/live-tones %))))
+          edges)
+    edges))
+
 (defn- normalize-live-item
   "One item of a keyed collection: a column, row, stat, step, lane, badge, list item,
-   chart series, link, scene object or mesh. A valid value takes its engine form, and a closed vocabulary is looked up.
+   chart series, link, scene object, mesh or canvas card. A valid value takes its engine form, and a closed vocabulary is looked up.
    An item that is no map or has no id, a key that the item does not take and a value
    of the wrong type stay as given, so the node check refuses them with the rule of the
    schema."
@@ -988,7 +1007,29 @@
             (assoc (scene-object item false) :id id)
 
             :meshes
-            (assoc (scene-mesh item) :id id))]
+            (assoc (scene-mesh item) :id id)
+
+            ;; One card of a canvas. Its place is optional: a surface lays out a card
+            ;; that names no column or row.
+            :cards
+            (cond-> {:id id :title (schema-text (:title item)) :tone tone}
+              (some? (:text item))
+              (assoc :text (:text item))
+
+              (some? (:meta item))
+              (assoc :meta (schema-text (:meta item)))
+
+              (some? (:badges item))
+              (assoc :badges (text-items (:badges item)))
+
+              (some? (:column item))
+              (assoc :column (schema-fraction (:column item)))
+
+              (some? (:row item))
+              (assoc :row (schema-fraction (:row item)))
+
+              (some? (:edges item))
+              (assoc :edges (canvas-edges (:edges item)))))]
 
       (merge (apply dissoc item (live-item-keys kind)) (into {} (remove (comp nil? val)) built)))))
 
@@ -1409,6 +1450,23 @@
                  :tick-ms (schema-long (:tick-ms node))
                  :meshes (items :meshes)
                  :objects (items :objects))
+
+               :canvas
+               (cond-> (assoc base :cards (items :cards))
+                 (some? (:zoom node))
+                 (assoc :zoom (schema-fraction (:zoom node)))
+
+                 (some? (:focus node))
+                 (assoc :focus (schema-text (:focus node)))
+
+                 (some? (:is-locked node))
+                 (assoc :is-locked (schema-bool (:is-locked node)))
+
+                 (some? (:is-selectable node))
+                 (assoc :is-selectable (schema-bool (:is-selectable node)))
+
+                 (some? (:selected-ids node))
+                 (assoc :selected-ids (text-items (:selected-ids node))))
 
                :diff
                (cond-> (assoc base :patch (:patch node))
@@ -1887,6 +1945,14 @@
               (normalize-live-items :object-changes value))
    :meshes (fn [_ value]
              (normalize-live-items :meshes value))
+   :cards (fn [_ value]
+            (normalize-live-items :cards value))
+   :zoom (fn [_ value]
+           (schema-fraction value))
+   :focus (fn [_ value]
+            (schema-text value))
+   :is-locked (fn [_ value]
+                (schema-bool value))
    :background (fn [_ value]
                  (scene-color value))
    :fov (fn [_ value]

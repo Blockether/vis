@@ -134,8 +134,12 @@
         "a selected id names no row of the table",
         "selection"
       ],
+      "canvas_selection": [
+        "a selected id names no card of the canvas",
+        "selection"
+      ],
       "not_selectable": [
-        "only a selectable table or card takes this property",
+        "only a selectable table, card or canvas takes this property",
         "selection"
       ],
       "mesh_shadow": [

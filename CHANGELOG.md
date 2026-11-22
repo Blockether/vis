@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Live views: a `canvas` node draws a graph of your own from cards with arrows between them. Vis puts the cards in steps. In the Companion app, people pan and zoom the board, and your code moves the camera with `zoom` and `focus`. A narrow window puts the steps from top to bottom. The TUI shows the cards as a list.
+
 ## [v0.5.26] - 2026-11-21
 
 Vis v0.5.25 was not published, because its release checks failed. v0.5.26 contains all v0.5.25 changes.

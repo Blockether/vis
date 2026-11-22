@@ -280,22 +280,22 @@
               (sort given)))))
 
 (defn- prune-selected
-  "Drop selected ids whose rows no longer exist, without adding selection metadata to a
-   table that never declared the control."
+  "Drop selected ids whose rows or cards no longer exist, without adding selection
+   metadata to a node that never declared the control."
   [node]
   (if (contains? node :selected-ids)
-    (let [row-ids (set (map :id (:rows node)))]
-      (update node :selected-ids #(filterv row-ids %)))
+    (let [held (set (map :id (get node (:key (spec/item-bounds (:type node))))))]
+      (update node :selected-ids #(filterv held %)))
     node))
 
 (defn- apply-remove
-  "A node without the named items. Removing table rows also prunes transient
-   selection, and a diff drops the named threads."
+  "A node without the named items. Removing table rows or canvas cards also prunes
+   transient selection, and a diff drops the named threads."
   [node op]
   (if (= :diff (:type node))
     (app/remove-threads node (:item-ids op))
     (cond-> (update node (:key (spec/item-bounds (:type node))) without-ids (:item-ids op))
-      (= :table (:type node))
+      (#{:table :canvas} (:type node))
       prune-selected)))
 
 (defn- apply-clear
@@ -311,7 +311,7 @@
         (dissoc :line-tones))
 
     (cond-> (assoc node (:key (spec/item-bounds (:type node))) [])
-      (= :table (:type node))
+      (#{:table :canvas} (:type node))
       prune-selected)))
 
 (defn- apply-replace
@@ -722,6 +722,15 @@
                                            [:width :height :background :fov :is-wrapping :tick-ms
                                             :meshes :objects]))]))
 
+(defmethod node->markdown :canvas
+  [{:keys [cards] :as node} _]
+  (marked-lines :canvas
+                [(str "Canvas · " (count cards) " cards")
+                 (tagged-json "canvas"
+                              (select-keys node
+                                           [:zoom :focus :is-locked :is-selectable :selected-ids
+                                            :cards]))]))
+
 (defmethod node->markdown :spinner
   [{:keys [text is-active]} _]
   (marked-lines :spinner [(str text (when is-active " (working)"))]))
@@ -1025,6 +1034,23 @@
 
     (with-meta (assoc node :objects shown) {:elided (- (count objects) (count shown))})))
 
+(defn- budget-canvas
+  "A canvas node with the first `table-rows` cards, and no selection."
+  [node {:keys [table-rows]}]
+  (let [cards
+        (:cards node)
+
+        limit
+        (long table-rows)
+
+        shown
+        (if (> (count cards) limit) (subvec cards 0 limit) cards)]
+
+    (with-meta (-> node
+                   (assoc :cards shown)
+                   (dissoc :is-selectable :selected-ids))
+      {:elided (- (count cards) (count shown))})))
+
 (defn- budget-node
   "One node as the model is handed it under `budget`; `:elided` meta counts what it left."
   [node budget]
@@ -1040,6 +1066,9 @@
 
     :scene
     (budget-scene node budget)
+
+    :canvas
+    (budget-canvas node budget)
 
     node))
 
@@ -1262,7 +1291,7 @@
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
   (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image
-          :badge :list :chart}
+          :badge :list :chart :canvas}
         (vals spec/field-types)))
 
 (def ^:private presentation-marker
@@ -1443,6 +1472,13 @@
   (-> (merge {:type :chart :series []} (tagged-value at "chart" (second lines)))
       (update :kind keyword)
       (update :series toned)))
+
+(defmethod markdown->node :canvas
+  [_ {:keys [at lines]}]
+  (update (merge {:type :canvas :cards []} (tagged-value at "canvas" (nth lines 2 nil)))
+          :cards
+          (fn [cards]
+            (mapv #(cond-> % (:edges %) (update :edges toned)) (toned cards)))))
 
 (defmethod markdown->node :spinner
   [_ {:keys [lines]}]

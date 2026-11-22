@@ -258,6 +258,12 @@
                              [(keyword (str/replace k "_" "-")) (get v "default")])))
                    object)}))
 
+(def canvas-defaults
+  "Bounds of a canvas node and of one canvas card."
+  {:max-cards (get-in live-nodes ["canvas" "properties" "cards" "maxItems"])
+   :max-edges (get-in (definition "canvas_card") ["properties" "edges" "maxItems"])
+   :max-zoom (get-in live-nodes ["canvas" "properties" "zoom" "maximum"])})
+
 (def scene-meshes
   "Built-in mesh name to `{:vertices :faces}`. Every surface draws these arrays, so
    one shape looks the same on each screen."
@@ -331,7 +337,8 @@
    :badge {:key :badges :max (:max-badges badge-defaults)}
    :list {:key :items :max (:max-items list-defaults)}
    :chart {:key :series :max (:max-series chart-defaults)}
-   :scene {:key :objects :max (:max-objects scene-defaults)}})
+   :scene {:key :objects :max (:max-objects scene-defaults)}
+   :canvas {:key :cards :max (:max-cards canvas-defaults)}})
 
 ;; The live keys — closed in both directions, exactly like the form's
 
@@ -367,6 +374,10 @@
 (def live-scene-object-keys "Every key one scene object may carry." (schema-keys "scene_object"))
 
 (def live-scene-mesh-keys "Every key one scene mesh may carry." (schema-keys "scene_mesh"))
+
+(def live-canvas-card-keys "Every key one canvas card may carry." (schema-keys "canvas_card"))
+
+(def live-canvas-edge-keys "Every key one canvas edge may carry." (schema-keys "canvas_edge"))
 
 (def live-sorted-keys
   "Every key a `{:by …}` table order may carry."
@@ -1479,6 +1490,18 @@
                                   (when-not (contains? known mesh)
                                     (line (str "/objects/" i) "unknown_mesh")))
                                 objects)))
+
+        "canvas"
+        (let [cards (set (map #(get % "id") (get node "cards")))]
+          (concat (some->> (repeated (map #(get % "id") (get node "cards")))
+                           (array-map "id")
+                           (line "/cards" "repeated_item_id")
+                           vector)
+                  (when (contains? node "selected_ids")
+                    (cond (not (true? (get node "is_selectable"))) [(line "/selected_ids"
+                                                                          "not_selectable")]
+                          (not-every? cards (get node "selected_ids"))
+                          [(line "/selected_ids" "canvas_selection")]))))
 
         "image"
         (for [[path raw]

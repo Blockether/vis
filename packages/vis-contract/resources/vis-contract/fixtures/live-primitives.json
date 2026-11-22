@@ -612,6 +612,84 @@
       ]
     },
     {
+      "id": "canvas",
+      "type": "canvas",
+      "label": "Canvas",
+      "is_selectable": true,
+      "selected_ids": [
+        "build"
+      ],
+      "cards": [
+        {
+          "id": "plan",
+          "title": "Plan",
+          "text": "Split the work into three tasks.",
+          "meta": "12 s",
+          "tone": "ok",
+          "badges": [
+            "lead"
+          ]
+        },
+        {
+          "id": "build",
+          "title": "Build",
+          "text": "Add the canvas node to the contract.",
+          "meta": "2 min",
+          "tone": "running",
+          "badges": [
+            "implement"
+          ],
+          "edges": [
+            {
+              "from": "plan",
+              "label": "spec",
+              "tone": "ok"
+            }
+          ]
+        },
+        {
+          "id": "docs",
+          "title": "Docs",
+          "text": "Write the page for extension authors.",
+          "tone": "running",
+          "edges": [
+            {
+              "from": "plan"
+            }
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify",
+          "meta": "waits",
+          "tone": "idle",
+          "badges": [
+            "verify"
+          ],
+          "edges": [
+            {
+              "from": "build",
+              "label": "diff",
+              "is_active": true
+            },
+            {
+              "from": "docs",
+              "tone": "warn"
+            }
+          ]
+        },
+        {
+          "id": "ship",
+          "title": "Ship",
+          "edges": [
+            {
+              "from": "verify"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "general",
       "type": "thread",
       "label": "General discussion",

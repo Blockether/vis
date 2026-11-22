@@ -273,6 +273,54 @@ def test_scene_changes_merge_onto_their_objects(monkeypatch, host_kind):
 
 
 @pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_canvas_draws_arrows_from_after_and_moves_its_camera(monkeypatch, host_kind):
+    # An extension draws its own graph: a card names the cards that it comes
+    # after. A second put of one card must replace it, not add a twin, and a
+    # removed card must leave the selection.
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    canvas = vis.ui.canvas(
+        "flow",
+        [
+            vis.ui.canvas_card("plan", "Plan", tone="ok"),
+            vis.ui.canvas_card("build", "Build", after="plan"),
+        ],
+        is_selectable=True,
+    )
+    with vis.live("Flow", [canvas], flush_ms=10000) as view:
+        flow = view["flow"]
+        assert flow.cards["build"]["edges"] == [{"from": "plan"}]
+        with view.batch():
+            flow.card("build", "Build", tone="running", after=["plan"])
+            flow.card(
+                "ship",
+                "Ship",
+                after=["plan", vis.ui.canvas_edge("build", is_active=True)],
+            )
+            flow.select("build")
+            flow.focus("ship", zoom=1.5)
+        assert list(flow.cards) == ["plan", "build", "ship"]
+        assert flow.cards["build"]["tone"] == "running"
+        assert flow.cards["ship"]["edges"] == [
+            {"from": "plan"},
+            {"from": "build", "is_active": True},
+        ]
+        state = next(one for one in view.state()["nodes"] if one["id"] == "flow")
+        assert (state["focus"], state["zoom"]) == ("ship", 1.5)
+        flow.remove("build")
+        flow.fit()
+        view.flush()
+        assert flow.selected_ids == []
+        state = next(one for one in view.state()["nodes"] if one["id"] == "flow")
+        assert (state["focus"], state["zoom"]) == ("", 0)
+        with pytest.raises(Exception, match="names no card of the canvas"):
+            flow.select("ghost")
+            view.flush()
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
 def test_a_batch_keeps_a_set_after_the_group_of_its_node_comes_again(
     monkeypatch, host_kind
 ):

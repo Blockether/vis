@@ -497,6 +497,18 @@
   }
 }
 
+/* An arrow of a live canvas with work on it: the dashes run toward the card where the
+   arrow ends. One period of the dash pattern, so the loop has no seam. */
+@theme {
+  --animate-canvas-flow: canvas-flow 700ms linear infinite;
+
+  @keyframes canvas-flow {
+    to {
+      stroke-dashoffset: -9;
+    }
+  }
+}
+
 /* The reading column owns its padding; a notch widens it through the safe-area insets. */
 .transcript-column {
   padding-left: max(0.875rem, env(safe-area-inset-left));

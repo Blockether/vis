@@ -5971,6 +5971,67 @@ class Scene(_KeyedNode):
         return {one["id"]: one for one in held}
 
 
+class Canvas(_KeyedNode):
+    """A board of cards with arrows that a person pans and zooms."""
+
+    def set(
+        self,
+        *,
+        zoom=None,
+        focus=None,
+        is_locked=None,
+        is_selectable=None,
+        label=None,
+    ):
+        """Move the camera or change the controls.
+
+        `zoom=0` fits the focus in the surface and `focus=""` shows the whole
+        board. `is_locked=True` stops a person from moving the board.
+        """
+        return self._op(
+            "set",
+            zoom=zoom,
+            focus=None if focus is None else str(focus),
+            is_locked=is_locked,
+            is_selectable=is_selectable,
+            label=label,
+        )
+
+    def put(self, *cards):
+        """Add cards, or replace each card that has the same id.
+
+        Build each card with `vis.ui.canvas_card`.
+        """
+        return self._op("append", cards=list(cards))
+
+    def card(self, card_id, title, **spec):
+        """Add or replace one card. See `vis.ui.canvas_card`."""
+        return self.put(_ui_canvas_card(card_id, title, **spec))
+
+    def fit(self):
+        """Show the whole board."""
+        return self._op("set", zoom=0, focus="")
+
+    def focus(self, card_id, zoom=None):
+        """Put one card in the centre. Without `zoom`, the scale stays."""
+        return self._op("set", focus=str(card_id), zoom=zoom)
+
+    def select(self, *card_ids):
+        """Mark cards as selected. The canvas must be selectable."""
+        return self._op("set", selected_ids=[str(card_id) for card_id in card_ids])
+
+    @property
+    def cards(self):
+        """The cards of this canvas as the host holds them, by id."""
+        held = self._view._node_state(self.node_id).get("cards") or []
+        return {one["id"]: one for one in held}
+
+    @property
+    def selected_ids(self):
+        """The ids of the cards that a person or the owner selected."""
+        return list(self._view._node_state(self.node_id).get("selected_ids") or [])
+
+
 _LIVE_NODES = {
     "paragraph": TextNode,
     "heading": TextNode,
@@ -5994,6 +6055,7 @@ _LIVE_NODES = {
     "image": ImageNode,
     "thread": ThreadNode,
     "scene": Scene,
+    "canvas": Canvas,
 }
 # The typed handle of each node type that is not an input. Each input type of the
 # view schema has an `Input` handle. A test compares this table with the schema.
@@ -8450,6 +8512,44 @@ def _ui_scene(node_id, width, height, *, objects=None, meshes=None, **spec):
     )
 
 
+def _ui_canvas(node_id, cards=None, **spec):
+    """A board of cards with arrows between them, for a graph of your own.
+
+    A surface puts the cards in steps: a card goes one step after the last
+    card that it comes from. A wide surface puts the steps from left to right
+    and a narrow surface puts them from top to bottom. A person pans and zooms
+    the board. `zoom` sets the scale (1 is full size, 0 fits the focus) and
+    `focus` names the card in the centre. Build items with `ui.canvas_card` and
+    `ui.canvas_edge`. Options: `zoom`, `focus`, `is_locked`, `is_selectable`,
+    `selected_ids`, `label`.
+    """
+    return _live_node("canvas", node_id, dict(spec, cards=list(cards or [])))
+
+
+def _ui_canvas_card(card_id, title, *, after=None, **spec):
+    """One card of a canvas: a title, and the cards that it comes after.
+
+    `after` takes card ids or `ui.canvas_edge(...)` values: each one draws an
+    arrow to this card. Keys: text, meta, tone, badges, and column and row to
+    put the card in a fixed step and at a fixed place in that step.
+    """
+    sources = [after] if isinstance(after, (str, dict)) else list(after or [])
+    edges = [one if isinstance(one, dict) else _ui_canvas_edge(one) for one in sources]
+    return _live_item(
+        card_id, dict(spec, title=str(title), edges=edges if edges else None)
+    )
+
+
+def _ui_canvas_edge(source_id, **spec):
+    """An arrow from card `source_id` to the card that holds this value.
+
+    Keys: label, tone and is_active (work moves along the arrow now).
+    """
+    edge = {"from": str(source_id)}
+    edge.update({k: v for k, v in spec.items() if v is not None})
+    return edge
+
+
 def _ui_scene_object(object_id, mesh, **spec):
     """One object of a scene: a builtin or custom mesh, placed and coloured.
 
@@ -8777,6 +8877,9 @@ class _UI:
     scene = staticmethod(_ui_scene)
     scene_object = staticmethod(_ui_scene_object)
     scene_mesh = staticmethod(_ui_scene_mesh)
+    canvas = staticmethod(_ui_canvas)
+    canvas_card = staticmethod(_ui_canvas_card)
+    canvas_edge = staticmethod(_ui_canvas_edge)
 
     # Bounds
     bound = staticmethod(_ui_bound)

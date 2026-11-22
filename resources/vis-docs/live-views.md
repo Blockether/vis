@@ -24,6 +24,8 @@ and a person can stop it at any time.
   limits](#stay-inside-the-limits), and [test the view](#testing-a-view) at its limits.
 - **People must act in an app with single keys.** Add [shortcuts](#add-shortcuts-to-an-app).
 - **Your program must show a moving 3D world, such as a game.** Draw a [scene](#draw-a-3d-scene).
+- **Your extension must show a graph of its own, such as a plan or a pipeline.** Draw a
+  [canvas](#draw-a-graph-on-a-canvas).
 - **The model must know what people do in an app or an HTML page.** Give it a
   [note](#tell-the-model-what-people-see).
 - **Your own program, not an extension, must own an app.** [Run it from your
@@ -337,6 +339,7 @@ returns a typed handle that has only the verbs of its node type:
 | `vis.ui.button(id, label, is_disabled=False, variant=None)` | An action for the person. `variant` is `primary`, `secondary`, or `destructive`. `is_selected=True` or `False` makes the button one choice of a row, such as a tab, and the Companion app marks the current choice. | `.set(label=, is_disabled=)` |
 | `vis.ui.disclosure(id, label, *nodes, default_expanded=False)` | A column that collapses | Children update by their own IDs. |
 | `vis.ui.scene(id, width, height, objects=[vis.ui.scene_object(…)])` | A 3D world, which [each client draws](#draw-a-3d-scene) | `.put(object_id, **changes)`, `.mesh(mesh_id, vertices, faces)`, `.set(background=, fov=, is_wrapping=, tick_ms=)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.canvas(id, cards=[vis.ui.canvas_card(…)])` | Cards with arrows on a board, which [people pan and zoom](#draw-a-graph-on-a-canvas) | `.card(card_id, title, **keys)`, `.put(*cards)`, `.focus(card_id, zoom=)`, `.fit()`, `.select(*card_ids)`, `.set(zoom=, focus=, is_locked=, is_selectable=, label=)`, `.remove(*ids)`, `.clear()` |
 
 `vis.ui.output(...)` builds a `log` node. The `output` name differs from `vis.log`, which writes
 a line to the engine log.
@@ -546,6 +549,62 @@ the smooth motion, give it a new ID.
 
 The terminal draws the same scene in true color, and each character shows two pixels with the `▀`
 half block.
+
+### Draw a graph on a canvas
+
+A `canvas` node shows cards with arrows between them, such as the steps of a plan or the jobs of a
+pipeline. Your Python code names the cards and the arrows, and Vis puts them in place.
+
+```python
+board = vis.ui.canvas(
+    "board",
+    [
+        vis.ui.canvas_card("plan", "Plan", tone="ok", meta="12s"),
+        vis.ui.canvas_card("build", "Build", after="plan", tone="running", badges=["arm64"]),
+        vis.ui.canvas_card(
+            "test", "Test", tone="idle",
+            after=[vis.ui.canvas_edge("build", label="binary", is_active=True)],
+        ),
+    ],
+    label="Release",
+    is_selectable=True,
+)
+app = vis.attach(vis.ui.app("Release", board, key="release"))
+
+app["board"].card("test", "Test", after="build", tone="running")  # Replaces the whole card.
+app["board"].focus("test", zoom=1)
+app["board"].fit()
+```
+
+- `after` takes card IDs or `vis.ui.canvas_edge(source_id, label=, tone=, is_active=)` values. Each
+  one draws an arrow to the card.
+- A card goes one step after the last card that it comes from. To fix the place of a card, give
+  it `column` for the step and `row` for the place in that step.
+- A card has a `title`. It can also have `text` with inline formatting, `meta`, `tone`, and at most
+  8 `badges`.
+- A card or an arrow with `tone="idle"` has a dashed line, which shows that it waits. An arrow with
+  `is_active=True` moves.
+- A canvas holds at most 200 cards, and a card holds at most 16 arrows.
+
+`.card(card_id, title, **keys)` and `.put(*cards)` add cards. A card with the ID of a card on the
+board replaces that whole card. `.remove(*ids)` removes cards. An arrow from a card that the board
+does not hold shows when that card arrives. `.cards` returns the cards as Vis holds them, by ID.
+
+In the Companion app, people drag the board to move it and pinch to zoom. With a mouse, they hold
+Ctrl or Command and turn the wheel. The buttons in the corner of the board zoom in, zoom out, show
+the cards at full size, and fit the whole board. A double click on a card puts that card in the
+center at full size. In a window narrower than 560 pixels, the steps go from top to bottom.
+
+Your code moves the camera too. `.focus(card_id, zoom=)` puts one card in the center, and `.fit()`
+shows the whole board. `zoom` is the scale from 0 to 4, where 1 is full size and 0 fits the focus.
+After a person moves the board, it stays there until the person presses **Fit** or your code sends
+a different `zoom` or `focus`. `.set(is_locked=True)` stops people from moving the board.
+
+With `is_selectable=True`, people can select a card. Read the selection with `.selected_ids`, and
+set it with `.select(*card_ids)`.
+
+The terminal shows a canvas as a list. Each card has its title, its text, and one line for each
+card that it comes from.
 
 ## Layout and text
 

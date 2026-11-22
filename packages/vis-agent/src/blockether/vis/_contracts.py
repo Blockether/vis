@@ -1352,6 +1352,15 @@ def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
                 lines.append(named_line("/selected_ids", "not_selectable"))
             elif not all(one in rows for one in node["selected_ids"]):
                 lines.append(named_line("/selected_ids", "table_selection"))
+    elif kind == "canvas":
+        cards = _ids(node.get("cards"))
+        if (one := _repeated(cards)) is not None:
+            lines.append(named_line("/cards", "repeated_item_id", {"id": one}))
+        if "selected_ids" in node:
+            if node.get("is_selectable") is not True:
+                lines.append(named_line("/selected_ids", "not_selectable"))
+            elif not all(one in cards for one in node["selected_ids"]):
+                lines.append(named_line("/selected_ids", "canvas_selection"))
     elif kind == "scene":
         meshes, objects = node.get("meshes") or [], node.get("objects") or []
         builtin = scene_meshes()
@@ -1628,9 +1637,11 @@ def _filled_items(key: str, items: Any) -> Any:
 
 
 def _pruned_selection(node: dict[str, Any]) -> None:
-    """A table selection names only rows that still exist."""
-    if node.get("type") == "table" and "selected_ids" in node:
-        kept = {row.get("id") for row in node.get("rows") or []}
+    """A selection names only the rows of a table or the cards of a canvas that
+    still exist."""
+    if node.get("type") in ("table", "canvas") and "selected_ids" in node:
+        held = node.get(live_collection(node["type"]) or "") or []
+        kept = {one.get("id") for one in held}
         node["selected_ids"] = [one for one in node["selected_ids"] if one in kept]
 
 

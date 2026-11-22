@@ -92,7 +92,8 @@
    :chart "no data yet"
    :log "no output yet"
    :table "no rows yet"
-   :link "no links"})
+   :link "no links"
+   :canvas "no cards yet"})
 
 (def ^:private tone-glyph
   "One cell that says the tone WITHOUT colour, for a terminal that has none, a
@@ -1269,6 +1270,72 @@
         (pos? (long behind))
         (conj (more-row id behind "item"))))
     [{:kind :empty :node-id id :text (empty-text :list)}]))
+
+;; A terminal has no board to pan. A canvas paints as a list: each card, then its
+;; text, then the cards that it comes from.
+(defmethod node-rows :canvas
+  [{:keys [id cards selected-ids]} {:keys [text-w fresh is-expanded]}]
+  (if (seq cards)
+    (let [{:keys [shown behind]}
+          (windowed cards is-expanded false)
+
+          titles
+          (into {} (map (juxt :id :title)) cards)
+
+          selected
+          (set selected-ids)
+
+          body-w
+          (max 1 (- (long text-w) 2))
+
+          hint
+          (fn [text]
+            {:text text :fg t/dialog-hint})]
+
+      (cond-> (vec
+                (mapcat
+                  (fn [{:keys [title text meta tone badges edges] :as card}]
+                    (let [is-fresh
+                          (contains? fresh (:id card))
+
+                          ink
+                          (tone-fg tone)
+
+                          styles
+                          (if (or is-fresh (contains? selected (:id card))) [p/BOLD] [])
+
+                          head
+                          (cond-> [{:text (str (get tone-glyph tone "•") " ")
+                                    :fg (if tone ink t/dialog-hint)
+                                    :styles styles}
+                                   {:text (flat-text title) :fg ink :styles styles}]
+                            meta
+                            (conj (hint (str " — " (flat-text meta))))
+
+                            (seq badges)
+                            (conj (hint (str " [" (str/join "] [" badges) "]"))))]
+
+                      (map (fn [segments]
+                             {:kind :item
+                              :node-id id
+                              :item-id (:id card)
+                              :tone tone
+                              :is-fresh is-fresh
+                              :segments segments
+                              :text (segment-line segments)})
+                           (concat [head]
+                                   (map #(into [{:text "  "}] (run-segments % t/dialog-hint []))
+                                        (md-lines text body-w))
+                                   (map (fn [{:keys [from label]}]
+                                          [(hint (str "  ← "
+                                                      (flat-text (get titles from from))
+                                                      (when label
+                                                        (str " (" (flat-text label) ")"))))])
+                                        edges)))))
+                  shown))
+        (pos? (long behind))
+        (conj (more-row id behind "card"))))
+    [{:kind :empty :node-id id :text (empty-text :canvas)}]))
 
 (def ^:private bar-eighths
   "The cells that end a bar: one to seven eighths of a column."

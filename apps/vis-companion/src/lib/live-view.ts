@@ -32,6 +32,7 @@ import {
   type LiveSceneMesh,
   type LiveSceneObject,
 } from './scene';
+import { CANVAS_MAX_ZOOM } from './canvas';
 import {
   HUMAN_INPUT_FIELD_TYPES,
   humanInputFieldFromWire,
@@ -61,6 +62,7 @@ export const LIVE_NODE_TYPES = [
   'diff',
   'thread',
   'scene',
+  'canvas',
   'image',
 ] as const;
 
@@ -479,6 +481,42 @@ export interface LiveSceneNode extends LiveNodeBase {
   objects: LiveSceneObject[];
 }
 
+/** An arrow that ends at the card which holds it (`view.json` `canvas_edge`). */
+export interface LiveCanvasEdge {
+  from: string;
+  label?: string;
+  /** Absent on a plain arrow. `idle` is an arrow that waits. */
+  tone?: LiveTone;
+  is_active: boolean;
+}
+
+/** One card of a canvas (`view.json` `canvas_card`). */
+export interface LiveCanvasCard {
+  id: string;
+  title: string;
+  text?: string;
+  meta?: string;
+  /** Absent on a plain card. `idle` is a card that waits. */
+  tone?: LiveTone;
+  badges: string[];
+  column?: number;
+  row?: number;
+  edges: LiveCanvasEdge[];
+}
+
+/** A board of cards and arrows. The owner moves its camera with `zoom` and `focus`. */
+export interface LiveCanvasNode extends LiveNodeBase {
+  type: 'canvas';
+  /** 0 fits the focus in the surface. */
+  zoom: number;
+  /** The id of the card in the centre. An empty string is the whole board. */
+  focus: string;
+  is_locked: boolean;
+  is_selectable: boolean;
+  selected_ids: string[];
+  cards: LiveCanvasCard[];
+}
+
 /** One picture as base64 data (`view.json` `picture`). */
 export interface LivePicture {
   media_type: LiveImageMedia;
@@ -560,6 +598,7 @@ export type LiveLeafNode =
   | LiveDiffNode
   | LiveThreadNode
   | LiveSceneNode
+  | LiveCanvasNode
   | LiveImageNode;
 
 /** A node either paints something, or arranges the nodes it holds. */
@@ -768,9 +807,9 @@ function lines(value: unknown): string[] {
   return Array.isArray(value) ? value.map((line) => text(line)) : [];
 }
 
-/** Distinct selected ids which still name a row, in the engine's order. */
-function selectedIds(value: unknown, tableRows: LiveRow[]): string[] {
-  const existing = new Set(tableRows.map((row) => row.id));
+/** Distinct selected ids which still name a row or a card, in the engine's order. */
+function selectedIds(value: unknown, items: { id: string }[]): string[] {
+  const existing = new Set(items.map((item) => item.id));
   const seen = new Set<string>();
   return (Array.isArray(value) ? value : [])
     .map(text)
@@ -858,6 +897,36 @@ function listItemFromWire(raw: Record<string, unknown>): LiveListItem | null {
   const id = text(raw.id);
   if (id === '') return null;
   return { id, text: text(raw.text), tone: tone(raw.tone), detail: optionalText(raw.detail) };
+}
+
+function canvasEdgeFromWire(raw: Record<string, unknown>): LiveCanvasEdge | null {
+  const from = text(raw.from);
+  if (from === '') return null;
+  const label = optionalText(raw.label);
+  return {
+    from,
+    ...(label ? { label } : {}),
+    ...(raw.tone === undefined ? {} : { tone: tone(raw.tone) }),
+    is_active: raw.is_active === true,
+  };
+}
+
+function canvasCardFromWire(raw: Record<string, unknown>): LiveCanvasCard | null {
+  const id = text(raw.id);
+  if (id === '') return null;
+  const column = optionalNumber(raw.column);
+  const row = optionalNumber(raw.row);
+  return {
+    id,
+    title: text(raw.title) || id,
+    text: optionalText(raw.text),
+    meta: optionalText(raw.meta),
+    ...(raw.tone === undefined ? {} : { tone: tone(raw.tone) }),
+    badges: lines(raw.badges).filter((badge) => badge.trim() !== ''),
+    ...(column === undefined ? {} : { column }),
+    ...(row === undefined ? {} : { row }),
+    edges: keyed(raw.edges, canvasEdgeFromWire),
+  };
 }
 
 function chartKind(value: unknown): LiveChartKind {
@@ -1391,7 +1460,31 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         objects: mergeSceneObjects([], node.objects),
       };
     }
+    case 'canvas': {
+      const cards = upsert([], keyed(node.cards, canvasCardFromWire));
+      const isSelectable = node.is_selectable === true;
+      return {
+        ...base,
+        type: 'canvas',
+        ...canvasCamera(node, { zoom: 0, focus: '', is_locked: false }),
+        is_selectable: isSelectable,
+        selected_ids: isSelectable ? selectedIds(node.selected_ids, cards) : [],
+        cards,
+      };
+    }
   }
+}
+
+type CanvasCamera = Pick<LiveCanvasNode, 'zoom' | 'focus' | 'is_locked'>;
+
+/** The camera keys of a canvas that `raw` carries, the others from `held`. */
+function canvasCamera(raw: Record<string, unknown>, held: CanvasCamera): CanvasCamera {
+  const zoom = optionalNumber(raw.zoom);
+  return {
+    zoom: zoom !== undefined && zoom >= 0 ? Math.min(CANVAS_MAX_ZOOM, zoom) : held.zoom,
+    focus: typeof raw.focus === 'string' ? raw.focus.trim() : held.focus,
+    is_locked: typeof raw.is_locked === 'boolean' ? raw.is_locked : held.is_locked,
+  };
 }
 
 type SceneSettings = Pick<LiveSceneNode, 'background' | 'fov' | 'is_wrapping' | 'tick_ms'>;
@@ -1710,6 +1803,7 @@ function appendKey(
   | 'series'
   | 'links'
   | 'objects'
+  | 'cards'
   | null {
   switch (node.type) {
     case 'log':
@@ -1732,6 +1826,8 @@ function appendKey(
       return 'links';
     case 'scene':
       return 'objects';
+    case 'canvas':
+      return 'cards';
     default:
       return null;
   }
@@ -1836,6 +1932,21 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
         label: 'label' in op ? optionalText(op.label) : node.label,
         ...sceneSettings(op, node),
       };
+    case 'canvas': {
+      const isSelectable =
+        typeof op.is_selectable === 'boolean' ? op.is_selectable : node.is_selectable;
+      return {
+        ...node,
+        label: 'label' in op ? optionalText(op.label) : node.label,
+        ...canvasCamera(op, node),
+        is_selectable: isSelectable,
+        selected_ids: !isSelectable
+          ? []
+          : 'selected_ids' in op
+            ? selectedIds(op.selected_ids, node.cards)
+            : node.selected_ids,
+      };
+    }
     default:
       if ('field' in node) {
         return {
@@ -1917,6 +2028,8 @@ function applyAppend(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
         meshes: upsert(node.meshes, keyed(op.meshes, sceneMeshFromWire)),
         objects: mergeSceneObjects(node.objects, op.objects),
       };
+    case 'canvas':
+      return { ...node, cards: upsert(node.cards, keyed(op.cards, canvasCardFromWire)) };
     default:
       return node;
   }
@@ -1950,6 +2063,10 @@ function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
       return { ...node, threads: withoutIds(node.threads, op.item_ids) };
     case 'scene':
       return { ...node, objects: withoutIds(node.objects, op.item_ids) };
+    case 'canvas': {
+      const cards = withoutIds(node.cards, op.item_ids);
+      return { ...node, cards, selected_ids: selectedIds(node.selected_ids, cards) };
+    }
     default:
       return node;
   }
@@ -1982,6 +2099,8 @@ function applyClear(node: LiveLeafNode): LiveNode {
       return { ...node, links: [] };
     case 'scene':
       return { ...node, objects: [] };
+    case 'canvas':
+      return { ...node, cards: [], selected_ids: [] };
     default:
       return node;
   }
