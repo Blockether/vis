@@ -76,6 +76,28 @@
                       {:artifact artifact :version version})))
     jars))
 
+(defn- compile-refusing-reflection!
+  "AOT-compile every namespace of the source roots into `dir`. A reflection warning stops
+   the build: `*warn-on-reflection*` only prints, so a namespace that reflects would reach
+   the binary."
+  [basis dir]
+  (let [{:keys [out err]}
+        (b/compile-clj {:basis basis :src-dirs source-dirs :class-dir dir
+                        :bindings {#'clojure.core/*warn-on-reflection* true}
+                        :out :capture :err :capture})
+
+        log
+        (str out err)
+
+        warnings
+        (filter #(str/includes? % "Reflection warning") (str/split-lines log))]
+
+    (print log)
+    (flush)
+    (when (seq warnings)
+      (throw (ex-info (str "vis-tui compile found " (count warnings) " reflection warnings")
+                      {:warnings (vec warnings)})))))
+
 (defn- prepare!
   []
   (b/delete {:path class-dir})
@@ -84,8 +106,16 @@
     (io/make-parents version-file)
     (spit version-file (version)))
   (let [basis (b/create-basis {:project "deps.edn" :aliases [:native]})]
-    (b/compile-clj {:basis basis :src-dirs source-dirs :class-dir class-dir})
+    (compile-refusing-reflection! basis class-dir)
     basis))
+
+(defn check
+  "Compile every namespace and fail on a reflection warning. CI runs it."
+  [_]
+  (let [dir "target/check-classes"]
+    (b/delete {:path dir})
+    (compile-refusing-reflection! (b/create-basis {:project "deps.edn"}) dir)
+    (println "-> no reflection warnings")))
 
 (defn native
   [_]

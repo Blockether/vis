@@ -277,6 +277,12 @@ jobs:
       - name: Run standalone TUI suite
         working-directory: apps/vis-tui
         run: clojure -X:deps prep && clojure -M:test
+      # The suite loads only the namespaces that its tests need, and a reflection warning
+      # only prints. This step compiles every TUI namespace and fails on a warning.
+      - name: Refuse reflection in the TUI
+        if: matrix.name == 'linux'
+        working-directory: apps/vis-tui
+        run: clojure -T:build check
 
   # The only job that saves the Clojure dependency cache. Other jobs only restore it,
   # so a partial resolution or a recorded download failure cannot become the cache.

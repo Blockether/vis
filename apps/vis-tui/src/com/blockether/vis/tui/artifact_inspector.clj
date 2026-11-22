@@ -998,13 +998,13 @@
 
                       (File. dir basename)))]
          (if (attachments/reference-artifact? row)
-           (let [target (file)]
+           (let [^File target (file)]
              (if (vis/gateway-iteration-attachment-to-file! session-id iteration-id index target)
                target
                (do (.delete (.getParentFile target)) nil)))
            (when-let [^bytes bytes
                       (vis/gateway-iteration-attachment-bytes session-id iteration-id index)]
-             (let [target (file)]
+             (let [^File target (file)]
                (with-open [out (FileOutputStream. target)]
                  (.write out bytes))
                target))))))))

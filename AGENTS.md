@@ -11,6 +11,7 @@ Run each project's tools from its own directory.
 - Parts: `VIS_TEST_PART=core clojure -M:test` runs one part of `test_selection.clj`. `bin/test-parts core other`
   runs one JVM for each argument at the same time; a comma joins parts in one JVM.
 - Native: `clojure -T:build native`, then `clojure -M:test-native`. JVM tests do not prove the binary.
+- TUI reflection: `clojure -T:build check` in `apps/vis-tui` compiles each namespace and fails on a reflection warning. The TUI native build also fails on it.
 - Companion Android Gradle uses stock JDK 21.
 - `clojure -M:audit` generates `audit/README.md` (network required). Never edit that file by hand.
 - `harbor run --path e2e` makes paid model calls. Use it only for editing tools and workflows.
