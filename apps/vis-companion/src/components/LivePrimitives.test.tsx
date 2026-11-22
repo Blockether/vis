@@ -257,10 +257,11 @@ describe('a canvas', () => {
     render(<LiveViewPanel view={board()} />);
     const item = (id: string) => document.querySelector<HTMLElement>(`[data-canvas-card="${id}"]`)!;
     const verify = within(item('verify'));
-    expect(verify.getAllByRole('listitem').map((task) => task.textContent)).toEqual([
-      'Done: clojure -M:test',
-      'Not done: npm test',
+    expect(verify.getAllByRole('listitem').map((task) => task.textContent?.trim())).toEqual([
+      'clojure -M:test',
+      'npm test',
     ]);
+    expect(verify.getAllByRole('checkbox').map((box) => box.getAttribute('aria-checked'))).toEqual(['true', 'false']);
     expect(verify.getByRole('table')).toBeVisible();
     expect(verify.getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Part', 'Time']);
     const ship = within(item('ship'));

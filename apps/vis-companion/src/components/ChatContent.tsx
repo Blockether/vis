@@ -748,18 +748,19 @@ const MarkdownPiece = memo(function MarkdownPiece({
             {item}
           </JustifiedProse>
         ),
-        // A task of a list: the box shows its state, and a screen reader reads it as words.
+        // A task of a list: the box shows its state, and a screen reader reads it as
+        // a checkbox that a person cannot change.
         input: ({ type, checked }) =>
           type === 'checkbox' ? (
-            <>
-              <span
-                aria-hidden="true"
-                className={`absolute left-0 top-[0.25lh] inline-flex size-[1.5ch] items-center justify-center border border-current ${checked ? 'bg-answer-edge' : 'opacity-70'}`}
-              >
-                {checked && <CheckIcon className="size-full" />}
-              </span>
-              <span className="sr-only">{checked ? 'Done:' : 'Not done:'}</span>
-            </>
+            <span
+              role="checkbox"
+              aria-checked={Boolean(checked)}
+              aria-disabled="true"
+              aria-label={checked ? 'Done' : 'Not done'}
+              className={`absolute left-0 top-[0.25lh] inline-flex size-[1.5ch] items-center justify-center border border-current ${checked ? 'bg-answer-edge' : 'opacity-70'}`}
+            >
+              {checked && <CheckIcon aria-hidden="true" className="size-full" />}
+            </span>
           ) : null,
         ol: ({ children: list, node, start }) => {
           // The markers share one column, so the widest number in the list sizes it:
