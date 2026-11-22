@@ -17,6 +17,7 @@
   (:import [com.blockether.vispython Interpreter]
            [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.net InetSocketAddress]
+           [java.nio ByteBuffer ByteOrder]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -859,6 +860,66 @@
            (expect (not (str/includes? (first @syncs) "release-a"))
                    "the environment depends on the first install")
            (finally (#'python-runtime/delete-tree! root))))))
+
+;; 2026-11-22: each macOS release signs the same interpreter build again, and each signature
+;; holds its own timestamp. The build identity included the signature, so the first gateway
+;; start of each release prepared every extension again: 10 installs in about 40 s.
+(defn- mach-o
+  "The bytes of a thin 64-bit Mach-O with the content `code` and the code signature
+   `signature` at its end."
+  ^bytes [^String code ^String signature]
+  (let [code
+        (.getBytes code "UTF-8")
+
+        signature
+        (.getBytes signature "UTF-8")
+
+        offset
+        (+ 32 16 (alength code))
+
+        buffer
+        (.order (ByteBuffer/allocate (+ offset (alength signature))) ByteOrder/LITTLE_ENDIAN)]
+
+    (.putInt buffer 0 (unchecked-int 0xfeedfacf))
+    ;; One load command of 16 bytes: LC_CODE_SIGNATURE with the offset and the size.
+    (.putInt buffer 16 1)
+    (.putInt buffer 20 16)
+    (.putInt buffer 32 0x1d)
+    (.putInt buffer 36 16)
+    (.putInt buffer 40 offset)
+    (.putInt buffer 44 (alength signature))
+    (.put buffer 48 code)
+    (.put buffer (int offset) signature)
+    (.array buffer)))
+
+(defdescribe automatic-environment-follows-the-build-not-its-code-signature
+             (it
+               "gives one environment to two signatures of one build and another to a changed build"
+               (let [root
+                     (temp-dir "vis-signed-build")
+
+                     install!
+                     (fn [dir code signature]
+                       (let [bin (io/file root dir "python" "bin")]
+                         (.mkdirs bin)
+                         (with-open [out (io/output-stream (io/file bin "python3"))]
+                           (.write out (mach-o code signature)))
+                         (.getPath (io/file bin "python3"))))
+
+                     first-release
+                     (install! "release-a" "build 1" "signed on 21 November")
+
+                     second-release
+                     (install! "release-b" "build 1" "signed on 22 November")
+
+                     other-build
+                     (install! "release-c" "build 2" "signed on 22 November")]
+
+                 (try (expect (= (#'python-runtime/environment-name first-release)
+                                 (#'python-runtime/environment-name second-release)))
+                      (expect (not= (#'python-runtime/environment-name first-release)
+                                    (#'python-runtime/environment-name other-build)))
+                      (finally (#'python-runtime/delete-tree! root))))))
 
 ;; kate140, 2026-11-05: each native release has its own interpreter path, so each release
 ;; prepared a new `.venv-<hash>` in every extension and none was removed: 21 GB of venvs.

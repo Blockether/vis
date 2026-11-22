@@ -30,8 +30,9 @@
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [com.blockether.vispython Interpreter Locations]
-           [java.io File]
+           [java.io File RandomAccessFile]
            [java.lang ProcessBuilder$Redirect ProcessHandle]
+           [java.nio ByteBuffer ByteOrder]
            [java.nio.channels FileChannel]
            [java.nio.file CopyOption FileVisitResult Files LinkOption OpenOption Path
             SimpleFileVisitor StandardCopyOption StandardOpenOption]
@@ -408,20 +409,55 @@
   ^String []
   (Interpreter/pythonExecutable))
 
+(defn- build-length
+  "The count of the leading bytes of the executable `file` that belong to its build: all
+   of them, or for a thin 64-bit Mach-O the bytes before the code signature at its end.
+   Each macOS release signs the same build again and each signature holds its own
+   timestamp. With the signature in the identity, each release prepared every extension
+   again."
+  ^long [^File file]
+  (let [length (.length file)]
+    (or (when (<= 32 length)
+          (with-open [in (RandomAccessFile. file "r")]
+            (let [head (byte-array 32)
+                  _ (.readFully in head)
+                  header (.order (ByteBuffer/wrap head) ByteOrder/LITTLE_ENDIAN)
+                  size (.getInt header 20)]
+
+              (when (and (= (unchecked-int 0xfeedfacf) (.getInt header 0))
+                         (pos? size)
+                         (<= (+ 32 size) length))
+                (let [block (byte-array size)
+                      _ (.readFully in block)
+                      commands (.order (ByteBuffer/wrap block) ByteOrder/LITTLE_ENDIAN)]
+
+                  (loop [at 0]
+                    (when (<= (+ at 16) size)
+                      (let [command-size (.getInt commands (+ at 4))]
+                        ;; 0x1d is LC_CODE_SIGNATURE: the offset and the size of the signature.
+                        (if (= 0x1d (.getInt commands at))
+                          (let [offset (Integer/toUnsignedLong (.getInt commands (+ at 8)))
+                                signature (Integer/toUnsignedLong (.getInt commands (+ at 12)))]
+
+                            (when (and (pos? offset) (= length (+ offset signature))) offset))
+                          (when (<= 8 command-size) (recur (+ at command-size))))))))))))
+        length)))
+
 (defn- build-digest
-  "Lowercase-hex SHA-256 of the content of the executable `file` and of the uv beside it."
+  "Lowercase-hex SHA-256 of the build of the executable `file` and of the uv beside it:
+   the content of each file without its code signature."
   ^String [^File file]
   (let [digest (util/sha256-digest)]
     (doseq [^File part [file (io/file (.getParentFile file) "uv")]
-            :when (.isFile part)]
+            :when (.isFile part)
+            :let [length (build-length part)]]
 
-      (.update digest (util/utf8 (str (.getName part) ":" (.length part) ":")))
+      (.update digest (util/utf8 (str (.getName part) ":" length ":")))
       (with-open [in (io/input-stream part)]
         (let [buffer (byte-array 65536)]
-          (loop []
-
-            (let [n (.read in buffer)]
-              (when (pos? n) (.update digest buffer 0 n) (recur)))))))
+          (loop [left length]
+            (let [n (.read in buffer 0 (int (min left 65536)))]
+              (when (pos? n) (.update digest buffer 0 n) (recur (- left n))))))))
     (util/bytes->hex (.digest digest))))
 
 (defonce ^:private interpreter-identities
