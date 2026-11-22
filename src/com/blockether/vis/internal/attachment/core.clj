@@ -1424,27 +1424,32 @@
     verdict))
 
 (defn- cache-put!
+  "Cache `verdict` for `k` and return the cached verdict. When another request cached
+   `k` first, keep that entry: a second queue slot would count its bytes twice."
   [k verdict]
-  (swap! wire-cache (fn [cache]
-                      (loop [order
-                             (conj (:order cache) k)
+  (-> (swap! wire-cache
+             (fn [cache]
+               (if (contains? (:entries cache) k)
+                 cache
+                 (loop [order
+                        (conj (:order cache) k)
 
-                             entries
-                             (assoc (:entries cache) k verdict)
+                        entries
+                        (assoc (:entries cache) k verdict)
 
-                             total
-                             (+ (long (:bytes cache)) (long (count (str (:base64 verdict)))))]
+                        total
+                        (+ (long (:bytes cache)) (long (count (str (:base64 verdict)))))]
 
-                        (if (and (seq order)
-                                 (or (> (count entries) (long wire-cache-max-entries))
-                                     (> total (long wire-cache-max-bytes))))
-                          (let [oldest (peek order)]
-                            (recur (pop order)
-                                   (dissoc entries oldest)
-                                   (- total
-                                      (long (count (str (get-in entries [oldest :base64])))))))
-                          {:order order :entries entries :bytes total}))))
-  verdict)
+                   (if (and (seq order)
+                            (or (> (count entries) (long wire-cache-max-entries))
+                                (> total (long wire-cache-max-bytes))))
+                     (let [oldest (peek order)]
+                       (recur (pop order)
+                              (dissoc entries oldest)
+                              (- total
+                                 (long (count (str (get-in entries [oldest :base64])))))))
+                     {:order order :entries entries :bytes total})))))
+      (get-in [:entries k] verdict)))
 
 (defn- base64-length
   "How many CHARACTERS the base64 encoding of `n` raw bytes occupies -- 4 per 3,
