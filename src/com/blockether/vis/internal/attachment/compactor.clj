@@ -76,7 +76,7 @@
        (let [id (:id (first (persistance/db-pending-attachment-compactions db 1)))]
          (cond (nil? id) {:rows n :more? false}
                ;; Each pass takes one row at least, so a pass always moves on.
-               (and deadline (pos? n) (> (util/now-ms) (long deadline))) {:rows n :more? true}
+               (and deadline (pos? n) (>= (util/now-ms) (long deadline))) {:rows n :more? true}
                :else (let [data (persistance/db-claim-attachment-compaction! db id)]
                        (when-let [out (some->> data
                                                (smaller id))]
