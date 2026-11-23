@@ -649,7 +649,12 @@
 (defn- description-line-rows
   "Hard-fold oversized Markdown tokens without dropping their text or inline styles."
   [{:keys [runs]} width]
-  (let [text
+  ;; A highlighted code fence carries ANSI SGR in its runs. This dialog paints runs as
+  ;; plain text, so the escapes would show as `[36m` and count as columns.
+  (let [runs
+        (mapv #(update % :text p/strip-sgr) runs)
+
+        text
         (apply str (map :text runs))
 
         parts

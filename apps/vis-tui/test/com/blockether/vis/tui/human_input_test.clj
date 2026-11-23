@@ -811,6 +811,19 @@
              (expect (contains? (modifiers-of screen "Safe") SGR/BOLD))
              (expect (some? (screen-row-of screen "<b>literal</b>")))
              (expect (not (contains? (modifiers-of screen "literal") SGR/BOLD)))
+             (finally (.close ^TerminalScreen screen)))))
+  (it "paints a highlighted Clojure fence without its ANSI escapes"
+      ;; Issue #503: the escapes of the code highlighter showed as `[36m` text.
+      (let [{:keys [screen g]} (virtual-screen)]
+        (try (hi/paint! g
+                        80
+                        30
+                        (hi/init-form {:title "Confirm"
+                                       :nodes []
+                                       :description
+                                       "```clojure\n(do (println \"hello\") {:answer 42})\n```"}))
+             (expect (some? (screen-row-of screen "(do (println \"hello\") {:answer 42})")))
+             (expect (not (re-find #"\[\d+m" (screen-text screen))))
              (finally (.close ^TerminalScreen screen))))))
 
 (defdescribe
