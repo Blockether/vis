@@ -1099,8 +1099,8 @@
   "Compile a newly installed project and its packages into the bytecode cache.
    Workers then import them without a compile, also from a read-only tree (#407).
    A failure costs only speed, because a worker compiles what it imports.
-   Hidden entries of the project stay out: each other interpreter build keeps its own
-   `.venv-<hash>` there, and compiling them all held the load lock for 30 s (#498)."
+   Environments and directory links of the project stay out: each other interpreter build
+   keeps its own `.venv-<hash>` there, and compiling them all held the load lock 30 s (#498)."
   [^File project ^File packages]
   (let [prefix
         (pycache-prefix)
@@ -1113,9 +1113,11 @@
 
         roots
         (-> (into []
-                  (comp (remove #(str/starts-with? (.getName ^File %) "."))
-                        (map #(.getCanonicalPath ^File %)))
-                  (sort (or (.listFiles project) (make-array File 0))))
+                  (comp (remove #(or (str/starts-with? (.getName ^File %) ".venv")
+                                     (and (.isDirectory ^File %)
+                                          (Files/isSymbolicLink (.toPath ^File %)))))
+                        (map #(.getPath ^File %)))
+                  (sort (or (.listFiles (io/file root)) (make-array File 0))))
             (conj (.getCanonicalPath packages)))]
 
     (when (and prefix python)

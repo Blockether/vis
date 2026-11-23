@@ -634,6 +634,12 @@
              ;; #498: another interpreter build's environment. Its compile held the load lock.
              (io/make-parents (io/file project ".venv-000000000000" "sibling.py"))
              (spit (io/file project ".venv-000000000000" "sibling.py") "VALUE = 3\n")
+             (java.nio.file.Files/createSymbolicLink (.toPath (io/file project "linked"))
+                                                     (.toPath (io/file ".venv-000000000000"))
+                                                     (make-array java.nio.file.attribute.FileAttribute
+                                                                 0))
+             (io/make-parents (io/file project ".src" "hidden_source.py"))
+             (spit (io/file project ".src" "hidden_source.py") "VALUE = 4\n")
              (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
                                                          (when (some #{"--check"} args)
                                                            (throw (ex-info "not ready" {}))))
@@ -651,6 +657,7 @@
                                      set)]
                    (expect (some #(str/starts-with? % "extension.") compiled))
                    (expect (some #(str/starts-with? % "dependency.") compiled))
+                   (expect (some #(str/starts-with? % "hidden_source.") compiled))
                    (expect (not-any? #(str/starts-with? % "sibling.") compiled)))))
              (finally (#'python-runtime/delete-tree! project)
                       (#'python-runtime/delete-tree! prefix))))))
