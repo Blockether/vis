@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-11-22.
+> Generated 2026-11-23.
 
 Vis is a coding agent that runs Python, uses tools to inspect and change
 projects, and stores sessions locally. The `vis-agent` wrapper starts a JVM
@@ -147,7 +147,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `clj-kondo/clj-kondo` | `2026.08.04` | EPL-1.0 | 733 KB | 3rd-party |
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.21` | MIT | 12 KB | Blockether (in-house) |
-| `com.blockether/imaging` | `0.1.12` | MIT | 23 KB | Blockether (in-house) |
+| `com.blockether/imaging` | `0.1.14` | MIT | 23 KB | Blockether (in-house) |
 | `com.blockether/parinferish` | `0.2.4` | MIT | 70 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.245` | Apache-2.0 | 1023 KB | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:ca3f2f53f2023296ba761e809c0203ba54f0f941` | MIT | source checkout | Blockether (in-house) |
@@ -195,7 +195,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/lanterna` | `3.1.5-vis.64` | LGPL-3.0 | 682 KB | Blockether (in-house) |
+| `com.blockether/lanterna` | `3.1.5-vis.65` | LGPL-3.0 | 683 KB | Blockether (in-house) |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 
 ### `vis-contract` module
@@ -225,7 +225,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 Dependencies use several licenses, listed above. Vis first-party code uses
 Apache-2.0. Review dependency terms for the intended distribution method — **with the copyleft exception(s) below that need legal sign-off:**
 
-> **Copyleft: `com.blockether/lanterna` (`3.1.5-vis.64`) uses LGPL-3.0.** Review source, notice and relinking
+> **Copyleft: `com.blockether/lanterna` (`3.1.5-vis.65`) uses LGPL-3.0.** Review source, notice and relinking
 > obligations before distribution, particularly for static native-image builds.
 > Keeping an optional dependency separate may affect those obligations (§4.3).
 

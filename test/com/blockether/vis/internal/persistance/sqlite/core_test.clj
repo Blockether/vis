@@ -1817,6 +1817,8 @@
 
 (defn- user-version [store] (:user_version (first (raw-query store {:raw "PRAGMA user_version"}))))
 
+(defn- rewrite-count "The number of store rewrites that a new open runs." [] (count @#'sqlite-core/store-rewrites))
+
 (defdescribe
   activity-search-text-size-test
   ;; The whole JSON presentation of every invocation filled 5.8 GB of one real store,
@@ -1865,7 +1867,7 @@
         (expect (= 0 (user-version s)))
         (rewrite-older-store! (:datasource s))
         (let [[text] (activity-search-texts s)]
-          (expect (= 7 (user-version s)))
+          (expect (= (rewrite-count) (user-version s)))
           (expect (not= old-text text))
           (expect (str/includes? text "Disk quota reached"))
           (expect (<= (count text) 4096))
@@ -1975,7 +1977,7 @@
                      ["UPDATE session_turn_iteration SET tool_calls = ?" (nippy/freeze older)])
       (jdbc/execute! (:datasource s) ["PRAGMA user_version = 1"])
       (rewrite-older-store! (:datasource s))
-      (expect (= 7 (user-version s)))
+      (expect (= (rewrite-count) (user-version s)))
       (expect (= [(dissoc snapshot :rows) orphan grouped] (stored-activities s)))
       (expect (= [snapshot orphan grouped]
                  (mapv :activity
@@ -4392,7 +4394,7 @@
         (jdbc/execute! ds ["CREATE INDEX idx_log_created ON log(created_at)"])
         (jdbc/execute! ds ["PRAGMA user_version = 2"])
         (rewrite-older-store! ds)
-        (expect (= 7 (user-version s)))
+        (expect (= (rewrite-count) (user-version s)))
         (expect (= [] (log-schema-names s))))))
 
 (defn- improve-schema-names
@@ -4482,7 +4484,7 @@
                                         " entry_id INTEGER REFERENCES improve(entry_id))")])
                    (jdbc/execute! ds ["PRAGMA user_version = 3"])
                    (rewrite-older-store! ds)
-                   (expect (= 7 (user-version s)))
+                   (expect (= (rewrite-count) (user-version s)))
                    (expect (= [] (improve-schema-names s))))))
 
 (defdescribe council-machine-table-drop-test
@@ -4499,7 +4501,7 @@
                    (jdbc/execute! ds ["INSERT INTO council_machine VALUES (1, 'desk', 0)"])
                    (jdbc/execute! ds ["PRAGMA user_version = 4"])
                    (rewrite-older-store! ds)
-                   (expect (= 7 (user-version s)))
+                   (expect (= (rewrite-count) (user-version s)))
                    (expect (= []
                               (raw-query s
                                          {:select [:name]

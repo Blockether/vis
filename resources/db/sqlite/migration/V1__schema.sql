@@ -1029,12 +1029,17 @@ CREATE TABLE session_attachment (
   bytes                     BLOB,
   storage_uri               TEXT,
 
-  -- COMPACTION_PENDING: 1 while the stored image waits for its lossless
-  -- re-compression. A step stores the bytes as they arrived, so that the next
-  -- model request does not wait for the optimiser. The image compactor writes the
-  -- smaller bytes later and sets 0. A row that a stopped process left at 1 is
-  -- compacted after the next start.
+  -- COMPACTION_PENDING: 1 while the stored payload waits for its lossless
+  -- compaction. A step stores the bytes as they arrived, so that the next model
+  -- request does not wait for the optimiser. The attachment compactor clears it
+  -- when it takes the row, then writes the smaller payload. A row that a stopped
+  -- process left at 1 is compacted after the next start.
   compaction_pending        INTEGER NOT NULL DEFAULT 0 CHECK (compaction_pending IN (0, 1)),
+
+  -- STORAGE_CODEC: how `bytes` holds the payload. 'raw' is the payload itself;
+  -- 'zstd' is one zstd frame of it. Every read gives back the payload, and
+  -- `size_bytes` is always the size of the payload, never of the frame.
+  storage_codec             TEXT NOT NULL DEFAULT 'raw' CHECK (storage_codec IN ('raw', 'zstd')),
 
   created_at                INTEGER NOT NULL,
 
@@ -1069,7 +1074,7 @@ CREATE INDEX idx_attachment_queued_turn
   ON session_attachment(queued_turn_id, position)
   WHERE queued_turn_id IS NOT NULL;
 
--- The images that wait for the image compactor.
+-- The payloads that wait for the attachment compactor.
 CREATE INDEX idx_attachment_compaction_pending
   ON session_attachment(id)
   WHERE compaction_pending = 1;

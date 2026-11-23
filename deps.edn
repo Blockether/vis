@@ -17,7 +17,7 @@
         com.blockether/fff {:mvn/version "0.12.21"}
         ;; Imaging over a Rust cdylib with embedded fonts, replacing AWT/Java2D/ImageIO/jsvg:
         ;; no headless bootstrap, no fontconfig. `java.desktop` still loads, for mic capture.
-        com.blockether/imaging {:mvn/version "0.1.12"}
+        com.blockether/imaging {:mvn/version "0.1.14"}
         ;; Names the wrong quote or bracket when Python refuses a `py3` block.
         com.blockether/parinferish {:mvn/version "0.2.4"}
         com.blockether/svar {:mvn/version "0.7.245"}

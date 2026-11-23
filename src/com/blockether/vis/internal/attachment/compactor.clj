@@ -1,81 +1,87 @@
 (ns com.blockether.vis.internal.attachment.compactor
-  "The image compactor: the one background worker that re-compresses stored images.
+  "The attachment compactor: janitor tasks that shrink stored payloads LOSSLESSLY.
 
-   A step stores an image as it arrived, with `compaction_pending` set, so that the
-   next model request never waits for the optimiser. This worker reads each waiting
-   row, compacts its bytes LOSSLESSLY ([[image-convert/compact]]) and writes them
-   back. It is not the janitor: a long compaction never delays maintenance, and
-   maintenance never delays a compaction.
+   A step stores each payload as it arrived, with `compaction_pending` set, so that
+   no step waits for an optimiser. A pass reads each waiting row and makes it
+   smaller in two steps: [[image-convert/compact]] gives a PNG the same picture in
+   fewer bytes, then [[codec/pack]] stores any payload as a zstd frame when that
+   saves enough. Every read gives the same bytes back as before the pass, except
+   for a compacted PNG, which shows the same pixels and metadata.
 
-   One daemon thread at the lowest priority does one image at a time, so a burst of
-   screenshots takes one core and no more. The wait lives in the row, not in this
-   process: a row that a stopped process left waiting is compacted after the next
-   start, and a second run on a compacted row writes nothing.
+   The work runs on the janitor ([[janitor/submit!]]), so it never runs at the same
+   time as a vacuum or a sweep of the same store. A pass stops after [[slice-ms]]
+   and asks for the next pass at once, so a long backlog never holds the other
+   chores for more than one slice.
 
-   [[watch!]] names a store to the worker; [[wake!]] asks for a pass soon after a
+   A pass takes a row ([[persistance/db-claim-attachment-compaction!]]) before it
+   reads the bytes with the optimiser. A payload that stops the process stays
+   `raw` and is never taken again, so it cannot stop each next start too.
+
+   [[watch!]] names a store to the janitor; [[wake!]] asks for a pass soon after a
    write. A pass also runs every [[poll-ms]], so a wake that came before the write
-   committed loses nothing. The thread starts at the first [[watch!]], never at
-   namespace load, so the native image holds no thread from its build."
-  (:require [com.blockether.vis.internal.attachment.image-convert :as image-convert]
+   committed loses nothing."
+  (:require [com.blockether.vis.internal.attachment.codec :as codec]
+            [com.blockether.vis.internal.attachment.image-convert :as image-convert]
+            [com.blockether.vis.internal.janitor :as janitor]
             [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
-  (:import (com.zaxxer.hikari HikariDataSource)
-           (java.util.concurrent ScheduledThreadPoolExecutor ThreadFactory TimeUnit)
-           (java.util.concurrent.atomic AtomicBoolean)))
+  (:import (com.zaxxer.hikari HikariDataSource)))
 
 (def ^:private settle-ms
   "The time from a wake to its pass: the write that woke the worker commits first."
   1000)
 
-(def ^:private poll-ms
-  "The time between two passes without a wake."
-  60000)
+(def ^:private poll-ms "The time between two passes without a wake." 60000)
 
-(defn- thread-factory
-  "Daemon threads at the lowest priority, named `vis-image-compactor-N`."
-  ^ThreadFactory []
-  (let [daemons (util/daemon-thread-factory "vis-image-compactor")]
-    (reify
-      ThreadFactory
-        (newThread [_ runnable]
-          (doto (.newThread daemons runnable) (.setPriority Thread/MIN_PRIORITY))))))
+(def ^:private slice-ms
+  "The longest time that one pass compacts before it gives the janitor back."
+  2000)
 
-(defonce ^{:private true :doc "The one worker thread."}
-         executor
-  (delay (doto (ScheduledThreadPoolExecutor. 1 (thread-factory)) (.setRemoveOnCancelPolicy true))))
+(defonce ^{:private true :doc "DataSource -> the store that the janitor drains."} stores (atom {}))
 
-(defonce ^{:private true :doc "DataSource -> the store the worker drains."}
-         stores
-  (atom {}))
+(defn- smaller
+  "`{:bytes :codec :size}` for the payload `data`, or nil when the optimisers win
+   nothing. An optimiser failure goes to the log and keeps `data`: it must not stop
+   the other rows of the pass."
+  [id ^bytes data]
+  (try (let [^bytes picture
+             (perf/timed :attachment/compact (image-convert/compact data))
 
-(defonce ^{:private true :doc "True while a pass waits to start."}
-         pass-waits
-  (AtomicBoolean.))
+             {:keys [^bytes bytes codec]}
+             (perf/timed :attachment/pack (codec/pack picture))]
 
-(defn- compact-row!
-  "Compact the bytes of ONE waiting row and end its wait."
-  [db {:keys [id] :as row}]
-  (let [^bytes data
-        (:bytes row)
-
-        ^bytes out
-        (perf/timed :attachment/compact (image-convert/compact data))]
-
-    (persistance/db-finish-attachment-compaction!
-      db
-      id
-      data
-      (when (< (alength out) (alength data)) out))))
+         (when (or (not (identical? picture data)) (not= codec/raw codec))
+           {:bytes bytes :codec codec :size (alength picture)}))
+       (catch Exception e
+         (tel/log! {:level :warn
+                    :id ::row-failed
+                    :data {:attachment id}
+                    :error e
+                    :msg (str "Attachment " id " stays as it is: its compaction failed")})
+         nil)))
 
 (defn drain!
-  "Compact every waiting row of `db`, one at a time, and answer how many it read."
-  [db]
-  (loop [n 0]
-    (if-let [row (first (persistance/db-pending-attachment-compactions db 1))]
-      (do (compact-row! db row) (recur (inc n)))
-      n)))
+  "Compact the waiting rows of `db`, one at a time, until none waits or
+   `budget-ms` has passed (nil: no limit). The time is checked before each row,
+   so one row can take longer than the budget: a large PNG takes seconds. Answer
+   `{:rows n :more? bool}`: how many rows it took, and whether rows still wait."
+  ([db] (drain! db nil))
+  ([db budget-ms]
+   (let [deadline (some->> budget-ms
+                           long
+                           (+ (util/now-ms)))]
+     (loop [n 0]
+       (let [id (:id (first (persistance/db-pending-attachment-compactions db 1)))]
+         (cond (nil? id) {:rows n :more? false}
+               ;; Each pass takes one row at least, so a pass always moves on.
+               (and deadline (pos? n) (> (util/now-ms) (long deadline))) {:rows n :more? true}
+               :else (let [data (persistance/db-claim-attachment-compaction! db id)]
+                       (when-let [out (some->> data
+                                               (smaller id))]
+                         (persistance/db-finish-attachment-compaction! db id data out))
+                       (recur (inc n)))))))))
 
 (defn- closed?
   "True when the DataSource `k` of a store is a closed pool. Only a pool tells it:
@@ -83,45 +89,49 @@
   [k]
   (and (instance? HikariDataSource k) (.isClosed ^HikariDataSource k)))
 
+(defn- task-id "The janitor id of the `kind` task of the store `k`." [k kind] [::compaction kind k])
+
 (defn- pass!
-  "Drain each watched store. A closed store leaves the worker until its next
-   [[watch!]]; a store with a passing failure stays for the next pass."
-  []
-  (.set ^AtomicBoolean pass-waits false)
-  (doseq [[k db] @stores]
-    (try (let [started (util/now-ms)
-               n (drain! db)]
-           (when (pos? (long n))
-             (tel/log! {:level :info
-                        :id ::compacted
-                        :data {:images n :ms (- (util/now-ms) started)}
-                        :msg (str "Compacted " n " stored images")})))
-         (catch Throwable t
-           (if (closed? k)
-             (swap! stores dissoc k)
-             (tel/log! {:level :warn :id ::pass-failed :error t :msg "Image compaction failed"}))))))
+  "Drain one slice of the store `k`. Answer `{:rows n}` for the janitor line, or nil
+   when no row waited. A closed store leaves the janitor until its next [[watch!]];
+   another failure goes to the janitor log and the store stays."
+  [k db]
+  (try (let [{:keys [rows more?]} (drain! db slice-ms)]
+         ;; Not [[wake-store!]]: this task is still queued while it runs, so that
+         ;; guard would drop the next slice.
+         (when more? (janitor/submit! {:id (task-id k :wake) :run #(pass! k db)}))
+         (when (pos? (long rows)) {:rows rows}))
+       (catch Throwable t
+         (if (closed? k)
+           (do (swap! stores dissoc k)
+               (janitor/cancel! (task-id k :poll))
+               (janitor/cancel! (task-id k :wake))
+               nil)
+           (throw t)))))
+
+(defn- wake-store!
+  "Give the janitor one pass of the store `k` after `delay-ms`, unless one waits."
+  [k delay-ms]
+  (when-let [db (get @stores k)]
+    (let [id (task-id k :wake)]
+      (when-not (contains? (janitor/queued) id)
+        (janitor/submit! {:id id :delay-ms delay-ms :run #(pass! k db)})))))
 
 (defn wake!
-  "Ask for a pass soon. Many wakes before the pass start make one pass."
+  "Ask for a pass of each watched store soon. Many wakes before the pass start make
+   one pass."
   []
-  (when (and (seq @stores) (.compareAndSet ^AtomicBoolean pass-waits false true))
-    (.schedule ^ScheduledThreadPoolExecutor @executor ^Runnable pass! (long settle-ms) TimeUnit/MILLISECONDS)))
-
-(defonce ^{:private true :doc "The repeating pass, started at the first watch."}
-         polling
-  (delay (.scheduleWithFixedDelay ^ScheduledThreadPoolExecutor @executor
-                                  ^Runnable pass!
-                                  (long poll-ms)
-                                  (long poll-ms)
-                                  TimeUnit/MILLISECONDS)))
+  (doseq [k (keys @stores)]
+    (wake-store! k settle-ms)))
 
 (defn watch!
-  "Give the store `db` to the worker and drain its waiting rows soon. A store that
-   the worker already drains changes nothing."
+  "Give the store `db` to the janitor and drain its waiting rows soon. A store that
+   the janitor already drains changes nothing."
   [db]
   (when-let [k (:datasource db)]
     (when-not (contains? @stores k)
       (swap! stores assoc k db)
-      (force polling)
-      (wake!)))
+      (janitor/submit!
+        {:id (task-id k :poll) :delay-ms poll-ms :every-ms poll-ms :run #(pass! k db)})
+      (wake-store! k settle-ms)))
   nil)

@@ -469,35 +469,43 @@
                        (= (:frames pa) (:frames pb))))
                 (catch Throwable _ false))))
 
-(defn compact
-  "Losslessly re-compress an image payload on its way INTO the store: oxipng's
-   filter/colour-type/palette search for PNG, jpegtran-style marker stripping
-   for JPEG, gifsicle's differencing re-encoder for GIF -- `imaging/optimize`
-   with only `:level`, which that library documents as pixel-preserving (only
-   `:lossy`/`:quality`/`:format`/`:max-*` license a re-encode).
+(def ^:private compact-formats
+  "The containers that `imaging/optimize` in strict mode can re-encode losslessly."
+  #{"png" "jpeg"})
 
-   Level 2, not the default 3: the image compactor runs this in the background, one
-   image at a time. On six screenshots level 1 took 4.3 s for 16 percent fewer
-   bytes, level 2 took 16.7 s for 25 percent, and level 3 took 57 s for the same 25
-   percent.
+(defn- compactable?
+  "True when `data` is a still PNG or JPEG: the only containers [[compact]] changes."
+  [^bytes data]
+  (boolean (try (let [p (imaging/probe data)]
+                  (and (contains? compact-formats (:format p)) (= 1 (long (or (:frames p) 1)))))
+                (catch Throwable _ false))))
+
+(defn compact
+  "Losslessly re-compress a PNG or a JPEG on its way INTO the store, with the
+   strict mode of `imaging/optimize`: oxipng for a PNG, and Huffman tables made
+   for the image for a baseline JPEG. Strict mode keeps every metadata chunk and
+   marker, so orientation, gamma and colour profiles stay, and it gives back its
+   input unless the output decodes to the same samples. Every other container
+   comes back as it is.
+
+   Level 2, the strict default: the compactor runs this in the background, one
+   image at a time. On six screenshots level 2 saved 30 percent in 2 s, and level
+   3 saved the same in 7.4 s. Strict JPEG saved 12 percent in about 50 ms.
 
    The second exception to \"never re-compress\", and a narrower one than
    [[fit-within]]: the PICTURE is untouched, only its encoding is. A rendered
    or screenshot PNG comes out of a speed-tuned encoder and routinely costs
    several times the bytes it needs -- bytes that are then paid in the
-   `session_attachment` BLOB, in every `/poll` + SSE replay of that row, and in
-   every later turn the attachment replays. What the model and the human see is
-   bit-identical, which is what the verbatim contract protects.
+   `session_attachment` BLOB and in every later turn the attachment replays.
 
-   Belt and braces, because a silent quality drop here would be invisible: the
-   result is taken ONLY when it is strictly smaller AND still probes as the same
-   format at the same dimensions and frame count ([[same-picture?]]).
+   The result is taken ONLY when it is strictly smaller and still probes as the
+   same container at the same size ([[same-picture?]]).
 
    Never bigger than `data`, never nil, never throws."
   ^bytes [^bytes data]
-  (if (or (not *enabled?*) (nil? data) (zero? (alength data)))
+  (if (or (not *enabled?*) (nil? data) (zero? (alength data)) (not (compactable? data)))
     data
-    (let [out (try (imaging/optimize data {:level 2}) (catch Throwable _ nil))]
+    (let [out (try (imaging/optimize data {:strict true}) (catch Throwable _ nil))]
       (if (and out
                (pos? (alength ^bytes out))
                (< (alength ^bytes out) (alength data))

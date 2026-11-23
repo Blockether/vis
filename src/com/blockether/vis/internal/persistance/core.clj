@@ -328,13 +328,16 @@
     "Write an exported tree with new ids in one transaction. Answer the new root and id map."))
 
 (defprotocol AttachmentStore
-  "Image compaction operations of a persistence backend, with the `Store` dispatch. They
-   are a separate protocol for the same JVM method-size limit as `AutomationStore`."
+  "Attachment compaction operations of a persistence backend, with the `Store` dispatch.
+   They are a separate protocol for the same JVM method-size limit as `AutomationStore`."
   (db-pending-attachment-compactions [db-info limit]
-    "Up to `limit` stored attachments that wait for the image compactor, as `{:id :bytes}`.")
+    "The ids of up to `limit` stored `raw` attachments that wait for the compactor, as `{:id}`.")
+  (db-claim-attachment-compaction! [db-info id]
+    "Take one waiting attachment, clear its wait and answer its `raw` bytes in the same
+     transaction. Nil when another pass took it.")
   (db-finish-attachment-compaction! [db-info id stored compacted]
-    "Write the `compacted` bytes (nil: no gain) of one waiting attachment and clear its wait.
-     The bytes change only while the row still holds the `stored` bytes."))
+    "Write `compacted`, `{:bytes :codec :size}`, for one taken attachment. The row changes
+     only while it still holds the `stored` bytes `raw`."))
 
 (defmacro store-implementation
   "Expand, inside a backend namespace, to its op map for `Store`, `AutomationStore`,

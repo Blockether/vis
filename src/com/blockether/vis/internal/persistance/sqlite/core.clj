@@ -30,6 +30,7 @@
             [clojure.walk :as walk]
             [com.blockether.vis.internal.persistance.sqlite.maintenance :as maintenance]
             [com.blockether.vis.internal.persistance.sqlite.migration :as migration]
+            [com.blockether.vis.internal.attachment.codec :as attachment-codec]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.native-libs :as native-libs]
@@ -719,11 +720,21 @@
                                                                 :from :session_agent})]
                              (refresh-teams! db-info leader_id)))))
 
+(defn- queue-attachment-compaction!
+  "Let each stored payload of at least `attachment-codec/min-bytes` wait for one
+   compaction. A store from before the storage codec compacted only images, so its
+   other payloads were never compressed."
+  [^DataSource ds]
+  (jdbc/execute! ds
+                 [(str "UPDATE session_attachment SET compaction_pending = 1 "
+                       "WHERE bytes IS NOT NULL AND storage_codec = ? AND length(bytes) >= ?")
+                  attachment-codec/raw (long attachment-codec/min-bytes)]))
+
 (def ^:private store-rewrites
   "One-time data rewrites of older stores, in order. `PRAGMA user_version` counts the
    rewrites that a store has already done. Append new rewrites; never reorder them."
   [rewrite-activity-search-text! drop-stored-activity-rows! drop-log-table! drop-improve-tables!
-   drop-council-machine-table! store-agent-teams! store-team-clocks!])
+   drop-council-machine-table! store-agent-teams! store-team-clocks! queue-attachment-compaction!])
 
 (defn- rewrites-done
   "The count of the store rewrites that this store has already done."
@@ -4104,7 +4115,8 @@
         {:bytes data
          :storage_uri nil
          :size_bytes (long (or (:size att) (alength data)))
-         :compaction_pending (if (:compaction-pending? att) 1 0)}))))
+         ;; The step stores the bytes as they arrived; the compactor shrinks them later.
+         :compaction_pending (if (>= (alength data) (long attachment-codec/min-bytes)) 1 0)}))))
 
 (defn- attachment-live-view-cols
   "Stable identity carried only by a filed live-view attachment."
@@ -4348,7 +4360,7 @@
    is a `user` image (no enum column to drift). `:id` is the bare row uuid;
    read-back knocks the single table directly by it, no prefix, no dispatch."
   [row]
-  (let [^bytes bs (:bytes row)]
+  (let [^bytes bs (attachment-codec/unpack (:bytes row) (:storage_codec row))]
     (cond-> {:id (:id row)
              :source (if (:session_turn_iteration_id row) :tool :user)
              :tool-call-id (:tool_call_id row)
@@ -4407,13 +4419,14 @@
 
 (def ^:private turn-attachment-inline-columns
   "The columns of a `session_attachment` row whose `bytes` BLOB is read only when
-   it is not larger than the one `?` of this list. `size_bytes` stays exact for a
-   row that an old store wrote without it."
+   the payload is not larger than the one `?` of this list. The limit is on the
+   original size, not on the stored BLOB, which a codec can make much smaller.
+   `size_bytes` stays exact for a row that an old store wrote without it."
   (str "id, session_turn_soul_id, session_turn_iteration_id, tool_call_id, queued_turn_id, "
        "position, kind, media_type, filename, reference, view_id, live_invocation_id, "
        "live_activity_id, version, audience, storage_uri, transcription, transcription_segments, "
-       "COALESCE(size_bytes, length(bytes)) AS size_bytes, "
-       "CASE WHEN length(bytes) <= ? THEN bytes END AS bytes"))
+       "storage_codec, COALESCE(size_bytes, length(bytes)) AS size_bytes, "
+       "CASE WHEN COALESCE(size_bytes, length(bytes)) <= ? THEN bytes END AS bytes"))
 
 (defn db-list-turns-attachments
   "Batch variant of [[db-list-turn-attachments]]: INBOUND user images for MANY
@@ -6738,7 +6751,8 @@
                                ;; A reference names a file on this machine and has no
                                ;; bytes to carry (#450): it travels as its path.
                                att
-                               (let [^bytes data (or (:bytes att)
+                               (let [^bytes data (or (attachment-codec/unpack (:bytes att)
+                                                                              (:storage_codec att))
                                                      (attachment-storage/resolve-bytes (:storage_uri
                                                                                          att)))]
                                  (when-not data
@@ -6749,6 +6763,7 @@
                                    (vswap! blobs assoc sha data)
                                    (assoc att
                                      :bytes nil
+                                     :storage_codec attachment-codec/raw
                                      :storage_uri nil
                                      :bytes_sha256 sha)))))
                   sessions (mapv #(snapshot-session tx-info % tree payload!) ids)]
@@ -6844,6 +6859,7 @@
                                           {:type :session/invalid-snapshot})))
                         (-> (dissoc a :bytes_sha256)
                             (assoc :bytes data
+                                   :storage_codec attachment-codec/raw
                                    :storage_uri nil)))))
                   atts))))
 
@@ -8697,44 +8713,54 @@
             (fn [tx]
               (execute! tx {:update :automation_delivery :set attrs :where [:= :id id]}))))))
 
-;; Image compaction
+;; Attachment compaction
 
 (defn db-pending-attachment-compactions
-  "Up to `limit` stored attachments that wait for the image compactor, as
-   `{:id :bytes}` rows."
+  "The ids of up to `limit` stored `raw` attachments that wait for the attachment
+   compactor, as `{:id}` rows. No BLOB is read."
   [db limit]
   (if-not (ds db)
     []
     (query! db
-            {:select [:id :bytes]
+            {:select [:id]
              :from :session_attachment
-             :where [:and [:= :compaction_pending 1] [:is-not :bytes nil]]
+             :where [:and [:= :compaction_pending 1] [:is-not :bytes nil]
+                     [:= :storage_codec attachment-codec/raw]]
              :limit (long limit)})))
 
+(defn db-claim-attachment-compaction!
+  "Take the waiting attachment `id` for one compaction, clear its wait and answer
+   its `raw` bytes, or nil when another pass took it. The read and the clear are
+   one transaction, so the bytes are those of the row that this call took. The
+   wait clears BEFORE the optimiser reads the bytes, so a payload that stops the
+   process is never read again."
+  ^bytes [db id]
+  (sqlite-write-tx! db
+                    (fn [tx]
+                      (when (pos? (update-count
+                                    (execute! tx
+                                              {:update :session_attachment
+                                               :set {:compaction_pending 0}
+                                               :where [:and [:= :id id] [:= :compaction_pending 1]
+                                                       [:= :storage_codec attachment-codec/raw]]})))
+                        (:bytes (query-one! tx
+                                            {:select [:bytes]
+                                             :from :session_attachment
+                                             :where [:= :id id]}))))))
+
 (defn db-finish-attachment-compaction!
-  "End the compaction of the attachment `id`: write `compacted` (nil when the
-   optimiser won nothing) and clear its wait. The bytes change only while the row
-   still holds the `stored` bytes that the compactor read. Each call clears the
-   wait, so a row never waits again."
-  [db id stored compacted]
-  (sqlite-write-tx!
-    db
-    (fn [tx]
-      (when (or (nil? compacted)
-                (zero? (update-count
-                         (execute! tx
-                                   {:update :session_attachment
-                                    :set {:bytes compacted
-                                          :size_bytes (alength ^bytes compacted)
-                                          :compaction_pending 0}
-                                    :where [:and
-                                            [:= :id id]
-                                            [:= :compaction_pending 1]
-                                            [:= :bytes stored]]}))))
-        (execute! tx
-                  {:update :session_attachment
-                   :set {:compaction_pending 0}
-                   :where [:= :id id]}))))
+  "Write the compacted payload of the taken attachment `id`: `compacted` is
+   `{:bytes :codec :size}`, with `:size` the length of the payload that a read
+   gives back. The row changes only while it still holds the `stored` bytes `raw`,
+   so a write that came while the compactor worked stays."
+  [db id stored {:keys [^bytes bytes codec size]}]
+  (sqlite-write-tx! db
+                    (fn [tx]
+                      (execute! tx
+                                {:update :session_attachment
+                                 :set {:bytes bytes :storage_codec codec :size_bytes (long size)}
+                                 :where [:and [:= :id id] [:= :storage_codec attachment-codec/raw]
+                                         [:= :bytes stored]]})))
   nil)
 
 ;; Backend

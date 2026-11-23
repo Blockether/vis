@@ -240,7 +240,7 @@
    see exactly what the producer drew."
   (describe
     "inline (the BLOB)"
-    (it "stores an image as it arrived and marks it for the image compactor"
+    (it "stores an image as it arrived"
         (let [png
               (gradient-png)
 
@@ -251,7 +251,7 @@
                :size (alength png)
                :base64 (b64* png)}]
 
-          (expect (= (assoc att :compaction-pending? true) (as/offload-attachment att))))))
+          (expect (= att (as/offload-attachment att))))))
   (describe
     "external (a backend PUT)"
     (it "hands the backend the bytes as they arrived, and hydrate gives them back"

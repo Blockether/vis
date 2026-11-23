@@ -76,7 +76,8 @@
       native-libs sounds janitor]]
     ;; The session store and the attachment blobs it persists.
     [persistance
-     [persistance attachment.core attachment.storage attachment.image-convert attachment.compactor]]
+     [persistance attachment.core attachment.storage attachment.image-convert attachment.compactor
+      attachment.codec]]
     ;; Merged configuration and the catalogs it reads.
     [config
      [config extension.registry extension.manifest provider.catalog provider.credential-command
