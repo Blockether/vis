@@ -1392,6 +1392,33 @@
                  (expect (= "REVG" (get (first rows) "base64")))))
              (finally (reset! registry saved)))))
   (it
+    "finds a stored attachment by its id when the landed turn still holds its upload"
+    ;; Session 1b75d634: the desktop app asked for the stored id of a phone picture and
+    ;; got 404, because the upload copy matched no id and stopped the search.
+    (let [sid
+          (str (java.util.UUID/randomUUID))
+
+          registry
+          @#'state/registry
+
+          saved
+          @registry]
+
+      (try (reset! registry {sid {:turns {"t9" {:turn_id "t9"
+                                                :session_id sid
+                                                :status "completed"
+                                                :request "[IMAGE #1] look"
+                                                :attachments [{:filename "photo.jpg"
+                                                               :media-type "image/jpeg"
+                                                               :base64 "QUJD"
+                                                               :reference "[IMAGE #1]"}]}}}})
+           (with-redefs [persistance/db-list-turns-attachments
+                         (fn [_ ids & _]
+                           {(str (first ids))
+                            [{:id "a1" :filename "photo.jpg" :media-type "image/jpeg" :size 3}]})]
+             (expect (= "a1" (get (state/turn-attachment sid "t9" "a1") "id"))))
+           (finally (reset! registry saved)))))
+  (it
     "serves a sent queued message's files from the step that stored them"
     (let [sid
           (str (java.util.UUID/randomUUID))

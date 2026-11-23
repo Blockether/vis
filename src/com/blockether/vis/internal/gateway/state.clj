@@ -2717,9 +2717,11 @@
   ([sid tid {:keys [attachment-id] :as opts}]
    (when (and sid tid)
      (let [turn (turn-record sid tid)
+           ;; No match is nil, not []: an empty vector would stop the `or` below
+           ;; before the store, where a landed turn keeps the ids that clients ask for.
            live #(when-let [rows (live-turn-attachments (read-turn-record turn))]
-                   (cond->> rows
-                     attachment-id (filterv (fn [row] (= (str attachment-id) (get row "id"))))))
+                   (not-empty (cond->> rows
+                                attachment-id (filterv (fn [row] (= (str attachment-id) (get row "id")))))))
            stored (fn [lister]
                     (try (when-let [rows (get (if opts
                                                (lister (lp/db-info) [tid] opts)
