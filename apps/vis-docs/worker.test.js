@@ -397,6 +397,9 @@ test('writes reject cross-origin requests, unsupported input and unpinned confir
   expect((await post('/api/extensions')).status).toBe(405);
 });
 test('per-IP rate limit prevents excessive inspection requests', async () => {
+  // The emulated limiter counts in 60 s windows aligned to the clock: start in a fresh window.
+  const left = 60000 - (Date.now() % 60000);
+  if (left < 10000) await new Promise((resolve) => setTimeout(resolve, left + 50));
   const statuses = [];
   for (let n = 0; n < 11; n++)
     statuses.push(
