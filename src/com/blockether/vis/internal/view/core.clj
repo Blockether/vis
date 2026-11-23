@@ -3243,20 +3243,32 @@
           (app-view (:session-id record) (:view-id newest))
           (live-entry (:view-id newest))))))
 
+(def ^:private declared-presentation
+  "The keys of an app declaration that an adopting owner sets again, also to nothing.
+   The nodes stay: they hold the threads and drafts of people, and the owner patches them."
+  [:title :description :shortcuts :icon])
+
+(defn- declared-view
+  "Open app `view` with the presentation and the settings name that `record` declares."
+  [view record]
+  (reduce (fn [v k]
+            (if (contains? record k) (assoc v k (get record k)) (dissoc v k)))
+          (merge view (select-keys record [:settings-name]))
+          declared-presentation))
+
 (defn- adopt-app!
-  "Give the open app to its current owner. Keep its state and update a declared
-   icon and settings name."
+  "Give the open app to its current owner. Keep its nodes and take the title,
+   description, shortcuts, icon and settings name that the owner declares, so a
+   reload of the owner shows them at once."
   [record]
   (when-let [entry (adoptable-app record)]
     (let [cell (:view entry)]
       (locking cell
         (when (identical? cell (:view (get @pending (:id entry))))
-          (let [declared (select-keys record [:icon :settings-name])
-                changed? (not= declared (select-keys @cell (keys declared)))
+          (let [declared (declared-view @cell record)
+                changed? (not= declared @cell)
                 _ (when changed?
-                    (let [view (-> @cell
-                                   (merge declared)
-                                   (update :seq inc))
+                    (let [view (update declared :seq inc)
                           bytes (sink/compact! (:file entry) view @(:node-seqs entry))]
 
                       (reset! cell view)

@@ -97,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Terminal: a large canvas board draws in less than 1 ms. Before, each frame laid out the board again.
 - Terminal: canvas text and the comment editor stay inside the frame in a small terminal.
 
+- Apps: when an extension takes an open app again, for example after `/reload`, the app shows the title, the description, the shortcuts, and the icon of the new declaration. Before, it kept the old title, description, and shortcuts. The app keeps its nodes, so the threads and the comment drafts of people stay.
 ## [v0.5.30] - 2026-11-22
 
 Vis v0.5.29 was not published, because its native release check failed. v0.5.30 contains all v0.5.29 changes.

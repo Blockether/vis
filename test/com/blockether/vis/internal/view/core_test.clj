@@ -4548,6 +4548,48 @@
                               (get-in (sdk-door! sid "demo" declaration) ["view" "seq"]))))
                  (restart-app! id)
                  (expect (= "review" (:icon (hi/app-view sid id))))
+                 (finally (hi/close-live! id)))))))
+  ;; User request: after `/reload`, the Review app kept the title and the shortcut
+  ;; legend of the replaced code until a person closed and opened it again.
+  (it "adopts the title, description and shortcuts of a new declaration and keeps the nodes"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                opened
+                (sdk-door! sid
+                           "demo"
+                           (update (keyed-app sid)
+                                   "view"
+                                   assoc
+                                   "description" "Old text."
+                                   "shortcuts" [{"key" "g" "label" "Go" "node_id" "go"}]))
+
+                id
+                (get opened "view_id")
+
+                renamed
+                (assoc-in (keyed-app sid) ["view" "title"] "Board 2")]
+
+            (try (let [adopted (sdk-door! sid "demo" renamed)]
+                   (expect (= id (get adopted "view_id")))
+                   (expect (= "Board 2" (get-in adopted ["view" "title"])))
+                   (expect (nil? (get-in adopted ["view" "description"])))
+                   (expect (nil? (get-in adopted ["view" "shortcuts"])))
+                   (expect (= (get-in opened ["view" "nodes"]) (get-in adopted ["view" "nodes"]))))
+                 (let [again (sdk-door! sid
+                                        "demo"
+                                        (update renamed
+                                                "view"
+                                                assoc
+                                                "description" "New text."
+                                                "shortcuts" [{"key" "n" "label" "Note" "action" "note"}]))]
+                   (expect (= "New text." (get-in again ["view" "description"])))
+                   (expect (= [{"key" "n" "label" "Note" "action" "note"}]
+                              (get-in again ["view" "shortcuts"]))))
+                 (restart-app! id)
+                 (expect (= "Board 2" (:title (hi/app-view sid id))))
                  (finally (hi/close-live! id))))))))
 
 (defdescribe
