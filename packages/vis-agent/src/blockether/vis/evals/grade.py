@@ -65,6 +65,7 @@ CHECK_KEYS = frozenset(
         "want_cache_read",
         "want_context_budget",
         "want_council_recovery",
+        "want_fold_first",
         "want_folded_prefix",
         "want_forms",
         "want_goal_complete",
@@ -97,6 +98,40 @@ def literal_fold_keys(code):
         and isinstance(node.args[0], ast.Constant)
         and isinstance(node.args[0].value, str)
     ]
+
+
+def fold_first_failures(code, error, needles):
+    """Check that the fold is the first call of its block and that the work follows it.
+
+    Statements before the fold may only bind values, such as the gist, without a call.
+    """
+    try:
+        body = ast.parse(code).body
+    except SyntaxError:
+        return ["the fold block is not valid Python"]
+    position = next(
+        (i for i, node in enumerate(body) if literal_fold_keys(ast.unparse(node))), None
+    )
+    if position is None:
+        return ["the fold block has no literal fold_session call"]
+    failures = []
+    if any(
+        isinstance(node, (ast.Call, ast.Await))
+        for statement in body[:position]
+        for node in ast.walk(statement)
+    ):
+        failures.append("a call runs before the fold in its block")
+    rest = "\n".join(ast.unparse(node) for node in body[position + 1 :])
+    if not rest:
+        failures.append("no other call follows the fold in its block")
+    failures.extend(
+        f"the calls after the fold do not use {needle!r}"
+        for needle in needles
+        if needle not in rest
+    )
+    if error:
+        failures.append(f"the fold block failed: {error.get('message', '?')}")
+    return failures
 
 
 CACHE_USAGE_FIELDS = (
@@ -1424,6 +1459,26 @@ def grade_trial(
             )
 
     fold_forms = [event for event in form_events if "fold_session(" in event["code"]]
+    if sc.get("want_fold_first"):
+        checks.use("fold_first")
+        fold_pairs = [
+            (event, output)
+            for event, output in zip(form_events, form_outputs, strict=True)
+            if "fold_session(" in event["code"]
+        ]
+        if len(fold_pairs) != 1:
+            checks.fail(
+                "fold_first", f"expected one fold block, observed {len(fold_pairs)}"
+            )
+        else:
+            event, output = fold_pairs[0]
+            needles = (
+                sc["want_fold_first"] if isinstance(sc["want_fold_first"], list) else []
+            )
+            checks.check(
+                "fold_first",
+                fold_first_failures(event["code"], output["error"], needles),
+            )
     if sc.get("want_folded_prefix"):
         checks.use("folded_prefix")
         if len(fold_forms) != 1:

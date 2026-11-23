@@ -1,0 +1,22 @@
+{
+  "want": {
+    "src/rates.py": [
+      "MAX_DISCOUNT_BPS = 6000"
+    ]
+  },
+  "wantnot": {},
+  "want_answer": [
+    "test_discount_caps_at_fifty",
+    "MAX_DISCOUNT_BPS",
+    "REL-4471-KESTREL"
+  ],
+  "want_forms": [
+    "fold_session("
+  ],
+  "want_requested_route": true,
+  "want_folded_prefix": true,
+  "want_fold_first": [
+    "shell(",
+    "RELEASE.md"
+  ]
+}

@@ -389,8 +389,9 @@
     "- New file: `path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)`. After a write, "
     "print only the changed lines to check them.\n"
     "\n" "## Context\n"
-    "- When `hint` shows and a large phase follows, make `print(fold_session(\"-tN/iK\", gist))` the only call "
-    "of a step. The gist keeps conclusions, exact paths, evidence, test state and dirty files.\n"))
+    "- When `hint` shows and a large phase follows, start the next block with "
+    "`print(fold_session(\"-tN/iK\", gist))`, where `iK` is the last completed step. Continue the work in the same "
+    "block after it. The gist keeps conclusions, exact paths, evidence, test state and dirty files.\n"))
 
 (defn- config-system-prompt
   "Read the optional string-keyed `system-prompt` YAML setting.

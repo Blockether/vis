@@ -118,6 +118,15 @@
                  (catch Throwable _ value))
             value))
 
+        current-turn
+        (fn []
+          (let [v (some-> ctx-atom
+                          deref
+                          (get "session_turn"))]
+            (cond (integer? v) (long v)
+                  (string? v) (parse-long (str/trim v))
+                  :else nil)))
+
         freeze
         (fn [intent]
           ;; Unbounded-above selectors (`since`, or `from` without `to`) would
@@ -129,11 +138,18 @@
           ;; Bounded selectors (`through`, `from`+`to`) are already safe and
           ;; pass through untouched (still re-resolved raw, but their upper
           ;; bound blocks any new scope).
-          (let [unbounded?
+          ;; A selector that reaches the CURRENT turn does the same: the live step
+          ;; settles at the next request, and a raw `t2` or `-t2` would then fold it
+          ;; with the work that ran after the fold. Its whole-turn intent is dropped,
+          ;; because the current turn keeps its request and answer.
+          (let [ranges
+                (ctx-engine/intent-ranges intent)
+
+                unbounded?
                 (boolean (some (fn [r]
                                  (or (contains? r "since")
                                      (and (contains? r "from") (not (contains? r "to")))))
-                               (ctx-engine/intent-ranges intent)))
+                               ranges))
 
                 ctx
                 (some-> ctx-atom
@@ -143,10 +159,43 @@
                 (get ctx "engine_iter_universe")
 
                 turns
-                (keys (get ctx "engine_turn_weights"))]
+                (keys (get ctx "engine_turn_weights"))
 
-            (if (and unbounded? (or (seq universe) (seq turns)))
-              (first (ctx-engine/expand-through [intent] universe turns))
+                turn
+                (current-turn)
+
+                selector-turn
+                (fn [v]
+                  (some-> (re-find #"^t(\d+)" (str/trim (str v)))
+                          second
+                          parse-long))
+
+                bounds
+                (mapcat vals ranges)
+
+                current?
+                (fn [v]
+                  (when-let [tn (selector-turn v)]
+                    (and turn (>= (long tn) (long turn)))))
+
+                ;; A bound on the live step stays raw so the live guard refuses it by name.
+                live-bound?
+                (some (fn [v]
+                        (when-let [[tn in] (and (current? v) (ctx-engine/scope-key v))]
+                          (not (contains? (set universe) (str "t" tn "/i" in)))))
+                      bounds)
+
+                reaches-current?
+                (and (not live-bound?) (some current? (concat bounds (get intent "scopes"))))]
+
+            (if (or reaches-current? (and unbounded? (or (seq universe) (seq turns))))
+              (let [frozen (first (ctx-engine/expand-through [intent] (or universe []) turns))
+                    kept (into #{} (remove #(and turn (>= (long %) (long turn)))) (get frozen "turns"))]
+                (when (and reaches-current? (empty? (get frozen "scopes")) (empty? kept))
+                  (throw (ex-info (str "fold_session: no step of this key is complete yet. Fold "
+                                       "only completed steps: \"-tN/iK\" up to the last completed step.")
+                                  {:type :vis/fold-session-unknown-key :scopes #{}})))
+                (if (seq kept) (assoc frozen "turns" kept) (dissoc frozen "turns")))
               intent)))
 
         parse-key
@@ -155,15 +204,6 @@
             (when-let [error (:error parsed)]
               (throw (ex-info error {:type :vis/fold-session-key :key k})))
             [(freeze (:intent parsed)) (:label parsed)]))
-
-        current-turn
-        (fn []
-          (let [v (some-> ctx-atom
-                          deref
-                          (get "session_turn"))]
-            (cond (integer? v) (long v)
-                  (string? v) (parse-long (str/trim v))
-                  :else nil)))
 
         record!
         (fn [intent]
@@ -315,14 +355,17 @@
                  ;; settled. Prior turns are always foldable, AND so is every finished
                  ;; iteration of the current turn — only the in-flight iteration is
                  ;; off-limits, because folding it would collapse steps this very turn
-                 ;; is still producing.
+                 ;; is still producing. A range bound counts too: the intent keeps a
+                 ;; bounded cursor raw, so "-tN/iK" on the live step would collapse that
+                 ;; step once a later request settles it.
                  live-scopes (when turn
                                (into (sorted-set)
                                      (filter (fn [sc]
-                                               (when-let [k (ctx-engine/scope-key sc)]
-                                                 (and (>= (long (first k)) (long turn))
-                                                      (not (contains? universe sc))))))
-                                     (get resolved "scopes")))]
+                                               (when-let [[tn in] (ctx-engine/scope-key sc)]
+                                                 (and (>= (long tn) (long turn))
+                                                      (not (contains? universe (str "t" tn "/i" in)))))))
+                                     (concat (get resolved "scopes")
+                                             (mapcat vals (ctx-engine/intent-ranges base)))))]
 
              (when-not turn
                (throw (ex-info "fold_session cannot prove the current turn; folding is blocked."

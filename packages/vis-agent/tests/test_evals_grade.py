@@ -202,6 +202,34 @@ def test_a_prefix_fold_needs_one_recorded_fold_in_the_session_usage(
 
 
 @pytest.mark.parametrize(
+    ("code", "is_passed"),
+    [
+        ('print(fold_session("-t1/i1", "gist"))\nprint(shell("pytest"))', True),
+        ('print(fold_session("-t1/i1", "gist"))', False),
+        ('print(shell("pytest"))\nprint(fold_session("-t1/i1", "gist"))', False),
+        ('print(fold_session("-t1/i1", "gist"))\nprint(read("a.py"))', False),
+        (
+            'gist = "g"\nprint(fold_session("-t1/i1", gist))\nprint(shell("pytest"))',
+            True,
+        ),
+        ('g = str(1)\nprint(fold_session("-t1/i1", g))\nprint(shell("pytest"))', False),
+    ],
+)
+def test_a_fold_first_block_opens_with_the_fold_and_runs_the_work_after_it(
+    tmp_path, code, is_passed
+):
+    document = _run(
+        _form("t1/i1/f1", "x = 1", operation="cat"),
+        _form("t1/i2/f1", code, operation="cat", iteration=2),
+    )
+    result = grade.grade_trial(
+        {"want_fold_first": ["shell("]}, tmp_path, _trial(document)
+    )
+
+    assert result.result["guards"]["fold_first"] is is_passed
+
+
+@pytest.mark.parametrize(
     ("session_id", "detail"),
     [
         (None, "persistent run returned no session id"),

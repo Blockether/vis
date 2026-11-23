@@ -381,7 +381,10 @@
 
         ;; `t2/i2` is the iteration being emitted right now (absent from the
         ;; settled universe); `t3/i1` is a future step. Both are off-limits.
-        (doseq [[target blocked] [[["t2/i2"] #{"t2/i2"}] [["t3/i1"] #{"t3/i1"}]]]
+        ;; A range that ENDS on the live step is refused too: its raw cursor would
+        ;; collapse that step, and the work after the fold, at the next request.
+        (doseq [[target blocked] [[["t2/i2"] #{"t2/i2"}] [["t3/i1"] #{"t3/i1"}]
+                                  ["-t2/i2" #{"t2/i2"}] ["t1/i1-t2/i2" #{"t2/i2"}]]]
           (let [ex (try (sf target "unsafe") nil (catch clojure.lang.ExceptionInfo e e))]
             (expect (= :vis/fold-session-active-turn (:type (ex-data ex))))
             (expect (= 2 (:current-turn (ex-data ex))))
@@ -402,6 +405,36 @@
         (expect (re-find #"^folded t2\b" (sf ["t2"] "whole-so-far")))
         (expect (re-find #"^folded through t2/i1" (sf "-t2/i1" "upto")))
         (expect (seq (get @ca "session_summaries")))))
+  (it "keeps the live step and the work after the fold when a key reaches the current turn"
+      ;; The live step `t2/i2` settles at the next request. A raw `t2` or `-t2` would
+      ;; then fold it, with the tests that ran after the fold in that block.
+      (doseq [k ["-t2" "t2" "t1/i1-t2" "-t3"]]
+        (let [ca
+              (atom {"session_turn" 2 "engine_iter_universe" ["t1/i1" "t2/i1"]})
+
+              sf
+              (get (compaction-verbs ca) 'fold-session)
+
+              _
+              (sf k "settled")
+
+              out
+              (apply-summaries (trailer "t1/i1" "t2/i1" "t2/i2") (get @ca "session_summaries"))]
+
+          (expect (true? (:collapsed? (second (nth out 1)))) k)
+          (expect (nil? (:collapsed? (second (nth out 2)))) k))))
+  (it "refuses a key on the current turn before any of its steps is complete"
+      (doseq [k ["t1" "-t1" "t1-t1"]]
+        (let [ca
+              (atom {"session_turn" 1 "engine_iter_universe" [] "engine_turn_weights" {}})
+
+              ex
+              (try ((get (compaction-verbs ca) 'fold-session) k "nothing yet")
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+
+          (expect (= :vis/fold-session-unknown-key (:type (ex-data ex))) k)
+          (expect (nil? (get @ca "session_summaries")) k))))
   (it "allows completed prior turns after the new turn has started"
       (let [ca
             (atom {"session_turn" 2 "engine_iter_universe" ["t1/i1" "t1/i2" "t2/i1"]})

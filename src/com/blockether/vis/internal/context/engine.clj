@@ -1005,7 +1005,8 @@
            (str
              "Use one broad print(fold_session(\"-tN/iK\", gist)) through the last completed scope"
              (when urgent? " before another large tool call")))
-         "; keep every fact, name, date, number and request of the user in the gist; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens.")))))
+         ", as the first call of your next block; the other calls of that block can follow it"
+         "; keep every fact, name, date, number and request of the user in the gist; if an edit is ready, make it in the same block after the fold; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens.")))))
 
 (defn session-view
   "The single projection from engine-internal ctx to the model-facing
