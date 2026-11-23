@@ -1693,6 +1693,27 @@
             (event-get event :label)]
 
         (case (str progress)
+          "extension-readiness"
+          (let [wait (event-get event :extension-wait)
+                stage (case (event-get wait :stage)
+                        "waiting" :waiting
+                        "preparing" :preparing
+                        nil)
+                since-ms (event-get wait :since-ms)
+                server-ms (event-get event :ts)
+                package (event-get wait :package)]
+            (when (and stage (nat-int? since-ms))
+              {:phase :extension-readiness
+               :extension-wait (cond-> {:stage stage
+                                        :since-ms (if (nat-int? server-ms)
+                                                    (- (System/currentTimeMillis)
+                                                       (max 0 (- (long server-ms) (long since-ms))))
+                                                    since-ms)}
+                                 (string? package) (assoc :package package))}))
+
+          "starting"
+          {:phase :extension-readiness}
+
           "attachment-transcription"
           {:phase :attachment-transcription :iteration iteration}
 

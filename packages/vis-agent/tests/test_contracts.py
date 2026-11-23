@@ -148,6 +148,21 @@ def test_gateway_envelopes_validate_real_payloads():
         _contracts.validate("gateway", "error_response", {"error": {"message": 7}})
 
 
+def test_extension_readiness_progress_matches_the_gateway_contract():
+    payload = {
+        "turn_id": "turn-1",
+        "progress": "extension-readiness",
+        "extension_wait": {"stage": "preparing", "since_ms": 1000, "package": "vis-spel"},
+    }
+    assert _contracts.validate("gateway", "turn_progress_payload", payload) is payload
+    with pytest.raises(ValueError):
+        _contracts.validate(
+            "gateway",
+            "turn_progress_payload",
+            {**payload, "extension_wait": {**payload["extension_wait"], "path": "/tmp"}},
+        )
+
+
 def test_the_host_implements_exactly_the_protocol_operations():
     assert set(vars(_outside.host)) == set(protocol_methods())
     for name, member in protocol_methods().items():

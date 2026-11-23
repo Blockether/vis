@@ -10998,8 +10998,20 @@
          now-ms
          (long (or now-ms (System/currentTimeMillis)))
 
+         {:keys [stage since-ms package]}
+         (when-not cancelling? (:extension-wait progress))
+
+         phase-label
+         (case stage
+           :waiting "Waiting for extensions"
+           :preparing (str "Preparing extensions" (when package (str " " package)))
+           (progress-phase iterations cancelling? command-label live-title agent-name))
+
+         elapsed-start-ms
+         (or since-ms turn-start-ms)
+
          elapsed-ms
-         (when turn-start-ms (max 0 (- now-ms (long turn-start-ms))))
+         (when elapsed-start-ms (max 0 (- now-ms (long elapsed-start-ms))))
 
          elapsed-str
          (or (vis/format-duration elapsed-ms) "0ms")
@@ -11049,7 +11061,7 @@
                 "  Send a message to continue.")
            (str (spinner-frame now-ms)
                 "  "
-                (progress-phase iterations cancelling? command-label live-title agent-name)
+                phase-label
                 "...  "
                 elapsed-str
                 (or (progress-error-segment iterations) "")

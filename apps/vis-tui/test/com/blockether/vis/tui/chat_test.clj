@@ -723,6 +723,17 @@
         (expect (= {:phase :python :iteration 4}
                    (g->c {"type" "turn.progress" "progress" "python" "iteration" 4}))))))
 
+(defdescribe extension-readiness-event-test
+  (it "projects readiness and its clear without inventing an iteration (#498)"
+      (let [frame {"type" "turn.progress" "turn_id" "t1"}]
+        (expect (= {:phase :extension-readiness
+                    :extension-wait {:stage :preparing :since-ms 1000 :package "vis-spel"}}
+                   (#'chat/gateway-event->chunk
+                    (assoc frame "progress" "extension-readiness"
+                           "extension_wait" {"stage" "preparing" "since_ms" 1000 "package" "vis-spel"}))))
+        (expect (= {:phase :extension-readiness}
+                   (#'chat/gateway-event->chunk (assoc frame "progress" "starting")))))))
+
 (defdescribe provider-retry-event-chunk-test
              (let [g->c @#'chat/gateway-event->chunk]
                (it "rehydrates structured retry metadata from the canonical wire event"

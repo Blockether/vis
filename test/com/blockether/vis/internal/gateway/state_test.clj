@@ -3242,6 +3242,51 @@
                  (expect (<= 25000 (long (get event "silent_ms")) 35000)))
                (finally (cancellation/cancel! token) (swap! @#'state/registry dissoc sid)))))))
 
+(defdescribe
+  extension-readiness-progress-test
+  (it "shows a long extension wait once, and clears it without moving the stall deadline (#498)"
+      (let [sid (str (random-uuid))
+            tid "turn-1"
+            token (cancellation/cancellation-token)
+            registry @#'state/registry
+            now (System/currentTimeMillis)
+            cell (atom {:stage :preparing :package "vis-spel" :since-ms now})
+            stall (atom {:phase :engine-start :started? true :last-ms now :extension-readiness cell})
+            events (atom [])
+            ready (promise)
+            cleared (promise)
+            append! state/append-event!]
+        (try
+          (swap! registry assoc sid {:current-turn tid
+                                     :turns {tid {:turn_id tid :status "running" :cancel-token token}}})
+          (with-redefs-fn
+            {#'state/TURN_WATCHDOG_TICK_MS 25
+             #'state/append-event! (fn [session-id type payload opts]
+                                    (when-let [event (append! session-id type payload opts)]
+                                      (when (= "turn.progress" type)
+                                        (swap! events conj (:store? opts))
+                                        (case (:progress payload)
+                                          "extension-readiness" (deliver ready event)
+                                          "starting" (deliver cleared event)
+                                          nil))
+                                      event))}
+            (fn []
+              (#'state/start-turn-stall-watchdog! sid tid token stall)
+              (expect (= ::timeout (deref ready 100 ::timeout)))
+              (let [frame (deref ready 3000 ::timeout)]
+                (expect (= {"turn_id" tid "progress" "extension-readiness"
+                            "extension_wait" {"stage" "preparing" "package" "vis-spel" "since_ms" now}}
+                           (select-keys frame ["turn_id" "progress" "extension_wait"])))
+                (expect (= [frame] (state/events-since sid 0))))
+              (Thread/sleep 100)
+              (reset! cell nil)
+              (let [frame (deref cleared 1500 ::timeout)]
+                (expect (= "starting" (get frame "progress")))
+                (expect (= [frame] (state/events-since sid 0))))
+              (expect (= [false false] @events))
+              (expect (= now (:last-ms @stall)))))
+          (finally (cancellation/cancel! token) (swap! registry dissoc sid))))))
+
 ;; Session 3bcf13c4-499f-4033-9523-684d466bbcfa: a block that computed for 20 minutes
 ;; showed only the phrase of its last tool call, so nobody saw the wedge.
 (defdescribe

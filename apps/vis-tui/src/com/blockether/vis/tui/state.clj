@@ -7270,10 +7270,19 @@
                               (fn [workspace]
                                 (if-not (:loading? workspace)
                                   workspace
-                                  (update-in workspace
-                                             [:progress :iterations]
-                                             retain-activity-reads
-                                             (or iterations []))))))))
+                                  (cond-> (update-in workspace
+                                                     [:progress :iterations]
+                                                     retain-activity-reads
+                                                     (or iterations []))
+                                    (seq iterations) (update :progress dissoc :extension-wait))))))))
+
+(reg-event-db :set-extension-readiness
+              (fn [db [_ workspace-id wait]]
+                (update-tab db workspace-id
+                            (fn [workspace]
+                              (if (:loading? workspace)
+                                (assoc-in workspace [:progress :extension-wait] wait)
+                                workspace)))))
 
 (defn- settled-trace
   "The trace a settling bubble KEEPS: the canonical refetch, but only when it carries
@@ -7742,6 +7751,9 @@
                                    :turn-metadata
                                    (dispatch [:sync-turn-metadata workspace-id chunk])
 
+                                   :extension-readiness
+                                   (dispatch [:set-extension-readiness workspace-id (:extension-wait chunk)])
+
                                    (do (when (and sid
                                                   (= :iteration-final (:phase chunk))
                                                   (or (:tasks chunk) (:facts chunk)))
@@ -7907,6 +7919,9 @@
 
                                    :turn-metadata
                                    (dispatch [:sync-turn-metadata workspace-id chunk])
+
+                                   :extension-readiness
+                                   (dispatch [:set-extension-readiness workspace-id (:extension-wait chunk)])
 
                                    (do (when (and sid
                                                   (= :iteration-final (:phase chunk))

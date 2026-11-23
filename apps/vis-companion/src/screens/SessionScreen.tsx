@@ -565,6 +565,13 @@ function runningTurnPhase(
     progress?.iteration == null ? 0 : progress.iteration,
   );
 
+  const wait = progress?.extensionWait;
+  if (wait?.stage === 'waiting') return 'Waiting for extensions';
+  if (wait?.stage === 'preparing') {
+    return wait.package
+      ? `Preparing extensions ${compactLabel(wait.package, '…')}`
+      : 'Preparing extensions';
+  }
   if (last?.error != null) return `${agentName} is retrying`;
   if (turn.resumed) return `${agentName} is continuing after a gateway restart`;
   // Nothing has arrived from the engine yet. The message IS sent — that is the
@@ -5511,7 +5518,11 @@ export function SessionScreen({
           )}
           providerWait={connected && !runningTurn.cancelling ? runningTurn.progress?.wait : undefined}
           pythonBusy={connected && !runningTurn.cancelling ? runningTurn.progress?.busy : undefined}
-          startedAt={runningTurn.startedAt}
+          startedAt={
+            (connected && !runningTurn.cancelling
+              ? runningTurn.progress?.extensionWaitStartedAt
+              : undefined) ?? runningTurn.startedAt
+          }
           client={client}
           sid={sid}
           onOpenAttachment={openLinkedArtifact}

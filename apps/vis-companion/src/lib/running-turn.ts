@@ -12,6 +12,7 @@ import type {
   CouncilRequest,
   DeliveredUserInput,
   RequestKind,
+  ExtensionWait,
   GatewayAttachment,
   IterationAttachment,
   SseEvent,
@@ -63,6 +64,10 @@ export interface TurnProgress {
   wait?: ProviderWait;
   /** The busy Python block while `kind` is `python`; absent when the notice ends. */
   busy?: PythonBusy;
+  /** Readiness before the first live iteration. */
+  extensionWait?: ExtensionWait;
+  /** Readiness start on the device clock. */
+  extensionWaitStartedAt?: number;
 }
 
 export interface RunningTurn {
@@ -476,7 +481,21 @@ export function reduceRunningTurnEvent(
   }
 
   if (type === 'turn.progress') {
+    if (turn.id && typeof event.turn_id === 'string' && event.turn_id !== turn.id) return turn;
     const kind = eventString(event, 'progress');
+    const wait = kind === 'extension-readiness' ? event.extension_wait : undefined;
+    const extensionWait =
+      wait &&
+      (wait.stage === 'waiting' || wait.stage === 'preparing') &&
+      Number.isFinite(wait.since_ms) &&
+      wait.since_ms >= 0
+        ? wait
+        : undefined;
+    // Use the gateway's sampled offset so a clock difference never changes the elapsed time.
+    const extensionWaitStartedAt =
+      extensionWait && typeof event.ts === 'number'
+        ? Date.now() - Math.max(0, event.ts - extensionWait.since_ms)
+        : extensionWait?.since_ms;
     const rawIteration = event.iteration;
     const iteration =
       typeof rawIteration === 'number'
@@ -498,6 +517,8 @@ export function reduceRunningTurnEvent(
             model: eventString(event, 'model') || undefined,
             wait: kind === 'provider-wait' ? providerWaitFromEvent(event) : undefined,
             busy: kind === 'python' ? pythonBusyFromEvent(event) : undefined,
+            extensionWait,
+            extensionWaitStartedAt,
           }
         : undefined,
     };

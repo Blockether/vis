@@ -1725,7 +1725,14 @@ export interface QueuePausedInfo {
   held: number;
 }
 
+export interface ExtensionWait {
+  stage: 'waiting' | 'preparing';
+  since_ms: number;
+  package?: string;
+}
+
 export interface SseEvent {
+  extension_wait?: ExtensionWait;
   type: string;
   request_kind?: RequestKind;
   council?: CouncilRequest;

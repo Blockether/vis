@@ -51,6 +51,7 @@
     [com.blockether.vis.internal.provider.service :as providers]
     [com.blockether.vis.internal.python.env :as python-env]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
+   [com.blockether.vis.internal.python.readiness :as readiness]
     [com.blockether.vis.internal.sandbox.jail :as process-jail]
     [com.blockether.vis.internal.sandbox.policy :as security-policy]
     [com.blockether.vis.internal.gateway.resources :as resources]
@@ -1084,9 +1085,10 @@
    poison the appender or sibling subscribers.
 
    `:mirror? false` keeps a transient event out of the cross-process journal too.
-   Use it only for an event that no other process can apply."
+   Use it only for an event that no other process can apply. `:when-current?`
+   checks under the event lock whether a transient frame is still current."
   ([sid type payload] (append-event! sid type payload {:store? true}))
-  ([sid type payload {:keys [store? mirror?] :or {mirror? true}}]
+  ([sid type payload {:keys [store? mirror? when-current?] :or {mirror? true}}]
    ;; Serialize cursor assignment, disk publication, and local delivery. Disk I/O
    ;; never occurs in a retryable registry update. Shared journals keep their own seq.
    (let [canonical-payload
@@ -1098,45 +1100,46 @@
 
          event
          (locking lock
-           (let [before
-                 (or (session-entry sid) (fresh-entry sid))
+           (when (or (nil? when-current?) (when-current?))
+             (let [before
+                   (or (session-entry sid) (fresh-entry sid))
 
-                 n
-                 (inc (long (:next-seq before 0)))
+                   n
+                   (inc (long (:next-seq before 0)))
 
-                 event
-                 (gateway-contract/stamp-session-event canonical-payload
-                                                       (str sid)
-                                                       n
-                                                       (util/now-ms)
-                                                       (wire/->wire type))
+                   event
+                   (gateway-contract/stamp-session-event canonical-payload
+                                                         (str sid)
+                                                         n
+                                                         (util/now-ms)
+                                                         (wire/->wire type))
 
-                 descriptor
-                 (when (or store? (materialized-transient? event))
-                   (when (= type "voice.admission") (persist-voice-receipt! sid canonical-payload))
-                   (event-store/write-event! event))]
+                   descriptor
+                   (when (or store? (materialized-transient? event))
+                     (when (= type "voice.admission") (persist-voice-receipt! sid canonical-payload))
+                     (event-store/write-event! event))]
 
-             (update-session! sid
-                              (fn [entry]
-                                (-> (assoc (or entry before) :next-seq
-                                           n :last-active
-                                           (util/now-ms))
-                                    (cond->
-                                      (and (= type "turn.started")
-                                           (get-in entry [:turns (:turn_id payload)]))
-                                      (assoc-in [:turns (:turn_id payload) :event_start_seq] n))
-                                    (retain-event descriptor store?))))
-             (event-store/discard-replaced! (:events before)
-                                            (:events (session-entry sid))
-                                            descriptor)
-             (fan-out! sid event)
-             (if (or mirror? store?)
-               (bus/publish! sid event {:store? store? :truncate? (= type "turn.started")})
-               (bus/note-unjournaled! sid n))
-             event))]
+               (update-session! sid
+                                (fn [entry]
+                                  (-> (assoc (or entry before) :next-seq
+                                             n :last-active
+                                             (util/now-ms))
+                                      (cond->
+                                        (and (= type "turn.started")
+                                             (get-in entry [:turns (:turn_id payload)]))
+                                        (assoc-in [:turns (:turn_id payload) :event_start_seq] n))
+                                      (retain-event descriptor store?))))
+               (event-store/discard-replaced! (:events before)
+                                              (:events (session-entry sid))
+                                              descriptor)
+               (fan-out! sid event)
+               (if (or mirror? store?)
+                 (bus/publish! sid event {:store? store? :truncate? (= type "turn.started")})
+                 (bus/note-unjournaled! sid n))
+               event)))]
 
      ;; Observers can read other sessions; never call them under a replay lock.
-     (run-event-taps! sid event)
+     (when event (run-event-taps! sid event))
      event)))
 
 (defn ingest-mirrored-event!
@@ -5170,6 +5173,27 @@
      (after-turn-terminal! sid tid {:failed? true :cancel-token cancel-token :stalled? true})
      true)))
 
+(defn- publish-extension-readiness!
+  "Publish a changed readiness mark after a second. Do not change the stall clock."
+  [sid tid cancel-token stall shown now]
+  (let [{:keys [phase extension-readiness]} @stall]
+    (if-not (and (= phase :engine-start) extension-readiness)
+      (vreset! shown nil)
+      (let [{:keys [stage package since-ms] :as wait} @extension-readiness
+            notice (cond (and wait (not= wait @shown) (or @shown (>= (- now since-ms) 1000)))
+                         {:progress "extension-readiness"
+                          :extension-wait (cond-> {:stage (name stage) :since-ms since-ms}
+                                            package (assoc :package package))}
+                         (and (nil? wait) @shown) {:progress "starting"})]
+        (when (and notice
+                   (append-event! sid "turn.progress" (assoc notice :turn_id tid)
+                                  {:store? false
+                                   :when-current? #(and (= :engine-start (:phase @stall))
+                                                        (= wait @extension-readiness)
+                                                        (not (cancellation/cancelled? cancel-token))
+                                                        (turn-watchdog-live? sid tid cancel-token))}))
+          (vreset! shown wait))))))
+
 (defn- start-turn-stall-watchdog!
   "Daemon thread guarding ONE turn from `turn.started` — not from its first chunk
    — until a terminal exists for it.
@@ -5195,8 +5219,8 @@
    nobody landed one within this turn's [[cancel-terminal-grace-ms]] it lands
    `turn.failed` itself. Every `turn.started` therefore ends in a terminal event.
 
-   While the model of a provider attempt is silent, it also sends the provider
-   wait notice ([[publish-provider-wait!]]).
+   It also sends notices while a turn waits for extensions ([[publish-extension-readiness!]])
+   or the model has not responded ([[publish-provider-wait!]]).
 
    Host suspension is not inactivity. When a tick arrives much later than its
    sleep ([[suspension-credit-ms]]), the watchdog removes the late part from the
@@ -5214,6 +5238,9 @@
             (min (long TURN_WATCHDOG_TICK_MS)))
 
         shown-wait
+        (volatile! nil)
+
+        shown-readiness
         (volatile! nil)
 
         ;; Wall clock of the previous tick, and the suspension excused since the
@@ -5305,7 +5332,8 @@
                                                reason
                                                (stall-failure-code stall))
                           (fail-orphaned-turn! sid tid cancel-token reason))))
-                    (do (publish-provider-wait! sid tid stall-state shown-wait (util/now-ms))
+                    (do (publish-extension-readiness! sid tid cancel-token stall shown-readiness now)
+                        (publish-provider-wait! sid tid stall-state shown-wait (util/now-ms))
                         (recur))))))
             (catch InterruptedException _ nil)
             (catch Throwable t
@@ -5819,7 +5847,8 @@
                                                       :answer (conj prior block)))
                                                   result))}
                       :cancel-token cancel-token
-                      :session-turn-id tid)
+                      :session-turn-id tid
+                      :extension-readiness (some-> stall deref :extension-readiness))
               provider
               (assoc :provider provider)
 
@@ -6157,7 +6186,7 @@
   ;; launch, and the watchdog is armed before the turn is announced.
   (try
     (let [stall
-          (atom {:phase nil :last-ms (util/now-ms)})
+          (atom {:phase nil :last-ms (util/now-ms) :extension-readiness (readiness/cell)})
 
           ;; Armed BEFORE the turn is announced, so it also covers the window in
           ;; which the announcement — or the worker — fails to come into existence.

@@ -2912,6 +2912,12 @@ class TurnInputData(TypedDict):
     ts: int
 
 
+class TurnProgressDataExtensionWait(TypedDict):
+    stage: Literal["waiting", "preparing"]
+    since_ms: int
+    package: NotRequired[str]
+
+
 class TurnProgressData(TypedDict):
     """The `data` of an event of type `turn.progress`."""
 
@@ -2932,6 +2938,7 @@ class TurnProgressData(TypedDict):
     connection: NotRequired[Literal["alive", "silent"]]
     awaiting_output: NotRequired[bool]
     deadline_action: NotRequired[Literal["retry", "timeout"]]
+    extension_wait: NotRequired[TurnProgressDataExtensionWait]
     schema: int
     ts: int
 

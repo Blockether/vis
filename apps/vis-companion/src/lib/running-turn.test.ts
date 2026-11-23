@@ -368,6 +368,38 @@ describe('a queued message delivered into the running turn', () => {
   });
 });
 
+describe('extension readiness before the first iteration', () => {
+  it('keeps readiness separate from iterations and clears it on provider progress', () => {
+    const waiting = reduceRunningTurnEvent(
+      runningTurn,
+      event({
+        type: 'turn.progress',
+        turn_id: runningTurn.id,
+        progress: 'extension-readiness',
+        extension_wait: { stage: 'preparing', since_ms: 1_000, package: 'vis-spel' },
+      }),
+    );
+    expect(waiting?.iterations).toEqual([]);
+    expect(waiting?.progress?.extensionWait).toEqual({
+      stage: 'preparing',
+      since_ms: 1_000,
+      package: 'vis-spel',
+    });
+    const otherTurn = reduceRunningTurnEvent(
+      waiting,
+      event({ type: 'turn.progress', turn_id: 'other-turn', progress: 'starting' }),
+    );
+    expect(otherTurn).toBe(waiting);
+    for (const progress of ['starting', 'provider-call']) {
+      const next = reduceRunningTurnEvent(
+        waiting,
+        event({ type: 'turn.progress', turn_id: runningTurn.id, progress }),
+      );
+      expect(next?.progress?.extensionWait).toBeUndefined();
+    }
+  });
+});
+
 describe('the provider wait notice', () => {
   const notice = (extra: Record<string, unknown> = {}) =>
     event({

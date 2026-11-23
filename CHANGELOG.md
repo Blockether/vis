@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Gateway: while a turn waits more than one second for its extensions, `turn.progress` sends `extension_wait` with the stage (`waiting` or `preparing`), the start time, and the package. The terminal and the Companion app show "Waiting for extensions" or "Preparing extensions" with the time (#498).
 - Extensions: `vis.run(..., is_child=True)` and `vis.sessions.create(is_child=True)` make a child session of the bound session. A child session is not in the session list, and Vis deletes it with its parent. The usage of the parent shows the cost of its child sessions in a separate Extensions part, in the Companion app and in the TUI. The AI review of vis-review runs in a child session.
 - Extensions: `vis.SessionApp(..., roles=("leader",))` lists a session app only in sessions of these agent roles.
 - vis-review: a subagent session does not show the Review app. The Review app of the leader shows the changes of its subagents as its own changes, and its undo can remove them.

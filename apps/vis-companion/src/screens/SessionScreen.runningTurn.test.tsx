@@ -671,6 +671,20 @@ describe('the wait between a submit and the first token', () => {
         type: 'turn.progress',
         session_id: 's1',
         turn_id: 't-live',
+        progress: 'extension-readiness',
+        extension_wait: { stage: 'preparing', package: 'vis-spel', since_ms: 1_000 },
+        ts: 4_000,
+        seq: 2,
+      });
+    });
+
+    expect((await screen.findAllByText(/Preparing extensions vis-spel/)).length).toBeGreaterThan(0);
+
+    act(() => {
+      emit({
+        type: 'turn.progress',
+        session_id: 's1',
+        turn_id: 't-live',
         progress: 'provider-wait',
         iteration: 1,
         model: 'claude-opus-5',
@@ -679,13 +693,14 @@ describe('the wait between a submit and the first token', () => {
         awaiting_output: true,
         deadline_in_ms: 180_500,
         deadline_action: 'retry',
-        seq: 2,
+        seq: 3,
       });
     });
 
     expect(
       (await screen.findAllByText(/Vis is waiting for claude-opus-5 \(iter 1\)/)).length,
     ).toBeGreaterThan(0);
+    expect(screen.queryByText(/Preparing extensions vis-spel/)).toBeNull();
     // The clocks move once a second; allow one tick on a slow runner.
     expect(
       await screen.findByText(
@@ -703,7 +718,7 @@ describe('the wait between a submit and the first token', () => {
         field: 'text',
         text: 'Plan',
         offset: 0,
-        seq: 3,
+        seq: 4,
       });
     });
 

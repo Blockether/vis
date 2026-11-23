@@ -8800,6 +8800,16 @@
             "retry",
             "timeout"
           ]
+        },
+        "extension_wait": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "stage": {"enum": ["waiting", "preparing"]},
+            "since_ms": {"type": "integer", "minimum": 0},
+            "package": {"type": "string", "minLength": 1}
+          },
+          "required": ["stage", "since_ms"]
         }
       },
       "required": [
