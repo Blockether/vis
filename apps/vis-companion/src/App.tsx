@@ -810,6 +810,19 @@ export function App({ launch = null }: AppProps = {}) {
     setOpenTarget(null);
   }, []);
 
+  // A SUBAGENT SESSION GOES BACK TO THE SESSION THAT STARTED IT, as its header chevron
+  // does: the edge stroke and the phone's back too. The open session says who its parent
+  // is, because only its snapshot knows. Without a parent, back leaves to the list.
+  const [agentParent, setAgentParent] = useState<{ sid: string; parentId: string } | null>(null);
+  const reportParent = useCallback((sid: string, parentId: string | null) => {
+    setAgentParent(parentId ? { sid, parentId } : null);
+  }, []);
+  const parentSid = openTarget && agentParent?.sid === openTarget.sid ? agentParent.parentId : null;
+  const goBack = useCallback(() => {
+    if (openTarget && parentSid) openGatewaySession(openTarget.conn, parentSid);
+    else leaveSession();
+  }, [openTarget, parentSid, openGatewaySession, leaveSession]);
+
   // Android's hardware/gesture back. Registering a listener REPLACES Capacitor's
   // default, which is `history.back()` — the thing that did nothing here. One
   // handler for the whole shell: dismiss what is on top, then walk the shell
@@ -1460,9 +1473,15 @@ export function App({ launch = null }: AppProps = {}) {
   // the list comes in over it, and each way back that no finger draws carries the
   // transcript off the same way (`edgeBack.leave`). Only the phone's two pages slide:
   // a session that opens from a cold start or from Machines has no list to slide over.
-  const edgeBack = useEdgeBack(!isDesk && openTarget ? leaveSession : null, {
+  const edgeBack = useEdgeBack(!isDesk && openTarget ? goBack : null, {
     page: edgePage(shellView, isDesk),
+    holds: openTarget?.sid ?? null,
   });
+  // A stroke to a parent session uncovers no list and no app bar. The choice is made
+  // before the stroke and kept to its end: the parent opens before the stroke lets go.
+  const [isParentStroke, setParentStroke] = useState(false);
+  if (!edgeBack.isSwiping && isParentStroke !== !!parentSid) setParentStroke(!!parentSid);
+  const isListStroke = edgeBack.isSwiping && !isParentStroke;
 
   useEffect(() => {
     backRef.current = () => {
@@ -1476,7 +1495,7 @@ export function App({ launch = null }: AppProps = {}) {
         return;
       }
       if (openTarget) {
-        if (isDesk) leaveSession();
+        if (isDesk) goBack();
         else edgeBack.leave();
         return;
       }
@@ -1517,7 +1536,7 @@ export function App({ launch = null }: AppProps = {}) {
   // rows, scope, scroll position, and expanded projects are already the user's frame.
   const sessionsMounted = conns.length > 0 && !!active;
   const sessionsVisible =
-    isSplit || edgeBack.isSwiping || (shellView === 'sessions' && (!isDesk || isSidebarShown));
+    isSplit || isListStroke || (shellView === 'sessions' && (!isDesk || isSidebarShown));
   // Voice that runs in a session that is not on screen keeps a way back and a way out.
   const voiceConn = voice && conns.find((conn) => normalizeBase(conn.url) === voice.base);
   const isVoiceDocked =
@@ -1546,7 +1565,7 @@ export function App({ launch = null }: AppProps = {}) {
         />
         <CommandSurface />
         <Shell>
-          {(isChromeVisible || edgeBack.isSwiping) && (
+          {(isChromeVisible || isListStroke) && (
             <Header
               // There is nothing to search until a session list stands behind the dialog.
               onSearch={sessionsMounted ? openSearch : null}
@@ -1575,7 +1594,7 @@ export function App({ launch = null }: AppProps = {}) {
             {sessionsMounted && (
               <div
                 ref={edgeBack.under}
-                className={listBox.className}
+                className={isParentStroke && !canSplit ? `${listBox.className} invisible` : listBox.className}
                 style={listBox.style}
                 aria-hidden={!sessionsVisible || undefined}
               >
@@ -1652,6 +1671,7 @@ export function App({ launch = null }: AppProps = {}) {
                     onBack={isDesk ? leaveSession : edgeBack.leave}
                     sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
                     onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
+                    onParent={reportParent}
                     onManageProviders={openProviderSettings}
                   />
                 </SessionEventsContext.Provider>

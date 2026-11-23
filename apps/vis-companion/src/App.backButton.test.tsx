@@ -91,4 +91,40 @@ describe("the phone's back button", () => {
     expect(native.exits).toBe(0);
     view.unmount();
   });
+
+  // Reported: back in a subagent session went to the list, not to the leader that started it.
+  it('takes a subagent session back to its parent, and the parent back to the list', async () => {
+    const lead = listSession({ id: 'lead', title: 'Leader session' });
+    const child = listSession({
+      id: 'child',
+      title: 'Child task',
+      agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' },
+    });
+    window.location.hash = '#/s/child';
+    const view = renderApp({
+      machines: [
+        {
+          sessions: [lead],
+          routes: {
+            '/v1/sessions/lead': { ...lead, queued_turns: [] },
+            '/v1/sessions/child': { ...child, queued_turns: [] },
+          },
+        },
+      ],
+    });
+    restore = view.restore;
+    await screen.findAllByTitle('Open the parent session');
+
+    act(() => native.back?.());
+
+    await screen.findByLabelText('Message Vis');
+    expect(window.location.hash).toMatch(/^#\/s\/lead/);
+
+    act(() => native.back?.());
+
+    await waitFor(() => expect(screen.queryByLabelText('Message Vis')).toBeNull());
+    expect(screen.getByRole('region', { name: 'Sessions' })).toBeVisible();
+    expect(native.exits).toBe(0);
+    view.unmount();
+  });
 });

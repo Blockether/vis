@@ -462,6 +462,12 @@ export interface EdgeBackOptions {
    * change is a plain step: a cold start into a session has nothing to slide over.
    */
   readonly page?: 'pane' | 'under' | null;
+  /**
+   * What the pane holds, such as the open session. A step back can stay in the pane: a
+   * subagent session goes back to its parent. A new key is that step, and it gives the
+   * pane back at once rather than after {@link EDGE_STEP_WAIT_MS}.
+   */
+  readonly holds?: string | null;
 }
 
 /**
@@ -553,7 +559,7 @@ export function isLayerUp(doc: Document = document): boolean {
  */
 export function useEdgeBack(
   onBack: (() => void) | null,
-  { isLayer = false, page = null }: EdgeBackOptions = {},
+  { isLayer = false, page = null, holds = null }: EdgeBackOptions = {},
 ): EdgeBackPanes {
   // Read only from an event, so it is kept in a ref instead of resubscribing the
   // listeners every time the shell re-renders.
@@ -932,7 +938,8 @@ export function useEdgeBack(
       // The step was taken, or the pane went: give back what the stroke still holds.
       if (landing) release();
     };
-  }, [hasDoor, isLayer, pane]);
+    // A new `holds` is a step that stayed in the pane: the cleanup gives the stroke back.
+  }, [hasDoor, isLayer, pane, holds]);
 
   const leave = useCallback(() => {
     if (hands.current) hands.current.leave();

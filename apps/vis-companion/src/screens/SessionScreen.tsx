@@ -931,6 +931,7 @@ export function SessionScreen({
   sid,
   onBack,
   onOpenSession,
+  onParent,
   onManageProviders,
   fresh = false,
   talk,
@@ -941,6 +942,8 @@ export function SessionScreen({
   sid: string;
   onBack: () => void;
   onOpenSession: (sid: string, fresh?: boolean) => void;
+  /** Says the parent of this session, or null: the shell's way back from a subagent session goes there. */
+  onParent?: (sid: string, parentId: string | null) => void;
   /** Open this gateway's settings, where provider accounts and OAuth live; an id focuses one provider. */
   onManageProviders?: (providerId?: string) => void;
   fresh?: boolean;
@@ -6133,6 +6136,9 @@ export function SessionScreen({
     'export-session': canExport && (() => askExport()),
     'agent-parent': !!parentId && (() => onOpenSession(parentId)),
   });
+  useEffect(() => {
+    onParent?.(sid, parentId ?? null);
+  }, [onParent, sid, parentId]);
 
   const screen = (
     <AttachImageContext.Provider value={attachCapturedImage}>
