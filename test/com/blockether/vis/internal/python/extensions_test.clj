@@ -38,6 +38,7 @@
     [com.blockether.vis.internal.foundation.core :as foundation]
     [com.blockether.vis.internal.foundation.shell :as shell]
     [com.blockether.vis.internal.python.extensions :as pyx]
+    [com.blockether.vis.internal.python.readiness :as readiness]
     [com.blockether.vis.internal.python.host :as python-host]
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.python.runtime :as python-runtime]
@@ -848,6 +849,67 @@
                (expect (:stale? (first (pyx/load-failures nil))))
                (finally (pyx/reload-python-extensions! {:dirs []}))))))))
 
+(defdescribe independent-package-preparation-test
+  (it "starts the second environment while the first environment waits"
+      (let [directory (temp-dir)
+            first-started (promise)
+            second-started (promise)
+            release (promise)]
+        (with-redefs-fn {#'pyx/last-fingerprint (atom {})
+                         #'pyx/prepared-scopes (atom #{})
+                         #'pyx/loaded (atom {})
+                         #'pyx/failures (atom [])
+                         #'pyx/default-extension-dirs (constantly [directory directory])
+                         #'config/extension-package-scopes
+                         (constantly [{:scope "global" :directory directory :packages {"a" {} "b" {}}}])
+                         #'pyx/package-operation
+                         (fn [_ _]
+                           (mapv (fn [name]
+                                   {"status" "cached" "name" name "path" (str (io/file directory name))})
+                                 ["a" "b"]))
+                         #'python-runtime/ensure-project!
+                         (fn [file]
+                           (if (= "a" (.getName ^java.io.File file))
+                             (do (deliver first-started true) @release)
+                             (deliver second-started true))
+                           (runtime/packages-dir))}
+          (fn []
+            (let [loader (future (pyx/ensure-python-extensions-loaded! {:global-only? true}))]
+              (try (expect (= true (deref first-started 2000 ::timeout)))
+                   (expect (= true (deref second-started 1000 ::timeout)))
+                   (finally (deliver release true) (deref loader 5000 ::timeout)))))))))
+
+(defdescribe moved-package-preparation-failure-test
+  (it "retains the live extension when preparation of its new snapshot fails"
+      (let [directory (temp-dir)
+            current (.toPath (io/file directory "fixture" "current"))
+            failure (atom [])
+            source (fn [description]
+                     (str "import blockether.vis.extension as vis\n"
+                          "vis.register_extension(vis.Extension(name='fixture', description='"
+                          description "'))\n"))]
+        (write-ext! directory "fixture/1.0/extension.py" (source "Old fixture"))
+        (write-ext! directory "fixture/2.0/extension.py" (source "New fixture"))
+        (Files/createSymbolicLink current (.toPath (io/file "1.0")) (make-array FileAttribute 0))
+        (with-redefs-fn {#'pyx/last-fingerprint (atom {})
+                         #'pyx/prepared-scopes (atom #{})
+                         #'pyx/failures (atom [])
+                         #'pyx/default-extension-dirs (constantly [directory directory])
+                         #'pyx/sync-packages! (fn [_] @failure)}
+          (fn []
+            (try (pyx/ensure-python-extensions-loaded! {:global-only? true})
+                 (expect (= "Old fixture" (:ext/description (registered "fixture"))))
+                 (Files/delete current)
+                 (Files/createSymbolicLink current (.toPath (io/file "2.0"))
+                                           (make-array FileAttribute 0))
+                 (reset! failure [{"name" "fixture"
+                                   "status" "failed"
+                                   "error" "Cannot install new fixture dependencies"}])
+                 (expect (= 1 (:loaded (pyx/reload-python-extensions! {:global-only? true}))))
+                 (expect (= "Old fixture" (:ext/description (registered "fixture"))))
+                 (expect (true? (:stale? (first (pyx/load-failures nil)))))
+                 (finally (pyx/reload-python-extensions! {:dirs []}))))))))
+
 (defdescribe foreground-project-priority-test
              ;; Issue #407: a session's project must not wait behind the background preparation of
              ;; other known projects. A background load lets each waiting foreground load go first.
@@ -889,8 +951,8 @@
                                                      (pyx/prepare-project-in-background! root)))]
                             (deref a-started 10000 nil)
                             (let [foreground (future (pyx/prepare-project! d))]
-                              ;; The foreground load waits for the lock that `a` holds.
-                              (Thread/sleep 200)
+                              ;; The foreground project can finish while background preparation waits.
+                              (expect (map? (deref foreground 1500 ::blocked)))
                               (deliver release-a true)
                               (deref foreground 10000 nil)
                               (deref background 10000 nil)
@@ -7179,7 +7241,9 @@ vis.register_extension(vis.Extension(
         (write-ext! dir "timed.py" "import blockether.vis.extension as vis\n")
         (try (with-bindings {#'pyx/*reload-phases* phases}
                (pyx/reload-python-extensions! {:dirs [(str dir)]}))
-             (expect (= :lock-wait (:phase (first @phases))))
+             (expect (some #{:lock-wait} (map :phase @phases)))
+             (expect (= [:snapshot :lock-wait :register]
+                        (filterv #{:snapshot :lock-wait :register} (map :phase @phases))))
              (expect (every? (set (map :phase @phases)) [:fingerprint :snapshot :register]))
              (expect (every? (comp nat-int? :ms) @phases))
              (expect (some #(= {:phase :register :detail "timed"} (dissoc % :ms)) @phases))
@@ -7194,8 +7258,8 @@ vis.register_extension(vis.Extension(
                    phases (some #(when (= ::pyx/reload-phases (:id %)) (:phases (:data %)))
                                 signals)]
 
-               ;; A load behind another thread's load showed a total with no phase for the wait.
-               (expect (= :lock-wait (:phase (first phases))))
+               (expect (= [:snapshot :lock-wait :register]
+                          (filterv #{:snapshot :lock-wait :register} (map :phase phases))))
                (expect (some #(= {:phase :register :detail "first"} (dissoc % :ms)) phases)))
              (finally (reset! live-load nil) (pyx/reload-python-extensions! {:dirs []})))))
   ;; #493: a load spent 67 s in `:packages`, and the log named no package, step or cause.
@@ -9154,6 +9218,84 @@ vis.register_extension(vis.Extension(name='sidecar', description='sidecar', alia
                               (deliver release true)
                               (expect (= 2 (count (:scopes (deref reader 5000 ::timeout))))))
                             (finally (deliver release true) (deref loader 5000 ::timeout))))))))
+
+(defn- await-readiness-stage
+  [cell stage]
+  (let [deadline (+ (System/nanoTime) 2000000000)]
+    (loop []
+      (or (= stage (:stage @cell))
+          (when (< (System/nanoTime) deadline)
+            (Thread/sleep 10)
+            (recur))))))
+
+(defn- with-paused-package-preparation
+  [f]
+  (let [global (temp-dir)
+        project (temp-dir)
+        fingerprint (atom {})
+        entered (promise)
+        release (promise)
+        calls (atom 0)
+        published (atom [])]
+    (with-redefs-fn {#'pyx/last-fingerprint fingerprint
+                     #'pyx/prepared-scopes (atom #{})
+                     #'pyx/loaded (atom {})
+                     #'pyx/failures (atom [])
+                     #'pyx/default-extension-dirs (constantly [global project])
+                     #'pyx/sync-packages! (fn [_]
+                                            (when (= 1 (swap! calls inc))
+                                              (deliver entered true)
+                                              (deref release 5000 nil))
+                                            [])
+                     #'pyx/load-scope! (fn [scope]
+                                         (swap! published conj (:test-generation scope))
+                                         (swap! fingerprint assoc nil [])
+                                         {:loaded 0 :failed 0 :changed? true})}
+      #(try (f {:entered entered :release release :calls calls :published published})
+            (finally (deliver release true))))))
+
+(defdescribe scope-preparation-flight-test
+  (it "publishes only the newest reload when a previous generation is still preparing"
+      (with-paused-package-preparation
+        (fn [{:keys [entered release calls published]}]
+          (let [cell (readiness/cell)
+                old (future (pyx/reload-python-extensions! {:global-only? true :test-generation 1}))]
+            (expect (= true (deref entered 2000 ::timeout)))
+            (let [new (future (binding [readiness/*cell* cell]
+                                (pyx/reload-python-extensions! {:global-only? true
+                                                                :test-generation 2})))
+                  waiting? (try (await-readiness-stage cell :waiting)
+                                (finally (deliver release true)))]
+              (expect (map? (deref old 5000 ::timeout)))
+              (expect (map? (deref new 5000 ::timeout)))
+              (expect (= 2 @calls))
+              (expect (= [2] @published))
+              (expect waiting?))))))
+  (it "cancels one turn's wait without cancelling preparation for other turns"
+      (with-paused-package-preparation
+        (fn [{:keys [entered release calls published]}]
+          (let [owner-cell (readiness/cell)
+                waiter-cell (readiness/cell)
+                waiter-thread (promise)
+                owner (future (binding [readiness/*cell* owner-cell]
+                                (pyx/ensure-python-extensions-loaded! {:global-only? true})))]
+            (expect (= true (deref entered 2000 ::timeout)))
+            (let [waiter (future (deliver waiter-thread (Thread/currentThread))
+                                 (binding [readiness/*cell* waiter-cell
+                                           pyx/*interruptible-load-thread* (Thread/currentThread)]
+                                   (try (pyx/ensure-python-extensions-loaded! {:global-only? true})
+                                        (catch InterruptedException _ ::cancelled))))]
+              (try (expect (await-readiness-stage owner-cell :preparing))
+                   (expect (await-readiness-stage waiter-cell :waiting))
+                   (.interrupt ^Thread (deref waiter-thread 2000 nil))
+                   (expect (= ::cancelled (deref waiter 2000 ::timeout)))
+                   (expect (nil? @waiter-cell))
+                   (expect (empty? @published))
+                   (finally (deliver release true)))
+              (expect (map? (deref owner 5000 ::timeout)))
+              (expect (= 1 @calls))
+              (expect (= 1 (count @published)))
+              (expect (nil? @owner-cell))))))))
 
 (defdescribe
   extension-freshness-test

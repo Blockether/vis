@@ -70,6 +70,7 @@
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.python.worker :as pyext]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
+            [com.blockether.vis.internal.python.readiness :as readiness]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file Files]
@@ -3463,10 +3464,14 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                              "0"
                              "globals()")))
 
+(def ^:private ^:dynamic *package-worker* nil)
+
 (defn- package-context
   "Open a context with `extension_package.py` loaded."
   []
-  (let [ctx (build-context "extension-package")]
+  (let [ctx (if *package-worker*
+              (build-context *package-worker* "extension-package")
+              (build-context "extension-package"))]
     (try (exec-in! ctx @package-python) ctx (catch Throwable t (discard-context! ctx) (throw t)))))
 
 (defn- package-call
@@ -3694,6 +3699,49 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (change #(merge % note))
     (try (f) (finally (change #(apply dissoc % (keys note)))))))
 
+(declare claim-package-snapshot!)
+
+(def ^:private ^:dynamic *preparing-package* nil)
+
+(defn- preparing-package!
+  [name]
+  (when *preparing-package* (reset! *preparing-package* {:stage :preparing :package name})))
+
+(defn- prepare-package-environment!
+  [result]
+  (let [started (System/nanoTime)
+        name (get result "name")
+        package-dir (io/file (get result "path"))]
+    (preparing-package! name)
+    (-> (try (assoc result
+               "prepared" true
+               "site_packages" (str (with-holder-note {:package name :package-step "environment"}
+                                      #(python-runtime/ensure-project! package-dir))))
+             (catch Exception error
+               (assoc result "status" "failed" "error" (.getMessage error))))
+        (assoc-in ["timing" "environment_ms"] (quot (- (System/nanoTime) started) 1000000)))))
+
+(defn- prepare-package-results!
+  [scope dry-run results]
+  (let [prepare? (fn [result]
+                   (and (not dry-run)
+                        (contains? #{"installed" "updated" "cached"} (get result "status"))))
+        results (mapv #(assoc % "scope" scope) results)
+        prepare (fn [result] (if (prepare? result) (prepare-package-environment! result) result))]
+    (if *preparing-package*
+      (do
+        ;; Claim the selected versions before any environment waits for uv.
+        (doseq [result results :when (prepare? result)]
+          (claim-package-snapshot! (io/file (get result "path"))))
+        (into []
+              (mapcat (fn [[a b :as batch]]
+                        (if (and b (prepare? a) (prepare? b))
+                          (let [other (future (prepare b))]
+                            (try [(prepare a) @other] (finally @other)))
+                          (mapv prepare batch))))
+              (partition-all 2 results)))
+      (mapv prepare results))))
+
 (defn sync-packages!
   "Explicitly reconcile YAML package scopes and prepare their uv environments.
    Never imports package entrypoints or reloads a live gateway. Dry-run is inert.
@@ -3703,47 +3751,25 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   (when (and project global)
     (throw (ex-info "Choose --project or --global, not both" {:vis/user-error true})))
   (let [scopes (cond->> (config/extension-package-scopes)
-                 project
-                 (filter #(= "project" (:scope %)))
-
-                 global
-                 (filter #(= "global" (:scope %))))]
-    (vec
-      (mapcat
-        (fn [{:keys [scope directory packages]}]
-          (mapv (fn [result]
-                  (let [result (assoc result "scope" scope)]
-                    (if (and (not dry-run)
-                             (contains? #{"installed" "updated" "cached"} (get result "status")))
-                      (let [started (System/nanoTime)]
-                        (-> (try (let [package-dir (io/file (get result "path"))]
-                                   (assoc result
-                                     "prepared" true
-                                     "site_packages"
-                                     (str (with-holder-note
-                                            {:package (get result "name")
-                                             :package-step "environment"}
-                                            #(python-runtime/ensure-project! package-dir)))))
-                                 (catch Exception error
-                                   (assoc result
-                                     "status" "failed"
-                                     "error" (.getMessage error))))
-                            (assoc-in ["timing" "environment_ms"]
-                                      (quot (- (System/nanoTime) started) 1000000))))
-                      result)))
-                (with-holder-note
-                  {:sync-lock (io/file directory ".sync-lock")}
-                  #(package-operation "sync"
-                                      {:configured packages
-                                       :directory directory
-                                       :trust (boolean trust)
-                                       :refresh (boolean refresh)
-                                       :prune (boolean prune)
-                                       :dry_run (boolean dry-run)
-                                       :frozen (boolean frozen)
-                                       :vis_version (package-version)}))))
-        (filter #(or prune (seq (:packages %)) (.isFile (io/file (:directory %) ".sync.json")))
-                scopes)))))
+                 project (filter #(= "project" (:scope %)))
+                 global (filter #(= "global" (:scope %))))]
+    (into []
+          (mapcat (fn [{:keys [scope directory packages]}]
+                    (prepare-package-results!
+                      scope dry-run
+                      (with-holder-note
+                        {:sync-lock (io/file directory ".sync-lock")}
+                        #(package-operation "sync"
+                                            {:configured packages
+                                             :directory directory
+                                             :trust (boolean trust)
+                                             :refresh (boolean refresh)
+                                             :prune (boolean prune)
+                                             :dry_run (boolean dry-run)
+                                             :frozen (boolean frozen)
+                                             :vis_version (package-version)})))))
+          (filter #(or prune (seq (:packages %)) (.isFile (io/file (:directory %) ".sync.json")))
+                  scopes))))
 
 (defn- project-problem
   "Why an entry's `tool.vis.project` cannot be admitted, naming the resolved directory
@@ -4214,13 +4240,12 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    A project with `python.environment: shared` prepares its uv projects in shared packages."
   [{:keys [roots dependencies project automatic? package-metadata sync-projects? site-packages
            project-root]}]
+  (some-> project claim-package-snapshot!)
   (let [frozen (timed-phase :snapshot
                             (when-let [^File root (if (instance? File roots) roots (last roots))]
                               (.getName root))
                             #(freeze-root! roots))]
-    (try (some-> project
-                 claim-package-snapshot!)
-         (let [prepare? (or automatic? sync-projects?)
+    (try (let [prepare? (or automatic? sync-projects?)
                packages (when project
                           (timed-phase :environment
                                        (.getName ^File project)
@@ -4644,30 +4669,22 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
 (declare register-loader-extension!)
 
-(defn- load-scope!
-  "Scan the Python extension dirs (default: `~/.vis/extensions` and
-   `<cwd>/.vis/extensions`) and (re)load the `*.py` files that changed. Idempotent:
-   when no file changed since the last scan this is a cheap no-op.
+(defn- release-scan-snapshots!
+  "Release roots of a completed or superseded scan and remove unused snapshots."
+  [snapshots old-snapshots]
+  (locking session-contexts
+    (swap! loading-snapshots #(apply disj % snapshots))
+    (let [live (set (concat @loading-snapshots
+                            (keep :snapshot (vals @loaded))
+                            (keep :snapshot (vals @context-lifecycle))))]
+      (doseq [snapshot (distinct (concat old-snapshots snapshots))
+              :when (not (live snapshot))]
+        (delete-tree! (io/file snapshot))))))
 
-   Change is measured over each extension's WHOLE import root, never its entry
-   file alone — a package module the entry imports is part of the extension —
-   and every root is FROZEN at load (`freeze-root!`), one freeze per root per
-   pass. A loaded entry also keeps a digest of the env values that it received,
-   so a `.env` edit counts as a change (#393).
-
-   A pass loads a file again only when its inputs changed, when it is new, or when
-   its last load failed. Other entries stay live with their open context, so the
-   cost of a reload follows the changes, not the number of extensions. `:all?` loads
-   every file again.
-
-   A file that fails to load is recorded in `load-failures` (and surfaced
-   by `vis-agent doctor`) — it never crashes the host.
-
-   Returns `{:loaded n :failed n :reloaded n :changed? bool}`; `:reloaded` counts the
-   files that this pass loaded again."
-  ([] (load-scope! nil))
-  ([{:keys [dirs project-root sync-projects? site-packages preparation-failures all?] :as scope}]
-   (register-loader-extension!)
+(defn- prepare-scope-scan!
+  "Pin entry paths, plan their imports and prepare each distinct root before publication."
+  [{:keys [dirs project-root sync-projects? site-packages preparation-failures force-scan?]
+    :as scope}]
    (let [dirs
          (or dirs [])
 
@@ -4681,7 +4698,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
          (into (vec preparation-failures) (:failures globbed))
 
          files
-         (scan dirs (:files globbed))
+         (mapv #(.getCanonicalFile ^File %) (scan dirs (:files globbed)))
 
          blocked
          (into {} (map (juxt :file identity)) preparation-failures)
@@ -4705,46 +4722,81 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                               (catch Throwable t {:error t}))])
                                       files)))))
 
-         roots
-         (atom {})
+         root-key
+         (juxt :roots :dependencies :project :automatic?)
 
-         per-root
-         (fn [k plan f]
-           (when-let [error (:error plan)]
-             (throw error))
-           (let [rk
-                 [(:roots plan) (:dependencies plan) (:project plan) (:automatic? plan)]
-
-                 ;; A failure is kept too: one pass prepares each root once.
-                 v
-                 (or (get-in @roots [rk k])
-                     (let [v (try (f plan) (catch Throwable t {::failure t}))]
-                       (locking session-contexts
-                         (when (and (= k :frozen) (not (::failure v)))
-                           (swap! loading-snapshots conj (.getCanonicalPath ^File (:dir v))))
-                         (swap! roots assoc-in [rk k] v))
-                       v))]
-
-             (when-let [t (::failure v)]
-               (throw t))
-             v))
+         code-sha-for
+         (memoize (fn [roots]
+                    (try (code-sha roots) (catch Throwable _ ::invalid-sources))))
 
          fp
          (timed-phase :fingerprint
                       nil
-                      #(mapv (fn [^File f]
-                               [(.getCanonicalPath f)
-                                (try (util/sha256-hex (slurp f))
-                                     (catch Throwable _ ::unreadable-source))
-                                (try (per-root :code-sha
-                                               (get plans f)
-                                               (fn [plan]
-                                                 (code-sha (:roots plan))))
-                                     (catch Throwable _ ::invalid-sources))])
-                             files))
+                      #(conj (mapv (fn [^File f]
+                                     (let [{:keys [error roots]} (get plans f)]
+                                       [(.getCanonicalPath f)
+                                        (try (util/sha256-hex (slurp f))
+                                             (catch Throwable _ ::unreadable-source))
+                                        (if error ::invalid-sources (code-sha-for roots))]))
+                                   files)
+                             [::preparation preparation-failures]))
 
-         fp
-         (conj fp [::preparation preparation-failures])
+         prepared
+         (atom {})]
+     (try
+       (when (or force-scan? (not= fp (get @last-fingerprint project-root)))
+         (doseq [f files
+                 :let [plan (get plans f)
+                       key (root-key plan)]
+                 :when (and (not (:error plan)) (not (contains? @prepared key)))]
+           (preparing-package! (get-in plan [:package-metadata "name"]))
+           (let [frozen (try (prepare-root! plan) (catch Throwable t {:error t}))]
+             (when-let [^File dir (:dir frozen)]
+               (locking session-contexts
+                 (swap! loading-snapshots conj (.getCanonicalPath dir))))
+             (swap! prepared assoc key frozen))))
+       {:plans plans
+        :files files
+        :fp fp
+        :glob-paths glob-paths
+        :preparation-failures preparation-failures
+        :snapshots (mapv #(.getCanonicalPath ^File %) (keep :dir (vals @prepared)))
+        :frozen-for (fn [f]
+                      (let [plan (get plans f)
+                            frozen (get @prepared (root-key plan))]
+                        (when-let [error (or (:error plan) (:error frozen))] (throw error))
+                        frozen))}
+       (catch Throwable t
+         (release-scan-snapshots! (mapv #(.getCanonicalPath ^File %) (keep :dir (vals @prepared)))
+                                  nil)
+         (throw t)))))
+
+(defn- package-entry-container
+  "The directory shared by versioned entry points of one linked package."
+  [path]
+  (let [^File file (io/file path)
+        ^File container (some-> file .getParentFile .getParentFile)]
+    (when (and (= "extension.py" (.getName file)) container
+               (Files/isSymbolicLink (.toPath (io/file container "current"))))
+      (.getCanonicalPath container))))
+
+(defn- last-good-entry
+  [entries path package]
+  (or (some (fn [entry] (when (= path (:path entry)) entry)) entries)
+      (when package
+        (some (fn [entry] (when (= package (get-in entry [:package-metadata "name"])) entry))
+              entries))
+      (when-let [container (package-entry-container path)]
+        (some (fn [entry] (when (= container (package-entry-container (:path entry))) entry))
+              entries))))
+
+(defn- load-scope!
+  "Register the prepared scope. Keep unchanged files and retain a failed file's last good entry."
+  [{:keys [project-root all? force-scan? prepared-scan]}]
+  (register-loader-extension!)
+  (let [{:keys [files fp plans glob-paths preparation-failures frozen-for]}
+        prepared-scan
+        blocked (into {} (map (juxt :file identity)) preparation-failures)
 
          ;; One reload resolves each env name once: a name can run a keychain or helper.
          env-value
@@ -4787,7 +4839,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
            (fn [^File f]
              (let [path (.getCanonicalPath f)]
                (when (and @registration-manifests? (not all?) (not (failed-before path)))
-                 (when-let [frozen (try (per-root :frozen (get plans f) prepare-root!)
+                 (when-let [frozen (try (frozen-for f)
                                         (catch Throwable _ nil))]
                    (read-manifest project-root path #(file-inputs f % (:packages frozen))))))))
 
@@ -4798,7 +4850,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
          retired
          (atom [])]
 
-     (if (= fp (get @last-fingerprint project-root))
+     (if (and (not force-scan?) (= fp (get @last-fingerprint project-root)))
        {:loaded (count (scope-entries project-root))
         :reloaded 0
         :failed (count (filter #(= project-root (:project-root %)) @failures))
@@ -4861,7 +4913,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                             (entry-label f)
                                             #(load-file!
                                                f
-                                               (per-root :frozen (get plans f) prepare-root!)
+                                               (or (frozen-for f)
+                                                   (throw (ex-info "No prepared extension root"
+                                                                   {:file path})))
                                                (partial claimed path)
                                                (manifest f)))
                            entry
@@ -4891,7 +4945,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                 :data {:file (str f) :error (ex-message t)}
                                 :msg (str "Python extension failed to load: " f
                                           " — " (ex-message t))})
-                     (let [previous (get @loaded entry-key)
+                     (let [package (or (:extension (get blocked path))
+                                       (get-in plans [f :package-metadata "name"]))
+                           previous (last-good-entry (vals old-loaded) path package)
                            [_ sha source-sha] (some #(when (= path (first %)) %) fp)]
 
                        (swap! failures conj
@@ -4908,20 +4964,24 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                  :requested-fingerprint
                                  (util/sha256-hex (util/content-str
                                                     {:sha sha :code-sha source-sha}))}))))))))
-           ;; A package that could not install has no entrypoint to scan.
-           (swap! failures into (remove #(scanned (:file %)) preparation-failures))
-           ;; Files that vanished from disk since the last scan (deleted / renamed)
-           ;; have no entry to retain — deregister and close so they don't linger.
-           (doseq [[opath {:keys [ext-name path] :as e}]
-                   (scope-entries project-root)
-
-                   :when (not (scanned path))]
-
-             (when-not project-root
-               (try (extension/deregister-extension! ext-name) (catch Throwable _)))
-             (swap! retired conj (:context e))
-             (swap! loaded dissoc opath))
-           (swap! last-fingerprint assoc project-root fp)
+           ;; An install can fail before there is an entry to scan.
+           (swap! failures into
+             (for [failure preparation-failures
+                   :when (not (scanned (:file failure)))]
+               (cond-> failure
+                 (last-good-entry (vals old-loaded) (:file failure) (:extension failure)) (assoc :stale? true))))
+           ;; Keep a failed replacement's last good snapshot even when `current` moved.
+           (let [retained (into #{} (keep (fn [{:keys [file stale? extension] :as failure}]
+                                           (when (and stale? (= project-root (:project-root failure)))
+                                             (:path (last-good-entry (vals old-loaded) file extension))))) @failures)]
+             (doseq [[opath {:keys [ext-name path] :as e}]
+                     (scope-entries project-root)
+                     :when (and (not (scanned path)) (not (retained path)))]
+               (when-not project-root
+                 (try (extension/deregister-extension! ext-name) (catch Throwable _)))
+               (swap! retired conj (:context e))
+               (swap! loaded dissoc opath)))
+                      (swap! last-fingerprint assoc project-root fp)
            ;; Propagate to live surfaces (cached session envs, TUI slash
            ;; palette). Without this a /reload only updates the GLOBAL
            ;; registry: new extensions stay invisible to running sessions
@@ -4965,20 +5025,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                   (catch Throwable t
                     (tel/log!
                       {:level :warn :id ::retain-spares-failed :data {:error (ex-message t)}})))
-             ;; A failed entry must not delete code still queued in this scan.
-             ;; Release the scan's roots even if publication or retirement fails.
-             (locking session-contexts
-               (let [snapshots (mapv (fn [^File dir]
-                                       (.getCanonicalPath dir))
-                                     (keep (comp :dir :frozen) (vals @roots)))]
-                 (swap! loading-snapshots #(apply disj % snapshots))
-                 (let [live (set (concat @loading-snapshots
-                                         (keep :snapshot (vals @loaded))
-                                         (keep :snapshot (vals @context-lifecycle))))]
-                   (doseq [snapshot (distinct (concat (keep :snapshot (vals old-loaded)) snapshots))
-                           :when (not (live snapshot))]
-
-                     (delete-tree! (io/file snapshot)))))))))))))
+             (release-scan-snapshots! [] (keep :snapshot (vals old-loaded)))))))))
 
 (defonce ^:private ^ReentrantLock ensure-load-lock (ReentrantLock.))
 
@@ -5148,8 +5195,6 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         (filter #(= "failed" (get % "status")) results)]
 
     (note-package-results! results)
-    ;; Admission is complete even with failures. Only /reload retries preparation.
-    (swap! prepared-scopes conj project-root)
     {:site-packages (into {}
                           (for [result
                                 results
@@ -5216,6 +5261,167 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (doseq [{:keys [level message remediation]} (unmatched-op-hook-findings)]
       (tel/log! {:level level :id ::op-hook-target :msg (str message " " remediation)}))))
 
+(defonce ^:private scope-flights (atom {}))
+
+(defn- interruptible-load?
+  []
+  (and (not *background-load?*)
+       (identical? *interruptible-load-thread* (Thread/currentThread))))
+
+(defn- await-scope-flight!
+  "Wait without cancelling the job that other turns may need."
+  [{:keys [result progress]} owner?]
+  (let [interruptible? (interruptible-load?)
+        stage (if owner? :preparing :waiting)]
+    (readiness/marking stage nil
+      (loop [interrupted? false]
+        (when owner? (readiness/mark! (or (:stage @progress) stage) (:package @progress)))
+        (let [answer (try (if (and owner? readiness/*cell*)
+                            (deref result 100 ::pending)
+                            @result)
+                          (catch InterruptedException e
+                            (if interruptible? (throw e) ::interrupted)))]
+          (case answer
+            ::interrupted (recur true)
+            ::pending (recur interrupted?)
+            (do (when interrupted? (.interrupt (Thread/currentThread)))
+                answer)))))))
+
+(defn- scope-report
+  [root]
+  {:loaded (count (scope-entries root))
+   :failed (count (filter #(= root (:project-root %)) @failures))
+   :changed? false})
+
+(defn- publish-scope!
+  [{:keys [project-root sync-projects? prepared-scan] :as scope}]
+  (let [result (if prepared-scan
+                 (load-scope! scope)
+                 (scope-report project-root))
+        result (assoc result :extensions (vec (sort (keep :ext-name
+                                                          (vals (scope-entries project-root))))))]
+    (when sync-projects? (swap! prepared-scopes conj project-root))
+    (when-let [fingerprint (get @last-fingerprint project-root)]
+      (swap! last-fingerprint assoc project-root
+        (vary-meta fingerprint assoc ::scope-result (assoc result :changed? false))))
+    result))
+
+(defn- refresh-package-paths!
+  []
+  (when (pyext/worker-live? pyext/shared-key)
+    (timed-phase :package-paths nil
+                 #(pyext/exec! pyext/shared-key runtime/default-session
+                              (str "import package_paths; package_paths.refresh("
+                                   (python-string-literal (runtime/packages-dir))
+                                   ", reload=True)")))))
+
+(defn- scope-current?
+  [root flight]
+  (identical? flight (get @scope-flights root)))
+
+(defn- run-scope-flight!
+  [{:keys [project-root sync-projects? scan? reload-paths?] :as scope} flight predecessor earlier]
+  ;; Same-scope disk writers run in request order. A superseded flight cannot
+  ;; publish, even when it was already preparing when the reload arrived.
+  (when (or predecessor earlier)
+    (reset! (:progress flight) {:stage :waiting})
+    (when predecessor (await-scope-flight! predecessor false))
+    (when earlier (await-scope-flight! earlier false))
+    (reset! (:progress flight) {:stage :preparing}))
+  (if-not (scope-current? project-root flight)
+    ::superseded
+    (let [scope (if sync-projects?
+                  (merge scope (timed-phase :packages (if (:global scope) "global" "project")
+                                            #(prepare-scope-packages! scope project-root)))
+                  scope)
+          scan (when scan? (prepare-scope-scan! scope))]
+      (try
+        (reset! (:progress flight) {:stage :waiting})
+        (with-phased-load-lock
+          (fn []
+            ;; Requests that arrive after this check wait for this publication to finish.
+            (if-not (locking scope-flights (scope-current? project-root flight))
+              ::superseded
+              (do (when reload-paths? (refresh-package-paths!))
+                  (let [report (publish-scope! (assoc scope :prepared-scan scan))]
+                    (when reload-paths? (retire-stale-workers!))
+                    report)))))
+        (finally (release-scan-snapshots! (:snapshots scan) nil))))))
+
+(defn- ready-scope
+  [{:keys [project-root] :as scope} explicit?]
+  (when-not (contains? @scope-flights project-root)
+    (ready-scope-result scope explicit? @last-fingerprint @prepared-scopes)))
+
+(defn- package-preparation-worker
+  "Use shared packages without taking a spare meant for a session."
+  [project-root]
+  (let [packages (some-> (runtime/packages-dir) io/file)]
+    (pyext/extension-worker-key [::package-preparation project-root]
+                                (when (and packages (.isDirectory ^File packages)) packages))))
+
+(defn- claim-scope!
+  "Choose a completed scope or one owner for the next generation."
+  [{:keys [project-root] :as scope} explicit? force? earlier reload-paths?]
+  (let [predecessor (get @scope-flights project-root)]
+    (cond
+      (and predecessor (not force?)) {:flight predecessor}
+      :else
+      (if-let [report (when-not force? (ready-scope scope explicit?))]
+        {:report report}
+        (let [prepare? (and (not explicit?) (or (:global scope) (some? workspace/*workspace-root*)))
+              pending? (and prepare? (not (contains? @prepared-scopes project-root)))
+              ;; A managed turn cannot reuse an unmanaged flight's prepared result.
+              scope (assoc scope
+                      :sync-projects? (or (:sync-projects? scope) (and prepare? (or force? pending?)))
+                      :force-scan? (or (:force? scope) pending?)
+                      :scan? (or force? pending? (not (contains? @last-fingerprint project-root)))
+                      :reload-paths? reload-paths?)
+              flight {:result (promise) :progress (atom {:stage :preparing})}]
+          (swap! scope-flights assoc project-root flight)
+          (future
+            (let [answer (binding [*interruptible-load-thread* nil
+                                   readiness/*cell* nil
+                                   *package-context* nil
+                                   *package-worker* (when (:sync-projects? scope)
+                                                      (package-preparation-worker project-root))
+                                   *preparing-package* (:progress flight)]
+                           (try (with-package-context
+                                  #(run-scope-flight! scope flight predecessor earlier))
+                                (catch Throwable t {:error t})))]
+              (locking scope-flights
+                (if (scope-current? project-root flight)
+                  (do (swap! scope-flights dissoc project-root)
+                      (deliver (:result flight) answer))
+                  (deliver (:result flight) ::superseded)))))
+          {:flight flight :owner? true})))))
+
+(defn- await-scope!
+  [scope explicit? {:keys [report flight owner?]}]
+  (loop [report report flight flight owner? owner?]
+    (or report
+        (let [{:keys [error] :as answer} (await-scope-flight! flight owner?)]
+          (cond error (throw error)
+                (and owner? (not= ::superseded answer)) answer
+                :else (let [next (locking scope-flights (claim-scope! scope explicit? false nil false))]
+                        (recur (:report next) (:flight next) (:owner? next))))))))
+
+(defn- load-scope-results!
+  [opts scopes explicit? force?]
+  (if force?
+    ;; Claim all scopes before a turn can see any part of this reload as ready.
+    (let [claims (locking scope-flights
+                   (reduce (fn [claims scope]
+                             (conj claims (claim-scope! scope explicit? true
+                                                        (:flight (peek claims))
+                                                        (and (:force? opts) (empty? claims)))))
+                           [] scopes))]
+      (mapv #(await-scope! %1 explicit? %2) scopes claims))
+    (mapv (fn [scope]
+            (await-scope! scope explicit?
+                          (locking scope-flights (claim-scope! scope explicit? false nil false))))
+          scopes)))
+
 (defn- load-scopes!
   [opts force?]
   (let [explicit?
@@ -5236,89 +5442,13 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                          (.getCanonicalPath ^File project-dir)))
               (conj {:dirs [project-dir] :project true :project-root root}))))
 
-        ready
-        (when-not force?
-          ;; Read preparation first: admission invalidates its report before preparing.
-          (let [prepared
-                @prepared-scopes
+        scopes (mapv (partial merge opts) scopes)
 
-                fingerprints
-                @last-fingerprint]
+        ready (when-not force? (locking scope-flights (mapv #(ready-scope % explicit?) scopes)))
 
-            (mapv #(ready-scope-result % explicit? fingerprints prepared) scopes)))
-
-        results
-        (if (and ready (every? some? ready))
-          ready
-          ;; A first load logs its phases as a reload does: without it the snapshot and
-          ;; package checks of a new session's catalog leave a silent gap (#422).
-          (with-phased-load-lock
-            (fn []
-              ;; A multi-scope reload cannot expose a partially updated report.
-              (when force?
-                (swap! last-fingerprint (fn [fingerprints]
-                                          (reduce (fn [state {:keys [project-root]}]
-                                                    (if-let [fingerprint (get state project-root)]
-                                                      (assoc state
-                                                        project-root (vary-meta fingerprint
-                                                                                dissoc
-                                                                                ::scope-result))
-                                                      state))
-                                                  fingerprints
-                                                  scopes))))
-              (with-package-context
-                (fn []
-                  (mapv
-                    (fn [{:keys [project-root] :as scope}]
-                      (let [initialized?
-                            (contains? @last-fingerprint project-root)
-
-                            ;; Prepare global and explicitly opened project catalogs only.
-                            prepare?
-                            (and (not explicit?)
-                                 (or (:global scope) (some? workspace/*workspace-root*)))
-
-                            pending?
-                            (and prepare? (not (contains? @prepared-scopes project-root)))
-
-                            result
-                            (if (and initialized? (not force?) (not pending?))
-                              {:loaded (count (scope-entries project-root))
-                               :failed (count (filter #(= project-root (:project-root %))
-                                                      @failures))
-                               :changed? false}
-                              (do
-                                ;; Invalidate before any admission or reload mutation.
-                                (when-let [fingerprint (get @last-fingerprint project-root)]
-                                  (swap! last-fingerprint assoc
-                                    project-root
-                                    (vary-meta fingerprint dissoc ::scope-result)))
-                                (let [prepared (when prepare?
-                                                 (timed-phase
-                                                   :packages
-                                                   (if (:global scope) "global" "project")
-                                                   #(prepare-scope-packages! scope project-root)))]
-                                  (when (or (:force? opts) pending?)
-                                    (swap! last-fingerprint dissoc project-root))
-                                  (load-scope! (cond-> (merge opts scope prepared)
-                                                 prepare?
-                                                 (assoc :sync-projects? true))))))
-
-                            result
-                            (assoc result
-                              :extensions (vec (sort (keep :ext-name
-                                                           (vals (scope-entries project-root))))))]
-
-                        ;; Publish only after registration, listeners and cleanup finish.
-                        (when-let [fingerprint (get @last-fingerprint project-root)]
-                          (swap! last-fingerprint assoc
-                            project-root
-                            (vary-meta fingerprint
-                                       assoc
-                                       ::scope-result
-                                       (assoc result :changed? false))))
-                        result))
-                    scopes))))))]
+        results (if (and ready (every? some? ready))
+                  ready
+                  (with-reload-phases #(load-scope-results! opts scopes explicit? force?)))]
 
     {:loaded (reduce + 0 (map :loaded results))
      :failed (reduce + 0 (map :failed results))
@@ -5371,31 +5501,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   "Reload global extensions and the calling project, preserving other project catalogs.
    Only new, changed and failed extension files load again; `{:all? true}` loads all (#393)."
   ([] (reload-python-extensions! nil))
-  ([opts]
-   (with-reload-phases
-     (fn []
-       (let [requested (System/nanoTime)
-             holder (holder-view)]
-
-         (with-load-lock (fn []
-                           (record-phase! :lock-wait
-                                          nil
-                                          requested
-                                          (when holder {:holder holder}))
-                           (when (pyext/worker-live? pyext/shared-key)
-                             (timed-phase :package-paths
-                                          nil
-                                          #(pyext/exec!
-                                             pyext/shared-key
-                                             runtime/default-session
-                                             (str "import package_paths; package_paths.refresh("
-                                                  (python-string-literal (runtime/packages-dir))
-                                                  ", reload=True)"))))
-                           (let [result (load-scopes! (assoc opts :force? true) true)]
-                             (warn-unmatched-op-hooks! result)
-                             ;; A worker that an earlier load found busy is still stale (#475).
-                             (retire-stale-workers!)
-                             result))))))))
+  ([opts] (doto (load-scopes! (assoc opts :force? true) true) warn-unmatched-op-hooks!)))
 
 ;; The loader's own host extension: `/reload` + doctor surface
 
