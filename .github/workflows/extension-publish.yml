@@ -3,8 +3,8 @@ name: Publish reviewed extension
 on:
   schedule:
     # First-party extension releases reach the center without anyone dispatching this.
-    # A scheduled run publishes only when the center does not list a newest release yet.
-    - cron: '*/15 * * * *'
+    # Run away from the start of each hour. GitHub can delay or drop a scheduled run.
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
     inputs:
       repository_url:
@@ -53,22 +53,58 @@ jobs:
               "$REPOSITORY_URL" "${SUBDIRECTORY:--}" "$RELEASE_TAG" "$REVISION" > "$RUNNER_TEMP/targets"
           else
             : > "$RUNNER_TEMP/targets"
+            cutoff=$(date -u -d '7 days ago' +%FT%TZ)
             while read -r repository folder prefix; do
-              if [ "$prefix" = "-" ]; then
-                tag=$(gh api "repos/$repository/releases/latest" --jq .tag_name 2>/dev/null || true)
+              if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+                if ! tags=$(gh api --paginate --slurp "repos/$repository/releases?per_page=100" | jq -r \
+                  --arg prefix "$prefix" --arg cutoff "$cutoff" '
+                    add | map(select((.draft or .prerelease) | not)
+                      | select($prefix == "-" or (.tag_name | startswith($prefix))))
+                    | sort_by(.published_at) | reverse
+                    | to_entries[] | select(.key == 0 or .value.published_at >= $cutoff)
+                    | .value.tag_name'); then
+                  echo "::warning::Could not list releases for $repository."
+                  continue
+                fi
+                subdirectory=$folder
+                if [ "$subdirectory" = "-" ]; then subdirectory=""; fi
+                url="https://github.com/$repository"
+                identity=$(printf '%s\n%s' "${url,,}" "$subdirectory" | sha256sum | cut -c1-24)
+                if ! status=$(curl -sS --max-time 20 -o "$RUNNER_TEMP/catalog" -w '%{http_code}' \
+                  "https://vis.blockether.com/api/extensions/$identity"); then
+                  echo "::warning::Could not check the catalog for $repository."
+                  continue
+                fi
+                case "$status" in
+                  200)
+                    if ! listed=$(jq -er '.releases | if type == "array" and all(.[]; (.release_tag | type) == "string") then map(.release_tag) | join("\n") else error("Invalid catalog releases") end' "$RUNNER_TEMP/catalog"); then
+                      echo "::warning::Invalid catalog response for $repository."
+                      continue
+                    fi
+                    ;;
+                  404) listed='' ;;
+                  *) echo "::warning::Catalog returned HTTP $status for $repository."; continue ;;
+                esac
+              elif [ "$prefix" = "-" ]; then
+                tags=$(gh api "repos/$repository/releases/latest" --jq .tag_name 2>/dev/null || true)
               else
-                # This repository also releases other products. Take its newest stable release with this tag prefix.
-                tag=$(gh api "repos/$repository/releases?per_page=15" \
-                  --jq "[.[] | select((.draft or .prerelease) | not) | select(.tag_name | startswith(\"$prefix\"))][0].tag_name // empty" \
-                  2>/dev/null || true)
+                tags=$(gh api --paginate --slurp "repos/$repository/releases?per_page=100" | jq -r \
+                  --arg prefix "$prefix" '[add[] | select((.draft or .prerelease) | not)
+                    | select(.tag_name | startswith($prefix))] | max_by(.published_at).tag_name // empty')
               fi
-              if [ -z "$tag" ]; then
-                echo "$repository has no published release yet; skipping it." >&2
-                continue
-              fi
-              revision=$(gh api "repos/$repository/commits/$tag" --jq .sha)
-              printf '%s %s %s %s\n' \
-                "https://github.com/$repository" "$folder" "$tag" "$revision" >> "$RUNNER_TEMP/targets"
+              while IFS= read -r tag; do
+                [ -n "$tag" ] || continue
+                if [ "$GITHUB_EVENT_NAME" = schedule ] && grep -Fxq -- "$tag" <<< "$listed"; then
+                  continue
+                fi
+                if ! revision=$(gh api "repos/$repository/commits/$tag" --jq .sha); then
+                  if [ "$GITHUB_EVENT_NAME" != schedule ]; then exit 1; fi
+                  echo "::warning::Could not resolve $repository release $tag."
+                  continue
+                fi
+                printf '%s %s %s %s\n' \
+                  "https://github.com/$repository" "$folder" "$tag" "$revision" >> "$RUNNER_TEMP/targets"
+              done <<< "$tags"
             done <<'FIRST_PARTY'
           Blockether/vis-lang-interface - -
           Blockether/vis-lang-python - -
@@ -81,20 +117,6 @@ jobs:
           Blockether/vis-reel - -
           Blockether/spel extensions/vis-spel vis-spel/v
           FIRST_PARTY
-          fi
-          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
-            # Keep only the releases that the center does not list yet.
-            while read -r repository folder tag revision; do
-              subdirectory=$folder
-              if [ "$subdirectory" = "-" ]; then subdirectory=""; fi
-              identity=$(printf '%s\n%s' "${repository,,}" "$subdirectory" | sha256sum | cut -c1-24)
-              if curl -fsS --max-time 20 "https://vis.blockether.com/api/extensions/$identity" 2>/dev/null \
-                | jq -e --arg tag "$tag" 'any(.releases[]?; .release_tag == $tag)' > /dev/null; then
-                continue
-              fi
-              printf '%s %s %s %s\n' "$repository" "$folder" "$tag" "$revision"
-            done < "$RUNNER_TEMP/targets" > "$RUNNER_TEMP/new-targets"
-            mv "$RUNNER_TEMP/new-targets" "$RUNNER_TEMP/targets"
           fi
           cat "$RUNNER_TEMP/targets"
           {
@@ -160,8 +182,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          failed=0
           while read -r repository folder tag revision; do
             [ -n "$repository" ] || continue
             if [ "$folder" = "-" ]; then folder=""; fi
-            node moderate.mjs publish "$repository" "$folder" "$tag" "$revision" --remote --config .deployment.json
+            if ! node moderate.mjs publish "$repository" "$folder" "$tag" "$revision" --remote --config .deployment.json; then
+              echo "::error::Could not publish $repository release $tag."
+              failed=1
+            fi
           done <<< "$TARGETS"
+          exit "$failed"
