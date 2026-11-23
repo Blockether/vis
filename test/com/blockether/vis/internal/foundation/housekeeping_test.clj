@@ -50,26 +50,29 @@
 ;; scan — gateway journals
 
 (defdescribe session-scratch-sweep-test
-  (it "keeps claimed, recent, and foreign scratch and removes free old and orphan scratch"
+  (it "keeps claimed, recent, idle, and foreign scratch and removes free old and orphan scratch"
       (let [home (tmp-dir "vis-scratch-sweep")
             root (io/file home "scratch")
             db-file (str (io/file home "vis.db"))
             old (random-uuid)
             claimed (random-uuid)
             recent (random-uuid)
+            idle (random-uuid)
             foreign (random-uuid)
             orphan (random-uuid)
             detached (str ".reclaim-" (random-uuid))
             now (System/currentTimeMillis)
-            old-ms (- now (* 2 day-ms))]
+            old-ms (- now (* 15 day-ms))]
         (with-redefs [paths/scratch-root (constantly (clojure.java.io/file home "scratch"))
                       p/db-get-session (fn [_ sid]
                                          (when-not (= sid orphan)
                                            {:created-at (java.util.Date. old-ms)}))
                       p/db-list-session-turns-meta (fn [_ sid]
-                                                     (when (= sid recent)
-                                                       [{:created-at (java.util.Date. now)}]))]
-          (doseq [sid [old claimed recent foreign orphan detached]]
+                                                     (condp = sid
+                                                       recent [{:created-at (java.util.Date. now)}]
+                                                       idle [{:created-at (java.util.Date. (- now (* 2 day-ms)))}]
+                                                       nil))]
+          (doseq [sid [old claimed recent idle foreign orphan detached]]
             (let [dir (io/file root (str sid))]
               (when-not (= sid detached)
                 (touch! dir ".vis-db" 2 (if (= sid foreign) "/other/store/vis.db" db-file)))
@@ -79,7 +82,7 @@
             (paths/with-claim-lock root #(paths/claim-dir! dir))
             (try
               (dotimes [_ 2] (housekeeping/sweep-session-scratch! {:db-file db-file} now))
-              (doseq [sid [claimed recent foreign]]
+              (doseq [sid [claimed recent idle foreign]]
                 (expect (.exists (io/file root (str sid) "tmp/output"))))
               (doseq [sid [old orphan detached]]
                 (expect (not (.exists (io/file root (str sid))))))

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Sessions: each session has a scratch directory for shell and Python temporary files. Vis removes unused scratch files and warns the agent above 10 GiB (#513).
+- Sessions: each session has a scratch directory for shell and Python temporary files. Vis removes unused scratch files after 14 days without a turn and warns the agent above 10 GiB (#513).
 
 ### Changed
 
