@@ -7,15 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed
-
-- Sessions: Vis now keeps unused session scratch for 7 days without a turn instead of 14 days (#513).
-
 ## [v0.5.32] - 2026-11-23
 
 ### Added
 
-- Sessions: each session has a scratch directory for shell and Python temporary files. Vis removes unused scratch files after 14 days without a turn and warns the agent above 10 GiB (#513).
+- Sessions: each session has a scratch directory for shell and Python temporary files. Vis removes unused scratch files after 7 days without a turn and warns the agent above 10 GiB (#513).
 
 ### Changed
 
@@ -41,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Extensions: an after hook does not run when its turn was cancelled or its session ended. A callback failure in the log names the exception class and up to 4 causes, with secrets removed.
 - Voice: in voice mode, Vis speaks the progress note of a step before its code runs. Before, you heard the note only after the code ended. Hands-free mode uses the Pocket voice that you selected (#510).
 - Python: an update removes the interpreter copies and the extension environments of the replaced interpreter build. Before, approximately 6 GiB stayed for each update (#511).
+- Gateway: the first turn of a new session no longer reports that its Python context is retired. When the project extensions became ready during the start of that turn, the turn checked the replaced environment and started a fresh one.
+- Companion: Back in a subagent session opens its parent session (#516).
 - Companion: an answer box shows a gap between paragraphs. Stop speech shows only while speech plays. A diff file without lines, for example a binary file, has no fold chevron.
 
 ## [v0.5.31] - 2026-11-23
