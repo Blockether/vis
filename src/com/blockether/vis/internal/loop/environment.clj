@@ -864,6 +864,7 @@
             env (cond-> {:environment-id environment-id
                          :session-id session-id
                          :session/scratch scratch
+                         :session/scratch-warning-cache (when scratch (atom {}))
                          :session/scratch-release! (:release! @scratch-lease)
                          :grant-owner grant-owner
                          :session/state-id session-state-id

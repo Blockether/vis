@@ -838,7 +838,10 @@
         (sandbox-shims-prompt-block active-extensions)
 
         scratch-warning
-        (housekeeping/scratch-size-warning (:session/scratch environment))
+        (when-let [cache (:session/scratch-warning-cache environment)]
+          (locking cache
+            (util/ttl-cached cache (* 5 60 1000) :warning
+                             #(housekeeping/scratch-size-warning (:session/scratch environment)))))
 
         blocks
         (->> [(:content extensions) shims scratch-warning]

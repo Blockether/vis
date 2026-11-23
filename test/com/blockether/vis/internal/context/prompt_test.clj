@@ -8,6 +8,8 @@
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -504,6 +506,40 @@
                    ;; 1.6k → 0.7k: user review cut the auto-import list, the build globals and the
                    ;; SDK note, and named no unbound `r` in the shell example.
                    (expect (< (count text) 800)))))
+
+(defdescribe
+  scratch-warning-cache-test
+  (it "reuses scratch readings until they expire and starts fresh in a new environment"
+      (let [now (atom 0)
+            scans (atom 0)
+            warning (atom nil)
+            environment {:session/scratch "scratch"
+                         :session/scratch-warning-cache (atom {})}
+            warning-text "SCRATCH-WARNING-FROM-SCAN"
+            warned? (fn [env]
+                      (-> (prompt/assemble-stable-prompt-messages env {:active-extensions []})
+                          prompt/stable-prompt-text
+                          (str/includes? warning-text)))]
+        (with-redefs [util/now-ms (fn ^long [] (long @now))
+                      housekeeping/scratch-size-warning (fn [_] (swap! scans inc) @warning)]
+          (expect (not (warned? environment)))
+          (reset! warning warning-text)
+          (reset! now 299999)
+          (expect (not (warned? environment)))
+          (expect (= 1 @scans))
+
+          (reset! now 300000)
+          (expect (warned? environment))
+          (reset! warning nil)
+          (reset! now 599999)
+          (expect (warned? environment))
+          (expect (= 2 @scans))
+
+          (expect (not (warned? (assoc environment :session/scratch-warning-cache (atom {})))))
+          (expect (= 3 @scans))
+          (reset! now 600000)
+          (expect (not (warned? environment)))
+          (expect (= 4 @scans))))))
 
 (defdescribe
   project-instructions-hoist-test
