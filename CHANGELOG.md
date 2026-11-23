@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Extensions: a gateway start or restart does not stop the turns of all workspaces for up to 30 seconds while it prepares an extension (#498). Preparation compiled each Python file of the extension environment, also the environments of other Python builds, while it held the extension load lock. Preparation now compiles no bytecode. A worker compiles only the modules that it imports. With the dependencies installed, four sessions after a restart waited 1.6 seconds, not 7.9 seconds, before their turns started. An explicit `vis-agent uv sync` still compiles the environment. A cancel also stops a turn that waits for the extension load lock, and the turn ends at once.
 - Gateway: a refused request body (a 400, 413, or 415 answer) gets `Connection: close`. Before, the gateway could close the connection without this header, and the next request of the client on that connection failed.
 - Terminal: a selected item on the canvas map shows the sign `●` before its title. Before, only a colour marked it, and some themes showed no difference.
 - Terminal: a sideways touchpad swipe does not scroll down. Lanterna 3.1.5-vis.65 reports it as a horizontal wheel step, and it keeps Shift, Alt, and Ctrl on a mouse event.

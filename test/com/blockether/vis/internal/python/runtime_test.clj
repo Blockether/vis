@@ -609,8 +609,9 @@
                  (expect (not (.exists (io/file environment ".vis-prepared.edn"))))))
              (finally (.setWritable environment true false)
                       (#'python-runtime/delete-tree! project)))))
-  ;; #407: a new installation compiles its bytecode, so a worker imports without a compile.
-  (it "compiles a new installation into the bytecode cache"
+  ;; #498: preparation compiled every site package under the load lock for 30 s. Only an
+  ;; explicit `uv sync` compiles, so a worker imports without a compile (#407).
+  (it "prepares a new installation without a compile; an explicit sync compiles it"
       (python-runtime/ensure-library!)
       (let [project
             (temp-dir "vis-compiled-project")
@@ -651,6 +652,12 @@
                                                                   (.getCanonicalFile site))}
                (fn []
                  (python-runtime/ensure-project! project)
+                 (expect (.isFile (io/file project
+                                           (#'python-runtime/automatic-environment)
+                                           ".vis-prepared.edn")))
+                 (expect (not-any? #(str/ends-with? (.getName ^java.io.File %) ".pyc")
+                                   (file-seq prefix)))
+                 (#'python-runtime/compile-bytecode! project (.getCanonicalFile site))
                  (let [compiled (->> (file-seq prefix)
                                      (map #(.getName ^java.io.File %))
                                      (filter #(str/ends-with? % ".pyc"))

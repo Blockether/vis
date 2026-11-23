@@ -1035,8 +1035,8 @@
 
 (defn- prepared-inputs
   "Digest what uv's offline check reads, without uv: project and lock files, local path
-   sources, the environment and the embedded tools. The bytecode cache is an input too:
-   a stamp records that its compile ran. Nil without an own automatic environment.
+   sources, the environment and the embedded tools. The bytecode cache stays an input, so
+   the stamps of earlier releases stay valid. Nil without an own automatic environment.
    An mtime counts in whole seconds: tar, cp and image layers drop the milliseconds."
   [^File project ^File packages]
   (let [config
@@ -1096,8 +1096,8 @@
   packages)
 
 (defn- compile-bytecode!
-  "Compile a newly installed project and its packages into the bytecode cache.
-   Workers then import them without a compile, also from a read-only tree (#407).
+  "Compile a project that an explicit `uv sync` installed, and its packages, into the
+   bytecode cache. A worker then imports them without a compile (#407).
    A failure costs only speed, because a worker compiles what it imports.
    Environments and directory links of the project stay out: each other interpreter build
    keeps its own `.venv-<hash>` there, and compiling them all held the load lock 30 s (#498)."
@@ -1158,7 +1158,8 @@
    A ready private environment must pass uv's offline check and use the embedded Python.
    A project `.venv` of this Python is that environment. Else each embedded Python owns its own.
    A stamp of that check skips uv while the project, lock and environment are unchanged (#407).
-   A preparation without that stamp also compiles the bytecode into the embedded Python's cache."
+   Preparation compiles no bytecode: a worker compiles what it imports into the cache. A full
+   compile ran under the load lock for 30 s, and extension startup imports few site packages (#498)."
   [^File project]
   (locking preparation-lock
     ;; #377: the readiness check and the shell cleanup share one workspace lookup.
@@ -1189,7 +1190,6 @@
                        (remove-environment-shell! project)
                        (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
                      (let [packages (project-packages project)]
-                       (compile-bytecode! project packages)
                        (stamp-prepared! project packages)
                        (preparation-stage! project (if ready? "cached" "ready"))
                        packages)))))
