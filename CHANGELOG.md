@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Provider: Z.AI Coding Plan providers (`zai-coding-plan` and `zai-coding`) offer GLM-5.4, the new multimodal GLM flagship. The direct Z.AI API does not offer it yet. GLM-5.3 Flash stays the default model. Svar is pinned at 0.7.246.
+
 ### Fixed
 
 - Context: the fold rule now also applies when the user asks for a fold. It tells the model to copy the key from the `# tN/iK` line of its last tool result, and gives an example. A refused fold names the key of the last completed step, so the next try uses a correct key.
