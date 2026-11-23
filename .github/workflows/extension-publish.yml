@@ -3,7 +3,8 @@ name: Publish reviewed extension
 on:
   schedule:
     # First-party extension releases reach the center without anyone dispatching this.
-    - cron: '23 5 * * *'
+    # A scheduled run publishes only when the center does not list a newest release yet.
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       repository_url:
@@ -27,55 +28,14 @@ permissions:
   contents: read
 
 jobs:
-  publish:
+  targets:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: docs
-    concurrency:
-      group: docs-production
-      cancel-in-progress: false
-    defaults:
-      run:
-        working-directory: apps/vis-docs
+    outputs:
+      targets: ${{ steps.resolve.outputs.targets }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-graalvm-25
-      - uses: ./.github/actions/setup-clojure
-      - uses: actions/cache/restore@v6
-        with:
-          path: |
-            ~/.m2/repository
-            ~/.gitlibs
-            ~/.clojure/.cpcache
-          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
-      - run: clojure -X:deps prep
-        working-directory: .
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: apps/vis-docs/package-lock.json
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-          cache: pip
-          cache-dependency-path: packages/vis-agent/pyproject.toml
-      - run: python -m pip install './packages/vis-agent[docs]'
-        working-directory: .
-      - run: npm ci
-      - run: npm run lint
-      - run: npm test
-      - name: Configure the approved catalog database
-        env:
-          DOCS_D1_DATABASE_ID: ${{ vars.DOCS_D1_DATABASE_ID }}
-          DOCS_TURNSTILE_SITE_KEY: ${{ vars.DOCS_TURNSTILE_SITE_KEY }}
-          DOCS_RATE_LIMIT_NAMESPACE: ${{ vars.DOCS_RATE_LIMIT_NAMESPACE }}
-          DOCS_HOSTNAME: ${{ vars.DOCS_HOSTNAME }}
-        run: node deploy.mjs
       - name: Resolve the releases to publish
+        id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY_URL: ${{ inputs.repository_url }}
@@ -122,15 +82,86 @@ jobs:
           Blockether/spel extensions/vis-spel vis-spel/v
           FIRST_PARTY
           fi
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            # Keep only the releases that the center does not list yet.
+            while read -r repository folder tag revision; do
+              subdirectory=$folder
+              if [ "$subdirectory" = "-" ]; then subdirectory=""; fi
+              identity=$(printf '%s\n%s' "${repository,,}" "$subdirectory" | sha256sum | cut -c1-24)
+              if curl -fsS --max-time 20 "https://vis.blockether.com/api/extensions/$identity" 2>/dev/null \
+                | jq -e --arg tag "$tag" 'any(.releases[]?; .release_tag == $tag)' > /dev/null; then
+                continue
+              fi
+              printf '%s %s %s %s\n' "$repository" "$folder" "$tag" "$revision"
+            done < "$RUNNER_TEMP/targets" > "$RUNNER_TEMP/new-targets"
+            mv "$RUNNER_TEMP/new-targets" "$RUNNER_TEMP/targets"
+          fi
           cat "$RUNNER_TEMP/targets"
+          {
+            echo 'targets<<TARGETS_END'
+            cat "$RUNNER_TEMP/targets"
+            echo 'TARGETS_END'
+          } >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: targets
+    if: needs.targets.outputs.targets != ''
+    runs-on: ubuntu-latest
+    environment: docs
+    concurrency:
+      group: docs-production
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: apps/vis-docs
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-graalvm-25
+      - uses: ./.github/actions/setup-clojure
+      - uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.CLOJURE_CLI_VERSION }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
+          restore-keys: deps-v2-${{ runner.os }}-${{ runner.arch }}-
+      - run: clojure -X:deps prep
+        working-directory: .
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/vis-docs/package-lock.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: packages/vis-agent/pyproject.toml
+      - run: python -m pip install './packages/vis-agent[docs]'
+        working-directory: .
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - name: Configure the approved catalog database
+        env:
+          DOCS_D1_DATABASE_ID: ${{ vars.DOCS_D1_DATABASE_ID }}
+          DOCS_TURNSTILE_SITE_KEY: ${{ vars.DOCS_TURNSTILE_SITE_KEY }}
+          DOCS_RATE_LIMIT_NAMESPACE: ${{ vars.DOCS_RATE_LIMIT_NAMESPACE }}
+          DOCS_HOSTNAME: ${{ vars.DOCS_HOSTNAME }}
+        run: node deploy.mjs
       - name: Recheck the reviewed releases and publish through authenticated moderation
         env:
+          TARGETS: ${{ needs.targets.outputs.targets }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           while read -r repository folder tag revision; do
+            [ -n "$repository" ] || continue
             if [ "$folder" = "-" ]; then folder=""; fi
             node moderate.mjs publish "$repository" "$folder" "$tag" "$revision" --remote --config .deployment.json
-          done < "$RUNNER_TEMP/targets"
+          done <<< "$TARGETS"

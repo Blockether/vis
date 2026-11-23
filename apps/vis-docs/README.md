@@ -265,12 +265,15 @@ on `main`, under the existing `docs` environment's approval and Cloudflare crede
 This is a maintainer operation, not a `vis-agent extension publish` command or an
 anonymous submission API. It does not weaken Turnstile.
 
-Blockether's own extensions need no dispatch. The same workflow also runs on a daily schedule and
-publishes the newest GitHub release of each first-party repository it lists: `vis-lang-interface`,
-`vis-lang-python`, `vis-lang-clojure`, `vis-decisions`, `vis-optmem`, `vis-podcaster` and `vis-reel`.
+Blockether's own extensions need no dispatch. The same workflow also runs every 15 minutes. It finds
+the newest GitHub release of each first-party repository it lists: `vis-lang-interface`,
+`vis-lang-python`, `vis-lang-javascript`, `vis-lang-clojure`, `vis-decisions`, `vis-optmem`,
+`vis-graphify`, `vis-podcaster`, `vis-reel` and `vis-spel`. A scheduled run publishes only the releases
+that the public catalog does not list yet; when the catalog lists all of them, the run stops before
+the build. Thus a project can pin a new first-party release a short time after its GitHub release.
 Publishing a release that is already in the catalog is a no-op, so a repeated sweep cannot replace a
 reviewed commit.
-Dispatch the workflow without inputs to run that sweep immediately.
+Dispatch the workflow without inputs to publish every listed release immediately.
 
 Review the source and dependencies first. The package version, matching tag and published
 GitHub Release must already exist. The workflow does not bump package versions, create
