@@ -19,18 +19,20 @@
   (or (:classification event) :generic))
 
 (defn row-summary
-  "Bounded already-redacted summary selected from semantic event fields. A shell
-   spawn is durable command evidence, not a live-tense status: its ticker phrase
-   `running: <command>` becomes the command itself in Activity."
-  [{:keys [presenter phrase] :as event}]
-  (or (when (and (= :shell presenter) (string? phrase) (str/starts-with? phrase "running: "))
-        (paths/compact-path-text nil (subs phrase (count "running: "))))
-      phrase
-      (:label event)
-      (:result-summary event)
-      (:error-summary event)
-      (some-> (:operation event)
-              name)))
+  "Bounded already-redacted summary selected from semantic event fields. Use the
+   declared headline instead of the live ticker phrase. Shell phrases describe
+   a command; strip `running: ` from the spawn phrase."
+  [{:keys [operation phrase] :as event}]
+  (if (and (= :shell operation) (string? phrase) (str/starts-with? phrase "running: "))
+    (paths/compact-path-text nil (subs phrase (count "running: ")))
+    (or (when (and phrase (not (contains? #{:shell :_shell-logs :_shell-wait :_shell-type :_shell-stop}
+                                         operation)))
+          (get-in event [:presentation "headline"]))
+        phrase
+        (:label event)
+        (:result-summary event)
+        (:error-summary event)
+        (some-> operation name))))
 
 ;; Presentation primitives shared with compiled-in packs. `vis.core` re-exports
 ;; them under `activity-*` names so a library that owns a tool binding builds the
