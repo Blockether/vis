@@ -8246,11 +8246,11 @@
                        #'persistance/db-list-iteration-attachments-meta (fn [_ _]
                                                                           (swap! meta-calls inc)
                                                                           rows)
-                       #'persistance/db-read-attachment (fn [_ id]
-                                                          (swap! reads conj id)
-                                                          {:base64 (.encodeToString
-                                                                     (java.util.Base64/getEncoder)
-                                                                     (.getBytes "PNG" "UTF-8"))})}
+                       #'persistance/db-read-attachment (fn [& _]
+                                                           (throw (ex-info "Legacy envelope read" {})))
+                        #'persistance/db-read-attachment-bytes (fn [_ id]
+                                                                (swap! reads conj id)
+                                                                (.getBytes "PNG" "UTF-8"))}
         (fn []
           (let [user (state/user-iteration-attachments "00000000-0000-0000-0000-0000000000ab")]
             (expect (= ["shown.png"] (mapv :filename user)))

@@ -20,6 +20,7 @@
              [raw-count raw-query]]
             [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [honey.sql :as sql]
@@ -6309,10 +6310,12 @@
 
         (with-redefs [attachments/max-stored-attachment-bytes 8]
           (expect (nil? (payload-cols {:media-type "application/octet-stream" :base64 (b64 9)})))
-          (let [cols (payload-cols {:media-type "application/octet-stream" :base64 (b64 8)})]
-            (expect (= 8 (alength ^bytes (:bytes cols))))
-            (expect (= 8 (:size_bytes cols)))
-            (expect (nil? (:storage_uri cols)))))
+          (expect (nil? (payload-cols {:media-type "application/octet-stream" :base64 (b64 12)})))
+          (doseq [encoded [(b64 8) (str/replace (b64 8) #"=+$" "")]]
+            (let [cols (payload-cols {:media-type "application/octet-stream" :base64 encoded})]
+              (expect (= 8 (alength ^bytes (:bytes cols))))
+              (expect (= 8 (:size_bytes cols)))
+              (expect (nil? (:storage_uri cols))))))
         ;; The real ceiling sits far above any ordinary artifact.
         (expect (some? (payload-cols {:media-type "image/png" :base64 (b64 4096)})))))
   (it "never caps an artifact the offload rail already parked outside the row"
@@ -6327,6 +6330,54 @@
         (expect (= "vis-store://bucket/key" (:storage_uri cols)))
         (expect (nil? (:bytes cols)))
         (expect (= 999999 (:size_bytes cols))))))
+
+(defdescribe
+  export-attachment-snapshot-test
+  (it "exports a stable snapshot without blocking a writer and queues imported payloads"
+      (let [dir (fs/create-temp-dir {:prefix "vis-attachment-export-"})]
+        (try
+          (let [s (persistance/db-create-connection! (str dir))]
+            (try
+              (let [sid (h/store-session! s {:channel :cli})
+                    uri "fixture://slow-attachment"
+                    data (byte-array 2048 (byte 49))
+                    b64 (.encodeToString (java.util.Base64/getEncoder) data)
+                    tid (persistance/db-store-session-turn!
+                          s {:parent-session-id sid :user-request "Export" :status :done
+                             :attachments [{:media-type "text/plain" :filename "slow.txt"
+                                            :storage-uri uri :size (alength data)}]})
+                    entered (promise)
+                    release (promise)]
+                (with-redefs [attachment-storage/resolve-bytes
+                              (fn [requested]
+                                (when (= uri requested)
+                                  (deliver entered true)
+                                  (when (deref release 10000 false) data)))]
+                  (let [exporter (future (persistance/db-export-session-tree s sid))]
+                    (try
+                      (expect (true? (deref entered 5000 false)))
+                      (let [writer (future (persistance/db-store-session-turn!
+                                             s {:parent-session-id sid :user-request "Later"
+                                                :status :done}))]
+                        (try
+                          (expect (uuid? (deref writer 3000 nil)))
+                          (finally (deliver release true) (deref writer 5000 nil))))
+                      (let [tree (deref exporter 5000 nil)
+                            turns (get-in tree [:sessions 0 :turns])
+                            root (str (fs/create-dir (fs/path dir "import")))
+                            ws (:id (persistance/db-workspace-insert!
+                                      s {:id (str (random-uuid)) :repo-id "test" :root root
+                                         :state :active}))
+                            imported (:root (persistance/db-import-session-tree!
+                                              s tree {:workspace-for (constantly ws)}))
+                            imported-tree (persistance/db-export-session-tree s imported)
+                            row (get-in imported-tree [:sessions 0 :turns 0 :attachments 0])]
+                        (expect (= [(str tid)] (mapv #(get-in % [:soul :id]) turns)))
+                        (expect (= 1 (:compaction_pending row)))
+                        (expect (= b64 (:base64 (persistance/db-read-attachment s (:id row))))))
+                      (finally (deliver release true) (deref exporter 5000 nil))))))
+              (finally (persistance/db-dispose-connection! s))))
+          (finally (fs/delete-tree dir))))))
 
 (defdescribe
   wal-size-limit-test

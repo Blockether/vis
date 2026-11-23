@@ -737,12 +737,36 @@
   [^DataSource ds]
   (migration/reorder-table! ds MIGRATIONS "session_attachment"))
 
+(defn- requeue-unpacked-attachments!
+  "Let each stored `raw` payload that is not a PNG or a JPEG wait for one more
+   compaction. A native build of the first storage codec failed its zstd check
+   after it took the row, so a compressible payload stayed `raw`. A PNG or a JPEG
+   kept its own result, because its zstd frame did not save enough to be checked.
+   Another pass costs one zstd frame for each payload."
+  [^DataSource ds]
+  (jdbc/execute! ds
+                 [(str "UPDATE session_attachment SET compaction_pending = 1 "
+                       "WHERE bytes IS NOT NULL AND storage_codec = ? AND length(bytes) >= ? "
+                       "AND COALESCE(media_type, '') NOT IN ('image/png', 'image/jpeg')")
+                  attachment-codec/raw (long attachment-codec/min-bytes)]))
+
+(defn- store-attachment-lengths!
+  "Give each stored `raw` payload its byte length as its size. An older writer kept the
+   size that the caller declared, so a row could claim 48 MiB for five bytes and a
+   size check refused it. A `zstd` row got its size from its bytes already."
+  [^DataSource ds]
+  (jdbc/execute! ds
+                 [(str "UPDATE session_attachment SET size_bytes = length(bytes) "
+                       "WHERE bytes IS NOT NULL AND storage_codec = ? "
+                       "AND size_bytes IS NOT length(bytes)")
+                  attachment-codec/raw]))
+
 (def ^:private store-rewrites
   "One-time data rewrites of older stores, in order. `PRAGMA user_version` counts the
    rewrites that a store has already done. Append new rewrites; never reorder them."
   [rewrite-activity-search-text! drop-stored-activity-rows! drop-log-table! drop-improve-tables!
    drop-council-machine-table! store-agent-teams! store-team-clocks! queue-attachment-compaction!
-   move-attachment-bytes-last!])
+   move-attachment-bytes-last! requeue-unpacked-attachments! store-attachment-lengths!])
 
 (defn- rewrites-done
   "The count of the store rewrites that this store has already done."
@@ -4172,6 +4196,9 @@
 
 ;; Turn - session_turn_soul + session_turn_state
 
+(defn- compaction-pending [^bytes data]
+  (if (>= (alength data) (long attachment-codec/min-bytes)) 1 0))
+
 (defn- attachment-payload-cols
   "Payload columns for ONE attachment row: EXTERNAL (`:storage_uri` set,
    `:bytes` nil) when the map carries a `:storage-uri` (the storage-offload rail
@@ -4186,14 +4213,18 @@
   [att]
   (if-let [uri (:storage-uri att)]
     {:storage_uri uri :bytes nil :size_bytes (long (or (:size att) 0))}
-    (when-let [^bytes data (try (.decode (java.util.Base64/getDecoder) (str (:base64 att)))
-                                (catch Throwable _ nil))]
-      (when (<= (alength data) (long attachments/max-stored-attachment-bytes))
-        {:bytes data
-         :storage_uri nil
-         :size_bytes (long (or (:size att) (alength data)))
-         ;; The step stores the bytes as they arrived; the compactor shrinks them later.
-         :compaction_pending (if (>= (alength data) (long attachment-codec/min-bytes)) 1 0)}))))
+    (let [^String base64 (str (:base64 att))
+          limit (long attachments/max-stored-attachment-bytes)]
+      (when (<= (.length base64) (* 4 (quot (+ limit 2) 3)))
+        (when-let [^bytes data (try (.decode (java.util.Base64/getDecoder) base64)
+                                    (catch IllegalArgumentException _ nil))]
+          (when (<= (alength data) limit)
+            {:bytes data
+             :storage_uri nil
+             ;; The bytes decide the size: a declared size can be stale or wrong.
+             :size_bytes (alength data)
+             ;; Store the original bytes first. The compactor shrinks them later.
+             :compaction_pending (compaction-pending data)}))))))
 
 (defn- attachment-live-view-cols
   "Stable identity carried only by a filed live-view attachment."
@@ -4505,79 +4536,80 @@
        "storage_codec, COALESCE(size_bytes, length(bytes)) AS size_bytes, "
        "CASE WHEN COALESCE(size_bytes, length(bytes)) <= ? THEN bytes END AS bytes"))
 
-(defn db-list-turns-attachments
-  "Batch variant of [[db-list-turn-attachments]]: INBOUND user images for MANY
-   `session_turn_soul` ids in ONE query (the `user` rail only -
-   `session_turn_iteration_id IS NULL`), grouped as `{soul-id-string [{:id
-   :source :position :kind :media-type :filename :size :base64} …]}` (each vector
-   ordered by `:position`). Missing ids are simply absent from the map. Safe: no
-   ids / no datasource -> `{}`. Lets the gateway hydrate a whole session's user
-   images without an N+1 per-turn query.
+(defn- inbound-attachments
+  [db-info sql params inline-limit]
+  (reduce (fn [m {:keys [source_id id bytes] :as row}]
+            (update m source_id
+                    (fn [rows]
+                      (cond-> (or rows [])
+                        id (conj (cond-> (row->attachment row)
+                                   (and inline-limit (nil? bytes)) (dissoc :base64)))))))
+          {}
+          (query-sql! db-info (into [sql] params))))
 
-   `:inline-limit` in `opts` is the largest payload, in bytes, that a row brings
-   with it. A larger row keeps its `:size` and has no `:base64`, and the query
-   does not read its BLOB: a transcript must not pay for a 32 MiB recording on
-   each read. The 2-arity reads each payload."
-  ([db-info session-turn-soul-ids] (db-list-turns-attachments db-info session-turn-soul-ids nil))
-  ([db-info session-turn-soul-ids {:keys [inline-limit]}]
-   (let [ids (->> session-turn-soul-ids
-                  (keep #(some-> %
-                                 ->ref))
-                  distinct
-                  vec)]
+(defn- attachment-columns [inline-limit]
+  (if inline-limit turn-attachment-inline-columns "*"))
+
+(defn- query-attachment-source
+  "Select the source before filtering its payload rows. Keep a source with no match."
+  [db-info sources ids join-on {:keys [inline-limit attachment-id]}]
+  (inbound-attachments
+    db-info
+    (str "WITH sources AS (" sources ") "
+         "SELECT sources.source_id, payload.* FROM sources LEFT JOIN (SELECT "
+         (attachment-columns inline-limit) " FROM session_attachment"
+         (when attachment-id " WHERE id = ?")
+         ") AS payload ON " join-on " ORDER BY sources.source_id, payload.position")
+    (cond-> ids
+      inline-limit (conj (long inline-limit))
+      attachment-id (conj (str attachment-id)))
+    inline-limit))
+
+(defn db-list-turns-attachments
+  "User attachments by turn id, in position order. `:inline-limit` omits payloads
+   over that size. `:attachment-id` selects one row; an empty vector means that
+   the turn has attachments, but does not have that row."
+  ([db-info ids] (db-list-turns-attachments db-info ids nil))
+  ([db-info ids {:keys [inline-limit attachment-id] :as opts}]
+   (let [ids (into [] (comp (keep ->ref) (distinct)) ids)]
      (if-not (and (ds db-info) (seq ids))
        {}
-       (reduce (fn [m row]
-                 (update m
-                         (:session_turn_soul_id row)
-                         (fnil conj [])
-                         (cond-> (row->attachment row)
-                           (and inline-limit (nil? (:bytes row)))
-                           (dissoc :base64))))
-               {}
-               (query-sql! db-info
-                           (into [(str "SELECT "
-                                       (if inline-limit turn-attachment-inline-columns "*")
-                                       " FROM session_attachment "
-                                       "WHERE session_turn_soul_id IN ("
-                                       (str/join "," (repeat (count ids) "?"))
-                                       ") AND session_turn_iteration_id IS NULL "
-                                       "AND queued_turn_id IS NULL "
-                                       "ORDER BY session_turn_soul_id ASC, position ASC")]
-                                 (cond->> ids
-                                   inline-limit
-                                   (cons (long inline-limit))))))))))
+       (let [where (str " WHERE session_turn_soul_id IN ("
+                        (str/join "," (repeat (count ids) "?"))
+                        ") AND session_turn_iteration_id IS NULL AND queued_turn_id IS NULL")]
+         (if attachment-id
+           (query-attachment-source
+             db-info
+             (str "SELECT DISTINCT session_turn_soul_id AS source_id FROM session_attachment" where)
+             ids
+             (str "payload.session_turn_soul_id = sources.source_id "
+                  "AND payload.session_turn_iteration_id IS NULL AND payload.queued_turn_id IS NULL")
+             opts)
+           (inbound-attachments
+             db-info
+             (str "SELECT session_turn_soul_id AS source_id, " (attachment-columns inline-limit)
+                  " FROM session_attachment" where " ORDER BY source_id, position")
+             (if inline-limit (cons (long inline-limit) ids) ids)
+             inline-limit)))))))
 
 (defn db-list-queued-turn-attachments
-  "The images of messages that the human sent into a running turn (`→ Send now`),
-   keyed by queued turn id: `{queued-turn-id-string [{:id :source :position :kind
-   :media-type :filename :size :base64} …]}`, each vector ordered by `:position`. A
-   forked session copies these rows, so one queued turn id can own rows of two turns;
-   the oldest copy answers. Missing ids are absent. No ids or no datasource -> `{}`."
-  [db-info queued-turn-ids]
-  (let [ids (->> queued-turn-ids
-                 (keep #(some-> %
-                                str
-                                not-empty))
-                 distinct
-                 vec)]
-    (if-not (and (ds db-info) (seq ids))
-      {}
-      (into {}
-            (map (fn [[queued-turn-id rows]]
-                   (let [soul (:session_turn_soul_id (first rows))]
-                     [queued-turn-id
-                      (into []
-                            (comp (filter #(= soul (:session_turn_soul_id %)))
-                                  (map row->attachment))
-                            (sort-by :position rows))])))
-            (group-by :queued_turn_id
-                      (query-sql! db-info
-                                  (into [(str "SELECT * FROM session_attachment "
-                                              "WHERE queued_turn_id IN ("
-                                              (str/join "," (repeat (count ids) "?"))
-                                              ") ORDER BY rowid ASC")]
-                                        ids)))))))
+  "Attachments by queued turn id, in position order. The oldest source wins
+   before an `:attachment-id` filter is applied. Options match
+   [[db-list-turns-attachments]]."
+  ([db-info ids] (db-list-queued-turn-attachments db-info ids nil))
+  ([db-info ids opts]
+   (let [ids (into [] (comp (keep #(not-empty (str %))) (distinct)) ids)]
+     (if-not (and (ds db-info) (seq ids))
+       {}
+       (query-attachment-source
+         db-info
+         (str "SELECT oldest.queued_turn_id AS source_id, oldest.session_turn_soul_id AS soul_id "
+              "FROM session_attachment AS oldest WHERE oldest.rowid IN "
+              "(SELECT MIN(rowid) FROM session_attachment WHERE queued_turn_id IN ("
+              (str/join "," (repeat (count ids) "?")) ") GROUP BY queued_turn_id)")
+         ids
+         "payload.queued_turn_id = sources.source_id AND payload.session_turn_soul_id = sources.soul_id"
+         opts)))))
 
 (defn- pending-turn-row
   [session-id kind position {:keys [turn-id payload]} owner at]
@@ -4899,6 +4931,17 @@
     (when-let [row (query-one! db-info
                                {:select [:*] :from :session_attachment :where [:= :id id-s]})]
       (row->attachment row))))
+
+(defn db-read-attachment-bytes
+  "Read the inline payload of one attachment without building an envelope."
+  [db-info attachment-id]
+  (when-let [id-s (and (ds db-info) (->ref attachment-id))]
+    (when-let [{:keys [bytes storage_codec]}
+               (query-one! db-info
+                           {:select [:bytes :storage_codec]
+                            :from :session_attachment
+                            :where [:= :id id-s]})]
+      (attachment-codec/unpack bytes storage_codec))))
 
 (def ^:private latest-turn-state-sql
   (str "SELECT * FROM session_turn_state WHERE session_turn_soul_id = ? "
@@ -6809,7 +6852,7 @@
    the workspace and storage handles stay out."
   [db-info session-id]
   (when (ds db-info)
-    (sqlite-write-tx!
+    (sqlite-read-tx!
       db-info
       (fn [tx-info]
         (let [root-s (->ref session-id)]
@@ -6930,14 +6973,15 @@
                     (if (and (nil? (:bytes_sha256 a))
                              (attachment-storage/reference-path (:storage_uri a)))
                       (dissoc a :bytes_sha256)
-                      (let [data (get blobs (:bytes_sha256 a))]
+                      (let [^bytes data (get blobs (:bytes_sha256 a))]
                         (when-not data
                           (throw (ex-info "The snapshot misses an attachment payload"
                                           {:type :session/invalid-snapshot})))
                         (-> (dissoc a :bytes_sha256)
                             (assoc :bytes data
                                    :storage_codec attachment-codec/raw
-                                   :storage_uri nil)))))
+                                   :storage_uri nil
+                                    :compaction_pending (compaction-pending data))))))
                   atts))))
 
 (defn- fit-snapshot-rows

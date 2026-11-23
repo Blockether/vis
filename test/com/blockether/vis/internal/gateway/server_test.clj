@@ -574,9 +574,18 @@
           (.getBytes "# Shared notes\n\n- café\n" "UTF-8")
 
           prepared
-          (atom nil)]
+          (atom nil)
+
+          encode-upload
+          @#'turns-api/upload->attachment
+
+          encodes
+          (atom 0)]
 
       (with-redefs-fn {#'state/soul (constantly (fixture/soul {:id sid}))
+                        #'turns-api/upload->attachment (fn [upload]
+                                                         (swap! encodes inc)
+                                                         (encode-upload upload))
                        #'state/submit-turn! (fn [_ opts]
                                               (reset! prepared
                                                 (attachments/prepare-inline-attachments

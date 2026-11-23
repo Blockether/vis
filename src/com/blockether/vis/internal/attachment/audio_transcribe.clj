@@ -112,6 +112,8 @@
   ;; bytes twice.
   (atom {}))
 
+(defonce ^:private recording-keys (atom {}))
+
 (defonce ^:private worker
   ;; ONE daemon thread: local speech saturates a core, and a message carrying five
   ;; memos must queue rather than race. Delayed so a build that never transcribes
@@ -121,6 +123,7 @@
 (defn clear-cache!
   "Drop every transcript and every in-flight job. Tests only."
   []
+  (reset! recording-keys {})
   (reset! work* {}))
 
 (defn- content-digest
@@ -322,12 +325,12 @@
           (if (.isFile file) (.length file) 0))
         0))))
 
-(defn- gate
+(defn- readiness
   "What is already decided before any engine is asked. `::ok` means \"go ahead\"; nil
    means the attachment is not a recording and has no transcription outcome at all;
    anything else IS the outcome — it already carries words, or this machine cannot
    make any right now."
-  [{:keys [media-type transcription transcription-segments] :as attachment}]
+  [{:keys [media-type transcription transcription-segments]}]
   (cond (not (attachments/audio-media-type? media-type)) nil
         (not (str/blank? (str transcription))) (cond-> {:transcription (str transcription)}
                                                  (seq transcription-segments)
@@ -336,38 +339,60 @@
         (not (enabled?)) (unavailable :disabled)
         (nil? (engine)) (unavailable :no-engine)
         (not (available?)) (unavailable :not-ready)
-        (str/blank? (str (or (:base64 attachment) (:path attachment)))) (unavailable :unreadable)
+        :else ::ok))
+
+(defn- payload-gate [attachment]
+  (cond (str/blank? (str (or (:base64 attachment) (:path attachment)))) (unavailable :unreadable)
         (> (payload-bytes attachment) (long MAX_PAYLOAD_BYTES)) (unavailable :too-long)
         :else ::ok))
 
-(defn outcome
-  "What is known about this recording's words RIGHT NOW, without starting anything.
+(defn- gate [attachment]
+  (let [answer (readiness attachment)]
+    (if (= ::ok answer) (payload-gate attachment) answer)))
 
-   `{:transcription \"…\"}` once they exist, `{:status \"pending\"}` while the worker
-   has it, a settled `{:status …}` when it could not be made, and nil when nobody has
-   asked yet — which is what a composer paints as a placeholder and re-reads on the
-   next frame."
+(defn- entry-outcome [entry]
+  (cond (nil? entry) nil
+        (:outcome entry) (:outcome entry)
+        (realized? (:result entry)) @(:result entry)
+        :else {:status PENDING :reason :running}))
+
+(defn outcome
+  "The cached transcription or status of this recording, without starting work."
   [attachment]
-  (let [entry (get @work* (content-digest attachment))]
-    (cond (nil? entry) nil
-          (:outcome entry) (:outcome entry)
-          (realized? (:result entry)) (deref (:result entry))
-          :else {:status PENDING :reason :running})))
+  (entry-outcome (get @work* (content-digest attachment))))
+
+(defn- remember-recording! [id k]
+  (when id
+    (swap! recording-keys
+           (fn [keys]
+             (assoc (if (or (contains? keys id) (< (count keys) (long MAX_REGISTRY_ENTRIES)))
+                      keys
+                      {})
+                    id k)))))
 
 (defn request!
-  "Start transcribing `attachment` in the BACKGROUND and answer what is known so far.
-
-   The upload-time door: a surface that has just staged a recording calls this and
-   paints the answer — normally `{:status \"pending\"}` — so the words are ready
-   before the turn is sent and no turn ever pays for the whole clip. Idempotent per
-   recording, and free for anything that is not audio or already carries a
-   transcript."
-  [attachment]
-  (let [gated (gate attachment)]
-    (if (not= ::ok gated)
-      gated
-      (let [k (content-digest attachment)]
-        (or (:outcome (get @work* k)) (do (start! k attachment) (outcome attachment)))))))
+  "Start a recording in the background and return its current transcription outcome.
+   Pass `load-base64` only for verified stored rows. It reads an inline payload on a cache miss."
+  ([attachment] (request! attachment nil))
+  ([{:keys [id base64 path size storage-uri] :as attachment} load-base64]
+   (let [gated (readiness attachment)
+         stored-id (when (and load-base64 (not (or base64 path storage-uri))) id)]
+     (cond (not= ::ok gated) gated
+           (and stored-id (number? size) (> (long size) (long MAX_PAYLOAD_BYTES)))
+           (unavailable :too-long)
+           :else
+           (or (when-let [k (get @recording-keys stored-id)]
+                 (entry-outcome (get @work* k)))
+               (let [attachment (if stored-id
+                                  (assoc attachment :base64 (load-base64 attachment))
+                                  attachment)
+                     check (payload-gate attachment)]
+                 (if (not= ::ok check)
+                   check
+                   (let [k (content-digest attachment)
+                         entry (start! k attachment)]
+                     (remember-recording! stored-id k)
+                     (entry-outcome entry)))))))))
 
 (defn transcribe-attachment
   "Wait for this recording's outcome. Cancellation stops only the waiter; an optional
@@ -434,8 +459,9 @@
    NOTHING waits. This is the call a surface makes the moment files are staged, and
    the one the turn makes when attachments first land, so the speech is already being
    made while the human is still typing and while the rest of the turn is assembled."
-  [attachments]
-  (walk-recordings attachments request!))
+  ([attachments] (walk-recordings attachments request!))
+  ([attachments load-base64]
+   (walk-recordings attachments #(request! % load-base64))))
 
 (defn transcribe-attachments
   "Join recordings in attachment order. An optional `:timeout-ms` is one wait budget

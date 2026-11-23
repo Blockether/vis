@@ -3,6 +3,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.attachment.audio-transcribe :as at]
+            [com.blockether.vis.internal.attachment.codec :as codec]
+            [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.gateway.server.turns :as turns-api]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -173,7 +175,7 @@
                     (constantly {:id sid})
 
                     at/request-attachments!
-                    (fn [rows]
+                    (fn [rows & _]
                       (mapv #(assoc % :transcription words) rows))]
 
         (let [state-id
@@ -241,37 +243,204 @@
           (expect (= [["shot.png" "cGljdHVyZQ=="]]
                      (mapv (juxt #(get % "filename") #(get % "base64")) rows))))))))
 
-(defdescribe turn-attachment-bytes-test
-             (it "serves the stored bytes of one turn attachment with its media type"
-                 (let [db
-                       (h/store)
+(defdescribe
+  turn-attachment-bytes-test
+  (it "serves only the selected payload, including after a sent turn is forgotten"
+      (let [db (h/store)
+            sid (h/store-session! db {:channel :api})
+            tid (persistence/db-store-session-turn!
+                  db {:parent-session-id sid :user-request "Listen" :status :done})
+            qtid (str (random-uuid))
+            text (apply str (repeat 4096 "hello "))
+            data (.getBytes ^String text "UTF-8")
+            packed (codec/pack data)
+            image {:media-type "image/png" :filename "image.png" :base64 "aW1hZ2U="}
+            html {:media-type "text/html" :filename "page.html"
+                  :base64 (.encodeToString (java.util.Base64/getEncoder) data)}
+            [raw-id packed-id corrupt-id]
+            (persistence/db-store-queued-turn-attachments! db tid qtid [image html recording])
+            iid (h/store-iteration!
+                  db {:session-turn-id tid :status :done :code "pass" :attachments [image html]})
+            packed-tool (:id (second (persistence/db-list-iteration-attachments-meta db iid)))
+            _ (h/fork-session-at-turn! db sid {:through-turn-id tid :title "Forked"})
+            fork-id (:id (first (h/raw-query
+                                  db {:select [:id] :from [:session_attachment]
+                                      :where [:and [:= :queued_turn_id qtid]
+                                              [:not= :session_turn_soul_id (str tid)]]})))
+            registry @#'state/registry
+            request {:path-params {:sid (str sid) :tid qtid}}
+            binary (fn [id]
+                     (#'turns-api/turn-attachment-bytes-handler
+                      (assoc-in request [:path-params :aid] id)))
+            json (fn [id]
+                   (get (wire/parse-json
+                          (:body (#'turns-api/turn-attachments-handler
+                                  (assoc request :query-params {"id" id}))))
+                        "attachments"))]
+        (expect (= "zstd" (:codec packed)))
+        (doseq [id [packed-id packed-tool corrupt-id]]
+          (h/raw-query db {:update :session_attachment
+                           :set {:storage_codec "zstd"
+                                 :bytes (if (= id corrupt-id) (byte-array [1]) (:bytes packed))}
+                           :where [:= :id id]}))
+        (with-redefs [lp/db-info (constantly db)
+                      persistence/db-read-attachment (fn [& _]
+                                                       (throw (ex-info "Legacy envelope read" {})))]
+          (try
+            (doseq [sent? [true false]]
+              (if sent?
+                (swap! registry assoc-in [(str sid) :turns qtid] {:status "sent"})
+                (swap! registry dissoc (str sid)))
+              (expect (= [{"filename" "image.png" "base64" "aW1hZ2U="}]
+                         (mapv #(select-keys % ["filename" "base64"]) (json raw-id))))
+              (expect (= [] (json fork-id)))
+              (expect (= 404 (:status (binary fork-id))))
+              (expect (= 404 (:status (binary "missing"))))
+              (doseq [[id media expected] [[raw-id "image/png" "image"]
+                                           [packed-id "text/html" text]]]
+                (let [response (binary id)]
+                  (expect (= 200 (:status response)))
+                  (expect (= media (get-in response [:headers "Content-Type"])))
+                  (expect (= expected (slurp (:body response)))))))
+            (finally (swap! registry dissoc (str sid))))
+          (doseq [[idx expected] [["0" "image"] ["1" text]]]
+            (let [response (#'turns-api/attachment-bytes-handler
+                            {:path-params {:sid (str sid) :iid (str iid) :idx idx}})]
+              (expect (= 200 (:status response)))
+              (expect (= expected (slurp (:body response))))))))))
 
-                       sid
-                       (h/store-session! db {:channel :api})
+(defdescribe
+  archived-attachment-id-test
+  (it "serves an archived upload by its original ID after persistence assigns a new ID"
+      (let [db (h/store)
+            sid (h/store-session! db {:channel :api})
+            old-id (str (random-uuid))
+            image {:filename "upload.png" :media-type "image/png" :base64 "aW1hZ2U="}
+            tid (str (persistence/db-store-session-turn!
+                       db {:parent-session-id sid :user-request "Look" :attachments [image]}))
+            durable-id (:id (first (persistence/db-list-turn-attachments db tid)))
+            registry @#'state/registry
+            route (fn [id]
+                    (#'turns-api/turn-attachment-bytes-handler
+                     {:path-params {:sid (str sid) :tid tid :aid id}}))]
+        (try
+          (swap! registry assoc-in [(str sid) :turns tid] {::state/archive :test})
+          (with-redefs-fn {#'lp/db-info (constantly db)
+                           #'state/read-turn-record (fn [turn]
+                                                       (assoc turn :attachments
+                                                         [(assoc image :id old-id)]))}
+            (fn []
+              (let [response (#'turns-api/turn-attachments-handler
+                              {:path-params {:sid (str sid) :tid tid}})
+                    rows (get (wire/parse-json (:body response)) "attachments")]
+                (expect (= [old-id] (mapv #(get % "id") rows))))
+              (expect (= "image" (slurp (:body (route durable-id)))))
+              (let [old (route old-id)]
+                (expect (= 200 (:status old)))
+                (expect (= "image" (slurp (:body old)))))))
+          (finally (swap! registry dissoc (str sid)))))))
 
-                       tid
-                       (persistence/db-store-session-turn!
-                         db
-                         {:parent-session-id sid :user-request "Listen" :attachments [recording]})
+(defdescribe
+  offloaded-recording-poll-test
+  (it "does not fetch external storage for speech in a metadata poll"
+      (let [db (h/store)
+            sid (h/store-session! db {:channel :api})
+            tid (persistence/db-store-session-turn!
+                  db {:parent-session-id sid :user-request "Listen"
+                      :attachments [(-> recording (dissoc :base64)
+                                        (assoc :storage-uri "fixture://recording"))]})
+            reads (atom [])
+            engine {:id :recording-test :label "Test" :transcribe (constantly "Remote words")}]
+        (with-redefs [lp/db-info (constantly db)
+                      at/engine (constantly engine)
+                      speech/resolve-engine (constantly engine)
+                      at/enabled? (constantly true)
+                      at/available? (constantly true)
+                      attachment-storage/resolve-bytes (fn [uri] (swap! reads conj uri) nil)]
+          (let [response (#'turns-api/turn-attachments-handler
+                          {:path-params {:sid (str sid) :tid (str tid)}
+                           :query-params {"transcription_only" "true"}})]
+            (expect (= at/UNAVAILABLE
+                       (get-in (wire/parse-json (:body response))
+                               ["attachments" 0 "transcription_status"])))
+            (expect (empty? @reads)))))))
 
-                       id
-                       (str (:id (first (persistence/db-list-turn-attachments db tid))))
+(defdescribe
+  recording-metadata-poll-test
+  (it "loads and hashes only the unresolved recording across repeated polls"
+      (let [db (h/store)
+            sid (h/store-session! db {:channel :api})
+            tid (persistence/db-store-session-turn!
+                  db {:parent-session-id sid
+                      :user-request "Listen"
+                      :attachments [recording
+                                    (assoc recording :filename "done.m4a" :transcription "Known")
+                                    {:media-type "image/png" :base64 "aW1hZ2U=" :filename "image.png"}]})
+            [id] (mapv :id (persistence/db-list-turn-attachments db tid))
+            audio-read persistence/db-read-attachment-bytes
+            digest @#'at/content-digest
+            reads (atom [])
+            hashes (atom 0)
+            entered (promise)
+            finish (promise)
+            worker {:id :recording-test
+                    :label "Test recording"
+                    :transcribe (fn [_]
+                                  (deliver entered true)
+                                  (deref finish 5000 nil)
+                                  "New words")}
+            poll (fn []
+                   (get (wire/parse-json
+                          (:body (#'turns-api/turn-attachments-handler
+                                  {:path-params {:sid (str sid) :tid (str tid)}
+                                   :query-params {"transcription_only" "true"}})))
+                        "attachments"))]
+        (at/clear-cache!)
+        (try
+          (with-redefs-fn {#'lp/db-info (constantly db)
+                           #'at/engine (constantly worker)
+                           #'speech/resolve-engine (constantly worker)
+                           #'at/enabled? (constantly true)
+                           #'at/available? (constantly true)
+                           #'at/content-digest (fn [att] (swap! hashes inc) (digest att))
+                           #'persistence/db-read-attachment-bytes
+                           (fn [db id]
+                             (swap! reads conj id)
+                             (audio-read db id))}
+            (fn []
+              (expect (= "pending" (get-in (poll) [0 "transcription_status"])))
+              (expect (true? (deref entered 5000 false)))
+              (let [[pending known image] (poll)]
+                (expect (= "pending" (get pending "transcription_status")))
+                (expect (= "Known" (get known "transcription")))
+                (expect (every? #(not (contains? % "base64")) [pending known image])))
+              (deliver finish true)
+              (loop [attempts 200]
+                (when (and (pos? attempts) (not= "New words" (get-in (poll) [0 "transcription"])))
+                  (Thread/sleep 10)
+                  (recur (dec attempts))))
+              (expect (= [id] @reads))
+              (expect (= 1 @hashes))
+              (expect (= "New words" (:transcription (persistence/db-read-attachment db id))))))
+          (finally
+            (deliver finish true)
+            (at/clear-cache!))))))
 
-                       read-bytes
-                       #(#'turns-api/turn-attachment-bytes-handler
-                          {:path-params {:sid (str sid) :tid (str tid) :aid %}})]
-
-                   (with-redefs [lp/db-info
-                                 (constantly db)
-
-                                 state/soul
-                                 (constantly {:id sid})]
-
-                     (let [response (read-bytes id)]
-                       (expect (= 200 (:status response)))
-                       (expect (= "audio/mp4" (get-in response [:headers "Content-Type"])))
-                       (expect (= "audio" (slurp (:body response)))))
-                     (expect (= 404 (:status (read-bytes "missing"))))))))
+(defdescribe
+  inline-path-image-poll-test
+  (it "keeps inline image bytes when the row has no binary route"
+      (let [sid (random-uuid)
+            image {:filename "path.png" :media-type "image/png" :base64 "aW1hZ2U="}
+            rows [image (assoc image :id "stored-id" :filename "stored.png")]]
+        (with-redefs [state/turn-attachments (constantly (wire/canonical rows))]
+          (let [response (#'turns-api/turn-attachments-handler
+                          {:path-params {:sid (str sid) :tid "turn"}
+                           :query-params {"transcription_only" "true"}})
+                [path stored] (get (wire/parse-json (:body response)) "attachments")]
+            (expect (= 200 (:status response)))
+            (expect (= "aW1hZ2U=" (get path "base64")))
+            (expect (= "stored-id" (get stored "id")))
+            (expect (not (contains? stored "base64"))))))))
 
 (defdescribe recording-watchdog-test
              (it "does not mistake a long recording join for a stalled provider or model output"
@@ -353,10 +522,10 @@
 
                     state/turn-attachments
                     (fn [& _]
-                      [(second rows)])
+                      (with-meta [(second rows)] {::state/stored? true}))
 
                     at/request-attachments!
-                    (fn [rows]
+                    (fn [rows & _]
                       (mapv #(assoc % :transcription "second words") rows))]
 
         (#'turns-api/turn-attachments-handler

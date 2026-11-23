@@ -14,6 +14,8 @@
             [taoensso.nippy.compression :as compression])
   (:import (java.util Arrays)))
 
+(set! *warn-on-reflection* true)
+
 (def ^:const raw "The codec of a payload stored as it is." "raw")
 
 (def ^:const zstd "The codec of a payload stored as one zstd frame." "zstd")
@@ -51,6 +53,9 @@
 
     (if (and frame
              (<= (* 100 (alength frame)) (* (- 100 (long min-saving-percent)) n))
-             (Arrays/equals data (try (unpack frame zstd) (catch Throwable _ nil))))
+             ;; The hint keeps the byte[] overload direct: a reflective call fails
+             ;; in the native image.
+             (let [^bytes restored (try (unpack frame zstd) (catch Throwable _ nil))]
+               (Arrays/equals data restored)))
       {:bytes frame :codec zstd}
       {:bytes data :codec raw})))

@@ -321,6 +321,52 @@
         (#'sqlite-core/rewrite-older-store! ds)
         (expect (= {:rows 1 :more? false} (compactor/drain! s)))
         (expect (= "zstd" (:storage_codec (first (rows s)))))))
+  (it "queues again a compressible payload that a native build left raw, and no picture"
+      (let [s
+            (h/store)
+
+            _
+            (stored-turn! s [["text/html" page] ["image/png" (gradient-png)]])
+
+            rewrites
+            @#'sqlite-core/store-rewrites]
+
+        (h/raw-query s {:update :session_attachment :set {:compaction_pending 0}})
+        (h/raw-query s
+                     {:raw (str "PRAGMA user_version = "
+                                (.indexOf ^java.util.List rewrites @#'sqlite-core/requeue-unpacked-attachments!))})
+        (#'sqlite-core/rewrite-older-store! (:datasource s))
+        (expect (= {"text/html" 1 "image/png" 0}
+                   (into {}
+                         (map (juxt :media_type :compaction_pending))
+                         (h/raw-query s
+                                      {:select [:media_type :compaction_pending] :from :session_attachment}))))))
+  (it "stores the length of the bytes as the size, not the size that the caller declared"
+      (let [s
+            (h/store)
+
+            cid
+            (h/store-session! s {:channel :cli})
+
+            rewrites
+            @#'sqlite-core/store-rewrites]
+
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id cid
+           :user-request "listen"
+           :attachments [{:kind "audio"
+                          :media-type "audio/wav"
+                          :size 50331649
+                          :base64 (.encodeToString (Base64/getEncoder) (ascii "RIFF!"))}]})
+        (expect (= [5] (mapv :size_bytes (h/raw-query s {:select [:size_bytes] :from :session_attachment}))))
+        ;; An older writer kept the declared size.
+        (h/raw-query s {:update :session_attachment :set {:size_bytes 50331649}})
+        (h/raw-query s
+                     {:raw (str "PRAGMA user_version = "
+                                (.indexOf ^java.util.List rewrites @#'sqlite-core/store-attachment-lengths!))})
+        (#'sqlite-core/rewrite-older-store! (:datasource s))
+        (expect (= [5] (mapv :size_bytes (h/raw-query s {:select [:size_bytes] :from :session_attachment}))))))
   (it "moves the payload of an older store to the last column and keeps each row"
       (let [s
             (h/store)
@@ -346,7 +392,9 @@
         (stored-turn! s [["text/html" page]])
         (h/raw-query s {:update :session_attachment :set {:reference "[FILE #1]"}})
         (expect (= "reference" (peek (columns))))
-        (h/raw-query s {:raw (str "PRAGMA user_version = " (dec (count rewrites)))})
+        (h/raw-query s
+                     {:raw (str "PRAGMA user_version = "
+                                (.indexOf ^java.util.List rewrites @#'sqlite-core/move-attachment-bytes-last!))})
         (#'sqlite-core/rewrite-older-store! (:datasource s))
         (expect (= "bytes" (peek (columns))))
         (expect (= held (indexes)))

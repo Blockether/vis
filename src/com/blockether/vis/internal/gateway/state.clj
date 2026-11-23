@@ -2150,9 +2150,7 @@
   (try (cond (some? base64) (decode-base64 base64)
              (some? storage-uri) (attachment-storage/resolve-bytes storage-uri)
              (and (some? id) (not (false? has-bytes)))
-             (some-> (persistance/db-read-attachment (lp/db-info) id)
-                     :base64
-                     decode-base64)
+             (persistance/db-read-attachment-bytes (lp/db-info) id)
              :else nil)
        (catch Throwable t
          (tel/log! :warn ["gateway: attachment-bytes read failed" (str id) (ex-message t)])
@@ -2712,37 +2710,38 @@
    A queued message that was sent into a running turn (`→ Send now`) answers the
    files its step stored on that turn, also after a gateway restart.
 
-   `opts` goes to [[persistance/db-list-turns-attachments]]: with `:inline-limit`,
-   a larger stored row has no `:base64` and its payload is not read."
+   `:attachment-id` selects a row without reading its siblings. `:inline-limit`
+   leaves a larger stored payload in the store. Stored result vectors carry
+   `::stored?` metadata so callers can distinguish them from live uploads."
   ([sid tid] (turn-attachments sid tid nil))
-  ([sid tid opts]
+  ([sid tid {:keys [attachment-id] :as opts}]
    (when (and sid tid)
-     (let [turn
-           (read-turn-record (turn-record sid tid))
-
-           live
-           #(live-turn-attachments turn)
-
-           stored
-           (fn [lister]
-             (try (seq (wire/canonical (vec (get (lister (lp/db-info) [tid]) (str tid)))))
-                  (catch Throwable _ nil)))
-
-           turn-rows
-           #(persistance/db-list-turns-attachments %1 %2 opts)]
-
-       (if (= "sent" (:status turn))
-         (or (stored persistance/db-list-queued-turn-attachments) (live))
-         (or (live) (stored turn-rows) (stored persistance/db-list-queued-turn-attachments)))))))
+     (let [turn (turn-record sid tid)
+           live #(when-let [rows (live-turn-attachments (read-turn-record turn))]
+                   (cond->> rows
+                     attachment-id (filterv (fn [row] (= (str attachment-id) (get row "id"))))))
+           stored (fn [lister]
+                    (try (when-let [rows (get (if opts
+                                               (lister (lp/db-info) [tid] opts)
+                                               (lister (lp/db-info) [tid]))
+                                             (str tid))]
+                           (with-meta (wire/canonical rows) {::stored? true}))
+                         (catch Throwable _ nil)))
+           landed #(stored persistance/db-list-turns-attachments)
+           queued #(stored persistance/db-list-queued-turn-attachments)]
+       (cond (= "sent" (:status turn)) (or (queued) (live))
+             (and attachment-id (or (::archive turn) (::archive-error turn)))
+              (let [rows (landed)]
+                ;; Stored copies have new IDs. Older clients can still name an archived upload.
+                (if (seq rows) rows (or (live) rows (queued))))
+             :else (or (live) (landed) (queued)))))))
 
 (defn turn-attachment
-  "The attachment `aid` of turn `tid` in the shape of [[turn-attachments]], or nil.
-   The payloads of the other stored attachments are not read, and a stored row has
-   no `:base64`: [[attachment-bytes]] reads its payload by `:id`."
+  "Metadata of attachment `aid` on turn `tid`, or nil. Live rows can carry
+   inline bytes; stored payloads are read by [[attachment-bytes]]."
   [sid tid aid]
   (when-not (str/blank? (str aid))
-    (some #(when (= (str aid) (str (get % "id"))) %)
-          (turn-attachments sid tid {:inline-limit -1}))))
+    (first (turn-attachments sid tid {:attachment-id aid :inline-limit -1}))))
 
 (def ^:private TRANSCRIPT_INLINE_ATTACHMENT_BYTES
   "The largest user attachment, in decoded bytes, that a transcript row or a turn

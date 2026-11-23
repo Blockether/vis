@@ -292,6 +292,28 @@
 ;; Regression: a 46-minute recording held the one worker while every later turn of
 ;; the session asked again and was handed `pending`. The words never arrived, the
 ;; player carried TRANSCRIBING… forever, and nothing ever said why.
+(defdescribe
+  stored-recording-poll-test
+  (it "does not replace a stored recording's alias with the ID of inline bytes"
+      (let [inline (assoc (dissoc (memo "original") :path) :id "row")
+            stored (dissoc inline :base64)
+            replacement (assoc inline :base64 (b64 "changed"))
+            load-original (constantly (:base64 inline))]
+        (register-fake! "Original words")
+        (at/request! stored load-original)
+        (expect (= "Original words" (:transcription (settled inline))))
+        (register-fake! "Replacement words")
+        (at/request! replacement)
+        (expect (= "Replacement words" (:transcription (settled replacement))))
+        (expect (= "Original words" (:transcription (at/request! stored load-original))))))
+  (it "rejects a known oversized stored recording before reading the payload"
+      (register-fake! "Unused words")
+      (let [loads (atom 0)
+            stored (assoc (dissoc (memo) :base64 :path) :id "row" :size 5)]
+        (with-redefs [at/MAX_PAYLOAD_BYTES 4]
+          (expect (= :too-long (:reason (at/request! stored (fn [_] (swap! loads inc) nil)))))
+          (expect (zero? @loads))))))
+
 (defdescribe recording-length-cap-test
              (it "refuses a recording past the cap instead of queueing it forever"
                  (register-fake! "words nobody would have waited for")

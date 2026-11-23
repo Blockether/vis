@@ -113,7 +113,8 @@
             (store-upload! upload-id upload)
             ;; Upload completion is the earliest instant the gateway owns the whole
             ;; recording. Start its local transcript here, before the tiny turn POST.
-            (refresh-upload-transcription upload)
+            (when (attachments/audio-media-type? media-type)
+              (refresh-upload-transcription upload))
             (http/json-response 201 {:upload_id upload-id :size (alength bytes)})))))))
 
 (defn- resolve-upload-attachments
@@ -630,12 +631,22 @@
   (if-let [sid (http/path-sid request)]
     (let [tid (path-tid request)
           id (http/query-str request "id")
-          rows (state/turn-attachments sid tid)
-          original (cond->> (wire/->engine rows)
-                     ;; Only the named attachment waits for its words.
-                     id
-                     (filterv #(= id (str (:id %)))))
-          refreshed (audio-transcribe/request-attachments! original)
+          transcription-only? (= "true" (http/query-str request "transcription_only"))
+          opts (cond-> nil
+                 id (assoc :attachment-id id)
+                 transcription-only? (assoc :inline-limit -1))
+          rows (if opts
+                 (state/turn-attachments sid tid opts)
+                 (state/turn-attachments sid tid))
+          stored? (::state/stored? (meta rows))
+          original (wire/->engine rows)
+          refreshed (if (and transcription-only? stored?)
+                      (audio-transcribe/request-attachments!
+                        original
+                        (fn [{:keys [id]}]
+                          (when-let [bs (persistance/db-read-attachment-bytes (lp/db-info) id)]
+                            (.encodeToString (Base64/getEncoder) bs))))
+                      (audio-transcribe/request-attachments! original))
           ;; A cancelled/finished turn can outlive its joiner. Collecting its words
           ;; must repair the durable row too, not only this one HTTP response.
           _ (doseq [[before after] (map vector original refreshed)
@@ -643,7 +654,8 @@
                           words (:transcription after)]
                     ;; Live/deduplicated rails have no durable ordinal. Their joiner
                     ;; stores words from the original vector; only stored rows repair here.
-                    :when (and (some? position)
+                    :when (and stored?
+                                (some? position)
                                (not (str/blank? words))
                                (not= words (:transcription before)))]
 
@@ -652,8 +664,8 @@
                                                                  position
                                                                  words
                                                                  (:transcription-segments after)))
-          response (if (= "true" (http/query-str request "transcription_only"))
-                     (mapv #(dissoc % :base64) refreshed)
+          response (if transcription-only?
+                     (mapv #(cond-> % (:id %) (dissoc :base64)) refreshed)
                      refreshed)]
 
       (http/json-response {:attachments response}))

@@ -203,6 +203,7 @@
   (db-list-iteration-attachments-meta [db-info iteration-id])
   (db-list-iterations-attachments-meta [db-info iteration-ids])
   (db-read-attachment [db-info attachment-id])
+  (db-read-attachment-bytes [db-info attachment-id])
   (db-append-iteration-attachment! [db-info iteration-id att])
   ;; --- Full-text search ---
   (db-search [db-info query opts]
@@ -293,7 +294,8 @@
   "Queued-turn operations of a persistence backend, with the `Store` dispatch. They
    are a separate protocol for the same JVM method-size limit as `AutomationStore`."
   (db-store-queued-turn-attachments! [db-info session-turn-soul-id queued-turn-id attachments])
-  (db-list-queued-turn-attachments [db-info queued-turn-ids])
+  (db-list-queued-turn-attachments [db-info queued-turn-ids]
+                                   [db-info queued-turn-ids opts])
   (db-replace-session-queue! [db-info session-id queue]
     "Replace the queued turns and the queue hold of one session.")
   (db-store-parked-turn! [db-info session-id turn owner]
