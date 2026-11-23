@@ -1108,12 +1108,14 @@
                 (if (pos? v) (max 2000 v) 0))
               (catch Exception _ 0))))
 
-(def ^:private ^SQLExceptionOverride ended-transaction-override
+(defn- ended-transaction-override
   "Evict a connection when the driver says that no transaction is active. SQLite ends a
    transaction by itself on some errors; next.jdbc then cannot roll back and keeps
    autoCommit off, and Hikari returns the connection with that state. Each later borrower
    then failed on close with `cannot rollback - no transaction is active`, and that error
-   hid its real one. An evicted connection also closes without that error."
+   hid its real one. An evicted connection also closes without that error. Each pool gets
+   a new instance: native-image refuses a top-level instance in the image heap."
+  ^SQLExceptionOverride []
   (reify
     SQLExceptionOverride
       (adjudicate [_ e]
@@ -1159,7 +1161,7 @@
               (.setIdleTimeout 0)
               (.setMaxLifetime 0)
               (.setLeakDetectionThreshold (long @leak-detection-ms))
-              (.setExceptionOverride ended-transaction-override))]
+              (.setExceptionOverride (ended-transaction-override)))]
     (HikariDataSource. cfg)))
 
 (def ^:private ^String DB_FILENAME "vis.db")
