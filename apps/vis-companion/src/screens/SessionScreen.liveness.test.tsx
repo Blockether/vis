@@ -2,7 +2,7 @@
 import { ReadableStream } from 'node:stream/web';
 import { TextEncoder } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen } from '@testing-library/react';
 
 import { GatewayClient } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -132,6 +132,51 @@ describe('quiet running turns', () => {
     expect(resync).not.toHaveBeenCalled();
     await act(() => vi.advanceTimersByTimeAsync(5_000));
     expect(resync).toHaveBeenCalledExactlyOnceWith('turn_unknown');
+    expect(fetches).toHaveBeenCalledTimes(2);
+  });
+
+  // Regression: a sent message showed "sent your message" for about 60 s when the
+  // stream lost `turn.started`. Heartbeats kept the stream, so only the 45 s stall
+  // watchdog could recover it.
+  it('reconnects once when a sent turn gets no frame while heartbeats arrive', async () => {
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+    const fetches = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          streams.push(controller);
+        },
+      }),
+    }));
+    vi.stubGlobal('fetch', fetches);
+    hub = new SessionSubscriptionHub(new GatewayClient({ url: 'https://gateway.example.com' }));
+    const resync = vi.spyOn(hub, 'resync');
+    const turnStatus = vi.fn(async () => ({ status: 'running' }));
+    const submitTurn = vi.fn(async () => ({ turn_id: 'turn-2', status: 'running' }));
+    renderSessionScreen({
+      client: { submitTurn, turnStatus, turnTrace: async () => [] },
+      subscriptions: {
+        subscribeSession: hub.subscribeSession.bind(hub),
+        subscribeConnection: hub.subscribeConnection.bind(hub),
+        resync: hub.resync.bind(hub),
+      },
+    });
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    fireEvent.change(screen.getByLabelText('Message Vis'), { target: { value: 'Hello' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(submitTurn).toHaveBeenCalledTimes(1);
+    for (let tick = 0; tick < 4; tick += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+        streams.at(-1)!.enqueue(new TextEncoder().encode(': ping\n\n'));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+    }
+    expect(resync).toHaveBeenCalledExactlyOnceWith('turn_silent');
     expect(fetches).toHaveBeenCalledTimes(2);
   });
 

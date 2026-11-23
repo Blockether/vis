@@ -14,6 +14,7 @@ export type GatewayStreamReason =
   | 'watch_changed'
   | 'wake'
   | 'turn_unknown'
+  | 'turn_silent'
   | 'resync'
   | 'supervisor'
   | 'connect_timeout'

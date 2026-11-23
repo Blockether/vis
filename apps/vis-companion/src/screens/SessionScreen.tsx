@@ -3344,6 +3344,7 @@ export function SessionScreen({
     // during a tool call. Only the transport watchdog checks bytes and heartbeats.
     let lastEventAt = Date.now();
     let unknownStrikes = 0;
+    let silentResyncTurnId: string | undefined;
     let activeProbe: object | null = null;
     const probeTurn = (woke = false) => {
       const probedTurn = runningTurnRef.current;
@@ -3372,6 +3373,13 @@ export function SessionScreen({
           if (turn && !isTerminalTurnStatus(String(turn.status ?? ''))) {
             // A confirmed running turn does not prove a transport failure.
             unknownStrikes = 0;
+            // But the gateway sends `turn.started` at once. No frame since the turn
+            // started means that this stream lost it: reconnect one time per turn.
+            if (lastEventAt < (probedTurn.startedAt ?? 0) && silentResyncTurnId !== probedTurn.id) {
+              silentResyncTurnId = probedTurn.id;
+              lastEventAt = Date.now();
+              subscriptions.resync('turn_silent');
+            }
             return;
           }
           if (!turn) {
