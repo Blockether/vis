@@ -4047,7 +4047,7 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
 
       {block.kind === 'auth' && manageProviders && (
         <div className="px-3 pb-3">
-          <Button variant="secondary" density="compact" onClick={() => manageProviders(provider)}>
+          <Button variant="primary" density="compact" onClick={() => manageProviders(provider)}>
             Sign in
           </Button>
         </div>
