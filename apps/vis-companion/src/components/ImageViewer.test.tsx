@@ -439,7 +439,7 @@ describe('a mouse while the pen is out', () => {
     mouse(viewport, 'pointermove', 90, 260);
     mouse(viewport, 'pointerup', 90, 260);
 
-    expect(stage.style.transform).toBe('translate3d(50px, 60px, 0) scale(1)');
+    expect(stage.style.transform).toMatch(/^translate3d\(50px, 60px, 0(?:px)?\) scale\(1\)$/);
     expect(named('Undo').disabled).toBe(true);
   });
 
@@ -457,7 +457,7 @@ describe('a mouse while the pen is out', () => {
     mouse(viewport, 'pointermove', 260, 240);
     mouse(viewport, 'pointerup', 260, 240);
 
-    expect(stage.style.transform).toBe('translate3d(0px, 0px, 0) scale(1)');
+    expect(stage.style.transform).toMatch(/^translate3d\(0px, 0px, 0(?:px)?\) scale\(1\)$/);
     expect(named('Undo').disabled).toBe(false);
   });
 
@@ -672,7 +672,7 @@ describe('a gallery in the viewer', () => {
     Element.prototype.setPointerCapture = vi.fn();
     finger('pointerdown', 200);
     finger('pointermove', 170);
-    expect(stage()?.style.transform).toContain('translate3d(-30px, 0, 0)');
+    expect(stage()?.style.transform).toMatch(/translate3d\(-30px, 0(?:px)?, 0(?:px)?\)/);
 
     finger('pointerup', 170);
     expect(stage()?.style.transform).not.toContain('-30px');
@@ -689,7 +689,7 @@ describe('a gallery in the viewer', () => {
     finger('pointerdown', 200);
     finger('pointermove', 60, 360);
     finger('pointerup', 60, 360);
-    expect(stage()?.style.transform).toContain('translate3d(-140px, 60px, 0)');
+    expect(stage()?.style.transform).toMatch(/translate3d\(-140px, 60px, 0(?:px)?\)/);
     expect(title()).toBe('two.png');
   });
 
@@ -726,7 +726,7 @@ describe('a gallery in the viewer', () => {
     swipe(60);
     expect(title()).toBe('one.png');
     // The picture moved with the drag and stays there. A gallery slide goes home.
-    expect(stage()?.style.transform).toBe('translate3d(-140px, 0px, 0) scale(1)');
+    expect(stage()?.style.transform).toMatch(/^translate3d\(-140px, 0px, 0(?:px)?\) scale\(1\)$/);
     expect(document.querySelector('[aria-live="polite"]')?.textContent).not.toContain('of 1');
   });
 });

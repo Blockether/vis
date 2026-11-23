@@ -378,7 +378,7 @@ jobs:
           tag: ${{ inputs.tag || github.ref_name }}
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "^24.15.0"
           cache: npm
           cache-dependency-path: apps/vis-companion/package-lock.json
       - name: Build the web app

@@ -177,8 +177,9 @@ beforeEach(() => {
     setTimeout(callback, 0),
   );
   vi.stubGlobal('cancelAnimationFrame', clearTimeout);
-  vi.stubGlobal('getComputedStyle', (element: Element) =>
-    Object.assign(nativeStyle(element), {
+  vi.stubGlobal('getComputedStyle', (element: Element) => {
+    const style = nativeStyle(element);
+    const overrides: Partial<CSSStyleDeclaration> = {
       width: `${width}px`,
       direction: 'ltr',
       writingMode: 'horizontal-tb',
@@ -188,8 +189,15 @@ beforeEach(() => {
       hyphens: 'manual',
       wordBreak: 'normal',
       overflowWrap: 'normal',
-    }),
-  );
+    };
+    return new Proxy(style, {
+      get(target, name) {
+        if (Object.hasOwn(overrides, name)) return Reflect.get(overrides, name);
+        const value = Reflect.get(target, name);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+  });
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
     font: '',
     measureText: () => ({ width: CHAR }),

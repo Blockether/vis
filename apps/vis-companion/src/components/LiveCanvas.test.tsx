@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { liveViewFromWire } from '../lib/live-view';
 import { LiveCanvas } from './LiveCanvas';
 import { CanvasThreads } from './CanvasThreads';
 import { failAppAction } from '../lib/app-actions';
 import { GatewayError } from '../lib/gateway';
+
+/** Read the camera pose; CSS may omit a zero second argument to translate(). */
+function cameraPose(transform: string) {
+  const [, x, y = '0', scale] = /^translate\(([-.\d]+)px(?:,\s*([-.\d]+)px)?\) scale\(([-.\d]+)\)$/.exec(transform) ?? [];
+  if (x === undefined || scale === undefined) throw new Error(`Invalid camera transform: ${transform}`);
+  return { x: Number(x), y: Number(y), scale: Number(scale) };
+}
+
+afterEach(() => vi.unstubAllGlobals());
 
 function board(withArrows = false) {
   const node = liveViewFromWire({ id: 'view', title: 'Test', seq: 0, nodes: [{
@@ -19,10 +28,7 @@ function board(withArrows = false) {
   frame.setPointerCapture = vi.fn();
   frame.hasPointerCapture = () => false;
   const world = frame.firstElementChild as HTMLElement;
-  const pose = () => {
-    const [x, y, scale] = world.style.transform.match(/-?[\d.]+/g)!.map(Number);
-    return { x, y, scale };
-  };
+  const pose = () => cameraPose(world.style.transform);
   return { frame, pose, point: (settings: Partial<typeof node>) => {
     rerender(<LiveCanvas node={{ ...node, ...settings }} mark={() => null} />);
   } };
@@ -185,6 +191,18 @@ it('does not offer clipped controls when the owner locks the camera', () => {
 });
 
 it('moves focus into comments and returns it to the opener on Escape', () => {
+  // jsdom exposes the transform functions instead of the browser's computed matrix.
+  vi.stubGlobal('DOMMatrixReadOnly', class {
+    readonly a: number;
+    readonly e: number;
+    readonly f: number;
+    constructor(transform: string) {
+      const { scale, x, y } = cameraPose(transform);
+      this.a = scale;
+      this.e = x;
+      this.f = y;
+    }
+  });
   const node = liveViewFromWire({ id: 'view', title: 'Test', seq: 0, nodes: [{
     id: 'board', type: 'canvas', cards: [{ id: 'card', title: 'Plan' }],
     threads: [{ id: 'thread', item_id: 'card', messages: [], draft: 'Keep this.' }],

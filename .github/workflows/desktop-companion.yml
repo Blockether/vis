@@ -89,7 +89,7 @@ jobs:
         run: echo "CARGO_TARGET_DIR=$HOME/.cache/vis/desktop-target" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "^24.15.0"
 
       - uses: dtolnay/rust-toolchain@stable
         with:

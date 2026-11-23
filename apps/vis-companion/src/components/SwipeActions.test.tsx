@@ -27,7 +27,7 @@ it.each([1, 3, 6, 8])(
     const strip = screen.getByRole('group', { name: 'a session actions' });
     expect((track.firstElementChild as HTMLElement).style.translate).toBe('');
     expect(strip).toHaveClass('max-w-full');
-    expect(strip).toHaveStyle({ width: `${count * 4.5}rem` });
+    expect(strip.style.width).toBe(`${count * 4.5}rem`);
     for (const button of strip.querySelectorAll('button')) {
       expect(button).toHaveClass('min-w-0', 'flex-1');
       expect(button).not.toHaveClass('w-[4.5rem]');
@@ -49,7 +49,7 @@ it.each([1, 3, 6, 8])(
         <span>row</span>
       </SwipeActions>,
     );
-    expect(strip).toHaveStyle({ width: '4.5rem' });
+    expect(strip.style.width).toBe('4.5rem');
   },
 );
 

@@ -42,7 +42,10 @@ async function lintFile(file) {
       filename: file,
       babelrc: false,
       configFile: false,
-      parserOpts: { plugins: ['typescript', 'jsx'], sourceType: 'module' },
+      parserOpts: {
+        plugins: file.endsWith('.tsx') ? ['typescript', 'jsx'] : ['typescript'],
+        sourceType: 'module',
+      },
       plugins: [['babel-plugin-react-compiler', { target: '19', logger }]],
     });
   } catch (cause) {
