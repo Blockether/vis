@@ -118,3 +118,6 @@ own_your_harness.pptx
 
 # uv lockfiles. The SDK and the examples are libraries; uv writes the lock locally.
 uv.lock
+
+# Metadata that an editable pip install writes next to the package source.
+*.egg-info/
