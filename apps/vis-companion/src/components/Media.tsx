@@ -645,7 +645,7 @@ export function MediaRecording({
         ) : null}
       </div>
       {spoken ? (
-        <div className="min-w-0">
+        <div className="mt-1.5 min-w-0">
           <Disclosure
             isOpen={isTranscriptOpen}
             tone="step"
