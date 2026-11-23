@@ -16,6 +16,7 @@
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
@@ -337,8 +338,9 @@
     "a failure is not a fix. Get the data shape right first. Give shared state one writer. A repeated or "
     "interrupted operation must end in the same state. Change an existing file with plain Python, and only "
     "the lines that change. `str.replace` is silent when nothing matches: assert the match before you write. "
-    "Add tests only where the project has tests. Keep probes in sandbox variables and temporary files in "
-    "`$TMPDIR`. Exit: CHECK.\n"
+    "Add tests only where the project has tests. Keep probes in sandbox variables. Put temporary files in "
+    "`$TMPDIR`, the session scratch directory. Vis removes it after use. Remove a temporary Git worktree "
+    "with `git worktree remove`. Exit: CHECK.\n"
     "- CHECK: Run the affected tests and compare the result with the task. Exit: EDIT on a failure, else "
     "FINISH.\n"
     "- FINISH: Give the answer first; it must make sense alone. Name the checks that you could not run. Stop "
@@ -836,16 +838,22 @@
         shims
         (sandbox-shims-prompt-block active-extensions)
 
+        scratch-warning
+        (housekeeping/scratch-size-warning (:session/scratch environment))
+
         blocks
-        (->> [(:content extensions) shims]
+        (->> [(:content extensions) shims scratch-warning]
              (filter util/non-blank-string?)
              seq)]
 
     (when blocks
       {:content (prompt-block "turn-system-context" (str/join "\n\n" blocks))
-       :parts (vec (concat (:parts extensions)
-                           (when (util/non-blank-string? shims)
-                             [{:label "Sandbox and Python runtime" :content shims}])))})))
+       :parts (cond-> (vec (:parts extensions))
+                (util/non-blank-string? shims)
+                (conj {:label "Sandbox and Python runtime" :content shims})
+
+                scratch-warning
+                (conj {:label "Session scratch warning" :content scratch-warning}))})))
 
 (defn- stable-prompt-message
   [content]

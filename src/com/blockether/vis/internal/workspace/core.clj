@@ -143,13 +143,15 @@
                 (File/listRoots)))
 
         configured
-        (if environment? (concat (:security/filesystem-roots env-or-roots) host-roots) env-or-roots)
+        (if environment?
+          (concat (:security/filesystem-roots env-or-roots) host-roots [(:session/scratch env-or-roots)])
+          env-or-roots)
 
         no-search
         (when environment?
           (into #{}
                 (keep normalize-root)
-                (concat host-roots (:security/no-search-roots env-or-roots))))]
+                (concat host-roots (:security/no-search-roots env-or-roots) [(:session/scratch env-or-roots)])))]
 
     (into []
           (comp (keep normalize-root)
@@ -182,7 +184,7 @@
                  [(some-> (:workspace-atom env-or-roots)
                           deref) (:security-policy env-or-roots)
                   (:security/filesystem-roots env-or-roots)
-                  (:security/no-search-roots env-or-roots)]
+                  (:security/no-search-roots env-or-roots) (:session/scratch env-or-roots)]
                  #(resolve-filesystem-roots env-or-roots))
     (util/cached filesystem-roots-cache
                  256

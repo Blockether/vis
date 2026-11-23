@@ -4444,6 +4444,7 @@ vis.register_extension(vis.Extension(
                 {:python-context ctx
                  :db-info store
                  :cwd (str ext-dir)
+                 :session/scratch (str ext-dir)
                  :extensions (atom exts)
                  :active-extensions (atom [])}
 
@@ -4454,11 +4455,14 @@ vis.register_extension(vis.Extension(
                  (let [result
                        (#'python-exec/run-python-code ctx code :env env)
 
+                       scratch
+                       {"TMPDIR" (str ext-dir) "VIS_SESSION_TMPDIR" (str ext-dir)}
+
                        hooked
-                       {"HOOK_VAR" "on" "DROPPED" nil}]
+                       (assoc scratch "HOOK_VAR" "on" "DROPPED" nil)]
 
                    (expect (nil? (:error result)) (pr-str result))
-                   (expect (= [hooked {} hooked]
+                   (expect (= [hooked scratch hooked]
                               (mapv #(dissoc % "op")
                                     (json/read-json (:stdout result) :key-fn identity)))))
                  (finally (ep/dispose-python-context! ctx))))))))

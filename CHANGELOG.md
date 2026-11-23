@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Sessions: each session has a scratch directory for shell and Python temporary files. Vis removes unused scratch files and warns the agent above 10 GiB (#513).
+
 ### Changed
 
 - Storage: the store is smaller. Activity search matches the stored invocations of one history, so the `activity_invocation.search_text` column is removed: it held a plain copy of each presentation, 2.4 GB of a 17 GB store. Search now also finds text after the first 4096 characters of a long output. A long history is searched on more than one core, so a search of 1800 invocations takes approximately 5 ms. A single form no longer keeps a second copy of its iteration code, older tool calls are stored with zstd, and each distinct root list of request health is stored once. The janitor rewrites an older store in the background. An older Vis cannot open the store after this version opened it.

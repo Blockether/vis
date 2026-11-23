@@ -23,6 +23,8 @@
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.vis.internal.python.env :as python-env]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.iteration :as iteration]
@@ -7403,6 +7405,34 @@
           #(.get ^java.util.concurrent.Future (#'state/teardown-session-async! sid)))
         ;; After `lp/close!`, no block can write a new snapshot of the deleted session.
         (expect (= [sid true] (deref deleted 5000 nil))))))
+
+(defdescribe scratch-session-deletion-test
+             (it "removes the deleted session's scratch after teardown"
+                 (let [home (test-temp/temp-dir "vis-scratch-delete")
+                       sid (random-uuid)
+                       scratch (io/file home "scratch" (str sid) "tmp")
+                       note (io/file scratch "note")]
+                   (io/make-parents note)
+                   (spit note "scratch")
+                   (with-redefs [paths/scratch-root (constantly (clojure.java.io/file home "scratch"))]
+                     (.get ^java.util.concurrent.Future (#'state/teardown-session-async! sid)))
+                   (expect (not (.exists scratch)))))
+             (it "keeps scratch while a background resource could not stop"
+                 (let [home (test-temp/temp-dir "vis-scratch-delete")
+                       sid (random-uuid)]
+                   (with-redefs-fn
+                     {#'paths/scratch-root (constantly (clojure.java.io/file home "scratch"))
+                      (requiring-resolve 'com.blockether.vis.internal.gateway.resources/stop-all!)
+                      (constantly [{:result :error}])}
+                     (fn []
+                       (let [scratch (io/file (paths/claim-session-scratch! sid nil))]
+                         (try
+                           (.get ^java.util.concurrent.Future (#'state/teardown-session-async! sid))
+                           (expect (.isDirectory scratch))
+                           (expect (= :held (paths/claim-state (paths/scratch-directory sid))))
+                           (finally
+                             (paths/with-claim-lock (paths/scratch-root)
+                               #(paths/release-dir-claim! (paths/scratch-directory sid)))))))))))
 
 (defdescribe
   failed-session-deletion-test

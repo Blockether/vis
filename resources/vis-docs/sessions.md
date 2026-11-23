@@ -205,6 +205,14 @@ session. The change applies from the next turn. The files in the old directory s
 A session that belongs to a project moves to the project of the new directory. If no project has
 that directory, the session leaves its project and its group.
 
+## Keep temporary files separate
+
+Each session has a scratch directory in the Vis state directory. Shell commands and sandbox Python get its path in `TMPDIR` and `VIS_SESSION_TMPDIR`. An extension can read these variables with `vis.call_env()` and pass them to a process it starts. For Java, pass `-Djava.io.tmpdir` with that path.
+
+Move files that you want to keep into your project. Vis removes scratch files when you delete the session and its managed processes stop. A cleanup check also removes scratch when no Vis process claims it and the session had no turn in the past 24 hours. Vis warns the agent when the directory exceeds 10 GiB. The warning does not remove files.
+
+Before cleanup, remove a temporary Git worktree with `git worktree remove`. This command also removes its record from the Git repository.
+
 ## Control a running session
 
 ### Follow progress

@@ -512,6 +512,66 @@
                          :held))
                      (catch Throwable _ :held)))))
 
+(defn scratch-root
+  "The store of temporary files that Vis owns for sessions."
+  ^File []
+  (let [^String root (or (not-empty (System/getProperty "vis.scratch.dir"))
+                         (str (vis-home) "/scratch"))]
+    (File. root)))
+
+(defn scratch-directory
+  "The claim directory of a canonical session ID, or nil for any other name."
+  ^File [session-id]
+  (when (re-matches #"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}" (str session-id))
+    (File. (scratch-root) (str session-id))))
+
+(defn- real-directory?
+  [^File dir]
+  (Files/isDirectory (.toPath dir) (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])))
+
+(defn claim-session-scratch!
+  "Create and claim a session's scratch. The claim lives outside the writable tmp tree.
+   `db-file` identifies the store that can judge whether the session still exists."
+  ^String [session-id db-file]
+  (when-let [dir (scratch-directory session-id)]
+    (let [root (scratch-root)
+          tmp (File. dir "tmp")]
+      (create-private-dirs! root)
+      (when-not (real-directory? root)
+        (throw (IOException. (str "Cannot create the scratch directory " root))))
+      (with-claim-lock root
+        (fn []
+          (create-private-dirs! dir)
+          (when-not (real-directory? dir)
+            (throw (IOException. (str "Cannot create the scratch directory " dir))))
+          (when db-file
+            (let [store (File. dir ".vis-db")]
+              (when-not (.exists store)
+                (spit-private! store db-file :fsync? false))))
+          (create-private-dirs! tmp)
+          (when-not (real-directory? tmp)
+            (throw (IOException. (str "Cannot create the scratch directory " tmp))))
+          (claim-dir! dir)
+          (when-not (contains? @held-claims (.getAbsolutePath dir))
+            (throw (IOException. (str "Cannot claim the scratch directory " dir))))
+          (.getCanonicalPath tmp))))))
+
+(defn release-dir-claim!
+  "Release this process's claim after the directory's users stop.
+   The caller holds the store claim lock. Other processes can still hold claims."
+  [^File dir]
+  (let [path (.getAbsolutePath dir)]
+    (when-let [[^FileChannel channel ^FileLock lock] (get @held-claims path)]
+      (.release lock)
+      (.close channel)
+      (swap! held-claims dissoc path)
+      (release-held-files! [::claim path]))))
+
+(defn scratch-env
+  "The environment variables that name a session's writable scratch directory."
+  [dir]
+  (when dir {"TMPDIR" dir "VIS_SESSION_TMPDIR" dir}))
+
 (def ^:private process-roles
   "What a vis PROCESS may call itself: the TUI, the gateway daemon, or the
    short-lived CLI."

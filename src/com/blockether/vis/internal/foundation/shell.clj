@@ -548,7 +548,8 @@
    pre-exec hijack, a source that produced nothing) denies that command by name
    instead of running it without the variable it asked for."
   [env opts]
-  (process-jail/with-call-env (jail-policy env) (process-jail/call-env-values (get opts "env"))))
+  (cond-> (process-jail/with-call-env (jail-policy env) (process-jail/call-env-values (get opts "env")))
+    (:session/scratch env) (assoc :session/scratch (:session/scratch env))))
 
 (defn- command-note
   "The single advisory line a command result carries. Truncation wins — it changes

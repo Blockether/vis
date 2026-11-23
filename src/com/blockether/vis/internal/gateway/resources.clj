@@ -407,6 +407,12 @@
 
               (recur (into results (map #(nth % 2)) steps) skipped (- budget (count steps))))))))
 
+(defn stop-session-resources!
+  "Stop the session's managed resources. False means a resource might still be live."
+  [session]
+  (try (not-any? #(#{:error :not-stoppable} (:result %)) (stop-all! session))
+       (catch Exception _ false)))
+
 (defn- teardown-sessions!
   "Stop every stoppable resource of each registered session `select?` accepts,
    INCLUDING sessions that first appear while an earlier stop callback is still

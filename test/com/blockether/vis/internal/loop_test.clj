@@ -5,6 +5,8 @@
     [com.blockether.vis-python-runtime :as python-runtime]
     [com.blockether.vis.internal.gateway.wiring :as wiring]
     [com.blockether.vis.test-python-context :as tpc]
+    [com.blockether.vis.test-temp :as test-temp]
+    [com.blockether.vis.internal.foundation.shell :as shell]
     [com.blockether.vis.test-provider-policies :as policies]
     [clojure.java.io]
     [clojure.string :as str]
@@ -4257,6 +4259,30 @@
                   (#'python-exec/run-python-code pc "pass" :env {:activity/on-snapshot snapshot!})]
               (expect (= "true" (:stdout result)))
               (expect (nil? (:error result)))))))))
+
+(defdescribe session-scratch-test
+             (it "gives each session its own writable directory in shell and Python"
+                 (let [home (test-temp/temp-dir "vis-scratch-env")]
+                   (with-redefs [paths/scratch-root (constantly (clojure.java.io/file home "scratch"))]
+                     (let [first-env (loop-env/create-environment ::router {:db :memory})
+                           second-env (loop-env/create-environment ::router {:db :memory})]
+                       (try
+                         (doseq [environment [first-env second-env]]
+                           (let [expected (str (.getCanonicalPath home) "/scratch/" (:session-id environment) "/tmp")
+                                 result (shell/run-argv environment
+                                                        ["bash" "-c"
+                                                         "printf '%s\\n%s\\n' \"$TMPDIR\" \"$VIS_SESSION_TMPDIR\""])
+                                 outcome (python-exec/execute-code
+                                           environment
+                                           (str "import os, tempfile\n"
+                                                "with tempfile.NamedTemporaryFile() as f:\n"
+                                                "    print(os.path.dirname(f.name))\n"
+                                                "print(os.environ.get('VIS_SESSION_TMPDIR'))"))]
+                             (expect (= [expected expected] (str/split-lines (get result "out" ""))))
+                             (expect (= [expected expected] (str/split-lines (:stdout outcome))))))
+                         (finally
+                           (loop-env/dispose-environment! first-env)
+                           (loop-env/dispose-environment! second-env))))))))
 
 (defdescribe tool-call-execution-test
              ;; REGRESSION: tool calling once shipped 100% broken — `run-iteration`

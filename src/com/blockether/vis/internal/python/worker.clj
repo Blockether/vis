@@ -335,20 +335,25 @@
   "Prefer the selected runtime's packaged worker, including from a JVM host.
    A source-only runtime uses its Java entrypoint; native Vis requires the executable.
    Source roots are the same pre-confinement snapshot used by the boot policy."
-  [library socket guest-dir run-directory runtime-roots]
-  (let [arguments (into [socket "--resolved-sources"] (conj runtime-roots guest-dir))]
-    (if-let [executable (runtime/resolve-worker {:path library})]
-      (into [executable (str "-Duser.home=" (System/getProperty "user.home"))] arguments)
-      (if (util/native-image?)
-        (throw (ex-info "The Python runtime archive has no worker executable"
-                        {:type :vis/python-worker-missing}))
-        (vec (concat
-               [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
-               (worker-jvm-options (.getInputArguments (ManagementFactory/getRuntimeMXBean)))
-               [(str "-XX:ErrorFile=" (io/file run-directory "jvm-crash-%p.log"))
-                (str "-XX:HeapDumpPath=" (io/file run-directory "jvm-heap.hprof")) "-cp"
-                (System/getProperty "java.class.path") "com.blockether.vispython.Worker"]
-               arguments))))))
+  ([library socket guest-dir run-directory runtime-roots]
+   (child-argv library socket guest-dir run-directory runtime-roots nil))
+  ([library socket guest-dir run-directory runtime-roots scratch]
+   (let [arguments (into [socket "--resolved-sources"] (conj runtime-roots guest-dir))
+         tmp-option (when scratch [(str "-Djava.io.tmpdir=" scratch)])]
+     (if-let [executable (runtime/resolve-worker {:path library})]
+       (into (into [executable (str "-Duser.home=" (System/getProperty "user.home"))] tmp-option)
+             arguments)
+       (if (util/native-image?)
+         (throw (ex-info "The Python runtime archive has no worker executable"
+                         {:type :vis/python-worker-missing}))
+         (vec (concat
+                [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
+                (worker-jvm-options (.getInputArguments (ManagementFactory/getRuntimeMXBean)))
+                tmp-option
+                [(str "-XX:ErrorFile=" (io/file run-directory "jvm-crash-%p.log"))
+                 (str "-XX:HeapDumpPath=" (io/file run-directory "jvm-heap.hprof")) "-cp"
+                 (System/getProperty "java.class.path") "com.blockether.vispython.Worker"]
+                arguments)))))))
 
 (defn- worker-dir
   ^File [stamp]
@@ -749,7 +754,8 @@
                 ;; #420: start in user.dir, which the boot policy grants. A host can set
                 ;; -Duser.dir apart from its process directory, which the jail does not grant.
                 (spawn-within! #(process-jail/spawn!
-                                  (child-argv library (:dial names) guest-dir dir runtime-roots)
+                                  (child-argv library (:dial names) guest-dir dir runtime-roots
+                                              (:session/scratch policy))
                                   child-dir
                                   policy
                                   {:extra-environment extra :merge-stderr? true})

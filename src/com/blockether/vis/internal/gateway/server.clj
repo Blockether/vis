@@ -2438,6 +2438,15 @@
                            :run (fn []
                                   {:deleted (state/sweep-turn-states!)})})
 
+         _
+         (janitor/submit! {:id :gateway/session-scratch
+                           :delay-ms 30000
+                           :every-ms 3600000
+                           :run (fn []
+                                  (let [result (housekeeping/sweep-session-scratch! (lp/db-info)
+                                                                                     (util/now-ms))]
+                                    (when (pos? (:deleted result 0)) result)))})
+
          ;; Old extension snapshots of the global folder and of each project (#509).
          _
          (janitor/submit! (housekeeping/sweep-task

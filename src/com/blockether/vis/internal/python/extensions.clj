@@ -1281,7 +1281,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (put! g
           "__vis_host_call_env__"
           (fn []
-            (or *call-env* {})))
+            (merge *call-env*
+                   (paths/scratch-env (:session/scratch extension/*current-environment*)))))
     (put! g
           "__vis_host_tool_call_provider__"
           (fn []

@@ -122,6 +122,7 @@
                     "-Dvis.image-descriptions.dir=target/vis-image-descriptions-test"
                     "-Dvis.logs.dir=target/vis-logs-test"
                     "-Dvis.sandbox.dir=target/vis-sandbox-test"
+                    "-Dvis.scratch.dir=target/vis-scratch-test"
                     "-Dvis.extensions.dir=target/vis-extensions-test"]
          :main-opts ["-m" "lazytest.main" "--hook"
                      "com.blockether.vis.test-network-guard/no-network" "--hook"

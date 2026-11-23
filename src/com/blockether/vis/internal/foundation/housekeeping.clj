@@ -413,6 +413,84 @@
   {:deleted (+ (long (:deleted a)) (long (:deleted b)))
    :bytes (+ (long (:bytes a)) (long (:bytes b)))})
 
+(def ^:private ^"[Ljava.nio.file.LinkOption;" scratch-no-follow
+  (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+
+(defn- scratch-directory? [^File dir]
+  (Files/isDirectory (.toPath dir) scratch-no-follow))
+
+(defn- detach-scratch!
+  "Rename a free directory under the claim lock. A later sweep retries removal
+   if this process stops before it can empty the renamed directory."
+  ^File [^File root ^File dir]
+  (let [detached (File. root (str ".reclaim-" (random-uuid)))]
+    (Files/move (.toPath dir) (.toPath detached)
+                (into-array java.nio.file.CopyOption [java.nio.file.StandardCopyOption/ATOMIC_MOVE]))
+    detached))
+
+(defn delete-session-scratch!
+  "Release this process's claim after teardown, and remove scratch no other process holds."
+  [session-id]
+  (when-let [dir (paths/scratch-directory session-id)]
+    (let [root (paths/scratch-root)]
+      (when (scratch-directory? root)
+        (when-let [detached (paths/with-claim-lock root
+                             (fn []
+                               (paths/release-dir-claim! dir)
+                               (when (and (scratch-directory? dir) (not= :held (paths/claim-state dir)))
+                                 (detach-scratch! root dir))))]
+          (reclaim-dir! detached (canonical root)))))))
+
+(defn- older-than? [^long cutoff ^java.util.Date date]
+  (and date (< (.getTime date) cutoff)))
+
+(defn- scratch-expired?
+  [db-info ^File dir ^long cutoff]
+  (let [store (File. dir ".vis-db")]
+    (when (and (Files/isRegularFile (.toPath store) scratch-no-follow)
+               (= (:db-file db-info) (slurp store)))
+      (let [sid (parse-uuid (.getName dir))]
+        (if-let [session (p/db-get-session db-info sid)]
+          (and (< (.lastModified dir) cutoff)
+               (older-than? cutoff (:created-at session))
+               (every? #(older-than? cutoff (:created-at %))
+                       (p/db-list-session-turns-meta db-info sid)))
+          true)))))
+
+(defn sweep-session-scratch!
+  "Remove unclaimed scratch for this database after deletion or 24 hours without a turn."
+  [{:keys [db-file] :as db-info} now]
+  (let [root (paths/scratch-root)
+        cutoff (- (long now) day-ms)]
+    (when (and db-file (scratch-directory? root))
+      (reduce
+        (fn [counts ^File dir]
+          (let [id (.getName dir)
+                detached
+                (cond (and (re-matches #"\.reclaim-[a-f0-9-]+" id) (scratch-directory? dir))
+                      dir
+
+                      (paths/scratch-directory id)
+                      (paths/with-claim-lock root
+                        (fn []
+                          (when (and (scratch-directory? dir)
+                                     (not= :held (paths/claim-state dir))
+                                     (scratch-expired? db-info dir cutoff))
+                            (detach-scratch! root dir)))))]
+            (if detached
+              (add-counts counts (reclaim-dir! detached (canonical root)))
+              counts)))
+        {:deleted 0 :bytes 0}
+        (.listFiles root)))))
+
+(defn scratch-size-warning
+  "Text for the agent when its scratch files exceed 10 GiB. Never deletes files."
+  [dir]
+  (when dir
+    (let [{:keys [bytes]} (tree-stats (io/file dir))]
+      (when (> (long bytes) (* 10 1024 1024 1024))
+        (str "Session scratch uses " bytes " bytes at `" dir "`. The warning limit is 10 GiB.")))))
+
 (defn- sweep-guest-store!
   "Reclaim the frozen Python guest trees nobody serves any more.
 

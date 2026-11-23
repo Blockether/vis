@@ -19,6 +19,7 @@
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.loop.cache-warmer :as cache-warmer]
             [com.blockether.vis.internal.loop.compaction :as compaction]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.loop.router :as loop-router]
@@ -610,6 +611,7 @@
 
                                                             parent-session-id
                                                             (assoc :parent-session-id parent-session-id))))
+            scratch (paths/claim-session-scratch! session-id (:db-file db-info))
             ;; A new session keeps the configuration tiers it was created with.
             ;; `open-env!` reads them back when it rebuilds the session.
             _ (when (and sources db-info (not resolved-session-id))
@@ -713,7 +715,7 @@
             ;; workspace overlay plus immutable configured read/write roots. Python
             ;; filesystem bindings consume the same roots through the environment below.
             workspace-atom (atom active-workspace)
-            sandbox-roots-fn (when (or active-workspace (seq configured-rw-roots))
+            sandbox-roots-fn (when (or active-workspace scratch (seq configured-rw-roots))
                                (fn []
                                  (let [ws @workspace-atom]
                                    (vec (distinct (concat (when ws [(str (:root ws))])
@@ -722,7 +724,8 @@
                              (security-policy/access-view security-config))
             jail-config (:process-jail security-config)
             ;; A later council.grant replaces the jail value of this child session.
-            live-jail-config #(process-jail/live-jail session-id jail-config)
+            live-jail-config #(assoc (process-jail/live-jail session-id jail-config)
+                                :session/scratch scratch)
             filesystem-policy-fn #(process-jail/runtime-policy (assoc (live-jail-config)
                                                                  :roots-fn sandbox-roots-fn))
             jail-enabled? (not (:disabled? jail-config))
@@ -857,6 +860,7 @@
                         (throw t)))))))
             env (cond-> {:environment-id environment-id
                          :session-id session-id
+                         :session/scratch scratch
                          :grant-owner grant-owner
                          :session/state-id session-state-id
                          :channel resolved-channel

@@ -1304,6 +1304,7 @@ in tool arguments.
 A before hook can also return `vis.with_env(variables)`, which allows the call and adds the
 variables to it. Map a name to `None` to unset that variable. The tool reads the variables with
 `vis.call_env()` and gives them to the processes that it starts. Other calls do not get them.
+In a session, `vis.call_env()` also returns the [scratch directory variables](sessions.md#keep-temporary-files-separate).
 Outside Vis, `vis.call_env()` returns an empty dict.
 
 The Clojure and Python language tools pass these variables on. `clj.run_tests` and

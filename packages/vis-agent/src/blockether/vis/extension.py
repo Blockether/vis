@@ -4087,9 +4087,11 @@ def with_env(variables):
 
 
 def call_env() -> dict[str, str | None]:
-    """Return the variables that `before` op hooks added to the current tool call.
+    """Return the environment for this extension call.
 
-    The result is empty when no hook added any, and outside a Vis process.
+    In a session this includes `TMPDIR` and `VIS_SESSION_TMPDIR` for scratch files.
+    It also includes variables a `before` op hook added to the call. Outside Vis,
+    the result is empty.
     """
     return dict(_host.call_env() or {})
 

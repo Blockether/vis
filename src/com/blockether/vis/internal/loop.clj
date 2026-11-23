@@ -11,6 +11,8 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.extension.client :as client-extensions]
+            [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
+            [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.foundation.shell-log :as shell-log]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.python-exec :as python-exec]
@@ -452,14 +454,16 @@
 
 (defn delete!
   [id]
-  (close! id)
-  ;; A shell log dies with the session that produced it, and with nothing else:
-  ;; the bytes on disk outlive the process, so the delete has to name them.
-  (shell-log/delete-session-logs! id)
-  ;; After `close!`: no block of the session can write a new snapshot.
-  (python-env/delete-session-defs! id)
-  (let [d (db-info)]
-    (try (persistance/db-delete-session-tree! d id) (catch Exception _ nil))))
+  (let [stopped? (resources/stop-session-resources! id)]
+    (close! id)
+    ;; Shell logs and the Python snapshot outlive the processes that made them.
+    (shell-log/delete-session-logs! id)
+    (python-env/delete-session-defs! id)
+    (let [d (db-info)]
+      (try (let [result (persistance/db-delete-session-tree! d id)]
+             (when stopped? (housekeeping/delete-session-scratch! id))
+             result)
+           (catch Exception _ nil)))))
 
 (def ^:private ORPHAN_INTERRUPTED_ANSWER
   "Warning: Turn interrupted - the server was restarted before this answer could finalize. Re-send the message to retry.")

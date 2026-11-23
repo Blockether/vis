@@ -210,6 +210,8 @@
           ;; A subagent file grant: only its write rules stay writable.
           (when (and (= "file-write" (str operation))
                      limited?
+                     (not (some-> (:session/scratch env)
+                                  (rule-covers? canonical)))
                      (not-any? #(rule-covers? % canonical) write-rules))
             (grant-refusal write-rules))))))
 
@@ -342,7 +344,8 @@
         closed
         (vec (distinct (concat deny-read (:deny-read expanded) deny-read-rules)))]
 
-    {:read-write (vec (if limited? allow-read-write (concat session-roots allow-read-write)))
+    {:read-write (cond-> (vec (if limited? allow-read-write (concat session-roots allow-read-write)))
+                   (:session/scratch policy) (conj (:session/scratch policy)))
      :read-only (vec (if limited? (concat allow-read session-roots) allow-read))
      :deny-write (vec (distinct (concat deny-write (:deny-write expanded) deny-write-rules closed)))
      :deny-read closed
@@ -593,6 +596,8 @@
                     [k (str v)]))))
         (:env-values policy)))
 
+(declare child-env-additions)
+
 (defn jailed-child-env
   "The COMPLETE environment for a confined child: an allowlist of non-secret
    operator variables, plus the policy's resolved project environment (the
@@ -624,7 +629,7 @@
       (into {}
             (remove (fn [[k _]]
                       (or (pre-exec-hijack? k) (contains? removals k))))
-            (with-child-env-defaults (merge inherited (declared-env policy) (proxy-env policy)))))))
+            (with-child-env-defaults (merge inherited (child-env-additions policy)))))))
 
 (defn child-env-additions
   "What an UNCONFINED child gets ON TOP of the inherited host environment: the
@@ -633,7 +638,7 @@
    is enabled — the project says where a variable comes from, and the jail only
    decides what ELSE a child may keep."
   [policy]
-  (merge (declared-env policy) (proxy-env policy)))
+  (merge (declared-env policy) (proxy-env policy) (paths/scratch-env (:session/scratch policy))))
 
 (defn process-environment
   "Build the COMPLETE child environment for `policy`, then overlay trusted
@@ -650,6 +655,8 @@
      (doseq [k (:env-removals policy)]
        (.remove environment ^String k))
      (when (seq extra) (.putAll environment ^java.util.Map extra))
+     (when-let [scratch (paths/scratch-env (:session/scratch policy))]
+       (.putAll environment ^java.util.Map scratch))
      environment)))
 
 (defn spawn!

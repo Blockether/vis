@@ -55,6 +55,7 @@
     [com.blockether.vis.internal.sandbox.jail :as process-jail]
     [com.blockether.vis.internal.sandbox.policy :as security-policy]
     [com.blockether.vis.internal.gateway.resources :as resources]
+    [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
     [com.blockether.vis.internal.foundation.shell-log :as shell-log]
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.gateway.runtime :as runtime]
@@ -10544,10 +10545,12 @@
   (.submit ^java.util.concurrent.ExecutorService @teardown-executor
            ^Callable
            (fn []
-             (try (resources/stop-all! sid) (catch Throwable _ nil))
-             (try (lp/close! sid) (catch Throwable _ nil))
-             ;; After `lp/close!`: no block can write a new snapshot of a deleted session.
-             (try (python-env/delete-session-defs! sid) (catch Throwable _ nil))
+             (let [resources-stopped? (resources/stop-session-resources! sid)
+                   sandbox-closed? (try (lp/close! sid) true (catch Throwable _ false))]
+               ;; After `lp/close!`: no block can write a new snapshot of a deleted session.
+               (try (python-env/delete-session-defs! sid) (catch Throwable _ nil))
+               (when (and resources-stopped? sandbox-closed?)
+                 (try (housekeeping/delete-session-scratch! sid) (catch Throwable _ nil))))
              nil)))
 
 (defn- forget-deleted-session!
