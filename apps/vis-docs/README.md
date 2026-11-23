@@ -265,16 +265,23 @@ on `main`, under the existing `docs` environment's approval and Cloudflare crede
 This is a maintainer operation, not a `vis-agent extension publish` command or an
 anonymous submission API. It does not weaken Turnstile.
 
-Blockether's own extensions need no dispatch. The same workflow also runs every 15 minutes, away from
-the start of the hour, because GitHub can delay or drop a scheduled run. It finds the newest GitHub
-release and each release of the last 7 days of each first-party repository it lists: `vis-lang-interface`,
+Blockether's own extensions need no manual dispatch. When a first-party repository publishes a
+release, its release workflow dispatches this workflow with the release tag and commit. The catalog
+then lists the release some minutes later. The dispatch uses the `VIS_EXTENSION_PUBLISH_TOKEN` secret
+of the repository. This token is a fine-grained token with only the `Actions: Read and write`
+permission on `Blockether/vis`. Without the secret, the release workflow shows a warning and does not
+dispatch.
+
+The same workflow also runs every 15 minutes as a catch-up. GitHub starts scheduled runs of this
+repository some hours late, and it can drop a run. A scheduled run finds the newest GitHub release and
+each release of the last 7 days of each first-party repository it lists: `vis-lang-interface`,
 `vis-lang-python`, `vis-lang-javascript`, `vis-lang-clojure`, `vis-decisions`, `vis-optmem`,
-`vis-graphify`, `vis-podcaster`, `vis-reel` and `vis-spel`. A scheduled run publishes only the releases
-that the public catalog does not list yet; when the catalog lists all of them, the run stops before
-the build. Thus a project can pin a new first-party release a short time after its GitHub release.
-Publishing a release that is already in the catalog is a no-op, so a repeated sweep cannot replace a
-reviewed commit.
-Thus a release that a newer release replaced in the same week also reaches the catalog. Dispatch the workflow without inputs to publish the newest release of each repository immediately.
+`vis-graphify`, `vis-podcaster`, `vis-reel` and `vis-spel`. It publishes only the releases that the
+public catalog does not list yet. When the catalog lists all of them, the run stops before the build.
+Thus a release that a newer release replaced in the same week also reaches the catalog. Publishing a
+release that is already in the catalog is a no-op, so a repeated sweep cannot replace a reviewed
+commit. Dispatch the workflow without inputs to publish the newest release of each repository
+immediately.
 
 Review the source and dependencies first. The package version, matching tag and published
 GitHub Release must already exist. The workflow does not bump package versions, create

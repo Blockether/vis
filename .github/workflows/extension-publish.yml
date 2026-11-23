@@ -2,8 +2,8 @@ name: Publish reviewed extension
 
 on:
   schedule:
-    # First-party extension releases reach the center without anyone dispatching this.
-    # Run away from the start of each hour. GitHub can delay or drop a scheduled run.
+    # The release workflow of each first-party repository dispatches this workflow. This schedule
+    # is a catch-up: GitHub starts scheduled runs of this repository some hours late or drops them.
     - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
     inputs:
