@@ -33,12 +33,13 @@
            [java.io File RandomAccessFile]
            [java.lang ProcessBuilder$Redirect ProcessHandle]
            [java.nio ByteBuffer ByteOrder]
-           [java.nio.channels FileChannel]
+           [java.nio.channels FileChannel FileLockInterruptionException]
            [java.nio.file CopyOption FileVisitResult Files LinkOption OpenOption Path
             SimpleFileVisitor StandardCopyOption StandardOpenOption]
-           [java.nio.file.attribute FileAttribute]
+           [java.nio.file.attribute BasicFileAttributes FileAttribute]
            [java.security MessageDigest]
-           [java.util.concurrent TimeUnit]))
+           [java.util.concurrent TimeUnit]
+           [java.util.concurrent.locks ReentrantLock]))
 
 (set! *warn-on-reflection* true)
 
@@ -460,25 +461,77 @@
               (when (pos? n) (.update digest buffer 0 n) (recur (- left n))))))))
     (util/bytes->hex (.digest digest))))
 
+(defn- interpreter-store
+  "The directory of the stable interpreter copies, or nil without a Vis state directory."
+  ^File []
+  (some-> (Locations/stateRoot)
+          (io/file "interpreters")))
+
+(defn- read-state
+  "Read an optional state file. An unreadable or incomplete entry is a miss."
+  [^File file]
+  (when (and file (.isFile file))
+    (try (edn/read-string (slurp file)) (catch Exception _ nil))))
+
+(defn- write-state!
+  "Publish optional state atomically. Read-only state does not prevent preparation."
+  [^File file value]
+  (when file
+    (try (paths/spit-private! file (pr-str value) :fsync? false)
+         (catch java.io.IOException _ nil))))
+
+(defn- python-state-file
+  "A file in the runtime state, separated by use and by canonical path."
+  ^File [kind ^String path]
+  (when-let [store (interpreter-store)]
+    (io/file (.getParentFile store) kind (str (util/sha256-hex path) ".edn"))))
+
+(defn- executable-input
+  "The path and file metadata of an executable. Include Unix change time, so an
+   in-place write that restores the old modification time is still a change."
+  [^File file]
+  (let [file (.getCanonicalFile file)
+        path (.toPath file)]
+    (try (let [^BasicFileAttributes attrs (Files/readAttributes path BasicFileAttributes
+                                                                  ^"[Ljava.nio.file.LinkOption;" no-follow)]
+           (when (.isRegularFile attrs)
+             [(.getPath file) (.size attrs) (str (.lastModifiedTime attrs))
+              (some-> (.fileKey attrs) str)
+              (try (str (Files/getAttribute path "unix:ctime" (make-array LinkOption 0)))
+                   (catch UnsupportedOperationException _ nil))]))
+         (catch java.nio.file.NoSuchFileException _ nil))))
+
+(defn- build-inputs
+  "The inputs of the interpreter build digest, including the bundled uv if present."
+  [^File file]
+  (when-let [python (executable-input file)]
+    [python (executable-input (io/file (.getParentFile file) "uv"))]))
+
 (defonce ^:private interpreter-identities
-  ;; Canonical executable path -> identity. Each install reads its files one time.
+  ;; Canonical executable path -> [file inputs, build digest].
   (atom {}))
 
 (defn- interpreter-identity
-  "Lowercase-hex SHA-256 of the interpreter build of `python`: the content of the executable
-   and of the bundled uv beside it. Two installs of one build give the same value. Without
-   an executable file, the canonical path is the identity."
+  "Lowercase-hex SHA-256 of the interpreter build of `python`: the executable and uv
+   beside it, without their code signatures. Reuse the hash while both files are unchanged."
   ^String [python]
-  (let [file
-        (.getCanonicalFile (io/file (str python)))
-
-        path
-        (.getPath file)]
-
-    (or (get @interpreter-identities path)
-        (let [identity (if (.isFile file) (build-digest file) (util/sha256-hex path))]
-          (swap! interpreter-identities assoc path identity)
-          identity))))
+  (let [file (.getCanonicalFile (io/file (str python)))
+        path (.getPath file)]
+    (if-let [inputs (build-inputs file)]
+      (or (let [[saved identity] (get @interpreter-identities path)]
+            (when (= saved inputs) identity))
+          (let [stamp (python-state-file "build-identities" path)
+                entry (read-state stamp)
+                [saved identity] (when (vector? entry) entry)
+                cached? (and (= saved inputs) (string? identity) (re-matches #"[0-9a-f]{64}" identity))
+                identity (if cached? identity (build-digest file))]
+            ;; A concurrent install must not stamp the digest of files that it was replacing.
+            (if (= inputs (build-inputs file))
+              (do (swap! interpreter-identities assoc path [inputs identity])
+                  (when-not cached? (write-state! stamp [inputs identity]))
+                  identity)
+              (recur python))))
+      (util/sha256-hex path))))
 
 (defn- environment-name
   "The directory of the environment that automatic preparation owns for `python`.
@@ -488,12 +541,6 @@
    such as the JVM's and an older native release's, gets its own environment."
   ^String [python]
   (str ".venv-" (subs (interpreter-identity python) 0 12)))
-
-(defn- interpreter-store
-  "The directory of the stable interpreter copies, or nil without a Vis state directory."
-  ^File []
-  (some-> (Locations/stateRoot)
-          (io/file "interpreters")))
 
 (defn- interpreter-home
   "The tree of the interpreter that `python` names: the parent of `bin/`, else its directory."
@@ -533,16 +580,15 @@
                        (.redirectErrorStream true)
                        (.redirectOutput ProcessBuilder$Redirect/DISCARD)))]
 
-         (if (.waitFor process 30 TimeUnit/SECONDS)
-           (zero? (.exitValue process))
-           (do (.destroyForcibly process) false)))
+         (try (and (.waitFor process 30 TimeUnit/SECONDS) (zero? (.exitValue process)))
+              (finally (when (.isAlive process) (.destroyForcibly process)))))
        (catch java.io.IOException _ false)))
 
 (defn- copy-valid?
   "True when `copy` is an executable of the interpreter build `identity` that starts."
   [^File copy ^String identity]
   (and (.isFile copy)
-       (= identity (build-digest (.getCanonicalFile copy)))
+       (= identity (interpreter-identity copy))
        (interpreter-starts? copy)))
 
 (defn- copy-interpreter!
@@ -581,7 +627,8 @@
                                  (.redirectErrorStream true)
                                  (.redirectOutput ProcessBuilder$Redirect/DISCARD)))]
 
-                   (when (and (zero? (.waitFor process))
+                   (when (and (zero? (try (.waitFor process)
+                                         (finally (when (.isAlive process) (kill-installer! process)))))
                               (copy-valid? (io/file tree relative) identity))
                      (let [packages (io/file tree "lib" "vis-sdk-packages")]
                        (when (.isDirectory packages) (delete-environment! packages)))
@@ -591,6 +638,7 @@
                                  (.toPath target)
                                  (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
                      (copy-valid? (io/file target relative) identity)))
+                 (catch InterruptedException e (throw e))
                  (catch Exception e
                    (tel/log! {:level :warn
                               :id ::interpreter-copy-failed
@@ -664,7 +712,7 @@
                       :error e})))))
 
 (defonce ^:private base-pythons
-  ;; Install executable path -> the executable that automatic environments use as base.
+  ;; Install executable path and build -> base executable for automatic environments.
   (atom {}))
 
 (defn- base-python
@@ -675,26 +723,29 @@
    of one build replaced each other's environment. Without a state directory or when the copy
    fails, the install's own."
   ^String []
-  (let [python (embedded-executable)]
-    (or (get @base-pythons python)
-        (let [base (or (when-let [store (when python (interpreter-store))]
-                         (let [file (.getCanonicalFile (io/file python))
-                               home (interpreter-home file)
-                               identity (interpreter-identity python)
-                               target (io/file store (subs identity 0 12))
-                               relative (str (.relativize (.toPath home) (.toPath file)))
-                               copy (io/file target relative)]
+  (let [python (embedded-executable)
+        identity (when python (interpreter-identity python))
+        key [python identity]]
+    (or (get @base-pythons key)
+        (locking base-pythons
+          (or (get @base-pythons key)
+              (let [base (or (when-let [store (when python (interpreter-store))]
+                               (let [file (.getCanonicalFile (io/file python))
+                                     home (interpreter-home file)
+                                     target (io/file store (subs identity 0 12))
+                                     relative (str (.relativize (.toPath home) (.toPath file)))
+                                     copy (io/file target relative)]
 
-                           (when (and (.isFile file)
-                                      (or (copy-valid? copy identity)
-                                          (copy-interpreter! store home target relative identity)))
-                             (record-install! store target (.getPath file))
-                             (paths/claim-dir! target)
-                             (remove-unused-copies! store target)
-                             (.getPath copy))))
-                       python)]
-          (swap! base-pythons assoc python base)
-          base))))
+                                 (when (and (.isFile file)
+                                            (or (copy-valid? copy identity)
+                                                (copy-interpreter! store home target relative identity)))
+                                   (record-install! store target (.getPath file))
+                                   (paths/claim-dir! target)
+                                   (remove-unused-copies! store target)
+                                   (.getPath copy))))
+                             python)]
+                (swap! base-pythons assoc key base)
+                base))))))
 
 (def ^:dynamic ^:private *environment*
   "Nil, or the project's own `.venv` while this interpreter made it and prepares the project."
@@ -766,31 +817,30 @@
           (finally (when (.isAlive ^Process process) (kill-installer! process))
                    (future-cancel output))))))
 
+(defn- project-workspace
+  "Find the canonical uv workspace without changing it."
+  ^File [^File project]
+  (let [lookup (fn []
+                 (let [dir (io/file (str/trim (run-uv! project [(bundled-uv!) "workspace" "dir" "--offline"])))]
+                   (when-not (and (.isAbsolute dir) (.isDirectory dir))
+                     (throw (ex-info "uv did not report an existing workspace directory" {})))
+                   (.getCanonicalFile dir)))
+        path (.getCanonicalPath project)]
+    (if-let [cache *workspace-dirs*]
+      (or (get @cache path)
+          (let [dir (lookup)]
+            (swap! cache assoc path dir)
+            dir))
+      (lookup))))
+
 (defn- project-environment
   "Locate uv's environment without creating it or resolving dependencies.
    Workspace members share the workspace environment. An override replaces .venv,
    and a relative override resolves against the workspace root."
   ^File [^File project override]
-  (let [lookup
-        #(io/file (str/trim (run-uv! project [(bundled-uv!) "workspace" "dir" "--offline"])))
-
-        ^File workspace
-        (if-let [cache *workspace-dirs*]
-          (or (get @cache (.getPath project))
-              (let [dir (lookup)]
-                (swap! cache assoc (.getPath project) dir)
-                dir))
-          (lookup))
-
-        path
-        (or (not-empty override) ".venv")
-
-        environment
-        (io/file path)]
-
-    (when-not (and (.isAbsolute workspace) (.isDirectory workspace))
-      (throw (ex-info "uv did not report an existing workspace directory" {})))
-    (if (.isAbsolute environment) environment (io/file workspace path))))
+  (let [workspace (project-workspace project)
+        environment (io/file (or (not-empty override) ".venv"))]
+    (if (.isAbsolute environment) environment (io/file workspace (.getPath environment)))))
 
 (defn project-environment-exists?
   "Check for uv's environment without creating it or resolving dependencies.
@@ -881,28 +931,56 @@
                         :error e}))))))
 
 (defn- embedded-python
-  "uv options that select the worker's embedded Python and never download another."
-  []
-  ["--python" (selected-python) "--no-python-downloads"])
+  "uv options that select an embedded Python executable and never download another."
+  ([] (embedded-python (selected-python)))
+  ([python] ["--python" python "--no-python-downloads"]))
+
+(defn- export-project
+  "Read uv's locked dependency selection. Automatic preparation can update a stale lock."
+  [^File project update? prune?]
+  (let [requirements (Files/createTempFile (.toPath (paths/temp-dir)) "vis-project-" ".txt"
+                                           (make-array FileAttribute 0))]
+    (try (let [command (into (cond-> [(bundled-uv!) "export" "--format" "requirements-txt" "--no-header"
+                                     "--no-annotate" "--no-hashes" "--output-file" (str requirements)]
+                              prune? (into ["--prune" "vis-agent"]))
+                            (embedded-python (embedded-executable)))
+               locked (into command ["--locked" "--offline"])]
+           (if update?
+             (try (run-uv! project locked)
+                  (catch clojure.lang.ExceptionInfo _ (run-uv! project command)))
+             (run-uv! project locked))
+           (slurp (.toFile requirements)))
+         (finally (Files/deleteIfExists requirements)))))
 
 (defn- shared-project?
-  "Use shared packages when uv selects no project installation or dependencies beyond the bundled Vis SDK.
-   Keep editable projects and dependency groups in their own environment."
+  "Use shared packages when uv selects no project installation or dependencies beyond the SDK."
   [^File project automatic?]
-  (let [requirements (Files/createTempFile (.toPath (paths/temp-dir))
-                                           "vis-project-"
-                                           ".txt"
-                                           (make-array java.nio.file.attribute.FileAttribute 0))]
-    (try (let [command (into [(bundled-uv!) "export" "--format" "requirements-txt" "--no-header"
-                              "--no-annotate" "--no-hashes" "--prune" "vis-agent" "--output-file"
-                              (str requirements)]
-                             (embedded-python))]
-           (if automatic?
-             (try (run-uv! project (into command ["--locked" "--offline"]))
-                  (catch clojure.lang.ExceptionInfo _ (run-uv! project command)))
-             (run-uv! project (into command ["--locked" "--offline"])))
-           (str/blank? (slurp (.toFile requirements))))
-         (finally (Files/deleteIfExists requirements)))))
+  (str/blank? (export-project project automatic? true)))
+
+(defn- sdk-lock?
+  "True when a project lock includes the SDK."
+  [^File project]
+  (let [lock (io/file project "uv.lock")]
+    (and (.isFile lock) (boolean (re-find #"(?m)^name = \"vis-agent\"$" (slurp lock))))))
+
+(defn- install-package-name
+  "The normalized name in a pinned or direct-URL requirement from uv."
+  [line]
+  (when-let [[_ name] (re-find #"(?i)^([a-z0-9][a-z0-9._-]*)\s*(?:==|@)" line)]
+    (str/replace (str/lower-case name) #"[-_.]+" "-")))
+
+(defn- sdk-exclusions
+  "Omit packages that occur only in the SDK tree. Keep names selected on any other branch.
+   If uv emits a changed line without a package name, keep the full selection."
+  [full pruned]
+  (let [lines #(set (remove str/blank? (str/split-lines %)))
+        retained (lines pruned)
+        removed (remove retained (lines full))
+        removed-names (map install-package-name removed)
+        retained-names (set (map install-package-name retained))]
+    (when (and (some #{"vis-agent"} removed-names) (every? some? removed-names)
+               (not (contains? retained-names nil)))
+      (sort (remove retained-names (set removed-names))))))
 
 (defn- project-packages
   "Ask uv's project interpreter for its site-packages; do not guess workspace paths.
@@ -959,7 +1037,40 @@
 
 (defonce ^:private preparation (atom {}))
 
-(defonce ^:private preparation-lock (Object.))
+(defonce ^:private preparation-gates (java.util.concurrent.ConcurrentHashMap.))
+
+(defn- with-preparation-lock
+  "Serialize writers to one workspace or package directory. Never remove the lock file:
+   a waiting process may already have opened it."
+  [^File file f]
+  (let [key (.getCanonicalPath file)
+        ^ReentrantLock gate (.computeIfAbsent ^java.util.concurrent.ConcurrentHashMap preparation-gates
+                                             key
+                                             (reify java.util.function.Function
+                                               (apply [_ _] (ReentrantLock.))))]
+    (.lockInterruptibly gate)
+    (try (paths/create-private-dirs! (.getParentFile file))
+         (with-open [channel (FileChannel/open (.toPath file)
+                                               (into-array OpenOption
+                                                           [StandardOpenOption/CREATE StandardOpenOption/WRITE]))
+                     _lock (.lock channel)]
+           (f))
+         (finally (.unlock gate)))))
+
+(defn- with-workspace-lock
+  "Serialize Vis operations that can write to one uv workspace, even with different venvs."
+  [^File workspace f]
+  (with-preparation-lock
+    (or (python-state-file "workspace-locks" (.getCanonicalPath workspace))
+        (io/file (paths/vis-home) "python" "workspace-locks"
+                 (str (util/sha256-hex (.getCanonicalPath workspace)) ".lock")))
+    f))
+
+(defn- with-shared-packages-lock
+  "Serialize writes to the shared packages, without blocking unrelated uv workspaces."
+  [packages f]
+  (let [dir (.getCanonicalFile (io/file packages))]
+    (with-preparation-lock (io/file (.getParentFile dir) (str ".vis-" (.getName dir) "-write.lock")) f)))
 
 (defn preparation-status
   "Public, credential-free preparation stages keyed by package display name."
@@ -1033,6 +1144,50 @@
     (update-digest! digest parts)
     (util/bytes->hex (.digest digest))))
 
+(defn- file-text
+  "The contents of `file`, if it exists."
+  [^File file]
+  (when (.isFile file) (slurp file)))
+
+(defn- shared-decision-inputs
+  "Digest inputs that can change uv's dependency selection. Without a lock, keep the uv check."
+  [^File project ^File packages]
+  (let [files (vec (for [^File dir (paths/ancestor-chain project)
+                         :let [manifest (file-text (io/file dir "pyproject.toml"))
+                               lock (file-text (io/file dir "uv.lock"))
+                               config (file-text (io/file dir "uv.toml"))]
+                         :when (or manifest lock config)]
+                     [(.getPath dir) manifest lock config (when lock (path-sources dir lock))]))
+        config-home (or (not-empty (System/getenv "XDG_CONFIG_HOME"))
+                        (str (System/getProperty "user.home") "/.config"))
+        explicit-config (not-empty (System/getenv "UV_CONFIG_FILE"))]
+    (when (some #(nth % 2) files)
+      (digest-parts ["shared-sdk-v1" (.getCanonicalPath project) files
+                     (->> (System/getenv)
+                          (filter #(str/starts-with? (key %) "UV_"))
+                          (sort-by key)
+                          (mapv (fn [entry] [(key entry) (val entry)])))
+                     (file-text (io/file config-home "uv" "uv.toml"))
+                     (file-text (io/file "/etc/uv/uv.toml"))
+                     (when explicit-config
+                       (let [file (io/file explicit-config)]
+                         (file-text (if (.isAbsolute file) file (io/file project explicit-config)))))
+                     (interpreter-identity (embedded-executable)) (.getCanonicalPath packages)
+                     (.isDirectory packages) (.lastModified packages)
+                     (vec (sort (.list packages)))]))))
+
+(defn- shared-decision-file
+  ^File [^File project]
+  (python-state-file "shared-decisions" (.getCanonicalPath project)))
+
+(defn- stamped-shared-packages
+  "Answer the shared package directory while the last classification is still valid."
+  ^File [^File project]
+  (when-let [saved (read-state (shared-decision-file project))]
+    (when-let [packages (runtime/packages-dir)]
+      (let [dir (.getCanonicalFile (io/file packages))]
+        (when (= saved (shared-decision-inputs project dir)) dir)))))
+
 (defn- prepared-inputs
   "Digest what uv's offline check reads, without uv: project and lock files, local path
    sources, the environment and the embedded tools. The bytecode cache stays an input, so
@@ -1058,18 +1213,26 @@
   ^File [^File project]
   (let [stamp (io/file project (automatic-environment) prepared-stamp)]
     (when (.isFile stamp)
-      (try (let [{:keys [inputs packages]} (edn/read-string (slurp stamp))
+      (try (let [{:keys [inputs packages managed-selection?]} (edn/read-string (slurp stamp))
                  packages (io/file (str packages))]
 
-             (when (and (string? inputs) (= inputs (prepared-inputs project packages)))
+             (when (and (string? inputs)
+                        (or managed-selection? *environment* (not (sdk-lock? project)))
+                        (= inputs (prepared-inputs project packages)))
                (.getCanonicalFile packages)))
            (catch Exception _ nil)))))
+
+(defn- cached-project
+  ^File [^File project]
+  (when-let [packages (or (stamped-packages project) (stamped-shared-packages project))]
+    (preparation-stage! project "cached")
+    packages))
 
 (defn- stamp-prepared!
   "Record a verified preparation in the project's own automatic environment and return `packages`.
    An environment elsewhere, such as a workspace member's, keeps the uv check.
    A read-only environment, such as one in a container image, keeps the uv check too."
-  ^File [^File project ^File packages]
+  ^File [^File project ^File packages managed-selection?]
   (let [environment
         (.getCanonicalFile (io/file project (automatic-environment)))
 
@@ -1085,7 +1248,8 @@
                                                (make-array java.nio.file.attribute.FileAttribute
                                                            0))]
              (try (spit (.toFile staging)
-                        (pr-str {:inputs inputs :packages (.getCanonicalPath packages)}))
+                        (pr-str {:inputs inputs :packages (.getCanonicalPath packages)
+                                 :managed-selection? managed-selection?}))
                   (Files/move staging
                               (.toPath (io/file environment prepared-stamp))
                               (into-array CopyOption
@@ -1151,49 +1315,65 @@
              (assoc (ex-data cause) :type ::project-preparation-failed)
              cause)))
 
+(defn- prepare-project!
+  "Classify and update `project` while its uv workspace is locked."
+  ^File [^File project]
+  (let [workspace (get @*workspace-dirs* (.getCanonicalPath project) project)
+        manifest (file-text (io/file project "pyproject.toml"))
+        ;; A workspace root and its members can use the same environment.
+        prune? (and (nil? *environment*) (= (.getCanonicalFile project) workspace)
+                    (not (Files/isSymbolicLink (.toPath (io/file workspace (automatic-environment)))))
+                    (not (str/includes? (or manifest "") "workspace"))
+                    (or (sdk-lock? project) (str/includes? (or manifest "") "vis-agent")))
+        pruned (when prune? (export-project project true true))]
+    (if (if prune? (str/blank? pruned) (shared-project? project true))
+      (let [packages (.getCanonicalFile (io/file (runtime/packages-dir)))]
+        (when-let [inputs (shared-decision-inputs project packages)]
+          (write-state! (shared-decision-file project) inputs))
+        (preparation-stage! project "cached")
+        packages)
+      (do (remove-orphan-environments! project)
+          (let [exclusions (when prune?
+                             (sdk-exclusions (export-project project false false) pruned))
+                uv (bundled-uv!)
+                options (cond-> (embedded-python)
+                          (seq exclusions) (into (cons "--locked" (mapcat #(vector "--no-install-package" %) exclusions))))
+                ready? (try (and (runtime-environment? project)
+                                 (do (run-uv! project (into [uv "sync" "--check" "--offline"] options))
+                                     true))
+                            (catch clojure.lang.ExceptionInfo _ false))]
+            (when-not ready?
+              (preparation-stage! project "installing")
+              (let [stamp (io/file workspace (automatic-environment) prepared-stamp)]
+                (Files/deleteIfExists (.toPath stamp)))
+              (remove-environment-shell! project)
+              (run-uv! project (into [uv "sync"] options)))
+            (let [packages (project-packages project)]
+              (stamp-prepared! project packages true)
+              (preparation-stage! project (if ready? "cached" "ready"))
+              packages))))))
+
 (defn ensure-project!
   "Prepare an extension with bundled uv and the embedded Python.
    Source-only projects without dependencies beyond Vis use shared packages.
    Otherwise uv owns lock updates, dependency groups and its package cache.
    A ready private environment must pass uv's offline check and use the embedded Python.
    A project `.venv` of this Python is that environment. Else each embedded Python owns its own.
-   A stamp of that check skips uv while the project, lock and environment are unchanged (#407).
-   Preparation compiles no bytecode: a worker compiles what it imports into the cache. A full
-   compile ran under the load lock for 30 s, and extension startup imports few site packages (#498)."
+   Stamps skip uv while the checked inputs stay unchanged (#407, #498).
+   Preparation compiles no bytecode: a worker compiles what it imports into the cache."
   [^File project]
-  (locking preparation-lock
-    ;; #377: the readiness check and the shell cleanup share one workspace lookup.
-    (binding [*extension-preparation?*
-              true
-
-              *workspace-dirs*
-              (atom {})
-
-              *environment*
-              (own-venv project)]
-
-      (try (if-let [packages (stamped-packages project)]
-             (do (preparation-stage! project "cached") packages)
-             (do (remove-orphan-environments! project)
-                 (if (shared-project? project true)
-                   (do (preparation-stage! project "cached")
-                       (.getCanonicalFile (io/file (runtime/packages-dir))))
-                   (let [ready? (try (and (runtime-environment? project)
-                                          (do (run-uv! project
-                                                       (into [(bundled-uv!) "sync" "--check"
-                                                              "--offline"]
-                                                             (embedded-python)))
-                                              true))
-                                     (catch clojure.lang.ExceptionInfo _ false))]
-                     (when-not ready?
-                       (preparation-stage! project "installing")
-                       (remove-environment-shell! project)
-                       (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
-                     (let [packages (project-packages project)]
-                       (stamp-prepared! project packages)
-                       (preparation-stage! project (if ready? "cached" "ready"))
-                       packages)))))
-           (catch Throwable t (throw (preparation-failure project t)))))))
+  (binding [*workspace-dirs* (atom {})
+            *environment* (own-venv project)
+            *extension-preparation?* true]
+    (try (or (cached-project project)
+             (with-workspace-lock (if (some #(.isFile (io/file % "pyproject.toml"))
+                                           (paths/ancestor-chain project))
+                                    (project-workspace project)
+                                    (.getCanonicalFile project))
+               #(or (cached-project project) (prepare-project! project))))
+         (catch InterruptedException e (throw e))
+         (catch FileLockInterruptionException e (throw e))
+         (catch Throwable t (throw (preparation-failure project t))))))
 
 (def ^:private shared-sync-selection-options
   {"--locked" 0
@@ -1393,26 +1573,28 @@
   "Run uv `command`, which changes shared `packages`; return its exit code. After a success,
    name each editable package that moved and the reload that Vis workers need."
   [^File cwd packages command]
-  (let [before
-        (editable-installs packages)
+  (with-shared-packages-lock packages
+    (fn []
+      (let [before
+            (editable-installs packages)
 
-        ;; uv keeps its `.lock` file there; only other entries are packages.
-        entries
-        #(disj (set (.list (io/file packages))) ".lock")
+            ;; uv keeps its `.lock` file there; only other entries are packages.
+            entries
+            #(disj (set (.list (io/file packages))) ".lock")
 
-        present
-        (entries)
+            present
+            (entries)
 
-        exit
-        (long (shared-sync-process! cwd command false))]
+            exit
+            (long (shared-sync-process! cwd command false))]
 
-    (when (zero? exit)
-      (warn-repointed-editables! before (editable-installs packages))
-      ;; A quiet command, such as the sync before `uv run`, stays quiet when nothing changed.
-      (when-not (and (some #{"--quiet"} command) (= present (entries)))
-        (.println config/original-stderr
-                  (str "Shared packages: " packages "\nRun /reload to refresh Vis workers."))))
-    exit))
+        (when (zero? exit)
+          (warn-repointed-editables! before (editable-installs packages))
+          ;; A quiet command, such as the sync before `uv run`, stays quiet when nothing changed.
+          (when-not (and (some #{"--quiet"} command) (= present (entries)))
+            (.println config/original-stderr
+                      (str "Shared packages: " packages "\nRun /reload to refresh Vis workers."))))
+        exit))))
 
 (defn- shared-uv-sync!
   [args]
@@ -1915,14 +2097,6 @@ else:
   (delay (slurp (or (io/resource "vis-host-python/shared_check.py")
                     (throw (ex-info "Missing Vis resource vis-host-python/shared_check.py" {}))))))
 
-(defn- shared-workspace
-  "uv's workspace directory of `project`, where uv resolves local sources."
-  ^File [^File project uv]
-  (let [workspace (io/file (str/trim (run-uv! project [uv "workspace" "dir" "--offline"])))]
-    (when-not (and (.isAbsolute workspace) (.isDirectory workspace))
-      (throw (ex-info "uv did not report an existing workspace directory" {})))
-    workspace))
-
 (defn- workspace-temp-file
   "A new temporary file in `workspace`. uv writes local sources relative to the workspace root,
    and reads them relative to the file's parent. Never put this file in the system temp dir."
@@ -1940,7 +2114,7 @@ else:
         (bundled-uv!)
 
         workspace
-        (shared-workspace project uv)
+        (project-workspace project)
 
         lock-file
         (workspace-temp-file workspace ".toml")
@@ -1969,7 +2143,7 @@ else:
         (bundled-uv!)
 
         workspace
-        (shared-workspace project uv)
+        (project-workspace project)
 
         [lock-file requirements overrides excludes :as files]
         (mapv #(workspace-temp-file workspace %) [".toml" ".txt" "-overrides.txt" "-excludes.txt"])]
@@ -2045,21 +2219,29 @@ else:
    Install only when shared packages do not satisfy the project. Never create or read `.venv`.
    While the inputs of the last passed check or installation stay the same, skip uv (#422)."
   ^File [^File project]
-  (locking preparation-lock
-    (binding [*extension-preparation?* true]
-      (try (let [inputs (shared-inputs project)]
-             (if (shared-prepared? project inputs)
-               (preparation-stage! project "cached")
-               (let [ready? (try (nil? (shared-project-plan project))
-                                 (catch clojure.lang.ExceptionInfo _ false))]
-                 (when-not ready?
-                   (preparation-stage! project "installing")
-                   (shared-project-install! project))
-                 ;; An installation changes shared packages: record their new state.
-                 (remember-shared! project (if ready? inputs (shared-inputs project)))
-                 (preparation-stage! project (if ready? "cached" "ready"))))
-             (.getCanonicalFile (io/file (runtime/packages-dir))))
-           (catch Throwable t (throw (preparation-failure project t)))))))
+  (binding [*extension-preparation?* true
+            *workspace-dirs* (atom {})]
+    (try (let [packages (.getCanonicalFile (io/file (runtime/packages-dir)))
+               inputs (shared-inputs project)]
+           (if (shared-prepared? project inputs)
+             (preparation-stage! project "cached")
+             (with-workspace-lock (project-workspace project)
+               #(with-shared-packages-lock packages
+                  (fn []
+                    (let [inputs (shared-inputs project)
+                          ready? (or (shared-prepared? project inputs)
+                                     (try (nil? (shared-project-plan project))
+                                          (catch clojure.lang.ExceptionInfo _ false)))]
+                      (when-not ready?
+                        (preparation-stage! project "installing")
+                        (shared-project-install! project))
+                      ;; An installation changes shared packages: record their new state.
+                      (remember-shared! project (if ready? inputs (shared-inputs project)))
+                      (preparation-stage! project (if ready? "cached" "ready")))))))
+           packages)
+         (catch InterruptedException e (throw e))
+         (catch FileLockInterruptionException e (throw e))
+         (catch Throwable t (throw (preparation-failure project t))))))
 
 (defn prepared-shared-project
   "Check that shared packages satisfy an extension project's lock. Never install.
@@ -2130,7 +2312,7 @@ else:
              (run-uv! project (into [(bundled-uv!) "sync" "--check" "--offline"] (embedded-python)))
              (let [packages (project-packages project)]
                (compile-bytecode! project packages)
-               (stamp-prepared! project packages))))
+               (stamp-prepared! project packages false))))
          (catch Exception _ nil))))
 
 (defn uv-command!
@@ -2166,8 +2348,17 @@ else:
    (let [index
          (configured-index-url)
 
+         install
+         #(runtime/pip-install! opts (into (if index ["--index-url" index] []) specs))
+
          result
-         (runtime/pip-install! opts (into (if index ["--index-url" index] []) specs))]
+         (let [packages (runtime/packages-dir)
+               target (:target opts)]
+           (if (and packages (or (nil? target)
+                                 (= (.getCanonicalFile (io/file target))
+                                    (.getCanonicalFile (io/file packages)))))
+             (with-shared-packages-lock packages install)
+             (install)))]
 
      (when (zero? (long (or (:exit result) 1)))
        (try

@@ -449,6 +449,156 @@
                    (expect (= "home = /foreign/python/bin\n" (slurp config))))))
              (finally (#'python-runtime/delete-tree! project))))))
 
+(defdescribe cached-interpreter-build-test
+  (it "reuses the build digest after a restart and detects an updated uv"
+      (let [root (temp-dir "vis-cached-build")
+            python (io/file root "python3")
+            uv (io/file root "uv")
+            build-digest @#'python-runtime/build-digest
+            calls (atom 0)]
+        (try (spit python "python build")
+             (spit uv "uv build")
+             (with-redefs-fn {#'python-runtime/build-digest (fn [file]
+                                                               (swap! calls inc)
+                                                               (build-digest file))}
+               (fn []
+                 (let [first-name (#'python-runtime/environment-name (.getPath python))]
+                   (reset! @#'python-runtime/interpreter-identities {})
+                   (expect (= first-name (#'python-runtime/environment-name (.getPath python))))
+                   (expect (= 1 @calls) "the next process does not hash the files again")
+                   (spit uv "updated uv build")
+                   (expect (not= first-name (#'python-runtime/environment-name (.getPath python))))
+                   (expect (= 2 @calls)))))
+             (finally (#'python-runtime/delete-tree! root))))))
+
+(defdescribe shared-sdk-preparation-test
+  (it "uses the installed interpreter for export and keeps the shared decision across calls"
+      (let [project (temp-dir "vis-only-sdk")
+            packages (io/file project "shared-packages")
+            python (io/file project "python3")
+            lock (io/file project "uv.lock")
+            calls (atom [])]
+        (try (.mkdirs packages)
+             (spit python "embedded python")
+             (spit lock "version = 1\n")
+             (spit (io/file project "pyproject.toml") "[project]\nname = \"shared-sdk\"\n")
+             (with-redefs-fn {#'python-runtime/embedded-executable (constantly (.getPath python))
+                              #'python-runtime/bundled-uv! (constantly "/bundled/uv")
+                              #'python-runtime/base-python (fn [] (throw (ex-info "unexpected stable copy" {})))
+                              #'runtime/packages-dir (constantly (.getPath packages))
+                              #'python-runtime/run-uv! (fn [_ args]
+                                                        (swap! calls conj (second args))
+                                                        (case (second args)
+                                                          "workspace" (.getPath project)
+                                                          "export" (do (expect (some #{(.getPath python)} args)) "")))}
+               (fn []
+                 (expect (= (.getCanonicalFile packages) (python-runtime/ensure-project! project)))
+                 (expect (= 1 (count (filter #{"export"} @calls))))
+                 (reset! calls [])
+                 (expect (= (.getCanonicalFile packages) (python-runtime/ensure-project! project)))
+                 (expect (empty? @calls) "a shared decision skips every uv command")
+                 (spit (io/file packages "new_package.py") "VALUE = 1\n")
+                 (python-runtime/ensure-project! project)
+                 (expect (= 1 (count (filter #{"export"} @calls))))
+                 (reset! calls [])
+                 (spit lock "version = 1\n# changed\n")
+                 (python-runtime/ensure-project! project)
+                 (expect (= 1 (count (filter #{"export"} @calls))))))
+             (finally (#'python-runtime/delete-tree! project))))))
+
+(defdescribe pruned-private-project-test
+  (it "removes SDK-only dependencies from a managed environment and checks the same set"
+      (let [project (temp-dir "vis-pruned-project")
+            python (io/file project "python3")
+            calls (atom [])]
+        (try (spit python "embedded python")
+             (spit (io/file project "pyproject.toml")
+                   "[project]\nname = \"fixture\"\ndependencies = [\"vis-agent\", \"direct\"]\n")
+             (spit (io/file project "uv.lock")
+                   "version = 1\n[[package]]\nname = \"vis-agent\"\n")
+             (with-redefs-fn {#'python-runtime/embedded-executable (constantly (.getPath python))
+                              #'python-runtime/bundled-uv! (constantly "/bundled/uv")
+                              #'python-runtime/runtime-environment? (constantly true)
+                              #'python-runtime/base-python (constantly (.getPath python))}
+               (fn []
+                 (let [env (io/file project (#'python-runtime/automatic-environment))
+                       site (io/file env "lib" "site-packages")
+                       syncs #(filterv (fn [args] (= "sync" (second args))) @calls)
+                       selection (fn [args]
+                                   (->> (partition 2 1 args)
+                                        (keep (fn [[flag name]] (when (= flag "--no-install-package") name)))
+                                        set))]
+                   (.mkdirs site)
+                   (spit (io/file env "pyvenv.cfg") (str "home = " (.getPath project) "\n"))
+                   (spit (io/file env ".vis-prepared.edn")
+                         (pr-str {:inputs (#'python-runtime/prepared-inputs project site)
+                                  :packages (.getCanonicalPath site)}))
+                   (with-redefs-fn {#'python-runtime/project-packages (constantly (.getCanonicalFile site))
+                                    #'python-runtime/run-uv! (fn [_ args]
+                                                              (swap! calls conj args)
+                                                              (case (second args)
+                                                                "workspace" (.getCanonicalPath project)
+                                                                "export" (do (spit (second (drop-while #(not= "--output-file" %) args))
+                                                                                    (str "direct==1\ncommon==2\n"
+                                                                                         (when-not (some #{"--prune"} args)
+                                                                                           "vis-agent==1\nsdk-only==3\n")))
+                                                                             "")
+                                                                "sync" (when (and (some #{"--check"} args) (= 1 (count (syncs))))
+                                                                         (throw (ex-info "environment needs sync" {})))))}
+                     (fn []
+                       (expect (= (.getCanonicalFile site) (python-runtime/ensure-project! project)))
+                       (expect (= [#{"vis-agent" "sdk-only"} #{"vis-agent" "sdk-only"}]
+                                  (mapv selection (syncs))))
+                       (reset! calls [])
+                       (python-runtime/ensure-project! project)
+                       (expect (empty? @calls)))))))
+             (finally (#'python-runtime/delete-tree! project))))))
+
+(defdescribe workspace-preparation-concurrency-test
+  (it "serializes members of one workspace without blocking another workspace"
+      (let [root (temp-dir "vis-parallel-preparation")
+            workspace (io/file root "workspace")
+            first-project (io/file workspace "first")
+            second-project (io/file workspace "second")
+            other-project (io/file root "other")
+            entered (promise)
+            second-lookup (promise)
+            release (promise)
+            second-entered (promise)
+            jobs (atom [])]
+        (try (doseq [project [first-project second-project other-project]]
+               (.mkdirs ^java.io.File project)
+               (spit (io/file project "pyproject.toml") "[project]\nname = \"fixture\"\n"))
+             (with-redefs-fn {#'python-runtime/embedded-executable (constantly "/fixture/python3")
+                              #'python-runtime/bundled-uv! (constantly "/fixture/uv")
+                              #'runtime/packages-dir (constantly (.getPath root))
+                              #'python-runtime/run-uv! (fn [project _]
+                                                        (when (= second-project project)
+                                                          (deliver second-lookup true))
+                                                        (.getCanonicalPath
+                                                          ^java.io.File
+                                                          (if (= project other-project) other-project workspace)))
+                              #'python-runtime/shared-project? (fn [project _]
+                                                                (cond (= first-project project) (do (deliver entered true)
+                                                                                                   (deref release 10000 nil))
+                                                                      (= second-project project) (deliver second-entered true))
+                                                                true)}
+               (fn []
+                 (let [prepare (fn [project]
+                                 (let [job (future (python-runtime/ensure-project! project))]
+                                   (swap! jobs conj job)
+                                   job))]
+                   (try (prepare first-project)
+                        (expect (deref entered 3000 false))
+                        (prepare second-project)
+                        (expect (deref second-lookup 3000 false))
+                        (expect (= (.getCanonicalFile root) (deref (prepare other-project) 3000 :blocked)))
+                        (expect (not (realized? second-entered)))
+                        (finally (deliver release true)))
+                   (expect (deref second-entered 3000 false)))))
+             (finally (doseq [job @jobs] (future-cancel job))
+                      (#'python-runtime/delete-tree! root))))))
+
 (defdescribe
   automatic-project-preparation-test
   (it "automatic project preparation"
@@ -536,7 +686,9 @@
            (spit (io/file project (#'python-runtime/automatic-environment) "pyvenv.cfg")
                  "home = /embedded/bin\n")
            (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
-                                                       (swap! calls conj (second args)))
+                                                       (if (= "workspace" (second args))
+                                                         (.getCanonicalPath project)
+                                                         (swap! calls conj (second args))))
                             #'python-runtime/shared-project? (constantly false)
                             #'python-runtime/runtime-environment? (constantly true)
                             #'python-runtime/project-packages (fn [_]
@@ -598,7 +750,9 @@
              (spit (io/file environment "pyvenv.cfg") "home = /embedded/bin\n")
              (.setWritable environment false false)
              (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
-                                                         (swap! calls conj (second args)))
+                                                         (if (= "workspace" (second args))
+                                                           (.getCanonicalPath project)
+                                                           (swap! calls conj (second args))))
                               #'python-runtime/shared-project? (constantly false)
                               #'python-runtime/runtime-environment? (constantly true)
                               #'python-runtime/project-packages (fn [_]
@@ -642,7 +796,8 @@
              (io/make-parents (io/file project ".src" "hidden_source.py"))
              (spit (io/file project ".src" "hidden_source.py") "VALUE = 4\n")
              (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
-                                                         (when (some #{"--check"} args)
+                                                         (cond (= "workspace" (second args)) (.getCanonicalPath project)
+                                                               (some #{"--check"} args)
                                                            (throw (ex-info "not ready" {}))))
                               #'python-runtime/shared-project? (constantly false)
                               #'python-runtime/runtime-environment? (constantly true)
@@ -989,7 +1144,8 @@
       (try (Files/createSymbolicLink (.toPath link) (.toPath target) (make-array FileAttribute 0))
            (spit (io/file project "pyproject.toml") "[project]\nname = \"orphans\"\n")
            (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
-                                                       (when (some #{"--check"} args)
+                                                       (cond (= "workspace" (second args)) (.getCanonicalPath project)
+                                                             (some #{"--check"} args)
                                                          (throw (ex-info "not ready" {}))))
                             #'python-runtime/shared-project? (constantly false)
                             #'python-runtime/runtime-environment? (constantly true)
@@ -1172,9 +1328,9 @@
               (last calls)]
 
           (expect (= (.getCanonicalFile packages) result))
-          (expect (= ["export" "pip"] [(first (nth calls 5)) (first install)]))
-          (expect (not-any? #{"--locked" "--offline"} (nth calls 5)))
-          (expect (some #{"vis-agent"} (nth calls 5))
+          (expect (= ["export" "pip"] [(first (nth calls 4)) (first install)]))
+          (expect (not-any? #{"--locked" "--offline"} (nth calls 4)))
+          (expect (some #{"vis-agent"} (nth calls 4))
                   "extension preparation never installs the SDK")
           (expect (some #{"--no-deps"} install) "an installation keeps the exact lock pins")
           (expect (not-any? #{"--dry-run" "--offline"} install))

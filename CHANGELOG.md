@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Extensions: a private environment of an extension holds only the packages of the extension. Before, it also held the packages of the Vis SDK, which the shared SDK already gives. The Reel environment went from 95 packages and 236 MiB to 1 package and 52 MiB (#498).
 - Live views: the `comment` kind of a canvas item is removed, with the `author`, `is_resolved`, and `comments` keys of an item. Put a thread on the item.
 - Python SDK: the canvas builders are in `vis.ui.canvas`: `vis.ui.canvas.card`, `.shape`, `.note`, `.frame`, `.text`, `.edge`, and `.picture`. `vis.ui.canvas_card` and `vis.ui.canvas_edge` are removed. Use `vis.ui.canvas.card` and `vis.ui.canvas.edge`.
 - Live views: each text of a canvas node has a largest length. An ID, a title, and the label of the board hold at most 200 characters, and a message holds at most 4,000 characters. A board holds at most 100 threads of 50 messages. Vis refuses a larger value and keeps the board as it was.
