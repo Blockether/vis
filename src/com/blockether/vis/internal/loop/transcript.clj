@@ -2910,21 +2910,43 @@
           (vec stable-messages)
 
           stable-count
-          (count stable)]
+          (count stable)
 
-      (when (and completed
-                 (same-prompt-cache-context? (:prompt-cache-context entry) prompt-cache-context)
-                 (prompt-cache-entry-fresh? provider entry)
-                 (seq stable)
-                 (= (long turn-position) (inc (long (:turn-position completed))))
-                 (= summaries (:summaries completed))
-                 (= stable-count (:stable-message-count completed))
-                 (map? (:assistant-message completed))
-                 (<= stable-count (count request))
-                 (= stable (subvec request 0 stable-count)))
+          ;; Each safety key on its own, so a miss names the keys that failed.
+          checks
+          (when completed
+            [[:context (same-prompt-cache-context? (:prompt-cache-context entry) prompt-cache-context)]
+             [:fresh (prompt-cache-entry-fresh? provider entry)]
+             [:stable (boolean (seq stable))]
+             [:turn (= (long turn-position) (inc (long (:turn-position completed))))]
+             [:summaries (= summaries (:summaries completed))]
+             [:stable-count (= stable-count (:stable-message-count completed))]
+             [:assistant (map? (:assistant-message completed))]
+             [:stable-prefix (and (<= stable-count (count request))
+                                  (= stable (subvec request 0 stable-count)))]])
+
+          failed
+          (if completed
+            (into [] (comp (remove second) (map first)) checks)
+            [(if entry :not-completed :route)])]
+
+      (if (empty? failed)
         {:messages (into (conj request (:assistant-message completed)) turn-messages)
          :summaries summaries
-         :resumed? true}))))
+         :resumed? true}
+        (do
+          (tel/log! {:level :info
+                     :id ::prompt-cache-resume-miss
+                     :data {:failed failed
+                            :route [provider (str model)]
+                            :turn turn-position
+                            :completed-turn (:turn-position completed)
+                            :age-ms (some->> (:at-ms entry) (- (util/now-ms)))
+                            :context-id-same? (= (:id (:prompt-cache-context entry)) (:id prompt-cache-context))
+                            :stable-diff-index (first (keep-indexed (fn [i m] (when (not= m (get request i)) i))
+                                                                    stable))}
+                     :msg "The previous request is not a provider prefix: the turn starts from the canonical conversation"})
+          nil)))))
 
 (defn fork-prompt-cache-state
   "The checkpoint of a fork through turn TURN-POSITION, or nil.
