@@ -389,9 +389,11 @@
     "- New file: `path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)`. After a write, "
     "print only the changed lines to check them.\n"
     "\n" "## Context\n"
-    "- When `hint` shows and a large phase follows, start the next block with "
-    "`print(fold_session(\"-tN/iK\", gist))`, where `iK` is the last completed step. Continue the work in the same "
-    "block after it. The gist keeps conclusions, exact paths, evidence, test state and dirty files.\n"))
+    "- Fold when the user asks for it, or when `hint` shows and a large phase follows. Fold only results that you "
+    "have read. Make `print(fold_session(\"-tN/iK\", gist))` the first statement of your next block, and put the "
+    "next work after it in that same block. `tN/iK` is the `# tN/iK` line of your last tool result: after a result "
+    "with the line `# t3/i7`, `fold_session(\"-t3/i7\", gist)` folds every step through t3/i7. The gist keeps "
+    "conclusions, exact paths, evidence, test state and dirty files.\n"))
 
 (defn- config-system-prompt
   "Read the optional string-keyed `system-prompt` YAML setting.

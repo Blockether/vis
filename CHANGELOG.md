@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Context: the fold rule now also applies when the user asks for a fold. It tells the model to copy the key from the `# tN/iK` line of its last tool result, and gives an example. A refused fold names the key of the last completed step, so the next try uses a correct key.
 - Extensions: `vis.tool_call_provider()` now returns the provider in a real turn. Before, a tool and a before hook got `None`. The value is the full provider ID, such as `external/prod`. A thread that the extension starts and a later callback, such as a `vis.live` event, get `None` (#507).
 
 ## [v0.5.31] - 2026-11-23

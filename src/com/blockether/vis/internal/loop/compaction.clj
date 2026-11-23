@@ -371,15 +371,27 @@
                (throw (ex-info "fold_session cannot prove the current turn; folding is blocked."
                                {:type :vis/fold-session-turn-unknown})))
              (when (seq live-scopes)
-               (throw (ex-info
-                        (str "fold_session blocked: " (str/join ", " live-scopes)
-                             " name the live iteration you are emitting right now — not yet a "
-                             "settled wire step. Fold only COMPLETED steps: every prior turn AND "
-                             "the current turn's finished iterations (e.g. \"-tN/iK\" up to the "
-                             "last settled iteration). Do not retry THESE scopes this turn.")
-                        {:type :vis/fold-session-active-turn
-                         :current-turn turn
-                         :blocked-scopes live-scopes})))
+               ;; Name the exact key of the last completed step: a model that guessed
+               ;; the turn or counted steps retries with a key it can copy.
+               (let [done (keep (fn [sc]
+                                  (when-let [[tn in] (ctx-engine/scope-key sc)]
+                                    (when (= (long tn) (long turn)) (long in))))
+                                uni)
+                     suggested (cond (seq done) (str "-t" turn "/i" (apply max done))
+                                     (> (long turn) 1) (str "-t" (dec (long turn))))]
+                 (throw (ex-info
+                          (str "fold_session blocked: " (str/join ", " live-scopes)
+                               " is not a completed step. "
+                               (if suggested
+                                 (str "The last completed step is \"" suggested "\": use print(fold_session(\""
+                                      suggested "\", gist)). ")
+                                 "No step of this turn is complete yet. ")
+                               "Fold only completed steps: every prior turn and the finished steps of the "
+                               "current turn. Do not retry these scopes this turn.")
+                          {:type :vis/fold-session-active-turn
+                           :current-turn turn
+                           :blocked-scopes live-scopes
+                           :suggested-key suggested}))))
              ;; A target that resolves to NO settled wire step folds nothing: the ack
              ;; would read `saved ~0 tokens` and the gist would anchor to an id the
              ;; wire never held (a mistyped range, a turn that does not exist yet).

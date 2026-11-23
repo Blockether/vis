@@ -201,6 +201,21 @@ def test_a_prefix_fold_needs_one_recorded_fold_in_the_session_usage(
     assert result.is_passed is is_passed
 
 
+def test_a_prefix_fold_in_a_repaired_block_keeps_its_literal_key(tmp_path):
+    document = _run(
+        _form("t1/i1/f1", "x = 1", operation="cat"),
+        _form(
+            "t1/i2/f1",
+            'print(fold_session("-t1/i1", "gist (open"',
+            operation="cat",
+            iteration=2,
+        ),
+    )
+    result = grade.grade_trial({"want_folded_prefix": True}, tmp_path, _trial(document))
+
+    assert result.result["guards"]["folded_prefix"] is True
+
+
 @pytest.mark.parametrize(
     ("code", "is_passed"),
     [

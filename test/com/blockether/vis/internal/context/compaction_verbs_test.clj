@@ -388,7 +388,9 @@
           (let [ex (try (sf target "unsafe") nil (catch clojure.lang.ExceptionInfo e e))]
             (expect (= :vis/fold-session-active-turn (:type (ex-data ex))))
             (expect (= 2 (:current-turn (ex-data ex))))
-            (expect (= blocked (:blocked-scopes (ex-data ex))))))
+            (expect (= blocked (:blocked-scopes (ex-data ex))))
+            (expect (= "-t2/i1" (:suggested-key (ex-data ex))))
+            (expect (str/includes? (ex-message ex) "print(fold_session(\"-t2/i1\", gist))"))))
         (expect (nil? (get @ca "session_summaries")))))
   (it "allows folding a SETTLED iteration of the current turn (finer-grained than the whole turn)"
       (let [ca

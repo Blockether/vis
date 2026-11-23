@@ -83,11 +83,20 @@ TERMINAL_ACTIVITY_STATES = {"succeeded", "failed", "cancelled"}
 
 
 def literal_fold_keys(code):
-    """Return literal first arguments from direct fold_session calls in one form."""
+    """Return literal first arguments from direct fold_session calls in one form.
+
+    Vis repairs a block with a syntax error before it runs it, so an invalid form
+    still folds: read its literal keys from the source text.
+    """
     try:
         tree = ast.parse(code)
     except SyntaxError:
-        return []
+        return [
+            match.group(2)
+            for match in re.finditer(
+                r"(?<![\w.])fold_session\(\s*(['\"])([^'\"\\\n]*)\1", code
+            )
+        ]
     return [
         node.args[0].value
         for node in ast.walk(tree)

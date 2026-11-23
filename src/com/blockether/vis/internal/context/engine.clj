@@ -1005,7 +1005,7 @@
            (str
              "Use one broad print(fold_session(\"-tN/iK\", gist)) through the last completed scope"
              (when urgent? " before another large tool call")))
-         ", as the first call of your next block; the other calls of that block can follow it"
+         ", as the first call of your next block; copy tN/iK from the # tN/iK line of your last tool result; the other calls of that block can follow it"
          "; keep every fact, name, date, number and request of the user in the gist; if an edit is ready, make it in the same block after the fold; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens.")))))
 
 (defn session-view
