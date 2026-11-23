@@ -641,7 +641,9 @@
                               (if (:error out)
                                 (extension/failure {:result out :error (:error out)})
                                 (extension/success {:result out}))))
-                          [{:code code}])
+                          [{:code code}]
+                          :run-after? #(not (or (cancellation/cancelled? cancel-token)
+                                                (env/retired-context-error env))))
 
                         out
                         (or (:result result) {:forms [] :error (:error result)})]

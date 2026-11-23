@@ -2123,8 +2123,10 @@
   ([op-kw env args result]
    (run-op-after-hooks op-kw env args result (environment-op-hooks op-kw env)))
   ([op-kw env args result hooks]
+   (run-op-after-hooks op-kw env args result hooks nil))
+  ([op-kw env args result hooks run-after?]
    (reduce (fn [res {:keys [phase owner] hook-fn :fn :as hook}]
-             (if (= :after phase)
+             (if (and (= :after phase) (or (nil? run-after?) (run-after?)))
                (try (let [r (hook-fn env (or (::matched hook) (:op hook) op-kw) args res)]
                       (if (tool-result? r) r res))
                     (catch Throwable e
@@ -2225,8 +2227,9 @@
   "Invoke host operation `f` through the declarative :around hooks for `op-kw`,
    then thread its result through the :after hooks. This is the non-model-tool
    entry point for host operations such as the Python block; hook
-   lifecycle remains owned by extension registration."
-  [op-kw env f args]
+   lifecycle remains owned by extension registration. When supplied,
+   `run-after?` must be true before each after hook can run."
+  [op-kw env f args & {:keys [run-after?]}]
   (let [op
         (keyword op-kw)
 
@@ -2238,7 +2241,7 @@
         hooks
         (vec (environment-op-hooks op env))]
 
-    (run-op-after-hooks op env args (run-op-around op env f args hooks) hooks)))
+    (run-op-after-hooks op env args (run-op-around op env f args hooks) hooks run-after?)))
 
 (defn- folded-kwargs->positional
   "Re-expand folded kwargs for the DIRECT-python surface. When the agent calls a
