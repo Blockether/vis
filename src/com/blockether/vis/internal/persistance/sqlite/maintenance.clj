@@ -6,11 +6,9 @@
    bulk reclaim (retiring a column across a whole transcript) can leave hundreds
    of megabytes in the file.
 
-   `maybe-vacuum!` gives that space back, on the same fortnight window as
-   `foundation.housekeeping` retention: at most once per `vacuum-interval-days`
-   per store, and only when the freelist is at least `vacuum-min-free-bytes` AND
-   `vacuum-min-free-fraction` of the file. A compact store is never touched, so
-   the usual answer is four PRAGMAs and no I/O.
+   `maybe-vacuum!` gives that space back when the freelist is at least
+   `vacuum-min-free-bytes`. A compact store is never touched, so the usual
+   answer is four PRAGMAs and no I/O.
 
    Writers never wait for the whole file. A store with `auto_vacuum=INCREMENTAL`
    frees its freelist with `PRAGMA incremental_vacuum(N)` in chunks of
@@ -18,6 +16,7 @@
    pause after each chunk lets waiting writers take the lock. Mozilla storage
    does the same (`mozStorageConnection.cpp` AsyncVacuum, application-services
    `maintenance.rs`). `use-incremental-vacuum!` gives each new store this mode.
+   Two processes that reclaim one store at the same time only take turns.
 
    A store with `auto_vacuum=NONE` (made by an older Vis) has no page map for
    this. One full VACUUM with `auto_vacuum=INCREMENTAL` converts it, and it is
@@ -26,18 +25,16 @@
    `vacuum-max-file-bytes`, inside the 30 s busy timeout of `core`. A larger old
    store keeps its freelist, and SQLite uses those pages again: on a 17 GB store
    the rewrite held the lock for many minutes and each turn write failed or
-   waited.
+   waited. The `vis.db.vacuum` file beside the store is the cross-process lock
+   of this conversion, an exclusive `FileLock`. The next reclaim of the
+   converted store deletes it.
 
    The work runs off the open path: `vacuum-async!` gives it to
-   `internal.janitor`, the one maintenance worker of a process, after a settling
-   delay. Each chunk and each rewrite is a transaction, so a process that stops
-   first leaves a consistent store, and the rest stays due.
-
-   The `vis.db.vacuum` marker beside the store is BOTH the clock (its mtime is
-   the last successful vacuum) and the cross-process mutex (an exclusive
-   `FileLock` held for the work). It is created only when a vacuum is
-   actually attempted and deleted again when one fails, so a store that never
-   needed reclaiming carries no marker and stays due."
+   `internal.janitor`, the one maintenance worker of a process. One pass frees
+   pages for at most `vacuum-slice-ms` and then queues the next pass, so a long
+   freelist never holds the other chores for more than one slice. Each chunk and
+   each rewrite is a transaction, so a process that stops first leaves a
+   consistent store, and the rest stays due."
   (:require [com.blockether.vis.internal.janitor :as janitor]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
@@ -46,25 +43,9 @@
            (java.sql Statement)
            (javax.sql DataSource)))
 
-(def ^:private ^:const day-ms 86400000)
-
-(def vacuum-interval-days
-  "Days between two reclaims of one store. The fortnight
-   `foundation.housekeeping/default-retention-days` already uses for every other
-   self-bounding artifact: long enough that no ordinary week ever pays the
-   rewrite, short enough that space freed by a migration comes back while the
-   operator still remembers the upgrade."
-  14)
-
 (def ^:private ^:const vacuum-min-free-bytes
-  "Freelist floor, in bytes (64 MiB). Below it the rewrite costs more than the
-   disk it returns."
+  "Freelist floor, in bytes (64 MiB). Below it SQLite uses the pages again soon."
   (* 64 1024 1024))
-
-(def ^:private ^:const vacuum-min-free-fraction
-  "Share of the file the freelist must reach on top of the floor. A big store
-   with 2% waste is healthy churn, not something to rewrite."
-  0.10)
 
 ;; Measured 15 s for 2.4 GB, so 2 GiB stays in the 30 s busy timeout of `core`.
 (def ^:private ^:const vacuum-max-file-bytes
@@ -82,13 +63,17 @@
    most 100 ms between tries, so it gets the lock in this pause."
   100)
 
+(def ^:private ^:const vacuum-slice-ms
+  "The longest time that one pass frees pages before it gives the janitor back."
+  2000)
+
 (def ^:private ^:const vacuum-start-delay-ms
-  "Settling time before the sweep. Startup is the busiest moment of a store's
-   day and the one VACUUM would block; a minute later it is quiet."
-  60000)
+  "Settling time after the open, so that the reclaim does not compete with the
+   start of the process."
+  5000)
 
 (defn- marker-file
-  "The `vis.db.vacuum` clock/mutex beside the store at `db-file`."
+  "The `vis.db.vacuum` conversion lock beside the store at `db-file`."
   ^File [^String db-file]
   (File. (str db-file ".vacuum")))
 
@@ -161,19 +146,6 @@
                                (checkpoint-or-retry! ds db-file open? later)))}))
   nil)
 
-(defn- time-due?
-  "True when `marker` has never recorded a vacuum, or the last one is older than
-   `interval-days`."
-  [^File marker ^long now-ms ^long interval-days]
-  (or (not (.isFile marker))
-      (>= (- now-ms (.lastModified marker)) (* interval-days (long day-ms)))))
-
-(defn- size-due?
-  "True when the freelist clears BOTH the byte floor and the share of the file."
-  [{:keys [file-bytes free-bytes]} ^long min-bytes ^double min-fraction]
-  (let [free (long free-bytes)]
-    (and (>= free min-bytes) (>= (double free) (* min-fraction (double (long file-bytes)))))))
-
 (defn- with-autocommit!
   "Call `f` with a statement of one connection in autocommit mode, and restore the
    mode after. SQLite refuses VACUUM inside a transaction."
@@ -202,17 +174,21 @@
   "Free the freelist of an `auto_vacuum=INCREMENTAL` store in chunks of
    `vacuum-chunk-pages`, each in its own write transaction, with a pause after
    each chunk. Stop when the freelist is empty, a chunk frees nothing, or the
-   store closes."
-  [^DataSource ds open?]
+   store closes. Answer `{:freelist-count :is-more}`: `:is-more` is true when the
+   slice ended at `deadline` and pages are left."
+  [^DataSource ds open? ^long deadline]
   (loop [free (long (:freelist-count (free-space ds)))]
-    (when (and (pos? free) (or (nil? open?) (open?)))
-      (with-autocommit!
-        ds
-        (fn [^Statement st]
-          ;; `execute` steps this pragma once and frees one page.
-          (.executeUpdate st (str "PRAGMA incremental_vacuum(" vacuum-chunk-pages ")"))))
-      (let [left (long (:freelist-count (free-space ds)))]
-        (when (< 0 left free) (Thread/sleep (long vacuum-chunk-pause-ms)) (recur left))))))
+    (if-not (and (pos? free) (or (nil? open?) (open?)))
+      {:freelist-count free :is-more false}
+      (do (with-autocommit!
+            ds
+            (fn [^Statement st]
+              ;; `execute` steps this pragma once and frees one page.
+              (.executeUpdate st (str "PRAGMA incremental_vacuum(" vacuum-chunk-pages ")"))))
+          (let [left (long (:freelist-count (free-space ds)))]
+            (cond (not (< 0 left free)) {:freelist-count left :is-more false}
+                  (<= deadline (long (util/now-ms))) {:freelist-count left :is-more true}
+                  :else (do (Thread/sleep (long vacuum-chunk-pause-ms)) (recur left))))))))
 
 (defn use-incremental-vacuum!
   "Give a new store `auto_vacuum=INCREMENTAL` before its first table, so that
@@ -232,7 +208,7 @@
 (defn- with-vacuum-lock!
   "Run `f` holding the exclusive cross-process lock on `marker`, which this call
    CREATES. Answers nil when another process (or another thread of this one) is
-   already reclaiming the same store."
+   already converting the same store."
   [^File marker f]
   (let [raf
         (RandomAccessFile. marker "rw")
@@ -248,130 +224,139 @@
                   (try (.close channel) (catch Throwable _ nil))
                   (try (.close raf) (catch Throwable _ nil))))))
 
-(defn- run-vacuum!
-  "One reclaim `work` under the held lock, stamping `marker` on success. Reports
-   rather than throws: a busy store is a later retry, not a failed open."
-  [^DataSource ds ^String db-file ^File marker space open? work]
+(defn- measured!
+  "Run the reclaim `work` and truncate the WAL after it, even when it fails. Add
+   the file size before and after and the duration to the report of `work`."
+  [^DataSource ds ^String db-file space open? work]
   (let [before
         (.length (File. db-file))
 
         started
-        (util/now-ms)]
+        (util/now-ms)
 
-    (try (try (work) (finally (checkpoint-or-retry! ds db-file open? checkpoint-retry-delays-ms)))
-         (.setLastModified marker (util/now-ms))
-         (merge space
-                {:is-vacuumed true
-                 :reason :vacuumed
-                 :before-bytes before
-                 :after-bytes (.length (File. db-file))
-                 :duration-ms (- (util/now-ms) started)})
-         (catch Throwable t
-           (merge space {:is-vacuumed false :reason :failed :error (ex-message t)})))))
+        result
+        (try (work) (finally (checkpoint-or-retry! ds db-file open? checkpoint-retry-delays-ms)))]
+
+    (merge space
+           {:is-vacuumed true
+            :reason :vacuumed
+            :before-bytes before
+            :after-bytes (.length (File. db-file))
+            :duration-ms (- (util/now-ms) started)}
+           result)))
+
+(defn- convert!
+  "Convert an `auto_vacuum=NONE` store with its last full VACUUM, under the
+   cross-process lock. Answer `:locked` when another process converts it."
+  [^DataSource ds ^String db-file space open?]
+  (or (with-vacuum-lock! (marker-file db-file)
+                         #(measured! ds
+                                     db-file
+                                     space
+                                     open?
+                                     (fn []
+                                       (vacuum! ds)
+                                       nil)))
+      (merge space {:is-vacuumed false :reason :locked})))
 
 (defn maybe-vacuum!
-  "Reclaim the freelist of the store at `db-file` when the fortnight has passed
-   AND the freelist is worth a rewrite. Returns a report — `:is-vacuumed` with a
-   `:reason` of `:vacuumed`, `:recent` (marker inside the window), `:compact`
-   (nothing worth reclaiming), `:too-large` (an `auto_vacuum=NONE` store whose
-   rewrite would block writers too long), `:low-disk`, `:locked` (another process is doing
-   it) or `:failed`. Does not throw. A low-disk skip leaves the marker alone:
-   only the next store open checks again, after the janitor delay. A busy
-   checkpoint retries on the janitor without a new vacuum. The optional `:open?`
-   predicate stops these retries when the store closes.
+  "Give back the freelist of the store at `db-file` when it is at least
+   `vacuum-min-free-bytes`. Returns a report — `:is-vacuumed` with a `:reason` of
+   `:vacuumed`, `:compact` (nothing worth reclaiming), `:too-large` (an
+   `auto_vacuum=NONE` store whose rewrite would block writers too long),
+   `:low-disk`, `:locked` (another process converts it) or `:failed`. Does not
+   throw. An incremental store frees pages for at most `vacuum-slice-ms`, and
+   `:is-more` is true when pages are left for the next pass. A busy checkpoint
+   retries on the janitor without a new reclaim. The optional `:open?` predicate
+   stops the work and these retries when the store closes.
 
-   Test options: `:now-ms`, `:interval-days`, `:min-free-bytes`,
-   `:min-free-fraction`, `:max-file-bytes`, and `:usable-space` (takes the store path)."
+   Test options: `:min-free-bytes`, `:max-file-bytes`, `:slice-ms`, and
+   `:usable-space` (takes the store path)."
   ([^DataSource ds ^String db-file] (maybe-vacuum! ds db-file nil))
   ([^DataSource ds ^String db-file
-    {:keys [now-ms interval-days min-free-bytes min-free-fraction max-file-bytes open?]
-     disk-space :usable-space}]
+    {:keys [min-free-bytes max-file-bytes slice-ms open?] disk-space :usable-space}]
    (try
-     (let [marker
-           (marker-file db-file)
+     (let [space
+           (free-space ds)
 
-           now
-           (long (or now-ms (util/now-ms)))
+           file-bytes
+           (max (long (:file-bytes space)) (.length (File. db-file)))]
 
-           window
-           (long (or interval-days vacuum-interval-days))]
+       (cond (< (long (:free-bytes space)) (long (or min-free-bytes vacuum-min-free-bytes)))
+             (merge space {:is-vacuumed false :reason :compact})
+             (= 2 (long (:auto-vacuum space)))
+             (do (.delete (marker-file db-file))
+                 (measured! ds
+                            db-file
+                            space
+                            open?
+                            #(incremental-vacuum! ds
+                                                  open?
+                                                  (+ (long (util/now-ms))
+                                                     (long (or slice-ms vacuum-slice-ms))))))
+             (< (long (or max-file-bytes vacuum-max-file-bytes)) file-bytes)
+             (merge space {:is-vacuumed false :reason :too-large})
+             :else (let [usable-bytes
+                         (long ((or disk-space usable-space) db-file))
 
-       (if-not (time-due? marker now window)
-         {:is-vacuumed false :reason :recent}
-         (let [space
-               (free-space ds)
+                         ;; VACUUM writes a temp database and a WAL. Both can be on this volume.
+                         ;; https://www.sqlite.org/lang_vacuum.html#how_vacuum_works
+                         required-bytes
+                         (* 2 file-bytes)]
 
-               file-bytes
-               (max (long (:file-bytes space)) (.length (File. db-file)))
-
-               reclaim!
-               (fn [work]
-                 (let [report (with-vacuum-lock! marker
-                                                 #(run-vacuum! ds db-file marker space open? work))]
-                   (when (= :failed (:reason report))
-                     (try (.delete marker) (catch Throwable _ nil)))
-                   (or report (merge space {:is-vacuumed false :reason :locked}))))]
-
-           (cond (not (size-due? space
-                                 (long (or min-free-bytes vacuum-min-free-bytes))
-                                 (double (or min-free-fraction vacuum-min-free-fraction))))
-                 (merge space {:is-vacuumed false :reason :compact})
-                 (= 2 (long (:auto-vacuum space))) (reclaim! #(incremental-vacuum! ds open?))
-                 (< (long (or max-file-bytes vacuum-max-file-bytes)) file-bytes)
-                 (merge space {:is-vacuumed false :reason :too-large})
-                 :else (let [usable-bytes
-                             (long ((or disk-space usable-space) db-file))
-
-                             ;; VACUUM writes a temp database and a WAL. Both can be on this volume.
-                             ;; https://www.sqlite.org/lang_vacuum.html#how_vacuum_works
-                             required-bytes
-                             (* 2 file-bytes)]
-
-                         (if (< usable-bytes required-bytes)
-                           (assoc space
-                             :is-vacuumed false
-                             :reason :low-disk
-                             :usable-bytes usable-bytes
-                             :required-bytes required-bytes)
-                           (reclaim! #(vacuum! ds))))))))
+                     (if (< usable-bytes required-bytes)
+                       (assoc space
+                         :is-vacuumed false
+                         :reason :low-disk
+                         :usable-bytes usable-bytes
+                         :required-bytes required-bytes)
+                       (convert! ds db-file space open?)))))
      (catch Throwable t {:is-vacuumed false :reason :failed :error (ex-message t)}))))
+
+(defn- vacuum-pass!
+  "One janitor pass of `maybe-vacuum!`. While pages are left, queue the next
+   pass at once under the same id, so other chores run between two slices."
+  [ds db-file {:keys [open?] :as opts}]
+  (when (or (nil? open?) (open?))
+    (let [{:keys [reason is-more] :as report} (maybe-vacuum! ds db-file opts)]
+      (when is-more
+        (janitor/submit! {:id [:sqlite-vacuum db-file] :run #(vacuum-pass! ds db-file opts)}))
+      (case reason
+        :compact
+        nil
+
+        :failed
+        (throw (ex-info "The SQLite vacuum failed" report))
+
+        report))))
 
 (defn vacuum-async!
   "Give `maybe-vacuum!` for the store at `db-file` to the janitor, which runs it
-   after `:delay-ms`, so the rewrite is not what a starting process waits on. A
+   after `:delay-ms`, so the reclaim is not what a starting process waits on. A
    `:before` function runs first in the same task, so a data rewrite frees its
    pages before the reclaim checks them. If it returns true, truncate the WAL.
-   `:open?` answers whether the store is
-   still open: a store that closed in the delay is due at its next open. Called
-   once per store per process, from the pool that just opened it. A second call
-   for one store replaces a task that still waits.
+   `:open?` answers whether the store is still open: a store that closed in the
+   delay is due at its next open. Called once per store per process, from the
+   pool that just opened it. A second call for one store replaces a task that
+   still waits.
 
-   The janitor writes the report of a vacuum that ran or that another process
-   holds. A store with nothing to reclaim leaves no line, and a failed vacuum is a
-   warning."
+   The janitor writes the report of each pass that did work or that another
+   process holds. A store with nothing to reclaim leaves no line, and a failed
+   pass is a warning."
   ([ds db-file] (vacuum-async! ds db-file nil))
   ([ds db-file {:keys [delay-ms before open?] :as opts}]
-   (janitor/submit!
-     {:id [:sqlite-vacuum db-file]
-      :delay-ms (long (or delay-ms vacuum-start-delay-ms))
-      :run (fn []
-             (when (or (nil? open?) (open?))
-               (when (and before
-                          (try (true? (before))
-                               (catch Exception e
-                                 (tel/log! {:level :warn
-                                            :id ::store-rewrite-failed
-                                            :data {:db-file db-file}
-                                            :error e})
-                                 ;; An earlier rewrite can commit before a later one fails.
-                                 true)))
-                 (checkpoint-or-retry! ds db-file open? checkpoint-retry-delays-ms))
-               (let [{:keys [reason] :as report} (maybe-vacuum! ds db-file opts)]
-                 (case reason
-                   (:recent :compact)
-                   nil
-
-                   :failed
-                   (throw (ex-info "The SQLite vacuum failed" report))
-
-                   report))))})))
+   (janitor/submit! {:id [:sqlite-vacuum db-file]
+                     :delay-ms (long (or delay-ms vacuum-start-delay-ms))
+                     :run (fn []
+                            (when (or (nil? open?) (open?))
+                              (when (and before
+                                         (try (true? (before))
+                                              (catch Exception e
+                                                (tel/log! {:level :warn
+                                                           :id ::store-rewrite-failed
+                                                           :data {:db-file db-file}
+                                                           :error e})
+                                                ;; An earlier rewrite can commit before a later one fails.
+                                                true)))
+                                (checkpoint-or-retry! ds db-file open? checkpoint-retry-delays-ms))
+                              (vacuum-pass! ds db-file opts)))})))

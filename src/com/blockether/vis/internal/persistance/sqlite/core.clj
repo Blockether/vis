@@ -1344,8 +1344,8 @@
 
 (defn- open-disk-pool!
   "Fresh pool over `file`, schema installed under the cross-process migration
-   lock (a new store first gets `auto_vacuum=INCREMENTAL`), then the fortnightly
-   space reclaim handed to the janitor (`maintenance/vacuum-async!`, off the open
+   lock (a new store first gets `auto_vacuum=INCREMENTAL`), then the space
+   reclaim handed to the janitor (`maintenance/vacuum-async!`, off the open
    path). Closes the pool if the migration fails so a failed open leaks
    nothing."
   ^HikariDataSource [^String path ^String file]

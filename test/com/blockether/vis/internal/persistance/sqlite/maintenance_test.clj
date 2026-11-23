@@ -1,14 +1,11 @@
 (ns com.blockether.vis.internal.persistance.sqlite.maintenance-test
-  "The fortnightly space reclaim: a store is rewritten only when the freelist is
-   both OLD enough and BIG enough, and the `vis.db.vacuum` marker is what makes
-   the window a window."
+  "The space reclaim: an old store gets one converting rewrite, and each later
+   freelist goes back in short chunks that writers can pass."
   (:require [com.blockether.vis.internal.janitor :as janitor]
             [com.blockether.vis.internal.persistance.sqlite.maintenance :as maintenance]
             [lazytest.core :refer [defdescribe expect it]]
             [taoensso.telemere :as tel])
   (:import (java.io File)))
-
-(def ^:private day-ms 86400000)
 
 (defn- temp-store
   "A file-backed store nobody else shares: `[path datasource]`."
@@ -105,50 +102,63 @@
                           (expect (not (.isFile (File. (str path ".vacuum"))))))
                         (finally (cleanup! path))))))
 
+(defn- free-pages ^long [ds] (long (:freelist-count (maintenance/free-space ds))))
+
 (defdescribe
-  vacuum-window-test
-  (it
-    "reclaims a big freelist once, then holds the fortnight before doing it again"
-    (let [[path ds]
-          (temp-store)
+  vacuum-test
+  (it "converts an old store with one rewrite, then reclaims each new freelist without one"
+      (let [[path ds]
+            (temp-store)
 
-          opts
-          {:min-free-bytes 1024}]
+            opts
+            {:min-free-bytes 1024}]
 
-      (try (fill! ds 2000)
-           (exec! ds "DELETE FROM bulk")
-           (let [before
-                 (.length (File. path))
+        (try (fill! ds 2000)
+             (exec! ds "DELETE FROM bulk")
+             (let [before
+                   (.length (File. path))
 
-                 report
-                 (maintenance/maybe-vacuum! ds path opts)]
+                   report
+                   (maintenance/maybe-vacuum! ds path opts)]
 
-             (expect (true? (:is-vacuumed report)))
-             (expect (= :vacuumed (:reason report)))
-             ;; The FILE gave the space back, not just the freelist.
-             (expect (< (.length (File. path)) before))
-             (expect (zero? (long (:freelist-count (maintenance/free-space ds)))))
-             ;; The rewrite converts the store, so it never needs a full VACUUM again.
-             (expect (= 2 (:auto-vacuum (maintenance/free-space ds))))
-             (expect (.isFile (File. (str path ".vacuum")))))
-           ;; Inside the window a fresh freelist waits its turn.
-           (fill! ds 2000)
-           (exec! ds "DELETE FROM bulk")
-           (let [report (maintenance/maybe-vacuum! ds path opts)]
-             (expect (false? (:is-vacuumed report)))
-             (expect (= :recent (:reason report))))
-           ;; A fortnight later it is due again.
-           (let [later
-                 (+ (System/currentTimeMillis)
-                    (* (long maintenance/vacuum-interval-days) (long day-ms))
-                    1000)
+               (expect (= :vacuumed (:reason report)))
+               ;; The FILE gave the space back, not just the freelist.
+               (expect (< (.length (File. path)) before))
+               (expect (zero? (free-pages ds)))
+               (expect (= 2 (:auto-vacuum (maintenance/free-space ds)))))
+             ;; A new freelist goes back at once, and no full rewrite blocks the writers.
+             (fill! ds 2000)
+             (exec! ds "DELETE FROM bulk")
+             (with-redefs-fn {#'maintenance/vacuum! (fn [_]
+                                                      (throw (ex-info "Full rewrite" {})))}
+               #(expect (= :vacuumed (:reason (maintenance/maybe-vacuum! ds path opts)))))
+             (expect (zero? (free-pages ds)))
+             (expect (not (.exists (File. (str path ".vacuum")))))
+             (finally (cleanup! path)))))
+  (it "gives the janitor back after each slice and frees the rest in later passes"
+      (let [[path ds]
+            (temp-store)
 
-                 report
-                 (maintenance/maybe-vacuum! ds path (assoc opts :now-ms later))]
+            opts
+            {:min-free-bytes 1024 :slice-ms 0}]
 
-             (expect (true? (:is-vacuumed report)))
-             (expect (zero? (long (:freelist-count (maintenance/free-space ds))))))
-           (finally (cleanup! path))))))
+        (try (maintenance/use-incremental-vacuum! ds)
+             (fill! ds 3000)
+             (exec! ds "DELETE FROM bulk")
+             (let [free
+                   (free-pages ds)
+
+                   report
+                   (maintenance/maybe-vacuum! ds path opts)]
+
+               (expect (true? (:is-more report)))
+               (expect (< 0 (free-pages ds) free)))
+             (maintenance/vacuum-async! ds path (assoc opts :delay-ms 0))
+             (let [deadline (+ (System/currentTimeMillis) 30000)]
+               (while (and (pos? (free-pages ds)) (< (System/currentTimeMillis) deadline))
+                 (Thread/sleep 50)))
+             (expect (zero? (free-pages ds)))
+             (finally (cleanup! path))))))
 
 (defdescribe
   vacuum-disk-space-test
@@ -284,7 +294,7 @@
                (expect (= [:sqlite-checkpoint path] (:id @retry)))
                (janitor-lines path #(janitor/submit! (assoc @retry :delay-ms 0)))
                (expect (zero? (.length wal)))
-               (expect (= :recent (:reason (maintenance/maybe-vacuum! ds path)))))
+               (expect (= :compact (:reason (maintenance/maybe-vacuum! ds path)))))
              (finally (cleanup! path))))))
 
 (defdescribe
