@@ -10386,6 +10386,18 @@
              (try (python-env/delete-session-defs! sid) (catch Throwable _ nil))
              nil)))
 
+(defn- forget-deleted-session!
+  "Drop the deleted session `sid` from this process and return its teardown Future.
+   The shell logs are on disk, outside the DB tree, so this deletes them by name.
+   Attached clients hear `session.deleted` while their sinks still exist; a
+   reconnect learns the same verdict from the missing persisted session."
+  [sid]
+  (shell-log/delete-session-logs! sid)
+  (append-event! sid "session.deleted" {} {:store? false})
+  (drop-session! sid)
+  (bus/forget! sid)
+  (teardown-session-async! sid))
+
 (defn close-session!
   "DELETE a session: delete the session tree and drop it from this process.
    The directories of its workspace are the user's real ones and are never
@@ -10409,20 +10421,12 @@
     ;; The leader of a deleted child keeps its stream: its team lost a row, and maybe a clock.
     (when-let [leader (:leader_id child)]
       (team-removed! (str leader) (str sid) (str (:team_id child)) (mapv str (:turn_ids child))))
-    (doseq [id extension-session-ids]
-      (shell-log/delete-session-logs! id)
-      (append-event! id "session.deleted" {} {:store? false})
-      (drop-session! id)
-      (bus/forget! id)
-      (teardown-session-async! id)))
-  ;; Notify attached clients while their sinks still exist. Reconnects learn the
-  ;; same verdict from the missing persisted session, not a deleted replay ring.
-  (append-event! sid "session.deleted" {} {:store? false})
+    ;; The cascade deleted the extension children too. No list shows them, so the fleet
+    ;; hears only of the parent.
+    (run! forget-deleted-session! extension-session-ids))
   ;; Lists watch the fleet, including sessions this client has never opened.
   (publish-fleet! [{"schema" 1 "type" "session.deleted" "session_id" (str sid)}])
-  (drop-session! sid)
-  (bus/forget! sid)
-  (teardown-session-async! sid))
+  (forget-deleted-session! sid))
 
 (defn delete-session-group-with-sessions!
   "Delete a group AND the sessions filed under it — the second answer the delete
