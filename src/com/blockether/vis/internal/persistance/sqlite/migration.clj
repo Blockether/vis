@@ -833,6 +833,161 @@
              (.executeUpdate st))
            (catch Throwable _ nil)))))
 
+(defn- column-names
+  "The column names of `table` in their stored order, generated and hidden columns too."
+  [^java.sql.Connection conn ^String table]
+  (with-open [st
+              (.createStatement conn)
+
+              rs
+              (.executeQuery st (str "PRAGMA table_xinfo(" table ")"))]
+
+    (loop [acc []]
+      (if (.next rs) (recur (conj acc (.getString rs "name"))) acc))))
+
+(defn- hidden-columns?
+  "True when `table` has a generated or hidden column: an INSERT cannot copy it."
+  [^java.sql.Connection conn ^String table]
+  (with-open [st (.prepareStatement conn "SELECT 1 FROM pragma_table_xinfo(?) WHERE hidden <> 0")]
+    (.setString st 1 table)
+    (with-open [rs (.executeQuery st)] (.next rs))))
+
+(defn- table-objects
+  "The store's own SQL of each index and trigger of `table`. Automatic indexes have none."
+  [^java.sql.Connection conn ^String table]
+  (with-open [st (.prepareStatement
+                   conn
+                   (str "SELECT sql FROM sqlite_master"
+                        " WHERE type IN ('index', 'trigger') AND tbl_name = ? AND sql IS NOT NULL"))]
+    (.setString st 1 table)
+    (with-open [rs (.executeQuery st)]
+      (loop [acc []]
+        (if (.next rs) (recur (conj acc (.getString rs 1))) acc)))))
+
+(defn- pragma-long
+  ^long [^java.sql.Connection conn ^String pragma]
+  (with-open [st
+              (.createStatement conn)
+
+              rs
+              (.executeQuery st (str "PRAGMA " pragma))]
+
+    (if (.next rs) (.getLong rs 1) 0)))
+
+(defn- index-shape
+  "Each index of `table` as `[unique origin partial columns]`, without its name, sorted.
+   Automatic indexes of UNIQUE and PRIMARY KEY constraints are in it too."
+  [^java.sql.Connection conn ^String table]
+  (with-open [st (.prepareStatement
+                   conn
+                   (str "SELECT il.\"unique\", il.origin, il.partial,"
+                        " (SELECT group_concat(ii.name, ',') FROM pragma_index_info(il.name) ii)"
+                        " FROM pragma_index_list(?) il"))]
+    (.setString st 1 table)
+    (with-open [rs (.executeQuery st)]
+      (loop [acc []]
+        (if (.next rs)
+          (recur (conj acc [(.getLong rs 1) (.getString rs 2) (.getLong rs 3) (.getString rs 4)]))
+          (sort-by pr-str acc))))))
+
+(defn reorder-table!
+  "Give `table` the column order of the canonical SQL. Answer true when the table was
+   built again, false when its order was canonical already.
+
+   SQLite reads a column that comes after a large BLOB only through all the overflow
+   pages of that BLOB, so the canonical SQL puts a large BLOB last. A store that got
+   its columns in an older order keeps that order, because SQLite cannot move a
+   column: only a new table can change it.
+
+   The new table gets each row, each index and each trigger of the old one. A column
+   that the canonical SQL does not name keeps its stored definition and comes last.
+   One transaction, so a stopped rebuild leaves the table as it was. A table that the
+   copy cannot keep exactly stays as it is: a column without a definition that the
+   parser reads, a generated column, or a constraint that only the old table has. Foreign-key
+   checks are off on this connection during the copy: the rows are those that the
+   store holds already, and a check would refuse an old row whose parent is gone."
+  [^DataSource ds locations ^String table]
+  (let [texts
+        (migration-sql-texts (if (string? locations) [locations] locations))
+
+        canonical
+        (mapv (comp str/lower-case :name)
+              (get (reduce merge {} (map canonical-columns texts)) table))
+
+        ddl
+        (some #(when (and (= "table" (:kind %)) (= table (:name %))) (:sql %))
+              (canonical-objects texts))]
+
+    (when-not (and ddl (seq canonical))
+      (throw (ex-info (str "The canonical SQL has no table " table)
+                      {:type :persistance/unknown-table :table table})))
+    (with-open [conn (.getConnection ds)]
+      (let [fk (pragma-long conn "foreign_keys")]
+        (execute-ddl! conn "PRAGMA foreign_keys = OFF")
+        (try (execute-ddl! conn "BEGIN IMMEDIATE")
+             ;; Read the table under the write lock: a column or an index that another
+             ;; connection adds before it must come into the new table too.
+             (try (let [names
+                        (column-names conn table)
+
+                        stored
+                        (mapv str/lower-case names)
+
+                        known
+                        (set canonical)
+
+                        extras
+                        (remove #(contains? known (str/lower-case ^String (:name %)))
+                                (stored-columns conn table))
+
+                        rebuild?
+                        (and (not= (filterv (set stored) canonical) (filterv known stored))
+                             (not (hidden-columns? conn table))
+                             ;; Each column must have a definition to copy.
+                             (= (set stored)
+                                (into (set (filter known stored))
+                                      (map (comp str/lower-case :name))
+                                      extras)))
+
+                        shape
+                        (when rebuild? (index-shape conn table))]
+
+                    (when rebuild?
+                      (let [aside
+                            (str table "_vis_reorder")
+
+                            objects
+                            (table-objects conn table)
+
+                            columns
+                            (str/join ", " (map #(str \" (str/replace % "\"" "\"\"") \") names))]
+
+                        (execute-ddl! conn (str "DROP TABLE IF EXISTS " aside))
+                        (execute-ddl! conn
+                                      (str/replace-first
+                                        ddl
+                                        (re-pattern (str "(?i)(create\\s+table\\s+(?:if\\s+not\\s+exists\\s+)?)[\"`\\[]?"
+                                                       table
+                                                       "[\"`\\]]?"))
+                                        (str "$1" aside)))
+                        (doseq [{:keys [sql]} extras]
+                          (execute-ddl! conn (str "ALTER TABLE " aside " ADD COLUMN " sql)))
+                        (execute-ddl! conn
+                                      (str "INSERT INTO " aside " (" columns ") SELECT " columns " FROM " table))
+                        (execute-ddl! conn (str "DROP TABLE " table))
+                        (execute-ddl! conn (str "ALTER TABLE " aside " RENAME TO " table))
+                        (doseq [sql objects]
+                          (execute-ddl! conn sql))))
+                    (if (or (not rebuild?)
+                            (and (= (frequencies stored)
+                                    (frequencies (map str/lower-case (column-names conn table))))
+                                 (= shape (index-shape conn table))))
+                      (do (execute-ddl! conn "COMMIT") rebuild?)
+                      ;; A constraint that the copy did not keep: keep the old table.
+                      (do (execute-ddl! conn "ROLLBACK") false)))
+                  (catch Throwable error (execute-ddl! conn "ROLLBACK") (throw error)))
+             (finally (execute-ddl! conn (str "PRAGMA foreign_keys = " fk))))))))
+
 (defn- drifted-columns
   "Columns whose definition in the STORE no longer reads like the canonical
    file's, as the canonical definition plus its `:table`.

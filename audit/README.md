@@ -147,7 +147,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `clj-kondo/clj-kondo` | `2026.08.04` | EPL-1.0 | 733 KB | 3rd-party |
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.21` | MIT | 12 KB | Blockether (in-house) |
-| `com.blockether/imaging` | `0.1.14` | MIT | 23 KB | Blockether (in-house) |
+| `com.blockether/imaging` | `0.1.15` | MIT | 24 KB | Blockether (in-house) |
 | `com.blockether/parinferish` | `0.2.4` | MIT | 70 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.245` | Apache-2.0 | 1023 KB | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:ca3f2f53f2023296ba761e809c0203ba54f0f941` | MIT | source checkout | Blockether (in-house) |

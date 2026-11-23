@@ -1026,7 +1026,6 @@ CREATE TABLE session_attachment (
   -- know where to seek to. NULL for every attachment that is not a recording, and
   -- for one whose engine reported no times.
   transcription_segments    TEXT,
-  bytes                     BLOB,
   storage_uri               TEXT,
 
   -- COMPACTION_PENDING: 1 while the stored payload waits for its lossless
@@ -1042,6 +1041,11 @@ CREATE TABLE session_attachment (
   storage_codec             TEXT NOT NULL DEFAULT 'raw' CHECK (storage_codec IN ('raw', 'zstd')),
 
   created_at                INTEGER NOT NULL,
+
+  -- BYTES: the stored payload. Keep it the last column. SQLite reads a column
+  -- after a large BLOB only through all the overflow pages of that BLOB, so a
+  -- column after it makes each read of the row metadata read the payload too.
+  bytes                     BLOB,
 
   -- Exactly one payload location: never both, never neither.
   CHECK (

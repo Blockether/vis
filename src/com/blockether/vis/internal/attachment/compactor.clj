@@ -13,8 +13,8 @@
    and asks for the next pass at once, so a long backlog never holds the other
    chores for more than one slice.
 
-   A pass takes a row ([[persistance/db-claim-attachment-compaction!]]) before it
-   reads the bytes with the optimiser. A payload that stops the process stays
+   A pass takes a row ([[persistance/db-claim-next-attachment-compaction!]]) before
+   it reads the bytes with the optimiser. A payload that stops the process stays
    `raw` and is never taken again, so it cannot stop each next start too.
 
    [[watch!]] names a store to the janitor; [[wake!]] asks for a pass soon after a
@@ -66,22 +66,24 @@
   "Compact the waiting rows of `db`, one at a time, until none waits or
    `budget-ms` has passed (nil: no limit). The time is checked before each row,
    so one row can take longer than the budget: a large PNG takes seconds. Answer
-   `{:rows n :more? bool}`: how many rows it took, and whether rows still wait."
+   `{:rows n :more? bool}`: how many rows it took, and whether rows can still wait.
+   A pass that stops at the budget answers `:more? true` without a look, so the
+   next pass can find none."
   ([db] (drain! db nil))
   ([db budget-ms]
    (let [deadline (some->> budget-ms
                            long
                            (+ (util/now-ms)))]
      (loop [n 0]
-       (let [id (:id (first (persistance/db-pending-attachment-compactions db 1)))]
-         (cond (nil? id) {:rows n :more? false}
-               ;; Each pass takes one row at least, so a pass always moves on.
-               (and deadline (pos? n) (>= (util/now-ms) (long deadline))) {:rows n :more? true}
-               :else (let [data (persistance/db-claim-attachment-compaction! db id)]
-                       (when-let [out (some->> data
-                                               (smaller id))]
-                         (persistance/db-finish-attachment-compaction! db id data out))
-                       (recur (inc n)))))))))
+       ;; Each pass takes one row at least, so a pass always moves on.
+       (if (and deadline (pos? n) (>= (util/now-ms) (long deadline)))
+         {:rows n :more? true}
+         (if-let [{:keys [id bytes]} (persistance/db-claim-next-attachment-compaction! db)]
+           (do (when-let [out (some->> bytes
+                                       (smaller id))]
+                 (persistance/db-finish-attachment-compaction! db id bytes out))
+               (recur (inc n)))
+           {:rows n :more? false}))))))
 
 (defn- closed?
   "True when the DataSource `k` of a store is a closed pool. Only a pool tells it:

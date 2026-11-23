@@ -335,11 +335,9 @@
 (defprotocol AttachmentStore
   "Attachment compaction operations of a persistence backend, with the `Store` dispatch.
    They are a separate protocol for the same JVM method-size limit as `AutomationStore`."
-  (db-pending-attachment-compactions [db-info limit]
-    "The ids of up to `limit` stored `raw` attachments that wait for the compactor, as `{:id}`.")
-  (db-claim-attachment-compaction! [db-info id]
-    "Take one waiting attachment, clear its wait and answer its `raw` bytes in the same
-     transaction. Nil when another pass took it.")
+  (db-claim-next-attachment-compaction! [db-info]
+    "Take the next waiting attachment, clear its wait and answer `{:id :bytes}` with its
+     `raw` bytes in the same transaction. Nil when none waits.")
   (db-finish-attachment-compaction! [db-info id stored compacted]
     "Write `compacted`, `{:bytes :codec :size}`, for one taken attachment. The row changes
      only while it still holds the `stored` bytes `raw`."))

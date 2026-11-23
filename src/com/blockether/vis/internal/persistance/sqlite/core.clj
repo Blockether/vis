@@ -730,11 +730,19 @@
                        "WHERE bytes IS NOT NULL AND storage_codec = ? AND length(bytes) >= ?")
                   attachment-codec/raw (long attachment-codec/min-bytes)]))
 
+(defn- move-attachment-bytes-last!
+  "Build `session_attachment` again with `bytes` as its last column. In an older store
+   each column after the payload BLOB made a read of the row metadata read the whole
+   payload: on a 3.4 GB store, one scan of `created_at` read 3.4 GB in 20 s."
+  [^DataSource ds]
+  (migration/reorder-table! ds MIGRATIONS "session_attachment"))
+
 (def ^:private store-rewrites
   "One-time data rewrites of older stores, in order. `PRAGMA user_version` counts the
    rewrites that a store has already done. Append new rewrites; never reorder them."
   [rewrite-activity-search-text! drop-stored-activity-rows! drop-log-table! drop-improve-tables!
-   drop-council-machine-table! store-agent-teams! store-team-clocks! queue-attachment-compaction!])
+   drop-council-machine-table! store-agent-teams! store-team-clocks! queue-attachment-compaction!
+   move-attachment-bytes-last!])
 
 (defn- rewrites-done
   "The count of the store rewrites that this store has already done."
@@ -8784,38 +8792,42 @@
 
 ;; Attachment compaction
 
-(defn db-pending-attachment-compactions
-  "The ids of up to `limit` stored `raw` attachments that wait for the attachment
-   compactor, as `{:id}` rows. No BLOB is read."
-  [db limit]
-  (if-not (ds db)
-    []
-    (query! db
-            {:select [:id]
-             :from :session_attachment
-             :where [:and [:= :compaction_pending 1] [:is-not :bytes nil]
-                     [:= :storage_codec attachment-codec/raw]]
-             :limit (long limit)})))
+(defn db-claim-next-attachment-compaction!
+  "Take the next attachment that waits for the attachment compactor: clear its wait
+   and answer `{:id :bytes}` with its `raw` bytes, or nil when none waits. `:bytes`
+   is nil when the row holds no `raw` payload any more. The read and the clear are one
+   transaction, and the wait clears BEFORE the optimiser reads the bytes, so a payload
+   that stops the process is never read again.
 
-(defn db-claim-attachment-compaction!
-  "Take the waiting attachment `id` for one compaction, clear its wait and answer
-   its `raw` bytes, or nil when another pass took it. The read and the clear are
-   one transaction, so the bytes are those of the row that this call took. The
-   wait clears BEFORE the optimiser reads the bytes, so a payload that stops the
-   process is never read again."
-  ^bytes [db id]
-  (sqlite-write-tx! db
-                    (fn [tx]
-                      (when (pos? (update-count
-                                    (execute! tx
-                                              {:update :session_attachment
-                                               :set {:compaction_pending 0}
-                                               :where [:and [:= :id id] [:= :compaction_pending 1]
-                                                       [:= :storage_codec attachment-codec/raw]]})))
-                        (:bytes (query-one! tx
-                                            {:select [:bytes]
-                                             :from :session_attachment
-                                             :where [:= :id id]}))))))
+   Only a stored `raw` payload gets a wait ([[attachment-payload-cols]],
+   [[queue-attachment-compaction!]]), so the search reads the partial index
+   `idx_attachment_compaction_pending` alone and no row."
+  [db]
+  ;; A read first: an empty queue must not wait for the write lock.
+  (when (and (ds db)
+             (seq (query! db
+                          {:select [:id]
+                           :from :session_attachment
+                           :where [:= :compaction_pending 1]
+                           :limit 1})))
+    (sqlite-write-tx! db
+                      (fn [tx]
+                        (when-let [id (:id (query-one! tx
+                                                       {:select [:id]
+                                                        :from :session_attachment
+                                                        :where [:= :compaction_pending 1]
+                                                        :limit 1}))]
+                          (execute! tx
+                                    {:update :session_attachment
+                                     :set {:compaction_pending 0}
+                                     :where [:= :id id]})
+                          {:id id
+                           :bytes (:bytes (query-one! tx
+                                                      {:select [:bytes]
+                                                       :from :session_attachment
+                                                       :where [:and [:= :id id]
+                                                               [:= :storage_codec
+                                                                attachment-codec/raw]]}))})))))
 
 (defn db-finish-attachment-compaction!
   "Write the compacted payload of the taken attachment `id`: `compacted` is

@@ -449,48 +449,54 @@
                          {:reason "the clip decoded to no frames"}))))
        (catch Throwable t {:reason (str "the clip could not be decoded: " (failure-reason t))})))))
 
-(defn- same-picture?
-  "True when `b` probes as the SAME container, frame count and pixel dimensions
-   as `a` -- the cheap guard that an \"optimiser\" stayed lossless. Colour type,
-   channel count and alpha may legitimately change (oxipng drops a fully opaque
-   alpha channel and palettes what it can); WIDTH x HEIGHT x FRAMES may not."
-  [^bytes a ^bytes b]
-  (boolean (try (let [pa
-                      (imaging/probe a)
+(def ^:private png-signature (byte-array [0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A]))
 
-                      pb
-                      (imaging/probe b)]
+(def ^:private jpeg-signature (byte-array [0xFF 0xD8]))
 
-                  (and pa
-                       pb
-                       (= (:format pa) (:format pb))
-                       (= (:width pa) (:width pb))
-                       (= (:height pa) (:height pb))
-                       (= (:frames pa) (:frames pb))))
-                (catch Throwable _ false))))
+(defn- starts-with?
+  [^bytes data ^bytes prefix]
+  (let [n (alength prefix)]
+    (and (>= (alength data) n) (java.util.Arrays/equals data 0 n prefix 0 n))))
 
-(def ^:private compact-formats
-  "The containers that `imaging/optimize` in strict mode can re-encode losslessly."
-  #{"png" "jpeg"})
+(def ^:private quick-check-pixels
+  "The pixel count above which a PNG must shrink at oxipng level 0 before it gets
+   level 2. Level 2 on 1920x1080 took 0.6 s; on a 4032x3024 photo, 7 s."
+  4000000)
 
-(defn- compactable?
-  "True when `data` is a still PNG or JPEG: the only containers [[compact]] changes."
-  [^bytes data]
-  (boolean (try (let [p (imaging/probe data)]
-                  (and (contains? compact-formats (:format p)) (= 1 (long (or (:frames p) 1)))))
-                (catch Throwable _ false))))
+(defn- png-pixels
+  "Width times height from the IHDR of a PNG, or 0 when it is too short. PNG
+   dimensions are at most 2^31-1, so a negative field counts as 0 and the product
+   fits a long."
+  ^long [^bytes data]
+  (if (< (alength data) 24)
+    0
+    (let [buf (java.nio.ByteBuffer/wrap data)]
+      (* (max 0 (.getInt buf 16)) (max 0 (.getInt buf 20))))))
+
+(defn- smaller
+  "`out` when it is a non-empty payload smaller than `data`, else nil."
+  [^bytes data ^bytes out]
+  (when (and out (pos? (alength out)) (< (alength out) (alength data))) out))
+
+(defn- optimize-strict
+  "Strict `imaging/optimize` of `data` at `level`, or nil when it fails."
+  ^bytes [^bytes data level]
+  (try (imaging/optimize data {:strict true :level level}) (catch Throwable _ nil)))
 
 (defn compact
   "Losslessly re-compress a PNG or a JPEG on its way INTO the store, with the
    strict mode of `imaging/optimize`: oxipng for a PNG, and Huffman tables made
    for the image for a baseline JPEG. Strict mode keeps every metadata chunk and
    marker, so orientation, gamma and colour profiles stay, and it gives back its
-   input unless the output decodes to the same samples. Every other container
-   comes back as it is.
+   input unless the output decodes to the same samples and metadata. Every other
+   container comes back as it is, without a call to the optimiser.
 
-   Level 2, the strict default: the compactor runs this in the background, one
-   image at a time. On six screenshots level 2 saved 30 percent in 2 s, and level
-   3 saved the same in 7.4 s. Strict JPEG saved 12 percent in about 50 ms.
+   A PNG gets oxipng level 2. A PNG over [[quick-check-pixels]] gets level 0 first,
+   and level 2 only when that pass makes it smaller: level 2 costs about ten times
+   more and grows with the pixels. It is a trade of space for time. A photo, and a
+   PNG that an optimiser wrote already, gain nothing at any level: a 4032x3024 photo
+   took 7 s at level 2 and 0.9 s at level 0, both for 0 percent. A large PNG that
+   only new filters make smaller keeps its bytes.
 
    The second exception to \"never re-compress\", and a narrower one than
    [[fit-within]]: the PICTURE is untouched, only its encoding is. A rendered
@@ -498,17 +504,17 @@
    several times the bytes it needs -- bytes that are then paid in the
    `session_attachment` BLOB and in every later turn the attachment replays.
 
-   The result is taken ONLY when it is strictly smaller and still probes as the
-   same container at the same size ([[same-picture?]]).
-
    Never bigger than `data`, never nil, never throws."
   ^bytes [^bytes data]
-  (if (or (not *enabled?*) (nil? data) (zero? (alength data)) (not (compactable? data)))
-    data
-    (let [out (try (imaging/optimize data {:strict true}) (catch Throwable _ nil))]
-      (if (and out
-               (pos? (alength ^bytes out))
-               (< (alength ^bytes out) (alength data))
-               (same-picture? data out))
-        out
-        data))))
+  (cond (or (not *enabled?*) (nil? data)) data
+
+        (and (starts-with? data png-signature) (> (png-pixels data) (long quick-check-pixels)))
+        (if-let [quick (smaller data (optimize-strict data 0))]
+          (or (smaller quick (optimize-strict quick 2)) quick)
+          data)
+
+        (starts-with? data png-signature) (or (smaller data (optimize-strict data 2)) data)
+
+        (starts-with? data jpeg-signature) (or (smaller data (optimize-strict data 2)) data)
+
+        :else data))

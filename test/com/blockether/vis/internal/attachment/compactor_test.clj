@@ -289,7 +289,7 @@
             _
             (stored-turn! s [["image/png" (gradient-png)]])]
 
-        (expect (some? (persistance/db-claim-attachment-compaction! s (:id (first (rows s))))))
+        (expect (some? (persistance/db-claim-next-attachment-compaction! s)))
         (expect (= {:rows 0 :more? false} (compactor/drain! s)))))
   (it "gives the janitor back after its budget, with rows still waiting"
       (let [s
@@ -314,10 +314,44 @@
             @#'sqlite-core/store-rewrites]
 
         (h/raw-query s {:update :session_attachment :set {:compaction_pending 0}})
-        (h/raw-query s {:raw (str "PRAGMA user_version = " (dec (count rewrites)))})
+        (h/raw-query s
+                     {:raw (str "PRAGMA user_version = "
+                                (.indexOf ^java.util.List rewrites
+                                          @#'sqlite-core/queue-attachment-compaction!))})
         (#'sqlite-core/rewrite-older-store! ds)
         (expect (= {:rows 1 :more? false} (compactor/drain! s)))
         (expect (= "zstd" (:storage_codec (first (rows s)))))))
+  (it "moves the payload of an older store to the last column and keeps each row"
+      (let [s
+            (h/store)
+
+            columns
+            #(mapv :name (h/raw-query s {:raw "SELECT name FROM pragma_table_info('session_attachment')"}))
+
+            indexes
+            #(set (map :name
+                       (h/raw-query s
+                                    {:raw (str "SELECT name FROM sqlite_master WHERE type = 'index'"
+                                               " AND tbl_name = 'session_attachment' AND sql IS NOT NULL")})))
+
+            held
+            (indexes)
+
+            rewrites
+            @#'sqlite-core/store-rewrites]
+
+        ;; An older store: a column that SQLite added after the payload.
+        (h/raw-query s {:raw "ALTER TABLE session_attachment DROP COLUMN reference"})
+        (h/raw-query s {:raw "ALTER TABLE session_attachment ADD COLUMN reference TEXT"})
+        (stored-turn! s [["text/html" page]])
+        (h/raw-query s {:update :session_attachment :set {:reference "[FILE #1]"}})
+        (expect (= "reference" (peek (columns))))
+        (h/raw-query s {:raw (str "PRAGMA user_version = " (dec (count rewrites)))})
+        (#'sqlite-core/rewrite-older-store! (:datasource s))
+        (expect (= "bytes" (peek (columns))))
+        (expect (= held (indexes)))
+        (expect (= "[FILE #1]" (:reference (first (h/raw-query s {:select [:reference] :from :session_attachment})))))
+        (expect (Arrays/equals ^bytes page (read-back s (:id (first (rows s))))))))
   (it "keeps bytes that changed while the compactor worked on them"
       (let [s
             (h/store)
