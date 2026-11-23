@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.32] - 2026-11-23
+
 ### Added
 
 - Sessions: each session has a scratch directory for shell and Python temporary files. Vis removes unused scratch files after 14 days without a turn and warns the agent above 10 GiB (#513).
@@ -16,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Storage: the store is smaller. Activity search matches the stored invocations of one history, so the `activity_invocation.search_text` column is removed: it held a plain copy of each presentation, 2.4 GB of a 17 GB store. Search now also finds text after the first 4096 characters of a long output. A long history is searched on more than one core, so a search of 1800 invocations takes approximately 5 ms. A single form no longer keeps a second copy of its iteration code, older tool calls are stored with zstd, and each distinct root list of request health is stored once. The janitor rewrites an older store in the background. An older Vis cannot open the store after this version opened it.
 - Extensions: the gateway removes old extension versions every 3 days, in the global extension folder and in the extension folder of each project. It keeps the same versions as `extension sync --prune`: the active version, one rollback version, and each version that a running Vis process uses. Before, old versions stayed until a manual `sync --prune` (#509).
 - Provider: Z.AI Coding Plan providers (`zai-coding-plan` and `zai-coding`) offer GLM-5.4, the new multimodal GLM flagship. The direct Z.AI API does not offer it yet. GLM-5.3 Flash stays the default model. Svar is pinned at 0.7.246.
+- Storage: the janitor gives free space back in short steps. A new store uses incremental vacuum: each step frees at most 1024 pages in its own short write transaction, and a pass stops after 2 seconds. Writers wait for one step at most. Before, a full `VACUUM` held the write lock for minutes on a large store and stopped the turns of all sessions. An older store gets one full `VACUUM` that converts it, only when it is at most 2 GiB. A larger older store keeps its free pages, and SQLite uses them again.
+- Terminal app: the agent team and the message queue show in frames above the prompt. `C-x b a` opens the agent table and `C-x b l` the timeline. On a short terminal, the open team frame shows fewer rows, then folds, so that the transcript keeps its rows.
+- Companion: Capacitor 8.6.2. On iOS, the app uses the scene life cycle that the iOS 27 SDK requires. Before, an iOS 27 build stopped at launch.
 
 ### Fixed
 
@@ -28,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Extensions: `vis.tool_call_provider()` now returns the provider in a real turn. Before, a tool and a before hook got `None`. The value is the full provider ID, such as `external/prod`. A thread that the extension starts and a later callback, such as a `vis.live` event, get `None` (#507).
 - Extensions: `/reload` and the agent of a session in the project name each package that a load kept at its installed version, with the error of its declared version. Before, only the gateway log showed it, and a project used an older version without notice (#504).
 - Extensions: a broken Extension Center reply, for example a cut-off response or a release with a bad revision, fails only its package. A load keeps a valid installed version of that package with the status `kept`. A corrupt installed receipt also fails only its package. Before, these errors stopped the sync, and the load dropped all extensions of the project folder (#504).
+- Storage: a pooled database connection is removed after SQLite ends a transaction by itself. Before, the pool kept that connection, and each later read or write on it failed with `cannot rollback - no transaction is active`. On 2026-11-23 this stopped the turns of all sessions until a gateway restart.
+- Extensions: an after hook does not run when its turn was cancelled or its session ended. A callback failure in the log names the exception class and up to 4 causes, with secrets removed.
+- Voice: in voice mode, Vis speaks the progress note of a step before its code runs. Before, you heard the note only after the code ended. Hands-free mode uses the Pocket voice that you selected (#510).
+- Python: an update removes the interpreter copies and the extension environments of the replaced interpreter build. Before, approximately 6 GiB stayed for each update (#511).
+- Companion: an answer box shows a gap between paragraphs. Stop speech shows only while speech plays. A diff file without lines, for example a binary file, has no fold chevron.
 
 ## [v0.5.31] - 2026-11-23
 
