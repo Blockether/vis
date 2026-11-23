@@ -3625,6 +3625,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   "True while this thread prepares a project that no session waits for."
   false)
 
+(def ^:dynamic *interruptible-load-thread*
+  "The turn thread whose load wait an interrupt can stop. Other threads keep waiting."
+  nil)
+
 (defonce ^:private load-holder
   ;; Nil, or the load that holds the load lock now, with the phase that it runs (#493).
   (atom nil))
@@ -5005,13 +5009,16 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   10000)
 
 (defn- lock-load!
-  "Take the load lock as `.lock` does. While the wait lasts, log at intervals the load
-   that holds the lock and its running phase: a slow load is then visible before it ends (#493)."
+  "Take the load lock. An interrupt stops a waiting turn (#498). While the wait lasts,
+   log at intervals the load that holds the lock and its running phase (#493)."
   []
-  (let [requested (System/nanoTime)]
+  (let [requested (System/nanoTime)
+        interruptible? (and (not *background-load?*)
+                            (identical? *interruptible-load-thread* (Thread/currentThread)))]
     (loop [interrupted? false]
       (let [outcome (try (.tryLock ensure-load-lock (long load-lock-report-ms) TimeUnit/MILLISECONDS)
-                         (catch InterruptedException _ ::interrupted))]
+                         (catch InterruptedException e
+                           (if interruptible? (throw e) ::interrupted)))]
         (cond (true? outcome) (when interrupted? (.interrupt (Thread/currentThread)))
               (= ::interrupted outcome) (recur true)
               :else (do (tel/log! {:level :warn

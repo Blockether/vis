@@ -18,6 +18,7 @@
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.python.env :as python-env]
+            [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.session.titling :as titling]
             [com.blockether.vis.internal.workspace.core :as workspace]))
 
@@ -393,7 +394,8 @@
   ([id messages] (send! id messages {}))
   ([id messages opts]
    (let [message-vec (if (string? messages) [(svar/user messages)] messages)]
-     (loop-env/with-turn-lock id #(turn/turn! % message-vec opts)))))
+     (binding [python-extensions/*interruptible-load-thread* (Thread/currentThread)]
+       (loop-env/with-turn-lock id #(turn/turn! % message-vec opts))))))
 
 (defn run-block!
   "Run one Python block `code` in the sandbox of session `id`, as the

@@ -901,6 +901,52 @@
                                    (pyx/reload-python-extensions! {:dirs []}))))))))
 
 (defdescribe
+  cancelled-load-wait-test
+  (it
+    "stops a cancelled turn before another extension load releases the lock (#498)"
+    (let [^java.util.concurrent.locks.ReentrantLock lock
+          @#'pyx/ensure-load-lock
+
+          ^java.util.concurrent.atomic.AtomicLong waiting
+          @#'pyx/foreground-loads
+
+          token
+          (cancellation/cancellation-token)
+
+          started
+          (promise)
+
+          outcome
+          (promise)]
+
+      (.lock lock)
+      (try (with-redefs [loop-env/open-env!
+                        (fn [_ _]
+                          (#'pyx/with-load-lock
+                           #(throw (ex-info "Turn entered the extension load" {}))))]
+             (let [worker (cancellation/worker-future
+                            "cancelled-load-wait-test"
+                            (fn []
+                              (deliver started (Thread/currentThread))
+                              (try (lp/send! (random-uuid) "hello" {:cancel-token token})
+                                   (catch Throwable t (deliver outcome t)))))
+                   thread (deref started 5000 nil)]
+
+               (cancellation/cancellation-set-future! token worker)
+               (expect (some? thread))
+               (when thread
+                 (loop [n 500]
+                   (when (and (pos? n) (not (.hasQueuedThread lock thread)))
+                     (Thread/sleep 10)
+                     (recur (dec n))))
+                 (expect (.hasQueuedThread lock thread))
+                 (cancellation/cancel! token :client-cancel-turn)
+                 (expect (instance? InterruptedException (deref outcome 1500 nil)))
+                 (expect (zero? (.get waiting)))
+                 (expect (.isHeldByCurrentThread lock)))))
+           (finally (.unlock lock) (deref outcome 5000 nil))))))
+
+(defdescribe
   background-load-wait-test
   ;; Audit B5 (poll audit at 0c273047d): a background load that yields to a waiting
   ;; foreground load woke every 10 ms until that load got the lock.

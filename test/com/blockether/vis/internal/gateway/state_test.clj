@@ -7861,6 +7861,43 @@
                       (#'state/release-turn-terminal-claim! sid tid)))))))
 
 (defdescribe
+  cancelled-cold-turn-test
+  (it
+    "settles a cold turn without opening its environment again after cancellation (#498)"
+    (let [sid (str (random-uuid))
+          tid "turn-1"
+          token (cancellation/cancellation-token)
+          registry @#'state/registry
+          opens (atom [])
+          events (atom [])]
+
+      (try
+        (swap! registry assoc
+          sid
+          {:next-seq 0
+           :current-turn tid
+           :turn-order [tid]
+           :turns {tid {:turn_id tid :status "running" :request "continue" :cancel-token token
+                        :cancelling_at 1}}})
+        (with-redefs-fn
+          {#'lp/send! (fn [& _]
+                        (cancellation/cancel! token :client-cancel-turn)
+                        (throw (InterruptedException.)))
+           #'lp/by-id (constantly {:id sid})
+           #'lp/db-info (constantly ::db)
+           #'loop-env/ensure-env! (fn [id]
+                                   (swap! opens conj id)
+                                   nil)
+           #'persistance/db-update-session-turn! (constantly true)
+           #'state/append-event! (fn [_ type _ & _] (swap! events conj type))}
+          #(#'state/run-turn! sid tid "continue" {:cancel-token token}))
+        (expect (= ["turn.cancelled"] (filter #(str/starts-with? % "turn.") @events)))
+        (expect (nil? (get-in @registry [sid :current-turn])))
+        (expect (empty? @opens))
+        (expect (not-any? #{"context.updated"} @events))
+        (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid))))))
+
+(defdescribe
   worker-failure-diagnostics-test
   ;; #252: message-less startup failures must remain diagnosable after reconnect.
   (it

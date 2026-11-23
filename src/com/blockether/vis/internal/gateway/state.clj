@@ -2501,16 +2501,16 @@
       (ctx-loop/session-snapshot env))))
 
 (defn- emit-context-updated!
-  "Append the post-turn utilization. A user cancel interrupts the turn worker,
-   and the worker runs this after the terminal with that flag still set. The
-   snapshot runs the extension ctx hooks, so it runs without the flag, which
-   then comes back for the code that follows."
+  "Append post-turn utilization only if the session has a live environment.
+   The snapshot runs extension ctx hooks without the interrupt flag set by a
+   user cancel. Restore the flag after the snapshot."
   [sid]
   (let [interrupted?
         (Thread/interrupted)
 
         snapshot
-        (try (context-snapshot sid)
+        (try (when-let [env (lp/live-env-for sid)]
+               (ctx-loop/session-snapshot env))
              (catch Throwable _ nil)
              (finally (when interrupted? (.interrupt (Thread/currentThread)))))]
 
