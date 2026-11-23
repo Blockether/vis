@@ -5181,6 +5181,23 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                         :timing timing}}
                 "extension package preparation failed"))))
 
+;; Packages that the last load of each scope folder kept at their installed version,
+;; as {folder {:project-root root :packages {name result}}}; a global folder has a nil
+;; root. Only the publication of a prepared scope in `run-scope-flight!` writes it (#504).
+(defonce ^:private kept-packages (atom {}))
+
+(defn- kept-package-summaries
+  "One line for each package of the current project and the global scope that runs its
+   installed version because its declaration failed."
+  []
+  (let [root (workspace/cwd-root)]
+    (sort (for [[folder {:keys [project-root packages]}] @kept-packages
+                :when (or (nil? project-root) (= root project-root))
+                [name {:strs [version error]}] packages]
+            (str "Extension package '" name "' in " (paths/abbreviate-home folder)
+                 " runs its installed version " version
+                 "; its declared version failed: " (util/redact-secret-text (str error)))))))
+
 ;; Scopes (nil = global) whose declared packages this process prepared. A project
 ;; first loaded through the process-directory fallback is prepared once a session
 ;; opens it.
@@ -5211,7 +5228,12 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         (filter #(= "failed" (get % "status")) results)]
 
     (note-package-results! results)
-    {:site-packages (into {}
+    {:kept-packages (let [by-name (into {}
+                                        (for [result results
+                                              :when (= "kept" (get result "status"))]
+                                          [(get result "name") result]))]
+                      [(str directory) (when (seq by-name) {:project-root project-root :packages by-name})])
+     :site-packages (into {}
                           (for [result
                                 results
 
@@ -5359,6 +5381,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             (if-not (locking scope-flights (scope-current? project-root flight))
               ::superseded
               (do (when reload-paths? (refresh-package-paths!))
+                  (when-let [[folder kept] (:kept-packages scope)]
+                    (swap! kept-packages #(if kept (assoc % folder kept) (dissoc % folder))))
                   (let [report (publish-scope! (assoc scope :prepared-scan scan))]
                     (when reload-paths? (retire-stale-workers!))
                     report)))))
@@ -5642,6 +5666,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                 (when prompt-templates [(str "- Prompt templates: " prompt-templates)])
                 (when (seq failed-hooks)
                   [(str "- Reload hooks failed: " (str/join ", " (map str failed-hooks)))])
+                (map #(str "- " %) (kept-package-summaries))
                 [(str "- Skills, agents and context files: "
                       (if context-error
                         (str "failed — " (util/redact-secret-text context-error))
@@ -5995,8 +6020,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
        :ext/kind "host"
        :ext/source-nses ['com.blockether.vis.internal.python.extensions]
        :ext/prompt-fn (fn [_]
-                        (when-let [visible (seq (load-failures))]
-                          (str/join "\n" (map failure-summary visible))))
+                        (when-let [visible (seq (concat (map failure-summary (load-failures))
+                                                        (kept-package-summaries)))]
+                          (str/join "\n" visible)))
        :ext/slash-commands
        [{:slash/name "reload"
          :slash/doc

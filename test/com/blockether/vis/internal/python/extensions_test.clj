@@ -904,7 +904,43 @@
                            (runtime/packages-dir))}
           (fn []
             (pyx/ensure-python-extensions-loaded! {:global-only? true})
-            (expect (= ["a"] @prepared)))))))
+            (expect (= ["a"] @prepared))))))
+  (it "names a kept package to the agent until its declared version loads"
+      (let [directory (temp-dir)
+            status (atom "kept")]
+        (with-redefs-fn {#'pyx/last-fingerprint (atom {})
+                         #'pyx/prepared-scopes (atom #{})
+                         #'pyx/loaded (atom {})
+                         #'pyx/failures (atom [])
+                         #'pyx/kept-packages (atom {})
+                         #'pyx/default-extension-dirs (constantly [directory directory])
+                         #'config/extension-package-scopes
+                         (constantly [{:scope "global" :directory directory :packages {"a" {}}}])
+                         #'pyx/package-operation
+                         (fn [_ _]
+                           [{"status" @status
+                             "name" "a"
+                             "version" "1.0.0"
+                             "path" (str (io/file directory "a"))
+                             "error" "Requested version is not approved in Extension Center"}])
+                         #'python-runtime/ensure-project! (fn [_] (runtime/packages-dir))}
+          (fn []
+            (let [kept (fn []
+                         (pyx/ensure-python-extensions-loaded! {:global-only? true})
+                         (some-> ((:ext/prompt-fn (registered "python-extensions")) {})
+                                 str/split-lines))]
+              (expect (= [(str "Extension package 'a' in " directory
+                               " runs its installed version 1.0.0; "
+                               "its declared version failed: "
+                               "Requested version is not approved in Extension Center")]
+                         (kept)))
+              ;; Another project does not see the packages that this project kept.
+              (swap! @#'pyx/kept-packages update-vals #(assoc % :project-root "/other/project"))
+              (expect (nil? ((:ext/prompt-fn (registered "python-extensions")) {})))
+              (reset! status "updated")
+              (reset! @#'pyx/prepared-scopes #{})
+              (reset! @#'pyx/last-fingerprint {})
+              (expect (nil? (kept)))))))))
 
 (defdescribe moved-package-preparation-failure-test
   (it "retains the live extension when preparation of its new snapshot fails"

@@ -14,6 +14,8 @@ This guide covers those choices and how to reload changes.
 - **You want to install an extension that someone else wrote.** Prefer an [approved
   release](#install-an-approved-github-release). Otherwise, [pin the commit that you
   reviewed](#install-source-that-is-not-in-the-catalog).
+- **Your project still uses an old extension version.** [Check why Vis kept the installed
+  version](#when-vis-keeps-the-installed-version).
 - **An update broke something.** [Roll back](#check-for-updates-and-roll-back) to the version that
   worked.
 - **You want to share your extension.** [Publish it](#publish-and-maintain-releases) through GitHub
@@ -117,9 +119,7 @@ steps:
 3. It prepares their Python dependencies.
 4. It makes the tools available.
 
-Preparation can need network access and can take longer on the first open. If installation or
-loading fails, Vis reports the failure and does not open a session with incomplete tools. Fix the
-declaration or the dependency problem and try again.
+Preparation can need network access and can take longer on the first open.
 
 One gateway can serve several projects at once. Each session resolves tools, providers, environment
 values, and toggles from its own project, not from the directory where the gateway started.
@@ -170,6 +170,20 @@ uv.
   without `--refresh`. It never selects a prerelease. `sync --dry-run` reports `would-sync`, because
   a dry run makes no network calls. A start of Vis and `/reload` keep the installed release and do
   not check the catalog.
+
+### When Vis keeps the installed version
+
+If Vis cannot apply a changed declaration at load, it keeps a valid installation that sync manages.
+This can happen if the Extension Center has not approved the declared version or is unavailable.
+Vis reports `kept` and tries the declared version again at the next load.
+
+If a first install fails, Vis reports the failure and loads the other packages.
+A scheduled workflow checks for new first-party releases to approve.
+
+The `/reload` details show the installed version and the error for each package that Vis kept.
+The agent of a session in that project gets the same information. Declare an approved version or
+run `vis-agent extension sync --trust` to check the error. An explicit sync reports `failed` and
+exits nonzero if it cannot apply the declaration.
 
 ### Remove packages and old versions
 
