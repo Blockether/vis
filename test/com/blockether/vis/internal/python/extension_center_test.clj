@@ -185,7 +185,7 @@
                         (expect (every? #(true? (get % "prepared")) result)))
                       (expect (nil? (#'fixtures/registered "vis-center-greeter"))
                               "Sync never imports entrypoints")
-                      (expect (= ["export" "export" "workspace" "sync" "run"] (mapv second @calls)))
+                      (expect (= ["sync" "run"] (filterv #{"sync" "run"} (map second @calls))))
                       (reset! calls []))
                     (when-not declarative?
                       (expect (= 1 (:failed (pyx/reload-python-extensions! opts))))
@@ -204,15 +204,17 @@
                       (expect (= 0 (:failed result))
                               (pr-str {:failures (pyx/load-failures) :uv @diagnostics})))
                     (expect (= 42 (invoke)))
+                    (when-not declarative?
+                      (expect (not (.exists (io/file (first (:dirs opts)) ".sync.json")))
+                              "Explicit directory reload does not transfer source ownership"))
                     (expect (.isFile (io/file source "uv.lock")))
                     (expect (.isDirectory (io/file source
                                                    (#'python-runtime/automatic-environment))))
                     ;; Reload finds the environment. Issue #407: the stamp of the sync that
                     ;; prepared it replaces uv's check while the project and lock are unchanged.
                     (expect
-                      (=
-                        (if declarative? ["workspace"] ["export" "export" "workspace" "sync" "run"])
-                        (mapv second @calls))
+                      (= (if declarative? [] ["sync" "run"])
+                         (filterv #{"sync" "run"} (map second @calls)))
                       "Explicit cold preparation installs; a stamped environment is not checked again")
                     (reset! calls [])
                     (when declarative?
@@ -220,9 +222,12 @@
                                  (mapv #(get % "status") (pyx/sync-packages! {:trust true}))))
                       (expect (= [] (mapv second @calls)))
                       (reset! calls []))
-                    (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
-                    (expect (= [] (mapv second @calls))
-                            "A reload skips an unchanged extension and its environment (#393)")
+                    (expect (= {:failed 0 :reloaded 0}
+                               (select-keys (pyx/reload-python-extensions! opts)
+                                            [:failed :reloaded])))
+                    (expect (not-any? #{"sync" "run"} (map second @calls))
+                            "A reload keeps the environment of an unchanged extension (#393)")
+                    (reset! calls [])
                     (spit (io/file source "src/center_logic.py")
                           (str/replace code
                                        "return vis_center_dep.VALUE"

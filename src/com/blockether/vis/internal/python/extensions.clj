@@ -5307,13 +5307,13 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    :changed? false})
 
 (defn- publish-scope!
-  [{:keys [project-root sync-projects? prepared-scan] :as scope}]
+  [{:keys [project-root reconcile-packages? prepared-scan] :as scope}]
   (let [result (if prepared-scan
                  (load-scope! scope)
                  (scope-report project-root))
         result (assoc result :extensions (vec (sort (keep :ext-name
                                                           (vals (scope-entries project-root))))))]
-    (when sync-projects? (swap! prepared-scopes conj project-root))
+    (when reconcile-packages? (swap! prepared-scopes conj project-root))
     (when-let [fingerprint (get @last-fingerprint project-root)]
       (swap! last-fingerprint assoc project-root
         (vary-meta fingerprint assoc ::scope-result (assoc result :changed? false))))
@@ -5333,7 +5333,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   (identical? flight (get @scope-flights root)))
 
 (defn- run-scope-flight!
-  [{:keys [project-root sync-projects? scan? reload-paths?] :as scope} flight predecessor earlier]
+  [{:keys [project-root reconcile-packages? scan? reload-paths?] :as scope} flight predecessor earlier]
   ;; Same-scope disk writers run in request order. A superseded flight cannot
   ;; publish, even when it was already preparing when the reload arrived.
   (when (or predecessor earlier)
@@ -5343,7 +5343,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (reset! (:progress flight) {:stage :preparing}))
   (if-not (scope-current? project-root flight)
     ::superseded
-    (let [scope (if sync-projects?
+    (let [scope (if reconcile-packages?
                   (merge scope (timed-phase :packages (if (:global scope) "global" "project")
                                             #(prepare-scope-packages! scope project-root)))
                   scope)
@@ -5384,9 +5384,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         {:report report}
         (let [prepare? (and (not explicit?) (or (:global scope) (some? workspace/*workspace-root*)))
               pending? (and prepare? (not (contains? @prepared-scopes project-root)))
-              ;; A managed turn cannot reuse an unmanaged flight's prepared result.
+              reconcile-packages? (and prepare? (or force? pending?))
               scope (assoc scope
-                      :sync-projects? (or (:sync-projects? scope) (and prepare? (or force? pending?)))
+                      :reconcile-packages? reconcile-packages?
+                      :sync-projects? (or (:sync-projects? scope) reconcile-packages?)
                       :force-scan? (or (:force? scope) pending?)
                       :scan? (or force? pending? (not (contains? @last-fingerprint project-root)))
                       :reload-paths? reload-paths?)
