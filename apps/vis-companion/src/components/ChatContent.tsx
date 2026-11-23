@@ -4841,7 +4841,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             Controls and tool payloads stay compact; touch keeps its existing density. */}
         {(shownBlocks.length > 0 || fallback || emptyStatus) && (
           <div
-            className={`bg-answer text-ui mouse:text-title ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}
+            className={`space-y-2.5 bg-answer text-ui mouse:text-title ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}
             data-transcript-part
           >
             {shownBlocks.map((block) => (
