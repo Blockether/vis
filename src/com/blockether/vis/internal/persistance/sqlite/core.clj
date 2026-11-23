@@ -256,26 +256,81 @@
   "Presentation keys whose values are opaque identifiers, not text that a person searches."
   #{:id :argument-key :read-key :handle-id :group-token})
 
+(defn- activity-search-text?
+  "True when a text in the presentation value `x` holds `needle`, a lowercase query. It
+   stops at the first match and skips identifiers."
+  [x ^String needle]
+  (cond (string? x) (str/includes? (str/lower-case ^String x) needle)
+        (map? x) (reduce-kv (fn [_ k v]
+                              (if (and (not (contains? activity-search-id-keys k))
+                                       (activity-search-text? v needle))
+                                (reduced true)
+                                false))
+                            false
+                            x)
+        (coll? x) (reduce (fn [_ v]
+                            (if (activity-search-text? v needle) (reduced true) false))
+                          false
+                          x)
+        :else false))
+
 (defn- activity-search-match?
   "True when one presentation text of the invocation `row` holds `needle`, a lowercase
    query. Identifiers and JSON keys do not match."
   [row ^String needle]
-  (->> (activity/presentation (assoc activity/empty-state :rows [row]))
-       :rows
-       (tree-seq coll? #(if (map? %) (vals (apply dissoc % activity-search-id-keys)) (seq %)))
-       (some #(and (string? %) (str/includes? (str/lower-case ^String %) needle)))
-       boolean))
+  (activity-search-text? (:rows (activity/presentation (assoc activity/empty-state :rows [row])))
+                         needle))
+
+(def ^:private ^:const activity-search-chunk-rows
+  "Most stored rows that one search task decodes and matches."
+  256)
+
+(def ^:private ^:const activity-search-chunk-bytes
+  "Stored payload bytes after which a search task takes no more rows, so a history with
+   long outputs also uses more cores."
+  65536)
+
+(defn- activity-search-chunks
+  "The stored `rows` in order, as search tasks of bounded rows and payload bytes."
+  [rows]
+  (lazy-seq (when (seq rows)
+              (loop [chunk
+                     []
+
+                     bytes
+                     0
+
+                     rows
+                     rows]
+
+                (if (and (seq rows)
+                         (< (count chunk) (long activity-search-chunk-rows))
+                         (< bytes (long activity-search-chunk-bytes)))
+                  (recur (conj chunk (first rows))
+                         (+ bytes (alength ^bytes (:payload (first rows))))
+                         (rest rows))
+                  (cons chunk (activity-search-chunks rows)))))))
 
 (defn- activity-search-records
   "The decoded payloads of `rows` that match the query `q`: at most `limit`, and one more
-   that only marks more pages. A row is decoded only until the page is full."
+   that only marks more pages. Chunks of rows decode in parallel, in order, only until the
+   page is full."
   [rows q limit]
-  (let [needle (str/lower-case q)]
+  (let [needle
+        (str/lower-case q)
+
+        matches
+        (fn [chunk]
+          (into []
+                (comp (map #(<-blob (:payload %))) (filter #(activity-search-match? % needle)))
+                chunk))
+
+        chunks
+        (activity-search-chunks rows)]
+
     (into []
-          (comp (map #(<-blob (:payload %)))
-                (filter #(activity-search-match? % needle))
-                (take (inc (long limit))))
-          rows)))
+          (comp cat (take (inc (long limit))))
+          (if (next chunks) (pmap matches chunks) (map matches chunks)))))
 
 (defn- activity-search-column?
   "True while an older store still has `activity_invocation.search_text`. The column is

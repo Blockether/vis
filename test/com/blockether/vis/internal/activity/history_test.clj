@@ -194,7 +194,12 @@
       (expect (nil? (db/db-activity-page store (random-uuid) aid {})))
       (expect (empty? (:rows (db/db-activity-page store sid aid {:q "private-test-value"}))))
       (expect (= [(last ids)]
-                 (mapv :id (:rows (db/db-activity-page store sid aid {:q "Outcome 299"})))))))
+                 (mapv :id (:rows (db/db-activity-page store sid aid {:q "Outcome 299"})))))
+      ;; Search decodes parts of the history in parallel; a page holds the first matches.
+      (let [found (mapv :id (:rows (db/db-activity-page store sid aid {:q "Record 2"})))]
+        (expect (< 11 (count found)))
+        (expect (= (take (count found) (mapv ids (concat [2] (range 20 30) (range 200 300))))
+                   found)))))
   (it
     "validates lifecycle durably and settles hidden live calls once"
     (let [store
