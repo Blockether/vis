@@ -134,7 +134,7 @@
 
             (#'screen/render-frame! terminal-screen 80 30 @state/app-db 1000)
             (.refresh terminal-screen)
-            (expect (some #(str/starts-with? (str/trim %) "Agents") (term/grid terminal)))))))))
+            (expect (some #(str/starts-with? (str/trim %) "▸ TEAM") (term/grid terminal)))))))))
 
 (defdescribe
   attachment-picker-gateway-test

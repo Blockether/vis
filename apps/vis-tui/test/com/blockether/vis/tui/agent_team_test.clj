@@ -551,11 +551,11 @@
                             [resumed]
                             [{"turn_id" "turn-1" "worked_ms" 60000 "busy_since" (- now-ms 30000)}])
         (apply-work! sid)
-        (expect (str/starts-with? (dock now-ms) "Agents   1m 30s   "))
+        (expect (str/starts-with? (dock now-ms) "▸ TEAM  ●  1m 30s   "))
         (team/team-updated! sid
                             {:agents [ended] :team-clocks [{"turn_id" "turn-1" "worked_ms" 80000}]})
         (apply-work! sid)
-        (expect (str/starts-with? (dock (+ now-ms 600000)) "Agents   1m 20s   ")
+        (expect (str/starts-with? (dock (+ now-ms 600000)) "▸ TEAM  ●  1m 20s   ")
                 "The time stops while no agent works")
         (expect (= "1m 20s"
                    (some (fn [[_ text part]]
@@ -568,7 +568,7 @@
                 "The team block of the turn shows the same stored time")
         (team/stream-ready! sid [ended] nil)
         (apply-work! sid)
-        (expect (= "Agents" (str/trim (subs (dock now-ms) 0 20))) "No clock gives no time")))
+        (expect (= "▸ TEAM  ●" (str/trim (subs (dock now-ms) 0 20))) "No clock gives no time")))
     ;; Cross-check 2026-11-22: the delete of a child that worked left its row and its running
     ;; clock in the TUI until the next connect.
     (it "drops the row of a deleted child, also the row that a transcript turn gave"
@@ -923,9 +923,10 @@
           (expect (= 2 (count text)) "The dock is one line and a blank line")
           ;; User report 2026-10-31: the dock touched the C-g row under it.
           (expect (= "" (peek text)) "A blank line parts the dock from the row below")
-          (expect (str/starts-with? line "Agents   "))
-          ;; The team time follows the head: the stored clock of the team, to now while it works.
-          (expect (str/starts-with? line "Agents   1m 04s   "))
+          ;; User report 2026-11-23: the live dock showed a plain "Agents" head. It shows the
+          ;; head line of the team block: fold mark, TEAM, status dots and the team time.
+          ;; The team time is the stored clock of the team, to now while it works.
+          (expect (str/starts-with? line "▸ TEAM  ●●● +7 more  1m 04s   "))
           ;; User decision 2026-11-15: the team line shows no status counts, as in the Companion.
           (expect (not (re-find #"RUNNING|DONE|FAILED|•|■" line)))
           (expect (not (str/includes? line "waiting")))
@@ -939,8 +940,8 @@
                (expect (= 12 (team/dock-height "leader" "turn-1" 120))))
              (finally (team/toggle-dock! "leader")))
         (expect (= 2 (team/dock-height "leader" "turn-1" 120)) "C-x b a again hides the table")
-        (expect (= ["Agents" ""] (team/dock-text "leader" "turn-1" 6 now-ms))
-                "A narrow line drops the time and the hint"))
+        (expect (= ["▸ TEAM  ●●●" ""] (team/dock-text "leader" "turn-1" 16 now-ms))
+                "A narrow line drops the hint, the time and the count"))
       (with-redefs [team/summary (constantly {:agents (drop 4 every-state)
                                               :clocks {"turn-1" {"turn_id" "turn-1"
                                                                  "worked_ms" 64000}}})]
@@ -948,7 +949,7 @@
         (expect (= 2 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock")
         ;; A team without a working agent stops its time at the last end.
         (expect (str/starts-with? (first (team/dock-text "leader" "turn-1" 120 (+ now-ms 60000)))
-                                  "Agents   1m 04s   ")))
+                                  "▸ TEAM  ●●● +3 more  1m 04s   ")))
       (with-redefs [team/summary (constantly {:agents []})]
         (expect (zero? (team/dock-height "leader" "turn-1" 120)) "An empty team has no dock"))))
 
@@ -1064,7 +1065,7 @@
                (expect (= 12 (team/dock-height "leader" "turn-1" 120)) "Scrolling keeps the height")
                (expect (true? (team/scroll-dock! "leader" "turn-1" 100)))
                (expect (some #(str/includes? % "↑5 above") (rows)))
-               (expect (not-any? #(str/includes? % "more") (rows)))
+               (expect (not-any? #(str/includes? % "more") (rest (rows))))
                (expect (false? (team/scroll-dock! "leader" "turn-1" 1))
                        "The last row stops the wheel")
                (expect (true? (team/scroll-dock! "leader" "turn-1" -100)))

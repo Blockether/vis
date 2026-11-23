@@ -1130,21 +1130,53 @@
         [(conj dots [(inc dots-end) text :more]) (+ (inc dots-end) (count text))])
       [dots dots-end])))
 
+(defn- head-segments
+  "The fold mark, the team, a status dot for each agent of `rows` and the `time` text, as
+   `[col text part]` vectors. The transcript block and the live dock share this line."
+  [expanded? rows time]
+  (let [[dots end]
+        (card-dots rows 8)]
+
+    (cond-> (into [[0 (if expanded? "▾" "▸") :mark] [2 "TEAM" :head]] dots)
+      time
+      (conj [(if (seq dots) (+ (long end) 2) 8) time :time]))))
+
 (defn card-head-segments
   "The painted parts of the head line of a team block: `[col text part]` vectors. `part` is
    `:mark`, `:head`, `:dot`, `:more` or `:time`, and a `:dot` vector ends with the status tone of
    its agent. The fold mark, the team, a status dot for each agent and the time, like the
    Companion team line: `▸ TEAM  ●●● +2 more  3m 20s`."
   [{:keys [expanded? clock rows]}]
-  (let [time
-        (when (and clock (not (get clock "busy_since"))) (duration-text (clock-ms clock 0)))
+  (head-segments expanded?
+                 rows
+                 (when (and clock (not (get clock "busy_since"))) (duration-text (clock-ms clock 0)))))
 
-        [dots end]
-        (card-dots rows 8)]
+(defn- paint-head-segments!
+  "Paint the head `segments` of a team block or of the dock on row `y` on `bg`, from column `left`
+   across `width` cells."
+  [^TextGraphics g left y width segments bg]
+  (doseq [[col text part tone]
+          segments
 
-    (cond-> (into [[0 (if expanded? "▾" "▸") :mark] [2 "TEAM" :head]] dots)
-      time
-      (conj [(if (seq dots) (+ (long end) 2) 8) time :time]))))
+          :let [room
+                (- (long width) (long col))]
+          :when (pos? room)]
+
+    (let [x
+          (+ (long left) (long col))
+
+          text
+          (p/ellipsize (str text) room)]
+
+      (case part
+        :head
+        (do (p/set-colors! g t/code-block-fg bg) (p/styled g [p/BOLD] (p/put-str! g x y text)))
+
+        :dot
+        (do (p/set-colors! g (t/legible-ink (tone-ink tone) bg) bg) (p/put-str! g x y text))
+
+        (do (p/set-colors! g t/dialog-hint bg) (p/put-str! g x y text)))))
+  (p/clear-styles! g))
 
 (defn- paint-card-head!
   "Paint the head line of a team block. A click on it folds or unfolds the table."
@@ -1159,28 +1191,7 @@
     (p/clear-styles! g)
     (p/set-colors! g t/code-block-fg bg)
     (p/fill-rect! g left y (max 1 (long width)) 1)
-    (doseq [[col text part tone]
-            (card-head-segments team-head)
-
-            :let [room
-                  (- (long width) (long col))]
-            :when (pos? room)]
-
-      (let [x
-            (+ (long left) (long col))
-
-            text
-            (p/ellipsize (str text) room)]
-
-        (case part
-          :head
-          (do (p/set-colors! g t/code-block-fg bg) (p/styled g [p/BOLD] (p/put-str! g x y text)))
-
-          :dot
-          (do (p/set-colors! g (t/legible-ink (tone-ink tone) bg) bg) (p/put-str! g x y text))
-
-          (do (p/set-colors! g t/dialog-hint bg) (p/put-str! g x y text)))))
-    (p/clear-styles! g)
+    (paint-head-segments! g left y width (card-head-segments team-head) bg)
     (.register interactions/hit-map
                {:bounds {:row (+ (long viewport-top) y) :col left :width (max 1 (long width))}
                 :kind :toggle-details
@@ -1374,31 +1385,30 @@
   (str (keymap/label-or-palette :toggle-agent-dock) (if expanded? " hide details" " details")))
 
 (defn summary-segments
-  "The painted parts of the dock summary line at `width` cells: `[col text part]` vectors.
-   `part` is `:head`, `:time` or `:hint`. The time of the team follows the head: the stored clock
-   of the docked team, or the longest one of several docked teams. A short line drops the hint
-   first, then the time."
-  [{:keys [expanded? clocks]} width now-ms]
+  "The painted parts of the dock summary line at `width` cells: `[col text part]` vectors, the
+   head line of a team block (`head-segments`) and then the `:hint`. The time is the stored clock
+   of the docked team, or the longest one of several docked teams, to `now-ms`. A short line drops
+   the hint first, then the time, then the dots."
+  [{:keys [expanded? clocks rows]} width now-ms]
   (let [width
         (long width)
 
         dw
         #(long (p/display-width (str %)))
 
-        head
-        "Agents"
-
         time
         (when (seq clocks) (duration-text (reduce max (map #(clock-ms % now-ms) clocks))))
 
-        time-col
-        (+ (count head) 3)
+        [mark head & more]
+        (head-segments expanded? rows time)
 
-        time?
-        (and time (<= (+ time-col (long (dw time))) width))
+        segments
+        (into [mark head]
+              (take-while (fn [[col text]] (<= (+ (long col) (long (dw text))) width)))
+              more)
 
         end
-        (if time? (+ time-col (long (dw time))) (count head))
+        (let [[col text] (peek segments)] (+ (long col) (long (dw text))))
 
         hint
         (summary-hint expanded?)
@@ -1406,10 +1416,7 @@
         hint-w
         (long (dw hint))]
 
-    (cond-> [[0 head :head]]
-      time?
-      (conj [time-col time :time])
-
+    (cond-> segments
       (>= (- width hint-w) (+ (long end) 3))
       (conj [(- width hint-w) hint :hint]))))
 
@@ -1510,6 +1517,7 @@
              head
              {:line {:kind :summary
                      :expanded? expanded?
+                     :rows rows
                      :clocks (vec (keep #(get (:clocks (summary sid)) %) (sort docked)))}}
 
              table
@@ -1552,15 +1560,7 @@
 (defn- paint-summary-line!
   "Paint the dock summary line at screen row `y` from column `left` across `width` cells."
   [^TextGraphics g left y width line now-ms]
-  (doseq [[col text part] (summary-segments line width now-ms)]
-    (let [x (+ (long left) (long col))]
-      (case part
-        :head
-        (do (p/set-colors! g t/code-block-fg t/terminal-bg)
-            (p/styled g [p/BOLD] (p/put-str! g x y text)))
-
-        (do (p/set-colors! g t/dialog-hint t/terminal-bg) (p/put-str! g x y text)))))
-  (p/clear-styles! g))
+  (paint-head-segments! g left y width (summary-segments line width now-ms) t/terminal-bg))
 
 (defn draw-dock!
   "Paint the dock table of `sid` at screen row `top` across `cols` columns. `leader` is the
