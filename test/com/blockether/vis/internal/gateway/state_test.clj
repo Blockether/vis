@@ -7419,20 +7419,16 @@
                    (expect (not (.exists scratch)))))
              (it "keeps scratch while a background resource could not stop"
                  (let [home (test-temp/temp-dir "vis-scratch-delete")
-                       sid (random-uuid)]
+                       sid (random-uuid)
+                       note (io/file home "scratch" (str sid) "tmp" "note")]
+                   (io/make-parents note)
+                   (spit note "scratch")
                    (with-redefs-fn
                      {#'paths/scratch-root (constantly (clojure.java.io/file home "scratch"))
                       (requiring-resolve 'com.blockether.vis.internal.gateway.resources/stop-all!)
                       (constantly [{:result :error}])}
-                     (fn []
-                       (let [{:keys [path release!]} (paths/claim-session-scratch! sid nil)
-                             scratch (io/file path)]
-                         (try
-                           (.get ^java.util.concurrent.Future (#'state/teardown-session-async! sid))
-                           (expect (.isDirectory scratch))
-                           (expect (= :held (paths/claim-state (paths/scratch-directory sid))))
-                           (finally
-                             (release!)))))))))
+                     #(.get ^java.util.concurrent.Future (#'state/teardown-session-async! sid)))
+                   (expect (.exists note)))))
 
 (defdescribe
   failed-session-deletion-test
