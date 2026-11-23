@@ -359,12 +359,14 @@ export interface SessionUsage {
   prompt_cache_rebuild_count?: number;
   /** Calls whose prefix survived but had aged out of the provider cache. */
   prompt_cache_expired_count?: number;
-  /** The session's own cost, without its subagents. */
+  /** The session's own cost, without its child sessions. */
   cost_usd?: number;
-  /** The session's own cost plus every subagent below it. */
+  /** The session's own cost plus the costs of its subagents and extension sessions. */
   total_cost_usd?: number;
   /** Every subagent below the session, at any depth. Absent without subagents. */
   subagents?: SubagentUsage;
+  /** Every extension child session below this session, at any depth. */
+  extensions?: ExtensionUsage;
   duration_ms?: number;
   first_turn_at?: number;
   last_turn_at?: number;
@@ -380,6 +382,14 @@ export interface SubagentUsage {
   input_tokens?: number;
   output_tokens?: number;
   cost_usd?: number;
+}
+
+export interface ExtensionUsage {
+  session_count: number;
+  iteration_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
 }
 
 export interface SlashCommand {

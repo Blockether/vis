@@ -1664,7 +1664,7 @@ def start_review(path: str) -> str:
 - `vis.session` is the `Session` of the bound session, the session that called your extension.
   `vis.council` is its [Council](council-api.md) handle. Without a bound session, both raise
   `RuntimeError`.
-- `vis.sessions.create(provider=..., model=..., **options)` creates an independent session.
+- `vis.sessions.create(provider=..., model=..., **options)` creates a session.
   Without `root`, it starts in the root of the bound session. The options are those of
   `create_session`.
 - `vis.sessions.get(session_id)` returns a handle without a request.
@@ -1678,7 +1678,7 @@ def start_review(path: str) -> str:
 - `vis.sessions.export(session_id=None)` returns a
   [snapshot](sessions-api.md#save-and-restore-a-session-snapshot) of the bound session or of
   `session_id`. `vis.sessions.restore(data, root=..., group_id=..., key=...)` restores one.
-- `vis.run(request, ...)` creates an independent session and runs one turn in it. It takes the
+- `vis.run(request, ...)` creates a session and runs one turn in it. It takes the
   arguments of `Agent.run`, also `response_model`. Without `response_model`, check the `status`
   of the turn.
 - `vis.speech` speaks text, transcribes audio, and adds, changes, or removes voices. It has the
@@ -1686,8 +1686,9 @@ def start_review(path: str) -> str:
 
 Each turn of a new session costs model tokens. [Choose the model of a
 session](sessions-api.md#choose-the-model-of-a-session) shows the model list with prices and
-limits. The host records your extension as the origin of each session that it creates. Such a
-session has no parent.
+limits. The host records your extension as the origin of each session that it creates.
+Set `is_child=True` in `vis.sessions.create` or `vis.run` to create a child of the bound
+session instead of an independent session.
 
 ### Where each call works
 

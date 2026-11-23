@@ -261,14 +261,22 @@ class Sessions:
     """
 
     def create(
-        self, *, provider: str | None = None, model: str | None = None, **options
+        self,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        is_child: bool = False,
+        **options,
     ) -> Any:
-        """Create an independent session and return its `Session`.
+        """Create a session and return its `Session`.
 
-        Without `root`, the session starts in the root of the bound session. The other
-        options are the options of `EngineClient.create_session`. Only an extension
-        callback can create a session.
+        Set `is_child=True` to create a child of the bound session. By default,
+        the new session is independent. Without `root`, the session starts in the
+        root of the bound session. The other options are those of
+        `EngineClient.create_session`. This call needs a Vis extension callback.
         """
+        if is_child is not False:
+            options["is_child"] = is_child
         return _host_layer().create_session(provider=provider, model=model, **options)
 
     def get(self, session_id: str) -> Any:
@@ -335,15 +343,19 @@ def run(
     timeout: float = 300,
     response_model: Any = None,
     max_corrections: int = 2,
+    is_child: bool = False,
     **options,
 ) -> Any:
-    """Create an independent session, run one turn in it and return the result.
+    """Create a session, run one turn in it, and return the result.
 
-    The arguments are those of `blockether.vis.engine.Agent.run`. `provider` and
-    `model` pin the model of the new session. Without `response_model`, the result
-    is the turn record; check its `status`. Only an extension callback can call it.
+    Set `is_child=True` to create a child of the bound session. By default,
+    the new session is independent. `provider` and `model` pin its model.
+    The other arguments are those of `blockether.vis.engine.Agent.run`.
+    Without `response_model`, check the `status` in the returned turn record.
+    This call needs a Vis extension callback.
     """
-    session = sessions.create(provider=provider, model=model)
+    create_options = {"is_child": is_child} if is_child is not False else {}
+    session = sessions.create(provider=provider, model=model, **create_options)
     return session.run(
         request,
         timeout=timeout,

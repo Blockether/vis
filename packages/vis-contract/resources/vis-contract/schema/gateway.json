@@ -738,6 +738,7 @@
         "post": {
           "request": "json",
           "response": "json",
+          "request_schema": "session_create_request",
           "response_schema": "session_created",
           "extension": "callback"
         }
@@ -5744,6 +5745,15 @@
         "attachments"
       ]
     },
+    "session_create_request": {
+      "type": "object",
+      "properties": {
+        "is_child": {
+          "type": "boolean",
+          "description": "True creates a child of the session bound to the extension. Only an extension with a bound session can set this to true."
+        }
+      }
+    },
     "session_usage": {
       "type": "object",
       "properties": {
@@ -5758,6 +5768,34 @@
             },
             "duration_ms": {
               "type": "integer"
+            },
+            "extensions": {
+              "type": "object",
+              "description": "Usage of extension children at all depths.",
+              "properties": {
+                "cost_usd": {
+                  "type": "number"
+                },
+                "input_tokens": {
+                  "type": "integer"
+                },
+                "iteration_count": {
+                  "type": "integer"
+                },
+                "output_tokens": {
+                  "type": "integer"
+                },
+                "session_count": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "cost_usd",
+                "input_tokens",
+                "iteration_count",
+                "output_tokens",
+                "session_count"
+              ]
             },
             "first_turn_at": {
               "type": "integer"
@@ -5810,6 +5848,38 @@
             "reusable_prefix_estimated": {
               "type": "boolean"
             },
+            "subagents": {
+              "type": "object",
+              "description": "Usage of Council subagents at all depths.",
+              "properties": {
+                "active_count": {
+                  "type": "integer"
+                },
+                "agent_count": {
+                  "type": "integer"
+                },
+                "cost_usd": {
+                  "type": "number"
+                },
+                "input_tokens": {
+                  "type": "integer"
+                },
+                "iteration_count": {
+                  "type": "integer"
+                },
+                "output_tokens": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "active_count",
+                "agent_count",
+                "cost_usd",
+                "input_tokens",
+                "iteration_count",
+                "output_tokens"
+              ]
+            },
             "tool_call_count": {
               "type": "integer"
             },
@@ -5826,14 +5896,12 @@
           "required": [
             "cost_usd",
             "duration_ms",
-            "first_turn_at",
             "fold_count",
             "input_cache_read_tokens",
             "input_cache_write_tokens",
             "input_regular_tokens",
             "input_tokens",
             "iteration_count",
-            "last_turn_at",
             "output_reasoning_tokens",
             "output_tokens",
             "prompt_cache_estimated_sample_count",
@@ -5848,7 +5916,7 @@
             "total_cost_usd",
             "turn_count"
           ],
-          "description": "The usage rollup, or null when the session has no turns."
+          "description": "The usage rollup, or null when the session has no turns and no extension children."
         }
       },
       "required": [

@@ -384,12 +384,14 @@ def test_extension_sessions_create_list_and_run_through_the_host(monkeypatch):
     from blockether.vis import extension as vis
 
     frames = []
+    create_bodies = []
     session = {"id": "N", "title": None, "status": "idle"}
 
     def request(frame):
         frame = json.loads(frame)
         frames.append((frame["method"], frame["route"], frame.get("query")))
         if frame["method"] == "POST" and frame["route"] == "/v1/sessions":
+            create_bodies.append(frame["body"])
             return _host_reply(201, session)
         if frame["route"] == "/v1/sessions":
             return _host_reply(200, {"sessions": [session], "next_cursor": None})
@@ -402,11 +404,16 @@ def test_extension_sessions_create_list_and_run_through_the_host(monkeypatch):
     monkeypatch.setattr(vis._host, "request", request)
     monkeypatch.setattr(vis, "_LAYER", [])
     assert vis.sessions.create().id == "N"
+    assert vis.sessions.create(is_child=False).id == "N"
+    assert vis.sessions.create(is_child=True).id == "N"
+    assert create_bodies == [{}, {}, {"is_child": True}]
     assert vis.sessions.get("N").id == "N"
     assert [row["id"] for row in vis.sessions.list()] == ["N"]
     assert vis.sessions.list(search="deploy") == []
     assert vis.sessions.models(is_available=True) == ()
     assert frames == [
+        ("POST", "/v1/sessions", None),
+        ("POST", "/v1/sessions", None),
         ("POST", "/v1/sessions", None),
         ("GET", "/v1/sessions", None),
         ("GET", "/v1/sessions/actions/search", "q=deploy"),
@@ -414,38 +421,40 @@ def test_extension_sessions_create_list_and_run_through_the_host(monkeypatch):
     ]
 
 
-def test_extension_run_creates_a_session_and_runs_one_turn(monkeypatch):
-    # #405: vis.run passes the model pair to create and the other options to Session.run.
+@pytest.mark.parametrize("create_options", [{}, {"is_child": True}])
+def test_extension_run_creates_a_session_and_runs_one_turn(monkeypatch, create_options):
+    # #405: check that the session and turn options reach separate requests.
     from blockether.vis import extension as vis
 
-    calls = []
-
-    class Created:
-        def run(self, request, **options):
-            calls.append(("run", request, options))
-            return {"status": "completed"}
-
-    def create(**options):
-        calls.append(("create", options))
-        return Created()
-
-    monkeypatch.setattr(vis.sessions, "create", create)
-    assert vis.run("Do it", provider="p", model="m", timeout=5, title="x") == {
-        "status": "completed"
+    replies = {
+        ("POST", "/v1/sessions"): (201, {"id": "N"}),
+        ("GET", "/v1/sessions/N/seq"): (200, {"seq": 0}),
+        ("POST", "/v1/sessions/N/turns"): (200, {"turn_id": "T"}),
+        ("GET", "/v1/sessions/N/turns/T"): (200, {"status": "completed"}),
     }
-    assert calls == [
-        ("create", {"provider": "p", "model": "m"}),
-        (
-            "run",
-            "Do it",
-            {
-                "timeout": 5,
-                "response_model": None,
-                "max_corrections": 2,
-                "title": "x",
-            },
-        ),
-    ]
+    bodies = {}
+
+    def request(frame):
+        frame = json.loads(frame)
+        key = (frame["method"], frame["route"])
+        if "body" in frame:
+            bodies[key] = frame["body"]
+        return _host_reply(*replies[key])
+
+    monkeypatch.setattr(vis._host, "request", request)
+    monkeypatch.setattr(vis, "_LAYER", [])
+    turn = vis.run(
+        "Do it", provider="p", model="m", timeout=5, title="x", **create_options
+    )
+    assert turn == {"status": "completed"}
+    assert bodies[("POST", "/v1/sessions")] == {
+        "provider": "p",
+        "model": "m",
+        **create_options,
+    }
+    turn_body = bodies[("POST", "/v1/sessions/N/turns")]
+    assert (turn_body["request"], turn_body["title"]) == ("Do it", "x")
+    assert "is_child" not in turn_body
 
 
 def test_extension_council_refuses_without_a_host_session():

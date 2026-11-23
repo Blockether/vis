@@ -1993,7 +1993,7 @@
 
 (defn session-usage-info
   "Whole-session USAGE rollup for `sid` in THE canonical string-keyed wire shape,
-   or nil when the session has no turns yet.
+   or nil when it has no turns and no extension children.
 
    `cache_read_share_percent` is provider cache reads over ALL logical input, so
    it describes cost. `reusable_prefix_coverage_percent` is provider reads over
@@ -2007,38 +2007,44 @@
    enriched by `request-health-metrics`, the single owner of metric calculations
    for Companion and TUI. Clients format values but never reconstruct them.
 
-   `cost_usd` is the session's own cost. `subagents` sums every subagent below
-   the session in one query and is absent without subagents. `total_cost_usd`
-   is the own cost plus the subagent cost.
+   `cost_usd` is the session's own cost. `subagents` and `extensions` give
+   the cost of each child type, if present. `total_cost_usd` adds all three costs.
    Never throws."
   [sid]
   (try (when-let [db (lp/db-info)]
-         (when-let [u (persistance/db-session-usage-stats db sid)]
-           (let [input (long (or (:input-tokens u) 0))
-                 cached (long (or (:input-cache-read-tokens u) 0))
-                 reusable (long (or (:prompt-cache-reusable-tokens u) 0))
-                 reused (long (or (:prompt-cache-reused-tokens u) 0))
-                 subagents (persistance/db-session-subagent-usage db sid)
-                 total-cost (+ (double (or (:cost-usd u) 0.0))
-                               (double (or (:cost-usd subagents) 0.0)))]
+         (let [extensions (persistance/db-session-extension-usage db sid)]
+           (when-let [u (if extensions
+                          (persistance/db-session-usage-stats db sid true)
+                          (persistance/db-session-usage-stats db sid))]
+             (let [input (long (or (:input-tokens u) 0))
+                   cached (long (or (:input-cache-read-tokens u) 0))
+                   reusable (long (or (:prompt-cache-reusable-tokens u) 0))
+                   reused (long (or (:prompt-cache-reused-tokens u) 0))
+                   subagents (persistance/db-session-subagent-usage db sid)
+                   total-cost (+ (double (or (:cost-usd u) 0.0))
+                                  (double (or (:cost-usd subagents) 0.0))
+                                  (double (or (:cost-usd extensions) 0.0)))]
 
-             (wire/canonical (cond-> (assoc u :total-cost-usd total-cost)
-                               subagents
-                               (assoc :subagents subagents)
+               (wire/canonical (cond-> (assoc u :total-cost-usd total-cost)
+                                 subagents
+                                 (assoc :subagents subagents)
 
-                               (:health u)
-                               (update :health request-health-metrics)
+                                 extensions
+                                 (assoc :extensions extensions)
 
-                               (contains? u :prompt-cache-estimated-sample-count)
-                               (assoc :reusable-prefix-estimated
-                                 (pos? (long (or (:prompt-cache-estimated-sample-count u) 0))))
+                                 (:health u)
+                                 (update :health request-health-metrics)
 
-                               (pos? input)
-                               (assoc :cache-read-share-percent (usage-percent cached input))
+                                 (contains? u :prompt-cache-estimated-sample-count)
+                                 (assoc :reusable-prefix-estimated
+                                   (pos? (long (or (:prompt-cache-estimated-sample-count u) 0))))
 
-                               (pos? reusable)
-                               (assoc :reusable-prefix-coverage-percent
-                                 (usage-percent reused reusable)))))))
+                                 (pos? input)
+                                 (assoc :cache-read-share-percent (usage-percent cached input))
+
+                                 (pos? reusable)
+                                 (assoc :reusable-prefix-coverage-percent
+                                   (usage-percent reused reusable))))))))
        (catch Throwable _ nil)))
 
 (defonce ^:private projects-overview-epoch
@@ -7790,7 +7796,8 @@
                         (ex-message t)]))))))
 
 (defn- create-session-cold!
-  [{:keys [channel title external-id workspace-id root group-id sources extensions tools origin]}]
+  [{:keys [channel title external-id workspace-id root group-id sources extensions tools origin
+            parent-session-id]}]
   ;; The store cannot make a workspace in a folder that does not exist, and a blank
   ;; root names no folder. Without this refusal the create failed later and the
   ;; caller read 500 engine-error (#484). Only a nil root asks for the default folder.
@@ -7832,7 +7839,10 @@
                       (assoc :tools tools)
 
                       origin
-                      (assoc :origin origin)))]
+                      (assoc :origin origin)
+
+                      parent-session-id
+                      (assoc :parent-session-id parent-session-id)))]
 
     (put-session! (:id created) {:next-seq 0 :last-active (util/now-ms)})
     (when-not group-id (file-in-root-project! (:id created) workspace-id))
@@ -7879,26 +7889,32 @@
    `:idempotency-key` makes a retry safe. For SESSION_CREATE_KEY_TTL_MS, the
    same key answers with the session that the first create made, also while that
    create still runs. A failed create forgets its key, so a retry creates again."
-  [{:keys [channel idempotency-key] :as opts}]
-  (let [create #(publish-session-created!
-                  (try (lp/db-info) (catch Throwable _ nil))
-                  (session->wire (create-session-cold! (-> opts
+  [{:keys [channel idempotency-key parent-session-id origin] :as opts}]
+  (let [create (fn []
+                 (let [session (session->wire
+                                 (create-session-cold! (-> opts
                                                            (dissoc :idempotency-key)
-                                                           (assoc :channel (or channel :api))))))]
+                                                           (assoc :channel (or channel :api)))))]
+                   (if parent-session-id
+                     session
+                     (publish-session-created! (try (lp/db-info) (catch Throwable _ nil)) session))))]
     (if (str/blank? idempotency-key)
       (create)
       (let [now (util/now-ms)
             _ (forget-old-session-creates! now)
+            key (if parent-session-id
+                  [parent-session-id (get origin "extension") idempotency-key]
+                  idempotency-key)
             mine {:at now :result (delay (create))}
             entry (or (.putIfAbsent ^java.util.concurrent.ConcurrentHashMap session-creates
-                                    idempotency-key
+                                    key
                                     mine)
                       mine)]
 
         (try
           @(:result entry)
           (catch Throwable t
-            (.remove ^java.util.concurrent.ConcurrentHashMap session-creates idempotency-key entry)
+            (.remove ^java.util.concurrent.ConcurrentHashMap session-creates key entry)
             (throw t)))))))
 
 (def ^:dynamic ^:private *turn-stats*
@@ -10386,13 +10402,19 @@
   ;; them: a shell log dies with the session that produced it and nothing else.
   (shell-log/delete-session-logs! sid)
   (let [child (some->> (agents/info (lp/db-info) (str sid))
-                       (agent-view (lp/db-info)))]
-    (persistance/db-delete-session-tree! (lp/db-info) sid)
+                       (agent-view (lp/db-info)))
+        {:keys [extension-session-ids]} (persistance/db-delete-session-tree! (lp/db-info) sid)]
     (swap! team-leaders dissoc (str sid))
     (team-dropped! sid)
     ;; The leader of a deleted child keeps its stream: its team lost a row, and maybe a clock.
     (when-let [leader (:leader_id child)]
-      (team-removed! (str leader) (str sid) (str (:team_id child)) (mapv str (:turn_ids child)))))
+      (team-removed! (str leader) (str sid) (str (:team_id child)) (mapv str (:turn_ids child))))
+    (doseq [id extension-session-ids]
+      (shell-log/delete-session-logs! id)
+      (append-event! id "session.deleted" {} {:store? false})
+      (drop-session! id)
+      (bus/forget! id)
+      (teardown-session-async! id)))
   ;; Notify attached clients while their sinks still exist. Reconnects learn the
   ;; same verdict from the missing persisted session, not a deleted replay ring.
   (append-event! sid "session.deleted" {} {:store? false})

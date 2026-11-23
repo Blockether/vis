@@ -90,7 +90,9 @@
   (db-get-session-goal [db-info session-id])
   (db-compare-session-goal! [db-info session-id revision goal])
   (db-claim-session! [db-info ref])
-  (db-delete-session-tree! [db-info id])
+  (db-delete-session-tree! [db-info id]
+    "Delete the session tree. Return `:extension-session-ids` with the IDs of its
+     deleted extension descendants.")
   (db-fork-session! [db-info session-id opts])
   (db-fork-session-at-turn! [db-info session-id opts])
   (db-agent-info [db-info session-id])
@@ -172,9 +174,12 @@
   (db-listed-session-turn-stats [db-info]
     "Read turn aggregates for top-level, claimed sessions only. Same result shape
      as the 1-arity `db-session-turn-stats`.")
-  (db-session-usage-stats [db-info session-id])
+  (db-session-usage-stats [db-info session-id]
+                          [db-info session-id include-empty?])
   (db-session-subagent-usage [db-info session-id]
     "Summed usage of every subagent below one session, at any depth, in one query.")
+  (db-session-extension-usage [db-info session-id]
+    "Sum the usage of extension children at all depths, or return nil if there are none.")
   (db-retry-session-turn! [db-info session-turn-soul-id opts])
   (db-list-session-turn-states [db-info session-turn-id])
   (db-list-turn-attachments [db-info session-turn-soul-id])

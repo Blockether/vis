@@ -191,6 +191,26 @@
           (expect (str/includes? split value) value)))))
 
 (defdescribe
+  extension-cost-split
+  (it "shows extension usage and one total cost with or without subagents"
+      (doseq [with-subagents? [false true]]
+        (let [usage (cond-> (assoc measured-usage
+                             "total_cost_usd" (if with-subagents? 2.7749 1.7749)
+                             "extensions" {"session_count" 2
+                                           "iteration_count" 7
+                                           "input_tokens" 4000
+                                           "output_tokens" 850
+                                           "cost_usd" 0.5})
+                      with-subagents? (assoc "subagents" {"agent_count" 1 "cost_usd" 1}))
+              component (dlg/session-metrics-component {} {:phase :ready :usage usage})
+              text (str/replace (lines component (:init component) 160 120) #"\s+" " ")]
+          (doseq [value ["Session cost $1.2749" "Extensions" "Sessions 2" "Calls 7"
+                         "Total input 4,000" "Total output 850" "Extension cost $0.5000"
+                         (if with-subagents? "Total cost $2.7749" "Total cost $1.7749")]]
+            (expect (str/includes? text value) value))
+          (expect (= 1 (count (re-seq #"Total cost" text))))))))
+
+(defdescribe
   supplied-cache-metrics-are-not-reclassified
   (it "supplied cache metrics are not reclassified"
       ;; #186: deliberately conflicting counts must not override the supplied metric.

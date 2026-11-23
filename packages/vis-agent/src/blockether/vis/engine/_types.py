@@ -1360,19 +1360,43 @@ class TurnTrace(TypedDict):
     iterations: list[dict[str, JSONValue]]
 
 
+class SessionUsageUsageExtensions(TypedDict):
+    """Usage of extension children at all depths."""
+
+    cost_usd: float
+    input_tokens: int
+    iteration_count: int
+    output_tokens: int
+    session_count: int
+
+
+class SessionUsageUsageSubagents(TypedDict):
+    """Usage of Council subagents at all depths."""
+
+    active_count: int
+    agent_count: int
+    cost_usd: float
+    input_tokens: int
+    iteration_count: int
+    output_tokens: int
+
+
 class SessionUsageUsage(TypedDict):
-    """The usage rollup, or null when the session has no turns."""
+    """The usage rollup, or null when the session has no turns and no extension
+    children.
+    """
 
     cost_usd: float
     duration_ms: int
-    first_turn_at: int
+    extensions: NotRequired[SessionUsageUsageExtensions]
+    first_turn_at: NotRequired[int]
     fold_count: int
     input_cache_read_tokens: int
     input_cache_write_tokens: int
     input_regular_tokens: int
     input_tokens: int
     iteration_count: int
-    last_turn_at: int
+    last_turn_at: NotRequired[int]
     output_reasoning_tokens: int
     output_tokens: int
     prompt_cache_estimated_sample_count: int
@@ -1382,6 +1406,7 @@ class SessionUsageUsage(TypedDict):
     prompt_cache_reused_tokens: int
     prompt_cache_sample_count: int
     reusable_prefix_estimated: bool
+    subagents: NotRequired[SessionUsageUsageSubagents]
     tool_call_count: int
     tool_failure_count: int
     total_cost_usd: float

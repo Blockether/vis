@@ -508,7 +508,7 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id sources tools origin]}]
+  [router {:keys [db session channel external-id title workspace-id sources tools origin parent-session-id]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   ;; Everything from here to the end runs with the sandbox GUARDED: the session is
   ;; built ~130 lines before this function returns, and workspace resolution,
@@ -605,7 +605,10 @@
                                                             (assoc :provider root-provider)
 
                                                             origin
-                                                            (assoc :origin origin))))
+                                                            (assoc :origin origin)
+
+                                                            parent-session-id
+                                                            (assoc :parent-session-id parent-session-id))))
             ;; A new session keeps the configuration tiers it was created with.
             ;; `open-env!` reads them back when it rebuilds the session.
             _ (when (and sources db-info (not resolved-session-id))
@@ -2146,7 +2149,7 @@
    resolving config and providers. A new session takes `:sources`, `:extensions` (see
    `extension-selection`), `:tools` (see [[tool-selection]]) and `:origin`; a resumed
    session keeps what it was created with."
-  [id {:keys [channel external-id title workspace-id sources extensions tools origin]}]
+  [id {:keys [channel external-id title workspace-id sources extensions tools origin parent-session-id]}]
   (let [db
         (config/resolve-db-spec)
 
@@ -2198,7 +2201,10 @@
                                   (assoc :workspace-id workspace-id)
 
                                   (and origin (not id))
-                                  (assoc :origin origin)))]
+                                  (assoc :origin origin)
+
+                                  (and parent-session-id (not id))
+                                  (assoc :parent-session-id parent-session-id)))]
 
         (turn-off-extensions! env turned-off)
         env))))

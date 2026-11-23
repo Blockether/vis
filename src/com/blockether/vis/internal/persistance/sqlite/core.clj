@@ -1700,6 +1700,8 @@
 
 ;; Session - session_soul + session_state
 
+(declare db-latest-session-state-id)
+
 (defn db-store-session!
   "Create session_soul + initial session_state (version 0).
    Returns the session-soul UUID.
@@ -1714,10 +1716,11 @@
      session_state.llm_root_provider / llm_root_model
      session_state.title.
 
+   Optional `:parent-session-id` links the child to the latest state of its parent.
    Optional `:origin` is a JSON map that names the program that created the session."
   [db-info
    {:keys [channel external-id title provider model workspace-id parent-state-id claimed? owner-id
-           origin]
+           origin parent-session-id]
     :or {claimed? true}}]
   (when-not workspace-id
     (throw (ex-info "db-store-session! requires :workspace-id (1:1 invariant)"
@@ -1733,7 +1736,14 @@
               (new-uuid)
 
               now
-              (now-ms)]
+              (now-ms)
+
+              parent-state-id
+              (if parent-session-id
+                (or (db-latest-session-state-id tx-info parent-session-id)
+                    (throw (ex-info "The bound parent session does not exist"
+                                    {:status 404 :type :session-not-found})))
+                parent-state-id)]
 
           (execute! tx-info
                     {:insert-into :session_soul
@@ -2698,8 +2708,10 @@
                 :stale (or (> (long (:turn latest)) (long (:turn measured)))
                            (pos? (long (:n newer))))})))))
 
-(defn db-session-usage-stats
+(defn- session-usage-stats
   "ONE session's whole-life USAGE rollup, or nil when the session has no turns:
+
+   With `include-empty?`, an empty session returns zero usage and no turn dates.
 
    `{:turn-count :iteration-count :duration-ms :input-tokens
      :input-regular-tokens :input-cache-write-tokens :input-cache-read-tokens
@@ -2732,7 +2744,7 @@
 
    Only the TOTALS survive the blob pass: per-tool and per-error rankings had no
    reader left on any channel, so they are not computed."
-  [db-info session-id]
+  [db-info session-id include-empty?]
   (when (and (ds db-info) session-id)
     (let [soul-id-s
           (->ref session-id)
@@ -2782,7 +2794,7 @@
              :join (into [[:session_turn_state :sts] [:= :sts.id :qti.session_turn_state_id]] join)
              :where where})]
 
-      (when (pos? (long (or (:turns agg) 0)))
+      (when (or include-empty? (pos? (long (or (:turns agg) 0))))
         (let [latest
               ;; The newest turn that HAS a model. A turn's row is inserted when
               ;; the turn STARTS and only stamped with provider/model when it
@@ -2855,36 +2867,58 @@
             (:llm_root_model latest)
             (assoc :model (str (:llm_root_model latest)))))))))
 
+(defn db-session-usage-stats
+  ([db-info session-id] (session-usage-stats db-info session-id false))
+  ([db-info session-id include-empty?] (session-usage-stats db-info session-id include-empty?)))
+
+(defn- session-descendants-sql
+  "Find descendants by state links and, for usage, agent links. `UNION` stops
+   cycles and counts a session once. Only state links cascade on delete."
+  [agent-links?]
+  (str "WITH RECURSIVE root(id) AS (VALUES (?)), tree(id) AS (
+      SELECT id FROM root
+      UNION
+      SELECT child.id FROM tree t
+        CROSS JOIN session_state parent ON parent.session_soul_id = t.id
+        CROSS JOIN session_soul child ON child.parent_state_id = parent.id"
+       (when agent-links?
+         "
+      UNION
+      SELECT a.session_id FROM tree t
+        CROSS JOIN session_agent a ON a.parent_id = t.id")
+       "), descendants(id) AS (
+      SELECT t.id FROM tree t WHERE t.id <> (SELECT id FROM root))"))
+
+(defn- extension-descendants-sql
+  [agent-links?]
+  (str (session-descendants-sql agent-links?) ", extensions(id) AS (
+      SELECT d.id FROM descendants d
+        WHERE NOT EXISTS (SELECT 1 FROM session_agent a WHERE a.session_id = d.id))"))
+
 (def ^:private subagent-usage-sql
-  "Descendant tree of one session over `session_agent.parent_id`, then ONE
-   aggregate over the current chain of every descendant. `UNION` (not
-   `UNION ALL`) stops a cycle. Each child excludes the parent turns it copied,
-   exactly like `session-usage-scope` does for a single session.
+  "Sum the current turns of descendant agents. Do not count copied turns.
 
    `CROSS JOIN` fixes the join order, because SQLite never reorders it. With a
    plain `JOIN`, the planner scanned all of `session_turn_iteration` first:
    34 s on a 16 GB store for a leader with 72 children, 5 ms with this order.
    The query must start from the small tree and use an index at each step."
-  "WITH RECURSIVE tree(id) AS (
-     SELECT session_id FROM session_agent WHERE parent_id = ?
-     UNION
-     SELECT a.session_id FROM session_agent a JOIN tree t ON a.parent_id = t.id)
-   SELECT (SELECT COUNT(*) FROM tree) AS agents,
-          (SELECT COUNT(*) FROM tree t JOIN session_agent a ON a.session_id = t.id
-            WHERE a.status IN ('queued', 'running')) AS active,
-          COUNT(qti.id) AS iterations,
+  (str (session-descendants-sql true) ", agents(id, status, inherited_turns) AS (
+      SELECT a.session_id, a.status, a.inherited_turns FROM descendants d
+        CROSS JOIN session_agent a ON a.session_id = d.id)
+    SELECT (SELECT COUNT(*) FROM agents) AS agents,
+           (SELECT COUNT(*) FROM agents WHERE status IN ('queued', 'running')) AS active,
+           COUNT(qti.id) AS iterations,
           SUM(qti.input_tokens) AS input_tokens,
           SUM(qti.output_tokens) AS output_tokens,
           SUM(qti.cost_usd) AS cost_usd
-     FROM tree t
-     CROSS JOIN session_agent sa ON sa.session_id = t.id
-     CROSS JOIN session_state ss ON ss.session_soul_id = t.id
+      FROM agents sa
+     CROSS JOIN session_state ss ON ss.session_soul_id = sa.id
      CROSS JOIN session_turn_soul ts ON ts.session_state_id = ss.id
      CROSS JOIN session_turn_state sts ON sts.session_turn_soul_id = ts.id
      CROSS JOIN session_turn_iteration qti ON qti.session_turn_state_id = sts.id
     WHERE (ss.parent_state_id IS NOT NULL OR ts.position > sa.inherited_turns)
       AND sts.version = (SELECT MAX(s2.version) FROM session_turn_state s2
-                          WHERE s2.session_turn_soul_id = sts.session_turn_soul_id)")
+                          WHERE s2.session_turn_soul_id = sts.session_turn_soul_id)"))
 
 (defn db-session-subagent-usage
   "Usage of EVERY subagent below `session-id`, at any depth, summed in ONE SQL
@@ -2900,6 +2934,35 @@
       (when (pos? (long (or (:agents row) 0)))
         {:agent-count (long (:agents row))
          :active-count (long (or (:active row) 0))
+         :iteration-count (long (or (:iterations row) 0))
+         :input-tokens (long (or (:input_tokens row) 0))
+         :output-tokens (long (or (:output_tokens row) 0))
+         :cost-usd (double (or (:cost_usd row) 0))}))))
+
+(def ^:private extension-usage-sql
+  "Use the same indexed join order as `subagent-usage-sql`."
+  (str (extension-descendants-sql true) "
+   SELECT (SELECT COUNT(*) FROM extensions) AS sessions,
+          COUNT(qti.id) AS iterations,
+          SUM(qti.input_tokens) AS input_tokens,
+          SUM(qti.output_tokens) AS output_tokens,
+          SUM(qti.cost_usd) AS cost_usd
+     FROM extensions e
+     CROSS JOIN session_state ss ON ss.session_soul_id = e.id
+     CROSS JOIN session_turn_soul ts ON ts.session_state_id = ss.id
+     CROSS JOIN session_turn_state sts ON sts.session_turn_soul_id = ts.id
+     CROSS JOIN session_turn_iteration qti ON qti.session_turn_state_id = sts.id
+    WHERE (ss.parent_state_id IS NOT NULL OR ts.created_at >= ss.created_at)
+      AND sts.version = (SELECT MAX(s2.version) FROM session_turn_state s2
+                          WHERE s2.session_turn_soul_id = sts.session_turn_soul_id)"))
+
+(defn db-session-extension-usage
+  "Sum the usage of extension children at all depths, or return nil if there are none."
+  [db-info session-id]
+  (when (and (ds db-info) session-id)
+    (let [row (first (query-sql! db-info [extension-usage-sql (->ref session-id)]))]
+      (when (pos? (long (or (:sessions row) 0)))
+        {:session-count (long (:sessions row))
          :iteration-count (long (or (:iterations row) 0))
          :input-tokens (long (or (:input_tokens row) 0))
          :output-tokens (long (or (:output_tokens row) 0))
@@ -2984,6 +3047,11 @@
         (let [id
               (str (->id session-soul-id))
 
+              extension-session-ids
+              (mapv :id
+                    (query-sql! tx-info
+                                [(str (extension-descendants-sql false) " SELECT id FROM extensions") id]))
+
               ;; The delete takes the agent rows of this session and of its children. Their
               ;; leader keeps the clocks of its teams, so those follow the rows that stay.
               leaders
@@ -2995,7 +3063,8 @@
                              :where [:or [:= :session_id id] [:= :parent_id id]]}))]
 
           (execute! tx-info {:delete-from :session_soul :where [:= :id (->id session-soul-id)]})
-          (run! #(refresh-teams! tx-info %) leaders))))))
+          (run! #(refresh-teams! tx-info %) leaders)
+          {:extension-session-ids extension-session-ids})))))
 
 ;; Projects (cross-channel) + movable project sessions + ownership  (V6/V7)
 

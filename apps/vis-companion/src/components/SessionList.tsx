@@ -1048,7 +1048,7 @@ export function SessionStatsPanel({
             <Stat label="Total input" value={compactCount(usage.input_tokens)} />
             <Stat label="Total output" value={compactCount(usage.output_tokens)} />
             <Stat
-              label={usage.subagents ? 'Session cost' : 'Cost'}
+              label={usage.subagents || usage.extensions ? 'Session cost' : 'Cost'}
               value={formatUsd(usage.cost_usd)}
             />
             <Stat label="Folds" value={compactCount(usage.fold_count)} />
@@ -1072,9 +1072,28 @@ export function SessionStatsPanel({
                 <Stat label="Total input" value={compactCount(usage.subagents.input_tokens)} />
                 <Stat label="Total output" value={compactCount(usage.subagents.output_tokens)} />
                 <Stat label="Subagent cost" value={formatUsd(usage.subagents.cost_usd)} />
-                <Stat label="Total cost" value={formatUsd(usage.total_cost_usd)} />
               </dl>
             </section>
+          )}
+          {usage.extensions && (
+            <section aria-label="Extensions" className="mt-4 border-t border-dialog-edge pt-4">
+              <h3 className="text-title font-bold text-white">Extensions</h3>
+              <p className="mt-1 text-ui text-dialog-hint">
+                Every extension child session below this session, at any depth.
+              </p>
+              <dl className="mt-3 grid grid-cols-4 gap-x-3 gap-y-3">
+                <Stat label="Sessions" value={compactCount(usage.extensions.session_count)} />
+                <Stat label="Calls" value={compactCount(usage.extensions.iteration_count)} />
+                <Stat label="Total input" value={compactCount(usage.extensions.input_tokens)} />
+                <Stat label="Total output" value={compactCount(usage.extensions.output_tokens)} />
+                <Stat label="Extension cost" value={formatUsd(usage.extensions.cost_usd)} />
+              </dl>
+            </section>
+          )}
+          {(usage.subagents || usage.extensions) && (
+            <dl className="mt-4 border-t border-dialog-edge pt-4">
+              <Stat label="Total cost" value={formatUsd(usage.total_cost_usd)} />
+            </dl>
           )}
           <dl
             aria-label="Prompt cache"

@@ -9584,3 +9584,124 @@
                    (expect (= 201 (:status (create {}))))
                    (expect (= 201 (:status (create {:vis.host/origin origin}))))
                    (expect (= [nil origin] @created)))))
+
+(defdescribe extension-child-sessions
+  (it "does not let HTTP callers set a parent or use a non-boolean is_child"
+      (let [handler (rr/ring-handler ((rv 'router) nil []))]
+        (with-redefs [state/create-session! (fn [_] (fixture/created-session))]
+          (doseq [[body message]
+                  [[{"is_child" true "origin" {"session_id" (str (random-uuid))}}
+                    "is_child needs the bound session of an extension"]
+                   [{"is_child" "false"} "is_child must be a boolean"]
+                   [{"is_child" nil} "is_child must be a boolean"]]]
+            (let [answer (handler {:request-method :post
+                                   :uri "/v1/sessions"
+                                   :body (java.io.ByteArrayInputStream.
+                                           (.getBytes (wire/json-str body) "UTF-8"))})]
+              (expect (= [400 {"error" {"type" "invalid-request" "message" message}}]
+                         [(:status answer) (wire/parse-json (:body answer))])))))))
+  (it "keeps host-created sessions off the list, adds their cost, and deletes them with the parent"
+      (let [db (persistance/db-create-connection! :memory)
+            parent (str (h/store-session! db {:channel :api :title "Review parent"}))
+            handler (rr/ring-handler ((rv 'router) nil []))
+            exchange ((rv 'host-exchange) handler)
+            create (fn [origin]
+                     (exchange {"method" "POST" "route" "/v1/sessions" "body" {"is_child" true}}
+                               {:vis.host/origin origin}))
+            origin {"kind" "extension" "extension" "review" "session_id" parent}
+            call (fn [method suffix]
+                   (handler {:request-method method :uri (str "/v1/sessions" suffix)}))
+            record! (fn [sid input output cost]
+                      (let [tid (persistance/db-store-session-turn!
+                                  db {:parent-session-id sid :user-request "Review" :status :success})]
+                        (h/store-iteration! db {:session-turn-id tid
+                                                :code ""
+                                                :tokens {"input" input "output" output}
+                                                :cost-usd cost})))
+            children (atom [])]
+        (try
+          (with-redefs [persistance/db-shared-connection! (constantly db)
+                        config/resolve-db-spec (constantly {:datasource (:datasource db)})
+                        loop-router/get-router (constantly {:providers []})
+                        python-extensions/prepare-project! (constantly nil)]
+            (expect (= 404 (:status (create (assoc origin "session_id" (str (random-uuid)))))))
+            (let [answer (create origin)]
+              (expect (= 201 (:status answer)))
+              (let [child (get (wire/parse-json (String. (.decode (java.util.Base64/getDecoder)
+                                                                  ^String (:content answer))
+                                                         "UTF-8")) "id")
+                    parent-path (str "/" parent)
+                    child-path (str "/" child)
+                    usage (fn [] (get (wire/parse-json (:body (call :get (str parent-path "/usage"))))
+                                       "usage"))
+                    costs {"session_count" 1 "iteration_count" 1 "input_tokens" 12
+                           "output_tokens" 3 "cost_usd" 0.5}]
+                (swap! children conj child)
+                (expect (= 200 (:status (call :get child-path))))
+                (expect (nil? (persistance/db-agent-info db child)))
+                (record! child 12 3 0.5)
+                (expect (= costs (get (usage) "extensions")))
+                (expect (= 0.5 (get (usage) "total_cost_usd")))
+                (record! parent 6 2 0.25)
+                (let [rows (wire/parse-json (:body (call :get "")))]
+                  (expect (= [parent] (mapv #(get % "id") (get rows "sessions")))))
+                (expect (= {"cost_usd" 0.25 "total_cost_usd" 0.75 "extensions" costs}
+                           (select-keys (usage) ["cost_usd" "total_cost_usd" "extensions"])))
+                (let [agent (str (h/store-session! db {:channel :api :parent-session-id parent}))
+                      reply (create (assoc origin "session_id" agent))
+                      grandchild (get (wire/parse-json
+                                       (String. (.decode (java.util.Base64/getDecoder)
+                                                         ^String (:content reply)) "UTF-8")) "id")]
+                  (expect (= 201 (:status reply)))
+                  (swap! children conj grandchild)
+                  (sqlite/execute! db {:insert-into :session_agent
+                                       :values [{:session_id agent :parent_id parent
+                                                 :leader_id parent :team_id "team" :task "Review"
+                                                 :depth 1 :inherited_turns 0 :spawn_key "key"
+                                                 :spawn_fingerprint "fingerprint"
+                                                 :checkpoint (byte-array 0) :created_at 1}]})
+                  (record! agent 8 2 0.125)
+                  (record! grandchild 14 4 1.0)
+                  (let [usage (usage)]
+                    (expect (= 0.125 (get-in usage ["subagents" "cost_usd"])))
+                    (expect (= {"session_count" 2 "iteration_count" 2 "input_tokens" 26
+                                "output_tokens" 7 "cost_usd" 1.5}
+                               (get usage "extensions")))
+                    (expect (= 1.875 (get usage "total_cost_usd")))))
+                (expect (= 204 (:status (call :delete parent-path))))
+                (doseq [id @children]
+                  (expect (= 404 (:status (call :get (str "/" id)))))
+                  (expect (true? (util/poll (+ (util/now-ms) 5000) 10
+                                           #(when-not (contains? @loop-env/cache (loop-env/cache-key id))
+                                              (reduced true)))))))))
+          (finally
+            (doseq [child @children] (lp/close! child))
+            (persistance/db-dispose-connection! db))))))
+
+(defdescribe mixed-descendant-usage
+  (it "counts a Council subagent below an extension child in the parent usage"
+      (let [db (persistance/db-create-connection! :memory)]
+        (try
+          (let [parent (h/store-session! db {:channel :api})
+                child (h/store-session! db {:channel :api :parent-session-id parent})
+                agent (h/store-session! db {:channel :api})
+                handler (rr/ring-handler ((rv 'router) nil []))]
+            (sqlite/execute! db {:insert-into :session_agent
+                                 :values [{:session_id (str agent) :parent_id (str child)
+                                           :leader_id (str child) :team_id "team" :task "Review"
+                                           :depth 1 :inherited_turns 1 :spawn_key "key"
+                                           :spawn_fingerprint "fingerprint"
+                                           :checkpoint (byte-array 0) :created_at 1}]})
+            (doseq [[sid cost] [[parent 0.125] [child 0.25] [agent 0.25] [agent 0.5]]]
+              (let [tid (persistance/db-store-session-turn!
+                          db {:parent-session-id sid :user-request "Review" :status :success})]
+                (h/store-iteration! db {:session-turn-id tid :code "" :cost-usd cost})))
+            (with-redefs [lp/db-info (constantly db)]
+              (let [answer (handler {:request-method :get :uri (str "/v1/sessions/" parent "/usage")})
+                    usage (get (wire/parse-json (:body answer)) "usage")]
+                (expect (= [200 0.125 0.25 0.5 0.875]
+                           [(:status answer) (get usage "cost_usd")
+                            (get-in usage ["extensions" "cost_usd"])
+                            (get-in usage ["subagents" "cost_usd"])
+                            (get usage "total_cost_usd")])))))
+          (finally (persistance/db-dispose-connection! db))))))

@@ -71,9 +71,9 @@ def jailed_shell(opts):
 
 
 def request(frame):
-    """Refuse a host session request outside a Vis process."""
+    """Refuse session requests, including child creation, without a Vis host."""
     raise Refused(
-        "vis.sessions, vis.session and vis.council need a Vis host. Outside an "
+        "vis.run, vis.sessions, vis.session and vis.council need a Vis host. Outside an "
         "extension, use GatewayClient or StdioEngineClient from blockether.vis.engine."
     )
 

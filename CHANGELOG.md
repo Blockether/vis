@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Extensions: `vis.run(..., is_child=True)` and `vis.sessions.create(is_child=True)` make a child session of the bound session. A child session is not in the session list, and Vis deletes it with its parent. The usage of the parent shows the cost of its child sessions in a separate Extensions part, in the Companion app and in the TUI. The AI review of vis-review runs in a child session.
 - Terminal: a canvas board has a map. Press `F4` (or `m` in an app, when the app does not use `m`) to change between the list and the map. The map shows the items as boxes in their frames, with the arrows between them. Pan with the arrow keys, `hjkl`, a mouse drag, the wheel, Shift and the wheel, or a sideways touchpad swipe. Zoom with `+`, `-`, or Ctrl and the wheel, about the pointer or the selected item. `0` fits the board, and `End` goes back to the camera of the owner. `Tab` moves to the next item, and the camera moves to it with a short glide. A locked board does not move, and `Tab` stays on the items that you can see.
 - Live views: people comment on the items of a canvas board. A comment starts a thread on its item, and one item can hold more than one thread. A mark on the item shows the number of comments and the state of the thread. Your code reads the threads with `board.threads` and answers with `board.reply(...)` and `board.resolve(...)`. The Companion app and the TUI show the threads.
 

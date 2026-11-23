@@ -74,7 +74,7 @@ def _call(tool, verb, **arguments):
 
 
 def _ask(request, model):
-    return vis.run(request, response_model=model)
+    return vis.run(request, response_model=model, is_child=True)
 
 
 def _key(journal):

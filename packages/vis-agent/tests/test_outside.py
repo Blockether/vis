@@ -163,6 +163,10 @@ def test_host_sessions_refuse_without_the_host(monkeypatch):
     assert vis._host.bound_session() is None
     with pytest.raises(TransportError, match="GatewayClient or StdioEngineClient"):
         vis.sessions.list()
+    with pytest.raises(TransportError, match="GatewayClient or StdioEngineClient"):
+        vis.sessions.create(is_child=True)
+    with pytest.raises(TransportError, match="GatewayClient or StdioEngineClient"):
+        vis.run("Do it", is_child=True)
 
 
 # -- State, logs, secrets, environment -----------------------------------------

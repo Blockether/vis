@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -102,8 +102,39 @@ describe('the expanded session card', () => {
     const subagents = await screen.findByRole('region', { name: 'Subagents' });
     expect(screen.getByText('Session cost')).toBeVisible();
     expect(screen.queryByText('Cost')).toBeNull();
-    for (const text of ['100 · 4 active', '1.7k', '154M', '768k', '$25.25', '$25.46']) {
+    for (const text of ['100 · 4 active', '1.7k', '154M', '768k', '$25.25']) {
       expect(subagents).toHaveTextContent(text);
     }
+    expect(screen.getByText('Total cost').nextElementSibling).toHaveTextContent('$25.46');
+  });
+
+  it.each([false, true])('splits extension cost (with subagents: %s)', async (withSubagents) => {
+    await open({
+      ...usage,
+      total_cost_usd: withSubagents ? 1.71 : 0.71,
+      ...(withSubagents && { subagents: { agent_count: 1, cost_usd: 1 } }),
+      extensions: {
+        session_count: 2,
+        iteration_count: 7,
+        input_tokens: 4_000,
+        output_tokens: 850,
+        cost_usd: 0.5,
+      },
+    });
+    const extensions = within(await screen.findByRole('region', { name: 'Extensions' }));
+    for (const [label, value] of [
+      ['Sessions', '2'],
+      ['Calls', '7'],
+      ['Total input', '4.0k'],
+      ['Total output', '850'],
+      ['Extension cost', '$0.50'],
+    ]) {
+      expect(extensions.getByText(label).nextElementSibling).toHaveTextContent(value);
+    }
+    expect(screen.getByText('Session cost').nextElementSibling).toHaveTextContent('$0.21');
+    expect(screen.queryByText('Cost')).toBeNull();
+    expect(screen.getByText('Total cost').nextElementSibling).toHaveTextContent(
+      withSubagents ? '$1.71' : '$0.71',
+    );
   });
 });

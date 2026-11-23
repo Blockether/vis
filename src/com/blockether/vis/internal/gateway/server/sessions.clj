@@ -150,7 +150,9 @@
    `PATCH /v1/sessions/:sid/model` does. Give both or neither.
 
    The extension host exchange sets `:vis.host/origin` on the request. The new
-   session then records which extension created it. An HTTP client cannot set it."
+   session then records which extension created it. With `is_child` set to true,
+   the new session is a child of the session bound to the extension. An HTTP
+   client cannot set the origin or create a child."
   [request]
   (let [body
         (http/body-json request)
@@ -180,13 +182,26 @@
         model
         (trimmed (get body "model"))
 
+        is-child
+        (get body "is_child")
+
+        origin
+        (:vis.host/origin request)
+
+        parent-session-id
+        (when (true? is-child) (trimmed (get origin "session_id")))
+
         provider-error
         (unknown-provider-error pid)
 
         string-list?
         #(or (nil? %) (and (sequential? %) (every? string? %)))]
 
-    (cond (and (not (str/blank? (str raw))) (nil? gid))
+    (cond (and (map? body) (contains? body "is_child") (not (boolean? is-child)))
+          (http/error-response 400 :invalid-request "is_child must be a boolean")
+          (and (true? is-child) (nil? parent-session-id))
+          (http/error-response 400 :invalid-request "is_child needs the bound session of an extension")
+          (and (not (str/blank? (str raw))) (nil? gid))
           (http/error-response 400 :invalid-request "group_id must be a session group id")
           (and gid (nil? (state/get-session-group gid))) (http/group-404 (str raw))
           (not (string-list? sources))
@@ -217,8 +232,11 @@
                                        gid
                                        (assoc :group-id gid)
 
-                                       (:vis.host/origin request)
-                                       (assoc :origin (:vis.host/origin request))))]
+                                       origin
+                                       (assoc :origin origin)
+
+                                       parent-session-id
+                                       (assoc :parent-session-id parent-session-id)))]
                        (when pid (state/set-session-model! (get created "id") pid model))
                        (http/json-response 201 created))
                      (catch clojure.lang.ExceptionInfo e
@@ -893,7 +911,7 @@
   "GET the whole-session usage rollup (turns, iterations, tool calls, folds,
    token split, cache hit rate, cost). ON-DEMAND only: it decodes every
    iteration's tool-call BLOB to count tools, so it is never folded into
-   `list-sessions`. `{\"usage\" nil}` for a session with no turns yet."
+   `list-sessions`. A session with no turns or extension children gives null usage."
   [request]
   (if-let [sid (http/path-sid request)]
     (http/json-response {:usage (state/session-usage-info sid)})

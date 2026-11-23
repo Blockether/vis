@@ -1525,7 +1525,13 @@
         (get usage "reusable_prefix_estimated")
 
         samples
-        (get usage "prompt_cache_sample_count")]
+        (get usage "prompt_cache_sample_count")
+
+        subagents
+        (get usage "subagents")
+
+        extensions
+        (get usage "extensions")]
 
     (vec
       (case phase
@@ -1628,7 +1634,7 @@
             (map (fn [[label field]]
                    (stat label (metric-count (get usage field))))
                  [["Total input" "input_tokens"] ["Total output" "output_tokens"]])
-            [(stat (if (get usage "subagents") "Session cost" "Cost")
+            [(stat (if (or subagents extensions) "Session cost" "Cost")
                    (metric-usd (get usage "cost_usd")))]
             (map (fn [[label field]]
                    (stat label (metric-count (get usage field))))
@@ -1639,7 +1645,7 @@
                    (if-let [ms (get usage "duration_ms")]
                      (or (vis/format-duration ms) "0s")
                      "—")) (explain "Time spent inside turns")]
-            (when-let [subagents (get usage "subagents")]
+            (when subagents
               (concat [(row "") (head "Subagents")
                        (explain "Every subagent below this session, at any depth.")
                        (stat "Subagents"
@@ -1651,9 +1657,18 @@
                              (stat label (metric-count (get subagents field))))
                            [["Calls" "iteration_count"] ["Total input" "input_tokens"]
                             ["Total output" "output_tokens"]])
-                      [(stat "Subagent cost" (metric-usd (get subagents "cost_usd"))) (row "")
-                       (stat "Total cost" (metric-usd (get usage "total_cost_usd")))
-                       (explain "Session cost plus subagent cost")]))
+                      [(stat "Subagent cost" (metric-usd (get subagents "cost_usd")))]))
+            (when extensions
+              (concat [(row "") (head "Extensions")
+                       (explain "Every extension child session below this session, at any depth.")]
+                      (map (fn [[label field]]
+                             (stat label (metric-count (get extensions field))))
+                           [["Sessions" "session_count"] ["Calls" "iteration_count"]
+                            ["Total input" "input_tokens"] ["Total output" "output_tokens"]])
+                      [(stat "Extension cost" (metric-usd (get extensions "cost_usd")))]))
+            (when (or subagents extensions)
+              [(row "") (stat "Total cost" (metric-usd (get usage "total_cost_usd")))
+               (explain "Session cost plus child session costs")])
             [(row "") (head "Prompt cache")
              (stat "Cached input" (metric-percent (get usage "cache_read_share_percent")))
              (explain "Share of all input served from provider cache") (row "")
