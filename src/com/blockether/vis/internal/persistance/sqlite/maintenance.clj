@@ -19,7 +19,10 @@
    a process, after a settling delay, never inside a transaction. Readers and
    writers in this process or another one block for its duration and then
    continue, which the 30 s busy timeout and the write-retry ladder in `core`
-   absorb. A process that exits first, or a `db-close!` that aborts the lease
+   absorb. Only a store of at most `vacuum-max-file-bytes` gets a VACUUM: on a
+   17 GB store the rewrite held the lock for many minutes, each turn write of the
+   gateway failed or waited, and each restart started the rewrite again. A larger
+   store keeps its freelist, and SQLite uses those pages again. A process that exits first, or a `db-close!` that aborts the lease
    mid-rewrite, simply leaves the store due at the next start: the rewrite is
    transactional, so an interrupted VACUUM rolls back rather than damaging
    anything.
@@ -55,6 +58,11 @@
   "Share of the file the freelist must reach on top of the floor. A big store
    with 2% waste is healthy churn, not something to rewrite."
   0.10)
+
+;; Measured 15 s for 2.4 GB, so 2 GiB stays in the 30 s busy timeout of `core`.
+(def ^:private ^:const vacuum-max-file-bytes
+  "The largest store, in bytes (2 GiB), that a VACUUM rewrites while writers wait."
+  (* 2 1024 1024 1024))
 
 (def ^:private ^:const vacuum-start-delay-ms
   "Settling time before the sweep. Startup is the busiest moment of a store's
@@ -203,17 +211,19 @@
   "Reclaim the freelist of the store at `db-file` when the fortnight has passed
    AND the freelist is worth a rewrite. Returns a report — `:is-vacuumed` with a
    `:reason` of `:vacuumed`, `:recent` (marker inside the window), `:compact`
-   (nothing worth reclaiming), `:low-disk`, `:locked` (another process is doing
+   (nothing worth reclaiming), `:too-large` (the rewrite would block writers too
+   long), `:low-disk`, `:locked` (another process is doing
    it) or `:failed`. Does not throw. A low-disk skip leaves the marker alone:
    only the next store open checks again, after the janitor delay. A busy
    checkpoint retries on the janitor without a new vacuum. The optional `:open?`
    predicate stops these retries when the store closes.
 
    Test options: `:now-ms`, `:interval-days`, `:min-free-bytes`,
-   `:min-free-fraction`, and `:usable-space` (takes the store path)."
+   `:min-free-fraction`, `:max-file-bytes`, and `:usable-space` (takes the store path)."
   ([^DataSource ds ^String db-file] (maybe-vacuum! ds db-file nil))
   ([^DataSource ds ^String db-file
-    {:keys [now-ms interval-days min-free-bytes min-free-fraction open?] disk-space :usable-space}]
+    {:keys [now-ms interval-days min-free-bytes min-free-fraction max-file-bytes open?]
+     disk-space :usable-space}]
    (try
      (let [marker
            (marker-file db-file)
@@ -231,21 +241,26 @@
                               (long (or min-free-bytes vacuum-min-free-bytes))
                               (double (or min-free-fraction vacuum-min-free-fraction)))
              (merge space {:is-vacuumed false :reason :compact})
-             (let [usable-bytes (long ((or disk-space usable-space) db-file))
-                   ;; VACUUM writes a temp database and a WAL. Both can be on this volume.
-                   ;; https://www.sqlite.org/lang_vacuum.html#how_vacuum_works
-                   required-bytes (* 2 (max (long (:file-bytes space)) (.length (File. db-file))))]
+             (if (< (long (or max-file-bytes vacuum-max-file-bytes))
+                    (max (long (:file-bytes space)) (.length (File. ^String db-file))))
+               (merge space {:is-vacuumed false :reason :too-large})
+               (let [usable-bytes (long ((or disk-space usable-space) db-file))
+                     ;; VACUUM writes a temp database and a WAL. Both can be on this volume.
+                     ;; https://www.sqlite.org/lang_vacuum.html#how_vacuum_works
+                     required-bytes (* 2
+                                       (max (long (:file-bytes space)) (.length (File. db-file))))]
 
-               (if (< usable-bytes required-bytes)
-                 (assoc space
-                   :is-vacuumed false
-                   :reason :low-disk
-                   :usable-bytes usable-bytes
-                   :required-bytes required-bytes)
-                 (let [report (with-vacuum-lock! marker #(run-vacuum! ds db-file marker space open?))]
-                   (when (= :failed (:reason report))
-                     (try (.delete marker) (catch Throwable _ nil)))
-                   (or report (merge space {:is-vacuumed false :reason :locked})))))))))
+                 (if (< usable-bytes required-bytes)
+                   (assoc space
+                     :is-vacuumed false
+                     :reason :low-disk
+                     :usable-bytes usable-bytes
+                     :required-bytes required-bytes)
+                   (let [report (with-vacuum-lock! marker
+                                                   #(run-vacuum! ds db-file marker space open?))]
+                     (when (= :failed (:reason report))
+                       (try (.delete marker) (catch Throwable _ nil)))
+                     (or report (merge space {:is-vacuumed false :reason :locked}))))))))))
      (catch Throwable t {:is-vacuumed false :reason :failed :error (ex-message t)}))))
 
 (defn vacuum-async!

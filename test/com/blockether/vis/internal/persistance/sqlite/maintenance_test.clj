@@ -151,6 +151,20 @@
                (expect (= freelist-count (:freelist-count (maintenance/free-space ds))))
                (expect (not (.exists (File. (str path ".vacuum"))))))
              (finally (cleanup! path)))))
+  (it "does not lock a store that is too large to rewrite inside the busy timeout"
+      (let [[path ds] (temp-store)]
+        (try (fill! ds 200)
+             (exec! ds "DELETE FROM bulk")
+             (let [{:keys [file-bytes freelist-count]} (maintenance/free-space ds)
+                   report (maintenance/maybe-vacuum! ds
+                                                     path
+                                                     {:min-free-bytes 1024
+                                                      :max-file-bytes (dec (long file-bytes))})]
+
+               (expect (= :too-large (:reason report)))
+               (expect (= freelist-count (:freelist-count (maintenance/free-space ds))))
+               (expect (not (.exists (File. (str path ".vacuum"))))))
+             (finally (cleanup! path)))))
   (it "truncates the WAL after changing a store with an open connection"
       (let [[path ^javax.sql.DataSource ds]
             (wal-store)
