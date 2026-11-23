@@ -513,6 +513,12 @@
   [:cancel-token :messages :engine-opts :extra-body :turn-features :reasoning-default
    ::cancel-disposer ::run])
 
+(defonce ^:private deferred-parked
+  ;; session id -> turn id -> parked row that waits for the running turn of its session.
+  (atom {}))
+
+(declare retry-deferred-parked!)
+
 (defn- archive-terminal-turn!
   "Persist the gateway-only projection, then release execution inputs and hooks.
    File I/O and callback disposal must never run inside the registry CAS."
@@ -557,7 +563,9 @@
               (dispose))
             (when-let [old (::archive previous)]
               (turn-archive/delete! old)))
-        (when archive (turn-archive/delete! archive))))))
+        (when archive (turn-archive/delete! archive)))
+      ;; The turn left the session slot: a parked turn that waits for it tries again.
+      (retry-deferred-parked! sid))))
 
 (defn- install-turn-cancel-disposer!
   "Dispose a late registration immediately if completion won the launch race."
@@ -613,6 +621,7 @@
       (let [sid (sid-key sid)
             [before after] (swap-vals! registry dissoc sid)]
 
+        (swap! deferred-parked dissoc sid)
         (retire-council-input! sid before after)
         (sync-queue! sid before after)
         (event-store/discard-replaced! (get-in before [sid :events]) [] nil)
@@ -7094,7 +7103,10 @@
    resume then continues from the transcript. Delete the row of a missing turn, of
    a turn that does not run or of a turn that [[resumable-row?]] refuses. A newer
    turn of the session shows that the session went on without this turn: the turn
-   becomes interrupted. Returns true when the turn started."
+   becomes interrupted, also when that turn ended between the check and the claim.
+   When another turn holds the session, the parked turn waits until that turn ends,
+   because only its stored row shows that it is newer. Returns true when the turn
+   started."
   [db {:keys [turn-id session-id payload] :as row}]
   (let [{:keys [turn launch clean? resumes crashes]}
         payload
@@ -7114,16 +7126,17 @@
           (persistance/db-delete-pending-turn! db turn-id)
           false)
 
-        newer-turn?
+        newer-turn
         (fn []
           (let [position (:position stored)]
-            (and (integer? position)
-                 (some #(and (integer? (:position %)) (> (long (:position %)) (long position)))
-                       (persistance/db-list-session-turns-meta db session-id)))))]
+            (when (integer? position)
+              (last (filter #(and (integer? (:position %)) (> (long (:position %)) (long position)))
+                            (persistance/db-list-session-turns-meta db session-id))))))]
 
-    (cond (nil? stored) (drop! "missing turn")
+    (cond (= (str turn-id) (str (:current-turn (session-entry session-id)))) false
+          (nil? stored) (drop! "missing turn")
           (not= :running (:status stored)) (drop! "turn does not run")
-          (newer-turn?) (do (lp/db-interrupt-turn! db stored) (drop! "newer turn"))
+          (newer-turn) (do (lp/db-interrupt-turn! db stored) (drop! "newer turn"))
           (not (resumable-row? row)) (drop! "resume limit")
           :else (let [token
                       (cancellation/cancellation-token)
@@ -7131,12 +7144,17 @@
                       started?
                       (volatile! false)
 
+                      busy-with
+                      (volatile! nil)
+
                       now
                       (util/now-ms)]
 
                   (update-session! session-id
                                    (fn [entry]
                                      (let [entry (or entry (fresh-entry session-id))]
+                                       (vreset! started? false)
+                                       (vreset! busy-with (:current-turn entry))
                                        (if (:current-turn entry)
                                          entry
                                          (do (vreset! started? true)
@@ -7151,6 +7169,34 @@
                                                              :cancel-token token
                                                              ::resumes (inc resumes)))
                                                  (update :turn-order (fnil conj []) turn-id)))))))
+                  (cond
+                    ;; Another turn holds the slot, and it can still be on its way to its
+                    ;; stored row. Try again when that turn ends (#514).
+                    (and (not @started?) (not= (str @busy-with) (str turn-id)))
+                    (do (swap! deferred-parked assoc-in [(str session-id) turn-id] row)
+                        (tel/log! :info ["gateway: parked turn waits for the running turn" turn-id
+                                         @busy-with])
+                        ;; That turn can end before this row waits for it.
+                        (when (not= (str @busy-with) (str (:current-turn (session-entry session-id))))
+                          (retry-deferred-parked! session-id)))
+
+                    ;; A newer turn can start and end between the first check and the claim.
+                    (and @started? (newer-turn))
+                    (do (update-session! session-id
+                                         (fn [entry]
+                                           (cond-> (-> entry
+                                                       (update :turns dissoc turn-id)
+                                                       (update :turn-order
+                                                               (fn [ids]
+                                                                 (filterv #(not= turn-id %) ids))))
+                                             (= turn-id (:current-turn entry))
+                                             (assoc :current-turn nil))))
+                      (vreset! started? false)
+                      (lp/db-interrupt-turn! db stored)
+                      (drop! "newer turn")
+                      ;; This claim can hide the session from the drain after that turn.
+                      ;; The drain keeps the pause and the cancel rule of the queue.
+                      (drain-next-queued! session-id)))
                   (when @started?
                     (persistance/db-store-parked-turn! db
                                                        session-id
@@ -7181,6 +7227,33 @@
                                           :display-request (:display-request launch)}))
                   @started?))))
 
+(defonce ^:private restore-lock (Object.))
+
+(defn- retry-deferred-parked!
+  "Try again the parked turns of `sid` that waited for its running turn. That turn
+   has ended, so a newer turn is now stored, and the parked turn becomes interrupted;
+   else the parked turn resumes."
+  [sid]
+  (let [rows (vals (get (first (swap-vals! deferred-parked dissoc (str sid))) (str sid)))
+        owner #(select-keys % [:owner_pid :owner_started_at])]
+    (when (seq rows)
+      (future
+        (locking restore-lock
+          ;; A draining gateway starts no turn: the next gateway restores these rows.
+          (when-not (draining?)
+            (let [db (lp/db-info)
+                  stored (into {}
+                               (map (juxt :turn-id identity))
+                               (:turns (persistance/db-list-pending-turns db)))]
+              (doseq [row rows
+                      :let [fresh (get stored (:turn-id row))]
+                      :when (and fresh (= "parked" (:kind fresh)) (= (owner row) (owner fresh)))]
+                (try (resume-parked-turn! db fresh)
+                     (catch Throwable t
+                       (tel/log! :error
+                                 ["gateway: parked turn not resumed" (:turn-id row)
+                                  (ex-message t)])))))))))))
+
 (declare restore-pending-turns! restore-pending-rows!)
 
 ;; Owner stamps of live gateway processes whose rows wait for the process to end.
@@ -7205,8 +7278,6 @@
                                    (catch Throwable t
                                      (tel/log! :warn
                                                ["gateway: queued-turn restore failed" (ex-message t)])))))))))
-
-(defonce ^:private restore-lock (Object.))
 
 (defn restore-pending-turns!
   "Restore the turns that a stopped gateway left in the database. Parked turns

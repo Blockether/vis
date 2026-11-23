@@ -9330,6 +9330,14 @@
            {:turn_id "r1" :session_id sid :status "running" :request "busy" :cancel-token token}}
    :turn-order ["r1"]})
 
+(defn- hold-session!
+  "Give `sid` a running turn `tid` that holds its slot and has no stored row."
+  [sid tid]
+  (#'state/update-session! sid
+                           #(-> (or % (#'state/fresh-entry sid))
+                                (assoc :current-turn tid)
+                                (assoc-in [:turns tid] {:turn_id tid :session_id sid :status "running"}))))
+
 (defn- parked-row
   "Store a parked row for `tid`. `extra` is merged into its payload, and
    `started-at` is the start time of its turn."
@@ -9484,6 +9492,144 @@
                                                                 (swap! launched conj (vec args)))}
                    #(expect (= {:resumed 0 :queued 0 :sessions 0} (state/restore-pending-turns!))))
                  (expect (empty? @launched))
+                 (expect (empty? (:turns (persistance/db-list-pending-turns store))))
+                 (expect (= :interrupted (:status (persistance/db-read-session-turn store sid tid))))
+                 (forget-session! sid)))
+             (finally (sqlite/db-close! store)))))
+  (it "interrupts a parked turn after a newer turn that held the session ends"
+      ;; A gateway takes requests before it restores parked turns. A user turn held the
+      ;; session before it stored its row, the restore saw no newer turn, and the parked
+      ;; turn stayed running until the next restart (#514).
+      (let [store
+            (sqlite/db-open! :memory)
+
+            launched
+            (atom [])]
+
+        (try (let [sid
+                   (str (h/store-session! store {:channel :api}))
+
+                   tid
+                   (str (persistance/db-store-session-turn! store
+                                                            {:parent-session-id sid
+                                                             :user-request "busy"}))]
+
+               (parked-row store sid tid {:resumes 0})
+               (with-redefs [lp/db-info
+                             (constantly store)
+
+                             lp/by-id
+                             (constantly {:id sid})]
+
+                 (hold-session! sid "live")
+                 (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                                (swap! launched conj (vec args)))}
+                   (fn []
+                     (expect (= {:resumed 0 :queued 0 :sessions 0} (state/restore-pending-turns!)))
+                     (expect (= 1 (count (:turns (persistance/db-list-pending-turns store)))))
+                     ;; The user turn stores its row, runs and ends.
+                     (persistance/db-store-session-turn! store
+                                                         {:parent-session-id sid
+                                                          :user-request "later"})
+                     (#'state/archive-terminal-turn! sid "live" {:status "completed"})
+                     (expect (util/poll (util/deadline-ms 5)
+                                        20
+                                        #(when (= :interrupted
+                                                  (:status (persistance/db-read-session-turn store
+                                                                                             sid
+                                                                                             tid)))
+                                           (reduced true))))))
+                 (expect (empty? @launched))
+                 (expect (empty? (:turns (persistance/db-list-pending-turns store))))
+                 (forget-session! sid)))
+             (finally (sqlite/db-close! store)))))
+  (it "resumes a parked turn when the turn that held the session ends without a row"
+      (let [store
+            (sqlite/db-open! :memory)
+
+            launched
+            (promise)]
+
+        (try (let [sid
+                   (str (h/store-session! store {:channel :api}))
+
+                   tid
+                   (str (persistance/db-store-session-turn! store
+                                                            {:parent-session-id sid
+                                                             :user-request "busy"}))]
+
+               (parked-row store sid tid {:resumes 0})
+               (with-redefs [lp/db-info
+                             (constantly store)
+
+                             lp/by-id
+                             (constantly {:id sid})]
+
+                 (hold-session! sid "live")
+                 (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                                (deliver launched (vec (take 2 args))))}
+                   (fn []
+                     (expect (= {:resumed 0 :queued 0 :sessions 0} (state/restore-pending-turns!)))
+                     ;; The user turn fails before it stores its row.
+                     (#'state/archive-terminal-turn! sid "live" {:status "failed"})
+                     (expect (= [sid tid] (deref launched 5000 nil)))))
+                 (expect (= :running (:status (persistance/db-read-session-turn store sid tid))))
+                 (forget-session! sid)))
+             (finally (sqlite/db-close! store)))))
+  (it "interrupts a parked turn when a newer turn ends before the restore claims the session"
+      (let [store
+            (sqlite/db-open! :memory)
+
+            launched
+            (atom [])
+
+            reads
+            (atom 0)
+
+            list-meta
+            persistance/db-list-session-turns-meta]
+
+        (try (let [sid
+                   (str (h/store-session! store {:channel :api}))
+
+                   tid
+                   (str (persistance/db-store-session-turn! store
+                                                            {:parent-session-id sid
+                                                             :user-request "busy"}))
+
+                   later
+                   (str (persistance/db-store-session-turn! store
+                                                            {:parent-session-id sid
+                                                             :user-request "later"}))]
+
+               (parked-row store sid tid {:resumes 0})
+               (with-redefs [lp/db-info
+                             (constantly store)
+
+                             lp/by-id
+                             (constantly {:id sid})
+
+                             ;; The first check runs before the newer turn stores its row.
+                             persistance/db-list-session-turns-meta
+                             (fn [& args]
+                               (cond->> (apply list-meta args)
+                                 (= 1 (swap! reads inc))
+                                 (remove #(= later (str (:id %))))))]
+
+                 ;; A request queued while the restore held the session.
+                 (#'state/update-session! sid
+                                          #(-> (or % (#'state/fresh-entry sid))
+                                               (assoc-in [:turns "q"]
+                                                         {:turn_id "q"
+                                                          :session_id sid
+                                                          :status "queued"
+                                                          :request "next"})
+                                               (update :turn-order (fnil conj []) "q")))
+                 (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                                (swap! launched conj (vec args)))}
+                   #(expect (= 0 (:resumed (state/restore-pending-turns!)))))
+                 (expect (= [[sid "q"]] (mapv #(vec (take 2 %)) @launched)))
+                 (expect (= "q" (:current-turn (#'state/session-entry sid))))
                  (expect (empty? (:turns (persistance/db-list-pending-turns store))))
                  (expect (= :interrupted (:status (persistance/db-read-session-turn store sid tid))))
                  (forget-session! sid)))
