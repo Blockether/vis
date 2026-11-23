@@ -32,6 +32,18 @@
 
     (.executeUpdate st sql)))
 
+(defn- wal-store
+  []
+  (let [[path _]
+        (temp-store)
+
+        config
+        (doto (org.sqlite.SQLiteConfig.)
+          (.setJournalMode org.sqlite.SQLiteConfig$JournalMode/WAL)
+          (.setBusyTimeout 50))]
+
+    [path (doto (org.sqlite.SQLiteDataSource. config) (.setUrl (str "jdbc:sqlite:" path)))]))
+
 (defn- fill!
   "Write `n` rows of ~4 KB so the store grows real pages."
   [^javax.sql.DataSource ds ^long n]
@@ -121,6 +133,61 @@
              (expect (zero? (long (:freelist-count (maintenance/free-space ds))))))
            (finally (cleanup! path))))))
 
+(defdescribe
+  vacuum-disk-space-test
+  (it "leaves a reclaimable store due when there is too little disk space"
+      (let [[path ds] (temp-store)]
+        (try (fill! ds 200)
+             (exec! ds "DELETE FROM bulk")
+             (let [{:keys [file-bytes freelist-count]} (maintenance/free-space ds)
+                   report (maintenance/maybe-vacuum! ds
+                                                     path
+                                                     {:min-free-bytes 1024
+                                                      :usable-space (constantly file-bytes)})]
+
+               (expect (= :low-disk (:reason report)))
+               (expect (= file-bytes (:usable-bytes report)))
+               (expect (= (* 2 file-bytes) (:required-bytes report)))
+               (expect (= freelist-count (:freelist-count (maintenance/free-space ds))))
+               (expect (not (.exists (File. (str path ".vacuum"))))))
+             (finally (cleanup! path)))))
+  (it "truncates the WAL after changing a store with an open connection"
+      (let [[path ^javax.sql.DataSource ds]
+            (wal-store)
+
+            wal
+            (File. (str path "-wal"))]
+
+        (try (with-open [keeper (.getConnection ds)]
+               (with-open [st (.createStatement keeper)]
+                 (.executeUpdate st "CREATE TABLE bulk (id INTEGER PRIMARY KEY, payload BLOB)"))
+               (fill! ds 200)
+               (exec! ds "DELETE FROM bulk WHERE id > 10")
+               (expect (pos? (.length wal)))
+               (expect (= :vacuumed
+                          (:reason (maintenance/maybe-vacuum! ds path {:min-free-bytes 1024}))))
+               (expect (zero? (.length wal))))
+             (finally (cleanup! path)))))
+  (it "truncates the WAL even when a vacuum fails"
+      (let [[path ^javax.sql.DataSource ds]
+            (wal-store)
+
+            wal
+            (File. (str path "-wal"))]
+
+        (try (with-open [keeper (.getConnection ds)]
+               (with-open [st (.createStatement keeper)]
+                 (.executeUpdate st "CREATE TABLE bulk (id INTEGER PRIMARY KEY, payload BLOB)"))
+               (fill! ds 200)
+               (exec! ds "DELETE FROM bulk WHERE id > 10")
+               (expect (pos? (.length wal)))
+               (with-redefs-fn {#'maintenance/vacuum! (fn [_]
+                                                        (throw (ex-info "Vacuum failed" {})))}
+                 #(expect (= :failed
+                             (:reason (maintenance/maybe-vacuum! ds path {:min-free-bytes 1024})))))
+               (expect (zero? (.length wal))))
+             (finally (cleanup! path))))))
+
 ;; The vacuum of a store ran on its own thread and dropped each result. On the
 ;; janitor each result is a line, so a store with no work must give none.
 
@@ -143,6 +210,38 @@
          (deref done 30000 nil)
          (filterv #(= [:sqlite-vacuum path] (:task (:data %))) @signals)
          (finally (tel/remove-handler! ::janitor-lines)))))
+
+(defdescribe
+  checkpoint-retry-test
+  (it "truncates the WAL after a reader releases its snapshot without repeating the vacuum"
+      (let [[path ^javax.sql.DataSource ds]
+            (wal-store)
+
+            wal
+            (File. (str path "-wal"))
+
+            retry
+            (atom nil)]
+
+        (try (with-open [keeper (.getConnection ds)]
+               (with-open [st (.createStatement keeper)]
+                 (.executeUpdate st "CREATE TABLE bulk (id INTEGER PRIMARY KEY, payload BLOB)"))
+               (fill! ds 200)
+               (with-open [st (.createStatement keeper)
+                           rs (.executeQuery st "SELECT id FROM bulk")]
+
+                 (expect (.next rs))
+                 (exec! ds "DELETE FROM bulk WHERE id > 10")
+                 (with-redefs [janitor/submit! #(reset! retry %)]
+                   (expect (= :vacuumed
+                              (:reason
+                                (maintenance/maybe-vacuum! ds path {:min-free-bytes 1024})))))
+                 (expect (pos? (.length wal))))
+               (expect (= [:sqlite-checkpoint path] (:id @retry)))
+               (janitor-lines path #(janitor/submit! (assoc @retry :delay-ms 0)))
+               (expect (zero? (.length wal)))
+               (expect (= :recent (:reason (maintenance/maybe-vacuum! ds path)))))
+             (finally (cleanup! path))))))
 
 (defdescribe
   queued-vacuum-test
@@ -174,6 +273,27 @@
                (expect (< (.length (File. path)) before))
                (expect (= [[::janitor/ran :vacuumed]]
                           (mapv (juxt :id (comp :reason :result :data)) lines))))
+             (finally (cleanup! path)))))
+  (it "truncates the WAL after a rewrite even when the store does not need a vacuum"
+      (let [[path ^javax.sql.DataSource ds]
+            (wal-store)
+
+            wal
+            (File. (str path "-wal"))]
+
+        (try (with-open [keeper (.getConnection ds)]
+               (with-open [st (.createStatement keeper)]
+                 (.executeUpdate st "CREATE TABLE bulk (id INTEGER PRIMARY KEY, payload BLOB)"))
+               (fill! ds 200)
+               (expect (pos? (.length wal)))
+               (expect (empty? (janitor-lines path
+                                              #(maintenance/vacuum-async! ds
+                                                                          path
+                                                                          {:delay-ms 0
+                                                                           :before (fn []
+                                                                                     (fill! ds 1)
+                                                                                     true)}))))
+               (expect (zero? (.length wal))))
              (finally (cleanup! path)))))
   ;; Each test store and each short command closes its store before the delay ends.
   (it "leaves a store that closed in the delay alone, without a line"

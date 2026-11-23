@@ -777,14 +777,18 @@
 
 (defn- rewrite-older-store!
   "Run each store rewrite that this store has not done yet, and record each one.
-   Every rewrite is safe to repeat, so a stopped run starts again at the next open."
+   A rewrite that needs more disk space stays due. A stopped run starts again at
+   the next open. Return true if at least one rewrite completed."
   [^DataSource ds]
   (let [done (rewrites-done ds)]
-    (doseq [[n rewrite!] (map-indexed vector store-rewrites)
-            :when (>= (long n) done)]
-
-      (rewrite! ds)
-      (jdbc/execute! ds [(str "PRAGMA user_version = " (inc (long n)))]))))
+    (loop [n done]
+      (if-let [rewrite! (get store-rewrites n)]
+        (if (= :low-disk (rewrite! ds))
+          (> n done)
+          (let [next-n (inc n)]
+            (jdbc/execute! ds [(str "PRAGMA user_version = " next-n)])
+            (recur next-n)))
+        (> n done)))))
 
 (defn- install-schema!
   ([ds] (install-schema! ds {}))

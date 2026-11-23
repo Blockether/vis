@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.attachment.storage :as as]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.persistance.sqlite.core :as sqlite-core]
+            [com.blockether.vis.internal.persistance.sqlite.migration :as migration]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io ByteArrayOutputStream DataOutputStream)
@@ -384,7 +385,10 @@
             (indexes)
 
             rewrites
-            @#'sqlite-core/store-rewrites]
+            @#'sqlite-core/store-rewrites
+
+            due
+            (.indexOf ^java.util.List rewrites @#'sqlite-core/move-attachment-bytes-last!)]
 
         ;; An older store: a column that SQLite added after the payload.
         (h/raw-query s {:raw "ALTER TABLE session_attachment DROP COLUMN reference"})
@@ -392,9 +396,11 @@
         (stored-turn! s [["text/html" page]])
         (h/raw-query s {:update :session_attachment :set {:reference "[FILE #1]"}})
         (expect (= "reference" (peek (columns))))
-        (h/raw-query s
-                     {:raw (str "PRAGMA user_version = "
-                                (.indexOf ^java.util.List rewrites @#'sqlite-core/move-attachment-bytes-last!))})
+        (h/raw-query s {:raw (str "PRAGMA user_version = " due)})
+        (with-redefs-fn {#'migration/reorder-space? (constantly false)}
+          #(#'sqlite-core/rewrite-older-store! (:datasource s)))
+        (expect (= "reference" (peek (columns))))
+        (expect (= due (:user_version (first (h/raw-query s {:raw "PRAGMA user_version"})))))
         (#'sqlite-core/rewrite-older-store! (:datasource s))
         (expect (= "bytes" (peek (columns))))
         (expect (= held (indexes)))

@@ -97,6 +97,43 @@
        :file-bytes (* page-size page-count)
        :free-bytes (* page-size freelist)})))
 
+(defn- usable-space
+  "Bytes that this process can use on the store volume."
+  [^String db-file]
+  (.getUsableSpace (.getParentFile (.getCanonicalFile (File. db-file)))))
+
+(def ^:private checkpoint-retry-delays-ms [30000 60000 120000])
+
+(defn- checkpoint!
+  "Give the WAL space back. Return false if SQLite cannot truncate it."
+  [^DataSource ds db-file]
+  (try (with-open [conn
+                   (.getConnection ds)
+
+                   st
+                   (.createStatement conn)
+
+                   rs
+                   (.executeQuery st "PRAGMA wal_checkpoint(TRUNCATE)")]
+
+         (if (and (.next rs) (zero? (.getLong rs 1)))
+           true
+           (do (tel/log! {:level :warn :id ::checkpoint-busy :data {:db-file db-file}}) false)))
+       (catch Exception e
+         (tel/log! {:level :warn :id ::checkpoint-failed :data {:db-file db-file} :error e})
+         false)))
+
+(defn- checkpoint-or-retry!
+  "Retry a checkpoint without repeating the VACUUM or data rewrite."
+  [ds db-file open? [delay-ms & later]]
+  (when (and (not (checkpoint! ds db-file)) delay-ms)
+    (janitor/submit! {:id [:sqlite-checkpoint db-file]
+                      :delay-ms delay-ms
+                      :run (fn []
+                             (when (or (nil? open?) (open?))
+                               (checkpoint-or-retry! ds db-file open? later)))}))
+  nil)
+
 (defn- time-due?
   "True when `marker` has never recorded a vacuum, or the last one is older than
    `interval-days`."
@@ -143,14 +180,15 @@
 (defn- run-vacuum!
   "One rewrite under the held lock, stamping `marker` on success. Reports rather
    than throws: a busy store is a later retry, not a failed open."
-  [^DataSource ds ^String db-file ^File marker space]
+  [^DataSource ds ^String db-file ^File marker space open?]
   (let [before
         (.length (File. db-file))
 
         started
         (util/now-ms)]
 
-    (try (vacuum! ds)
+    (try (try (vacuum! ds)
+              (finally (checkpoint-or-retry! ds db-file open? checkpoint-retry-delays-ms)))
          (.setLastModified marker (util/now-ms))
          (merge space
                 {:is-vacuumed true
@@ -165,39 +203,57 @@
   "Reclaim the freelist of the store at `db-file` when the fortnight has passed
    AND the freelist is worth a rewrite. Returns a report — `:is-vacuumed` with a
    `:reason` of `:vacuumed`, `:recent` (marker inside the window), `:compact`
-   (nothing worth reclaiming), `:locked` (another process is doing it) or
-   `:failed` — and never throws.
+   (nothing worth reclaiming), `:low-disk`, `:locked` (another process is doing
+   it) or `:failed`. Does not throw. A low-disk skip leaves the marker alone:
+   only the next store open checks again, after the janitor delay. A busy
+   checkpoint retries on the janitor without a new vacuum. The optional `:open?`
+   predicate stops these retries when the store closes.
 
-   Options, all for tests: `:now-ms`, `:interval-days`, `:min-free-bytes`,
-   `:min-free-fraction`."
+   Test options: `:now-ms`, `:interval-days`, `:min-free-bytes`,
+   `:min-free-fraction`, and `:usable-space` (takes the store path)."
   ([^DataSource ds ^String db-file] (maybe-vacuum! ds db-file nil))
-  ([^DataSource ds ^String db-file {:keys [now-ms interval-days min-free-bytes min-free-fraction]}]
-   (try (let [marker
-              (marker-file db-file)
+  ([^DataSource ds ^String db-file
+    {:keys [now-ms interval-days min-free-bytes min-free-fraction open?] disk-space :usable-space}]
+   (try
+     (let [marker
+           (marker-file db-file)
 
-              now
-              (long (or now-ms (util/now-ms)))
+           now
+           (long (or now-ms (util/now-ms)))
 
-              window
-              (long (or interval-days vacuum-interval-days))]
+           window
+           (long (or interval-days vacuum-interval-days))]
 
-          (if-not (time-due? marker now window)
-            {:is-vacuumed false :reason :recent}
-            (let [space (free-space ds)]
-              (if-not (size-due? space
-                                 (long (or min-free-bytes vacuum-min-free-bytes))
-                                 (double (or min-free-fraction vacuum-min-free-fraction)))
-                (merge space {:is-vacuumed false :reason :compact})
-                (let [report (with-vacuum-lock! marker #(run-vacuum! ds db-file marker space))]
-                  (when (= :failed (:reason report)) (try (.delete marker) (catch Throwable _ nil)))
-                  (or report (merge space {:is-vacuumed false :reason :locked})))))))
-        (catch Throwable t {:is-vacuumed false :reason :failed :error (ex-message t)}))))
+       (if-not (time-due? marker now window)
+         {:is-vacuumed false :reason :recent}
+         (let [space (free-space ds)]
+           (if-not (size-due? space
+                              (long (or min-free-bytes vacuum-min-free-bytes))
+                              (double (or min-free-fraction vacuum-min-free-fraction)))
+             (merge space {:is-vacuumed false :reason :compact})
+             (let [usable-bytes (long ((or disk-space usable-space) db-file))
+                   ;; VACUUM writes a temp database and a WAL. Both can be on this volume.
+                   ;; https://www.sqlite.org/lang_vacuum.html#how_vacuum_works
+                   required-bytes (* 2 (max (long (:file-bytes space)) (.length (File. db-file))))]
+
+               (if (< usable-bytes required-bytes)
+                 (assoc space
+                   :is-vacuumed false
+                   :reason :low-disk
+                   :usable-bytes usable-bytes
+                   :required-bytes required-bytes)
+                 (let [report (with-vacuum-lock! marker #(run-vacuum! ds db-file marker space open?))]
+                   (when (= :failed (:reason report))
+                     (try (.delete marker) (catch Throwable _ nil)))
+                   (or report (merge space {:is-vacuumed false :reason :locked})))))))))
+     (catch Throwable t {:is-vacuumed false :reason :failed :error (ex-message t)}))))
 
 (defn vacuum-async!
   "Give `maybe-vacuum!` for the store at `db-file` to the janitor, which runs it
    after `:delay-ms`, so the rewrite is not what a starting process waits on. A
    `:before` function runs first in the same task, so a data rewrite frees its
-   pages before the reclaim checks them. `:open?` answers whether the store is
+   pages before the reclaim checks them. If it returns true, truncate the WAL.
+   `:open?` answers whether the store is
    still open: a store that closed in the delay is due at its next open. Called
    once per store per process, from the pool that just opened it. A second call
    for one store replaces a task that still waits.
@@ -210,20 +266,24 @@
    (janitor/submit!
      {:id [:sqlite-vacuum db-file]
       :delay-ms (long (or delay-ms vacuum-start-delay-ms))
-      :run
-      (fn []
-        (when (or (nil? open?) (open?))
-          (when before
-            (try (before)
-                 (catch Exception e
-                   (tel/log!
-                     {:level :warn :id ::store-rewrite-failed :data {:db-file db-file} :error e}))))
-          (let [{:keys [reason] :as report} (maybe-vacuum! ds db-file opts)]
-            (case reason
-              (:recent :compact)
-              nil
+      :run (fn []
+             (when (or (nil? open?) (open?))
+               (when (and before
+                          (try (true? (before))
+                               (catch Exception e
+                                 (tel/log! {:level :warn
+                                            :id ::store-rewrite-failed
+                                            :data {:db-file db-file}
+                                            :error e})
+                                 ;; An earlier rewrite can commit before a later one fails.
+                                 true)))
+                 (checkpoint-or-retry! ds db-file open? checkpoint-retry-delays-ms))
+               (let [{:keys [reason] :as report} (maybe-vacuum! ds db-file opts)]
+                 (case reason
+                   (:recent :compact)
+                   nil
 
-              :failed
-              (throw (ex-info "The SQLite vacuum failed" report))
+                   :failed
+                   (throw (ex-info "The SQLite vacuum failed" report))
 
-              report))))})))
+                   report))))})))

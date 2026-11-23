@@ -38,6 +38,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [javax.sql DataSource]
+           [java.io File]
            [java.nio.charset StandardCharsets]
            [org.flywaydb.core.api ClassProvider Location ResourceProvider]
            [org.flywaydb.core.internal.resource.classpath ClassPathResource]))
@@ -890,9 +891,31 @@
           (recur (conj acc [(.getLong rs 1) (.getString rs 2) (.getLong rs 3) (.getString rs 4)]))
           (sort-by pr-str acc))))))
 
+(defn- reorder-space?
+  "Check space for a table and its indexes without reading their pages. Use the size
+   of the whole database as an upper estimate. A memory database has no disk file."
+  [^java.sql.Connection conn]
+  (with-open [st
+              (.createStatement conn)
+
+              rs
+              (.executeQuery st "PRAGMA database_list")]
+
+    (loop []
+
+      (if (.next rs)
+        (if (= "main" (.getString rs "name"))
+          (let [path (.getString rs "file")]
+            (or (str/blank? path)
+                (>= (.getUsableSpace (.getParentFile (File. path)))
+                    (* (pragma-long conn "main.page_count") (pragma-long conn "main.page_size")))))
+          (recur))
+        false))))
+
 (defn reorder-table!
   "Give `table` the column order of the canonical SQL. Answer true when the table was
-   built again, false when its order was canonical already.
+   built again, false when no change is needed or possible, and `:low-disk` when
+   there is not enough space for the copy.
 
    SQLite reads a column that comes after a large BLOB only through all the overflow
    pages of that BLOB, so the canonical SQL puts a large BLOB last. A store that got
@@ -949,10 +972,13 @@
                                       (map (comp str/lower-case :name))
                                       extras)))
 
-                        shape
-                        (when rebuild? (index-shape conn table))]
+                        deferred?
+                        (and rebuild? (not (reorder-space? conn)))
 
-                    (when rebuild?
+                        shape
+                        (when (and rebuild? (not deferred?)) (index-shape conn table))]
+
+                    (when (and rebuild? (not deferred?))
                       (let [aside
                             (str table "_vis_reorder")
 
@@ -978,13 +1004,17 @@
                         (execute-ddl! conn (str "ALTER TABLE " aside " RENAME TO " table))
                         (doseq [sql objects]
                           (execute-ddl! conn sql))))
-                    (if (or (not rebuild?)
-                            (and (= (frequencies stored)
-                                    (frequencies (map str/lower-case (column-names conn table))))
-                                 (= shape (index-shape conn table))))
-                      (do (execute-ddl! conn "COMMIT") rebuild?)
-                      ;; A constraint that the copy did not keep: keep the old table.
-                      (do (execute-ddl! conn "ROLLBACK") false)))
+                    (cond deferred?
+                          (do (execute-ddl! conn "ROLLBACK") :low-disk)
+
+                          (or (not rebuild?)
+                              (and (= (frequencies stored)
+                                      (frequencies (map str/lower-case (column-names conn table))))
+                                   (= shape (index-shape conn table))))
+                          (do (execute-ddl! conn "COMMIT") rebuild?)
+
+                          ;; A constraint that the copy did not keep: keep the old table.
+                          :else (do (execute-ddl! conn "ROLLBACK") false)))
                   (catch Throwable error (execute-ddl! conn "ROLLBACK") (throw error)))
              (finally (execute-ddl! conn (str "PRAGMA foreign_keys = " fk))))))))
 
