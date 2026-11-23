@@ -50,7 +50,7 @@
 (def default-stale-days "Age past which unattended state is worth mentioning: two weeks." 14)
 
 (def ^:const day-ms 86400000)
-(def ^:const scratch-idle-ms (* 14 (long day-ms)))
+(def ^:const scratch-idle-ms (* 7 (long day-ms)))
 
 (def ^:private ^:const hour-ms 3600000)
 
@@ -458,7 +458,7 @@
           true)))))
 
 (defn sweep-session-scratch!
-  "Remove unclaimed scratch for this database after deletion or 14 days without a turn."
+  "Remove unclaimed scratch for this database after deletion or 7 days without a turn."
   [{:keys [db-file] :as db-info} now]
   (let [root (paths/scratch-root)
         cutoff (- (long now) scratch-idle-ms)]

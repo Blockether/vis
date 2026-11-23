@@ -69,8 +69,9 @@
                                            {:created-at (java.util.Date. old-ms)}))
                       p/db-list-session-turns-meta (fn [_ sid]
                                                      (condp = sid
+                                                       old [{:created-at (java.util.Date. (dec (- now (* 7 day-ms))))}]
                                                        recent [{:created-at (java.util.Date. now)}]
-                                                       idle [{:created-at (java.util.Date. (- now (* 2 day-ms)))}]
+                                                       idle [{:created-at (java.util.Date. (- now (* 7 day-ms)))}]
                                                        nil))]
           (doseq [sid [old claimed recent idle foreign orphan detached]]
             (let [dir (io/file root (str sid))]

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Sessions: Vis now keeps unused session scratch for 7 days without a turn instead of 14 days (#513).
+
 ## [v0.5.32] - 2026-11-23
 
 ### Added
