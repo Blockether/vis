@@ -13370,6 +13370,59 @@
                      ;; a healthy context is never thrown away: same entry, same globals
                      (expect (identical? entry e))
                      (expect (zero? @opened)))))
+               (finally (swap! env-cache dissoc k)))))
+    ;; A new session rebuilt its deferred env in the background while its first turn
+    ;; waited on the lock. That turn checked the disposed env and logged it as unsafe.
+    (it "takes the env that replaced its entry while the turn waited on the lock"
+        (let [id
+              "wedge-test/replaced-while-waiting"
+
+              k
+              (cache-key id)
+
+              entry
+              (new-cache-entry {:marker :deferred})
+
+              ^java.util.concurrent.locks.ReentrantLock lock
+              (:lock entry)
+
+              checked
+              (atom [])
+
+              held
+              (promise)
+
+              release
+              (promise)]
+
+          (swap! env-cache assoc k entry)
+          (try (with-redefs-fn {#'env/context-enterable? (fn [environment]
+                                                           (swap! checked conj (:marker environment))
+                                                           (not= :deferred (:marker environment)))}
+                 (fn []
+                   (let [holder
+                         (future (.lock lock)
+                                 (deliver held true)
+                                 @release
+                                 (swap! env-cache assoc k (assoc entry :environment {:marker :fresh}))
+                                 (.unlock lock))
+
+                         _
+                         @held
+
+                         waiter
+                         (future (let [e (acquire-turn-lock! id)]
+                                   (.unlock ^java.util.concurrent.locks.ReentrantLock (:lock e))
+                                   e))]
+
+                     (expect (loop [remaining 200]
+                               (cond (.hasQueuedThreads lock) true
+                                     (zero? remaining) false
+                                     :else (do (Thread/sleep 5) (recur (dec remaining))))))
+                     (deliver release true)
+                     @holder
+                     (expect (= {:marker :fresh} (:environment (deref waiter 5000 nil))))
+                     (expect (= [:fresh] @checked)))))
                (finally (swap! env-cache dissoc k)))))))
 
 (defdescribe

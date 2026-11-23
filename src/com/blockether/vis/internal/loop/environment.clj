@@ -2436,11 +2436,15 @@
              :as entry}
             (ensure-env! id)]
         (if (.tryLock lock (long ENGINE_LOCK_POLL_MS) java.util.concurrent.TimeUnit/MILLISECONDS)
-          (if (try (or rescued? (policy-stale? entry) (env/context-enterable? (:environment entry)))
+          (cond
+            ;; A recycle swapped a new env in while this turn waited on the shared lock.
+            (not (identical? entry (get @cache k))) (do (.unlock lock) (recur rescued?))
+            (try (or rescued? (policy-stale? entry) (env/context-enterable? (:environment entry)))
                    ;; The bounded guest readiness check is interruptible. Its caller
                    ;; already owns this lock, even though send! has not received it yet.
                    (catch Throwable error (.unlock lock) (throw error)))
             (do (when condemned (.set condemned false)) entry)
+            :else
             (do
               (.unlock lock)
               (detach-entry! k entry)
