@@ -87,7 +87,7 @@
      [extension provider workspace session channel sandbox attachment external-opener context python
       inference speech decisions docs council automation view gateway.client gateway.resources
       gateway.runtime gateway.discovery gateway.diagnostics foundation.harness.discovery
-      foundation.mpl-capture foundation.shell-log]]
+      foundation.housekeeping foundation.mpl-capture foundation.shell-log]]
     ;; Built-in extensions over the services.
     [extensions [foundation python.extensions python.test-runner]]
     ;; The agent loop.

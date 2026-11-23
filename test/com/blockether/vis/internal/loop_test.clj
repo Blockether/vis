@@ -4288,7 +4288,7 @@
              (it "sweeps old scratch after the last of two overlapping environments closes"
                  (let [home (test-temp/temp-dir "vis-scratch-release")
                        db-path (str (clojure.java.io/file home "vis.db"))
-                       now (+ (System/currentTimeMillis) (* 2 housekeeping/day-ms))]
+                       now (+ (System/currentTimeMillis) housekeeping/scratch-idle-ms housekeeping/day-ms)]
                    (with-redefs [paths/scratch-root (constantly (clojure.java.io/file home "scratch"))]
                      (let [environment (loop-env/create-environment ::router {:db db-path})
                            sid (:session-id environment)
@@ -4309,7 +4309,7 @@
              (it "keeps old scratch for a managed shell after the environment closes"
                  (let [home (test-temp/temp-dir "vis-scratch-shell")
                        db-path (str (clojure.java.io/file home "vis.db"))
-                       now (+ (System/currentTimeMillis) (* 2 housekeeping/day-ms))]
+                       now (+ (System/currentTimeMillis) housekeeping/scratch-idle-ms housekeeping/day-ms)]
                    (with-redefs [paths/scratch-root (constantly (clojure.java.io/file home "scratch"))]
                      (let [environment (loop-env/create-environment ::router {:db db-path})
                            sid (:session-id environment)
