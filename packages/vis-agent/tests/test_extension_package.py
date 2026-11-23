@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -1389,6 +1390,81 @@ def test_frozen_sync_keeps_an_installed_latest_package_without_the_catalog(
     kept = package.sync(configured, target, trust=True, frozen=True)[0]
     assert (kept["status"], kept["version"]) == ("cached", "1.0.0")
     assert commands == fetched
+
+
+# Regression: a load dropped an installed package when its changed pin was not yet
+# approved, so the extension disappeared until the next catalog approval.
+def test_frozen_sync_keeps_the_installed_package_when_a_changed_pin_fails(releases):
+    _metadata, target, _commands = releases
+    pinned = lambda version: {  # noqa: E731
+        "vis-greeter": {
+            "source": REPOSITORY,
+            "subdirectory": "plugins/greeting",
+            "version": version,
+        }
+    }
+    installed = package.sync(pinned("1.0.0"), target, trust=True, frozen=True)[0]
+    assert (installed["status"], installed["version"]) == ("installed", "1.0.0")
+    kept = package.sync(pinned("9.9.9"), target, trust=True, frozen=True)[0]
+    assert (kept["status"], kept["version"]) == ("kept", "1.0.0")
+    assert "not approved" in kept["error"]
+    assert kept["path"] == installed["path"]
+    explicit = package.sync(pinned("9.9.9"), target, trust=True)[0]
+    assert explicit["status"] == "failed"
+    updated = package.sync(pinned("1.1.0"), target, trust=True, frozen=True)[0]
+    assert (updated["status"], updated["version"]) == ("updated", "1.1.0")
+
+
+def _pinned(version):
+    return {
+        "vis-greeter": {
+            "source": REPOSITORY,
+            "subdirectory": "plugins/greeting",
+            "version": version,
+        }
+    }
+
+
+# A load keeps only a valid installed package; a broken snapshot still fails.
+def test_frozen_sync_does_not_keep_a_broken_installed_package(releases):
+    _metadata, target, _commands = releases
+    installed = package.sync(_pinned("1.0.0"), target, trust=True, frozen=True)[0]
+    (Path(installed["path"]) / "pyproject.toml").unlink()
+    for version in ("9.9.9", "1.0.0"):
+        row = package.sync(_pinned(version), target, trust=True, frozen=True)[0]
+        assert row["status"] == "failed", version
+
+
+# A load does not keep a snapshot whose receipt names another revision.
+def test_frozen_sync_does_not_keep_a_snapshot_with_another_revision(releases):
+    _metadata, target, _commands = releases
+    installed = package.sync(_pinned("1.0.0"), target, trust=True, frozen=True)[0]
+    receipt = Path(installed["path"]) / "receipt.json"
+    data = json.loads(receipt.read_text())
+    data["revision"] = "0" * 40
+    receipt.write_text(json.dumps(data))
+    assert package.sync(_pinned("9.9.9"), target, trust=True, frozen=True)[0][
+        "status"
+    ] == ("failed")
+
+
+# A read-only scope keeps the installed package on a load; an explicit sync fails.
+def test_read_only_frozen_sync_keeps_the_installed_package(releases, monkeypatch):
+    _metadata, target, _commands = releases
+    installed = package.sync(_pinned("1.0.0"), target, trust=True, frozen=True)[0]
+    writable = os.access
+    monkeypatch.setattr(
+        package.os,
+        "access",
+        lambda path, mode, **kw: (
+            False
+            if Path(path) == Path(target).resolve() and mode == os.W_OK
+            else writable(path, mode, **kw)
+        ),
+    )
+    kept = package.sync(_pinned("9.9.9"), target, trust=True, frozen=True)[0]
+    assert (kept["status"], kept["path"]) == ("kept", installed["path"])
+    assert package.sync(_pinned("9.9.9"), target, trust=True)[0]["status"] == "failed"
 
 
 # Issue #493: the log of a slow load must name the package, its step and the cause.

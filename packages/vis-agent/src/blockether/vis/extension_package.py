@@ -1630,7 +1630,40 @@ def _sync_one(name, spec, directory, current, refresh, vis_version, frozen=False
     return {**result, "status": "updated" if exists and not missing else "installed"}
 
 
-def _sync_read_only(specs, directory):
+def _kept(name, spec, directory, current, vis_version, failure):
+    """Return the installed package that a load keeps when its changed declaration fails.
+
+    Only a valid package that sync owns qualifies. The record keeps the old spec, so the
+    next load tries the change again. Return None when nothing valid is installed.
+    """
+    if spec is None or current is None or current["spec"] == spec:
+        return None
+    try:
+        destination = _destination(directory, name)
+        if not destination.exists() or not _sync_owned(destination, current):
+            return None
+        metadata = inspect_source(
+            destination, vis_version, ".".join(map(str, sys.version_info[:3]))
+        )
+        mode = current["result"].get("mode")
+        if metadata["name"] != name or (
+            mode != "source" and metadata["version"] != os.readlink(destination)
+        ):
+            return None
+        if mode == "github":
+            _snapshot, receipt = _managed(directory, name)
+            if (
+                receipt["repository_url"].lower() != current["spec"]["source"].lower()
+                or receipt["subdirectory"] != current["spec"]["subdirectory"]
+                or receipt["revision"] != current["result"].get("revision")
+            ):
+                return None
+    except (ValueError, OSError, KeyError):
+        return None
+    return {**current["result"], **failure, "status": "kept"}
+
+
+def _sync_read_only(specs, directory, frozen=False, vis_version=None):
     """Reconcile a scope that cannot be written, without the sync lock or network.
 
     A container image or a read-only mount holds packages that a writable sync prepared.
@@ -1649,13 +1682,15 @@ def _sync_read_only(specs, directory):
         ):
             results.append({**current["result"], "name": name, "status": "cached"})
         else:
-            results.append(
-                {
-                    "name": name,
-                    "status": "failed",
-                    "error": f"{directory} is read-only. Run the sync where it is writable",
-                }
+            failure = {
+                "name": name,
+                "status": "failed",
+                "error": f"{directory} is read-only. Run the sync where it is writable",
+            }
+            kept = frozen and _kept(
+                name, spec, directory, current, vis_version, failure
             )
+            results.append(kept or failure)
     return results
 
 
@@ -1673,7 +1708,8 @@ def sync(
 
     A `latest` version follows the newest approved stable release on every sync. A frozen
     sync is the exception: it keeps each installed package and does not read the catalog
-    for it. It still installs a missing package and applies a changed declaration.
+    for it. It still installs a missing package and applies a changed declaration. When
+    that change fails, it keeps the installed package with the status `kept`.
     A package whose version directory is gone installs again.
     Receipts and pointers are atomic. Prune unlinks orphaned packages and removes old Git
     snapshots that no live process claims; local source always stays on disk. A
@@ -1690,7 +1726,7 @@ def sync(
     if not directory.exists() and not specs:
         return []
     if not dry_run and directory.is_dir() and not os.access(directory, os.W_OK):
-        return _sync_read_only(specs, directory)
+        return _sync_read_only(specs, directory, frozen, vis_version)
     if not dry_run:
         directory.mkdir(parents=True, exist_ok=True)
     lock = directory / ".sync-lock"
@@ -1798,12 +1834,10 @@ def sync(
                         _prune_snapshots(directory, name, dry_run, spec is None)
                     )
             except (ValueError, OSError) as error:
-                results.append(
-                    timed(
-                        {"name": name, "status": "failed", "error": str(error)[:1024]},
-                        started,
-                    )
-                )
+                row = {"name": name, "status": "failed", "error": str(error)[:1024]}
+                if frozen:
+                    row = _kept(name, spec, directory, current, vis_version, row) or row
+                results.append(timed(row, started))
         return results
     finally:
         _steps.reset(scope)

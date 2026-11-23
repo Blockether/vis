@@ -3725,7 +3725,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   [scope dry-run results]
   (let [prepare? (fn [result]
                    (and (not dry-run)
-                        (contains? #{"installed" "updated" "cached"} (get result "status"))))
+                        (contains? #{"installed" "updated" "cached" "kept"} (get result "status"))))
         results (mapv #(assoc % "scope" scope) results)
         prepare (fn [result] (if (prepare? result) (prepare-package-environment! result) result))]
     (if *preparing-package*
@@ -5156,6 +5156,13 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                      catalog_ms (assoc :catalog-ms catalog_ms)
                      git_ms (assoc :git-ms git_ms))))
     (when environment_ms (note-phase! :package-environment name environment_ms nil))
+    (when (= "kept" (get result "status"))
+      (tel/log! {:level :warn
+                 :id ::package-kept
+                 :data {:extension name
+                        :version (get result "version")
+                        :error (get result "error")}}
+                "extension package kept its installed version; its changed declaration failed"))
     (when (= "failed" (get result "status"))
       (tel/log! {:level :warn
                  :id ::package-preparation-failed

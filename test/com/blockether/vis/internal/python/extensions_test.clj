@@ -879,6 +879,33 @@
                    (expect (= true (deref second-started 1000 ::timeout)))
                    (finally (deliver release true) (deref loader 5000 ::timeout)))))))))
 
+;; Regression (#504): a load that kept an installed package after its changed pin failed
+;; did not prepare its environment, so the kept extension could not import its packages.
+(defdescribe kept-package-preparation-test
+  (it "prepares the environment of a package that a load kept"
+      (let [directory (temp-dir)
+            prepared (atom [])]
+        (with-redefs-fn {#'pyx/last-fingerprint (atom {})
+                         #'pyx/prepared-scopes (atom #{})
+                         #'pyx/loaded (atom {})
+                         #'pyx/failures (atom [])
+                         #'pyx/default-extension-dirs (constantly [directory directory])
+                         #'config/extension-package-scopes
+                         (constantly [{:scope "global" :directory directory :packages {"a" {}}}])
+                         #'pyx/package-operation
+                         (fn [_ _]
+                           [{"status" "kept"
+                             "name" "a"
+                             "path" (str (io/file directory "a"))
+                             "error" "Requested version is not approved in Extension Center"}])
+                         #'python-runtime/ensure-project!
+                         (fn [file]
+                           (swap! prepared conj (.getName ^java.io.File file))
+                           (runtime/packages-dir))}
+          (fn []
+            (pyx/ensure-python-extensions-loaded! {:global-only? true})
+            (expect (= ["a"] @prepared)))))))
+
 (defdescribe moved-package-preparation-failure-test
   (it "retains the live extension when preparation of its new snapshot fails"
       (let [directory (temp-dir)
