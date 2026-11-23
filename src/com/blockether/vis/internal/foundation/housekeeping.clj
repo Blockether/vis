@@ -29,19 +29,21 @@
    claims existed still waits out the retention window.
    `runtime-retention-plan` previews that classification without deleting.
 
-   Compiled bytecode under `python/pycache` is judged by EXISTENCE instead: the
-   prefix mirrors absolute source paths, so an entry whose source is gone is garbage
-   whatever its age, and one whose source is live is a cache the next import wants.
+   The `python/pycache` directory mirrors absolute source paths. The bytecode
+   sweep removes entries with no source, then limits bytecode from outside the
+   Vis runtime, shared packages and extensions.
 
    `purge!` removes journal files and sandbox snapshots directly, confined to the
    events or sandbox store."
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as p]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
-  (:import [java.io File]
+  (:import [com.blockether.vispython Locations]
+           [java.io File]
            [java.nio.file FileVisitResult Files LinkOption Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]))
 
@@ -512,65 +514,104 @@
            {:level :warn :id ::sweep-stamp-not-written :data {:stamp (.getPath stamp)} :error e})))
   result)
 
+(def ^:private pycache-budget-bytes
+  "Maximum bytes of cached modules outside the Vis runtime, packages and extensions."
+  (* 1024 1024 1024))
+
+(defn- pycache-hot-roots
+  "Absolute source paths of the Vis runtime, shared packages and global extensions."
+  []
+  (into #{}
+        (mapcat (fn [^File dir] [(.getAbsolutePath dir) (canonical dir)]))
+        [(python-dir "runtime") (python-dir "sources") (python-dir "vis-guest")
+         (if *python-home* (python-dir "packages") (io/file (Locations/packagesDir)))
+         (config/global-extensions-dir)]))
+
+(defn- trim-pycache!
+  "Remove the oldest cold entries until `held` is within `budget`."
+  [entries ^String canon held budget]
+  (let [parents (java.util.HashSet.)
+        {:keys [report]}
+        (reduce (fn [{:keys [held] :as acc} [_ ^File file size]]
+                  (cond (<= (long held) (long budget)) (reduced acc)
+                        (and (under? canon (canonical file)) (delete-quietly! (.toPath file)))
+                        (do (.add parents (.getParentFile file))
+                            (-> acc
+                                (update :held - size)
+                                (update :report add-counts {:deleted 1 :bytes size})))
+                        :else acc))
+                {:held held :report {:deleted 0 :bytes 0}}
+                (sort-by first entries))]
+    (reduce (fn [report ^File parent]
+              (loop [report report, dir parent]
+                (if (and (under? canon (canonical dir))
+                         (empty? (.list dir))
+                         (delete-quietly! (.toPath dir)))
+                  (recur (update report :deleted inc) (.getParentFile dir))
+                  report)))
+            report
+            parents)))
+
 (defn- sweep-pycache!
-  "Reclaim compiled bytecode whose source is gone.
+  "Remove bytecode with no source. Limit other bytecode outside the hot roots.
 
-   The interpreter starts with its `pycache_prefix` at `~/.vis/python/pycache`, so an
-   import never writes a `__pycache__` beside a tree that ships read-only and shared.
-   The prefix MIRRORS the absolute source path, which makes the store self-describing
-   — `<prefix>/tmp/x/c.cpython-314.pyc` caches `/tmp/x/c.py` — and unbounded: every
-   temp directory, deleted checkout and interpreter version this sweep reclaims leaves
-   its bytecode behind, and nothing ever reads it again.
+   The Python cache prefix mirrors the absolute source path: a bytecode file at
+   `<prefix>/tmp/x/c.cpython-314.pyc` caches `/tmp/x/c.py`. Remove a mirror directory
+   when its source directory does not exist. For each other directory, list its
+   sources once. A live entry under a hot root needs no file attributes.
 
-   Bytecode is pure cache, so the rule is EXISTENCE, not age. Age would be actively
-   wrong here: an entry is not re-stamped when it is used, so the hottest caches — the
-   interpreter's own stdlib — are the oldest files in the store. A mirrored directory
-   whose source directory is gone is reclaimed whole, without descending; under a
-   source that still exists entries are judged one by one, and a directory the sweep
-   emptied is removed.
-
-   A live store holds hundreds of thousands of entries, and every process sweeps it.
-   Each directory therefore reads its source directory once. A live entry costs no
-   filesystem call; only directories and reclaim candidates read their attributes.
+   Python does not change a bytecode file's modification time on import. Keep
+   live bytecode under hot roots regardless of age. For other live bytecode,
+   read its size and modification time in one call and sort only if over budget.
 
    Returns `{:deleted :bytes}`."
-  [^File root ^String canon]
-  (letfn
-    [(visit [acc ^File dir ^File source-dir]
-       (let [names (delay (set (.list source-dir)))]
-         (reduce (fn [acc ^String entry-name]
-                   (if (and (.endsWith entry-name ".pyc")
-                            (pycache-source-present? @names entry-name))
-                     ;; The common case: a live cache, judged without a filesystem call.
-                     acc
-                     (let [child (File. dir entry-name)
-                           ^BasicFileAttributes attrs
-                           (try (Files/readAttributes (.toPath child) BasicFileAttributes no-follow)
-                                (catch java.io.IOException e
-                                  (tel/log! {:level :debug
-                                             :id ::pycache-entry-unreadable
-                                             :data {:path (.getPath child)}
-                                             :error e})
-                                  nil))]
-
-                       (cond (or (nil? attrs) (.isSymbolicLink attrs)) acc
-                             (.isDirectory attrs) (let [child-source (File. source-dir entry-name)]
-                                                    (if-not (.isDirectory child-source)
-                                                      (add-counts acc (reclaim-dir! child canon))
-                                                      (let [swept (visit acc child child-source)]
-                                                        ;; A full directory would raise per visit; try only an emptied one.
-                                                        (if (and (empty? (.list child))
-                                                                 (delete-quietly! (.toPath child)))
-                                                          (add-counts swept {:deleted 1 :bytes 0})
-                                                          swept))))
-                             (and (.endsWith entry-name ".pyc") (under? canon (canonical child)))
-                             (if (delete-quietly! (.toPath child))
-                               (add-counts acc {:deleted 1 :bytes (.size attrs)})
-                               acc)
-                             :else acc))))
-                 acc
-                 (or (.list dir) (make-array String 0)))))]
-    (visit {:deleted 0 :bytes 0} root (File. File/separator))))
+  [^File root ^String canon budget]
+  (let [hot-roots (pycache-hot-roots)
+        cold (java.util.ArrayList.)
+        held (volatile! 0)]
+    (letfn
+      [(visit [acc ^File dir ^File source-dir hot?]
+         (let [names (delay (set (.list source-dir)))
+               hot? (or hot? (contains? hot-roots (.getPath source-dir)))]
+           (reduce (fn [acc ^String entry-name]
+                     (let [pyc? (.endsWith entry-name ".pyc")
+                           live? (and pyc? (pycache-source-present? @names entry-name))]
+                       (if (and live? hot?)
+                         acc
+                         (let [child (File. dir entry-name)
+                               ^BasicFileAttributes attrs
+                               (try (Files/readAttributes (.toPath child) BasicFileAttributes no-follow)
+                                    (catch java.io.IOException e
+                                      (tel/log! {:level :debug
+                                                 :id ::pycache-entry-unreadable
+                                                 :data {:path (.getPath child)}
+                                                 :error e})
+                                      nil))]
+                           (cond (or (nil? attrs) (.isSymbolicLink attrs)) acc
+                                 (.isDirectory attrs)
+                                 (let [child-source (File. source-dir entry-name)]
+                                   (if-not (.isDirectory child-source)
+                                     (add-counts acc (reclaim-dir! child canon))
+                                     (let [swept (visit acc child child-source hot?)]
+                                       (if (and (empty? (.list child))
+                                                (delete-quietly! (.toPath child)))
+                                         (add-counts swept {:deleted 1 :bytes 0})
+                                         swept))))
+                                 (not (and pyc? (.isRegularFile attrs))) acc
+                                 live?
+                                 (let [size (.size attrs)]
+                                   (.add cold [(.toMillis (.lastModifiedTime attrs)) child size])
+                                   (vswap! held + size)
+                                   acc)
+                                 (and (under? canon (canonical child)) (delete-quietly! (.toPath child)))
+                                 (add-counts acc {:deleted 1 :bytes (.size attrs)})
+                                 :else acc)))))
+                   acc
+                   (.list dir))))]
+      (let [report (visit {:deleted 0 :bytes 0} root (File. File/separator) false)]
+        (if (<= (long @held) (long budget))
+          report
+          (add-counts report (trim-pycache! cold canon @held budget)))))))
 
 (defn- prune-version-stores!
   "Reclaim installed interpreter and source versions no process serves any more.
@@ -737,9 +778,10 @@
       :every-ms day-ms
       :rows [:python-pycache]
       :root #(python-dir "pycache")
-      :run (fn [^File dir _pass]
+      :run (fn [^File dir {:keys [budget-bytes]}]
              (let [canon (canonical dir)]
-               [(merge {:id :python-pycache :root canon} (sweep-pycache! dir canon))]))}
+               [(merge {:id :python-pycache :root canon}
+                       (sweep-pycache! dir canon (or budget-bytes pycache-budget-bytes)))]))}
      {:id :sandbox-temp
       :every-ms day-ms
       :rows [:sandbox-temp]
@@ -780,8 +822,8 @@
    for a `sweep-targets` entry `{:id :root :days :cutoff-ms :file-count :deleted
    :bytes :dirs-removed :over-budget-deleted}`. A sweep with no work gives
    `{:id :deleted 0 :bytes 0}`. The claim-based rows are `:python-guest`,
-   `:python-runtime` and `:python-sources`; `:python-pycache` answers to the source
-   a bytecode entry mirrors, not to age.
+   `:python-runtime` and `:python-sources`. `:python-pycache` deletes bytecode
+   with no source and keeps other bytecode outside the hot roots within a budget.
 
    A missing directory is zero work, and a permission-denied subtree is skipped
    rather than allowed to stop the pass.

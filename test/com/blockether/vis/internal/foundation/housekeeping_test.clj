@@ -759,6 +759,31 @@
             (expect (not (.exists (io/file python (mirror emptied)))))
             (expect (not (.exists (io/file python (mirror vanished)))))
             (expect (.isDirectory (io/file sources "live"))))))))
+  (it
+    "removes the oldest cold bytecode over budget and keeps runtime bytecode"
+    (let [python (tmp-dir "vis-hk-pycache-budget")
+          cold (io/file (tmp-dir "vis-hk-pycache-build") "target")
+          hot (io/file python "runtime" "stdlib")
+          bytecode (fn [^File dir name age]
+                     (touch! dir (str name ".py") 0 "x = 1")
+                     (touch! python
+                             (str "pycache/" (subs (.getCanonicalPath dir) 1)
+                                  "/" name ".cpython-314.pyc")
+                             age
+                             "bytecode"))
+          old-src (io/file cold "one")
+          ^File oldest (bytecode old-src "oldest" 10)
+          ^File newer (bytecode (io/file cold "two") "newer" 1)
+          ^File runtime (bytecode hot "runtime" 100)
+          row (target (with-homes {:python python}
+                        #(housekeeping/sweep-stale! {:budget-bytes 8}))
+                      :python-pycache)]
+      (expect (= 8 (:bytes row)))
+      (expect (not (.exists oldest)))
+      (expect (not (.exists (.getParentFile oldest))))
+      (expect (.isFile (io/file old-src "oldest.py")))
+      (expect (.isFile newer))
+      (expect (.isFile runtime))))
   ;; Every process start also walked ~/.vis/logs: 127,455 files, 0.7 to 2.2 s and
   ;; 60 MB of allocation per start of any `vis-agent` command.
   (it "walks the diagnostic logs once per sweep interval across process starts"
