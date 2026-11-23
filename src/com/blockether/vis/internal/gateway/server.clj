@@ -16,6 +16,7 @@
    TUI run, an embedded caller) can start it alongside whatever else it
    is doing via `start!`."
   (:require
+    [clojure.java.io :as io]
     [clojure.string :as str]
     [com.blockether.vis.contract.activity :as activity-contract]
     [com.blockether.vis.contract.gateway :as gateway-contract]
@@ -67,6 +68,7 @@
     [com.blockether.vis.internal.python.runtime :as python-runtime]
     [com.blockether.vis.internal.paths :as paths]
     [com.blockether.vis.internal.janitor :as janitor]
+    [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
     [com.blockether.vis.internal.config.toggles :as toggles]
     [com.blockether.vis.internal.config.scoped :as scoped]
     [com.blockether.vis.internal.util :as util]
@@ -2322,6 +2324,19 @@
                                      ["gateway: decision model preload failed" id
                                       (ex-message t)]))))))))))
 
+(def ^:private extension-prune-interval-ms
+  "How often the janitor removes old extension snapshots: every three days (#509)."
+  (* 3 housekeeping/day-ms))
+
+(defn- extension-folders
+  "The global extension folder and the extension folder of each known project."
+  []
+  (distinct (cons (config/global-extensions-dir)
+                  (keep #(some-> (get % "workspace_root")
+                                 not-empty
+                                 (io/file ".vis" "extensions"))
+                        (state/list-projects {:archived :include})))))
+
 (defn start!
   "Start the gateway on the Jetty 12 core adapter with virtual threads.
    Returns `{:port :host :token-file}`. Throws when already running.
@@ -2422,6 +2437,15 @@
          (janitor/submit! {:id :gateway/turn-states
                            :run (fn []
                                   {:deleted (state/sweep-turn-states!)})})
+
+         ;; Old extension snapshots of the global folder and of each project (#509).
+         _
+         (janitor/submit! (housekeeping/sweep-task
+                            {:id :extension-snapshots
+                             :every-ms extension-prune-interval-ms
+                             :roots extension-folders
+                             :run (fn [dir _pass]
+                                    (python-extensions/prune-package-snapshots! dir))}))
 
          ;; Hydrate persisted toggles + install the state.yml save
          ;; listener so web/gateway-driven flips survive restarts.

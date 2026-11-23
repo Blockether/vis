@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Extensions: the gateway removes old extension versions every 3 days, in the global extension folder and in the extension folder of each project. It keeps the same versions as `extension sync --prune`: the active version, one rollback version, and each version that a running Vis process uses. Before, old versions stayed until a manual `sync --prune` (#509).
 - Provider: Z.AI Coding Plan providers (`zai-coding-plan` and `zai-coding`) offer GLM-5.4, the new multimodal GLM flagship. The direct Z.AI API does not offer it yet. GLM-5.3 Flash stays the default model. Svar is pinned at 0.7.246.
 
 ### Fixed

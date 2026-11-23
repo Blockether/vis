@@ -1209,6 +1209,31 @@ def test_sync_prune_removes_old_snapshots_by_version_and_claim(releases):
     assert versions() == ["2.0.0rc1"]
 
 
+# Issue #509: the janitor prunes each scope without its YAML, and keeps the same snapshots.
+def test_prune_removes_old_snapshots_of_a_scope_without_declarations(releases):
+    _, target, _ = releases
+    spec = {"source": REPOSITORY, "subdirectory": "plugins/greeting"}
+    for version in ("1.0.0", "1.1.0", "2.0.0rc1"):
+        package.sync({"vis-greeter": {**spec, "version": version}}, target, trust=True)
+    container = target / "vis-greeter"
+    (target / "__pycache__").mkdir()
+
+    def versions():
+        return sorted(p.name for p in container.iterdir() if p.name != "current")
+
+    with held_claim(container / "1.0.0"):
+        assert package.prune(target) == []
+    planned = package.prune(target, dry_run=True)
+    assert [(r["status"], r["version"]) for r in planned] == [("would-prune", "1.0.0")]
+    assert planned[0]["bytes"] > 0
+    pruned = package.prune(target)
+    assert [(r["status"], r["version"]) for r in pruned] == [("pruned", "1.0.0")]
+    assert versions() == ["1.1.0", "2.0.0rc1"]
+    assert (target / "__pycache__").is_dir()
+    assert os.readlink(container / "current") == "2.0.0rc1"
+    assert package.prune(target) == []
+
+
 # A read-only image holds prepared packages; loading them must not need the sync lock.
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
 def test_sync_reads_a_read_only_scope_without_lock_or_changes(tmp_path):

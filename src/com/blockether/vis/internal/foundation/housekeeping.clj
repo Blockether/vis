@@ -851,6 +851,31 @@
    that, so it walks nothing and its start pays nothing."
   30000)
 
+(defn sweep-task
+  "A janitor task for the sweep `{:id :every-ms :roots :run}`, as [[tasks]] makes one
+   for each sweep of `sweeps`. `:roots` answers the directories to walk at each
+   question. Each root has its own stamp, so a root that appears later is walked when
+   it is due. A caller whose sweep needs more than this namespace, such as the Python
+   extension host, submits the task itself. The task answers nil when no root was due,
+   else `{:deleted :bytes}` over the rows of the walked roots."
+  [{:keys [id every-ms roots run]}]
+  {:id (keyword "housekeeping" (name id))
+   :delay-ms settle-ms
+   :every-ms (min (quot (long every-ms) 4) (long hour-ms))
+   :run (bound-fn* (fn []
+                     (let [pass
+                           {:now (util/now-ms)}
+
+                           rows
+                           (into
+                             []
+                             (mapcat #(run-sweep!
+                                        {:id id :every-ms every-ms :root (constantly %) :run run}
+                                        pass))
+                             (roots))]
+
+                       (when (seq rows) (totals rows)))))})
+
 (defn tasks
   "The sweeps as tasks for `internal.janitor/submit!`: one task for each sweep, in
    report order.
@@ -867,12 +892,8 @@
    A task keeps the dynamic bindings of the caller, so the home seams of a test
    reach the worker thread."
   []
-  (mapv (fn [{:keys [id every-ms] :as sweep}]
-          {:id (keyword "housekeeping" (name id))
-           :delay-ms settle-ms
-           :every-ms (min (quot (long every-ms) 4) (long hour-ms))
-           :run (bound-fn* #(some-> (run-sweep! sweep {:now (util/now-ms)})
-                                    totals))})
+  (mapv (fn [{:keys [root] :as sweep}]
+          (sweep-task (assoc sweep :roots #(vector (root)))))
         sweeps))
 
 ;; Gateway journals

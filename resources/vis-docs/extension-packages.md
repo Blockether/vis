@@ -197,6 +197,10 @@ other version, which is the rollback version or else the newest one. It also kee
 that a running Vis process still uses. The output shows each removed version as `pruned`, and a dry
 run shows it as `would-prune`.
 
+The gateway also removes these old versions every 3 days. It does this in the global extension
+folder and in the extension folder of each project that Vis lists. It keeps the same versions as
+`--prune`, and it does not change declarations or links.
+
 Sync never adopts or replaces a link that you installed manually or that changed outside sync. Keep
 the link and resolve the conflict before you sync. Do not edit the private `.sync.json` receipt.
 

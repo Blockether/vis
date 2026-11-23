@@ -498,6 +498,37 @@
              (expect (gone? stale))
              (expect (.exists kept)))
            (finally (run! janitor/cancel! ids)))))
+  ;; Issue #509: old extension snapshots of a project folder stayed forever.
+  (it "walks each root of a sweep task once in its interval, also a root that appears later"
+      (let [cache
+            (tmp-dir "vis-hk-task-cache")
+
+            a
+            (tmp-dir "vis-hk-task-a")
+
+            b
+            (tmp-dir "vis-hk-task-b")
+
+            roots
+            (atom [a])
+
+            walked
+            (atom [])
+
+            task
+            (with-homes {:cache cache}
+                        #(housekeeping/sweep-task {:id :test-roots
+                                                   :every-ms day-ms
+                                                   :roots (fn [] @roots)
+                                                   :run (fn [dir _pass]
+                                                          (swap! walked conj dir)
+                                                          [{:deleted 1 :bytes 2}])}))]
+
+        (expect (= {:deleted 1 :bytes 2} ((:run task))))
+        (expect (nil? ((:run task))))
+        (swap! roots conj b)
+        (expect (= {:deleted 1 :bytes 2} ((:run task))))
+        (expect (= [a b] @walked))))
   ;; Regression, user report in this Vis session: only the logs were swept again while a
   ;; process ran, and each other store only at a process start.
   (it "sweeps each store again when its own interval is over"

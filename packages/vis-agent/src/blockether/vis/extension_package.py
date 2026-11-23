@@ -1644,6 +1644,58 @@ def _prune_snapshots(directory, name, dry_run, removing=False):
     return results
 
 
+def _tree_bytes(path):
+    """The bytes of the files under `path`. Links are not followed."""
+    total = 0
+    for root, _, files in os.walk(path):
+        for file in files:
+            try:
+                total += os.lstat(os.path.join(root, file)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def prune(directory, dry_run=False):
+    """Remove old snapshots of each package in one scope and report each one.
+
+    The gateway janitor runs this for the global scope and for each known project every
+    few days (#509). It keeps what `sync --prune` keeps for a package: the active
+    snapshot, its rollback target, local source links, unmanaged entries and claimed
+    snapshots. It reads no YAML and changes no declarations, links or records. A row of a
+    removed snapshot also gives its `bytes`. A package that fails gives a `failed` row,
+    and the other packages continue.
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        return []
+    lock = directory / ".sync-lock"
+    fd = None if dry_run else _acquire(lock)
+    try:
+        if not dry_run:
+            _sweep_pruned(directory)
+        results = []
+        for container in sorted(directory.iterdir()):
+            name = container.name
+            if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+                continue
+            try:
+                planned = _prune_snapshots(directory, name, True)
+                sizes = {row["version"]: _tree_bytes(row["path"]) for row in planned}
+                if planned and not dry_run:
+                    planned = _prune_snapshots(directory, name, False)
+                for row in planned:
+                    results.append({**row, "bytes": sizes.get(row["version"], 0)})
+            except (ValueError, OSError) as error:
+                results.append(
+                    {"name": name, "status": "failed", "error": str(error)[:1024]}
+                )
+        return results
+    finally:
+        if fd is not None:
+            _release(lock, fd)
+
+
 def _sync_one(
     name,
     spec,

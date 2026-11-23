@@ -3780,6 +3780,26 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
           (filter #(or prune (seq (:packages %)) (.isFile (io/file (:directory %) ".sync.json")))
                   scopes))))
 
+(defn prune-package-snapshots!
+  "Remove old snapshots of each package in the extension folder `directory`, as
+   `extension sync --prune` does, and answer one housekeeping row
+   `{:id :root :deleted :bytes}`. The gateway janitor calls it for the global folder
+   and for each project folder (#509). A package that fails goes to the log, and the
+   other packages continue."
+  [^File directory]
+  (let [rows (with-holder-note {:sync-lock (io/file directory ".sync-lock")}
+               #(package-operation "prune" {:directory (str directory)}))
+        pruned (filter #(= "pruned" (get % "status")) rows)]
+    (doseq [row rows
+            :when (= "failed" (get row "status"))]
+      (tel/log! {:level :warn
+                 :id ::package-prune-failed
+                 :data {:directory (str directory) :name (get row "name") :error (get row "error")}}))
+    [{:id :extension-snapshots
+      :root (str directory)
+      :deleted (count pruned)
+      :bytes (reduce + 0 (map #(long (get % "bytes" 0)) pruned))}]))
+
 (defn- project-problem
   "Why an entry's `tool.vis.project` cannot be admitted, naming the resolved directory
    and the next step; nil when that directory holds `pyproject.toml` and `uv.lock`.
