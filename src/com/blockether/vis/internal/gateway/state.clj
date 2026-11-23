@@ -5666,7 +5666,10 @@
                         (and projection? (string? text)) (speech-commit-update
                                                            (get @speech-streams iteration {})
                                                            text
-                                                           (= phase :iteration-final)))]
+                                                           ;; The loop sends `:assistant-prose` once, with the whole
+                                                           ;; note, before the code runs. Speak it then, not after.
+                                                           (contains? #{:assistant-prose :iteration-final}
+                                                                      phase)))]
 
               (when update
                 (if (:invalidated? update)

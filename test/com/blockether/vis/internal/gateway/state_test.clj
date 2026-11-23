@@ -6782,6 +6782,20 @@
       (expect (some #(= "turn.completed" (get % "type")) events))
       (expect (not-any? #(= "speech.committed" (get % "type"))
                         (:events (run-speech-chunks! {} chunks))))))
+  ;; Regression: session 86ead08e-0717-48e4-9d1c-26170173e6c6 spoke its progress note 76 s late,
+  ;; after the code of the iteration ran.
+  (it "speaks the progress note before the code of its iteration runs"
+      (let [note
+            (wire/json-str
+              {"type" "conversation" "phase" "progress" "text" "I'll check the store first."})
+
+            {:keys [before-terminal]}
+            (run-speech-chunks! {"voice_segments" true}
+                                [{:phase :assistant-prose :iteration 1 :text note}])]
+
+        (expect (= ["I'll check the store first."]
+                   (mapv #(get % "text")
+                         (filter #(= "speech.committed" (get % "type")) before-terminal))))))
   (it "suppresses further speech when a provider rewrites a committed record"
       (let [first
             (str (wire/json-str
