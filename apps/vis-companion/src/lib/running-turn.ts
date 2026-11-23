@@ -14,6 +14,7 @@ import type {
   RequestKind,
   ExtensionWait,
   GatewayAttachment,
+  RecordingTranscription,
   IterationAttachment,
   SseEvent,
   TranscriptForm,
@@ -68,6 +69,19 @@ export interface TurnProgress {
   extensionWait?: ExtensionWait;
   /** Readiness start on the device clock. */
   extensionWaitStartedAt?: number;
+  /** The recording the turn waits on while `kind` is `attachment-transcription`. */
+  transcription?: RecordingTranscription;
+}
+
+const positiveInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0;
+
+function transcriptionFromEvent(event: SseEvent): RecordingTranscription | undefined {
+  const wait = event.transcription;
+  if (!wait || !positiveInteger(wait.recording) || !positiveInteger(wait.recordings)) return undefined;
+  const percent =
+    typeof wait.percent === 'number' && wait.percent >= 0 && wait.percent <= 100 ? wait.percent : undefined;
+  return { recording: wait.recording, recordings: wait.recordings, ...(percent === undefined ? {} : { percent }) };
 }
 
 export interface RunningTurn {
@@ -90,6 +104,8 @@ export interface RunningTurn {
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   /** Bytes sent by this device; the running-turn wire carries descriptors only. */
   attachments?: GatewayAttachment[];
+  /** Percent of the attachment bytes uploaded, until the gateway accepts the turn. */
+  upload?: { percent: number };
   /** Typed streamed content, replaced by terminal content until the transcript takes over. */
   content?: ContentBlock[];
   /** Start offset of each live block's known text; absent means offset 0. */
@@ -519,6 +535,7 @@ export function reduceRunningTurnEvent(
             busy: kind === 'python' ? pythonBusyFromEvent(event) : undefined,
             extensionWait,
             extensionWaitStartedAt,
+            transcription: kind === 'attachment-transcription' ? transcriptionFromEvent(event) : undefined,
           }
         : undefined,
     };

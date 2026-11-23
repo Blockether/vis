@@ -2912,6 +2912,16 @@ class TurnInputData(TypedDict):
     ts: int
 
 
+class TurnProgressDataTranscription(TypedDict):
+    """The recording that the turn waits on: its position among the recordings without
+    words, and the percent that is text already.
+    """
+
+    recording: int
+    recordings: int
+    percent: NotRequired[int]
+
+
 class TurnProgressDataExtensionWait(TypedDict):
     stage: Literal["waiting", "preparing"]
     since_ms: int
@@ -2938,6 +2948,7 @@ class TurnProgressData(TypedDict):
     connection: NotRequired[Literal["alive", "silent"]]
     awaiting_output: NotRequired[bool]
     deadline_action: NotRequired[Literal["retry", "timeout"]]
+    transcription: NotRequired[TurnProgressDataTranscription]
     extension_wait: NotRequired[TurnProgressDataExtensionWait]
     schema: int
     ts: int

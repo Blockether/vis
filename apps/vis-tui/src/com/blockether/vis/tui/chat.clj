@@ -1715,7 +1715,14 @@
           {:phase :extension-readiness}
 
           "attachment-transcription"
-          {:phase :attachment-transcription :iteration iteration}
+          (let [wait (event-get event :transcription)
+                recording (event-get wait :recording)
+                recordings (event-get wait :recordings)
+                percent (event-get wait :percent)]
+            (cond-> {:phase :attachment-transcription :iteration iteration}
+              (and (pos-int? recording) (pos-int? recordings))
+              (assoc :transcription (cond-> {:recording recording :recordings recordings}
+                                      (nat-int? percent) (assoc :percent percent)))))
 
           "provider-call"
           (cond-> {:phase :provider-call :iteration iteration}

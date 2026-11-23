@@ -9882,6 +9882,16 @@
 
         (str "  — " (str/join " · " parts))))))
 
+(defn- transcription-phase
+  "The spinner text while the turn waits for the words of attached recordings."
+  [agent-name {:keys [recording recordings percent]}]
+  (str agent-name
+       " is transcribing "
+       (if (and recordings (> (long recordings) 1))
+         (str "recording " recording " of " recordings)
+         "the recording")
+       (when percent (str " · " percent "%"))))
+
 (defn- progress-phase
   "Human-readable phase label for the current iteration state. Drives
    the spinner row text so the user can tell whether Vis is calling
@@ -9992,8 +10002,8 @@
           (= :shell-run activity) (str agent-name " is running: " shell-label)
           (= :shell-bg activity) (str agent-name " is starting: " shell-label)
           (= :slash activity) (str agent-name " is running: " slash-label)
-          (= :attachment-transcription activity) (str agent-name
-                                                      " is transcribing recordings (up to 5 min)")
+          (= :attachment-transcription activity)
+          (transcription-phase agent-name (:activity/transcription last-iteration))
           (= :python activity) (str agent-name " is running Python code (iter " n ")")
           (= :provider-wait activity)
           (str agent-name " is waiting for " (or activity-model "the provider") " (iter " n ")")

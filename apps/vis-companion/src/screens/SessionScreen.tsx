@@ -580,6 +580,12 @@ function runningTurnPhase(
   // while the request was still in flight, and read as a hang from the first
   // second (measured: no turn on this machine reaches its first token in under
   // one second; the median is 6.4s).
+  // The gateway has no turn until every attachment is uploaded; a phone recording
+  // can take minutes, and "sent your message" read as a hang for all of them.
+  if (turn.upload && !turn.id) {
+    const recording = turn.attachments?.some((file) => file.media_type.startsWith('audio/'));
+    return `Sending ${recording ? 'the recording' : 'attachments'} · ${turn.upload.percent}%`;
+  }
   if (iteration === 0)
     return commandPhase(turn.request, agentName) ?? `${agentName} sent your message`;
 
@@ -597,8 +603,12 @@ function runningTurnPhase(
       return `${agentName} is starting: ${compactLabel(progress.command ?? '', '…')}`;
     case 'slash':
       return `${agentName} is running: ${compactLabel(progress.command ?? '', 'command')}`;
-    case 'attachment-transcription':
-      return `${agentName} is transcribing recordings (up to 5 min)`;
+    case 'attachment-transcription': {
+      const wait = progress.transcription;
+      const which =
+        wait && wait.recordings > 1 ? `recording ${wait.recording} of ${wait.recordings}` : 'the recording';
+      return `${agentName} is transcribing ${which}${wait?.percent == null ? '' : ` · ${wait.percent}%`}`;
+    }
     case 'python':
       // A Python block runs. When it is busy, the line under this one says for how long.
       return `${agentName} is running Python code ${suffix}`;
@@ -4560,6 +4570,14 @@ export function SessionScreen({
         displayRequest,
         attachments: sent,
         comments: sentComments,
+        onUploadProgress: (percent) =>
+          setRunningTurn((turn) => {
+            // Only OUR optimistic bubble, the one with no id, shows the upload.
+            if (!turn || turn.id || turn.upload?.percent === percent) return turn;
+            const next: RunningTurn = { ...turn, upload: { percent } };
+            runningTurnRef.current = next;
+            return next;
+          }),
       });
       if (comments.length) hideComments(comments);
       const submittedId = submitted.turn_id;
@@ -4593,7 +4611,7 @@ export function SessionScreen({
           if (!turn) return turn;
           const next: RunningTurn = turn.id
             ? { ...turn, id: submittedId }
-            : { ...turn, id: submittedId, status: 'running' };
+            : { ...turn, id: submittedId, status: 'running', upload: undefined };
           runningTurnRef.current = next;
           return next;
         });

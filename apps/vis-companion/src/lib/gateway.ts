@@ -217,6 +217,33 @@ export function onTurnSubmitted(listener: (sid: string, gateway: string) => void
   };
 }
 
+/** An uploaded attachment as a turn names it. */
+interface UploadedAttachment {
+  upload_id: string;
+  filename: string;
+  media_type: string;
+  size: number;
+  reference?: string;
+}
+
+const turnSendingListeners = new Set<(sid: string, gateway: string, isSending: boolean) => void>();
+
+/**
+ * Hear a message whose attachments upload before the gateway can see its turn.
+ *
+ * A recording from a phone can take minutes to upload, and the gateway has no turn
+ * to mark as live until then. `isSending` is true when the upload starts, and false
+ * only when the message failed: an accepted message is heard by `onTurnSubmitted`.
+ */
+export function onTurnSending(
+  listener: (sid: string, gateway: string, isSending: boolean) => void,
+): () => void {
+  turnSendingListeners.add(listener);
+  return () => {
+    turnSendingListeners.delete(listener);
+  };
+}
+
 // One transcript-search hit inside a session: which SIDE it landed on (the
 // user's own request, the assistant's answer, or the reasoning aside it thought
 // out loud), a short preview snippet, and when it happened. Several travel per
@@ -5978,27 +6005,67 @@ export class GatewayClient {
       idempotencyKey?: string;
       /** Saved app drafts that the turn adds. The gateway removes them when it accepts the turn. */
       comments?: TurnComment[];
+      /** Percent of all attachment bytes sent. Given, the uploads report their progress. */
+      onUploadProgress?: (percent: number) => void;
     } = {},
   ): Promise<SubmittedTurn> {
     const clientId = options.idempotencyKey ?? `companion:${randomUuid()}`;
     this.submissionKeys.set(sid, clientId);
-    const attachments = await Promise.all(
-      (options.attachments ?? []).map(async (attachment) => {
+    const files = options.attachments ?? [];
+    if (!files.length) return this.postTurn(sid, request, options, clientId, []);
+    for (const listener of turnSendingListeners) listener(sid, this.base, true);
+    try {
+      const attachments = await this.uploadTurnAttachments(sid, files, options.onUploadProgress);
+      return await this.postTurn(sid, request, options, clientId, attachments);
+    } catch (cause) {
+      for (const listener of turnSendingListeners) listener(sid, this.base, false);
+      throw cause;
+    }
+  }
+
+  /** Upload the attachments of one message; the turn names them by `upload_id`. */
+  private async uploadTurnAttachments(
+    sid: string,
+    files: GatewayAttachment[],
+    onUploadProgress?: (percent: number) => void,
+  ): Promise<UploadedAttachment[]> {
+    const sent = files.map(() => 0);
+    const totals = files.map(() => 0);
+    const report = () => {
+      const total = totals.reduce((sum, size) => sum + size, 0);
+      if (!onUploadProgress || total <= 0) return;
+      try {
+        onUploadProgress(Math.round((sent.reduce((sum, size) => sum + size, 0) / total) * 100));
+      } catch {
+        // A progress line is a UI detail; it can never fail a message.
+      }
+    };
+    return Promise.all(
+      files.map(async (attachment, index) => {
         const query = new URLSearchParams({
           filename: attachment.filename,
           media_type: attachment.media_type,
         });
         const plain = attachmentPayloadBlob(attachment);
         const packed = inflatingGateways.has(this.base) ? await packedUpload(plain) : null;
-        const uploaded = (
-          await this.requestFull<{ upload_id: string; size: number }>(
-            'POST',
-            `/v1/sessions/${encodeURIComponent(sid)}/attachments?${query.toString()}`,
-            packed ?? plain,
-            undefined,
-            packed ? { 'Content-Encoding': 'gzip' } : undefined,
-          )
-        ).data as { upload_id: string; size: number };
+        const body = packed ?? plain;
+        const path = `/v1/sessions/${encodeURIComponent(sid)}/attachments?${query.toString()}`;
+        const headers = packed ? { 'Content-Encoding': 'gzip' } : undefined;
+        totals[index] = body.size;
+        const uploaded = onUploadProgress
+          ? await this.uploadWithProgress<{ upload_id: string; size: number }>(
+              path,
+              body,
+              headers,
+              (bytes) => {
+                sent[index] = bytes;
+                report();
+              },
+            )
+          : ((await this.requestFull<{ upload_id: string; size: number }>('POST', path, body, undefined, headers))
+              .data as { upload_id: string; size: number });
+        sent[index] = body.size;
+        report();
         return {
           upload_id: uploaded.upload_id,
           filename: attachment.filename,
@@ -6008,6 +6075,69 @@ export class GatewayClient {
         };
       }),
     );
+  }
+
+  /**
+   * POST one raw upload, reporting the bytes as they leave. XHR, not `fetch`:
+   * `fetch` still cannot report upload progress in a WebView.
+   */
+  private uploadWithProgress<T>(
+    path: string,
+    body: Blob,
+    extraHeaders: Record<string, string> | undefined,
+    onSent: (bytes: number) => void,
+  ): Promise<T> {
+    const budget = requestDeadlineMs(body.size);
+    return new Promise<T>((resolve, reject) => {
+      const diagnostic = startRequestDiagnostic(this.base, 'POST', path, { transport: 'xhr' });
+      const xhr = new XMLHttpRequest();
+      const finish = (failure?: { cause: unknown }, timedOut = false) =>
+        finishRequestDiagnostic(diagnostic, { status: xhr.status, failure, timedOut });
+      const fail = (error: unknown, timedOut = false) => {
+        finish({ cause: error }, timedOut);
+        reject(error);
+      };
+      xhr.open('POST', `${this.base}${path}`);
+      xhr.timeout = budget;
+      this.headers(extraHeaders).forEach((value, key) => xhr.setRequestHeader(key, value));
+      if (xhr.upload) {
+        xhr.upload.onprogress = (event: ProgressEvent) => {
+          if (event.lengthComputable) onSent(Math.min(event.loaded, body.size));
+        };
+      }
+      xhr.onload = () => {
+        let parsed: unknown;
+        try {
+          parsed = xhr.responseText ? JSON.parse(xhr.responseText) : undefined;
+        } catch {
+          parsed = xhr.responseText;
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          finish();
+          resolve(parsed as T);
+          return;
+        }
+        fail(new GatewayError(xhr.status, errorText(parsed, xhr.status), parsed));
+      };
+      xhr.onerror = () => fail(new GatewayError(0, 'network error: upload failed'));
+      xhr.ontimeout = () =>
+        fail(new GatewayError(0, `gateway did not answer within ${Math.round(budget / 1000)}s`), true);
+      xhr.onabort = () => fail(new DOMException('Aborted', 'AbortError'));
+      try {
+        xhr.send(body);
+      } catch (cause) {
+        fail(cause);
+      }
+    });
+  }
+
+  private async postTurn(
+    sid: string,
+    request: string,
+    options: Parameters<GatewayClient['submitTurn']>[2] & object,
+    clientId: string,
+    attachments: UploadedAttachment[],
+  ): Promise<SubmittedTurn> {
     const path = `/v1/sessions/${encodeURIComponent(sid)}/turns`;
     const submitted = await this.request<SubmittedTurn>('POST', path, {
       request,

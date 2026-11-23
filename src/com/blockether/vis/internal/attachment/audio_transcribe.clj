@@ -114,6 +114,12 @@
 
 (defonce ^:private recording-keys (atom {}))
 
+(defonce ^:private progressed-at
+  ;; `System/nanoTime` of the worker's last sign of life: a job start, a progress
+  ;; report or an outcome. One worker serves every recording, so a report on any of
+  ;; them also moves the queue that a waiting recording sits in.
+  (atom (System/nanoTime)))
+
 (defonce ^:private worker
   ;; ONE daemon thread: local speech saturates a core, and a message carrying five
   ;; memos must queue rather than race. Delayed so a build that never transcribes
@@ -230,10 +236,22 @@
                         :ms ms}
                  :msg "an attached recording produced no transcript"}))))
 
+(defn- note-progress!
+  "Record that the worker is alive, and the percent of recording `k` when the
+   engine gave one. Only work that is still running keeps a percent."
+  [k percent]
+  (reset! progressed-at (System/nanoTime))
+  (when percent
+    (swap! work* (fn [registry]
+                   (if (get-in registry [k :result])
+                     (assoc-in registry [k :progress] (-> (long percent) (max 0) (min 100)))
+                     registry)))))
+
 (defn- transcribe-now
   "Run ONE recording through the engine and answer its outcome. Total: an unreadable
-   payload, a throw and a recording with no speech in it are all outcomes."
-  [attachment]
+   payload, a throw and a recording with no speech in it are all outcomes.
+   `on-progress` receives the percent transcribed, or nil while the engine prepares."
+  [attachment on-progress]
   (let [started (util/now-ms)]
     (if-let [{:keys [^File file is-temp]} (try (source-file attachment)
                                                (catch Throwable t
@@ -242,7 +260,11 @@
                                                             :data {:filename (:filename attachment)
                                                                    :error (ex-message t)}})
                                                  nil))]
-      (try (let [{:keys [text segments]} (speech/transcribe! {:audio-path (str file)})
+      (try (let [{:keys [text segments]} (speech/transcribe!
+                                         {:audio-path (str file)
+                                          :on-progress (fn [{:keys [phase progress]}]
+                                                         (on-progress (when (= :transcribing phase)
+                                                                        progress)))})
                  words (some-> text
                                str
                                str/trim
@@ -307,9 +329,11 @@
       (.submit ^ExecutorService @worker
                ^Callable
                (fn []
-                 (let [outcome (transcribe-now attachment)]
+                 (note-progress! k nil)
+                 (let [outcome (transcribe-now attachment #(note-progress! k %))]
                    (settle! k outcome)
                    (deliver (:result entry) outcome)
+                   (note-progress! k nil)
                    outcome))))
     entry))
 
@@ -395,10 +419,13 @@
                      (entry-outcome entry)))))))))
 
 (defn transcribe-attachment
-  "Wait for this recording's outcome. Cancellation stops only the waiter; an optional
-   monotonic `:deadline-ns` returns pending when the wait expires. The shared worker
-   continues so its eventual result can still be stored and displayed."
-  [attachment & [{:keys [cancelled? deadline-ns]}]]
+  "Wait for this recording's outcome. Cancellation stops only the waiter. An optional
+   `:stall-ms` returns pending when the shared worker reports no progress for that
+   long, so a long recording that keeps moving is never cut off. `:on-progress`
+   receives this recording's percent (nil while it waits or prepares) each time it
+   changes. The shared worker continues so its eventual result can still be stored
+   and displayed."
+  [attachment & [{:keys [cancelled? stall-ms on-progress]}]]
   (let [gated (gate attachment)]
     (if (not= ::ok gated)
       ;; A refusal this side of the engine is exactly the silence turn 35 could not
@@ -409,22 +436,38 @@
             {:keys [outcome result]} (start! k attachment)]
 
         (or outcome
-            (if-not (or cancelled? deadline-ns)
+            (if-not (or cancelled? stall-ms on-progress)
               @result
-              (loop []
+              (let [started (System/nanoTime)]
+                (loop [reported ::none]
 
-                (when (and cancelled? (cancelled?))
-                  (throw (InterruptedException.
-                           "Waiting for recording transcription was cancelled")))
-                (let [wait-ms
-                      (if deadline-ns
-                        (min 250 (max 0 (quot (- (long deadline-ns) (System/nanoTime)) 1000000)))
-                        250)
-                      answer (deref result wait-ms ::waiting)]
+                  (when (and cancelled? (cancelled?))
+                    (throw (InterruptedException.
+                             "Waiting for recording transcription was cancelled")))
+                  (let [percent
+                        (get-in @work* [k :progress])
 
-                  (cond (not= ::waiting answer) answer
-                        (zero? wait-ms) {:status PENDING}
-                        :else (recur))))))))))
+                        _
+                        (when (and on-progress (not= reported percent)) (on-progress percent))
+
+                        wait-ms
+                        (if stall-ms
+                          (let [deadline (+ (max started (long @progressed-at))
+                                            (* 1000000 (long stall-ms)))]
+                            (min 250 (max 0 (quot (- deadline (System/nanoTime)) 1000000))))
+                          250)
+
+                        answer
+                        (deref result wait-ms ::waiting)]
+
+                    (cond (not= ::waiting answer) answer
+                          (zero? wait-ms) {:status PENDING}
+                          :else (recur percent)))))))))))
+
+(defn awaits-words?
+  "Is this attachment a recording that has no words yet?"
+  [{:keys [media-type transcription]}]
+  (and (attachments/audio-media-type? media-type) (str/blank? (str transcription))))
 
 (defn- walk-recordings
   "`attachments` with `answer-for` applied to every RECORDING that has no words yet,
@@ -464,13 +507,24 @@
    (walk-recordings attachments #(request! % load-base64))))
 
 (defn transcribe-attachments
-  "Join recordings in attachment order. An optional `:timeout-ms` is one wait budget
-   for the whole collection, not a fresh budget per recording. Expired joins return
-   pending rows without stopping workers; callers consuming the words must handle
-   those rows. Without a limit, wait for every recording."
-  [attachments & [opts]]
-  (let [wait-opts (cond-> opts
-                    (:timeout-ms opts)
-                    (assoc :deadline-ns
-                      (+ (System/nanoTime) (* 1000000 (long (:timeout-ms opts))))))]
-    (walk-recordings attachments #(transcribe-attachment % wait-opts))))
+  "Join recordings in attachment order. An optional `:stall-ms` ([[transcribe-attachment]])
+   returns pending rows when the worker stops making progress, without stopping it;
+   callers consuming the words must handle those rows. `:on-progress` receives
+   `{:recording i :recordings n :percent p}` for the recording being waited on, where
+   `i` counts from 1 among the recordings that have no words yet and `:percent` is
+   absent until the engine reports one. Without these options, wait for every
+   recording."
+  [attachments & [{:keys [on-progress] :as opts}]]
+  (let [recordings (count (filter awaits-words? attachments))
+        position (atom 0)]
+    (walk-recordings attachments
+                     (fn [attachment]
+                       (let [recording (swap! position inc)]
+                         (transcribe-attachment
+                           attachment
+                           (cond-> (dissoc opts :on-progress)
+                             on-progress
+                             (assoc :on-progress
+                               (fn [percent]
+                                 (on-progress (cond-> {:recording recording :recordings recordings}
+                                                percent (assoc :percent percent))))))))))))

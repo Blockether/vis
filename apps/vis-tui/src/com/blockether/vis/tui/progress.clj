@@ -292,7 +292,9 @@
   [entry chunk]
   (case (:phase chunk)
     :attachment-transcription
-    (assoc entry :activity :attachment-transcription)
+    (assoc entry
+      :activity :attachment-transcription
+      :activity/transcription (:transcription chunk))
 
     :provider-call
     ;; `:activity/reason` says WHY the request exists (`:user-submit` /

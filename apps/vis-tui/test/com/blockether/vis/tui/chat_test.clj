@@ -665,6 +665,15 @@
         (expect
           (= {:phase :attachment-transcription :iteration 1}
              (g->c {"type" "turn.progress" "progress" "attachment-transcription" "iteration" 1}))))
+    (it "a recording transcription event keeps which recording it waits on and its percent"
+        (expect
+          (= {:phase :attachment-transcription
+              :iteration 1
+              :transcription {:recording 2 :recordings 3 :percent 42}}
+             (g->c {"type" "turn.progress"
+                    "progress" "attachment-transcription"
+                    "iteration" 1
+                    "transcription" {"recording" 2 "recordings" 3 "percent" 42}}))))
     (it "a provider-call progress event projects to :provider-call"
         (expect (= {:phase :provider-call :iteration 1}
                    (g->c {"type" "turn.progress" "progress" "provider-call" "iteration" 1}))))

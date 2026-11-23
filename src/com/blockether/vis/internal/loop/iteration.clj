@@ -2138,28 +2138,35 @@
            (update (f journal) :trace #(mapv (partial read-trace journal) %)))
          (finally (java.nio.file.Files/deleteIfExists path)))))
 
-(def ^:private RECORDING_WAIT_MS "Maximum foreground wait for all recordings in one turn." 300000)
+(def ^:private RECORDING_STALL_MS
+  "How long a turn waits for recordings while the speech worker reports no progress."
+  300000)
 
 (defn- transcribe-turn-attachments
-  "Bound recording joins without charging local speech time to the provider watchdog."
+  "Join recordings while the speech worker makes progress, without charging local
+   speech time to the provider watchdog. Each new percent reaches the live ticker."
   [rows {:keys [hooks cancel-atom cancel-token]}]
-  (when (some #(and (attachments/audio-media-type? (:media-type %)) (str/blank? (:transcription %)))
-              rows)
-    (when-let [on-chunk (:on-chunk hooks)]
-      (on-chunk {:phase :attachment-transcription :iteration 1})))
-  (let [transcribed (audio-transcribe/transcribe-attachments
+  (let [on-chunk (:on-chunk hooks)
+        _ (when (and on-chunk (some audio-transcribe/awaits-words? rows))
+            (on-chunk {:phase :attachment-transcription :iteration 1}))
+        transcribed (audio-transcribe/transcribe-attachments
                       rows
-                      {:timeout-ms RECORDING_WAIT_MS
-                       :cancelled? #(or (some-> cancel-atom
-                                                deref)
-                                        (cancellation/cancelled? cancel-token))})]
+                      (cond-> {:stall-ms RECORDING_STALL_MS
+                               :cancelled? #(or (some-> cancel-atom
+                                                        deref)
+                                                (cancellation/cancelled? cancel-token))}
+                        on-chunk
+                        (assoc :on-progress
+                          #(on-chunk {:phase :attachment-transcription
+                                      :iteration 1
+                                      :transcription %}))))]
     (when (some #(and (attachments/audio-media-type? (:media-type %))
                       (= audio-transcribe/PENDING (:transcription-status %)))
                 transcribed)
-      (throw (ex-info (str "Recording transcription timed out after 5 minutes. "
-                           "It is still running in the background; the transcript will be saved "
+      (throw (ex-info (str "Recording transcription made no progress for 5 minutes. "
+                           "It continues in the background; the transcript will be saved "
                            "when ready. Try again once it appears.")
-                      {:type ::recording-transcription-timeout :timeout-ms RECORDING_WAIT_MS})))
+                      {:type :vis/recording-transcription-stalled :stall-ms RECORDING_STALL_MS})))
     transcribed))
 
 (defn- request-extra-body

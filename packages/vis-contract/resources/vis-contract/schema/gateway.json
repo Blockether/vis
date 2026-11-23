@@ -8801,6 +8801,17 @@
             "timeout"
           ]
         },
+        "transcription": {
+          "type": "object",
+          "description": "The recording that the turn waits on: its position among the recordings without words, and the percent that is text already.",
+          "additionalProperties": false,
+          "properties": {
+            "recording": {"type": "integer", "minimum": 1},
+            "recordings": {"type": "integer", "minimum": 1},
+            "percent": {"type": "integer", "minimum": 0, "maximum": 100}
+          },
+          "required": ["recording", "recordings"]
+        },
         "extension_wait": {
           "type": "object",
           "additionalProperties": false,

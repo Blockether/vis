@@ -1731,8 +1731,16 @@ export interface ExtensionWait {
   package?: string;
 }
 
+/** The recording a turn waits on (`attachment-transcription` progress). */
+export interface RecordingTranscription {
+  recording: number;
+  recordings: number;
+  percent?: number;
+}
+
 export interface SseEvent {
   extension_wait?: ExtensionWait;
+  transcription?: RecordingTranscription;
   type: string;
   request_kind?: RequestKind;
   council?: CouncilRequest;

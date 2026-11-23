@@ -660,8 +660,22 @@ describe('the wait between a submit and the first token', () => {
       });
     });
 
+    expect((await screen.findAllByText(/Vis is transcribing the recording/)).length).toBeGreaterThan(0);
+
+    act(() => {
+      emit({
+        type: 'turn.progress',
+        session_id: 's1',
+        turn_id: 't-live',
+        progress: 'attachment-transcription',
+        iteration: 1,
+        transcription: { recording: 2, recordings: 3, percent: 42 },
+        seq: 3,
+      });
+    });
+
     expect(
-      (await screen.findAllByText(/Vis is transcribing recordings \(up to 5 min\)/)).length,
+      (await screen.findAllByText(/Vis is transcribing recording 2 of 3 · 42%/)).length,
     ).toBeGreaterThan(0);
 
     act(() => {
@@ -673,12 +687,12 @@ describe('the wait between a submit and the first token', () => {
         iteration: 1,
         reason: 'user-submit',
         model: 'claude-opus-5',
-        seq: 3,
+        seq: 4,
       });
     });
 
     expect((await screen.findAllByText(/Vis is calling claude-opus-5/)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/Vis is transcribing recordings/)).toBeNull();
+    expect(screen.queryByText(/Vis is transcribing/)).toBeNull();
   });
 
   it('says how long the model is silent and when Svar acts, until output arrives', async () => {

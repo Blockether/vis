@@ -2276,7 +2276,8 @@
 
 (defn- progress-chunk->event
   "Ephemeral `turn.progress` wire event `[type store? payload]`, or nil."
-  [{:keys [phase cmd iteration reason model busy-ms deadline-in-ms cpu-percent] :as chunk}]
+  [{:keys [phase cmd iteration reason model busy-ms deadline-in-ms cpu-percent transcription]
+    :as chunk}]
   (when (and (turn-progress-phases phase)
              (not (and (= phase :response-parse) (= :done (:status chunk)))))
     (let [op
@@ -2334,7 +2335,11 @@
          (assoc :deadline-in-ms deadline-in-ms)
 
          (some? cpu-percent)
-         (assoc :cpu-percent cpu-percent))])))
+         (assoc :cpu-percent cpu-percent)
+
+         ;; Which recording the turn waits on, and how much of it is text already.
+         (some? transcription)
+         (assoc :transcription (select-keys transcription [:recording :recordings :percent])))])))
 
 (defn- form-activity-chunk->event
   "`block.activity` frame `[type store? payload]` carrying one full replacement of a

@@ -266,20 +266,28 @@
 
 (defdescribe
   bounded-recording-wait-test
-  (it "shares one deadline across every recording in a bounded join"
-      (let [deadlines (atom [])]
-        (with-redefs [at/transcribe-attachment (fn [_ opts]
-                                                 (swap! deadlines conj (:deadline-ns opts))
-                                                 {:transcription "ready"})]
-          (at/transcribe-attachments [(memo "first") (memo "second")] {:timeout-ms 300000}))
-        (expect (= 2 (count @deadlines)))
-        (expect (every? number? @deadlines))
-        (expect (apply = @deadlines))))
-  (it "returns pending at the deadline without losing the worker's eventual words"
+  (it "keeps waiting past the stall limit while the worker reports progress"
+      (let [seen (atom [])]
+        (reset! fake-engine* {:id engine-id
+                              :label "test"
+                              :transcribe (fn [{:keys [audio-path on-progress]}]
+                                            (swap! calls conj (str audio-path))
+                                            (doseq [percent (range 10 101 10)]
+                                              (Thread/sleep 30)
+                                              (on-progress {:phase :transcribing :progress percent}))
+                                            {:text "long but moving"})})
+        (let [rows (at/transcribe-attachments [(memo)]
+                                              {:stall-ms 150 :on-progress #(swap! seen conj %)})]
+          (expect (= "long but moving" (get-in rows [0 :transcription])))
+          (expect (= {:recording 1 :recordings 1} (first @seen)))
+          ;; The waiter samples the percent, so it sees some reports, rising.
+          (expect (seq (keep :percent @seen)))
+          (expect (apply < (keep :percent @seen))))))
+  (it "returns pending when the worker stalls without losing the worker's eventual words"
       (let [hold (promise)]
         (register-fake! "saved after the wait limit" hold)
         (let [staged (at/request-attachments! [(memo)])
-              waiting (future (at/transcribe-attachments staged {:timeout-ms 25}))]
+              waiting (future (at/transcribe-attachments staged {:stall-ms 25}))]
 
           (try (let [rows (deref waiting 1000 ::still-waiting)]
                  (expect (not= ::still-waiting rows))

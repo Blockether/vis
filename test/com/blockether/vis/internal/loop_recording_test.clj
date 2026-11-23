@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistence]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
+            [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.speech.core :as speech]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -537,7 +538,7 @@
 
 (defdescribe
   recording-wait-limit-test
-  (it "stops the turn after a five-minute join instead of sending pending audio to the model"
+  (it "stops the turn after five minutes without progress instead of sending pending audio"
       (let [seen
             (atom nil)
 
@@ -548,6 +549,7 @@
             (with-redefs [at/transcribe-attachments
                           (fn [rows opts]
                             (reset! seen opts)
+                            ((:on-progress opts) {:recording 1 :recordings 1 :percent 40})
                             (mapv #(assoc % :transcription-status at/PENDING) rows))]
               (try (#'iteration/transcribe-turn-attachments
                     [recording]
@@ -555,16 +557,27 @@
                    nil
                    (catch clojure.lang.ExceptionInfo e e)))]
 
-        (expect (= 300000 (:timeout-ms @seen)))
-        (expect (= [{:phase :attachment-transcription :iteration 1}] @chunks))
-        (expect (= :com.blockether.vis.internal.loop.iteration/recording-transcription-timeout
-                   (:type (ex-data failure))))
-        (expect (str/includes? (str (some-> failure
-                                            ex-message))
-                               "5 minutes")))))
+        (expect (= 300000 (:stall-ms @seen)))
+        (expect (= [{:phase :attachment-transcription :iteration 1}
+                    {:phase :attachment-transcription
+                     :iteration 1
+                     :transcription {:recording 1 :recordings 1 :percent 40}}]
+                   @chunks))
+        (expect (= :vis/recording-transcription-stalled (:type (ex-data failure))))
+        ;; A local speech stall is not a provider outage (vis session e96cf37b).
+        (expect (= :recording-transcription (perr/provider-error-kind failure))))))
 
 (defdescribe
   recording-progress-event-test
   (it "publishes the transcription phase to the live ticker without storing a model delta"
       (expect (= ["turn.progress" false {:progress "attachment-transcription" :iteration 1}]
-                 (#'state/progress-chunk->event {:phase :attachment-transcription :iteration 1})))))
+                 (#'state/progress-chunk->event {:phase :attachment-transcription :iteration 1}))))
+  (it "publishes which recording the turn waits on and its percent"
+      (expect (= ["turn.progress" false
+                  {:progress "attachment-transcription"
+                   :iteration 1
+                   :transcription {:recording 1 :recordings 2 :percent 42}}]
+                 (#'state/progress-chunk->event
+                  {:phase :attachment-transcription
+                   :iteration 1
+                   :transcription {:recording 1 :recordings 2 :percent 42}})))))

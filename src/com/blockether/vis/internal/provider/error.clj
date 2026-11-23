@@ -369,6 +369,14 @@
   [err]
   (contains? PYTHON_WORKER_ERROR_TYPES (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
+(defn recording-transcription-error?
+  "True when the turn stopped because local transcription of an attached recording
+   made no progress. A provider was never asked, so the card must not blame one.
+   Dispatches on typed `ex-data`, never on message text."
+  [err]
+  (= :vis/recording-transcription-stalled
+     (or (:type (:data err)) (:type err) (:type (ex-data err)))))
+
 (defn stream-timeout-error?
   "True when the failure is one of svar's TYPED stream watchdogs firing:
    `:svar.core/stream-semantic-timeout` (transport alive, zero model/progress
@@ -646,6 +654,11 @@
            ;; #423: a refused VIS_RUNTIME_DIR names its reason only in the message.
            (when-let [cause (not-empty (str/trim (str (or (ex-message err) (:message err)))))]
              (str " Cause: " cause)))
+      (recording-transcription-error? err)
+      (str "WHAT HAPPENED: local speech recognition of an attached recording made no "
+           "progress for 5 minutes, so Vis did not send the turn without its words. "
+           "This is NOT a provider failure: no model was asked. The transcription "
+           "continues in the background, and its transcript is saved when it ends.")
       (model-metadata-error? err)
       (str
         "WHAT HAPPENED: the provider's model catalog did not supply valid input/context limits for "
@@ -873,6 +886,9 @@
       :python-worker
       "Python sandbox failed"
 
+      :recording-transcription
+      "Recording transcription stalled"
+
       :refusal
       (if-let [category (get (refusal-stop-details err) "category")]
         (str "Model declined this request (" category ")")
@@ -957,6 +973,10 @@
            "worker log named in the error, then check this session's file under "
            "`~/.vis/sandbox/`: a saved global whose name matches an extension tool "
            "(for example `py`) breaks every tool bind until that line is removed.")
+
+      :recording-transcription
+      (str "NEXT STEP: wait until the transcript shows under the recording, then send "
+           "the turn again. Vis then uses the saved words at once.")
 
       :model-metadata
       "NEXT STEP: refresh the provider's model list and retry, configure verified model limits, or choose another model."
@@ -1110,6 +1130,7 @@
 
     (cond (fd-exhaustion-error? err) :file-descriptors-exhausted
           (python-worker-error? err) :python-worker
+          (recording-transcription-error? err) :recording-transcription
           (model-metadata-error? err) :model-metadata
           (context-overflow-error? err) :context-overflow
           (stream-timeout-error? err) :stream-timeout

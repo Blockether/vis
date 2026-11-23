@@ -32,7 +32,13 @@ import {
   type SessionRowsContext,
 } from './sessions/SessionProjectGroups';
 import { PANEL_SIZES } from '../components/Menu';
-import { GatewayClient, onTurnSubmitted, type ProjectWindows, type SessionMatch } from '../lib/gateway';
+import {
+  GatewayClient,
+  onTurnSending,
+  onTurnSubmitted,
+  type ProjectWindows,
+  type SessionMatch,
+} from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { ForkPoint, GatewayConn, Session, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, viewKind } from '../lib/view';
@@ -1198,6 +1204,18 @@ export function SessionsScreen({
   useEffect(
     () => onTurnSubmitted((_sid, gateway) => refreshGateway(gateway)),
     [refreshGateway],
+  );
+
+  // A message with attachments has no gateway turn until its uploads end, which can
+  // take minutes from a phone. Its row shows LIVE at once; a failed upload reads the
+  // gateway's own state back.
+  useEffect(
+    () =>
+      onTurnSending((sid, gateway, isSending) => {
+        if (!isSending) refreshGateway(gateway);
+        else applyFleetFrame({ type: 'session.status', session_id: sid, is_live: true }, gateway);
+      }),
+    [applyFleetFrame, refreshGateway],
   );
 
   useLayoutEffect(() => {

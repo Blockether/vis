@@ -23,7 +23,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 });
 (globalThis as { window?: unknown }).window ??= globalThis;
 
-const { GatewayClient, GatewayError } = await import('./gateway');
+const { GatewayClient, GatewayError, onTurnSending } = await import('./gateway');
 
 const CONN = {
   id: 'gw',
@@ -308,5 +308,60 @@ describe('transcribeVoice', () => {
     );
     // Nothing was streamed: there is no job to watch.
     expect(calls).toEqual([]);
+  });
+});
+
+describe('submitTurn with an attached recording', () => {
+  const memo = { filename: 'memo.m4a', media_type: 'audio/mp4', base64: btoa('x'.repeat(3000)) };
+
+  function turnsEndpoint(bodies: unknown[]): void {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), method: init?.method ?? 'GET' });
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ turn_id: 't1', status: 'running' }), {
+        status: 202,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof globalThis.fetch;
+  }
+
+  it('reports the upload percent and marks the session as sending before the turn exists', async () => {
+    upload.status = 201;
+    upload.body = { upload_id: 'u1', size: 3000 };
+    const bodies: unknown[] = [];
+    turnsEndpoint(bodies);
+    const heard: boolean[] = [];
+    const stop = onTurnSending((_sid, _gateway, isSending) => heard.push(isSending));
+    const seen: number[] = [];
+    try {
+      await new GatewayClient(CONN).submitTurn('s1', 'listen', {
+        attachments: [memo],
+        onUploadProgress: (percent) => seen.push(percent),
+      });
+    } finally {
+      stop();
+    }
+    expect(seen).toEqual([50, 100]);
+    expect(heard).toEqual([true]);
+    expect(upload.url).toContain('/v1/sessions/s1/attachments?');
+    expect((bodies[0] as { attachments: { upload_id: string }[] }).attachments[0]?.upload_id).toBe('u1');
+  });
+
+  it('tells the list when the upload failed, and sends no turn', async () => {
+    upload.status = 500;
+    upload.body = { error: { message: 'disk full' } };
+    const bodies: unknown[] = [];
+    turnsEndpoint(bodies);
+    const heard: boolean[] = [];
+    const stop = onTurnSending((_sid, _gateway, isSending) => heard.push(isSending));
+    try {
+      await expect(
+        new GatewayClient(CONN).submitTurn('s1', 'listen', { attachments: [memo], onUploadProgress: () => {} }),
+      ).rejects.toThrow('disk full');
+    } finally {
+      stop();
+    }
+    expect(heard).toEqual([true, false]);
+    expect(bodies).toEqual([]);
   });
 });
