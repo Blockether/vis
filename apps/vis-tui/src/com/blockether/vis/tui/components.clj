@@ -328,6 +328,7 @@
         "Import session — a snapshot or ATIF file as a new session"]]}
      {:title "Subagents"
       :rows [[(keymap/label-for :toggle-agent-dock) "Show or hide the agent table of the dock"]
+             [(keymap/label-for :toggle-agent-timeline) "Show the agent timeline or the agent table"]
              [(str (keymap/group-chord :agents) " 1-9") "Open the subagent with that number"]
              [(keymap/label-for :agent-team) "List the subagents, then open one"]
              [(keymap/label-for :agent-parent) "Go back from a subagent to its parent session"]

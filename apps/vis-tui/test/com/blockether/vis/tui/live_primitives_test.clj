@@ -5,6 +5,7 @@
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.view :as spec]
             [com.blockether.vis.tui.capture :as capture]
+            [com.blockether.vis.tui.time-axis :as time-axis]
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.human-input :as hi]
@@ -1285,8 +1286,8 @@
                (it "keeps one cell for a lane that took no time"
                    (expect (= [49 50] (lv/lane-cells {:start now :end now} scale now 50)))))
              (it "marks the axis on the least round step that gives fewer than five marks"
-                 (expect (= [0 30000 60000 90000] (lv/axis-marks 100000)))
-                 (expect (= [0 10000 20000 30000 40000] (lv/axis-marks 45000)))))
+                 (expect (= [0 30000 60000 90000] (time-axis/axis-marks 100000)))
+                 (expect (= [0 10000 20000 30000 40000] (time-axis/axis-marks 45000)))))
 
 (defdescribe
   timeline-rows-test

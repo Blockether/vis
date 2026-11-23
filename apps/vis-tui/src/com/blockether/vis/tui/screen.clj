@@ -18,6 +18,7 @@
     [com.blockether.vis.tui.frame :as frame]
     [com.blockether.vis.tui.header :as header]
     [com.blockether.vis.tui.agent-team :as agent-team]
+    [com.blockether.vis.tui.queue-tray :as queue-tray]
     [com.blockether.vis.tui.app-log :as app-log]
     [com.blockether.vis.tui.picture :as picture]
     [com.blockether.vis.tui.app-model :as app-model]
@@ -1863,7 +1864,7 @@
    answer dividers, padding bands, iteration labels, and provider/model footers."
   #{m/MARKER_ITERATION_HDR m/MARKER_SEP m/MARKER_ANSWER_SEP m/MARKER_ANSWER_HDR m/MARKER_ANSWER_PAD
     m/MARKER_CODE_PAD m/MARKER_CODE_OK_PAD m/MARKER_CODE_ERR_PAD m/MARKER_ITERATION_PAD
-    m/MARKER_QUEUE_HDR m/MARKER_USER_INPUT_HDR})
+    m/MARKER_USER_INPUT_HDR})
 
 (defn- copyable-transcript-line?
   [line]
@@ -4010,6 +4011,32 @@
   [db]
   (when (:loading? db) {:start (:turn-start-ms db) :steps (get-in db [:progress :iterations])}))
 
+(defn- queue-focus-view
+  "The C-x e queue focus that the renderer paints, with `:undo?` while a removal can come
+   back. Nil without focus, or when the queue is empty and nothing can come back."
+  [db]
+  (when-let [focus (:queue-focus db)]
+    (let [undo? (state/queue-undo-open? db (System/currentTimeMillis))]
+      (when (or undo? (seq (:pending-sends db))) (assoc focus :undo? undo?)))))
+
+(defn- queue-input
+  "The queue tray input of `db`: the queued rows, the hold, the C-x e focus and the run state.
+   `under-team?` when the agent team frame stands directly above the tray."
+  [db under-team?]
+  {:under-team? under-team?
+   :pending (:pending-sends db)
+   :paused (:queue-paused db)
+   :focus (queue-focus-view db)
+   :running? (boolean (and (:loading? db)
+                           (not (and (:queue-paused db)
+                                     (empty? (get-in db [:progress :iterations]))
+                                     (not (:cancelling? db))))))
+   :session-id (get-in db [:session :id])})
+
+(def ^:private min-transcript-rows
+  "Transcript rows that the agent team frame leaves free above it."
+  6)
+
 (defn- composer-geometry
   "One geometry contract for the prompt, attachment rail, and echo boundary."
   [db cols rows]
@@ -4040,11 +4067,21 @@
         echo-row
         (dec rail-top)
 
-        dock-h
+        ;; The agent team frame, then the queue frame, sit above the echo row. The team frame
+        ;; shows fewer agents, or folds, so the transcript keeps `min-transcript-rows`.
+        team-h
         (agent-team/dock-height (get-in db [:session :id])
                                 (running-turn-id db)
                                 cols
-                                (running-leader db))
+                                (running-leader db)
+                                (- echo-row
+                                   (long (header/header-rows db))
+                                   1
+                                   (long min-transcript-rows)
+                                   (long (queue-tray/height (queue-input db true) cols))))
+
+        dock-h
+        (+ (long team-h) (long (queue-tray/height (queue-input db (pos? (long team-h))) cols)))
 
         dock-top
         (- echo-row dock-h)]
@@ -4242,22 +4279,26 @@
   (or (not (project-sidebar-locked? db cols)) (and (:help-open? db) (projects/help-key? db key))))
 
 (defn- paint-agent-dock!
-  "Paint the agent dock of the session at `dock-top`, above the echo row."
-  [g db dock-top cols]
-  (agent-team/draw-dock! g
-                         (get-in db [:session :id])
-                         (running-turn-id db)
-                         dock-top
-                         cols
-                         (running-leader db)))
+  "Paint the agent team frame of the session at `dock-top`, then the queue frame under it.
+   `dock-h` is the height of both from `composer-geometry`, or nil for no limit."
+  [g db dock-top dock-h cols]
+  (let [sid (get-in db [:session :id])
+        turn-id (running-turn-id db)
+        leader (running-leader db)
+        ;; The team frame takes what the tray, touching it, leaves of `dock-h`.
+        max-lines (when dock-h (- (long dock-h) (long (queue-tray/height (queue-input db true) cols))))
+        team-h (agent-team/dock-height sid turn-id cols leader max-lines)]
+    (agent-team/draw-dock! g sid turn-id dock-top cols leader max-lines)
+    (queue-tray/draw! g (queue-input db (pos? (long team-h))) (+ (long dock-top) (long team-h)) cols)))
 
 (defn- session-band-anchor
   "`state/band-anchor` with the painter that puts the agent dock directly above a band."
   [db]
-  (let [cols (long (or (get-in db [:layout :cols]) 80))]
-    (assoc (state/band-anchor db)
+  (let [cols (long (or (get-in db [:layout :cols]) 80))
+        anchor (state/band-anchor db)]
+    (assoc anchor
       :paint-dock! (fn [g top]
-                     (paint-agent-dock! g db top cols)))))
+                     (paint-agent-dock! g db top (:dock-h anchor) cols)))))
 
 (defn- frame-band-top
   "First row of the human-input or Live View band that a full frame paints, or nil."
@@ -4289,9 +4330,9 @@
    painters as separate GridLayout children; this helper remains the focused
    test/modal entry point."
   [^TerminalScreen screen g db
-   {:keys [input input-top dock-top rail-top text-rows cols now-ms echo-row footer-row
+   {:keys [input input-top dock-top dock-h rail-top text-rows cols now-ms echo-row footer-row
            slash-suggestions slash-command-index]}]
-  (paint-agent-dock! g db dock-top cols)
+  (paint-agent-dock! g db dock-top dock-h cols)
   (paint-attachment-rail! g db rail-top cols)
   (let [cursor (paint-composer! g db input input-top text-rows cols)]
     (footer/draw-echo-area! g db echo-row cols now-ms)
@@ -4379,14 +4420,6 @@
                   live-views))
           (keep render/app-run)
           (vals (:app-views db)))))
-
-(defn- queue-focus-view
-  "The C-x e queue focus that the renderer paints, with `:undo?` while a removal can come
-   back. Nil without focus, or when the queue is empty and nothing can come back."
-  [db]
-  (when-let [focus (:queue-focus db)]
-    (let [undo? (state/queue-undo-open? db (System/currentTimeMillis))]
-      (when (or undo? (seq (:pending-sends db))) (assoc focus :undo? undo?)))))
 
 (def ^:private side-canvas-moving? (volatile! false))
 
@@ -4583,9 +4616,6 @@
          :turn-start-ms turn-start-ms
          :cancelling? (boolean cancelling?)
          :viewport-rows inner-h
-         :pending-sends (:pending-sends db)
-         :queue-paused (:queue-paused db)
-         :queue-focus (queue-focus-view db)
          :live-title (lv/watching-title (:live-views db))
          :live-runs (progress-live-runs db)}
 
@@ -4712,7 +4742,7 @@
                     :header (fn [graphics _]
                               (header/draw-header! graphics db header-top cols))
                     :dock (fn [graphics _]
-                            (when-not band-top (paint-agent-dock! graphics db dock-top cols)))
+                            (when-not band-top (paint-agent-dock! graphics db dock-top dock-h cols)))
                     :attachments (fn [graphics _]
                                    (paint-attachment-rail! graphics db rail-top cols))
                     :composer (fn [graphics _]
@@ -4875,7 +4905,7 @@
           (fill-live-log!)
           (when (:is-log-search geom) (.setCursorPosition screen (:cursor geom)))))
       ;; The agent dock goes ABOVE the band, never between the band and the prompt.
-      (when band-top (paint-agent-dock! g db (- (long band-top) dock-h) cols))
+      (when band-top (paint-agent-dock! g db (- (long band-top) dock-h) dock-h cols))
       (vswap! post-marks assoc :overlays (System/nanoTime))
       ;; The side panel spans the whole height when docked; an overlay covers only
       ;; the transcript rows, so the composer stays usable.
@@ -5454,8 +5484,8 @@
         rows
         (long rows)
 
-        {:keys [^long text-rows ^long input-top ^long dock-top ^long rail-top ^long echo-row
-                ^long messages-bottom ^long footer-row]}
+        {:keys [^long text-rows ^long input-top ^long dock-top ^long dock-h ^long rail-top
+                ^long echo-row ^long messages-bottom ^long footer-row]}
         (composer-geometry db cols rows)
 
         ;; Keep partial-frame geometry identical to `render-frame!`; even a one-row
@@ -5489,9 +5519,6 @@
          :turn-start-ms turn-start-ms
          :cancelling? (boolean cancelling?)
          :viewport-rows inner-h
-         :pending-sends (:pending-sends db)
-         :queue-paused (:queue-paused db)
-         :queue-focus (queue-focus-view db)
          :live-title (lv/watching-title (:live-views db))
          :live-runs (progress-live-runs db)}
 
@@ -5688,7 +5715,7 @@
           ;; AFTER the commit (as before) left those regions in an uncommitted
           ;; staging buffer that the next `begin-frame!` dropped — so the footer
           ;; buttons were never clickable on the live/partial render path.
-          (paint-agent-dock! g db dock-top cols)
+          (paint-agent-dock! g db dock-top dock-h cols)
           (paint-attachment-rail! g db rail-top cols)
           (footer/draw-echo-area! g db echo-row cols now-ms)
           (footer/draw-footer! g db footer-row cols now-ms)
@@ -5835,9 +5862,6 @@
          :turn-start-ms (:turn-start-ms db)
          :cancelling? false
          :viewport-rows inner-h
-         :pending-sends (:pending-sends db)
-         :queue-paused (:queue-paused db)
-         :queue-focus (queue-focus-view db)
          :live-title (lv/watching-title (:live-views db))
          :live-runs (progress-live-runs db)}
 
@@ -5970,8 +5994,8 @@
         g
         (frame/surface-graphics screen cols rows)
 
-        {:keys [^long text-rows ^long input-top ^long dock-top ^long rail-top ^long echo-row
-                ^long footer-row]}
+        {:keys [^long text-rows ^long input-top ^long dock-top ^long dock-h ^long rail-top
+                ^long echo-row ^long footer-row]}
         (composer-geometry db cols rows)
 
         slash-suggestions
@@ -5986,6 +6010,7 @@
                          {:input input
                           :input-top input-top
                           :dock-top dock-top
+                          :dock-h dock-h
                           :rail-top rail-top
                           :text-rows text-rows
                           :cols cols
@@ -6797,6 +6822,13 @@
   []
   (when-let [sid (current-session-id)]
     (agent-team/toggle-dock! sid)
+    (state/dispatch [:bump-render-version :full-frame])))
+
+(defn- toggle-agent-timeline!
+  "Switch the agent dock between its table and its timeline (C-x b l or a click on the switch)."
+  []
+  (when-let [sid (current-session-id)]
+    (agent-team/toggle-timeline! sid)
     (state/dispatch [:bump-render-version :full-frame])))
 
 (defn- toggle-zen-mode!
@@ -9668,6 +9700,9 @@
                 :agent-dock-toggle
                 (toggle-agent-dock!)
 
+                :agent-timeline-toggle
+                (toggle-agent-timeline!)
+
                 :agent-open
                 (open-agent! (:text hit))
 
@@ -9883,6 +9918,9 @@
             :agent-dock-toggle
             (toggle-agent-dock!)
 
+            :agent-timeline-toggle
+            (toggle-agent-timeline!)
+
             :agent-open
             (open-agent! (:text hit))
 
@@ -10025,6 +10063,10 @@
           :queue-send-all-now
           (state/dispatch [:queue-send-all-now nil])
 
+          ;; The queue frame's `edit` control opens the C-x e focus.
+          :queue-edit
+          (state/dispatch [:queue-focus])
+
           :copy-id
           (copy-session-id! (:text hit))
 
@@ -10054,6 +10096,9 @@
 
           :agent-dock-toggle
           (toggle-agent-dock!)
+
+          :agent-timeline-toggle
+          (toggle-agent-timeline!)
 
           :agent-open
           (open-agent! (:text hit))
@@ -10753,6 +10798,9 @@
                     :toggle-agent-dock
                     (toggle-agent-dock!)
 
+                    :toggle-agent-timeline
+                    (toggle-agent-timeline!)
+
                     :toggle-zen-mode
                     (toggle-zen-mode!)
 
@@ -11123,6 +11171,10 @@
         ;; C-x b a — show or hide the agent table of the dock.
         :toggle-agent-dock
         (do (toggle-agent-dock!) ::recur)
+
+        ;; C-x b l — switch the agent dock between its table and its timeline.
+        :toggle-agent-timeline
+        (do (toggle-agent-timeline!) ::recur)
 
         ;; C-x t — list, open and leave subagents.
         :agent-team

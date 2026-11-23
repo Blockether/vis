@@ -1370,16 +1370,6 @@
 
 (def ^:private hint-marker m/MARKER_HINT)
 
-(def ^:private queue-hdr-marker m/MARKER_QUEUE_HDR)
-
-(def ^:private queue-item-marker m/MARKER_QUEUE_ITEM)
-
-(def ^:private queue-border-marker m/MARKER_QUEUE_BORDER)
-
-;; Columns between the queue's edge and its text, on each side, so the rows line up
-;; with the header text on its band.
-(def ^:private queue-inset 1)
-
 (def ^:private step-digest-marker m/MARKER_STEP_DIGEST)
 
 (def ^:private attachment-card-marker m/MARKER_ATTACHMENT_CARD)
@@ -2065,96 +2055,11 @@
                    :enabled? true
                    :bounds {:row (+ (long viewport-top) (long y)) :col col :width width})))))
 
-(defn- queue-control-text
-  "Text of a queue control: its label, then its chord when it has one."
-  [label chord]
-  (cond-> (str label)
-    chord
-    (str "  " chord)))
-
-(defn- draw-queue-control!
-  "Paint a queue control at the right edge of row `y` on the row's own paper, without a
-   fill: the label in bold accent, then its chord in the hint color. A hovered control
-   underlines its label. Returns the hit bounds `{:col :width}`."
-  [g label chord x y iw bg hovered?]
-  (let [text
-        (queue-control-text label chord)
-
-        width
-        (long (p/display-width text))
-
-        label-w
-        (long (p/display-width label))
-
-        col
-        (+ (long x) (max 0 (- (long iw) width)))]
-
-    (p/clear-styles! g)
-    (p/set-colors! g t/header-active-tab-accent bg)
-    (p/styled g [p/BOLD] (p/put-str! g col y label))
-    (when hovered?
-      (dotimes [dc label-w]
-        (p/underline-cell! g (+ col (long dc)) y t/link-chrome-hover-fg)))
-    (when chord (p/set-colors! g t/dialog-hint bg) (p/put-str! g (+ col label-w 2) y chord))
-    (p/clear-styles! g)
-    {:col col :width width}))
-
-(defn- draw-queue-send-all!
-  "Paint the `Send all now` control and its chord at the right edge of the Queued header
-   and register it as the `:queue-send-all-now` hit region. `used-cols` is the width of
-   the header text; the control is skipped when the row leaves no room for it."
-  [g {:keys [session-id label chord]} x y iw used-cols bg viewport-top]
-  (let [width
-        (long (p/display-width (queue-control-text label chord)))
-
-        abs-row
-        (+ (long viewport-top) (long y))
-
-        hovered
-        (.hovered interactions/hit-map)
-
-        hovered?
-        (and (= :queue-send-all-now (:kind hovered)) (= abs-row (:row (:bounds hovered))))]
-
-    (when (>= (- (long iw) (long used-cols) 2) width)
-      (let [{:keys [col]} (draw-queue-control! g label chord x y iw bg hovered?)]
-        (.register interactions/hit-map
-                   {:bounds {:row abs-row :col col :width width}
-                    :kind :queue-send-all-now
-                    :session-id session-id})))))
-
-(defn- draw-queue-send-button!
-  "Paint a queue row's `Send it now` control and its chord at the right edge and register
-   it as its `:queue-send-now` hit region. A row marked for the next step reads `Unsend`.
-   `deliver` is the mode a press sets, so one control serves both the mark and its undo."
-  [g {:keys [session-id turn-id deliver marked? label chord]} x y iw bg viewport-top]
-  (let [abs-row
-        (+ (long viewport-top) (long y))
-
-        hovered
-        (.hovered interactions/hit-map)
-
-        hovered?
-        (and (= :queue-send-now (:kind hovered))
-             (= abs-row (:row (:bounds hovered)))
-             (= (str turn-id) (str (:turn-id hovered))))
-
-        {:keys [col width]}
-        (draw-queue-control! g label chord x y iw bg hovered?)]
-
-    (.register interactions/hit-map
-               {:bounds {:row abs-row :col col :width width}
-                :kind :queue-send-now
-                :session-id session-id
-                :turn-id turn-id
-                :deliver deliver
-                :marked? marked?})))
-
 (def ^:private trace-row-markers
-  #{attachment-card-marker hint-marker iteration-hdr-marker queue-hdr-marker recap-marker})
+  #{attachment-card-marker hint-marker iteration-hdr-marker recap-marker})
 
 (defn- paint-trace-row!
-  "Paint a trace row: an attachment card, an iteration header, a recap, a hint or the queue header."
+  "Paint a trace row: an attachment card, an iteration header, a recap or a hint."
   [^TextGraphics g {:keys [bg-color fbx fill-iw iw line meta viewport-top x y]}]
   (let [fbx
         (long fbx)
@@ -2305,36 +2210,10 @@
       (str/starts-with? line hint-marker) (let [raw (subs line 1)]
                                             (p/set-colors! g t/header-active-tab-accent bg-color)
                                             (p/fill-rect! g fbx y fill-iw 1)
-                                            (p/styled g [p/ITALIC] (p/put-str! g x y raw)))
-      ;; ── Queued section header — the bold accent label ("QUEUED · N")
-      ;; on its own band. User decisions: no left rail, no dark band, only the
-      ;; header has a background, and a rule runs under it.
-      (str/starts-with? line queue-hdr-marker)
-      (let [raw
-            (subs line 1)
-
-            bg-color
-            (t/zebra-bg bg-color)]
-
-        (p/set-bg! g bg-color)
-        (p/fill-rect! g fbx y fill-iw 1)
-        (p/set-colors! g t/header-active-tab-accent bg-color)
-        (p/styled g [p/BOLD] (p/put-str! g (+ (long x) queue-inset) y raw))
-        ;; `Send all now  C-x k` at the right edge while a turn runs, two or more
-        ;; rows are markable and one is still unmarked (`queued-progress-entries`).
-        (when-let [send-all (:queue-send-all meta)]
-          (draw-queue-send-all! g
-                                send-all
-                                (+ (long x) queue-inset)
-                                y
-                                (- (long iw) (* 2 queue-inset))
-                                (p/display-width raw)
-                                bg-color
-                                viewport-top))))))
+                                            (p/styled g [p/ITALIC] (p/put-str! g x y raw))))))
 
 (def ^:private queue-row-markers
-  #{queue-border-marker queue-item-marker step-digest-marker user-input-hdr-marker
-    user-input-marker})
+  #{step-digest-marker user-input-hdr-marker user-input-marker})
 
 (defn- paint-queue-row!
   "Paint a queue row, a step digest or a delivered message row."
@@ -2355,86 +2234,6 @@
         (long y)]
 
     (cond
-      ;; ── Queued message row — the ordinal ("1. ") in the accent
-      ;; gutter, then the single-line preview (already right-clipped
-      ;; with an ellipsis so it never wraps) in dim italic. Everything
-      ;; sits on the regular bubble bg, with no left rail. `:queue-gutter` in
-      ;; meta is the ordinal column width.
-      (str/starts-with? line queue-item-marker)
-      (let [raw
-            (subs line 1)
-
-            ;; C-x e focus: the selected row takes the shared list selection, bold
-            ;; and reversed (`p/selection-styles`): row ink as the fill, every span
-            ;; in the row paper. The accent fill hid accent and hint text (light).
-            selected?
-            (:queue-selected? meta)
-
-            ink
-            (fn [color]
-              (if selected? bg-color color))
-
-            bg-color
-            (if selected? t/dialog-fg bg-color)
-
-            gutter-n
-            (long (or (:queue-gutter meta) 0))
-
-            cut
-            (min gutter-n (count raw))
-
-            ord
-            (subs raw 0 cut)
-
-            suffix
-            (str (:queue-suffix meta))
-
-            msg
-            (subs raw cut)
-
-            ;; A marked row ends in ` · next iter`, painted in accent
-            ;; after the dim preview.
-            body
-            (if (and (seq suffix) (str/ends-with? msg suffix))
-              (subs msg 0 (- (count msg) (count suffix)))
-              msg)]
-
-        (p/set-bg! g bg-color)
-        (p/fill-rect! g fbx y fill-iw 1)
-        ;; Ordinal at the queue inset — accent, bold.
-        (p/set-colors! g (ink t/header-active-tab-accent) bg-color)
-        (p/styled g [p/BOLD] (when (pos? gutter-n) (p/put-str! g (+ x queue-inset) y ord)))
-        ;; Preview — dim italic, after the ordinal.
-        (p/set-colors! g (ink t/dialog-hint) bg-color)
-        (p/styled g
-                  (if selected? [p/ITALIC p/BOLD] [p/ITALIC])
-                  (p/paint-styled-line! g
-                                        (+ x queue-inset gutter-n)
-                                        y
-                                        body
-                                        (ink t/dialog-hint)
-                                        bg-color
-                                        (ink t/code-block-fg)
-                                        (if selected? bg-color t/code-block-bg)))
-        (when (not= body msg)
-          (p/set-colors! g (ink t/header-active-tab-accent) bg-color)
-          (p/put-str! g (+ x queue-inset gutter-n (long (p/display-width body))) y suffix))
-        ;; `Send it now  C-x N` ends the row while a turn runs. The preview
-        ;; already left room for it.
-        (when-let [send (:queue-send meta)]
-          (draw-queue-send-button! g
-                                   send
-                                   (+ x queue-inset)
-                                   y
-                                   (- iw (* 2 queue-inset))
-                                   bg-color
-                                   viewport-top)))
-      ;; ── Queue rule — a horizontal rule over the whole width, under the
-      ;; header and under the queued items, above the edit hint.
-      (str/starts-with? line queue-border-marker)
-      (do (p/set-colors! g t/header-active-tab-accent bg-color)
-          (p/fill-rect! g fbx y fill-iw 1)
-          (p/put-str! g x y (repeat-str \─ (max 0 (long iw)))))
       ;; A step digest stays on transcript paper; only its state colors it.
       (str/starts-with? line step-digest-marker)
       (let [raw
@@ -10719,7 +10518,7 @@
                                   (render-adjacent-thinking-entries groups iter-entry-fn)
                                   (into [] cat (render-step-plans (mapv iter-plan groups)))))))))
 
-(defn- queued-preview
+(defn queued-preview
   "One clipped line describing a queued submission.
 
    Image paths collapse to `name.png` chips, so a message authored by
@@ -10747,22 +10546,6 @@
   [row]
   (= gateway-contract/queued-turn-deliver-next-iteration (:deliver row)))
 
-(def ^:private queue-send-all-label
-  "Label of the header button that sends every markable queued row at the next step."
-  "Send all now")
-
-(def ^:private queue-send-it-label
-  "Label of a queue row's own button that sends only that row at the next step."
-  "Send it now")
-
-(def ^:private queue-unsend-label
-  "Label of a marked queue row's button: a press keeps the row for the turn end."
-  "Send later")
-
-(def ^:private queue-marked-suffix
-  "Trailer of a queue row that is marked to send at the next iteration."
-  " · next iter")
-
 (defn queued-row-key
   "The identity of a queue row across gateway syncs: its turn id, else its client id."
   [row]
@@ -10779,172 +10562,6 @@
          (when (:undo? focus) " · u undo")
          " · Esc back")
     (str (keymap/label-for :queue-edit) " edit, send, remove or merge a message")))
-
-(defn- queued-progress-entries
-  "Rows of the Queued block. `send-opts` is `{:running? bool :session-id sid}`: while
-   a turn runs, every markable row ends in a ` Send it now ` button. The header gets
-   ` Send all now ` only with two or more markable rows (see `markable-queued-row?`): one
-   row has its own button. With no running turn there is no next step, so nothing is
-   painted (the paused and held flows have their own controls).
-
-   `(:focus send-opts)` is `{:index :marked :undo?}` while C-x e focuses the queue. Then the
-   buttons go, the row at `:index` is selected, rows whose `queued-row-key` is in `:marked`
-   show a check, and the hint names the focus keys."
-  [pending-sends content-w paused-info send-opts]
-  (let [queued
-        (vec (or pending-sends []))
-
-        focus
-        (:focus send-opts)
-
-        running?
-        (and (not focus) (boolean (:running? send-opts)))
-
-        session-id
-        (:session-id send-opts)]
-
-    (when (seq queued)
-      (let [;; Header row: "QUEUED · N" in bold accent on the row's own paper. While a turn
-            ;; runs, two or more rows are markable and one is still unmarked, the painter adds
-            ;; `Send all now  C-x k` at the right edge as the `:queue-send-all-now` hit region.
-            hdr-line
-            (str queue-hdr-marker
-                 "QUEUED · "
-                 (count queued)
-                 (when paused-info
-                   (if (:is-breaker-open paused-info) " · provider unhealthy" " · paused")))
-
-            markable
-            (if running? (filterv markable-queued-row? queued) [])
-
-            ;; User decision: one markable row already has ` Send it now `, so the header
-            ;; button starts at two.
-            send-all?
-            (and (>= (count markable) 2) (some #(not (marked-queued-row? %)) markable))
-
-            hdr-meta
-            (when send-all?
-              {:queue-send-all {:session-id session-id
-                                :label queue-send-all-label
-                                :chord (keymap/label-for :queue-send-all-now)}})
-
-            ;; Ordinals count in SEND ORDER, top to bottom: #1 is the item that
-            ;; fires NEXT (oldest, first in the vec, rendered at the top), then
-            ;; #2, #3 … down to #N — the newest queued submission at the bottom,
-            ;; nearest the input box (the one ArrowUp pulls back for editing).
-            ;; Reading top-to-bottom is 1,2,3,…,N, matching the order they send.
-            ;; Each row is ONE clipped line: the ordinal in the accent gutter,
-            ;; then the preview right-clipped with an ellipsis so it always fits
-            ;; the width and never wraps. While a turn runs a markable row also
-            ;; keeps room for its ` Send it now ` button (and one gap) at the right edge.
-            item-line
-            (fn [idx entry]
-              (let [markable?
-                    (and running? (markable-queued-row? entry))
-
-                    marked?
-                    (and markable? (marked-queued-row? entry))
-
-                    ord
-                    (str (inc (long idx))
-                         ". "
-                         (when (contains? (:marked focus) (queued-row-key entry)) "✓ "))
-
-                    gutter-n
-                    (count ord)
-
-                    suffix
-                    (when marked? queue-marked-suffix)
-
-                    ;; C-x 1-9 presses the button of rows 1-9 (`keymap/queue-row-index`).
-                    chord
-                    (keymap/queue-row-chord (inc (long idx)))
-
-                    ;; Room for the wider label and two gap columns, so a toggle never
-                    ;; moves the preview.
-                    button-w
-                    (if markable?
-                      (+ 2
-                         (long (max (p/display-width (queue-control-text queue-send-it-label chord))
-                                    (p/display-width (queue-control-text queue-unsend-label
-                                                                         chord)))))
-                      0)
-
-                    avail
-                    (max 1
-                         (- (long content-w)
-                            (* 2 queue-inset)
-                            (long gutter-n)
-                            (long (count (or suffix "")))
-                            (long button-w)))
-
-                    ;; A row the gateway never accepted (`:stage-queued-locally`)
-                    ;; says so: it is held in THIS client only, so painting it
-                    ;; identically to a server-backed row is a lie.
-                    preview
-                    (ellipsize-cols (cond->> (queued-preview (or (:preview-text entry)
-                                                                 (:text entry)))
-                                      (:unsent? entry)
-                                      (str "unsent: "))
-                                    avail)]
-
-                {:line (str queue-item-marker ord preview suffix)
-                 :meta (cond-> {:queue-gutter gutter-n}
-                         (and focus (= idx (:index focus)))
-                         (assoc :queue-selected? true)
-
-                         markable?
-                         (assoc :queue-send
-                           {:session-id session-id
-                            :label (if marked? queue-unsend-label queue-send-it-label)
-                            :chord chord
-                            :turn-id (:turn-id entry)
-                            :marked? marked?
-                            ;; The mode a press SETS: a marked row goes back to the
-                            ;; turn end, an unmarked one to the next step.
-                            :deliver (if marked?
-                                       gateway-contract/default-queued-turn-deliver
-                                       gateway-contract/queued-turn-deliver-next-iteration)}
-                           :queue-suffix
-                           suffix))}))
-
-            ;; Items stack directly, one line each — no blank rows between them.
-            item-lines
-            (vec (map-indexed item-line queued))
-
-            ;; Bottom border closes the block, between the queued items and the edit hint.
-            border
-            {:line queue-border-marker :meta nil}
-
-            ;; The chord that focuses the queue, or the focus keys while it is focused.
-            ;; Accent hint on the REGULAR bubble bg (via `hint-marker`) so the
-            ;; affordance pops as a control.
-            hint
-            {:line (str hint-marker (queue-hint-text focus)) :meta nil}
-
-            ;; When the gateway paused the queue after a provider failure, the head
-            ;; is held (not cascaded). Show WHY on its own row, above the edit hint.
-            paused-line
-            (when paused-info
-              {:line (str
-                       hint-marker
-                       "held — "
-                       (str/replace (str (or (:reason paused-info) "provider unhealthy")) #"_" " ")
-                       ;; A breaker-open hold (provider unhealthy) DOES resume on
-                       ;; its own when the provider recovers. A turn-failure hold
-                       ;; does NOT auto-resume — the failed prompt is handed back
-                       ;; to the composer and a new send un-wedges the backlog.
-                       (if (:is-breaker-open paused-info)
-                         " · resumes automatically"
-                         " · send a message to continue"))
-               :meta nil})]
-
-        ;; User decision: a rule under the header, above the messages.
-        (vec (concat [{:line "" :meta nil} {:line hdr-line :meta hdr-meta} border]
-                     item-lines
-                     [border]
-                     (when paused-line [paused-line])
-                     [hint]))))))
 
 (defn- margin-row?
   "True for outer spacing: whitespace or an iteration pad. Filled Code, Activity
@@ -11001,7 +10618,7 @@
          (max 10 (- (long bubble-w) 4))
 
          {:keys [now-ms turn-start-ms cancelling? session-id session-turn-id detail-expansions
-                 viewport-rows pending-sends command-label queue-paused queue-focus live-title runs
+                 viewport-rows command-label queue-paused live-title runs
                  agent-name live-runs]}
          extra
 
@@ -11095,8 +10712,7 @@
                                          :session-id session-id
                                          :session-turn-id session-turn-id
                                          :detail-expansions detail-expansions})
-            (mapv (juxt :text :deliver :unsent? :turn-id) (vec (or pending-sends []))) queue-held?
-            queue-focus
+            queue-held?
             ;; Anchored rows ride `form-fingerprint`; UNPLACED ones never touch an
             ;; iteration, so the body key must name them directly or a settling run
             ;; would keep painting its pre-settle receipt.
@@ -11118,13 +10734,6 @@
 
                    trace-entries
                    (into (vec trace-entries) (run-row-entries unplaced-runs content-w session-id))
-
-                   queued-entries
-                   (queued-progress-entries
-                     pending-sends
-                     content-w
-                     queue-paused
-                     {:running? (not queue-held?) :session-id session-id :focus queue-focus})
 
                    ;; Top margin invariant: the spinner row carries EXACTLY ONE
                    ;; empty row above it, whether or not any iteration has been
@@ -11151,53 +10760,35 @@
                    prefix
                    (vec (coalesce-bubble-blanks prefix-entries))
 
-                   queued
-                   (vec (coalesce-bubble-blanks queued-entries))
-
                    prefix-lines
                    (mapv :line prefix)
 
                    ;; A new step keeps the rows of the steps before it.
                    prefix-text
-                   (grown-mapv grown-plain nil (map m/plain-text) prefix-lines)
-
-                   queued-text
-                   (mapv (comp m/plain-text :line) queued)]
+                   (grown-mapv grown-plain nil (map m/plain-text) prefix-lines)]
 
                {:prefix-lines prefix-lines
                 :prefix-text prefix-text
                 :prefix-joined (str/join "\n" prefix-text)
-                :queued-lines (mapv :line queued)
-                :queued-text queued-text
-                :queued-joined (str/join "\n" queued-text)
                 ;; The spinner row has no metadata, so one vector serves every tick
                 ;; and layout memos that key on its identity keep their entry.
-                :line-meta (-> (mapv :meta prefix)
-                               (conj nil)
-                               (into (map :meta) queued))})))
+                :line-meta (conj (mapv :meta prefix) nil)})))
 
          spinner-text
          (m/plain-text spinner-line)]
 
-     ;; Splice the fresh spinner row between the cached prefix and queue. This
+     ;; Append the fresh spinner row to the cached prefix. This
      ;; mirrors `entries->payload` exactly: `:text` is the newline-join of the
      ;; per-line `m/plain-text` outputs (`:text-lines`), in the same
      ;; order as `:lines`. The body holds the join of each cached part, and
      ;; `String.concat` copies the text one time, so a tick does not join every
      ;; row again.
-     {:lines (-> (:prefix-lines body)
-                 (conj spinner-line)
-                 (into (:queued-lines body)))
+     {:lines (conj (:prefix-lines body) spinner-line)
       :line-meta (:line-meta body)
-      :text-lines (-> (:prefix-text body)
-                      (conj spinner-text)
-                      (into (:queued-text body)))
-      :text (let [tail (if (seq (:queued-text body))
-                         (str spinner-text "\n" (:queued-joined body))
-                         spinner-text)]
-              (if (seq (:prefix-text body))
-                (.concat ^String (:prefix-joined body) (.concat "\n" ^String tail))
-                tail))})))
+      :text-lines (conj (:prefix-text body) spinner-text)
+      :text (if (seq (:prefix-text body))
+              (.concat ^String (:prefix-joined body) (.concat "\n" ^String spinner-text))
+              spinner-text)})))
 
 (defn progress->text
   "Build the text body of the live progress placeholder bubble."

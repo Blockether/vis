@@ -113,6 +113,7 @@ To move a command, the extension names its verb id.
 | `queue-send-all-now` | Ctrl+X q s | Send the queued messages now |
 | `queue-edit` | Ctrl+X q e | Edit, send, remove, or merge queued messages |
 | `toggle-agent-dock` | Ctrl+X b a | Show or hide the agent team details |
+| `toggle-agent-timeline` | Ctrl+X b l | Show the agent timeline or the agent table |
 | `agent-team` | Ctrl+X t t | List the subagents, then open one |
 | `agent-parent` | Ctrl+X t b | Open the session that started this subagent |
 | `fork-session` | Ctrl+X s f | Fork this session |

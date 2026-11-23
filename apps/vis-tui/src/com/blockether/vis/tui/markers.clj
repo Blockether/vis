@@ -79,12 +79,6 @@
 
 (def MARKER_HINT "\uE010") ;; affordance hint (e.g. "↑ to edit") -> accent fg on regular terminal bg, NOT the queue band
 
-(def MARKER_QUEUE_HDR "\uE011") ;; "Messages Queue" section header -> bold accent fg on regular bg, leading bar glyph (NOT the gray band)
-
-(def MARKER_QUEUE_ITEM "\uE012") ;; queued message row -> ordinal in accent gutter on regular bg, preview text on the gray queue band
-
-(def MARKER_QUEUE_BORDER "\uE013") ;; queue bottom border -> accent corner + horizontal rule that caps the left rail, above the edit hint
-
 (def MARKER_STEP_DIGEST "\uE014") ;; digest of the steps after a progress note, on transcript paper
 
 (def MARKER_USER_INPUT "\uE016") ;; queued message delivered into the running turn (`→ Send now`) -> the user's words on the user bubble paper, like a normal user message

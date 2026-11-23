@@ -326,6 +326,13 @@
           "x-vis-group": "view"
         },
         {
+          "const": "toggle-agent-timeline",
+          "title": "agent timeline",
+          "description": "Show the subagent timeline or the subagent table",
+          "x-vis-key": "l",
+          "x-vis-group": "view"
+        },
+        {
           "const": "pick-file",
           "title": "attach file",
           "description": "Add files to the next message",

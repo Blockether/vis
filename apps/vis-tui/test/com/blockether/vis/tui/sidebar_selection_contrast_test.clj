@@ -4,7 +4,7 @@
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.projects :as projects]
             [com.blockether.vis.tui.projects-test :as projects-test]
-            [com.blockether.vis.tui.render :as render]
+            [com.blockether.vis.tui.queue-tray :as queue-tray]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.theme-test :as theme-test]
@@ -175,23 +175,19 @@
              (finally (theme/apply-theme! before))))))
 
 (defn- capture-queue-focus
-  "Paint a focused Queued block whose row `index` is selected, as the chat paints it."
+  "Paint a focused queue frame whose row `index` is selected, as the chat paints it."
   [index]
-  (let [entries (#'render/queued-progress-entries
-                 [{:text "first" :turn-id "t1"} {:text "second" :turn-id "t2"}]
-                 60
-                 nil
-                 {:running? true :session-id "s1" :focus {:index index}})]
-    (cap/capture! {:cols 64
-                   :rows 12
-                   :paint! (fn [{:keys [g]}]
-                             (render/draw-chat-bubble! g
-                                                       {:role :assistant
-                                                        :text ""
-                                                        :prewrapped-lines (mapv :line entries)
-                                                        :line-meta (mapv :meta entries)}
-                                                       0 0
-                                                       60 {:viewport-h 12}))})))
+  (cap/capture! {:cols 64
+                 :rows 10
+                 :paint! (fn [{:keys [g]}]
+                           (queue-tray/draw! g
+                                             {:pending [{:text "first" :turn-id "t1"}
+                                                        {:text "second" :turn-id "t2"}]
+                                              :running? true
+                                              :session-id "s1"
+                                              :focus {:index index}}
+                                             0
+                                             64))}))
 
 (defdescribe
   queue-focus-selection-contrast-test
@@ -205,15 +201,16 @@
                      frame (first (:frames capture))
                      row-text (fn [cells]
                                 (apply str (map :ch cells)))
-                     selected (first (filter #(str/includes? (row-text %) "2. second") frame))
-                     other (first (filter #(str/includes? (row-text %) "1. first") frame))
-                     text-cells (remove #(str/blank? (:ch %)) selected)]
+                     selected (first (filter #(str/includes? (row-text %) "#2 │ second") frame))
+                     other (first (filter #(str/includes? (row-text %) "#1 │ first") frame))
+                     text-cells (remove #(or (str/blank? (:ch %)) (= "│" (:ch %))) selected)
+                     paper (fn [cells] (:bg (first (filter #(= "#" (:ch %)) cells))))]
 
                  (expect (nil? (:error capture)))
-                 (expect (str/includes? (row-text selected) "2. second") (str theme-id))
-                 (expect (>= (contrast (:bg (first selected)) (:bg (first other))) 3.0)
+                 (expect (some? selected) (str theme-id))
+                 (expect (>= (contrast (paper selected) (paper other)) 3.0)
                          (str theme-id " selected row vs other row"))
-                 (expect (= #{"2" "." "s" "e" "c" "o" "n" "d"} (set (map :ch text-cells)))
+                 (expect (= #{"#" "2" "s" "e" "c" "o" "n" "d"} (set (map :ch text-cells)))
                          (str theme-id))
                  (doseq [{:keys [ch fg bg]} text-cells]
                    (expect (>= (contrast fg bg) 4.5) (str theme-id " selected queue text: " ch)))))

@@ -23,9 +23,16 @@ export function AgentDock({ agents, sid, runningTurnId, leader, clocks, ...team 
   const body = useId();
   const line = useId();
   const teams = dockTeams(agents, sid, runningTurnId);
+  // The timeline control and C-x b l: a folded dock opens on the timeline.
+  const switchTimeline = () => {
+    const isOn = !(open && isTimeline);
+    setTimeline(isOn);
+    if (isOn) setOpen(true);
+  };
   // C-x b a folds the dock; C-x t t opens it.
   useCommands({
     'toggle-agent-dock': teams.length > 0 && (() => setOpen((value) => !value)),
+    'toggle-agent-timeline': teams.length > 0 && switchTimeline,
     'agent-team': teams.length > 0 && (() => setOpen(true)),
   });
   if (teams.length === 0) return null;
@@ -36,14 +43,7 @@ export function AgentDock({ agents, sid, runningTurnId, leader, clocks, ...team 
   const clock = longestClock(teams.map((team) => clocks?.get(currentTurn(team[0]))), Date.now());
   const head = teams.some((team) => currentTurn(team[0]) === runningTurnId) ? leader : undefined;
   const toggle = hasTimeline(members, head) ? (
-    <TimelineToggle
-      isOn={open && isTimeline}
-      onToggle={() => {
-        const isOn = !(open && isTimeline);
-        setTimeline(isOn);
-        if (isOn) setOpen(true);
-      }}
-    />
+    <TimelineToggle isOn={open && isTimeline} onToggle={switchTimeline} />
   ) : undefined;
   return (
     <section

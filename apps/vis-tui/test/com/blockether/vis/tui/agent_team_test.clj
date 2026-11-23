@@ -86,13 +86,13 @@
                                        "status" "running"
                                        "created_at" 0}])
                  (apply-work! "flaky-leader")
-                 (expect (= 2 (team/dock-height "flaky-leader" "turn-1" 120)))
+                 (expect (= 4 (team/dock-height "flaky-leader" "turn-1" 120)))
                  (with-redefs [vis/setting (fn [& _]
                                              (throw (java.io.IOException. "offline")))]
                    (team/settings-changed! "flaky-leader")
                    (apply-work! "flaky-leader")
                    (expect (team/enabled? "flaky-leader") "A settings error keeps Subagents on")
-                   (expect (= 2 (team/dock-height "flaky-leader" "turn-1" 120))
+                   (expect (= 4 (team/dock-height "flaky-leader" "turn-1" 120))
                            "A settings error keeps the dock"))))
 
 (defdescribe team-row-information-test
@@ -545,17 +545,17 @@
 
             dock
             (fn [at]
-              (first (team/dock-text sid "turn-1" 120 at)))]
+              (nth (team/dock-text sid "turn-1" 120 at) 2))]
 
         (team/stream-ready! sid
                             [resumed]
                             [{"turn_id" "turn-1" "worked_ms" 60000 "busy_since" (- now-ms 30000)}])
         (apply-work! sid)
-        (expect (str/starts-with? (dock now-ms) "▸ TEAM  ●  1m 30s   "))
+        (expect (str/starts-with? (dock now-ms) "│ ▸ TEAM  ●  │  1m 30s   "))
         (team/team-updated! sid
                             {:agents [ended] :team-clocks [{"turn_id" "turn-1" "worked_ms" 80000}]})
         (apply-work! sid)
-        (expect (str/starts-with? (dock (+ now-ms 600000)) "▸ TEAM  ●  1m 20s   ")
+        (expect (str/starts-with? (dock (+ now-ms 600000)) "│ ▸ TEAM  ●  │  1m 20s   ")
                 "The time stops while no agent works")
         (expect (= "1m 20s"
                    (some (fn [[_ text part]]
@@ -568,7 +568,7 @@
                 "The team block of the turn shows the same stored time")
         (team/stream-ready! sid [ended] nil)
         (apply-work! sid)
-        (expect (= "▸ TEAM  ●" (str/trim (subs (dock now-ms) 0 20))) "No clock gives no time")))
+        (expect (= "│ ▸ TEAM  ●" (str/trim (subs (dock now-ms) 0 22))) "No clock gives no time")))
     ;; Cross-check 2026-11-22: the delete of a child that worked left its row and its running
     ;; clock in the TUI until the next connect.
     (it "drops the row of a deleted child, also the row that a transcript turn gave"
@@ -913,43 +913,48 @@
 
 (defdescribe
   dock-test
-  (it "shows one summary line, and the agent table only after C-x b a"
+  (it "shows one team line in a frame, and the agent table only after C-x b a"
       (with-redefs [team/summary (constantly {:agents every-state
                                               :clocks {"turn-1" {"turn_id" "turn-1"
                                                                  "worked_ms" 0
                                                                  "busy_since" (- now-ms 64000)}}})]
         (expect (not (team/dock-expanded? "leader")))
-        (let [[line :as text] (team/dock-text "leader" "turn-1" 120 now-ms)]
-          (expect (= 2 (count text)) "The dock is one line and a blank line")
-          ;; User report 2026-10-31: the dock touched the C-g row under it.
-          (expect (= "" (peek text)) "A blank line parts the dock from the row below")
-          ;; User report 2026-11-23: the live dock showed a plain "Agents" head. It shows the
-          ;; head line of the team block: fold mark, TEAM, status dots and the team time.
-          ;; The team time is the stored clock of the team, to now while it works.
-          (expect (str/starts-with? line "▸ TEAM  ●●● +7 more  1m 04s   "))
+        (let [text (team/dock-text "leader" "turn-1" 120 now-ms)
+              line (nth text 2)]
+          (expect (= 4 (count text)) "A blank line, the frame and the team line")
+          ;; User report 2026-10-31: the dock touched the row next to it.
+          (expect (= "" (first text)) "A blank line parts the dock from the rows above")
+          (expect (str/starts-with? (second text) "┌"))
+          (expect (str/starts-with? (peek text) "└"))
+          ;; User report 2026-11-23: the live dock shows the head line of the team block: fold
+          ;; mark, TEAM, status dots and the team time. The team time is the stored clock of
+          ;; the team, to now while it works.
+          (expect (str/starts-with? line "│ ▸ TEAM  ●●● +7 more  │  1m 04s   "))
           ;; User decision 2026-11-15: the team line shows no status counts, as in the Companion.
           (expect (not (re-find #"RUNNING|DONE|FAILED|•|■" line)))
           (expect (not (str/includes? line "waiting")))
           (expect (not (str/includes? line "asking")))
-          (expect (str/ends-with? line "C-x b a details")))
+          (expect (str/includes? line "details (C-x b a)"))
+          (expect (str/ends-with? line "▤ timeline (C-x b l) │")))
         (try (expect (true? (team/toggle-dock! "leader")))
              (let [text (team/dock-text "leader" "turn-1" 120 now-ms)]
-               (expect (str/ends-with? (first text) "C-x b a hide details"))
-               (expect (= 12 (count text)) "The table caps its rows and counts the rest")
+               (expect (str/ends-with? (nth text 2) "fold (C-x b a) │"))
+               (expect (= 11 (count text)) "The table caps its rows and counts the rest")
                (expect (some #(str/includes? % "+5 more") text))
-               (expect (= 12 (team/dock-height "leader" "turn-1" 120))))
+               (expect (= 11 (team/dock-height "leader" "turn-1" 120))))
              (finally (team/toggle-dock! "leader")))
-        (expect (= 2 (team/dock-height "leader" "turn-1" 120)) "C-x b a again hides the table")
-        (expect (= ["▸ TEAM  ●●●" ""] (team/dock-text "leader" "turn-1" 16 now-ms))
-                "A narrow line drops the hint, the time and the count"))
+        (expect (= 4 (team/dock-height "leader" "turn-1" 120)) "C-x b a again hides the table")
+        (expect (= ["" "┌────────────┐" "│ ▸ TEAM     │" "└────────────┘"]
+                   (team/dock-text "leader" "turn-1" 16 now-ms))
+                "A narrow line drops the controls, the time, the count and the dots"))
       (with-redefs [team/summary (constantly {:agents (drop 4 every-state)
                                               :clocks {"turn-1" {"turn_id" "turn-1"
                                                                  "worked_ms" 64000}}})]
         (expect (zero? (team/dock-height "leader" nil 120)) "No dock after a finished team")
-        (expect (= 2 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock")
+        (expect (= 4 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock")
         ;; A team without a working agent stops its time at the last end.
-        (expect (str/starts-with? (first (team/dock-text "leader" "turn-1" 120 (+ now-ms 60000)))
-                                  "▸ TEAM  ●●● +3 more  1m 04s   ")))
+        (expect (str/starts-with? (nth (team/dock-text "leader" "turn-1" 120 (+ now-ms 60000)) 2)
+                                  "│ ▸ TEAM  ●●● +3 more  │  1m 04s   ")))
       (with-redefs [team/summary (constantly {:agents []})]
         (expect (zero? (team/dock-height "leader" "turn-1" 120)) "An empty team has no dock"))))
 
@@ -1020,9 +1025,9 @@
                (expect (str/includes? row "LEADER"))
                (expect (re-find #"LEADER +│ Waiting for the parser fix" row)
                        "The live leader line takes the title cell too")
-               (expect (re-find #"RUNNING +│ +1m 30s \(waited 30s\)" row))
+               (expect (re-find #"1m 30s \(waited 30s\) │ RUNNING" row))
                (expect (str/starts-with? (nth text 5) "├") "A rule stands under the leader row")
-               (expect (str/includes? (nth text 6) "Map the gateway routes"))
+               (expect (str/includes? (nth text 6) "Map the gateway rou"))
                (expect (= "s1" (team/dock-agent-id "leader" "turn-1" 1))
                        "Digit 1 still opens agent 1")
                (expect (= (+ 2 (team/dock-height "leader" "turn-1" 120))
@@ -1033,14 +1038,14 @@
 (defdescribe
   dock-keys-test
   ;; User report 2026-10-31: the TUI had no keys to open one subagent from the dock.
-  (it "shows a digit on the first nine dock rows, and the digit names the agent of its row"
+  (it "shows the open chord on the first nine dock rows, and the digit names the agent of its row"
       (with-redefs [team/summary (constantly {:agents every-state})]
         (team/toggle-dock! "leader")
         (try (let [text (team/dock-text "leader" "turn-1" 120 now-ms)
-                   row-1 (first (filter #(str/starts-with? % "│ 1 │") text))]
+                   row-1 (first (filter #(str/includes? % "(C-x t 1)") text))]
 
-               (expect (some? row-1) "Row 1 shows its digit")
-               (expect (str/includes? row-1 "Map the gateway routes"))
+               (expect (some? row-1) "Row 1 shows its chord")
+               (expect (str/includes? row-1 "Map the gateway rou"))
                (expect (= "s1" (team/dock-agent-id "leader" "turn-1" 1)))
                (expect (nil? (team/dock-agent-id "leader" "turn-1" 10)) "Row 10 has no digit"))
              (finally (team/toggle-dock! "leader")))))
@@ -1062,10 +1067,10 @@
                (expect (true? (team/scroll-dock! "leader" "turn-1" 3)))
                (expect (some #(str/includes? % "Run tests") (rows)) "A hidden row comes into view")
                (expect (some #(str/includes? % "↑3 above  +2 more") (rows)))
-               (expect (= 12 (team/dock-height "leader" "turn-1" 120)) "Scrolling keeps the height")
+               (expect (= 11 (team/dock-height "leader" "turn-1" 120)) "Scrolling keeps the height")
                (expect (true? (team/scroll-dock! "leader" "turn-1" 100)))
                (expect (some #(str/includes? % "↑5 above") (rows)))
-               (expect (not-any? #(str/includes? % "more") (rest (rows))))
+               (expect (not-any? #(str/includes? % "more") (drop 3 (rows))))
                (expect (false? (team/scroll-dock! "leader" "turn-1" 1))
                        "The last row stops the wheel")
                (expect (true? (team/scroll-dock! "leader" "turn-1" -100)))
@@ -1077,7 +1082,7 @@
                    (.beginFrame interactions/hit-map)
                    (team/draw-dock! (.newTextGraphics screen) "leader" "turn-1" 2 120)
                    (.commitFrame interactions/hit-map)
-                   (doseq [y (range 2 13)]
+                   (doseq [y (range 3 13)]
                      (expect (= "leader" (:dock (.lookup interactions/hit-map (int 40) (int y))))
                              (str "Dock line " y " takes the wheel")))
                    (expect (nil? (:dock (.lookup interactions/hit-map (int 40) (int 13))))))))
@@ -1123,3 +1128,21 @@
                                                 (assoc-in waiting-team [1 "title"] "Fix parser")})]
           (expect (= "LEADER → IMPLEMENT | Fix parser" (:text (team/breadcrumb "c2")))))
         (expect (nil? (team/breadcrumb "unknown"))))))
+
+(defdescribe
+  dock-budget-test
+  ;; Visual check: on a short terminal the open dock took every transcript row, and the queue
+  ;; frame under it lost its bottom border.
+  (it "shows fewer agent rows to stay inside the budget, then folds"
+      (with-redefs [team/summary (constantly {:agents every-state})]
+        (team/toggle-dock! "leader")
+        (try (let [full (team/dock-height "leader" "turn-1" 120)
+                   short (team/dock-text "leader" "turn-1" 120 now-ms nil 8)]
+               (expect (= 11 full))
+               (expect (= 8 (count short)))
+               (expect (some #(str/includes? % "more") (drop 3 short)) "The others are counted")
+               (expect (= 4 (team/dock-height "leader" "turn-1" 120 nil 5)) "No agent row fits: it folds")
+               (expect (str/includes? (nth (team/dock-text "leader" "turn-1" 120 now-ms nil 5) 2)
+                                      "details (C-x b a)")
+                       "A folded dock offers details"))
+             (finally (team/toggle-dock! "leader"))))))

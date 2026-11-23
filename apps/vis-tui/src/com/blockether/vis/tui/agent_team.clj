@@ -14,7 +14,8 @@
             [com.blockether.vis.tui.presentation :as presentation]
             [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.primitives :as p]
-            [com.blockether.vis.tui.theme :as t])
+            [com.blockether.vis.tui.theme :as t]
+            [com.blockether.vis.tui.time-axis :as time-axis])
   (:import [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.input KeyStroke KeyType]))
 
@@ -175,6 +176,24 @@
   [sid]
   (let [sid (str sid)]
     (contains? (swap! expanded-docks #(if (contains? % sid) (disj % sid) (conj % sid))) sid)))
+
+(defonce ^:private timeline-docks
+  ;; Sessions whose open dock shows the timeline, not the agent table. It lasts for this TUI run only.
+  (atom #{}))
+
+(defn dock-timeline?
+  "Whether the open dock of `sid` shows the team timeline, not the agent table."
+  [sid]
+  (contains? @timeline-docks (str sid)))
+
+(defn toggle-timeline!
+  "Switch the dock of `sid` between the agent table and the timeline. A folded dock opens on the
+   timeline. Returns true when the timeline shows."
+  [sid]
+  (let [sid (str sid)]
+    (if (dock-expanded? sid)
+      (contains? (swap! timeline-docks #(if (contains? % sid) (disj % sid) (conj % sid))) sid)
+      (do (swap! expanded-docks conj sid) (swap! timeline-docks conj sid) true))))
 
 (defonce ^:private dock-offsets
   ;; The first agent row that the dock table of each session shows. It lasts for this TUI run only.
@@ -458,6 +477,14 @@
       :active? (active? agent)
       :pending? (pending? agent)
       :start (start-ms agent)
+      :created-at (get agent "created_at")
+      ;; The earlier tasks, which the timeline draws in the tone of their status.
+      :runs (mapv (fn [run]
+                    {:start (get run "start")
+                     :end (get run "end")
+                     :word (status-word {"status" (get run "status") "outcome" (get run "outcome")})})
+                  (filter #(and (number? (get % "start")) (number? (get % "end")))
+                          (let [runs (get agent "runs")] (when (sequential? runs) runs))))
       :worked-ms (get agent "worked_ms")
       :busy-since (get agent "busy_since")
       :end (when (and (not (active? agent)) (number? (get agent "finished_at")))
@@ -553,6 +580,12 @@
                           (keep #(some-> (:duration-ms %)
                                          long)
                                 forms))
+       ;; The waits as `[start end]` in epoch ms for the timeline; a wait that runs has no end.
+       :waits (vec (keep #(when (number? (:started-at-ms %))
+                            [(long (:started-at-ms %))
+                             (some-> (:duration-ms %)
+                                     (+ (long (:started-at-ms %))))])
+                         forms))
        ;; A wait that still runs counts to now.
        :wait-starts (when-not ended?
                       (vec (keep #(when (and (nil? (:duration-ms %)) (number? (:started-at-ms %)))
@@ -1374,52 +1407,6 @@
 
 ;; ── Dock ────────────────────────────────────────────────────────────────────
 
-(defn- dock-width
-  "The dock spans the transcript bubble: `cols` less `render/MESSAGE_SIDE_PAD` (5), which
-   this namespace cannot require."
-  [cols]
-  (max 1 (- (long cols) 5)))
-
-(defn- summary-hint
-  [expanded?]
-  (str (keymap/label-or-palette :toggle-agent-dock) (if expanded? " hide details" " details")))
-
-(defn summary-segments
-  "The painted parts of the dock summary line at `width` cells: `[col text part]` vectors, the
-   head line of a team block (`head-segments`) and then the `:hint`. The time is the stored clock
-   of the docked team, or the longest one of several docked teams, to `now-ms`. A short line drops
-   the hint first, then the time, then the dots."
-  [{:keys [expanded? clocks rows]} width now-ms]
-  (let [width
-        (long width)
-
-        dw
-        #(long (p/display-width (str %)))
-
-        time
-        (when (seq clocks) (duration-text (reduce max (map #(clock-ms % now-ms) clocks))))
-
-        [mark head & more]
-        (head-segments expanded? rows time)
-
-        segments
-        (into [mark head]
-              (take-while (fn [[col text]] (<= (+ (long col) (long (dw text))) width)))
-              more)
-
-        end
-        (let [[col text] (peek segments)] (+ (long col) (long (dw text))))
-
-        hint
-        (summary-hint expanded?)
-
-        hint-w
-        (long (dw hint))]
-
-    (cond-> segments
-      (>= (- width hint-w) (+ (long end) 3))
-      (conj [(- width hint-w) hint :hint]))))
-
 (def ^:private ^:const dock-keys
   "Dock rows that C-x t and a digit open: rows 1 to 9 show their digit in the key column."
   9)
@@ -1479,23 +1466,234 @@
         (swap! dock-offsets assoc sid new)
         (not= old new)))))
 
-(defn- with-leader-line
-  "Table `lines` with the row of `leader` right after the titles, between the rule of the head
-   and a rule that divides it from its agents (see `leader-lines`)."
-  [lines leader]
-  (let [lines (vec lines)]
-    (-> (subvec lines 0 2)
-        (into (leader-lines leader))
-        (into (subvec lines 3)))))
+(defn- dock-width
+  "Content cells of the dock frame at `cols` columns. The frame spans columns 1 to `cols - 2`,
+   and a border and one space stand at each side of the content."
+  ^long [cols]
+  (max 1 (- (long cols) 6)))
+
+(def ^:private ^:const phone-width
+  "At or below these content cells the team line writes `+N`, not `+N more`, and a short rule."
+  70)
+
+(def ^:private ^:const title-cells
+  "Cells of the title column of the dock: the title, then the chord that opens its agent."
+  30)
+
+(def ^:private ^:const status-cells "Cells of the status column: `RUNNING`." 7)
+
+(def ^:private ^:const time-cells
+  "The fewest cells of the time column: a leader time with its wait, `3m 42s (waited 1m 10s)`."
+  22)
+
+(def ^:private ^:const note-min-cells
+  "The fewest cells of the note column. A narrower dock stacks each agent on its own lines."
+  12)
+
+(def ^:private ^:const phone-note-lines "The most lines of a note in a stacked dock." 2)
+
+(def ^:private cell-rule
+  "The rule between two cells of a dock row, as in the Companion team table."
+  " │ ")
+
+(def ^:private leader-key "The key of the leader lane of the timeline." "L")
+
+(defn- open-chord
+  "The chord that opens the agent of dock row `row`, such as `(C-x t 2)`. A task that did not
+   start has no session to open, so its row has no chord."
+  [row]
+  (when (and (:key row) (:session-id row) (not (:pending? row)))
+    (str "(" (keymap/group-chord :agents) " " (:key row) ")")))
+
+(defn- seg-width ^long [segs] (reduce + 0 (map #(long (p/display-width (str (second %)))) segs)))
+
+(defn- run-segs
+  "`parts`, `[text ink bold?]` vectors, as segments from column `col`. Returns `[segments end]`."
+  [col parts]
+  (reduce (fn [[segs col] [text ink bold?]]
+            [(conj segs [col text ink bold?]) (+ (long col) (long (p/display-width (str text))))])
+          [[] col]
+          parts))
+
+(defn- cell-segs
+  "One dock row from `cells`, `[width parts align]` vectors, from column `col`. A `cell-rule`
+   stands between two cells. `parts` are `[text ink bold?]` vectors, cut to the cell."
+  [col cells]
+  (first
+    (reduce (fn [[segs col] [i [width parts align]]]
+              (let [width
+                    (long width)
+
+                    parts
+                    (loop [[[text ink bold?] & more] parts room width out []]
+                      (if (or (nil? text) (<= room 0))
+                        out
+                        (let [text (p/ellipsize (str text) room)]
+                          (recur more
+                                 (- room (long (p/display-width text)))
+                                 (conj out [text ink bold?])))))
+
+                    used
+                    (reduce + 0 (map #(long (p/display-width (first %))) parts))
+
+                    [cell]
+                    (run-segs (if (= :right align) (+ (long col) (- width used)) col) parts)
+
+                    end
+                    (+ (long col) width)]
+
+                [(cond-> (into segs cell)
+                   (< (long i) (dec (count cells)))
+                   (conj [end cell-rule :edge]))
+                 (+ end 3)]))
+            [[] col]
+            (map-indexed vector cells))))
+
+(defn- framed
+  "Content `segs` of a dock line inside the side borders of a frame `iw` content cells wide."
+  [iw segs]
+  (-> [[0 "│" :edge]]
+      (into (map (fn [[col & more]] (into [(+ 2 (long col))] more))) segs)
+      (conj [(+ (long iw) 3) "│" :edge])))
+
+(defn- edge-line
+  "A border line of a frame `iw` content cells wide: `left`, `mid` cells and `right`. `cuts` are
+   content columns where `cut` replaces `mid`, so a rule meets the column rules."
+  ([iw left mid right] (edge-line iw left mid right #{} nil))
+  ([iw left mid right cuts cut]
+   [[0
+     (apply str
+            (for [i (range (+ (long iw) 4))]
+              (cond (zero? (long i)) left
+                    (= (long i) (+ (long iw) 3)) right
+                    (contains? cuts (- (long i) 2)) cut
+                    :else mid)))
+     :edge]]))
+
+(defn- role-part
+  "The role word of `row` in the ink of its role. The leader word is bold."
+  [row]
+  [(:role row) [:role (:role-key row)] (leader? row)])
+
+(defn- status-part [row] [(:status row) [:tone (:tone row)]])
+
+(defn- title-parts
+  "The title of `row` in bold, padded to `width` cells less its open chord, then the chord."
+  [row width]
+  (let [chord
+        (open-chord row)
+
+        room
+        (max 1 (- (long width) (if chord (inc (count chord)) 0)))]
+
+    (cond-> [[(pad (p/ellipsize (str (:label row)) room) room) :fg true]]
+      chord
+      (conj [(str " " chord) :dim]))))
+
+(defn- table-widths
+  "The cells of the dock table columns at `iw` content cells, with a time column of `time-w`, or
+   nil when the note column would be narrower than `note-min-cells`."
+  [iw time-w]
+  (let [role
+        (role-width)
+
+        note
+        (- (long iw) role (long title-cells) (long time-w) (long status-cells) 12)]
+
+    (when (>= note (long note-min-cells))
+      {:role role :title title-cells :time time-w :status status-cells :note note})))
+
+(defn- dock-time-width
+  "Cells of the time column for the time texts `times`. A short timeline shows no leader wait,
+   so its column only fits the texts."
+  (^long [times] (dock-time-width times false))
+  (^long [times short?] (max (if short? 6 (long time-cells)) (long (widest times)))))
+
+(defn- wrap-lines
+  "`text` in lines of at most `width` cells, at most `n` lines. A cut last line ends in `…`."
+  [text width n]
+  (let [width
+        (max 1 (long width))
+
+        words
+        (str/split (str/trim (str text)) #"\s+")
+
+        lines
+        (loop [[word & more :as words] words line "" out []]
+          (cond (nil? word) (cond-> out (seq line) (conj line))
+                (str/blank? word) (recur more line out)
+                (str/blank? line) (recur more word out)
+                (<= (+ (count line) 1 (long (p/display-width word))) width)
+                (recur more (str line " " word) out)
+                :else (recur words "" (conj out line))))]
+
+    (if (> (count lines) (long n))
+      (conj (vec (take (dec (long n)) lines))
+            (p/ellipsize (str (nth lines (dec (long n))) " " (nth lines n)) width))
+      (mapv #(p/ellipsize % width) lines))))
+
+(defn- dock-table-lines
+  "The lines between the team line and the bottom border of an open dock that shows the table."
+  [leader shown more iw]
+  (if (table-widths iw time-cells)
+    (-> [{:kind :mid}]
+        (cond->
+          leader
+          (into [{:kind :leader :row leader} {:kind :rule}]))
+        (into (map (fn [row]
+                     {:kind :agent :row row}))
+              shown)
+        (cond-> more (conj more)))
+    (-> [{:kind :mid}]
+        (cond->
+          leader
+          (into (cons {:kind :phone-head :row leader}
+                      (map (fn [text]
+                             {:kind :phone-note :text text})
+                           (wrap-lines (:now leader) iw phone-note-lines))))
+          (and leader (seq shown))
+          (conj {:kind :mid}))
+        (into (comp (map (fn [row]
+                           (into [{:kind :phone-head :row row} {:kind :phone-title :row row}]
+                                 (map (fn [text]
+                                        {:kind :phone-note :text text}))
+                                 (wrap-lines (:now row) iw phone-note-lines))))
+                    (interpose [{:kind :faint}])
+                    cat)
+              shown)
+        (cond-> more (conj more)))))
+
+(defn- dock-timeline-lines
+  "The lines between the team line and the bottom border of an open dock that shows the timeline:
+   the axis, a lane for the leader and for each agent, a rule and the legend."
+  [leader shown more]
+  (-> [{:kind :mid} {:kind :axis}]
+      (cond->
+        leader
+        (conj {:kind :lane :row leader}))
+      (into (map (fn [row]
+                   {:kind :lane :row row}))
+            shown)
+      (cond-> more (conj more))
+      (conj {:kind :mid})
+      (cond->
+        leader
+        (conj {:kind :legend :row leader}))
+      (into (map (fn [row]
+                   {:kind :legend :row row}))
+            shown)))
 
 (defn dock-lines
-  "The dock of `sid` above the prompt at `cols` columns: `{:line :columns}` maps, one for each
-   screen row. A docked team shows one summary line. After `toggle-dock!`, the agent table
-   follows it. The row of the running turn `leader` (see `leader-row`) stands first in the table
-   of its team and does not scroll. One blank line ends the dock, so it never touches the row
-   below. Empty without a docked team."
-  ([sid running-turn cols] (dock-lines sid running-turn cols nil))
-  ([sid running-turn cols leader]
+  "The dock of `sid` above the prompt at `cols` columns: `{:line}` maps, one for each screen row.
+   One blank line stands above the frame. A folded dock shows the team line in a frame. An open
+   dock adds the agent table or, after `toggle-timeline!`, the timeline. The row of the running
+   turn `leader` (see `leader-row`) stands first and does not scroll. A dock narrower than the
+   table stacks each agent on its own lines. With `max-lines`, an open dock shows fewer agent rows
+   so that it takes at most that many lines, and folds when no agent row fits. Empty without a
+   docked team."
+  ([sid running-turn cols] (dock-lines sid running-turn cols nil nil))
+  ([sid running-turn cols leader] (dock-lines sid running-turn cols leader nil))
+  ([sid running-turn cols leader max-lines]
    (let [agents
          (:agents (summary sid))
 
@@ -1511,97 +1709,535 @@
              leader
              (when (contains? docked running-turn) (leader-row leader))
 
-             expanded?
-             (dock-expanded? sid)
+             mode
+             (when (dock-expanded? sid) (if (dock-timeline? sid) :timeline :table))
+
+             n
+             (count rows)
 
              head
-             {:line {:kind :summary
-                     :expanded? expanded?
-                     :rows rows
-                     :clocks (vec (keep #(get (:clocks (summary sid)) %) (sort docked)))}}
+             {:kind :header
+              :mode mode
+              :rows rows
+              :clocks (vec (keep #(get (:clocks (summary sid)) %) (sort docked)))}
 
-             table
-             (table-lines rows dock-max-rows (get @dock-offsets (str sid)))]
+             iw
+             (dock-width cols)
 
-         (-> [head]
-             (cond->
-               expanded?
-               (into (let [columns (table-columns (cond->> rows
-                                                    leader
-                                                    (cons leader))
-                                                  (dock-width cols))]
-                       (map (fn [line]
-                              {:line line :columns columns})))
-                     (cond-> table
-                       leader
-                       (with-leader-line leader))))
-             (conj {:line {:kind :gap}})))))))
+             ;; The lines with `size` agent rows from the scroll offset, and a last line that
+             ;; counts the others when they do not all show.
+             build
+             (fn [mode size]
+               (let [overflow? (< (long size) n)
+                     start (window-start n size (get @dock-offsets (str sid)))
+                     shown (subvec rows start (+ start (long size)))
+                     more (when overflow? {:kind :more :above start :n (- n start (long size))})]
+                 (mapv (fn [line]
+                         {:line line})
+                       (-> [{:kind :gap} {:kind :top} (assoc head :mode mode)]
+                           (into (case mode
+                                   :table (dock-table-lines leader shown more iw)
+                                   :timeline (dock-timeline-lines leader shown more)
+                                   nil))
+                           (conj {:kind :bottom})))))
+
+             size
+             (if (> n (long dock-max-rows)) (dec (long dock-max-rows)) n)]
+
+         ;; With `max-lines`, an open dock shows fewer agents until it fits, then folds.
+         (or (some (fn [size]
+                     (let [lines (build mode size)]
+                       (when (or (nil? max-lines) (<= (count lines) (long max-lines))) lines)))
+                   (if mode (range size 0 -1) [size]))
+             (build nil size)))))))
 
 (defn dock-height
   "Rows that the dock of `sid` takes above the prompt, 0 without a docked team."
-  (^long [sid running-turn cols] (dock-height sid running-turn cols nil))
-  (^long [sid running-turn cols leader] (count (dock-lines sid running-turn cols leader))))
+  (^long [sid running-turn cols] (dock-height sid running-turn cols nil nil))
+  (^long [sid running-turn cols leader] (dock-height sid running-turn cols leader nil))
+  ([sid running-turn cols leader max-lines]
+   (count (dock-lines sid running-turn cols leader max-lines))))
+
+(defn- team-time
+  "The time of the docked teams at `now-ms`: the stored clock of the team, or the longest one."
+  [clocks now-ms]
+  (when (seq clocks) (duration-text (reduce max (map #(clock-ms % now-ms) clocks)))))
+
+(defn- header-controls
+  "The right part of the team line in `mode`: the fold control and the switch between the table
+   and the timeline, each with its chord. `[parts switch]`: `[text ink bold?]` parts and the index
+   of the first part of the switch. `short?` keeps only the marks."
+  [mode short?]
+  (let [dock
+        (str " (" (keymap/label-for :toggle-agent-dock) ")")
+
+        timeline
+        (str " (" (keymap/label-for :toggle-agent-timeline) ")")
+
+        switch
+        (if (= :timeline mode) "▦ team" "▤ timeline")
+
+        fold
+        (if mode "fold" "details")
+
+        mark
+        #(subs % 0 1)
+
+        rule
+        [(if short? " │ " "  │  ") :edge]
+
+        fold-parts
+        [[(if short? (if mode "▴" "▸") fold) :fg true] [dock :dim]]
+
+        switch-parts
+        [[(if short? (mark switch) switch) :fg true] [timeline :dim]]]
+
+    (if mode
+      [(-> switch-parts
+           (conj rule)
+           (into fold-parts))
+       0]
+      [(-> fold-parts
+           (conj rule)
+           (into switch-parts))
+       3])))
+
+(defn header-segments
+  "The painted parts of the team line of the dock at `iw` content cells: `[segments switch]`.
+   Segments are `[col text ink bold?]` vectors from the left border. The fold mark, the team, a
+   status dot for the first three agents and `+N more`, a rule and the team time; at the right
+   the fold control and the switch between the table and the timeline with their chords. `switch`
+   is `[col width]` of the switch, or nil. A short line keeps only the marks of the controls, then
+   drops them."
+  [{:keys [mode clocks rows]} iw now-ms]
+  (let [iw
+        (long iw)
+
+        wide?
+        (> iw (long phone-width))
+
+        agents
+        (vec (remove leader? rows))
+
+        dots
+        (take card-max-dots agents)
+
+        extra
+        (- (count agents) (count dots))
+
+        time
+        (team-time clocks now-ms)
+
+        ;; A narrow line drops the time, then the count, then the dots.
+        [left end]
+        (some (fn [[dots? extra? time?]]
+                (let [[_ end :as run]
+                      (run-segs 2
+                                (cond-> [[(if mode "▾ " "▸ ") :dim] ["TEAM" :fg true]]
+                                  dots?
+                                  (into (cons ["  " :dim]
+                                              (map (fn [row]
+                                                     ["●" [:tone (:tone row)]])
+                                                   dots)))
+                                  (and extra? (pos? extra))
+                                  (conj [(str " +" extra (when wide? " more")) :dim])
+                                  (and time? time)
+                                  (into [[(if wide? "  │  " " │ ") :edge] [time :dim]])))]
+                  (when (or (<= (long end) (+ iw 2)) (not dots?)) run)))
+              [[true true true] [true true false] [true false false] [false false false]])
+
+        room
+        (- (+ iw 2) (long end) 2)
+
+        [parts switch-at]
+        (some (fn [short?]
+                (let [[parts at] (header-controls mode short?)]
+                  (when (<= (seg-width (map (fn [[text]] [0 text]) parts)) room) [parts at])))
+              [false true])
+
+        start
+        (when parts (- (+ iw 2) (seg-width (map (fn [[text]] [0 text]) parts))))
+
+        [right]
+        (if parts (run-segs start parts) [[]])
+
+        switch
+        (when parts
+          (let [[col] (nth right switch-at)]
+            [col (seg-width (map (fn [[_ text]] [0 text]) (subvec right switch-at (+ (long switch-at) 2))))]))]
+
+    [(framed iw (concat (map (fn [[col & more]] (into [(- (long col) 2)] more)) left)
+                        (map (fn [[col & more]] (into [(- (long col) 2)] more)) right)))
+     (when switch [(+ 2 (long (first switch)) -2) (second switch)])]))
+
+(defn- time-text
+  "The time cell of `row` at `now-ms`. A short dock shows only the time of a leader, not its wait."
+  [row now-ms short?]
+  (if (and short? (leader? row) (:start row))
+    (duration-text (max 0 (- (long (or (:end row) now-ms)) (long (:start row)))))
+    (str (row-time row now-ms))))
+
+(defn- chart-span
+  "The time of the chart of `rows` and `leader` in epoch ms, `[start end]`: from the first task
+   or the start of the leader, to `now-ms` while anything works, else to the last end. Nil when
+   the chart has no length. The rule of the Companion `chartSpan`."
+  [rows leader now-ms]
+  (let [starts
+        (keep (fn [row]
+                (or (:start (first (:runs row)))
+                    (if (= "QUEUED" (:status row)) (:created-at row) (:start row))))
+              rows)
+
+        starts
+        (cond-> (filter number? starts) (:start leader) (conj (:start leader)))]
+
+    (when (seq starts)
+      (let [start
+            (long (reduce min starts))
+
+            ends
+            (filter number? (cond-> (map :end rows) leader (conj (:end leader))))
+
+            working?
+            (or (some :active? rows) (and leader (nil? (:end leader))))
+
+            end
+            (cond working? (reduce max (long now-ms) ends)
+                  (seq ends) (reduce max ends))]
+
+        (when (and end (> (long end) start)) [start (long end)])))))
+
+(defn- leader-parts
+  "The parts of the lane of `leader` in epoch ms, `[start end wait?]`, in time order: its work and
+   its waits for its agents. A wait is cut to the time of the lane, and an overlap counts once."
+  [leader now-ms]
+  (let [end
+        (long (or (:end leader) now-ms))
+
+        [parts at]
+        (reduce (fn [[parts at] [ws we]]
+                  (let [from (max (long at) (long ws))
+                        to (min end (long (or we now-ms)))]
+                    (if (<= to from)
+                      [parts at]
+                      [(cond-> parts
+                         (> from (long at)) (conj [at from false])
+                         true (conj [from to true]))
+                       to])))
+                [[] (long (:start leader))]
+                (sort-by first (:waits leader)))]
+
+    (cond-> parts (> end (long at)) (conj [at end false]))))
+
+(defn- agent-parts
+  "The parts of the lane of agent row `row` in epoch ms, `[start end wait? tone]`: each earlier
+   run in the tone of its status, a failed wait after a failed run, then the current task. A
+   queued task waits from its spawn to `chart-end`. The rule of the Companion `agentBars`."
+  [row now-ms chart-end]
+  (let [queued?
+        (= "QUEUED" (:status row))
+
+        start
+        (if queued? (:created-at row) (:start row))
+
+        end
+        (cond queued? chart-end
+              (= "RUNNING" (:status row)) now-ms
+              :else (:end row))
+
+        runs
+        (vec (:runs row))]
+
+    (cond-> (vec (mapcat (fn [i {run-start :start run-end :end word :word}]
+                           (let [next (or (:start (get runs (inc (long i)))) start)
+                                 tone (tone word)]
+                             (cond-> [[run-start run-end false tone]]
+                               (and (= :bad tone) (number? next) (> (long next) (long run-end)))
+                               (conj [run-end next true :bad]))))
+                         (range)
+                         runs))
+      (and (number? start) (number? end))
+      (conj [start end queued? (:tone row)]))))
+
+(defn- lane-cells
+  "The bar of a lane, `bar-w` cells, as `[text ink]` parts: `━` for work in the ink of its tone,
+   `╌` for a wait, and `┊` at each mark of the axis where the lane is empty."
+  [parts [span-start span-end] bar-w marks]
+  (let [bar-w
+        (long bar-w)
+
+        total
+        (double (- (long span-end) (long span-start)))
+
+        cell
+        (fn [at]
+          (min bar-w (max 0 (Math/round (* bar-w (/ (- (double at) (long span-start)) total))))))
+
+        filled
+        (reduce (fn [bar [a b wait? tone]]
+                  (let [from (min (dec bar-w) (long (cell a)))
+                        to (max (inc from) (long (cell b)))]
+                    (reduce (fn [bar i]
+                              (assoc bar i (if wait? ["╌" (if (= :bad tone) [:tone :bad] :dim)] ["━" [:tone tone]])))
+                            bar
+                            (range from (min bar-w to)))))
+                (vec (repeat bar-w [" " :dim]))
+                parts)
+
+        grid
+        (set (map #(cell (+ (long span-start) (long %))) (rest marks)))]
+
+    (map-indexed (fn [i [text :as part]]
+                   (if (and (= " " text) (contains? grid i)) ["┊" :edge] part))
+                 filled)))
+
+(defn- axis-label
+  "A mark of the dock timeline axis: `0s`, `45s`, `2m` or `2m 30s`."
+  [ms]
+  (let [s (quot (long ms) 1000)]
+    (cond (< s 60) (str s "s")
+          (zero? (rem s 60)) (str (quot s 60) "m")
+          :else (format "%dm %02ds" (quot s 60) (rem s 60)))))
+
+(defn- legend-widths
+  "Cells of the title and the note of a legend row at `iw` content cells: `[title note]`. A
+   narrow dock gives the title the rest of the row and has no note."
+  [iw]
+  (let [base (+ 1 (role-width) 6)
+        note (- (long iw) base (long title-cells) 3)]
+    (if (>= note (long note-min-cells))
+      [title-cells note]
+      [(- (long iw) base) nil])))
+
+(defn- line-segments
+  "The painted parts of dock line `line` at `iw` content cells and `now-ms`: `[col text ink
+   bold?]` vectors from the left border. `ctx` holds the shown rows and the time span of the
+   chart, which every lane shares."
+  [{:keys [kind row text above n] :as line} iw now-ms {:keys [rows leader span]}]
+  (let [iw
+        (long iw)
+
+        short?
+        (<= iw (long phone-width))]
+
+    (case kind
+      :gap
+      []
+
+      :top
+      (edge-line iw "┌" "─" "┐")
+
+      :mid
+      (edge-line iw "├" "─" "┤")
+
+      :bottom
+      (edge-line iw "└" "─" "┘")
+
+      :header
+      (first (header-segments line iw now-ms))
+
+      (:leader :rule :agent)
+      (let [times
+            (map #(time-text % now-ms false) (cond->> rows leader (cons leader)))
+
+            ;; The layout chose the table at the narrowest time column, so that one always fits.
+            {:keys [role title note time status]}
+            (or (table-widths iw (dock-time-width times)) (table-widths iw time-cells))]
+
+        (case kind
+          :leader
+          (framed iw
+                  (cell-segs 0
+                             [[role [(role-part row)]]
+                              [(+ (long title) 3 (long note)) [[(str (:now row)) :dim]]]
+                              [time [[(time-text row now-ms false) :dim]] :right]
+                              [status [(status-part row)]]]))
+
+          :rule
+          (edge-line iw
+                     "├"
+                     "─"
+                     "┤"
+                     #{(inc (long role))
+                       (+ (long role) 3 (long title) 3 (long note) 1)
+                       (+ (long role) 3 (long title) 3 (long note) 3 (long time) 1)}
+                     "┼")
+
+          :agent
+          (framed iw
+                  (cell-segs 0
+                             [[role [(role-part row)]]
+                              [title (title-parts row title)]
+                              [note [[(str (:now row)) :dim]]]
+                              [time [[(time-text row now-ms false) :dim]] :right]
+                              [status [(status-part row)]]]))))
+
+      :more
+      (framed iw [[0 (p/ellipsize (str/join "  "
+                                            (cond-> []
+                                              (pos? (long above)) (conj (str "↑" above " above"))
+                                              (pos? (long n)) (conj (str "+" n " more"))))
+                                  iw)
+                   :dim]])
+
+      :phone-head
+      (let [time (time-text row now-ms false)
+            right (cond-> [] (seq time) (into [[time :dim] ["  " :dim]]) true (conj (status-part row)))
+            [segs] (run-segs (- iw (seg-width (map (fn [[t]] [0 t]) right))) right)]
+        (framed iw (into [(into [0] (role-part row))] segs)))
+
+      :phone-title
+      (let [chord (open-chord row)
+            room (max 1 (- iw (if chord (inc (count chord)) 0)))]
+        (framed iw (cond-> [[0 (p/ellipsize (str (:label row)) room) :fg true]]
+                     chord (conj [(- iw (count chord)) chord :dim]))))
+
+      :phone-note
+      (framed iw [[0 text :dim]])
+
+      :faint
+      (framed iw [[0 (apply str (repeat iw "┈")) :edge]])
+
+      :axis
+      (let [times (map #(time-text % now-ms short?) (cond->> rows leader (cons leader)))
+            time-w (dock-time-width times short?)
+            bar-w (max 1 (- iw 1 (long time-w) (long status-cells) 9))
+            [start end] (or span [0 1])
+            total (max 1 (- (long end) (long start)))
+            labels (keep (fn [at]
+                           (let [label (axis-label at)
+                                 col (min (- bar-w (count label))
+                                          (long (Math/floor (* bar-w (/ (double at) total)))))]
+                             (when (>= col 0) [(+ 4 col) label :dim])))
+                         (time-axis/axis-marks total))]
+        (framed iw (concat (cell-segs 0 [[1 []] [bar-w []] [time-w []] [status-cells []]]) labels)))
+
+      :lane
+      (let [times (map #(time-text % now-ms short?) (cond->> rows leader (cons leader)))
+            time-w (dock-time-width times short?)
+            bar-w (max 1 (- iw 1 (long time-w) (long status-cells) 9))
+            [start end] span
+            parts (if (leader? row)
+                    (map (fn [[a b wait?]] [a b wait? (:tone row)]) (leader-parts row now-ms))
+                    (agent-parts row now-ms end))]
+        (framed iw
+                (cell-segs 0
+                           [[1 [(if (leader? row)
+                                  [leader-key [:role "leader"] true]
+                                  [(or (:key row) "·") :fg true])]]
+                            [bar-w (if span (lane-cells parts span bar-w (time-axis/axis-marks (- (long end) (long start)))) [])]
+                            [time-w [[(time-text row now-ms short?) :dim]] :right]
+                            [status-cells [(status-part row)]]])))
+
+      :legend
+      (let [[title-w note-w] (legend-widths iw)
+            role-w (role-width)]
+        (framed iw
+                (cell-segs 0
+                           (if (leader? row)
+                             [[1 [[leader-key [:role "leader"] true]]]
+                              [role-w [(role-part row)]]
+                              [(+ (long title-w) (if note-w (+ 3 (long note-w)) 0)) [[(str (:now row)) :dim]]]]
+                             (cond-> [[1 [[(or (:key row) "·") :fg true]]]
+                                      [role-w [(role-part row)]]
+                                      [title-w (title-parts row title-w)]]
+                               note-w (conj [note-w [[(str (:now row)) :dim]]])))))))))
+
+(defn- dock-context
+  "What every line of the dock of `sid` shares at `now-ms`: the shown rows, the leader row and
+   the time span of the chart."
+  [lines now-ms]
+  (let [rows (keep #(when (#{:agent :lane :phone-head} (:kind %)) (:row %)) (map :line lines))
+        leader (first (filter leader? rows))
+        rows (vec (remove leader? rows))]
+    {:rows rows :leader leader :span (chart-span rows leader now-ms)}))
 
 (defn dock-text
-  "Plain dock lines of `sid`, as the painter shows them."
+  "Plain dock lines of `sid`, as the painter shows them, from the left border of the frame."
   ([sid running-turn cols now-ms] (dock-text sid running-turn cols now-ms nil))
-  ([sid running-turn cols now-ms leader]
-   (mapv (fn [{:keys [line columns]}]
-           (case (:kind line)
-             :summary
-             (segments-text (summary-segments line (dock-width cols) now-ms))
+  ([sid running-turn cols now-ms leader] (dock-text sid running-turn cols now-ms leader nil))
+  ([sid running-turn cols now-ms leader max-lines]
+   (let [lines (dock-lines sid running-turn cols leader max-lines)
+         ctx (dock-context lines now-ms)
+         iw (dock-width cols)]
+     (mapv (fn [{:keys [line]}] (segments-text (line-segments line iw now-ms ctx))) lines))))
 
-             :gap
-             ""
+(defn- segment-ink
+  "The ink of the segment ink key `ink` on `bg`."
+  [ink bg]
+  (if (vector? ink)
+    (let [[kind value] ink]
+      (t/legible-ink (if (= :role kind) (role-ink value) (tone-ink value)) bg))
+    (case ink
+      :edge t/dialog-border
+      :fg t/code-block-fg
+      t/dialog-hint)))
 
-             (segments-text (table-segments line columns now-ms))))
-         (dock-lines sid running-turn cols leader))))
-
-(defn- paint-summary-line!
-  "Paint the dock summary line at screen row `y` from column `left` across `width` cells."
-  [^TextGraphics g left y width line now-ms]
-  (paint-head-segments! g left y width (summary-segments line width now-ms) t/terminal-bg))
+(defn- paint-segments!
+  "Paint `[col text ink bold?]` segments on row `y` from column `left` on `bg`."
+  [^TextGraphics g left y segments bg]
+  (doseq [[col text ink bold?] segments]
+    (p/set-colors! g (segment-ink ink bg) bg)
+    (if bold?
+      (p/styled g [p/BOLD] (p/put-str! g (+ (long left) (long col)) y (str text)))
+      (p/put-str! g (+ (long left) (long col)) y (str text))))
+  (p/clear-styles! g))
 
 (defn draw-dock!
-  "Paint the dock table of `sid` at screen row `top` across `cols` columns. `leader` is the
-   running turn, as `dock-lines` takes it."
-  ([g sid running-turn top cols] (draw-dock! g sid running-turn top cols nil))
-  ([^TextGraphics g sid running-turn top cols leader]
-   (let [width
+  "Paint the dock of `sid` at screen row `top` across `cols` columns. `leader` is the running
+   turn, as `dock-lines` takes it. A click on the team line folds or opens the dock, and a click on
+   its switch shows the timeline or the table. A click on an agent row opens its agent."
+  ([g sid running-turn top cols] (draw-dock! g sid running-turn top cols nil nil))
+  ([g sid running-turn top cols leader] (draw-dock! g sid running-turn top cols leader nil))
+  ([^TextGraphics g sid running-turn top cols leader max-lines]
+   (let [iw
          (dock-width cols)
 
          now
-         (System/currentTimeMillis)]
+         (System/currentTimeMillis)
 
-     (doseq [[i {:keys [line columns]}]
-             (map-indexed vector (dock-lines sid running-turn cols leader))
+         lines
+         (dock-lines sid running-turn cols leader max-lines)
 
-             :let [y
-                   (+ (long top) (long i))]]
+         ctx
+         (dock-context lines now)
 
+         all
+         (max 1 (long cols))]
+
+     (doseq [[i {:keys [line]}] (map-indexed vector lines)
+             :let [y (+ (long top) (long i))]]
        (p/set-colors! g t/code-block-fg t/terminal-bg)
-       (p/fill-rect! g 0 y (max 1 (long cols)) 1)
+       (p/fill-rect! g 0 y all 1)
+       (paint-segments! g 1 y (line-segments line iw now ctx) t/terminal-bg)
+       ;; Each dock line takes the wheel, so the wheel scrolls the agent table, not the transcript.
        (case (:kind line)
-         :summary
-         (do (paint-summary-line! g 2 y width line now)
-             ;; A click on the summary line shows or hides the agent table, like C-x b a.
-             (.register interactions/hit-map
-                        {:bounds {:row y :col 0 :width (max 1 (long cols))}
-                         :kind :agent-dock-toggle
-                         :text (str sid)
-                         :dock (str sid)}))
-
          :gap
          nil
 
-         (paint-table-line! g 2 y width line columns now t/terminal-bg))
-       ;; Each dock line takes the wheel, so the wheel scrolls the agent table, not the transcript.
-       (cond (#{:summary :gap} (:kind line)) nil
-             (:session-id (:row line)) (register-row! (:row line) y 0 (max 1 (long cols)) (str sid))
-             :else (.register interactions/hit-map
-                              {:bounds {:row y :col 0 :width (max 1 (long cols))}
-                               :kind :agent-dock
-                               :dock (str sid)}))))))
+         :header
+         (let [[_ [col width]] (header-segments line iw now)
+               region (fn [kind from to]
+                        (when (> (long to) (long from))
+                          (.register interactions/hit-map
+                                     {:bounds {:row y :col from :width (- (long to) (long from))}
+                                      :kind kind
+                                      :text (str sid)
+                                      :dock (str sid)})))]
+           (if col
+             (let [from (inc (long col))
+                   to (+ from (long width))]
+               (region :agent-dock-toggle 0 from)
+               (region :agent-timeline-toggle from to)
+               (region :agent-dock-toggle to all))
+             (region :agent-dock-toggle 0 all)))
+
+         (if (:session-id (:row line))
+           (register-row! (:row line) y 0 all (str sid))
+           (.register interactions/hit-map
+                      {:bounds {:row y :col 0 :width all}
+                       :kind :agent-dock
+                       :dock (str sid)})))))))
 
 ;; ── Child traffic ───────────────────────────────────────────────────────────
 
