@@ -345,10 +345,12 @@ export function LiveVoicePanelContent({
             )}
             {status.muted ? 'Unmute' : 'Mute'}
           </Button>
-          <Button variant="secondary" className={cell} disabled={!stoppable} onClick={onStopSpeech}>
-            <StopIcon className={`size-3 ${mark}`} />
-            Stop speech
-          </Button>
+          {stoppable && (
+            <Button variant="secondary" className={cell} onClick={onStopSpeech}>
+              <StopIcon className={`size-3 ${mark}`} />
+              Stop speech
+            </Button>
+          )}
           <Button variant="danger" className={cell} aria-label="End voice mode" onClick={onEnd}>
             <CloseIcon className={`size-3.5 ${mark}`} />
             End

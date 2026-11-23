@@ -158,10 +158,7 @@ describe('hands-free opt-in panel', () => {
       for (const other of ['Speaking', 'Waiting for you', 'Microphone muted', 'Listening']) {
         expect(screen.queryAllByText(other, { selector: 'p' })).toHaveLength(other === headline ? 1 : 0);
       }
-      expect(screen.getByRole('button', { name: 'Stop speech' })).toHaveProperty(
-        'disabled',
-        output === 'muted',
-      );
+      expect(screen.queryByRole('button', { name: 'Stop speech' }) !== null).toBe(output !== 'muted');
       expect(screen.getByText(taskLabel)).toBeInTheDocument();
       expect(screen.getByText(outputLabel)).toBeInTheDocument();
       expect(screen.getByText('Choose a task with the task controls.')).toBeInTheDocument();
@@ -269,7 +266,8 @@ describe('hands-free opt-in panel', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Mute microphone' }));
     expect(screen.getByRole('button', { name: 'Unmute microphone' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'Stop speech' })).toBeInTheDocument();
+    // Nothing speaks yet, so there is no speech to stop.
+    expect(screen.queryByRole('button', { name: 'Stop speech' })).not.toBeInTheDocument();
     await act(async () => {
       Socket.last.onmessage?.({ data: JSON.stringify({ type: 'utterance.admitted', utterance_id: 1, turn_id: 't', idempotency_key: 'v:1', status: 'running' }) });
     });
