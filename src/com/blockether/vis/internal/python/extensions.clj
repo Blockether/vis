@@ -3773,6 +3773,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                              :prune (boolean prune)
                                              :dry_run (boolean dry-run)
                                              :frozen (boolean frozen)
+                                             :source_cache (str (paths/vis-home) "/package-sources")
                                              :vis_version (package-version)})))))
           (filter #(or prune (seq (:packages %)) (.isFile (io/file (:directory %) ".sync.json")))
                   scopes))))

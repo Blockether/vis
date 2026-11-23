@@ -411,6 +411,32 @@ def _checkout(repository, directory, revision):
     return actual
 
 
+def _shared_source(cache, repository, subdirectory, revision):
+    """The folder of one fetched commit in the source cache of `sync`, or None.
+
+    A full commit SHA names fixed bytes, so another project reuses the fetch without Git.
+    """
+    if not cache or not re.fullmatch(r"[0-9a-f]{40}", revision or ""):
+        return None
+    key = hashlib.sha256(
+        "\n".join((repository.lower(), subdirectory, revision)).encode()
+    ).hexdigest()[:32]
+    return Path(cache).expanduser().resolve() / key
+
+
+def _keep_source(cache, selected):
+    """Copy a fetched folder into the source cache. The cache is optional: errors are ignored."""
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=".staging-", dir=cache.parent))
+    try:
+        _copy_project(selected, stage / "source")
+        os.rename(stage / "source", cache)
+    except (OSError, ValueError):
+        pass
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
 def _copy_project(source, destination):
     def excluded(_directory, names):
         return {
@@ -765,6 +791,7 @@ def _admit(
     expected_name=None,
     expected_target=None,
     sync_records=None,
+    source_cache=None,
 ):
     path = Path(source).expanduser()
     if path.is_file() and path.name == "pyproject.toml":
@@ -784,6 +811,7 @@ def _admit(
     with tempfile.TemporaryDirectory(prefix=".staging-", dir=directory) as temporary:
         stage = Path(temporary)
         cached = None
+        shared = fetched = None
         if repository:
             if release:
                 candidate = _destination(directory, release["name"]).parent / _version(
@@ -800,11 +828,21 @@ def _admit(
                             "An installed name/version cannot change its source or revision"
                         )
                     cached = candidate
-            if cached is None:
+            shared = _shared_source(source_cache, repository, subdirectory, revision)
+            if cached is None and shared is not None and shared.is_dir():
+                fetched = shared
+            elif cached is None:
                 path = stage / "repository"
                 revision = _checkout(repository, path, revision)
-        selected = cached or (path / subdirectory).resolve(strict=True)
-        if cached is None and not selected.is_relative_to(path.resolve()):
+                shared = _shared_source(
+                    source_cache, repository, subdirectory, revision
+                )
+        selected = cached or fetched or (path / subdirectory).resolve(strict=True)
+        if (
+            cached is None
+            and fetched is None
+            and not selected.is_relative_to(path.resolve())
+        ):
             raise ValueError("Selected folder must stay inside the repository")
         metadata = inspect_source(selected, vis_version, python_version)
         if expected_name is not None and metadata["name"] != expected_name:
@@ -988,7 +1026,9 @@ def _admit(
                 raise
         finally:
             _release(lock, fd)
-    if release and cached is None:
+        if shared is not None and cached is None and fetched is None:
+            _keep_source(shared, selected)
+    if release and cached is None and fetched is None:
         _count_download(repository, subdirectory)
     result = {
         "name": metadata["name"],
@@ -1550,7 +1590,16 @@ def _prune_snapshots(directory, name, dry_run, removing=False):
     return results
 
 
-def _sync_one(name, spec, directory, current, refresh, vis_version, frozen=False):
+def _sync_one(
+    name,
+    spec,
+    directory,
+    current,
+    refresh,
+    vis_version,
+    frozen=False,
+    source_cache=None,
+):
     destination = _destination(directory, name)
     exists = os.path.lexists(destination)
     tracking = _tracks_latest(spec)
@@ -1626,6 +1675,7 @@ def _sync_one(name, spec, directory, current, refresh, vis_version, frozen=False
         active.name if active else None,
         expected_name=name,
         expected_target=current["target"] if exists and active is None else None,
+        source_cache=source_cache,
     )
     return {**result, "status": "updated" if exists and not missing else "installed"}
 
@@ -1703,6 +1753,7 @@ def sync(
     dry_run=False,
     vis_version=None,
     frozen=False,
+    source_cache=None,
 ):
     """Reconcile one YAML scope. Reuse pins until refresh, and prune only owned packages.
 
@@ -1716,6 +1767,8 @@ def sync(
     failed package is reported, and its previous source and other packages stay. Dry-run
     makes no writes, imports or network calls. After source admission, the host prepares
     dependencies with upstream uv's own readiness and cache checks.
+    A `source_cache` folder keeps each fetched GitHub commit, so that another project
+    installs the same commit without Git.
     """
     if not dry_run:
         _trust(trust)
@@ -1795,7 +1848,14 @@ def sync(
                     activation.clear()
                     try:
                         result = _sync_one(
-                            name, spec, directory, current, refresh, vis_version, frozen
+                            name,
+                            spec,
+                            directory,
+                            current,
+                            refresh,
+                            vis_version,
+                            frozen,
+                            source_cache,
                         )
                         record = {
                             "spec": spec,

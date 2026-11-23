@@ -453,6 +453,33 @@ def releases(tmp_path, monkeypatch):
     return metadata, tmp_path / "installed", commands
 
 
+# A new worktree is a new project: it installed every package again with Git.
+def test_sync_in_another_project_reuses_the_fetched_commit_without_git(
+    releases, tmp_path, counted_downloads
+):
+    _, _, commands = releases
+    declared = {
+        "vis-greeter": {
+            "source": REPOSITORY,
+            "subdirectory": "plugins/greeting",
+            "version": "1.0.0",
+        }
+    }
+    cache = tmp_path / "home/package-sources"
+    first, second = tmp_path / "a/.vis/extensions", tmp_path / "b/.vis/extensions"
+    [one] = package.sync(declared, first, trust=True, source_cache=cache)
+    assert one["status"] == "installed" and commands
+    commands.clear()
+    [two] = package.sync(declared, second, trust=True, source_cache=cache)
+    assert two["status"] == "installed"
+    assert not commands and len(counted_downloads) == 1
+    assert two["revision"] == one["revision"]
+    for name in ("src/greeter.py", "pyproject.toml"):
+        assert (second / "vis-greeter/current" / name).read_text() == (
+            first / "vis-greeter/current" / name
+        ).read_text()
+
+
 @pytest.mark.parametrize("scope", ["workspace/.vis/extensions", "home/.vis/extensions"])
 def test_installed_sources_use_name_and_version_without_staging_layers(
     releases, tmp_path, scope
