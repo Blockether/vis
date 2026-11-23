@@ -529,10 +529,44 @@
   [^File dir]
   (Files/isDirectory (.toPath dir) (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])))
 
+(defn release-dir-claim!
+  "Release this process's claim after the directory's users stop.
+   The caller holds the store claim lock. Other processes can still hold claims."
+  [^File dir]
+  (let [path (.getAbsolutePath dir)]
+    (when-let [[^FileChannel channel ^FileLock lock] (get @held-claims path)]
+      (.release lock)
+      (.close channel)
+      (swap! held-claims dissoc path)
+      (release-held-files! [::claim path]))))
+
+(defonce ^:private scratch-users (atom {}))
+
+(defn- retain-scratch-dir!
+  "Return one user's idempotent release function. The caller holds the claim lock."
+  [^File dir open?]
+  (let [path (.getAbsolutePath dir)
+        users (long (get @scratch-users path 0))
+        released? (atom false)]
+    (when (zero? users)
+      (when-not open?
+        (throw (IOException. (str "The session no longer owns scratch " dir))))
+      (claim-dir! dir)
+      (when-not (contains? @held-claims path)
+        (throw (IOException. (str "Cannot claim the scratch directory " dir)))))
+    (swap! scratch-users assoc path (inc users))
+    (fn []
+      (with-claim-lock
+        (fn []
+          (when (compare-and-set! released? false true)
+            (if (= 1 (get @scratch-users path))
+              (do (release-dir-claim! dir) (swap! scratch-users dissoc path))
+              (swap! scratch-users update path dec))))))))
+
 (defn claim-session-scratch!
-  "Create and claim a session's scratch. The claim lives outside the writable tmp tree.
+  "Create session scratch and return `{:path :release!}`. The lock is outside `tmp`.
    `db-file` identifies the store that can judge whether the session still exists."
-  ^String [session-id db-file]
+  [session-id db-file]
   (when-let [dir (scratch-directory session-id)]
     (let [root (scratch-root)
           tmp (File. dir "tmp")]
@@ -551,21 +585,18 @@
           (create-private-dirs! tmp)
           (when-not (real-directory? tmp)
             (throw (IOException. (str "Cannot create the scratch directory " tmp))))
-          (claim-dir! dir)
-          (when-not (contains? @held-claims (.getAbsolutePath dir))
-            (throw (IOException. (str "Cannot claim the scratch directory " dir))))
-          (.getCanonicalPath tmp))))))
+          {:path (.getCanonicalPath tmp)
+           :release! (retain-scratch-dir! dir true)})))))
 
-(defn release-dir-claim!
-  "Release this process's claim after the directory's users stop.
-   The caller holds the store claim lock. Other processes can still hold claims."
-  [^File dir]
-  (let [path (.getAbsolutePath dir)]
-    (when-let [[^FileChannel channel ^FileLock lock] (get @held-claims path)]
-      (.release lock)
-      (.close channel)
-      (swap! held-claims dissoc path)
-      (release-held-files! [::claim path]))))
+(defn retain-session-scratch!
+  "Keep an open session's scratch in use for a managed child process."
+  [scratch]
+  (when scratch
+    (let [^File parent (.getParentFile (File. ^String scratch))
+          ^File dir (when parent (scratch-directory (.getName parent)))]
+      (when-not (and dir (= scratch (.getCanonicalPath (File. dir "tmp"))))
+        (throw (IOException. (str "Invalid session scratch directory " scratch))))
+      (with-claim-lock #(retain-scratch-dir! dir false)))))
 
 (defn scratch-env
   "The environment variables that name a session's writable scratch directory."

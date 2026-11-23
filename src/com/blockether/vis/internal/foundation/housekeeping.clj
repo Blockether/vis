@@ -429,14 +429,13 @@
     detached))
 
 (defn delete-session-scratch!
-  "Release this process's claim after teardown, and remove scratch no other process holds."
+  "Remove the session scratch after its last user releases its claim."
   [session-id]
   (when-let [dir (paths/scratch-directory session-id)]
     (let [root (paths/scratch-root)]
       (when (scratch-directory? root)
         (when-let [detached (paths/with-claim-lock root
                              (fn []
-                               (paths/release-dir-claim! dir)
                                (when (and (scratch-directory? dir) (not= :held (paths/claim-state dir)))
                                  (detach-scratch! root dir))))]
           (reclaim-dir! detached (canonical root)))))))

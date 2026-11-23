@@ -671,23 +671,32 @@
    `:extra-environment`, `:pty?`, `:merge-stderr?`, `:rows`, and `:columns`."
   ([argv directory policy] (spawn! argv directory policy nil))
   ([argv directory policy {:keys [environment extra-environment pty? merge-stderr? rows columns]}]
-   (let [confined? (and policy (not (:disabled? policy)) (not (python-runtime/jailed?)))]
-     ;; The spawn itself is the runtime library's (`Jail/spawn`), so the cdylib
-     ;; has to be resolvable HERE — in the process doing the spawning, which is
-     ;; not necessarily one that ever started an interpreter. Ensuring is a no-op
-     ;; once it resolves.
-     (try (vis-python-runtime/ensure-library!) (catch Throwable _ nil))
-     (python-runtime/spawn-process!
-       (mapv str argv)
-       {:environment (or environment (process-environment policy extra-environment))
-        :directory (some-> directory
-                           str)
-        :policy (when confined? (assoc (runtime-policy policy) :owner (claim-owner!)))
-        :socket-dir (when confined? (socket-dir (paths/runtime-dir)))
-        :pty? (boolean pty?)
-        :merge-stderr? (boolean merge-stderr?)
-        :rows (int (or rows 0))
-        :columns (int (or columns 0))}))))
+   (let [confined? (and policy (not (:disabled? policy)) (not (python-runtime/jailed?)))
+         release! (paths/retain-session-scratch! (:session/scratch policy))]
+     (try
+       ;; The spawn itself is the runtime library's (`Jail/spawn`), so the cdylib
+       ;; has to be resolvable HERE — in the process doing the spawning, which is
+       ;; not necessarily one that ever started an interpreter. Ensuring is a no-op
+       ;; once it resolves.
+       (try (vis-python-runtime/ensure-library!) (catch Throwable _ nil))
+       (let [^Process process
+             (python-runtime/spawn-process!
+               (mapv str argv)
+               {:environment (or environment (process-environment policy extra-environment))
+                :directory (some-> directory
+                                   str)
+                :policy (when confined? (assoc (runtime-policy policy) :owner (claim-owner!)))
+                :socket-dir (when confined? (socket-dir (paths/runtime-dir)))
+                :pty? (boolean pty?)
+                :merge-stderr? (boolean merge-stderr?)
+                :rows (int (or rows 0))
+                :columns (int (or columns 0))})]
+         (when release!
+           (.thenRun (.onExit process) ^Runnable (fn [] (release!))))
+         process)
+       (catch Throwable t
+         (when release! (release!))
+         (throw t))))))
 
 ;; ── ONE call's own environment ──────────────────────────────────────────────
 ;; `environment:` says what EVERY child of Vis gets. A verb that SPAWNS also

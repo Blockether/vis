@@ -7425,14 +7425,14 @@
                       (requiring-resolve 'com.blockether.vis.internal.gateway.resources/stop-all!)
                       (constantly [{:result :error}])}
                      (fn []
-                       (let [scratch (io/file (paths/claim-session-scratch! sid nil))]
+                       (let [{:keys [path release!]} (paths/claim-session-scratch! sid nil)
+                             scratch (io/file path)]
                          (try
                            (.get ^java.util.concurrent.Future (#'state/teardown-session-async! sid))
                            (expect (.isDirectory scratch))
                            (expect (= :held (paths/claim-state (paths/scratch-directory sid))))
                            (finally
-                             (paths/with-claim-lock (paths/scratch-root)
-                               #(paths/release-dir-claim! (paths/scratch-directory sid)))))))))))
+                             (release!)))))))))
 
 (defdescribe
   failed-session-deletion-test

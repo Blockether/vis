@@ -7,6 +7,8 @@
     [com.blockether.vis.test-python-context :as tpc]
     [com.blockether.vis.test-temp :as test-temp]
     [com.blockether.vis.internal.foundation.shell :as shell]
+    [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
+    [com.blockether.vis.internal.gateway.resources :as resources]
     [com.blockether.vis.test-provider-policies :as policies]
     [clojure.java.io]
     [clojure.string :as str]
@@ -4282,7 +4284,55 @@
                              (expect (= [expected expected] (str/split-lines (:stdout outcome))))))
                          (finally
                            (loop-env/dispose-environment! first-env)
-                           (loop-env/dispose-environment! second-env))))))))
+                           (loop-env/dispose-environment! second-env)))))))
+             (it "sweeps old scratch after the last of two overlapping environments closes"
+                 (let [home (test-temp/temp-dir "vis-scratch-release")
+                       db-path (str (clojure.java.io/file home "vis.db"))
+                       now (+ (System/currentTimeMillis) (* 2 housekeeping/day-ms))]
+                   (with-redefs [paths/scratch-root (constantly (clojure.java.io/file home "scratch"))]
+                     (let [environment (loop-env/create-environment ::router {:db db-path})
+                           sid (:session-id environment)
+                           next-env (loop-env/create-environment ::router {:db db-path :session sid})
+                           scratch (clojure.java.io/file (:session/scratch environment))
+                           db (:db-info next-env)]
+                       (try
+                         (loop-env/dispose-environment! environment)
+                         (housekeeping/sweep-session-scratch! db now)
+                         (expect (.isDirectory scratch))
+                         (finally
+                           (loop-env/dispose-environment! next-env)))
+                       (let [db (persistance/db-create-connection! db-path)]
+                         (try
+                           (housekeeping/sweep-session-scratch! db now)
+                           (expect (not (.exists scratch)))
+                           (finally (persistance/db-dispose-connection! db))))))))
+             (it "keeps old scratch for a managed shell after the environment closes"
+                 (let [home (test-temp/temp-dir "vis-scratch-shell")
+                       db-path (str (clojure.java.io/file home "vis.db"))
+                       now (+ (System/currentTimeMillis) (* 2 housekeeping/day-ms))]
+                   (with-redefs [paths/scratch-root (constantly (clojure.java.io/file home "scratch"))]
+                     (let [environment (loop-env/create-environment ::router {:db db-path})
+                           sid (:session-id environment)
+                           scratch (clojure.java.io/file (:session/scratch environment))
+                           db (persistance/db-create-connection! db-path)]
+                       (try
+                         (try
+                           (let [started (shell/shell-dispatch environment {"op" "background"
+                                                                          "id" "scratch-holder"
+                                                                          "command" "exec sleep 60"})]
+                             (expect (number? (get-in started [:result "pid"]))))
+                           (finally (loop-env/dispose-environment! environment)))
+                         (housekeeping/sweep-session-scratch! db now)
+                         (expect (.isDirectory scratch))
+                         (resources/stop-all! sid)
+                         (expect (loop [attempts 100]
+                                   (housekeeping/sweep-session-scratch! db now)
+                                   (cond (not (.exists scratch)) true
+                                         (pos? attempts) (do (Thread/sleep 20) (recur (dec attempts)))
+                                         :else false)))
+                         (finally
+                           (resources/stop-all! sid)
+                           (persistance/db-dispose-connection! db))))))))
 
 (defdescribe tool-call-execution-test
              ;; REGRESSION: tool calling once shipped 100% broken — `run-iteration`

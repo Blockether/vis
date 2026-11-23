@@ -209,7 +209,9 @@ that directory, the session leaves its project and its group.
 
 Each session has a scratch directory in the Vis state directory. Shell commands and sandbox Python get its path in `TMPDIR` and `VIS_SESSION_TMPDIR`. An extension can read these variables with `vis.call_env()` and pass them to a process it starts. For Java, pass `-Djava.io.tmpdir` with that path.
 
-Move files that you want to keep into your project. Vis removes scratch files when you delete the session and its managed processes stop. A cleanup check also removes scratch when no Vis process claims it and the session had no turn in the past 24 hours. Vis warns the agent when the directory exceeds 10 GiB. The warning does not remove files.
+Move files that you want to keep into your project. Vis removes scratch files when you delete the session and its managed processes stop. A cleanup check also removes scratch when the session had no turn in the past 24 hours and nothing claims it. Open environments, managed shells and managed REPLs hold claims. Detached processes that Vis does not track do not hold claims.
+
+Vis warns the agent when the directory exceeds 10 GiB. The warning does not remove files.
 
 Before cleanup, remove a temporary Git worktree with `git worktree remove`. This command also removes its record from the Git repository.
 

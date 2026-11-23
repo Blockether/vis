@@ -402,6 +402,7 @@
        ;; A sandbox that was never built has no interpreter to kill, and building
        ;; one here would start a process for the sole purpose of ending it.
        (try (env/dispose-sandbox! environment)
+            (when-let [release! (:session/scratch-release! environment)] (release!))
             (catch Throwable t
               (tel/log! :error
                         ["gateway: sandbox dispose failed - session LEAKED"
@@ -520,7 +521,8 @@
   ;; at: its namespace, its host doors and the native memory behind them stay live
   ;; for the process. So the failure path leaked worse than success ever could, on
   ;; exactly the runs a caller would retry.
-  (let [pending (volatile! nil)]
+  (let [pending (volatile! nil)
+        scratch-lease (volatile! nil)]
     (try
       (let [db-info (persistance/db-create-connection! db)
             _ (compactor/watch! db-info)
@@ -611,7 +613,8 @@
 
                                                             parent-session-id
                                                             (assoc :parent-session-id parent-session-id))))
-            scratch (paths/claim-session-scratch! session-id (:db-file db-info))
+            scratch (:path (vreset! scratch-lease
+                                        (paths/claim-session-scratch! session-id (:db-file db-info))))
             ;; A new session keeps the configuration tiers it was created with.
             ;; `open-env!` reads them back when it rebuilds the session.
             _ (when (and sources db-info (not resolved-session-id))
@@ -861,6 +864,7 @@
             env (cond-> {:environment-id environment-id
                          :session-id session-id
                          :session/scratch scratch
+                         :session/scratch-release! (:release! @scratch-lease)
                          :grant-owner grant-owner
                          :session/state-id session-state-id
                          :channel resolved-channel
@@ -1009,6 +1013,8 @@
       (catch Throwable t
         ;; Best-effort: a teardown must never replace the real failure with its own.
         (try (env/dispose-python-context! (:python-context @pending)) (catch Throwable _ nil))
+        (when-let [release! (:release! @scratch-lease)]
+          (try (release!) (catch Throwable _ nil)))
         (throw t)))))
 
 ;; Session env cache
