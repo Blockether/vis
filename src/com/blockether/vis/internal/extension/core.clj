@@ -1660,6 +1660,13 @@
   "Live session environment for the extension callback currently executing."
   nil)
 
+(def ^:dynamic *tool-call-provider*
+  "The full ID of the provider that served the model reply of the `py3` block that
+   runs now, or nil (#507). It is bound only around that block. It is not part of
+   the environment map, because a live view or an app callback keeps that map and
+   runs later, after the block."
+  nil)
+
 (defn current-extension-id
   []
   (some-> *current-extension*

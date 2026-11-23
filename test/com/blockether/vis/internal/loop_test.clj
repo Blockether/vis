@@ -14390,7 +14390,11 @@
             :routed/provider-id :peer
             :routed/model "small"}
            {:stop-reason :tool-calls
-            :tool-calls [{:id "call-1" :name "py3" :input {:code "x = 2"}}]}
+            :tool-calls [{:id "call-1" :name "py3" :input {:code "x = 2"}}]
+            :routed/provider-id :external/peer
+            :routed/model "small"}
+           {:stop-reason :tool-calls
+            :tool-calls [{:id "call-2" :name "py3" :input {:code "x = 3"}}]}
            {:stop-reason :end :tool-calls [] :content "Done" :routed/provider-id :fixture}]
 
           asked
@@ -14423,7 +14427,8 @@
                                           (:db-info environment)
                                           {:parent-session-id (:session-id environment)
                                            :user-request "Run two blocks"})})
-             (expect (= ["peer" nil] @seen))
+             ;; The full ID: a policy must tell `:external/peer` from `:peer`.
+             (expect (= ["peer" "external/peer" nil] @seen))
              (expect (nil? (:tool-call/provider environment))))
            (finally (loop-env/dispose-environment! environment))))))
 

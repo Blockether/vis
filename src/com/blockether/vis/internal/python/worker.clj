@@ -187,7 +187,9 @@
    drives only the views that the extension already owns. State and the log stay
    in the extension's own storage."
   #{"__vis_host_request__" "__vis_host_live__" "__vis_host_state_get__" "__vis_host_state_put__"
-    "__vis_host_state_del__" "__vis_host_state_keys__" "__vis_host_log__"})
+    "__vis_host_state_del__" "__vis_host_state_keys__" "__vis_host_log__"
+    ;; #507: answers nil to a thread, so the thread never reads the provider of a call.
+    "__vis_host_tool_call_provider__"})
 
 (defn- serve-host-call!
   "Serve only identities the host assigned to this connection. Worker claims do

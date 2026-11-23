@@ -4407,7 +4407,8 @@ vis.register_extension(vis.Extension(
                  (finally (ep/dispose-python-context! ctx))))))))
 
 (def ^:private provider-tool-py
-  "import time
+  "import threading
+import time
 import blockether.vis.extension as vis
 
 def provider() -> dict:
@@ -4420,10 +4421,35 @@ def guarded() -> str:
     'Run only for the prod provider.'
     return 'ran'
 
+def in_thread() -> dict:
+    'Read the provider in a thread that this call starts.'
+    out = {}
+    def work():
+        out['thread'] = vis.tool_call_provider()
+    worker = threading.Thread(target=work)
+    worker.start()
+    worker.join(10)
+    return out
+
+SEEN = []
+
+def watch() -> str:
+    'Open a panel whose button records the provider of each press.'
+    view = vis.live('Watch', [vis.ui.button('go', 'Go')], placement='panel', key='watch',
+                    on_event=lambda event: SEEN.append(vis.tool_call_provider()))
+    return view.view_id
+
+def seen() -> list:
+    'Report the provider of each press.'
+    return SEEN
+
 vis.register_extension(vis.Extension(
     name='provider-tool', description='Provider fixture.', alias='prov',
     symbols=[vis.Symbol(provider, activity=vis.Activity(label='Provider', show_start=False)),
-             vis.Symbol(guarded, activity=vis.Activity(label='Guarded', show_start=False))]))
+             vis.Symbol(guarded, activity=vis.Activity(label='Guarded', show_start=False)),
+             vis.Symbol(in_thread, activity=vis.Activity(label='Thread', show_start=False)),
+             vis.Symbol(watch, activity=vis.Activity(label='Watch', show_start=False)),
+             vis.Symbol(seen, activity=vis.Activity(label='Seen', show_start=False))]))
 ")
 
 (def ^:private provider-inner-py
@@ -4472,7 +4498,8 @@ vis.register_extension(vis.Extension(
                                      :extensions (atom exts)
                                      :active-extensions (atom exts)}
                               provider (assoc :tool-call/provider provider))]
-                    (try (loop-env/sync-active-extension-symbols! env exts)
+                    ;; Like a turn: the symbols sync once, without the provider of a call.
+                    (try (loop-env/sync-active-extension-symbols! (dissoc env :tool-call/provider) exts)
                          (let [result (#'python-exec/run-python-code ctx code :env env)]
                            (or (get-in result [:error :message]) (:stdout result)))
                          (finally (ep/dispose-python-context! ctx)))))
@@ -4489,7 +4516,45 @@ vis.register_extension(vis.Extension(
             (expect (= "[null, null]\n" (run nil report)))
             (expect (= "ran\n" (run "prod" "print(guarded())")))
             (expect (str/includes? (run "peer" "print(guarded())") "provider peer may not run it"))
-            (expect (str/includes? (run nil "print(guarded())") "provider None may not run it")))))))
+            (expect (str/includes? (run nil "print(guarded())") "provider None may not run it"))
+            (expect (= "{'thread': None}\n" (run "prod" "print({k: v for k, v in in_thread().items() if k != 'op'})")))))))
+  (it "gives a later live view event no provider, also when a model tool call opened the view"
+      (with-fresh-loaded
+        {"provider_tool.py" provider-tool-py
+         "provider_inner.py" provider-inner-py
+         "provider_hook.py" provider-hook-py}
+        (fn [_ {:keys [store]}]
+          (let [exts (mapv registered ["provider-tool" "provider-inner" "provider-hook"])
+                root (.getCanonicalPath ^java.io.File (temp-dir))
+                ws (ps/db-workspace-insert! store {:repo-id "watch" :root root})
+                sid (ps/db-store-session! store {:channel :tui :workspace-id (:id ws) :title "watch"})
+                ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                env {:python-context ctx
+                     :db-info store
+                     :session-id sid
+                     :channel :tui
+                     :cwd root
+                     :extensions (atom exts)
+                     :active-extensions (atom exts)
+                     :workspace-atom (atom ws)}
+                run (fn [e code]
+                      (let [result (#'python-exec/run-python-code ctx code :env e)]
+                        (or (get-in result [:error :message]) (:stdout result))))]
+            (try (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                                  (constantly (io/file root "views"))}
+                   #(do (loop-env/sync-active-extension-symbols! env exts)
+                        (let [view-id (str/trim (run (assoc env :tool-call/provider "prod")
+                                                     "print(watch())"))]
+                          (try (expect (:is-accepted (human-input/action! view-id {:action "activate"
+                                                                                   :node-id "go"})))
+                               (expect (= "[None]\n"
+                                          (loop [attempt 0]
+                                            (let [out (run env "print(seen())")]
+                                              (if (or (not= "[]\n" out) (= attempt 100))
+                                                out
+                                                (do (Thread/sleep 100) (recur (inc attempt))))))))
+                               (finally (when view-id (human-input/close-live! view-id)))))))
+                 (finally (ep/dispose-python-context! ctx))))))))
 
 (def ^:private python-name-tool-py
   "import blockether.vis.extension as vis

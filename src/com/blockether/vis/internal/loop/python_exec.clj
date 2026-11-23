@@ -597,9 +597,14 @@
               ;; (`ls` refusing a bound extra filesystem root that `cat`/`grep` on the
               ;; same path accept) and a nil environment reaching the `:fs/access`
               ;; gate that is supposed to hide a tree from the listing too.
+              ;; #507: the provider of this tool call is bound for this block only. A
+              ;; callback that keeps the environment map runs later and must not see it.
               (extension/with-context
-                {:env env}
-                (binding [rt/*blocking-wall-park*
+                {:env (dissoc env :tool-call/provider)}
+                (binding [extension/*tool-call-provider*
+                          (:tool-call/provider env)
+
+                          rt/*blocking-wall-park*
                           eval-park
 
                           rt/*blocking-wall-hold*
@@ -628,7 +633,7 @@
                   (let [result
                         (extension/invoke-operation
                           :py3
-                          env
+                          (dissoc env :tool-call/provider)
                           (fn [{:keys [code]}]
                             (let [out (env/run-python-block python-context
                                                             code

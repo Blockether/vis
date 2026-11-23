@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Extensions: `vis.tool_call_provider()` now returns the provider in a real turn. Before, a tool and a before hook got `None`. The value is the full provider ID, such as `external/prod`. A thread that the extension starts and a later callback, such as a `vis.live` event, get `None` (#507).
+
 ## [v0.5.31] - 2026-11-23
 
 ### Added

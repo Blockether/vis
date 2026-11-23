@@ -1170,7 +1170,9 @@
                                                            ;; `vis.tool_call_provider()`. Only the served route
                                                            ;; counts: no fallback to the selected model.
                                                            :tool-call/provider
-                                                           (some-> (:routed/provider-id ask-result) name)
+                                                           (when-some [id (:routed/provider-id ask-result)]
+                                                             ;; The full ID: `:external/prod` is not `:prod`.
+                                                             (if (keyword? id) (subs (str id) 1) (str id)))
                                                            ;; Activity belongs to the form and routes on the
                                                            ;; position shared by all of that form's frames.
                                                            :activity/on-snapshot

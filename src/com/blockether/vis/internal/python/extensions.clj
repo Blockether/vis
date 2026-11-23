@@ -1286,8 +1286,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
           "__vis_host_tool_call_provider__"
           (fn []
             ;; #507: the served provider of the model tool call that runs now, else nil.
-            ;; The bound session is no source: it knows only the selected model.
-            (:tool-call/provider extension/*current-environment*)))
+            ;; The bound session is no source: it knows only the selected model. A thread
+            ;; that the extension started is no part of the call, so it gets nil.
+            (when-not python-host/*guest-thread?*
+              extension/*tool-call-provider*)))
     (put! g
           "__vis_host_bound_session__"
           (fn []
