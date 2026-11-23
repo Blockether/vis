@@ -1167,6 +1167,89 @@
                     (#'python-runtime/delete-tree! outside)
                     (#'python-runtime/delete-tree! live-home))))))
 
+;; 2026-11-23: an update replaces the interpreter at the same install path. The old copies and
+;; environments looked live because the recorded path still existed: 8 environments for each
+;; extension, about 6 GiB, and a warm start never removed them.
+(defdescribe
+  automatic-environments-of-a-replaced-build-are-removed
+  (it
+    "removes the copy and the environments of a build that an update replaced at the same path"
+    (let [root
+          (temp-dir "vis-replaced-build")
+
+          bin
+          (io/file root "release" "python" "bin")
+
+          install
+          (.getPath (io/file bin "python3"))
+
+          store
+          (io/file root "state" "interpreters")
+
+          project
+          (io/file root "extension")
+
+          environment
+          #(io/file project (#'python-runtime/automatic-environment))
+
+          site
+          #(io/file (environment) "lib" "site-packages")
+
+          new-process!
+          #(do (reset! @#'python-runtime/base-pythons {})
+               (reset! @#'python-runtime/swept-projects #{}))]
+
+      (try (.mkdirs bin)
+           (spit install "build 1")
+           (spit (io/file bin "uv") "uv 1")
+           (.mkdirs project)
+           (spit (io/file project "pyproject.toml") "[project]\nname = \"replaced\"\n")
+           (with-redefs-fn
+             {#'python-runtime/embedded-executable (constantly install)
+              #'python-runtime/interpreter-store (constantly store)
+              #'python-runtime/swept-projects (atom #{})
+              ;; The process that used the old build has stopped, so no claim holds its copy.
+              #'paths/claim-dir! identity
+              #'python-runtime/interpreter-starts? (constantly true)
+              #'python-runtime/shared-project? (constantly false)
+              #'python-runtime/compile-bytecode! (fn [_ _])
+              #'python-runtime/project-packages (fn [_]
+                                                  (.getCanonicalFile ^java.io.File (site)))
+              #'python-runtime/run-uv!
+              (fn [_ args]
+                (let [base (second (drop-while #(not= "--python" %) args))]
+                  (cond (some #{"workspace"} args) (.getCanonicalPath project)
+                        (some #{"--check"} args) (when-not (.isFile (io/file (environment) "pyvenv.cfg"))
+                                                   (throw (ex-info "not ready" {})))
+                        :else (do (.mkdirs ^java.io.File (site))
+                                  (spit (io/file (environment) "pyvenv.cfg")
+                                        (str "home = " (.getParent (io/file base)) "\n"))))))}
+             (fn []
+               (python-runtime/ensure-project! project)
+               (let [old-environment (environment)
+                     old-copy (io/file store (subs (.getName ^java.io.File old-environment) 6))]
+                 (expect (.isDirectory old-copy) "preparation made no stable copy")
+                 (spit install "build 2, the update")
+                 (new-process!)
+                 (python-runtime/ensure-project! project)
+                 (expect (not= old-environment (environment)) "the update kept the environment name")
+                 (expect (not (.exists ^java.io.File old-environment))
+                         "the environment of the replaced build stays")
+                 (expect (not (.exists old-copy)) "the copy of the replaced build stays")
+                 (expect (.isDirectory ^java.io.File (environment)) "preparation removed its own environment")
+                 ;; An environment of an older release names the install directly as home.
+                 (.mkdirs (io/file old-environment "bin"))
+                 (spit (io/file old-environment "pyvenv.cfg") (str "home = " (.getPath bin) "\n"))
+                 (Files/createSymbolicLink (.toPath (io/file old-environment "bin" "python"))
+                                           (.toPath (io/file install))
+                                           (make-array FileAttribute 0))
+                 (new-process!)
+                 (python-runtime/ensure-project! project)
+                 (expect (not (.exists ^java.io.File old-environment))
+                         "a warm start keeps the environment of a replaced install")
+                 (expect (.isDirectory ^java.io.File (environment)) "the warm start removed its own environment"))))
+           (finally (#'python-runtime/delete-tree! root))))))
+
 (defdescribe
   automatic-project-preparation-replaces-an-environment-from-another-python
   (it "automatic project preparation replaces an environment from another python"

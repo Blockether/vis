@@ -666,8 +666,10 @@
                                (spit file (str python "\n") :append true))))))
 
 (defn- copy-in-use?
-  "True when the stable copy `home` still serves an install: an install in its list exists,
-   or a process holds its claim. A copy without a list is not one of ours, so it stays."
+  "True when the stable copy `home` still serves an install: an install in its list still
+   holds the build of the copy, or a process holds its claim. An update replaces an install
+   at the same path, so an existing path is not enough. A copy without a list is not one of
+   ours, so it stays."
   [^File store ^File home]
   (let [target
         (paths/nearest-ancestor #(= store (.getParentFile ^File %)) home)
@@ -679,7 +681,10 @@
     (or (nil? file)
         (not (.isFile file))
         (= :held (paths/claim-state target))
-        (boolean (some #(and (seq %) (.exists (io/file %))) (str/split-lines (slurp file)))))))
+        (boolean (some #(and (seq %)
+                             (.isFile (io/file %))
+                             (str/starts-with? (interpreter-identity %) (.getName ^File target)))
+                       (str/split-lines (slurp file)))))))
 
 (defn- base-in-use?
   "True when the base interpreter directory `home` of an environment can still serve it:
@@ -903,14 +908,29 @@
                          (file-seq environment)))
       (delete-tree! environment))))
 
+(defn- environment-build?
+  "True when the executable of `environment` is still the interpreter build that its name
+   records. An update replaces an install at the same path, and the environment of the old
+   build cannot serve a process again. An environment without an executable stays."
+  [^File environment]
+  (let [python (io/file environment "bin" "python")]
+    (or (not (.isFile python))
+        (str/starts-with? (interpreter-identity python) (subs (.getName environment) 6)))))
+
+(defonce ^:private swept-projects
+  ;; Canonical project paths whose orphan environments this process removed.
+  (atom #{}))
+
 (defn- remove-orphan-environments!
-  "Remove the automatic environments in `project` whose base interpreter is gone.
-   A native release keeps its interpreter in its own directory, so each release
-   prepares a new environment. When the release is removed, no process can use
-   that environment again. The bytecode cache of a removed tree is swept at startup.
+  "Remove the automatic environments in `project` whose base interpreter is gone or
+   holds another build. A native release keeps its interpreter in its own directory, so
+   each release prepares a new environment. When the release is removed, no process can
+   use that environment again. The bytecode cache of a removed tree is swept at startup.
    An environment on a stable copy stays while an install of that build exists.
-   A link, a project `.venv` and an environment of an existing interpreter stay."
+   A link, a project `.venv` and an environment of an existing interpreter stay.
+   Runs one time for each project in a process, also when the preparation is cached."
   [^File project]
+  (swap! swept-projects conj (.getCanonicalPath project))
   (let [own (automatic-environment)]
     (doseq [^File environment (or (.listFiles project) (make-array File 0))
             :let [name (.getName environment)]
@@ -918,13 +938,15 @@
                        (not= own name)
                        (Files/isDirectory (.toPath environment) no-follow))
             :let [home (environment-home environment)]
-            :when (and home (.isAbsolute (io/file home)) (not (base-in-use? (io/file home))))]
+            :when (and home (.isAbsolute (io/file home)))]
 
-      (try (delete-environment! environment)
-           (tel/log! {:level :info
-                      :id ::orphan-environment-removed
-                      :data {:project (.getPath project) :environment name}})
-           (catch java.io.IOException e
+      (try (when-not (and (base-in-use? (io/file home)) (environment-build? environment))
+             (delete-environment! environment)
+             (tel/log! {:level :info
+                        :id ::orphan-environment-removed
+                        :data {:project (.getPath project) :environment name}}))
+           (catch InterruptedException e (throw e))
+           (catch Exception e
              (tel/log! {:level :warn
                         :id ::orphan-environment-not-removed
                         :data {:project (.getPath project) :environment name}
@@ -1332,26 +1354,25 @@
           (write-state! (shared-decision-file project) inputs))
         (preparation-stage! project "cached")
         packages)
-      (do (remove-orphan-environments! project)
-          (let [exclusions (when prune?
-                             (sdk-exclusions (export-project project false false) pruned))
-                uv (bundled-uv!)
-                options (cond-> (embedded-python)
-                          (seq exclusions) (into (cons "--locked" (mapcat #(vector "--no-install-package" %) exclusions))))
-                ready? (try (and (runtime-environment? project)
-                                 (do (run-uv! project (into [uv "sync" "--check" "--offline"] options))
-                                     true))
-                            (catch clojure.lang.ExceptionInfo _ false))]
-            (when-not ready?
-              (preparation-stage! project "installing")
-              (let [stamp (io/file workspace (automatic-environment) prepared-stamp)]
-                (Files/deleteIfExists (.toPath stamp)))
-              (remove-environment-shell! project)
-              (run-uv! project (into [uv "sync"] options)))
-            (let [packages (project-packages project)]
-              (stamp-prepared! project packages true)
-              (preparation-stage! project (if ready? "cached" "ready"))
-              packages))))))
+      (let [exclusions (when prune?
+                         (sdk-exclusions (export-project project false false) pruned))
+            uv (bundled-uv!)
+            options (cond-> (embedded-python)
+                      (seq exclusions) (into (cons "--locked" (mapcat #(vector "--no-install-package" %) exclusions))))
+            ready? (try (and (runtime-environment? project)
+                             (do (run-uv! project (into [uv "sync" "--check" "--offline"] options))
+                                 true))
+                        (catch clojure.lang.ExceptionInfo _ false))]
+        (when-not ready?
+          (preparation-stage! project "installing")
+          (let [stamp (io/file workspace (automatic-environment) prepared-stamp)]
+            (Files/deleteIfExists (.toPath stamp)))
+          (remove-environment-shell! project)
+          (run-uv! project (into [uv "sync"] options)))
+        (let [packages (project-packages project)]
+          (stamp-prepared! project packages true)
+          (preparation-stage! project (if ready? "cached" "ready"))
+          packages)))))
 
 (defn ensure-project!
   "Prepare an extension with bundled uv and the embedded Python.
@@ -1365,7 +1386,9 @@
   (binding [*workspace-dirs* (atom {})
             *environment* (own-venv project)
             *extension-preparation?* true]
-    (try (or (cached-project project)
+    (try (when-not (contains? @swept-projects (.getCanonicalPath project))
+           (remove-orphan-environments! project))
+         (or (cached-project project)
              (with-workspace-lock (if (some #(.isFile (io/file % "pyproject.toml"))
                                            (paths/ancestor-chain project))
                                     (project-workspace project)
