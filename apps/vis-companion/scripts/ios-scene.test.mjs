@@ -56,6 +56,14 @@ describe('iOS scene life cycle preparation', () => {
       expect(delegate).not.toContain('endEditing');
       expect(run('--check').status).toBe(0);
 
+      // A scene manifest with another delegate or storyboard stops the app at launch too.
+      writeFileSync(plistPath, plist
+        .replace('$(PRODUCT_MODULE_NAME).SceneDelegate', '$(PRODUCT_MODULE_NAME).WrongDelegate')
+        .replace(/(<key>UISceneStoryboardFile<\/key>\s*<string>)Main(<\/string>)/, '$1Missing$2'));
+      expect(run('--check').status).not.toBe(0);
+      expect(run().status).toBe(0);
+      expect(readFileSync(plistPath, 'utf8')).toBe(plist);
+
       // A project made before the scene life cycle: no scene delegate in the target,
       // an app-level storyboard and the keyboard stamp in the app delegate.
       const objectId = (n) => `5A11E5${n.toString(16).toUpperCase().padStart(18, '0')}`;

@@ -392,6 +392,28 @@ if (missingPlistEntries.length > 0) {
   preparedPlist = preparedPlist.slice(0, at) + additions + preparedPlist.slice(at);
 }
 
+// The scene manifest is ours whole: one with another delegate or storyboard also stops
+// the app at launch. So prepare writes ours over it, and --check sees the difference.
+const sceneManifestKey = '<key>UIApplicationSceneManifest</key>';
+const sceneManifestAt = preparedPlist.indexOf(sceneManifestKey);
+if (sceneManifestAt >= 0) {
+  const tags = /<dict\/>|<dict>|<\/dict>/g;
+  tags.lastIndex = sceneManifestAt + sceneManifestKey.length;
+  let depth = 0;
+  let end = -1;
+  for (let tag = tags.exec(preparedPlist); tag; tag = tags.exec(preparedPlist)) {
+    depth += tag[0] === '<dict>' ? 1 : tag[0] === '</dict>' ? -1 : 0;
+    if (depth === 0) {
+      end = tags.lastIndex;
+      break;
+    }
+  }
+  if (end < 0) die('Info.plist has an unclosed UIApplicationSceneManifest');
+  const start = preparedPlist.lastIndexOf('\n', sceneManifestAt) + 1;
+  const manifest = plistEntries.find(([key]) => key === 'UIApplicationSceneManifest')[1];
+  preparedPlist = preparedPlist.slice(0, start) + manifest + preparedPlist.slice(end);
+}
+
 // Capacitor's generated plist enables controller-based appearance, and its SystemBars
 // plugin shows the status bar during bridge startup. The plist must control it globally
 // instead, from the launch screen through every web view reload.
