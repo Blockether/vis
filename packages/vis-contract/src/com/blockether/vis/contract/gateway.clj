@@ -30,6 +30,10 @@
   "Largest picture that one file preview answers, in bytes."
   (get-in @source ["$defs" "preview_image_bytes" "maximum"]))
 
+(def agent-roles
+  "The roles of the agent of a session."
+  (set (get-in @source ["$defs" "session_agent" "properties" "role" "enum"])))
+
 (def client-lease
   "Remote lease lifetime and keepalive policy."
   (wire/->engine (get @source "x-vis-client-lease")))

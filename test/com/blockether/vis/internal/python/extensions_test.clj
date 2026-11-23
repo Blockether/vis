@@ -8062,6 +8062,10 @@ vis.register_extension(vis.Extension(name='board', description='Board fixture.',
     session_app=vis.SessionApp('board', 'Board', open_board, icon='review')))
 ")
 
+(def ^:private leader-board-py
+  "The extension of `declared-board-py`, with its app only in leader sessions."
+  (str/replace declared-board-py "icon='review')" "icon='review', roles=('leader',))"))
+
 (defdescribe
   declared-session-app-test
   ;; User request 2026-11-22: a session with no block had no Review app, so only
@@ -8171,7 +8175,51 @@ vis.register_extension(vis.Extension(name='board', description='Board fixture.',
                                                                              (:id (first
                                                                                     listed))))))
                (expect (empty? @cache)) (expect (empty? (human-input/session-apps
-                                                          (str (random-uuid))))))))))))
+                                                          (str (random-uuid)))))))))))
+  (it
+    "lists an app for leaders in a leader session and not in its subagent"
+    ;; User request: a subagent session listed the Review app of its leader.
+    (with-fresh-loaded
+      {"extension.py" leader-board-py}
+      (fn [loaded {:keys [store]}]
+        (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+        (let [root
+              (.getCanonicalPath ^java.io.File (temp-dir))
+
+              ws
+              (ps/db-workspace-insert! store {:repo-id "board" :root root})
+
+              sid
+              (ps/db-store-session! store {:channel :tui :workspace-id (:id ws) :title "board"})
+
+              turn
+              (ps/db-store-session-turn!
+                store
+                {:parent-session-id sid :user-request "Leader task" :status :running})
+
+              child
+              (db-test/fork-session-at-turn! store
+                                             sid
+                                             {:through-turn-id turn
+                                              :agent {:parent_id (str sid)
+                                                      :leader_id (str sid)
+                                                      :team_id (str turn)
+                                                      :task "Change a file"
+                                                      :iteration_budget 4
+                                                      :spawn_key (str turn)
+                                                      :spawn_fingerprint "fixture"
+                                                      :checkpoint [{:role :user :content "Task"}]}})
+
+              listed
+              #(human-input/session-apps (str %))]
+
+          (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                           (constantly (io/file root "views"))
+                           #'loop-env/cache (atom {})
+                           #'ps/db-shared-connection! (constantly store)}
+            #(do (expect (= ["Board"] (mapv :title (listed sid))))
+                 (expect (not-any? :roles (listed sid)))
+                 (expect (= [] (listed child))))))))))
 
 (def ^:private stale-ctx-py
   "import blockether.vis.extension as vis

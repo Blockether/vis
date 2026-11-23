@@ -2,10 +2,12 @@
 
 Before each Python block, the journal records the changes made since the last
 block, by a person or another program. After each block, it
-records what that step changed. Each session lists the app from its start: the
-checkpoints, the changed files and their diff, the checks, an AI review and undo.
+records what that step changed. Each leader session lists the app from its start:
+the checkpoints, the changed files and their diff, the checks, an AI review and undo.
 The app opens when a person opens it, or at the first step of the session. After a
-reload, the `on_reload` hook of the app connects it again.
+reload, the `on_reload` hook of the app connects it again. A subagent has no app:
+its journal names its leader, and the app of the leader shows its changes as own.
+The sessions of the AI review record nothing.
 The logic lives in `vis_review`; the SDK program `python -m vis_review` uses it too.
 """
 
@@ -16,6 +18,7 @@ import threading
 import blockether.vis.extension as vis
 
 from vis_review.app import ReviewApp, extension_opener
+from vis_review.journal import member_key
 from vis_review.recorder import (
     Recorder,
     block_label,
@@ -26,6 +29,8 @@ LOG = logging.getLogger("vis_review")
 RECORDER = Recorder()
 # A block hook and `reopen` can ask for the app of one journal at the same time.
 _MAKING = threading.Lock()
+# The journal key of each session; None for a session that records nothing.
+_KEYS: dict[str, str | None] = {}
 
 
 def _session_id():
@@ -36,16 +41,35 @@ def _session_id():
         return None
 
 
+def _journal_key(session_id):
+    """The journal key of a session: its id, or the member key of a subagent.
+
+    None for a session of the AI review, which changes no file.
+    """
+    if session_id not in _KEYS:
+        record = vis.session.read()
+        agent = record.get("agent") or {}
+        origin = record.get("origin") or {}
+        if origin.get("extension") == "vis-review":
+            _KEYS[session_id] = None
+        elif agent.get("role") == "subagent" and agent.get("leader_id"):
+            _KEYS[session_id] = member_key(agent["leader_id"], session_id)
+        else:
+            _KEYS[session_id] = session_id
+    return _KEYS[session_id]
+
+
 def _record(kind, label_of, wrote_of=None):
     session_id = _session_id()
-    if not session_id:
+    key = _journal_key(session_id) if session_id else None
+    if not key:
         return
     root = vis.workspace_root()
     wrote = wrote_of(str(root)) if wrote_of else None
-    RECORDER.record(session_id, root, kind, label_of(str(root)), wrote)
-    # The first step opens the app, so a person sees it at once.
-    journal = RECORDER.journal(session_id, root)
-    if RECORDER.app(session_id, journal.root) is None:
+    RECORDER.record(key, root, kind, label_of(str(root)), wrote)
+    # The first step of a leader opens the app, so a person sees it at once.
+    journal = RECORDER.journal(key, root)
+    if key == session_id and RECORDER.app(session_id, journal.root) is None:
         _app(session_id, journal).open()
 
 
@@ -107,7 +131,7 @@ def _opener(declaration, on_event):
 def reopen(app):
     """The `on_reload` hook: connect the review app of a session again."""
     session_id = str(app.get("session_id") or "")
-    if not session_id:
+    if not session_id or _journal_key(session_id) != session_id:
         return
     journal = RECORDER.journal(session_id, vis.workspace_root())
     # Another root of this session has another key, and its own app.
@@ -116,9 +140,12 @@ def reopen(app):
 
 
 def open_review(app):
-    """The `open` function of the session app: open the review app of a session."""
+    """The `open` function of the session app: open the review app of a leader session.
+
+    A subagent opens no app, also one that it saved before it lost the app.
+    """
     session_id = str(app.get("session_id") or "")
-    if session_id:
+    if session_id and _journal_key(session_id) == session_id:
         journal = RECORDER.journal(session_id, vis.workspace_root())
         _app(session_id, journal).open()
 
@@ -133,6 +160,7 @@ vis.register_extension(
             open_review,
             icon="review",
             surfaces={"inline": False, "session": "sidebar"},
+            roles=("leader",),
         ),
         op_hooks=[
             vis.OpHook(["py3"], before_block),

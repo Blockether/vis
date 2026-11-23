@@ -1172,7 +1172,7 @@ follows these rules:
 ## Session apps
 
 ```python
-vis.SessionApp(key, title, open, icon=None, surfaces=None)
+vis.SessionApp(key, title, open, icon=None, surfaces=None, roles=None)
 ```
 
 An app of an extension exists in a session only after the code of the extension opened it there.
@@ -1211,6 +1211,10 @@ A session app follows these rules:
 - `icon` and `surfaces` take the values of `vis.ui.app`. Give the same values to the real app.
 - `key` names the settings of the person for the listed app. Give the real app
   `settings_name=key`, so both use the same settings.
+- `roles` names the agent roles of the sessions that list the app: `"leader"`, `"subagent"`,
+  or both. A managed subagent has the `subagent` role. Each other session has the `leader`
+  role. With `roles=("leader",)`, a subagent does not list the app. `None` lists the app in
+  each session.
 - While a turn runs in a session that has no Python yet, the app does not open. The app opens
   when the extension opens it in that turn, or when the person opens it after the turn.
 

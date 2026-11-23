@@ -16,6 +16,8 @@ The journal keeps checkpoints of the files of one root, without Git refs.
 - The extension records a checkpoint after each Python block and each patch.
 - Before each block, it also records the changes that a person or another program made since the last block.
 - The SDK program records a checkpoint each time it looks, every `--every` seconds.
+- A subagent records its own journal, and its journal names its leader. The journal of the leader shows the changes of each subagent as changes of the leader, in a **Changes of subagents** checkpoint. The undo of the leader and the **This session** view include them.
+- The sessions of the AI review record nothing.
 
 The file list follows the ignore rules of the workspace (`vis_lang_interface.tree.listing`). A file stat finds the changed files.
 
@@ -28,7 +30,7 @@ Data is under `$VIS_HOME/review/`, else `~/.vis/review/`:
 
 ## The app
 
-Each session lists the app from its start. The app opens when you open it, or at the first Python block or patch of the session. After you closed it, the session lists it again. After `/reload`, the open app connects again by itself. After a gateway restart, the app connects when you open it. The app shows:
+Each leader session lists the app from its start. A subagent session does not list the app: open the app of its leader. The app opens when you open it, or at the first Python block or patch of the session. After you closed it, the session lists it again. After `/reload`, the open app connects again by itself. After a gateway restart, the app connects when you open it. The app shows:
 
 - The checkpoints. Pick one to see its changes, or pick **All changes**.
 - The changed files with their added and removed line counts. Pick one to see only its diff.

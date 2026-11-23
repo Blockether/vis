@@ -2443,6 +2443,16 @@
 ;; Keep the Var so namespace reloads retain live wiring.
 (defonce ^:private _app-connect (view/set-connector! #'connect-app!))
 
+(defn- for-agent
+  "The apps of `apps` that session `session-id` lists, without their `:roles`. An app
+   with `:roles` shows only in a session whose agent has one of these roles: a managed
+   subagent is a `subagent`, every other session a `leader`."
+  [db-info session-id apps]
+  (let [role (if (persistance/db-agent-info db-info (str session-id)) "subagent" "leader")]
+    (into []
+          (keep #(when (or (nil? (:roles %)) (some #{role} (:roles %))) (dissoc % :roles)))
+          apps)))
+
 (defn- declared-apps
   "The apps that the extensions of session `session-id` declare for each session. A
    session with an environment answers from its own extensions. Another session
@@ -2450,13 +2460,13 @@
    unknown session has none."
   [session-id]
   (if-let [environment (:environment (get @cache (cache-key session-id)))]
-    (extension/session-apps environment)
-    (let [db-info (persistance/db-shared-connection! (config/resolve-db-spec))]
-      (when-let [workspace (saved-workspace db-info
-                                            (persistance/db-resolve-session-id db-info session-id))]
+    (for-agent (:db-info environment) session-id (extension/session-apps environment))
+    (let [db-info (persistance/db-shared-connection! (config/resolve-db-spec))
+          sid (persistance/db-resolve-session-id db-info session-id)]
+      (when-let [workspace (saved-workspace db-info sid)]
         (extension/with-context {:env {:session-id session-id :workspace/root (:root workspace)}}
                                 (python-extensions/ensure-python-extensions-loaded!)
-                                (extension/session-apps))))))
+                                (for-agent db-info sid (extension/session-apps)))))))
 
 ;; Keep the Var so namespace reloads retain live wiring.
 (defonce ^:private _app-declare (view/set-declarer! #'declared-apps))

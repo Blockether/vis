@@ -3077,7 +3077,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             (assoc :icon (get app "icon"))
 
             (get app "surfaces")
-            (assoc :surfaces (update-keys (get app "surfaces") keyword))))
+            (assoc :surfaces (update-keys (get app "surfaces") keyword))
+
+            (get app "roles")
+            (assoc :roles (vec (get app "roles")))))
 
         op-hooks
         (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))

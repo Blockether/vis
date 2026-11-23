@@ -24,6 +24,11 @@ def test_extension_carries_the_function_of_a_session_app_by_name():
     }
 
 
+def test_session_app_names_the_agent_roles_of_its_sessions():
+    app = vis.SessionApp("board", "Board", open_board, roles=["leader", "leader"])
+    assert app._spec()["roles"] == ["leader"]
+
+
 def test_session_app_refuses_a_function_that_a_new_process_cannot_find():
     with pytest.raises(TypeError, match="module level"):
         vis.SessionApp("board", "Board", lambda app: None)
@@ -36,6 +41,8 @@ def test_session_app_refuses_a_function_that_a_new_process_cannot_find():
         ({"title": ""}, ValueError),
         ({"icon": "typo"}, ValueError),
         ({"surfaces": {"session": "typo"}}, TypeError),
+        ({"roles": ()}, ValueError),
+        ({"roles": ("boss",)}, ValueError),
     ],
 )
 def test_session_app_refuses_a_wrong_field(kwargs, error):

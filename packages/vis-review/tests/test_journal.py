@@ -9,7 +9,7 @@ from vis_lang_interface.tree import walked
 
 from vis_review import journal as journal_module
 from vis_review import store
-from vis_review.journal import Base, Journal, base_ref
+from vis_review.journal import Base, Journal, base_ref, member_key
 
 
 def journal(tmp_path, key="s1"):
@@ -547,3 +547,117 @@ def test_a_session_keeps_a_file_that_it_changed_before(tmp_path):
     theirs.checkpoint("block", "ended first")
     entry = mine.checkpoint("block", "the second own change")
     assert (entry.kind, set(entry.files)) == ("block", {"shared.py"})
+
+
+def test_a_leader_owns_the_changes_that_its_subagents_recorded(tmp_path):
+    # The review of the leader showed the work of its subagents as changes of others.
+    leader = journal(tmp_path, "L")
+    member = journal(tmp_path, member_key("L", "S"))
+    other = journal(tmp_path, "s2")
+    write(leader, "base.py", "b\n")
+    for j in (leader, member, other):
+        j.checkpoint()
+    write(member, "base.py", "a1\n")
+    member.checkpoint("block", "a subagent block")
+    write(other, "other.py", "o1\n")
+    other.checkpoint("block", "another session")
+    write(leader, "mine.py", "m1\n")
+    leader.checkpoint("block", "a long leader block")
+    assert [(e.kind, set(e.files)) for e in leader.entries[1:]] == [
+        ("team", {"base.py"}),
+        ("outside", {"other.py"}),
+        ("block", {"mine.py"}),
+    ]
+    assert leader.own_paths() == ["base.py", "mine.py"]
+    assert member.own_paths() == ["base.py"]
+    assert leader.undo_own("base.py").restored == ("base.py",)
+    assert read(leader, "base.py") == "b\n"
+
+
+def test_a_leader_owns_a_subagent_change_that_it_saw_before_the_subagent_recorded_it(
+    tmp_path,
+):
+    # A subagent records its step when the step ends; the leader can see the file first.
+    leader = journal(tmp_path, "L")
+    member = journal(tmp_path, member_key("L", "S"))
+    leader.checkpoint()
+    member.checkpoint()
+    write(member, "agent.py", "a1\n")
+    entry = leader.checkpoint("outside", "Changes between blocks")
+    assert entry.kind == "outside"
+    assert leader.own_paths() == []
+    member.checkpoint("block", "a subagent block ends")
+    assert leader.own_paths() == ["agent.py"]
+
+
+def test_a_leader_keeps_a_subagent_change_that_another_session_edited_before_its_scan(
+    tmp_path,
+):
+    leader = journal(tmp_path, "L")
+    member = journal(tmp_path, member_key("L", "S"))
+    write(leader, "f.py", "a\nb\nc\n")
+    leader.checkpoint()
+    member.checkpoint()
+    write(member, "f.py", "A\nb\nc\n")
+    member.checkpoint("block", "a subagent block")
+    write(member, "f.py", "A\nb\nC\n")
+    leader.checkpoint("outside", "Changes between blocks")
+    [diff] = leader.own_diff(context=0)
+    assert "+A" in diff.patch and "+C" not in diff.patch
+
+
+def test_a_leader_keeps_an_old_change_of_others_that_a_later_subagent_repeats(tmp_path):
+    times = iter(range(1, 100))
+    root = tmp_path / "root"
+    root.mkdir()
+    leader, member = (
+        Journal(root, key, tmp_path / "base", files=walked, clock=lambda: next(times))
+        for key in ("L", member_key("L", "S"))
+    )
+    write(leader, "f.py", "a\n")
+    leader.checkpoint()
+    write(leader, "f.py", "b\n")
+    leader.checkpoint("outside", "Changes between blocks")
+    write(leader, "f.py", "a\n")
+    leader.checkpoint("outside", "Changes between blocks")
+    member.checkpoint()
+    write(member, "f.py", "b\n")
+    member.checkpoint("block", "a subagent block")
+    assert [e.kind for e in leader.entries] == ["baseline", "outside", "outside"]
+    assert leader.own_paths() == []
+
+
+def test_a_leader_owns_a_file_that_a_subagent_deleted_before_it_recorded_the_step(
+    tmp_path,
+):
+    leader = journal(tmp_path, "L")
+    member = journal(tmp_path, member_key("L", "S"))
+    write(leader, "f.py", "a\n")
+    leader.checkpoint()
+    member.checkpoint()
+    os.remove(os.path.join(member.root, "f.py"))
+    leader.checkpoint("outside", "Changes between blocks")
+    member.checkpoint("block", "a subagent block ends")
+    assert leader.own_paths() == ["f.py"]
+
+
+def test_a_subagent_step_starts_at_its_last_scan_and_not_at_its_last_change(tmp_path):
+    times = iter(range(1, 100))
+    root = tmp_path / "root"
+    root.mkdir()
+    leader, member = (
+        Journal(root, key, tmp_path / "base", files=walked, clock=lambda: next(times))
+        for key in ("L", member_key("L", "S"))
+    )
+    write(leader, "f.py", "a\n")
+    leader.checkpoint()
+    member.checkpoint()
+    write(leader, "f.py", "b\n")
+    leader.checkpoint("outside", "Changes between blocks")
+    write(leader, "f.py", "a\n")
+    leader.checkpoint("outside", "Changes between blocks")
+    # The before-hook of an idle subagent block saves no checkpoint, but it scans.
+    assert member.checkpoint("outside", "Changes between blocks") is None
+    write(member, "f.py", "b\n")
+    member.checkpoint("block", "a subagent block")
+    assert leader.own_paths() == []

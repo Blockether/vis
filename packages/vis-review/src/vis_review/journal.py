@@ -38,9 +38,10 @@ from vis_lang_interface.tree import Tree, listing, stamp_of
 
 from vis_review.store import Store
 
-KINDS = ("baseline", "outside", "block", "patch", "undo", "manual")
-# Kinds that the session itself wrote; "outside" holds the edits of others.
-OWN_KINDS = ("block", "patch", "undo")
+KINDS = ("baseline", "outside", "block", "patch", "undo", "manual", "team")
+# Kinds that the session itself wrote; "team" holds the changes of its subagents,
+# "outside" the edits of others.
+OWN_KINDS = ("block", "patch", "undo", "team")
 # Kinds that record a step of the session. A step takes time, so its changes can
 # hold the work of others: a pull, or the edit of a session that runs beside it.
 STEP_KINDS = ("block", "patch")
@@ -102,6 +103,19 @@ def _safe(key: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", key)[:120] or "default"
 
 
+# The part of a journal key between the key of a leader and the key of its subagent.
+TEAM_MARK = ".agent."
+
+
+def member_key(leader: str, member: str) -> str:
+    """The journal key of subagent `member` of leader `leader`.
+
+    The journal of the leader reads the journals of these keys: the own changes of
+    its subagents are its own changes too.
+    """
+    return f"{_safe(leader)}{TEAM_MARK}{_safe(member)}"
+
+
 def _covers(_path) -> bool:
     return True
 
@@ -146,6 +160,10 @@ class Journal:
         self._oids: dict[str, str] = {}
         # Merged contents by the digests of their three sides; None when the sides conflict.
         self._merges: OrderedDict[tuple, str | None] = OrderedDict()
+        # The own changes of each subagent journal, by its path, with the stamp of the read.
+        self._members: dict[
+            Path, tuple[tuple, list[tuple[float, float, str, str | None]]]
+        ] = {}
         self.entries: list[Entry] = []
         self.state: dict[str, str] = {}
         self._load()
@@ -230,6 +248,15 @@ class Journal:
                 return self._append("baseline", label or "Baseline", delta)
             if not delta:
                 return None
+            ours = self._of_team(delta, since, wrote if kind in STEP_KINDS else None)
+            if ours:
+                team = self._append(
+                    "team",
+                    "Changes of subagents",
+                    {rel: delta.pop(rel) for rel in ours},
+                )
+                if not delta:
+                    return team
             if kind in STEP_KINDS:
                 theirs = self._of_others(delta, since, head, wrote)
                 if theirs:
@@ -240,7 +267,9 @@ class Journal:
                     )
                     if not delta:
                         return other
-            return self._append(kind, label, delta)
+            return self._append(
+                kind, label, delta, since if kind in STEP_KINDS else None
+            )
 
     def _head_now(self) -> str | None:
         """The commit of HEAD. The reflog gives it without a git process."""
@@ -345,6 +374,120 @@ class Journal:
             return set()
         return {rel for rel in maybe if at_new.get(rel) == self._oid(delta[rel])}
 
+    def _of_team(
+        self,
+        delta: Mapping[str, str | None],
+        since: float | None,
+        wrote: Callable[[str], bool] | None = None,
+    ) -> set[str]:
+        """The paths of `delta` that a subagent journal recorded as its own change since `since`.
+
+        A path that the step shows it wrote (`wrote`) stays with the step.
+        """
+        claimed = self._team_claims(self.entries[-1].at if since is None else since)
+        return {
+            rel
+            for rel in delta
+            if (rel, delta[rel]) in claimed and (wrote is None or not wrote(rel))
+        }
+
+    def _team_claims(self, since: float | None = None) -> set[tuple[str, str | None]]:
+        """`(path, digest)` of each own change of a subagent journal, since `since` or ever."""
+        return {
+            (rel, sha)
+            for rel, changes in self._team_changes().items()
+            for _start, at, sha in changes
+            if since is None or at >= since
+        }
+
+    def team_stamp(self) -> tuple:
+        """A value that changes when a subagent journal of this session changes."""
+        stamps = []
+        for path in self._members_paths():
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            stamps.append((path.name, info.st_mtime_ns, info.st_size))
+        return tuple(sorted(stamps))
+
+    def _members_paths(self) -> list[Path]:
+        try:
+            return list(self._folder.glob(_safe(self.key) + TEAM_MARK + "*.jsonl"))
+        except OSError:
+            return []
+
+    def _team_changes(self) -> dict[str, list[tuple[float, float, str | None]]]:
+        """`{path: [(step start, step end, digest)]}` of the own changes of the subagent journals."""
+        changes: dict[str, list[tuple[float, float, str | None]]] = {}
+        for path in self._members_paths():
+            for start, at, rel, sha in self._member_changes(path):
+                changes.setdefault(rel, []).append((start, at, sha))
+        return changes
+
+    def _member_changes(self, path: Path) -> list[tuple[float, float, str, str | None]]:
+        """`(step start, step end, path, digest)` of each own change in the subagent journal at `path`.
+
+        A step starts at its `from` time, else at the previous checkpoint of the journal.
+        """
+        try:
+            info = path.stat()
+            stamp = (info.st_mtime_ns, info.st_size)
+            with self._lock:
+                known = self._members.get(path)
+            if known and known[0] == stamp:
+                return known[1]
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        changes = []
+        start = None
+        for line in lines:
+            try:
+                raw = json.loads(line)
+                at = float(raw["at"])
+                if raw["kind"] in OWN_KINDS:
+                    begin = float(raw.get("from", at if start is None else start))
+                    changes.extend(
+                        (begin, at, rel, sha)
+                        for rel, sha in (raw.get("files") or {}).items()
+                    )
+                start = at
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+        with self._lock:
+            self._members[path] = (stamp, changes)
+        return changes
+
+    @staticmethod
+    def _team_step(
+        changes: list[tuple[float, float, str | None]] | None,
+        since: float | None,
+        at: float,
+        old: str | None,
+        new: str | None,
+    ) -> tuple[str | None] | None:
+        """`(digest,)` that a subagent wrote in a change of others from `old` to `new`, or None.
+
+        The digest is None for a deleted file.
+
+        The change was seen at `at`, and the checkpoint before it at `since`. A
+        subagent step that ran in that time and wrote `new` made the change. A
+        subagent step that ended in that time and wrote another content made the
+        change first, and others edited the file after it.
+        """
+        if not changes:
+            return None
+        ran = [
+            (end, sha)
+            for start, end, sha in changes
+            if start <= at and (since is None or end >= since)
+        ]
+        if any(sha == new for _end, sha in ran):
+            return (new,)
+        ended = [(end, sha) for end, sha in ran if end <= at and sha != old]
+        return (max(ended, key=lambda e: e[0])[1],) if ended else None
+
     def _peer_claims(self, since: float) -> set[tuple[str, str | None]]:
         """`(path, digest)` of each own change that another journal of this root recorded since `since`."""
         claims: set[tuple[str, str | None]] = set()
@@ -434,7 +577,14 @@ class Journal:
                 delta[rel] = sha
         return delta
 
-    def _append(self, kind: str, label: str, files: Mapping[str, str | None]) -> Entry:
+    def _append(
+        self,
+        kind: str,
+        label: str,
+        files: Mapping[str, str | None],
+        start: float | None = None,
+    ) -> Entry:
+        """Write one checkpoint. `start` is the time when a step started, if known."""
         entry = Entry(
             self.last + 1, self._clock(), kind, label, dict(sorted(files.items()))
         )
@@ -449,6 +599,7 @@ class Journal:
                 "kind": entry.kind,
                 "label": entry.label,
                 "files": entry.files,
+                **({} if start is None else {"from": start}),
             },
             separators=(",", ":"),
         )
@@ -508,19 +659,36 @@ class Journal:
         return list(self._own_changes())
 
     def _own_changes(self) -> dict[str, tuple[str | None, str | None]]:
-        """`{path: (digest before, digest after)}` of each own change, by path."""
+        """`{path: (digest before, digest after)}` of each own change, by path.
+
+        A change of others that a subagent step made is an own change too: a
+        subagent records its step only when the step ends. See `_team_step`.
+        """
+        team = self._team_changes()
         state: dict[str, str] = {}
         spans: dict[str, tuple[str | None, str | None]] = {}
+        since = None
         for entry in self.entries:
             for rel, sha in entry.files.items():
+                old = state.get(rel)
+                step = (
+                    self._team_step(team.get(rel), since, entry.at, old, sha)
+                    if entry.kind == "outside"
+                    else None
+                )
                 if entry.kind in OWN_KINDS:
-                    spans[rel] = (spans.get(rel, (state.get(rel),))[0], sha)
+                    spans[rel] = (spans.get(rel, (old,))[0], sha)
+                elif step is not None:
+                    spans[rel] = (spans.get(rel, (old,))[0], step[0])
+                    if step[0] != sha:
+                        spans[rel] = self._carry(spans[rel], step[0], sha)
                 elif rel in spans:
-                    spans[rel] = self._carry(spans[rel], state.get(rel), sha)
+                    spans[rel] = self._carry(spans[rel], old, sha)
                 if sha is None:
                     state.pop(rel, None)
                 else:
                     state[rel] = sha
+            since = entry.at
         return {
             rel: spans[rel] for rel in sorted(spans) if spans[rel][0] != spans[rel][1]
         }

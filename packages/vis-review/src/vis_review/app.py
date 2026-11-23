@@ -239,12 +239,17 @@ class ReviewApp:
                 self._paint(self.render())
 
     def is_behind(self) -> bool:
-        """True when the app compares with git, and a git ref moved since the last paint."""
+        """True when what the app shows changed without a checkpoint of its journal.
+
+        A git ref moved, and the app compares with git. Or a subagent recorded a
+        change, and the app shows the own changes.
+        """
         is_git = self.against is not None or (
             self._is_own_range() and not self.is_merged_shown
         )
-        return (
-            self.view is not None and is_git and self.journal.refs_stamp() != self._refs
+        return self.view is not None and (
+            (is_git and self.journal.refs_stamp() != self._refs)
+            or (self._is_own_range() and self.journal.team_stamp() != self._team)
         )
 
     def _paint(self, nodes: list[dict]) -> None:
@@ -348,6 +353,7 @@ class ReviewApp:
     def render(self) -> list[dict]:
         """Every node of the app for the current state: the diff first."""
         self._refs = self.journal.refs_stamp()
+        self._team = self.journal.team_stamp()
         diffs_all = self._scope_diffs()
         if all(d.path != self.path for d in diffs_all):
             # An undo or a new range can take the chosen file out of the list.

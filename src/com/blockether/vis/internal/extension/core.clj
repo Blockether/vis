@@ -24,6 +24,7 @@
             [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
             [com.blockether.vis.contract.document :as contract-document]
+            [com.blockether.vis.contract.gateway :as contract-gateway]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
@@ -730,7 +731,12 @@
        (optional-field? x :ext/keybindings #(vector-of? keybinding? %))
        (optional-field? x
                         :ext/session-app
-                        #(and (map? %) (every? (comp non-blank-string? %) [:key :title :hook])))
+                        #(and (map? %)
+                              (every? (comp non-blank-string? %) [:key :title :hook])
+                              (or (nil? (:roles %))
+                                  (and (vector? (:roles %))
+                                       (seq (:roles %))
+                                       (every? contract-gateway/agent-roles (:roles %))))))
        (optional-field? x :ext/sandbox-shims #(vector-of? sandbox-shim? %))
        (optional-field? x :ext/engine engine?)
        (optional-field? x :ext/source-scope workspace/config-sources)

@@ -3342,9 +3342,12 @@ class SessionApp:
         surfaces: Where the app shows, as for `vis.attach_app(...)`. Give the
             same value to the real app. The `key` names the settings of the
             person: give the real app `settings_name=key` to share them.
+        roles: The agent roles of the sessions that list the app, for example
+            `("leader",)`. None lists it in every session.
 
     Raises:
-        ValueError: A text is blank, or the icon is unknown.
+        ValueError: A text is blank, the icon is unknown, or `roles` is empty
+            or names an unknown role.
         TypeError: `open` is not a function at module level, or `surfaces` is
             wrong.
     """
@@ -3354,6 +3357,7 @@ class SessionApp:
     open: Callable[..., Any]
     icon: str | None = None
     surfaces: Mapping[str, Any] | None = None
+    roles: Sequence[str] | None = None
 
     def __post_init__(self):
         for name in ("key", "title"):
@@ -3371,6 +3375,18 @@ class SessionApp:
                 )
         if self.surfaces is not None:
             object.__setattr__(self, "surfaces", _app_surfaces(self.surfaces))
+        if self.roles is not None:
+            from blockether.vis import _contracts
+
+            known = _contracts.definition("gateway", "session_agent")["properties"][
+                "role"
+            ]["enum"]
+            roles = (self.roles,) if isinstance(self.roles, str) else tuple(self.roles)
+            if not roles or any(role not in known for role in roles):
+                raise ValueError(
+                    "vis.SessionApp roles must name one or more of " + ", ".join(known)
+                )
+            object.__setattr__(self, "roles", tuple(dict.fromkeys(roles)))
 
     def _spec(self):
         return {
@@ -3380,6 +3396,7 @@ class SessionApp:
             "open": _app_hook_ref("vis.SessionApp open", self.open),
             **({} if self.icon is None else {"icon": self.icon}),
             **({} if self.surfaces is None else {"surfaces": dict(self.surfaces)}),
+            **({} if self.roles is None else {"roles": list(self.roles)}),
         }
 
 
