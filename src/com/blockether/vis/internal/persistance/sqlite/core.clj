@@ -43,7 +43,8 @@
             [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]
             [taoensso.nippy :as nippy])
-  (:import (com.zaxxer.hikari HikariConfig HikariDataSource HikariPoolMXBean)
+  (:import (com.zaxxer.hikari HikariConfig HikariDataSource HikariPoolMXBean SQLExceptionOverride
+                              SQLExceptionOverride$Override)
            (java.io File RandomAccessFile)
            (java.nio.channels FileLock)
            (java.nio.file Files FileSystems LinkOption Paths)
@@ -1107,6 +1108,20 @@
                 (if (pos? v) (max 2000 v) 0))
               (catch Exception _ 0))))
 
+(def ^:private ^SQLExceptionOverride ended-transaction-override
+  "Evict a connection when the driver says that no transaction is active. SQLite ends a
+   transaction by itself on some errors; next.jdbc then cannot roll back and keeps
+   autoCommit off, and Hikari returns the connection with that state. Each later borrower
+   then failed on close with `cannot rollback - no transaction is active`, and that error
+   hid its real one. An evicted connection also closes without that error."
+  (reify
+    SQLExceptionOverride
+      (adjudicate [_ e]
+        (if (some-> (.getMessage e)
+                    (str/includes? "no transaction is active"))
+          SQLExceptionOverride$Override/MUST_EVICT
+          SQLExceptionOverride$Override/CONTINUE_EVICT))))
+
 (defn- pooled-datasource
   "Wrap `raw-ds` in a HikariCP pool. `pool-name` is the JMX name and
    shows up in thread names (`HikariPool-vis-rlm-disk-1`), which
@@ -1143,7 +1158,8 @@
               (.setConnectionTimeout 30000)
               (.setIdleTimeout 0)
               (.setMaxLifetime 0)
-              (.setLeakDetectionThreshold (long @leak-detection-ms)))]
+              (.setLeakDetectionThreshold (long @leak-detection-ms))
+              (.setExceptionOverride ended-transaction-override))]
     (HikariDataSource. cfg)))
 
 (def ^:private ^String DB_FILENAME "vis.db")

@@ -2621,7 +2621,43 @@
                               (fn [_]
                                 (deliver other-done true)
                                 :other))))
-        (expect (= :ok (try @retrying (catch Exception e (ex-message e))))))))
+        (expect (= :ok (try @retrying (catch Exception e (ex-message e)))))))
+  ;; SQLite ends a write transaction by itself on some errors. The pool took the connection
+  ;; back with autoCommit off, and each later write on it failed with
+  ;; "cannot rollback - no transaction is active" until the gateway restarted.
+  (it "keeps a disk store writable after SQLite ends a write transaction by itself"
+      (let [root
+            (fs/create-temp-dir {:prefix "vis-ended-tx-"})
+
+            s
+            (persistance/db-create-connection! (str (fs/path root "store")))
+
+            write-tx!
+            (private-core-fn "sqlite-write-tx!")
+
+            title!
+            (fn [sid title]
+              (write-tx! s
+                         (fn [tx]
+                           (jdbc/execute! (:datasource tx)
+                                          (sql/format {:update :session_state
+                                                       :set {:title title}
+                                                       :where [:= :session_soul_id sid]})))))]
+
+        (try (let [sid
+                   (str (h/store-session! s {:channel :cli}))
+
+                   failure
+                   (try (write-tx! s
+                                   (fn [tx]
+                                     (jdbc/execute! (:datasource tx) ["ROLLBACK"])
+                                     (throw (RuntimeException. "[SQLITE_IOERR] disk I/O error"))))
+                        (catch Throwable t t))]
+
+               (expect (str/includes? (ex-message failure) "disk I/O error"))
+               (doseq [title ["one" "two" "three"]] (title! sid title))
+               (expect (= "three" (:title (persistance/db-get-session s sid)))))
+             (finally (persistance/db-dispose-connection! s) (fs/delete-tree root))))))
 
 ;; Session
 
