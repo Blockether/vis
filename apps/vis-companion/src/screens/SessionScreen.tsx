@@ -603,7 +603,7 @@ function runningTurnPhase(
       // silence of the turn: "sent" -> "calling claude-opus-5" -> "thinking".
       return `${agentName} is calling ${progress.model ?? 'the provider'} ${suffix}`;
     case 'response-parse':
-      return `${agentName} is parsing model response ${suffix}`;
+      return `${agentName} is parsing the model response ${suffix}`;
     case 'code':
       return `${agentName} is running code ${suffix}`;
     case 'tool':

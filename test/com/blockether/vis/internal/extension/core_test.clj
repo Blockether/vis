@@ -1980,3 +1980,52 @@
           (expect (= "No gateway" value))
           (expect (= [:start :terminal] (mapv :phase events)))
           (expect (true? (:failed (second events))))))))
+
+;; Regression: the live ticker printed an Activity label after `Vis is` without a
+;; change, so a tool showed `Vis is Sign in to GitHub`.
+(defdescribe
+  activity-label-ticker-test
+  (it "puts the label's verb in its -ing form for the live ticker"
+      (let [contract
+            (extension/symbol-contract
+              #:ext.symbol{:fn sample-channel-fn :doc "Sign in." :tag :external :arglists '([])}
+              "gh.login")
+
+            entry
+            (extension/python-symbol-entry
+              'gh.login
+              {"contract" contract
+               "tag" "external"
+               "doc" "Sign in."
+               "params" []
+               "activity" {"presenter" "generic" "label" "Sign in to GitHub" "show_start" true}}
+              (constantly nil))]
+
+        (expect (= "signing in to GitHub" ((:ext.symbol/ticker-fn entry) {} [])))))
+  (it "spells the -ing form of the verbs that tool labels use"
+      (doseq [[label phrase] {"List workflow runs" "listing workflow runs"
+                              "Run remote command" "running remote command"
+                              "Write docs" "writing docs"
+                              "Continue run" "continuing run"
+                              "See all" "seeing all"
+                              "Untie it" "untying it"
+                              "Quit app" "quitting app"
+                              "Wrap lines" "wrapping lines"
+                              "Show diff" "showing diff"
+                              "Visit page" "visiting page"
+                              "Open file" "opening file"
+                              "Commit changes" "committing changes"
+                              "Reformat code" "reformatting code"
+                              "Reset state" "resetting state"
+                              "Unpin tab" "unpinning tab"
+                              "Overlap clips" "overlapping clips"
+                              "Reckon cost" "reckoning cost"
+                              "Read file" "reading file"
+                              "Debug test" "debugging test"
+                              "Panic now" "panicking now"
+                              "Ping host" "pinging host"
+                              "Building docs" "building docs"}]
+        (expect (= phrase (extension/label->ticker-phrase label)) label)))
+  (it "keeps the generic sentence when the label starts with a name"
+      (doseq [label ["CI run" "GitHub sync" "v2 upgrade" "" nil]]
+        (expect (nil? (extension/label->ticker-phrase label)) (pr-str label)))))

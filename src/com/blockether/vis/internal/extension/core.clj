@@ -983,6 +983,50 @@
   [parts opts]
   (build-symbol-entry parts opts))
 
+(def ^:private gerund-irregular
+  "Verbs whose `-ing` form no spelling rule gives: stress on the last syllable
+   doubles the final consonant (`commit` -> `committing`, but `visit` ->
+   `visiting`), and a final `c` takes a `k`."
+  (into {"be" "being" "panic" "panicking" "mimic" "mimicking" "picnic" "picnicking"
+         "traffic" "trafficking"}
+        (map (fn [w] [w (str w (subs w (dec (count w))) "ing")]))
+        ["abet" "acquit" "admit" "begin" "commit" "compel" "confer" "control" "debug" "defer"
+         "deter" "emit" "equip" "excel" "expel" "forget" "format" "handicap" "incur" "infer"
+         "input" "kidnap" "occur" "omit" "patrol" "permit" "program" "propel" "rebut" "transfer"
+         "transmit" "zigzag"]))
+
+(def ^:private doubling-verb
+  "One syllable that ends consonant-vowel-consonant (`run`, `quit`), or the same
+   after a prefix with a real onset (`reset`, `unpin`, `overlap`, but not `reckon`
+   or `read`)."
+  #"(?:(?:re|un|pre|over|out|mis|dis|up|sub|under)(?:qu|squ|[bcdfghjklmnprstvwyz]|[bcfgkpw][lr]|dr|tr|tw|dw|kn|s[cklmnptw]|sh|ch|th|wh|scr|spl|spr|str|shr|thr)|(?:qu|squ|[bcdfghjklmnprstvwyz]|[bcfgkpw][lr]|dr|tr|tw|dw|kn|s[cklmnptw]|sh|ch|th|wh|scr|spl|spr|str|shr|thr)?)[aeiou][^aeiouwxy]")
+
+(defn- gerund
+  "The `-ing` form of the lowercase English verb `w`."
+  [^String w]
+  (or (gerund-irregular w)
+      (when-let [[_ prefix root] (re-matches #"(re|un|pre|over|out|mis|dis|up|sub|under)(.+)" w)]
+        (some->> (gerund-irregular root) (str prefix)))
+      (cond (str/ends-with? w "ie") (str (subs w 0 (- (count w) 2)) "ying")
+            (re-find #"(?:ee|oe|ye)$" w) (str w "ing")
+            (re-find #"(?:[^aeiou]|u)e$" w) (str (subs w 0 (dec (count w))) "ing")
+            (re-matches doubling-verb w) (str w (subs w (dec (count w))) "ing")
+            :else (str w "ing"))))
+
+(defn label->ticker-phrase
+  "The live-ticker phrase that completes `Vis is …` for an Activity label. A label
+   starts with an imperative verb (`Sign in to GitHub`); the phrase puts that verb
+   in its `-ing` form (`signing in to GitHub`). A first word that is not a plain
+   word (`CI`, `GitHub`, `v2`) gives nil, so the generic tool sentence stays."
+  [label]
+  (let [[_ head tail] (re-matches #"\s*(\S+)(.*)" (str label))]
+    (when (and head (re-matches #"[A-Za-z][a-z]+" head))
+      (let [w (str/lower-case head)
+            ;; Already a gerund (`Building docs`), but not `bring` or `ping`.
+            ing? (and (str/ends-with? w "ing")
+                      (re-find #"[aeiouy]" (subs w 0 (- (count w) 3))))]
+        (str (if ing? w (gerund w)) tail)))))
+
 (defn python-symbol-entry
   "Build an observed entry from portable Python metadata and an implementation fn.
    Used by both trusted extension workers and application-owned SDK callbacks."
@@ -992,6 +1036,10 @@
 
         activity
         (get spec "activity")
+
+        ;; Computed once here: the ticker answers a constant on every call.
+        phrase
+        (label->ticker-phrase (get activity "label"))
 
         argv
         (cond-> (mapv clojure.core/symbol (get spec "params"))
@@ -1021,10 +1069,8 @@
                         (get activity "label")
                         (assoc :headline (get activity "label"))))
 
-                    (get activity "label")
-                    (assoc :ticker-fn
-                      (fn [_env _args]
-                        (get activity "label")))))))
+                    phrase
+                    (assoc :ticker-fn (fn [_env _args] phrase))))))
 
 (defn helper
   "Build a raw callable helper entry FROM A CLOJURE VAR.

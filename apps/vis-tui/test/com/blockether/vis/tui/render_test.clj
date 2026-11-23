@@ -2253,7 +2253,7 @@
             body
             (strip-ansi (str/join "\n" (:lines payload)))]
 
-        (expect (str/includes? body "Vis is parsing model response (iter 1)"))
+        (expect (str/includes? body "Vis is parsing the model response (iter 1)"))
         (expect (not (str/includes? body "Paused")))))
   (it "paints a running Activity receipt inside the live bubble, owned by its form"
       ;; Regression, td-821868: run receipts landed on the loading placeholder's

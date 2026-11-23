@@ -1062,6 +1062,8 @@ class Activity:
     Args:
         presenter: Presentation category. Leave `"generic"` for ordinary tools.
         label: Optional nonblank, single-line label of at most 96 characters.
+            Start it with a verb ("Run tests"): the live status line says
+            "Vis is running tests".
         render: Synchronous callback accepting `phase`, `args`, `kwargs`, `result`
             and `error` keyword arguments. Return an `ActivityPresentation` or None.
         show_start: Whether readers see a running row before the call settles.

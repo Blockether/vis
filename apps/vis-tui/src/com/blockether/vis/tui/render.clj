@@ -10011,7 +10011,7 @@
                  ")")
 
             (str agent-name " is calling " (or activity-model "the provider") " (iter " n ")"))
-          (= :response-parse activity) (str agent-name " is parsing model response (iter " n ")")
+          (= :response-parse activity) (str agent-name " is parsing the model response (iter " n ")")
           (= :tool-call activity) (if tool-phrase
                                     (str agent-name " is " tool-phrase " (iter " n ")")
                                     (str agent-name
