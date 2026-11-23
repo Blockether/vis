@@ -869,6 +869,11 @@
         file?
         (:file/mention? suggestion)
 
+        ;; The selection reverses the row; chip and dim ink would get their own
+        ;; bands there, so a selected row paints every span in the row colours.
+        selected?
+        (:slash/selected? suggestion)
+
         x0
         (inc left)
 
@@ -908,7 +913,7 @@
 
     ;; Inline code chip for the usage/path — markdown `\\`…\\`` look.
     (when (pos? chip-w)
-      (p/set-colors! g t/code-block-fg t/code-block-bg)
+      (when-not selected? (p/set-colors! g t/code-block-fg t/code-block-bg))
       (p/fill-rect! g x0 row chip-w 1)
       ;; Paint the candidate PLAIN on the code-chip background — the colored
       ;; chip IS the markdown inline-code look, so no literal backticks. The
@@ -928,7 +933,7 @@
 
         (when (and desc (pos? desc-w))
           (let [desc-x (max (+ chip-end 2) (- row-right desc-w))]
-            (p/set-fg! g t/dialog-hint)
+            (p/set-fg! g (if selected? row-fg t/dialog-hint))
             (p/styled g [p/ITALIC] (p/put-str! g desc-x row desc))
             (p/set-fg! g row-fg))))
       ;; SLASH row: ` - ` separator + left-anchored italic description.
@@ -946,7 +951,7 @@
 
         (when (pos? (long sep-w)) (p/put-str! g (long chip-end) row sep))
         (when (and desc (pos? (p/display-width desc)))
-          (p/set-fg! g t/dialog-hint)
+          (p/set-fg! g (if selected? row-fg t/dialog-hint))
           (p/styled g [p/ITALIC] (p/put-str! g (+ (long chip-end) (long sep-w)) row desc))
           (p/set-fg! g row-fg))))))
 

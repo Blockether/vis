@@ -94,15 +94,21 @@
          (boolean (re-find #"\s" (subs s 1))))))
 
 (defn- fuzzy-score
-  [query candidate]
+  "Rank `query` against a command: a prefix of the `name` first, in name order like
+   shell completion, so palette rows early in the catalog cannot bury `/reload`
+   under `/re`. Then a substring of `candidate`, then a subsequence of it."
+  [query name candidate]
   (let [q
         (str/lower-case (or query ""))
+
+        n
+        (str/lower-case (or name ""))
 
         c
         (str/lower-case (or candidate ""))]
 
-    (cond (str/blank? q) [0 0]
-          (str/starts-with? c q) [0 0]
+    (cond (str/blank? q) [0 ""]
+          (str/starts-with? n q) [0 n]
           (str/includes? c q) [1 (or (str/index-of c q) 0)]
           :else (loop [qi
                        0
@@ -130,17 +136,18 @@
   ([text commands {:keys [limit selected-index] :or {limit Integer/MAX_VALUE}}]
    (when-not (slash-command-token-complete? text)
      (when-let [{:keys [query args]} (slash-query text)]
-       (let [matches (keep-indexed (fn [idx cmd]
-                                     (let [cmd' (enrich cmd)
-                                           skill? (str/starts-with? (:slash/name cmd') "skill:")
-                                           score (fuzzy-score query (:slash/search cmd'))]
+       (let [matches (keep-indexed
+                       (fn [idx cmd]
+                         (let [cmd' (enrich cmd)
+                               skill? (str/starts-with? (:slash/name cmd') "skill:")
+                               score (fuzzy-score query (:slash/name cmd') (:slash/search cmd'))]
 
-                                       (when (and score (or (not (str/blank? query)) (not skill?)))
-                                         (assoc cmd'
-                                           :slash/score score
-                                           :slash/index idx
-                                           :slash/args args))))
-                                   commands)
+                           (when (and score (or (not (str/blank? query)) (not skill?)))
+                             (assoc cmd'
+                               :slash/score score
+                               :slash/index idx
+                               :slash/args args))))
+                       commands)
              result (->> matches
                          (sort-by (juxt :slash/score :slash/index))
                          (take limit)

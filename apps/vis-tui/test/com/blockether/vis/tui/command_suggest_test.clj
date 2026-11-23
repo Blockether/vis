@@ -30,6 +30,20 @@
     (it "finds namespaced skills by their unprefixed name"
         (expect (= "skill:create-extension"
                    (:slash/name (first (suggest/suggestions "/create-ext" commands))))))
+    (it "ranks name matches alphabetically before catalog order"
+        ;; Palette rows come first in the catalog; `/re` must still offer `/reload`
+        ;; first, not the palette `/rename-session`.
+        (expect (= ["reload" "rename" "rename-session" "group-rename"]
+                   (->> (suggest/suggestions "/re"
+                                             [{:id :rename-session :label "Rename Session…"}
+                                              {:id :group-rename :label "Rename Group"}
+                                              {:id :rename :label "Rename this session's title."}
+                                              {:id :reload :label "Reload configuration"}])
+                        (mapv :slash/name))))
+        (expect (= "rename"
+                   (:slash/name (first (suggest/suggestions "/rename"
+                                                            [{:id :rename-session :label "Rename"}
+                                                             {:id :rename :label "Rename"}]))))))
     (it "renders extension command arguments in usage"
         (expect (= "/exa/search <query> [--limit <limit>]"
                    (:slash/usage (first (suggest/suggestions "/exa" commands))))))
