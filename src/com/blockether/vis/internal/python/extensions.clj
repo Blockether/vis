@@ -2256,7 +2256,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
            (if (map? r) (plainify r) {}))
          (catch Throwable t
            (tel/log!
-             {:level :warn :id ::ctx-failed :data {:extension ext-name :error (ex-message t)}})
+             {:level :warn
+              :id ::ctx-failed
+              :data {:extension ext-name :error (extension/callback-error t)}})
            {}))))
 
 (defn- py-result->slash
@@ -2461,7 +2463,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                (catch Throwable t
                  (tel/log! {:level :warn
                             :id ::op-hook-failed
-                            :data {:extension ext-name :op op-kw :error (ex-message t)}})
+                            :data {:extension ext-name :op op-kw :error (extension/callback-error t)}})
                  nil))]
 
       (cond (and (map? res) (= "block" (get res "marker")))
@@ -2525,7 +2527,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::op-hook-failed
-                      :data {:extension ext-name :op op-kw :error (ex-message t)}})))
+                      :data {:extension ext-name :op op-kw :error (extension/callback-error t)}})))
     result))
 
 (defn- network-filter-adapter

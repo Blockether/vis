@@ -1769,6 +1769,17 @@
   (letfn [(merge-entry [a b] (if (and (map? a) (map? b)) (merge-with merge-entry a b) b))]
     (apply merge-with merge-entry maps)))
 
+(defn callback-error
+  "Describe a callback failure without logging its stack or exception data."
+  [t]
+  (reduce (fn [cause error]
+            (cond-> {:class (.getName (class error))}
+              (seq (ex-message error))
+              (assoc :message (util/truncate (util/redact-secret-text (ex-message error)) 2000))
+              cause (assoc :cause cause)))
+          nil
+          (reverse (take 4 (take-while some? (iterate ex-cause t))))))
+
 (defn- ctx-contribution
   "Run one extension's `:ext/ctx-fn` and add its time to the `perf` ledger.
    Log a throw and answer nil."
@@ -1778,7 +1789,7 @@
        (catch Throwable t
          (tel/log! {:level :warn
                     :id ::ctx-contribution-error
-                    :data {:ext (:ext/name ext) :error (ex-message t)}}
+                    :data {:ext (:ext/name ext) :error (callback-error t)}}
                    "Extension :ext/ctx-fn fn threw")
          nil)))
 

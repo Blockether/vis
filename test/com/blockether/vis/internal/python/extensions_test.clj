@@ -4097,6 +4097,27 @@ vis.register_extension(vis.Extension(
                        (fn [_]
                          :ran)))))))))
 
+(defdescribe op-hook-diagnostics-test
+  (it "names the exception in the problem log when a hook fails without a message"
+      (let [hook
+            (#'pyx/after-adapter "broken-observer" nil nil)
+
+            signal
+            (tel/with-signal
+              (with-redefs-fn {#'pyx/call-py-ext (fn [& _]
+                                                  (throw (IllegalStateException.
+                                                           nil
+                                                           (IllegalArgumentException.
+                                                             "Invalid token=fixture-value"))))}
+                #(hook {} :fs [] (extension/success {:result nil}))))
+
+            problem
+            (json/read-json (config/problem-log-line signal))]
+        (expect (= {"class" "java.lang.IllegalStateException"
+                    "cause" {"class" "java.lang.IllegalArgumentException"
+                             "message" "Invalid token=[REDACTED]"}}
+                   (get problem "error"))))))
+
 (def ^:private preview-guard-py
   "import blockether.vis.extension as vis
 

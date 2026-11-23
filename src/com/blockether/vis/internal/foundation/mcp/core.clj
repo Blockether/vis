@@ -58,6 +58,7 @@
             [com.blockether.vis.internal.foundation.mcp.python-names :as python-names]
             [com.blockether.vis.internal.foundation.mcp.sampling :as sampling]
             [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
@@ -658,7 +659,8 @@
    those servers alive from then on."
   []
   (ensure-supervisor!)
-  (when-not @reconciling? (future (reconcile-once!)))
+  (when-not @reconciling?
+    (cancellation/worker-future "vis-mcp-reconcile" (bound-fn [] (reconcile-once!))))
   nil)
 
 (defn clear-session-servers!
