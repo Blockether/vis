@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Gateway: a refused request body (a 400, 413, or 415 answer) gets `Connection: close`. Before, the gateway could close the connection without this header, and the next request of the client on that connection failed.
 - Terminal: a selected item on the canvas map shows the sign `●` before its title. Before, only a colour marked it, and some themes showed no difference.
 - Terminal: a sideways touchpad swipe does not scroll down. Lanterna 3.1.5-vis.65 reports it as a horizontal wheel step, and it keeps Shift, Alt, and Ctrl on a mouse event.
 - Companion: when the owner changes the camera of a canvas or locks it, an active mouse drag or a pinch on Safari stops. Before, the gesture could change the new camera again.

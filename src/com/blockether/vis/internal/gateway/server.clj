@@ -1765,7 +1765,10 @@
    through the one `::http/refusal` atom of the request: that answer wins, also when
    the handler catches the error of the reader. Each answer says
    `Accept-Encoding: gzip`: a client that does not see this header sends plain
-   bodies, so it also works with a gateway that cannot inflate."
+   bodies, so it also works with a gateway that cannot inflate. A refusal leaves
+   bytes of the body unread, so the server can close the connection after the
+   answer: a refusal says `Connection: close`, and a client does not send its next
+   request on that connection."
   [handler]
   (fn [request]
     (let [coding
@@ -1776,13 +1779,16 @@
           refusal
           (atom nil)
 
+          refused
+          #(assoc-in % [:headers "Connection"] "close")
+
           answer
           (fn [request]
             (let [response (try (handler (assoc request ::http/refusal refusal))
                                 ;; a handler that does not catch the refusal still gets its answer
                                 (catch Throwable t (when-not @refusal (throw t))))]
               (if-let [[status type message] @refusal]
-                (http/error-response status type message)
+                (refused (http/error-response status type message))
                 response)))
 
           response
@@ -1793,12 +1799,12 @@
                             (update :body
                                     #(some-> %
                                              (inflating-body INFLATED_BODY_MAX_BYTES refusal)))))
-                :else (http/error-response
-                        415
-                        :unsupported-content-encoding
-                        (str "The gateway reads a request body as gzip or without a coding, not as "
-                             coding
-                             ".")))]
+                :else (refused (http/error-response
+                                 415
+                                 :unsupported-content-encoding
+                                 (str "The gateway reads a request body as gzip or without a coding, not as "
+                                      coding
+                                      "."))))]
 
       (some-> response
               (assoc-in [:headers "Accept-Encoding"] "gzip")))))

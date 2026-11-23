@@ -7596,6 +7596,7 @@
                     :coding (header "Content-Encoding")
                     :length (header "Content-Length")
                     :announce (header "Accept-Encoding")
+                    :connection (header "Connection")
                     :bytes (alength ^bytes (.body answer))
                     :text (String. ^bytes (.body answer) "UTF-8")}))
                calls)
@@ -7649,6 +7650,8 @@
         (expect (str/includes? (:text not-gzip) "invalid-request"))
         (expect (= 400 (:status half)) "half of a stream is not a shorter body")
         (expect (= "gzip" (:announce half)) "a refusal still says what the gateway reads")
+        (expect (= ["close" "close"] (mapv :connection [not-gzip half])))
+        (expect (nil? (:connection whole)))
         (expect (= [200 "0"] [(:status empty) (:text empty)]))))
   (it "answers 413 for a JSON body above the limit, also when the handler hides the error"
       (let [handler
@@ -7679,6 +7682,8 @@
                                  (.getBytes "abc" "UTF-8")]))]
 
         (expect (= [415 415 415 415] (mapv :status answers)))
+        (expect (= ["close" "close" "close" "close"] (mapv :connection answers))
+                "a refusal leaves the body unread, so no next request may use the connection")
         (expect (str/includes? (:text (first answers)) "unsupported-content-encoding"))
         (expect (= [] @seen))
         (expect (= [200 "3"]

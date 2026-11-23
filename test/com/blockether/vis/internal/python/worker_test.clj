@@ -599,7 +599,11 @@ print(worker_value)"))))
                                     (mapv deref (mapv #(future (run %)) (range 3)))))
                          (expect (= "3\n" (run 3))))))))
                (expect (= 4 (count @sockets)))
-               (expect (empty? (.list dir)))
+               ;; The runtime deletes a child's socket directory off the exit thread.
+               (expect (loop [attempt 0]
+                         (cond (empty? (.list dir)) true
+                               (= attempt 500) false
+                               :else (do (Thread/sleep 10) (recur (inc attempt))))))
                (finally (delete-tree! (.getParentFile dir))))))
     (it
       "fails closed on a missing, relative, symbolic or shared setting"

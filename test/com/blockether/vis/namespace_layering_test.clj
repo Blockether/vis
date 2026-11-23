@@ -75,7 +75,8 @@
      [util error import paths content format system-trust jfr activity config.toggles perf
       native-libs sounds janitor]]
     ;; The session store and the attachment blobs it persists.
-    [persistance [persistance attachment.core attachment.storage attachment.image-convert]]
+    [persistance
+     [persistance attachment.core attachment.storage attachment.image-convert attachment.compactor]]
     ;; Merged configuration and the catalogs it reads.
     [config
      [config extension.registry extension.manifest provider.catalog provider.credential-command
