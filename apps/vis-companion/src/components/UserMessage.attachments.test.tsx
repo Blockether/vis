@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { UserMessage } from './ChatContent';
 import { shareArtifact } from '../lib/artifact-share';
@@ -116,13 +116,27 @@ it('plays a sent clip from its data address when its bytes cannot be read', asyn
 
 // Session 475b983a-62be-400c-aaf7-ff7bb4822c88: a 32 MiB recording came with each read
 // of the transcript. A transcript row now leaves large bytes in the gateway's store.
-function storeOf(bytes: Record<string, string>) {
-  const fetchAttachmentBytes = vi.fn(async (_sid: string, _tid: string, id: string) => bytes[id]);
-  return { fetchAttachmentBytes, client: { fetchAttachmentBytes } as unknown as GatewayClient };
+function stubObjectUrls() {
+  let count = 0;
+  const create = vi.fn((_blob: Blob) => `blob:attachment-${++count}`);
+  const revoke = vi.fn();
+  vi.stubGlobal('URL', class extends URL {
+    static createObjectURL = create;
+    static revokeObjectURL = revoke;
+  });
+  return { create, revoke };
+}
+
+function storeOf(blobs: Record<string, Blob>) {
+  const fetchAttachmentBlob = vi.fn(async (_sid: string, _tid: string, id: string) => blobs[id]);
+  return { fetchAttachmentBlob, client: { fetchAttachmentBlob } as unknown as GatewayClient };
 }
 
 it('loads a picture whose bytes its transcript row left in the store', async () => {
-  const { client, fetchAttachmentBytes } = storeOf({ a1: 'iVBORw0KGgo=' });
+  const { create, revoke } = stubObjectUrls();
+  const first = new Blob(['first image'], { type: 'image/png' });
+  const second = new Blob(['second image'], { type: 'image/png' });
+  const { client, fetchAttachmentBlob } = storeOf({ a1: first, a2: second });
   const view = render(
     <UserMessage
       attachments={[{ id: 'a1', filename: 'shot.png', media_type: 'image/png', size: 900_000 }]}
@@ -135,13 +149,34 @@ it('loads a picture whose bytes its transcript row left in the store', async () 
   );
 
   await waitFor(() =>
-    expect(view.container.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,iVBORw0KGgo='),
+    expect(view.container.querySelector('img')).toHaveAttribute('src', 'blob:attachment-1'),
   );
-  expect(fetchAttachmentBytes).toHaveBeenCalledWith('s1', 't1', 'a1', expect.any(AbortSignal), 900_000);
+  expect(create).toHaveBeenCalledWith(first);
+  expect(fetchAttachmentBlob).toHaveBeenCalledWith('s1', 't1', 'a1', expect.any(AbortSignal), 900_000);
+
+  view.rerender(
+    <UserMessage
+      attachments={[{ id: 'a2', filename: 'next.png', media_type: 'image/png', size: 800_000 }]}
+      client={client}
+      sid="s1"
+      turnId="t1"
+    >
+      {''}
+    </UserMessage>,
+  );
+  await waitFor(() => expect(view.container.querySelector('img')).toHaveAttribute('src', 'blob:attachment-2'));
+  expect(create).toHaveBeenCalledWith(second);
+  expect(revoke.mock.calls).toEqual([['blob:attachment-1']]);
+  view.unmount();
+  expect(revoke.mock.calls).toEqual([['blob:attachment-1'], ['blob:attachment-2']]);
 });
 
 it('loads a large recording only when the reader asks for it', async () => {
-  const { client, fetchAttachmentBytes } = storeOf({ a2: 'AAAAIGZ0eXBNNEEg' });
+  stubObjectUrls();
+  const blob = new Blob(['recording'], { type: 'audio/mp4' });
+  const { client, fetchAttachmentBlob } = storeOf({ a2: blob });
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
   const view = render(
     <UserMessage
       attachments={[
@@ -156,18 +191,27 @@ it('loads a large recording only when the reader asks for it', async () => {
   );
 
   expect(view.getByText('talk.m4a')).toBeVisible();
-  expect(fetchAttachmentBytes).not.toHaveBeenCalled();
+  expect(fetchAttachmentBlob).not.toHaveBeenCalled();
   fireEvent.click(view.getByRole('button', { name: 'Load recording' }));
-  await waitFor(() => expect(view.container.querySelector('audio')).not.toBeNull());
-  expect(fetchAttachmentBytes).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(view.container.querySelector('audio')).toHaveAttribute('src', 'blob:attachment-1'));
+  expect(fetchAttachmentBlob).toHaveBeenCalledTimes(1);
+  fireEvent.click(view.getByRole('button', { name: 'Save talk.m4a' }));
+  await waitFor(() => expect(shareArtifact).toHaveBeenCalledWith(blob, 'talk.m4a', 'audio/mp4', {
+    dialogTitle: 'Share recording',
+    noun: 'Recording',
+  }));
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 it('keeps the control of a recording whose load failed', async () => {
-  const fetchAttachmentBytes = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('AAAAIGZ0eXBNNEEg');
+  stubObjectUrls();
+  const fetchAttachmentBlob = vi.fn()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValue(new Blob(['recording'], { type: 'audio/mp4' }));
   const view = render(
     <UserMessage
       attachments={[{ id: 'a2', filename: 'talk.m4a', media_type: 'audio/mp4', size: 33_208_749 }]}
-      client={{ fetchAttachmentBytes } as unknown as GatewayClient}
+      client={{ fetchAttachmentBlob } as unknown as GatewayClient}
       sid="s1"
       turnId="t1"
     >
@@ -178,4 +222,29 @@ it('keeps the control of a recording whose load failed', async () => {
   fireEvent.click(view.getByRole('button', { name: 'Load recording' }));
   fireEvent.click(await view.findByRole('button', { name: 'Could not load the recording. Try again' }));
   await waitFor(() => expect(view.container.querySelector('audio')).not.toBeNull());
+});
+
+
+it('aborts an outstanding download and ignores its result after unmount', async () => {
+  const { create } = stubObjectUrls();
+  let complete!: (blob: Blob) => void;
+  const download = new Promise<Blob>((resolve) => { complete = resolve; });
+  const fetchAttachmentBlob = vi.fn((_sid: string, _tid: string, _id: string, _signal: AbortSignal) => download);
+  const view = render(
+    <UserMessage
+      attachments={[{ id: 'a1', filename: 'shot.png', media_type: 'image/png' }]}
+      client={{ fetchAttachmentBlob } as unknown as GatewayClient}
+      sid="s1"
+      turnId="t1"
+    >
+      {''}
+    </UserMessage>,
+  );
+
+  const signal = fetchAttachmentBlob.mock.calls[0]?.[3];
+  expect(signal?.aborted).toBe(false);
+  view.unmount();
+  expect(signal?.aborted).toBe(true);
+  await act(async () => complete(new Blob(['late'], { type: 'image/png' })));
+  expect(create).not.toHaveBeenCalled();
 });

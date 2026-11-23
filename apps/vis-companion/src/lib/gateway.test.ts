@@ -1413,6 +1413,41 @@ describe('GatewayClient turn cancellation', () => {
     expect(rows[0]?.transcription).toBe('ready words');
   });
 
+  it('restores attachment metadata without bytes and still reads inline bytes for editing', async () => {
+    const row = { id: 'a1', filename: 'talk.m4a', media_type: 'audio/mp4', size: 32_000_000 };
+    const fetchMock = vi.fn(async (url: string) => new Response(JSON.stringify({
+      attachments: [url.endsWith('?transcription_only=true') ? row : { ...row, base64: 'AAAA' }],
+    })));
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    const metadata = await client.fetchTurnAttachments('session-1', 'turn-1', undefined, true);
+    const editable = await client.fetchTurnAttachments('session-1', 'turn-1');
+
+    expect(metadata).toEqual([row]);
+    expect(fetchMock.mock.calls.map(([url]) => new URL(url).search)).toEqual(['?transcription_only=true', '']);
+    expect(editable).toEqual([{ ...row, base64: 'AAAA' }]);
+  });
+
+  it('keeps an older gateway path attachment inline without keeping other payloads', async () => {
+    const pathImage = { filename: 'shot.png', media_type: 'image/png' };
+    const recording = { id: 'a1', filename: 'talk.m4a', media_type: 'audio/mp4' };
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      attachments: [pathImage, recording],
+    }))).mockResolvedValueOnce(new Response(JSON.stringify({
+      attachments: [{ ...pathImage, base64: 'iVBORw0KGgo=' }, { ...recording, base64: 'AAAA' }],
+    })));
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    const rows = await client.fetchTurnAttachments('session-1', 'turn-1', undefined, true);
+
+    expect(fetchMock.mock.calls.map(([url]) => new URL(url).search)).toEqual(['?transcription_only=true', '']);
+    expect(rows).toEqual([{ ...pathImage, base64: 'iVBORw0KGgo=' }, recording]);
+  });
+
   // Session 475b983a-62be-400c-aaf7-ff7bb4822c88: a transcript row leaves large bytes
   // in the store, and the row that shows the attachment reads them.
   it('reads the bytes of one stored attachment by its id', async () => {
@@ -1424,6 +1459,42 @@ describe('GatewayClient turn cancellation', () => {
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/v1/sessions/session-1/turns/turn-1/attachments/a1');
     expect(bytes).toBe('AAAA');
+  });
+
+  it('keeps a downloaded attachment in a Blob without encoding base64', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([0, 128, 255]), { headers: { 'Content-Type': 'audio/mp4' } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const encode = vi.fn(() => { throw new Error('Unexpected base64 encoding'); });
+    vi.stubGlobal('btoa', encode);
+    const { GatewayClient } = await import('./gateway');
+
+    const blob = await new GatewayClient(conn).fetchAttachmentBlob('session-1', 'turn-1', 'a1');
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/v1/sessions/session-1/turns/turn-1/attachments/a1');
+    expect(blob.type).toBe('audio/mp4');
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array([0, 128, 255]));
+    expect(encode).not.toHaveBeenCalled();
+  });
+
+  it('decodes a legacy JSON attachment into a Blob', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { type: 'not-found', message: 'no such route' } }), { status: 404 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ attachments: [{ id: 'a1', media_type: 'audio/mp4', base64: 'AID/' }] })),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+
+    const blob = await new GatewayClient(conn).fetchAttachmentBlob('session-1', 'turn-1', 'a1');
+
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/v1/sessions/session-1/turns/turn-1/attachments?id=a1');
+    expect(blob.type).toBe('audio/mp4');
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array([0, 128, 255]));
   });
 
   it('reads one attachment from an older gateway with the JSON route', async () => {

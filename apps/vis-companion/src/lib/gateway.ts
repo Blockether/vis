@@ -1827,7 +1827,9 @@ function queuePausedFromWire(value: unknown): QueuePausedInfo | null {
   };
 }
 
-function attachmentPayloadBlob(attachment: GatewayAttachment): Blob {
+type InlineAttachmentPayload = Pick<GatewayAttachment, 'base64' | 'media_type'>;
+
+function attachmentPayloadBlob(attachment: InlineAttachmentPayload): Blob {
   const encoded = attachment.base64.startsWith('data:')
     ? attachment.base64.slice(attachment.base64.indexOf(',') + 1)
     : attachment.base64;
@@ -4182,54 +4184,52 @@ export class GatewayClient {
   }
 
   /**
-   * The same bytes, from the GATEWAY — `GET /v1/sessions/:sid/turns/:tid/attachments`.
-   *
-   * `rememberSentAttachments` only ever covers the device that did the sending,
-   * and only until that process dies. Restart the app (or open the session on
-   * another device) while the turn is still running and the user bubble painted
-   * its text with the pictures missing, because the live rail ships byte-free
-   * chips and the persisted row does not exist yet. The gateway has held the
-   * bytes the whole time, so ask it, and fold the answer into the same cache the
-   * sender's own copy lives in.
-   *
-   * In-flight requests are shared, and the entry is dropped once settled: a turn
-   * mid-hand-off can legitimately answer empty, and the next mount must be free
-   * to ask again.
-   *
-   * A `refresh` with a cached copy reads only the words, and the rows keep the
-   * bytes of that copy. A copy from a transcript row can be without bytes: a
-   * read that is not a `refresh` then asks the gateway.
+   * A refresh reads descriptors and transcription without downloading bytes.
+   * It keeps any inline bytes this device already has. Editing asks for bytes.
+   * Requests of the same kind share a read, but an empty result is not cached.
    */
   async fetchTurnAttachments(
     sid: string,
     tid: string | undefined,
     signal?: AbortSignal,
-    refresh = false,
+    metadataOnly = false,
   ): Promise<TranscriptAttachment[]> {
     if (!tid) return [];
     const cached = this.cachedSentAttachments(sid, tid);
-
-    if (!refresh && cached?.length && cached.every((row) => !!row.base64)) return cached;
-    const key = `${sid}\u0000${tid}`;
+    if (!metadataOnly && cached?.length && cached.every((row) => !!row.base64)) return cached;
+    const key = `${sid}\u0000${tid}\u0000${metadataOnly}`;
     const inflight = this.attachmentFetches.get(key);
     if (inflight) return inflight;
     const pending = (async () => {
-      const metadataOnly = refresh && !!cached?.length;
       const path = `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments`;
-      const res = await this.request<{ attachments?: TranscriptAttachment[] }>(
-        'GET',
-        metadataOnly ? `${path}?transcription_only=true` : path,
-        undefined,
-        signal,
-      );
-      const received = res.attachments ?? [];
-      const rows = metadataOnly
-        ? cached.map((base, index) => ({
-            ...base,
-            ...received[index],
-            base64: base.base64,
-          }))
-        : received.filter((row) => !!row?.base64);
+      const read = async (url: string) =>
+        (await this.request<{ attachments?: TranscriptAttachment[] }>('GET', url, undefined, signal)).attachments ?? [];
+      const received = await read(metadataOnly ? `${path}?transcription_only=true` : path);
+      const latest = this.cachedSentAttachments(sid, tid) ?? [];
+      const sameSlot = (row: TranscriptAttachment, at: TranscriptAttachment | undefined) =>
+        at && (!row.id || !at.id) && at.filename === row.filename && at.media_type === row.media_type;
+      let rows: TranscriptAttachment[];
+      if (!metadataOnly) {
+        rows = received.filter((row) => !!row?.base64);
+      } else {
+        const localById = new Map(latest.flatMap((row) => (row.id ? [[row.id, row] as const] : [])));
+        rows = received.length
+          ? received.map((row, index) => {
+              const at = latest[index];
+              const local = (row.id ? localById.get(row.id) : undefined) ?? (sameSlot(row, at) ? at : undefined);
+              return local?.base64 ? { ...local, ...row, base64: local.base64 } : row;
+            })
+          : latest;
+        // An older gateway can omit both the bytes and the id of a path image.
+        // Keep only the bytes of the rows that have no binary route.
+        if (rows.some((row) => !row.id && !row.base64)) {
+          const inline = await read(path);
+          rows = rows.map((row, index) => {
+            const at = inline[index];
+            return !row.id && !row.base64 && sameSlot(row, at) && at.base64 ? { ...row, base64: at.base64 } : row;
+          });
+        }
+      }
       this.rememberSentAttachments(sid, tid, rows);
       return rows;
     })();
@@ -4243,15 +4243,7 @@ export class GatewayClient {
 
   private readonly attachmentFetches = new Map<string, Promise<TranscriptAttachment[]>>();
 
-  /**
-   * The bytes of ONE stored attachment of a turn, as base64.
-   *
-   * A transcript row leaves the bytes of a large attachment in the store, so that
-   * a 32 MiB recording does not come with each read of the transcript. The row
-   * that shows the attachment reads its bytes here. The copy that this device
-   * sent is used first. The binary route sends the bytes as they are; an older
-   * gateway does not have it, and the JSON route with `?id=` answers.
-   */
+  /** One stored attachment as base64, for callers that need an inline payload. */
   async fetchAttachmentBytes(
     sid: string,
     tid: string,
@@ -4259,17 +4251,41 @@ export class GatewayClient {
     signal?: AbortSignal,
     size = 0,
   ): Promise<string> {
-    const own = this.cachedSentAttachments(sid, tid)?.find((row) => row.id === id)?.base64;
-    if (own) return own;
+    const payload = await this.readTurnAttachment(sid, tid, id, signal, size);
+    return 'response' in payload
+      ? bytesAsBase64(new Uint8Array(await payload.response.arrayBuffer()))
+      : payload.base64;
+  }
+
+  /** One stored attachment as a Blob, without base64 encoding for playback or sharing. */
+  async fetchAttachmentBlob(
+    sid: string,
+    tid: string,
+    id: string,
+    signal?: AbortSignal,
+    size = 0,
+  ): Promise<Blob> {
+    const payload = await this.readTurnAttachment(sid, tid, id, signal, size);
+    return 'response' in payload ? payload.response.blob() : attachmentPayloadBlob(payload);
+  }
+
+  private async readTurnAttachment(
+    sid: string,
+    tid: string,
+    id: string,
+    signal: AbortSignal | undefined,
+    size: number,
+  ): Promise<{ response: Response } | InlineAttachmentPayload> {
+    const own = this.cachedSentAttachments(sid, tid)?.find((row) => row.id === id);
+    if (own?.base64) return { base64: own.base64, media_type: own.media_type };
     const turn = `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments`;
     try {
-      const response = await this.sessionFile(`${turn}/${encodeURIComponent(id)}`, { signal });
-      return bytesAsBase64(new Uint8Array(await response.arrayBuffer()));
+      return { response: await this.sessionFile(`${turn}/${encodeURIComponent(id)}`, { signal }) };
     } catch (error) {
       const type = (error as { body?: { error?: { type?: unknown } } }).body?.error?.type;
       if (!(error instanceof GatewayError && error.status === 404 && type === 'not-found')) throw error;
     }
-    // The answer holds the bytes as base64: four characters for each three bytes.
+    // An older gateway returns the bytes as base64 in JSON.
     const res = (
       await this.requestFull<{ attachments?: TranscriptAttachment[] }>(
         'GET',
@@ -4281,9 +4297,9 @@ export class GatewayClient {
         Math.ceil((size * 4) / 3),
       )
     ).data;
-    const base64 = res?.attachments?.find((row) => row.id === id)?.base64;
-    if (!base64) throw new GatewayError(404, 'The gateway has no bytes for this attachment.');
-    return base64;
+    const row = res?.attachments?.find((attachment) => attachment.id === id);
+    if (!row?.base64) throw new GatewayError(404, 'The gateway has no bytes for this attachment.');
+    return { base64: row.base64, media_type: row.media_type };
   }
 
   /**

@@ -40,7 +40,7 @@ function recordingGateway() {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit) => {
-      if (url.includes("/attachments?")) {
+      if (init?.method === "POST" && url.includes("/attachments?")) {
         uploads.push(init.body);
         return new Response(JSON.stringify({ upload_id: `u${uploads.length}`, size: 1 }), { status: 201 });
       }

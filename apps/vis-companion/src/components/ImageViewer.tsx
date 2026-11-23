@@ -43,6 +43,8 @@ interface ExpandableImageProps {
    * That is what makes a not-yet-sent attachment editable rather than read-only.
    */
   onApply?: (edited: Blob) => void | Promise<void>;
+  /** Stable identity when a download gives the same picture a new object URL. */
+  overlayId?: string;
   /**
    * Where this picture sits in the gallery its call site laid out. Given, and
    * inside an {@link ImageGallery}, the viewer it opens can walk to its
@@ -83,6 +85,7 @@ export function ExpandableImage({
   decoding = 'async',
   onError,
   onApply,
+  overlayId,
   galleryAt,
 }: ExpandableImageProps) {
   // The picture is identified by its BYTES, not by this instance: when a turn
@@ -92,7 +95,7 @@ export function ExpandableImage({
   // Memoized because `src` may BE the bytes: a composer attachment is a base64
   // data URL, so composing the key on every render allocated — and compared —
   // megabytes for every keystroke of the message being typed beside it.
-  const overlayKey = useMemo(() => `image:${src}`, [src]);
+  const overlayKey = useMemo(() => (overlayId ? `image:attachment:${overlayId}` : `image:${src}`), [overlayId, src]);
   const [open, setOpen] = useStickyOverlay(overlayKey);
   // A picture laid out in a grid is one step of that grid's gallery. An
   // EDITABLE one is not: `onApply` hands the flattened result back to the slot

@@ -5501,6 +5501,9 @@ export function SessionScreen({
             requestKind={runningTurn.requestKind}
             council={runningTurn.council}
             attachments={liveAttachments}
+            client={client}
+            sid={sid}
+            turnId={runningTurn.id}
           >
             {runningTurn.request}
           </UserMessage>
@@ -5550,7 +5553,9 @@ export function SessionScreen({
   const settlingRow = useMemo(() => {
     if (!settlingShown || !settlingTurn?.id) return null;
     const attachments =
-      settlingTurn.attachments ?? client.cachedSentAttachments(sid, settlingTurn.id);
+      (fetchedRunningTurnAttachments?.id === settlingTurn.id ? fetchedRunningTurnAttachments.rows : undefined) ??
+      settlingTurn.attachments ??
+      client.cachedSentAttachments(sid, settlingTurn.id);
     return (
       <div
         className={turns.length ? 'mt-10' : undefined}
@@ -5565,6 +5570,9 @@ export function SessionScreen({
             requestKind={settlingTurn.requestKind}
             council={settlingTurn.council}
             attachments={attachments}
+            client={client}
+            sid={sid}
+            turnId={settlingTurn.id}
           >
             {settlingTurn.request}
           </UserMessage>
@@ -5586,6 +5594,7 @@ export function SessionScreen({
     isChildWake,
     settlingShown,
     settlingTurn,
+    fetchedRunningTurnAttachments,
     turns.length,
     client,
     sid,

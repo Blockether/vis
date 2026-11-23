@@ -284,6 +284,67 @@ describe('a running transcript row without canonical session state', () => {
     expect(document.querySelectorAll('audio')).toHaveLength(1);
   });
 
+  it('loads a cold-restored recording as a Blob in the live and settling rows', async () => {
+    const turnId = 'cold-audio';
+    const row = { id: 'stored-audio', filename: 'remote.m4a', media_type: 'audio/mp4', size: 32_000_000 };
+    const blob = new Blob(['recording'], { type: row.media_type });
+    const fetchAttachmentBlob = vi.fn().mockResolvedValue(blob);
+    const fetchTurnAttachments = vi.fn(async (_sid: string, id: string) => id === turnId ? [row] : []);
+    const listeners = new Set<(event: Record<string, unknown>) => void>();
+    const createUrl = vi.fn().mockReturnValue('blob:remote-recording');
+    class TestURL extends URL {
+      static createObjectURL = createUrl;
+      static revokeObjectURL = vi.fn();
+    }
+    vi.stubGlobal('URL', TestURL);
+    let view: ReturnType<typeof renderSessionScreen> | undefined;
+    try {
+      view = renderSessionScreen({
+        session: sessionFixture({ status: 'running', live: true, current_turn_id: turnId }),
+        client: {
+          cachedRunningTurn: () => ({
+            turn: { id: turnId, request: 'listen', iterations: [], startedAt: Date.now(), status: 'running' },
+            seq: 1,
+          }),
+          cachedTranscript: () => [],
+          transcript: async () => [],
+          fetchTurnAttachments,
+          fetchAttachmentBlob,
+        },
+        subscriptions: {
+          subscribeConnection: (on: (live: boolean) => void) => {
+            on(true);
+            return () => {};
+          },
+          subscribeSession: (_sid: string, on: (event: Record<string, unknown>) => void) => {
+            listeners.add(on);
+            return () => listeners.delete(on);
+          },
+        },
+      });
+
+      const load = await screen.findByRole('button', { name: 'Load recording' });
+      expect(fetchAttachmentBlob).not.toHaveBeenCalled();
+      fireEvent.click(load);
+      await waitFor(() => expect(document.querySelector('[data-live] audio')).toHaveAttribute('src', 'blob:remote-recording'));
+      expect(fetchAttachmentBlob).toHaveBeenCalledWith('s1', turnId, row.id, expect.any(AbortSignal), row.size);
+
+      act(() => {
+        for (const listener of listeners) {
+          listener({ type: 'turn.completed', turn_id: turnId, seq: 2 });
+          listener({ type: 'turn.started', turn_id: 'next-turn', request: 'next request', seq: 3 });
+        }
+      });
+      fireEvent.click(await screen.findByRole('button', { name: 'Load recording' }));
+      await waitFor(() => expect(document.querySelector('[data-settling] audio')).toHaveAttribute('src', 'blob:remote-recording'));
+      expect(fetchAttachmentBlob).toHaveBeenCalledTimes(2);
+      expect(createUrl).toHaveBeenLastCalledWith(blob);
+    } finally {
+      view?.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
   // Regression, same report: a submit paints an optimistic bubble with nothing
   // in it, and the hub still remembers the PREVIOUS turn's terminal frame. Seeding
   // that empty bubble as `completed` renders the assistant rail as a bare "Vis" —

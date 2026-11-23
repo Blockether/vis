@@ -113,7 +113,22 @@ export const mediaTileContentClass = 'block h-full w-full object-cover object-ce
  */
 export function inlinePictureSize(base64: string): PictureSize | null {
   const payload = base64.startsWith('data:') ? base64.slice(base64.indexOf(',') + 1) : base64;
-  const read = base64Reader(payload);
+  return pictureHeaderSize(base64Reader(payload));
+}
+
+/** Read only the beginning of a downloaded image. Large headers keep the default frame. */
+export async function blobPictureSize(blob: Blob): Promise<PictureSize | null> {
+  try {
+    const bytes = new Uint8Array(await blob.slice(0, 128 * 1024).arrayBuffer());
+    return pictureHeaderSize((offset, length) =>
+      offset + length <= bytes.length ? bytes.subarray(offset, offset + length) : null,
+    );
+  } catch {
+    return null;
+  }
+}
+
+function pictureHeaderSize(read: ByteReader): PictureSize | null {
   // Ten bytes tell the formats apart and hold a GIF's size; a PNG's IHDR ends at 24.
   const head = read(0, 10);
   if (!head) return null;
