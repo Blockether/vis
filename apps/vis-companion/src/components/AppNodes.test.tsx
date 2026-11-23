@@ -178,9 +178,28 @@ describe('DiffNodeView', () => {
       '+new',
     ].join('\n');
     render(<DiffNodeView node={{ id: 'review', type: 'diff', patch, threads: [] }} />);
-    const header = (path: string) => screen.getByRole('button', { name: `Fold ${path}` }).closest('header');
+    const header = (path: string) => screen.getByRole('button', { name: `Copy path ${path}` }).closest('header');
     expect(header('logo.png')?.querySelector('.diff-stat')).toBeNull();
     expect(header('a.txt')?.querySelector('.diff-stat')).toHaveTextContent('-1+1');
+  });
+
+  // User report: an empty new file has no lines, so its header offers no fold.
+  it('gives a file without hunks no fold button', () => {
+    const patch = [
+      'diff --git a/tests/__init__.py b/tests/__init__.py',
+      'new file mode 100644',
+      'index 0000000..e69de29',
+      'diff --git a/a.txt b/a.txt',
+      '--- a/a.txt',
+      '+++ b/a.txt',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+    ].join('\n');
+    render(<DiffNodeView node={{ id: 'review', type: 'diff', patch, threads: [] }} />);
+    expect(screen.queryByRole('button', { name: /Fold tests\/__init__\.py/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy path tests/__init__.py' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Fold a.txt' })).toHaveAttribute('aria-expanded', 'true');
   });
 
   // The review parity report requires the file tree to open folded files.

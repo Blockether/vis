@@ -813,6 +813,41 @@ function FileHeader({ file, isOpen, onToggle }: FileHeaderProps) {
   const kind = fileChange(file);
   const change = CHANGE_MARK[kind];
   const renamed = file.old_path && file.new_path && file.old_path !== file.new_path;
+  const label = (
+    <>
+      <DiffChangeIcon kind={kind} className={`size-4 diff-change-${kind}`} />
+      <span className="sr-only">{change.word}</span>
+      <span className="diff-file-path">
+        {renamed && (
+          <>
+            <span className="diff-old-path">{file.old_path}</span>
+            <RenameArrowIcon className="size-4" />
+          </>
+        )}
+        <span>{file.path}</span>
+      </span>
+    </>
+  );
+  // A file without hunks (empty, binary, mode-only) has no lines to show, so it does not fold.
+  if (file.hunks.length === 0) {
+    return (
+      <header className="diff-file-header">
+        <div className="diff-fold">
+          <span className="size-4 shrink-0" aria-hidden />
+          {label}
+        </div>
+        <CopyChip
+          value={file.path}
+          label={`Copy path ${file.path}`}
+          title="Copy file path"
+          density="compact"
+          className="diff-copy"
+        />
+        <span className="flex-1" />
+        {!file.binary && <DiffStat {...fileStat(file)} isFile />}
+      </header>
+    );
+  }
   return (
     <header className={`diff-file-header ${isOpen ? 'is-open' : ''}`}>
       <button
@@ -823,17 +858,7 @@ function FileHeader({ file, isOpen, onToggle }: FileHeaderProps) {
         onClick={onToggle}
       >
         <ChevronIcon open={isOpen} className="size-4 text-dialog-hint" />
-        <DiffChangeIcon kind={kind} className={`size-4 diff-change-${kind}`} />
-        <span className="sr-only">{change.word}</span>
-        <span className="diff-file-path">
-          {renamed && (
-            <>
-              <span className="diff-old-path">{file.old_path}</span>
-              <RenameArrowIcon className="size-4" />
-            </>
-          )}
-          <span>{file.path}</span>
-        </span>
+        {label}
       </button>
       <CopyChip
         value={file.path}
