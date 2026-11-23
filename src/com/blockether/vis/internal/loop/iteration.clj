@@ -1550,6 +1550,17 @@
 
 (def ^:private balanced-reasoning :balanced)
 
+(def ^:private REPEATED_REQUEST_LIMIT
+  "How many times one request can go to the model after steps that ran tools. A step
+   adds its results to the next request, so a repeated request means that the model
+   cannot see its own steps, and it will do the same step again without end (#514)."
+  3)
+
+(def ^:private repeated-request-text
+  (str "The turn stopped: the model got the same request " REPEATED_REQUEST_LIMIT
+       " times after steps that ran tools, so it could not see their results. "
+       "The steps ran; the conversation view is not correct. Start a new turn."))
+
 (def ^:private empty-replies-give-up-text
   "Fallback shown only when the provider repeatedly returns an empty reply."
   "The model returned empty replies repeatedly, so the turn was stopped.")
@@ -3981,8 +3992,24 @@
                                   ;; pairs one `tool_result` block per call's :id (the API requires
                                   ;; every tool_use be answered).
                                   :tool-calls (:tool-calls iteration-result)
-                                  :preserved-thinking/replay? true}])]
+                                  :preserved-thinking/replay? true}])
+                  ;; Each step must change the next request (#514).
+                  request-hash (hash effective-messages)
+                  request-sends (if (= request-hash (:request-hash loop-state))
+                                  (inc (long (:request-sends loop-state)))
+                                  1)
+                  repeated? (>= request-sends (long REPEATED_REQUEST_LIMIT))
+                  final (when repeated?
+                          {:answer {:answer repeated-request-text}
+                           :iteration-count (inc (long iteration))
+                           :status :error})]
 
+              (when repeated?
+                (log-stage! :final
+                            iteration
+                            {:reason :repeated-request
+                             :iteration-count (inc (long iteration))
+                             :message-count (count effective-messages)}))
               ;; Tool calls and accepted goal progress remain non-terminal;
               ;; only an accepted answer without active goal work ends the turn.
               (when on-chunk
@@ -3993,14 +4020,20 @@
                            :presentation-content presentation-content
                            :iteration-id iteration-id
                            :attachment-count (count iteration-attachments)
-                           :final nil
-                           :done? false}))
-              {::next-state (merge (dissoc loop-state :llm-provider :provider-error-feedback)
-                                   {:iteration (inc (long iteration))
-                                    :empty-iteration-streak 0
-                                    :messages messages
-                                    :trace (conj trace (store-trace! trace-store trace-entry))
-                                    :trailer-iters (compact-trailer next-recent)})})))))))
+                           :final final
+                           :done? repeated?}))
+              (if repeated?
+                (merge final
+                       {:status-id (loop-router/status->id :error) :trace (conj trace trace-entry)}
+                       (accounting/turn-cost @accounting-atom turn-pricing))
+                {::next-state (merge (dissoc loop-state :llm-provider :provider-error-feedback)
+                                     {:iteration (inc (long iteration))
+                                      :empty-iteration-streak 0
+                                      :request-hash request-hash
+                                      :request-sends request-sends
+                                      :messages messages
+                                      :trace (conj trace (store-trace! trace-store trace-entry))
+                                      :trailer-iters (compact-trailer next-recent)})}))))))))
 
 (defn- iteration-loop*
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist

@@ -1,7 +1,9 @@
 (ns com.blockether.vis.internal.loop.turn-test
-  (:require [com.blockether.svar.core :as svar]
+  (:require [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.iteration :as iteration]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
@@ -191,3 +193,36 @@
                (expect (= [:cancelled :cancelled] ((juxt :status :prior-outcome) result)))
                (expect (not (re-find #"InterruptedException" (pr-str result))))))
            (finally (loop-env/dispose-environment! environment))))))
+
+;; #514: a parked turn resumed under a later fold. The fold hid each new step, so the model
+;; got the same request and ran the same step more than 1000 times.
+(defdescribe
+  repeated-request-test
+  (it "stops the turn when its steps do not change the next request"
+      (let [router
+            (svar/make-router [{:id :lmstudio
+                                :api-key "test"
+                                :base-url "http://127.0.0.1:1234/v1"
+                                :models [{:name "model"}]}])
+
+            environment
+            (loop-env/create-environment router {:db :memory})
+
+            requests
+            (atom 0)]
+
+        (try (let [result
+                   (with-redefs [transcript/apply-summaries (fn [_ _] [])
+                                 svar/ask-code! (fn [_ _]
+                                                  (when (> (swap! requests inc) 10)
+                                                    (throw (AssertionError. "The turn loops")))
+                                                  {:stop-reason :tool-calls
+                                                   :tool-calls [{:id "step"
+                                                                 :name "py3"
+                                                                 :input {:code "print('step')"}}]})]
+                     (turn/run-turn! environment "do the work" {}))]
+
+               (expect (= 3 @requests))
+               (expect (= :error (:status result)))
+               (expect (str/includes? (str (:answer result)) "same request")))
+             (finally (loop-env/dispose-environment! environment))))))

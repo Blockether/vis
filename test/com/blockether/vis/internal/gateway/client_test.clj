@@ -2411,6 +2411,31 @@
         (expect (= 0 (:running-turns result)))
         (expect (not-any? string? (keys result)) "no wire key survives into the client's answer"))))
 
+;; #514: `gateway stop` answered before the old daemon ended. A new daemon started at once
+;; and did not resume the turns that the old one parked while it ended.
+(defdescribe
+  a-stop-waits-for-the-daemon-process-to-end
+  (it "answers stopped only after the daemon process ends"
+      (let [child (.start (ProcessBuilder. ["sleep" "30"]))
+            pid (.pid child)
+            started (System/currentTimeMillis)]
+
+        (try (future (Thread/sleep 300) (.destroy child))
+             (let [result (with-redefs-fn {(rv 'db-target) (constantly "/tmp/ack-exit/vis.db")
+                                           (rv 'remote-gateway) (constantly nil)
+                                           #'discovery/read-registry
+                                           (constantly (assoc fake-entry :pid pid))
+                                           #'discovery/registry-fresh? (constantly true)
+                                           (rv 'send-json-with-entry!)
+                                           (fn [& _] {"stopping" true "status" {"pid" pid}})}
+                            (fn []
+                              (client/stop-daemon!)))]
+               (expect (= "stopped" (:status result)))
+               (expect (false? (:stopping result)))
+               (expect (not (.isAlive child)))
+               (expect (< (- (System/currentTimeMillis) started) 10000)))
+             (finally (.destroyForcibly child))))))
+
 ;; Regression: a daemon on a NEWER release than this build refused nothing, bounced
 ;; nothing and said nothing, so an update that was already installed and serving
 ;; sessions was invisible to the human running the older half.

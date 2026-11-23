@@ -858,6 +858,28 @@
       (counted "running_turns")
       (assoc :running-turns (counted "running_turns")))))
 
+(def ^:private DAEMON_EXIT_MS
+  "How long a stop waits for the daemon process to end: its turn drain (8 s at most)
+   and its resource reap."
+  20000)
+
+(defn- await-daemon-exit!
+  "Block up to [[DAEMON_EXIT_MS]] until the daemon with `pid` ends. A daemon parks its
+   running turns while it stops, and a new daemon can resume them only after that
+   process ends (#514). Waits only for the registered daemon that confirmed `pid`,
+   never for this process. Returns true when the process ended."
+  [db entry pid]
+  (if-let [handle (when (and pid
+                             (= (long pid) (long (or (:pid entry) -1)))
+                             (not= (long pid) (.pid (java.lang.ProcessHandle/current))))
+                    (registered-daemon-handle db pid))]
+    (try (.get (.onExit ^java.lang.ProcessHandle handle)
+               (long DAEMON_EXIT_MS)
+               java.util.concurrent.TimeUnit/MILLISECONDS)
+         true
+         (catch java.util.concurrent.TimeoutException _ false))
+    false))
+
 (defn stop-daemon!
   "Stop the daemon registered for this DB, escalating when it stops answering.
    `POST /v1/admin/stop` first; when that is met with silence from a daemon that
@@ -904,7 +926,13 @@
                                             nil
                                             {:headers (lifecycle-protocol-headers)})
                      (catch Throwable _ ::unreachable))]
-        (if (= ::unreachable res) (escalate!) (do (forget!) (acknowledged-stop res))))
+        (if (= ::unreachable res)
+          (escalate!)
+          (let [ack (acknowledged-stop res)]
+            (forget!)
+            (if (and (:stopping ack) (await-daemon-exit! db entry (:pid ack)))
+              (assoc ack :status "stopped" :stopping false)
+              ack))))
       (if (and (:host entry) (:port entry) (not (port-free? (str (:host entry)) (:port entry))))
         (escalate!)
         {:status "stopped" :stopping false}))))
