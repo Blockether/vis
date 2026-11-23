@@ -464,6 +464,18 @@
 (def ^:private ORPHAN_INTERRUPTED_ANSWER
   "Warning: Turn interrupted - the server was restarted before this answer could finalize. Re-send the message to retry.")
 
+(defn db-interrupt-turn!
+  "Mark the stored `turn` as `:interrupted` with the restart notice as its answer."
+  [db {:keys [id iteration-count duration-ms]}]
+  (transcript/persist-turn-outcome!
+    db
+    id
+    {:content [(content/error "turn_interrupted" ORPHAN_INTERRUPTED_ANSWER true)]
+     :iteration-count (or iteration-count 0)
+     :duration-ms (or duration-ms 0)
+     :status :interrupted
+     :prior-outcome :cancelled}))
+
 (defn db-sweep-orphaned-running-turns!
   "Mark every `:running` turn as `:interrupted`, except the turns named in
    `live-turn-ids`. Run at process start to clean up turns that crashed or
@@ -481,15 +493,8 @@
          (remove #(contains? live (str (:id %)))
            (try (persistance/db-list-session-turns-by-status db :running) (catch Exception _ [])))]
 
-     (doseq [{:keys [id iteration-count duration-ms]} orphans]
-       (transcript/persist-turn-outcome!
-         db
-         id
-         {:content [(content/error "turn_interrupted" ORPHAN_INTERRUPTED_ANSWER true)]
-          :iteration-count (or iteration-count 0)
-          :duration-ms (or duration-ms 0)
-          :status :interrupted
-          :prior-outcome :cancelled}))
+     (doseq [turn orphans]
+       (db-interrupt-turn! db turn))
      (count orphans))))
 
 (defn close-all!

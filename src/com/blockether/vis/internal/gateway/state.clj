@@ -7089,8 +7089,9 @@
    names this process, counts the resume and marks the stop unclean. It also counts
    a crash, and the next park sets that count back to zero. A crash during the
    resume then continues from the transcript. Delete the row of a missing turn, of
-   a turn that does not run or of a turn that [[resumable-row?]] refuses. Returns
-   true when the turn started."
+   a turn that does not run or of a turn that [[resumable-row?]] refuses. A newer
+   turn of the session shows that the session went on without this turn: the turn
+   becomes interrupted. Returns true when the turn started."
   [db {:keys [turn-id session-id payload] :as row}]
   (let [{:keys [turn launch clean? resumes crashes]}
         payload
@@ -7108,10 +7109,18 @@
         (fn [why]
           (tel/log! :warn ["gateway: parked turn dropped" turn-id why])
           (persistance/db-delete-pending-turn! db turn-id)
-          false)]
+          false)
+
+        newer-turn?
+        (fn []
+          (let [position (:position stored)]
+            (and (integer? position)
+                 (some #(and (integer? (:position %)) (> (long (:position %)) (long position)))
+                       (persistance/db-list-session-turns-meta db session-id)))))]
 
     (cond (nil? stored) (drop! "missing turn")
           (not= :running (:status stored)) (drop! "turn does not run")
+          (newer-turn?) (do (lp/db-interrupt-turn! db stored) (drop! "newer turn"))
           (not (resumable-row? row)) (drop! "resume limit")
           :else (let [token
                       (cancellation/cancellation-token)
@@ -7169,20 +7178,66 @@
                                           :display-request (:display-request launch)}))
                   @started?))))
 
+(declare restore-pending-turns! restore-pending-rows!)
+
+;; Owner stamps of live gateway processes whose rows wait for the process to end.
+(defonce ^:private watched-owners (atom #{}))
+
+(defn- restore-on-owner-exit!
+  "Restore the rows of the live gateway `stamp` when its process ends. A stopping
+   gateway answers its stop before its JVM exits, so a new gateway can start while
+   the old one still owns the rows that it parked."
+  [stamp]
+  (when-let [^java.lang.ProcessHandle h
+             (some-> (:owner_pid stamp) long java.lang.ProcessHandle/of (.orElse nil))]
+    (when-not (contains? (first (swap-vals! watched-owners conj stamp)) stamp)
+      (.thenRun ^java.util.concurrent.CompletableFuture (.onExit h)
+                ^Runnable (fn []
+                            (swap! watched-owners disj stamp)
+                            (when-not (draining?)
+                              (try (let [restored (restore-pending-turns! stamp)]
+                                     (tel/log! :info
+                                               ["gateway: restored turns of a stopped gateway" stamp
+                                                restored]))
+                                   (catch Throwable t
+                                     (tel/log! :warn
+                                               ["gateway: queued-turn restore failed" (ex-message t)])))))))))
+
+(defonce ^:private restore-lock (Object.))
+
 (defn restore-pending-turns!
   "Restore the turns that a stopped gateway left in the database. Parked turns
    resume first, then the queued turns follow. The rows of a gateway process that
-   still runs stay with that process. Rows of a deleted session are dropped.
-   Returns `{:resumed n :queued n :sessions m}`."
-  []
+   still runs stay with that process until it ends; then this restores them. With
+   `owner`, restore only the rows of that owner stamp. Rows of a deleted session
+   are dropped. Returns `{:resumed n :queued n :sessions m}`."
+  ([] (restore-pending-turns! nil))
+  ([owner]
+   (locking restore-lock
+     (restore-pending-rows! owner))))
+
+(defn- restore-pending-rows!
+  "The body of [[restore-pending-turns!]]."
+  [owner]
   (let [db
         (lp/db-info)
 
         {:keys [turns holds]}
         (persistance/db-list-pending-turns db)
 
+        turns
+        (cond->> turns
+          owner (filter #(= owner (select-keys % [:owner_pid :owner_started_at]))))
+
+        {live true dead false}
+        (group-by (comp boolean bus/stamp-alive?) turns)
+
+        _
+        (doseq [stamp (distinct (map #(select-keys % [:owner_pid :owner_started_at]) live))]
+          (restore-on-owner-exit! stamp))
+
         {parked "parked" queued "queued"}
-        (group-by :kind (remove bus/stamp-alive? turns))
+        (group-by :kind dead)
 
         resumed
         (count (filter (fn [row]

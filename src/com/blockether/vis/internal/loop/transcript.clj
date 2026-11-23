@@ -901,10 +901,18 @@
         (delay (ctx-engine/expansion-index (keep (comp iter-scope-of second) trailer)
                                            (distinct (keep (comp boundary-turn second) trailer))))
 
+        ;; The position of the running turn. A gateway can resume an old parked turn
+        ;; after later turns folded the session. Their intents never fold this turn.
+        current-turn
+        (some (fn [[_ rec]]
+                (when (:turn/current? rec) (:turn/position rec)))
+              trailer)
+
         ;; Resolve ranges against this trailer, then keep only what the intent's
         ;; canonical at_turn owns. A turn may fold its own settled work and every
         ;; prior turn, never a future turn; unstamped intents own nothing. Whole
-        ;; turns are owned strictly before at_turn.
+        ;; turns are owned strictly before at_turn. An intent of a turn after the
+        ;; running turn applies to nothing.
         scope-turn
         (fn [scope]
           (or (first (ctx-engine/scope-key scope)) (ctx-engine/turn-key scope)))
@@ -929,7 +937,8 @@
                 (when (integer? owner)
                   (into #{} (filter #(< (long %) (long owner))) (get summary "turns")))]
 
-            (when (or (seq scopes) (seq turns))
+            (when (and (or (seq scopes) (seq turns))
+                       (not (and (integer? current-turn) (> (long owner) (long current-turn)))))
               (assoc summary
                 "scopes" scopes
                 "turns" turns))))

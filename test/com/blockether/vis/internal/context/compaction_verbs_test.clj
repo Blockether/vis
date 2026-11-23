@@ -928,6 +928,17 @@
         ;; the breadcrumb is injected at the EARLIEST collapsed step (t1/i1)
         (expect (some :summary? (:forms-vec r1)))
         (expect (= ["t1/i1" "t1/i2"] (:summary-iters (first sfs))))))
+  (it "a fold of a later turn collapses nothing of a resumed older turn"
+      ;; Session 33ee41e0: a gateway resumed turn 3 after turn 5 folded through
+      ;; t5/i37. Each new t3 step collapsed at once, and the model saw no result.
+      (let [tr
+            (conj (trailer "t3/i1" "t3/i2")
+                  [3 {:turn/boundary :resume :turn/position 3 :turn/current? true :turn/messages []}])
+
+            out
+            (apply-summaries tr [{"through" "t5/i37" "at_turn" 5 "gist" "G"}])]
+
+        (expect (= tr out))))
   (it "a bare-turn fold collapses EVERY iteration of that turn"
       (let [tr
             (trailer "t1/i1" "t1/i2" "t1/i3")

@@ -9441,6 +9441,87 @@
                             [(get-in row [:payload :clean?]) (get-in row [:payload :resumes])])))
                (forget-session! sid)))
            (finally (sqlite/db-close! store)))))
+  (it "interrupts a parked turn when a newer turn of its session ran"
+      ;; Session 33ee41e0: a gateway resumed turn 3 after turns 4-7 ran. The later
+      ;; fold ledger hid each new step, and the turn looped 1194 times.
+      (let [store
+            (sqlite/db-open! :memory)
+
+            launched
+            (atom [])]
+
+        (try (let [sid
+                   (str (h/store-session! store {:channel :api}))
+
+                   tid
+                   (str (persistance/db-store-session-turn! store
+                                                            {:parent-session-id sid
+                                                             :user-request "busy"}))]
+
+               (persistance/db-store-session-turn! store {:parent-session-id sid :user-request "later"})
+               (parked-row store sid tid {:resumes 0})
+               (with-redefs [lp/db-info
+                             (constantly store)
+
+                             lp/by-id
+                             (constantly {:id sid})]
+
+                 (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                                (swap! launched conj (vec args)))}
+                   #(expect (= {:resumed 0 :queued 0 :sessions 0} (state/restore-pending-turns!))))
+                 (expect (empty? @launched))
+                 (expect (empty? (:turns (persistance/db-list-pending-turns store))))
+                 (expect (= :interrupted (:status (persistance/db-read-session-turn store sid tid))))
+                 (forget-session! sid)))
+             (finally (sqlite/db-close! store)))))
+  (it "resumes the parked turn of a live gateway when that gateway exits"
+      ;; A stop answers before the old JVM exits, so the next gateway started while
+      ;; the old one still owned its parked rows, and no gateway resumed them.
+      (let [store
+            (sqlite/db-open! :memory)
+
+            launched
+            (promise)
+
+            child
+            (.start (ProcessBuilder. ^java.util.List ["sleep" "30"]))
+
+            owner
+            {:owner_pid (.pid child)
+             :owner_started_at (some-> (.orElse (.startInstant (.info child)) nil)
+                                       .toEpochMilli)}]
+
+        (try (let [sid
+                   (str (h/store-session! store {:channel :api}))
+
+                   tid
+                   (str (persistance/db-store-session-turn! store
+                                                            {:parent-session-id sid
+                                                             :user-request "busy"}))]
+
+               (persistance/db-store-parked-turn!
+                 store
+                 sid
+                 {:turn-id tid
+                  :payload {:turn {:request "busy" :idempotency_key "k"}
+                            :launch {:request "busy" :engine-opts {}}
+                            :clean? true}}
+                 owner)
+               (with-redefs [lp/db-info
+                             (constantly store)
+
+                             lp/by-id
+                             (constantly {:id sid})]
+
+                 (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                                (deliver launched (vec (take 2 args))))}
+                   (fn []
+                     (expect (= {:resumed 0 :queued 0 :sessions 0} (state/restore-pending-turns!)))
+                     (expect (not (realized? launched)))
+                     (.waitFor (.destroyForcibly child))
+                     (expect (= [sid tid] (deref launched 5000 :not-resumed)))))
+                 (forget-session! sid)))
+             (finally (.destroyForcibly child) (sqlite/db-close! store)))))
   (it "keeps the journal of a parked turn unreaped until the turn resumes"
       ;; A client that subscribed before `restore-pending-turns!` resumed the turn
       ;; hydrated the journal of the stopped gateway and reaped the turn as interrupted.
