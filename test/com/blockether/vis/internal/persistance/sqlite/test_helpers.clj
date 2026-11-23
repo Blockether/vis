@@ -10,6 +10,7 @@
 
    Each test gets an isolated in-memory DB. No manual setup/teardown."
   (:require [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [honey.sql :as sql]
             [lazytest.core :as lt]
@@ -67,12 +68,9 @@
    `session_state.workspace_id` (NOT NULL, 1:1)."
   [store]
   (let [root
-        ;; The JVM deletes the empty root at exit. Without that, the suite left
-        ;; about 200,000 directories in the user's temp directory.
-        (.getCanonicalPath (doto (.toFile (java.nio.file.Files/createTempDirectory
-                                            "vis-test-ws"
-                                            (make-array java.nio.file.attribute.FileAttribute 0)))
-                             .deleteOnExit))
+        ;; The JVM deletes the root and its content at exit. Without that, the suite
+        ;; left about 200,000 directories in the user's temp directory.
+        (.getCanonicalPath (test-temp/temp-dir "vis-test-ws"))
 
         id
         (str (java.util.UUID/randomUUID))]

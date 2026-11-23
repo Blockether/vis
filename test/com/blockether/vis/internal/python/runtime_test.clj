@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
+            [com.blockether.vis.test-temp :as test-temp]
             [lazytest.core :refer [around defdescribe expect it set-ns-context!]])
   (:import [com.blockether.vispython Interpreter]
            [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
@@ -23,7 +24,7 @@
 
 (defn- temp-dir
   ^java.io.File [prefix]
-  (.toFile (Files/createTempDirectory prefix (make-array FileAttribute 0))))
+  (test-temp/temp-dir prefix))
 
 (set-ns-context! [(around [f]
                           ;; Preparation copies the interpreter to a stable store. Keep it out of `~/.vis`.

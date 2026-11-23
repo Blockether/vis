@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.python.env :as python-env]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
             [com.blockether.vis.internal.gateway.event-check :as event-check]
+            [com.blockether.vis.test-temp :as test-temp]
             [next.jdbc :as jdbc]))
 
 ;; Each published event payload must match its payload schema (#487).
@@ -21,9 +22,7 @@
 
 (defn- temp-dir
   [prefix]
-  (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
-                                prefix
-                                (make-array java.nio.file.attribute.FileAttribute 0)))))
+  (.getCanonicalPath (test-temp/temp-dir prefix)))
 
 (defn- seeded-session!
   "A session pinned to a trunk workspace, carrying `requests` as turns in order.

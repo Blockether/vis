@@ -7978,9 +7978,7 @@ vis.register_extension(vis.Extension(name='shared-bound', description='Shared he
   ;; because the shared package kept the SDK module of the context that imported it first.
   (it
     "imports a shared package again for a new session context in the same worker"
-    (let [shared (.toFile (java.nio.file.Files/createTempDirectory
-                            "vis-shared-helper"
-                            (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (let [shared (temp-dir)]
       (spit
         (io/file shared "shared_helper_bound.py")
         "import blockether.vis.extension as vis\n\ndef activity():\n    return vis.Activity(label='Probe', show_start=False)\n")
@@ -9761,7 +9759,8 @@ vis.register_extension(vis.Extension(
             (expect (= "written by the door" (get answer "moved")))
             (expect (= ["note.txt" "note.txt.moved"] (get answer "listed")))
             (expect (= true (get answer "removed")))
-            (expect (= false (get answer "gone"))))))))
+            (expect (= false (get answer "gone")))
+            (fs/delete-tree outside))))))
 
 (defdescribe
   project-extension-shared-fallback-test
