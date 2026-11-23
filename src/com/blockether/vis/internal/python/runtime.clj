@@ -1098,7 +1098,9 @@
 (defn- compile-bytecode!
   "Compile a newly installed project and its packages into the bytecode cache.
    Workers then import them without a compile, also from a read-only tree (#407).
-   A failure costs only speed, because a worker compiles what it imports."
+   A failure costs only speed, because a worker compiles what it imports.
+   Hidden entries of the project stay out: each other interpreter build keeps its own
+   `.venv-<hash>` there, and compiling them all held the load lock for 30 s (#498)."
   [^File project ^File packages]
   (let [prefix
         (pycache-prefix)
@@ -1109,13 +1111,12 @@
         root
         (.getCanonicalPath project)
 
-        site
-        (.getCanonicalPath packages)
-
         roots
-        (cond-> [root]
-          (not (str/starts-with? site (str root File/separator)))
-          (conj site))]
+        (-> (into []
+                  (comp (remove #(str/starts-with? (.getName ^File %) "."))
+                        (map #(.getCanonicalPath ^File %)))
+                  (sort (or (.listFiles project) (make-array File 0))))
+            (conj (.getCanonicalPath packages)))]
 
     (when (and prefix python)
       (try (let [process (.start (doto (ProcessBuilder. ^java.util.List

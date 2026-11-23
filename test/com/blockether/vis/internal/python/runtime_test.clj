@@ -631,6 +631,9 @@
              (spit (io/file site "dependency.py") "VALUE = 2\n")
              (spit (io/file project (#'python-runtime/automatic-environment) "pyvenv.cfg")
                    "home = /embedded/bin\n")
+             ;; #498: another interpreter build's environment. Its compile held the load lock.
+             (io/make-parents (io/file project ".venv-000000000000" "sibling.py"))
+             (spit (io/file project ".venv-000000000000" "sibling.py") "VALUE = 3\n")
              (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
                                                          (when (some #{"--check"} args)
                                                            (throw (ex-info "not ready" {}))))
@@ -647,7 +650,8 @@
                                      (filter #(str/ends-with? % ".pyc"))
                                      set)]
                    (expect (some #(str/starts-with? % "extension.") compiled))
-                   (expect (some #(str/starts-with? % "dependency.") compiled)))))
+                   (expect (some #(str/starts-with? % "dependency.") compiled))
+                   (expect (not-any? #(str/starts-with? % "sibling.") compiled)))))
              (finally (#'python-runtime/delete-tree! project)
                       (#'python-runtime/delete-tree! prefix))))))
 
