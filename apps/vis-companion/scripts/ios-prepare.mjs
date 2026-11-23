@@ -16,9 +16,9 @@
  * means the storyboard names a class that no longer exists — a crash on launch.
  *
  * The hook removes that obsolete bridge and restores `CAPBridgeViewController`.
- * It also stamps the small native lifecycle behavior that must happen before the
- * asynchronous JavaScript bridge can react: ending keyboard editing synchronously
- * as the app resigns active. Every operation is idempotent.
+ * It also installs the scene delegate that iOS 27 requires at launch. The delegate
+ * ends keyboard editing synchronously as the scene resigns active, before the
+ * asynchronous JavaScript bridge can react. Every operation is idempotent.
  *
  * Usage:
  *   node scripts/ios-prepare.mjs
@@ -219,23 +219,18 @@ if (!existsSync(delegate)) {
   process.exit(0);
 }
 
-// ── 1. generated AppDelegate hygiene + pre-background keyboard release ─────────
+// ── 1. generated AppDelegate hygiene ───────────────────────────────────────────
 
 const currentDelegate = readFileSync(delegate, 'utf8');
 const cleanedDelegate = currentDelegate.includes(BEGIN)
   ? `${currentDelegate.slice(0, currentDelegate.indexOf(BEGIN)).trimEnd()}\n`
   : currentDelegate;
-const KEYBOARD_RELEASE = 'window?.endEditing(true)';
-const WILL_RESIGN_ACTIVE = '    func applicationWillResignActive(_ application: UIApplication) {\n';
-if (!cleanedDelegate.includes(KEYBOARD_RELEASE) && !cleanedDelegate.includes(WILL_RESIGN_ACTIVE)) {
-  die('AppDelegate.swift has no applicationWillResignActive method to stamp');
-}
-const preparedDelegate = cleanedDelegate.includes(KEYBOARD_RELEASE)
-  ? cleanedDelegate
-  : cleanedDelegate.replace(
-      WILL_RESIGN_ACTIVE,
-      `${WILL_RESIGN_ACTIVE}        // Release WebKit's editor before UIKit starts the scene transition.\n        ${KEYBOARD_RELEASE}\n`,
-    );
+// With the scene life cycle, UIKit does not call applicationWillResignActive and the
+// app delegate has no window. SceneDelegate releases the keyboard, so an older stamp
+// in the app delegate is removed.
+const KEYBOARD_STAMP =
+  "        // Release WebKit's editor before UIKit starts the scene transition.\n        window?.endEditing(true)\n";
+const preparedDelegate = cleanedDelegate.replace(KEYBOARD_STAMP, '');
 const delegateOk = preparedDelegate === currentDelegate;
 
 // ── 2. the storyboard, back to Capacitor's own controller ────────────────────
@@ -341,6 +336,30 @@ const plistEntries = [
 \t\t</dict>
 \t</array>`,
   ],
+  // iOS 27 stops an app at launch without the scene life cycle. UIKit loads the
+  // storyboard into the window of SceneDelegate (native/ios/SceneDelegate.swift).
+  [
+    'UIApplicationSceneManifest',
+    `\t<key>UIApplicationSceneManifest</key>
+\t<dict>
+\t\t<key>UIApplicationSupportsMultipleScenes</key>
+\t\t<false/>
+\t\t<key>UISceneConfigurations</key>
+\t\t<dict>
+\t\t\t<key>UIWindowSceneSessionRoleApplication</key>
+\t\t\t<array>
+\t\t\t\t<dict>
+\t\t\t\t\t<key>UISceneConfigurationName</key>
+\t\t\t\t\t<string>Default Configuration</string>
+\t\t\t\t\t<key>UISceneDelegateClassName</key>
+\t\t\t\t\t<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+\t\t\t\t\t<key>UISceneStoryboardFile</key>
+\t\t\t\t\t<string>Main</string>
+\t\t\t\t</dict>
+\t\t\t</array>
+\t\t</dict>
+\t</dict>`,
+  ],
   [
     'UILaunchScreen',
     `\t<key>UILaunchScreen</key>
@@ -359,10 +378,13 @@ const currentPlist = readFileSync(infoPlist, 'utf8');
 const launchStoryboardEntry =
   /[\t ]*<key>UILaunchStoryboardName<\/key>\n[\t ]*<string>[^<]*<\/string>\n/;
 const launchStoryboardStale = launchStoryboardEntry.test(currentPlist);
+// The scene manifest names the storyboard; the app-level key would be a second owner of it.
+const mainStoryboardEntry = /[\t ]*<key>UIMainStoryboardFile<\/key>\n[\t ]*<string>[^<]*<\/string>\n/;
+const mainStoryboardStale = mainStoryboardEntry.test(currentPlist);
 const missingPlistEntries = plistEntries.filter(
   ([key]) => !currentPlist.includes(`<key>${key}</key>`),
 );
-let preparedPlist = currentPlist.replace(launchStoryboardEntry, '');
+let preparedPlist = currentPlist.replace(launchStoryboardEntry, '').replace(mainStoryboardEntry, '');
 if (missingPlistEntries.length > 0) {
   const at = preparedPlist.lastIndexOf('</dict>');
   if (at < 0) die('Info.plist has no root </dict>');
@@ -389,7 +411,7 @@ preparedPlist = preparedPlist.replace(
       ? `${start}${schemes}<string>com.blockether.viscompanion</string>${end}`
       : entry,
 );
-const plistOk = !launchStoryboardStale && preparedPlist === currentPlist;
+const plistOk = !launchStoryboardStale && !mainStoryboardStale && preparedPlist === currentPlist;
 
 // ── 4. share extension + App Intents, and the Xcode target that builds them ───
 //
@@ -1083,6 +1105,9 @@ const pasteFileOk = fileOk(pasteSwift, pasteSource);
 const proxyBrowserSwift = join(appDir, 'ProxyBrowser.swift');
 const proxyBrowserSource = readFileSync(join(root, 'native/ios/ProxyBrowserPlugin.swift'), 'utf8');
 const proxyBrowserFileOk = fileOk(proxyBrowserSwift, proxyBrowserSource);
+const sceneSwift = join(appDir, 'SceneDelegate.swift');
+const sceneSource = readFileSync(join(root, 'native/ios/SceneDelegate.swift'), 'utf8');
+const sceneFileOk = fileOk(sceneSwift, sceneSource);
 // The Live Activity of a voice session: one file that the app and the widget
 // extension share, and the extension's views.
 const voiceDir = join(root, 'ios', 'App', 'VisVoice');
@@ -1779,6 +1804,34 @@ if (!proxyBrowserProjectOk) {
     `\t\t${proxyBrowserIds.swiftRef} /* ProxyBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyBrowser.swift; sourceTree = "<group>"; };\n`,
   );
 }
+// The scene delegate is one Swift file in the app target. Capacitor's current template
+// already compiles a SceneDelegate.swift, so only an older project gets these entries.
+// The file itself is always ours: the window comes from the storyboard alone.
+const sceneIds = { swiftRef: objectId(66), swiftBuild: objectId(67) };
+const sceneProjectOk =
+  sourceProjectOk('SceneDelegate', sceneIds) ||
+  (!project.includes(sceneIds.swiftRef) &&
+    /[0-9A-Fa-f]{24} \/\* SceneDelegate\.swift in Sources \*\/,/.test(project));
+if (!sceneProjectOk) {
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift in Sources [*]/,'),
+    `\n\t\t\t\t${sceneIds.swiftBuild} /* SceneDelegate.swift in Sources */,`,
+    'App Sources phase',
+  );
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift [*]/,'),
+    `\n\t\t\t\t${sceneIds.swiftRef} /* SceneDelegate.swift */,`,
+    'App group',
+  );
+  before(
+    '/* End PBXBuildFile section */',
+    `\t\t${sceneIds.swiftBuild} /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${sceneIds.swiftRef} /* SceneDelegate.swift */; };\n`,
+  );
+  before(
+    '/* End PBXFileReference section */',
+    `\t\t${sceneIds.swiftRef} /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };\n`,
+  );
+}
 const liveVoiceIds = { swiftRef: objectId(44), swiftBuild: objectId(45) };
 const liveVoiceProjectOk = sourceProjectOk('LiveVoice', liveVoiceIds);
 if (!liveVoiceProjectOk) {
@@ -2004,6 +2057,7 @@ const voiceOk = voiceFilesOk && voiceProjectOk;
 const oauthOk = oauthFileOk && oauthProjectOk && oauthConfigOk;
 const pasteOk = pasteFileOk && pasteProjectOk && pasteConfigOk;
 const proxyBrowserOk = proxyBrowserFileOk && proxyBrowserProjectOk && proxyBrowserConfigOk;
+const sceneOk = sceneFileOk && sceneProjectOk;
 const shareOk = shareFilesOk && projectOk;
 const badgeOk = notifyFilesOk && notifyProjectOk && badgeConfigOk;
 const speechOk = speechFileOk && speechProjectOk && speechConfigOk;
@@ -2012,6 +2066,7 @@ const hostOk = hostFileOk && hostProjectOk && hostConfigOk;
 if (check) {
   if (
     delegateOk &&
+    sceneOk &&
     boardOk &&
     plistOk &&
     appIconOk &&
@@ -2037,7 +2092,9 @@ if (check) {
       ? 'ios: generated AppIcon is not the tracked Vis icon — run `node scripts/ios-prepare.mjs`'
       : !delegateOk
         ? 'ios: AppDelegate needs native hygiene — run `node scripts/ios-prepare.mjs`'
-        : !boardOk
+        : !sceneOk
+          ? 'ios: no SceneDelegate in the App target — run `node scripts/ios-prepare.mjs`'
+          : !boardOk
           ? 'ios: stale viewport bridge — run `node scripts/ios-prepare.mjs`'
           : !shareOk
             ? 'ios: no share extension / Shortcuts target — run `node scripts/ios-prepare.mjs`'
@@ -2110,6 +2167,7 @@ if (!hostFileOk) writeFileSync(hostSwift, hostSource);
 if (!oauthFileOk) writeFileSync(oauthSwift, oauthSource);
 if (!pasteFileOk) writeFileSync(pasteSwift, pasteSource);
 if (!proxyBrowserFileOk) writeFileSync(proxyBrowserSwift, proxyBrowserSource);
+if (!sceneFileOk) writeFileSync(sceneSwift, sceneSource);
 if (!liveVoiceFileOk) writeFileSync(liveVoiceSwift, liveVoiceSource);
 if (!voiceFilesOk) {
   mkdirSync(voiceDir, { recursive: true });
