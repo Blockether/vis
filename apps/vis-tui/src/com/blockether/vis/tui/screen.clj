@@ -588,22 +588,23 @@
 (defn- copy-text-async!
   "Copy off the input thread. `text` is a string, or a thunk producing one when
    the payload needs a gateway round trip — that fetch belongs on the worker
-   rather than on the keystroke that asked for it.
+   rather than on the keystroke that asked for it. A copy that works is silent;
+   only a failure shows a notice.
 
    A thunk that answers nil could NOT produce what was asked for. Nothing is
    copied then: the clipboard keeps what it already held and `failure-message`
    (a string, or a thunk for a reason known only once the fetch has failed) says
    what happened and that it is worth trying again."
-  ([worker-name text success-message] (copy-text-async! worker-name text success-message nil))
-  ([worker-name text success-message failure-message]
+  ([worker-name text] (copy-text-async! worker-name text nil))
+  ([worker-name text failure-message]
    (vis/worker-future
      worker-name
      #(if-let [payload (if (fn? text) (text) text)]
         (let [copied? (try (true? (input/clipboard-copy! payload)) (catch Throwable _ false))]
-          (when (or (not copied?) success-message)
-            (vis/notify! (if copied? success-message "Copy failed — terminal clipboard unavailable")
-                         :level (if copied? :success :error)
-                         :ttl-ms (if copied? copy-success-ttl-ms status-error-ttl-ms)))
+          (when-not copied?
+            (vis/notify! "Copy failed — terminal clipboard unavailable"
+                         :level :error
+                         :ttl-ms status-error-ttl-ms))
           copied?) (do (vis/notify! (or (if (fn? failure-message) (failure-message) failure-message)
                                         "Copy failed — nothing to copy")
                                     :level :error
@@ -616,18 +617,15 @@
    about what it addresses; the marker tells whoever it is pasted to — a person,
    an issue, another agent — that it names a Vis session."
   [text]
-  (copy-text-async! "vis-tui-copy-session-id" (vis-header/marked-session-id text) nil))
+  (copy-text-async! "vis-tui-copy-session-id" (vis-header/marked-session-id text)))
 
 (defn- copy-selection!
-  ([text] (copy-selection! text :transcript))
-  ([text source]
-   (copy-text-async! "vis-tui-copy-selection"
-                     text
-                     (if (= source :input) "✓ Copied input selection" "✓ Copied selection"))))
+  [text]
+  (copy-text-async! "vis-tui-copy-selection" text))
 
 (defn- copy-bubble!
   [text]
-  (copy-text-async! "vis-tui-copy-bubble" (selection/clean-copied-text text) nil))
+  (copy-text-async! "vis-tui-copy-bubble" (selection/clean-copied-text text)))
 
 (defn- copy-disclosure!
   "Copy a disclosure hit: an expanded body, a code header, or an Activity band.
@@ -655,7 +653,6 @@
             (if (some :failed exports)
               (do (vreset! failure (if (some :stale exports) :stale :unavailable)) nil)
               (str/join "\n\n" (map #(force (:text %)) exports)))))
-        "✓ Copied Activity history"
         (fn []
           (if (= :stale @failure)
             "Activity changed while copying — show it again from the first operation, then copy"
@@ -3642,17 +3639,19 @@
     (state/dispatch [:bump-render-version])))
 
 (defn- report-open-result!
-  "Say when the OS opener refused a clicked target. The notice names the
-   target, so the person can copy it when no browser opens."
+  "Say when the OS opener could not open a clicked target. The notice names the
+   target, so the person can copy it when no browser opens. A refused scheme
+   (#499) is not a failure to report: Vis never opens it."
   [{:keys [status error]}]
-  (when-not (= :ok status)
+  (when-not (#{:ok :rejected-scheme} status)
     (vis/notify! (or error "Link could not be opened") :level :warn :ttl-ms status-error-ttl-ms)))
 
 (declare open-settings-modal!)
 
 (defn- open-click-target!
   ([{:keys [kind url session-id user-written?]}]
-   (if (and (= :url kind) (re-find #"(?i)^attachment:" (str url)))
+   ;; #499: a `sandbox:` link names a session attachment by its filename.
+   (if (and (= :url kind) (re-find #"(?i)^(attachment|sandbox):" (str url)))
      ;; Capture the clicked session before the worker runs: changing tabs must
      ;; not resolve the link against another session's attachments.
      (open-produced-artifact! (or session-id (get-in @state/app-db [:session :id])) url)
@@ -9633,7 +9632,7 @@
                                                  {:anchor anchor :focus focus :source :overlay}
                                                  overlay-ranges)]
             (state/dispatch [:clear-mouse-selection])
-            (when-not (str/blank? payload) (copy-selection! payload :overlay)))
+            (when-not (str/blank? payload) (copy-selection! payload)))
           (do
             (state/dispatch [:clear-mouse-selection])
             (when-let [hit (and (not already-handled?) (.lookup interactions/hit-map mx my))]
@@ -9832,8 +9831,7 @@
                                            (:node-id control-hit) (:collapsed? control-hit)])
               disclosure-hit (copy-disclosure! disclosure-hit)
               bubble-hit (copy-bubble-hit! bubble-hit)
-              (and (not simple-click?) (not (str/blank? payload))) (copy-selection! payload
-                                                                                    source)))
+              (and (not simple-click?) (not (str/blank? payload))) (copy-selection! payload)))
       (when (and (not was-dragging?) (not already-handled?))
         (if-let [hit release-hit]
           (case (:kind hit)

@@ -2469,7 +2469,14 @@ therapy line 2"
             (open-click-target! {:kind :url :url "https://example.com"})
             (let [[text options] (deref notified 1000 ::timeout)]
               (expect (str/includes? (str text) "https://example.com"))
-              (expect (= :warn (:level options)))))))))
+              (expect (= :warn (:level options))))))))
+  ;; #499: a click on a link with a refused scheme showed a "Rejected scheme" notice.
+  (it "shows no notice for a link with a refused scheme"
+      (let [notified (promise)]
+        (with-redefs-fn {#'vis/notify! (fn [text & _] (deliver notified text))}
+          (fn []
+            @(open-click-target! {:kind :url :url "javascript:alert(1)"})
+            (expect (not (realized? notified))))))))
 
 (def ^:private linked-artifact-id "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 
@@ -2577,6 +2584,14 @@ therapy line 2"
           (expect (= ["vis-czapka.pdf" "linked version"] (:opened result)))
           (expect (empty? (:urls result)))
           (expect (empty? (:notifications result))))))
+  ;; #499: a reply linked an attachment as sandbox:/mnt/data/<name>, and the click
+  ;; showed a "Rejected scheme" error. The name opens the newest cut of this session.
+  (it "opens the newest attachment with the filename of a sandbox: link"
+      (let [result (attachment-click-outcome {:kind :url :url "sandbox:/mnt/data/vis-czapka.pdf"} {})]
+        (expect (= [[:index "session-1"] [:bytes "session-1" "iteration-new" 1]] (:requests result)))
+        (expect (= ["vis-czapka.pdf" "linked version"] (:opened result)))
+        (expect (empty? (:urls result)))
+        (expect (empty? (:notifications result)))))
   ;; Regression: ZIP support (848c57e31) saves an archive and shows it in the
   ;; file manager, because no viewer opens an archive.
   (it "saves a linked archive in the downloads folder and shows it there"
@@ -4535,7 +4550,7 @@ therapy line 2"
           (expect (true? (deref (copy-disclosure! copy) 1000 ::timeout)))
           (expect (= "export sid 0f3f2a1e-0000-4000-8000-000000000001 r4"
                      (deref copied 1000 ::timeout)))
-          (expect (= "✓ Copied Activity history" (first (deref notified 1000 ::timeout))))))))
+          (expect (not (realized? notified)))))))
   (it
     "copies inline and retained sources together in their original order, or nothing on failure"
     (doseq [fail? [false true]]

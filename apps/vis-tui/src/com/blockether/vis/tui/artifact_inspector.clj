@@ -933,14 +933,41 @@
   [^TerminalScreen screen images index opts]
   (dlg/run-modal! screen (image-viewer-component images index opts)))
 
+(defn- link-name
+  "The decoded last path segment of `s`, or `s` when it does not decode."
+  [^String s]
+  (let [name (peek (str/split s #"/"))]
+    (try (java.net.URLDecoder/decode ^String name "UTF-8") (catch IllegalArgumentException _ name))))
+
+(defn- link-matcher
+  "A predicate over `artifacts` that picks the artifact `url` names, or nil when `url`
+   names none. An attachment://<uuid> link names one exact cut. A sandbox:<path> link
+   (#499), the form a model copies from other tools, names the newest cut of the
+   attachment whose filename is the last path segment."
+  [url]
+  (if-let [[_ attachment-id]
+           (re-matches
+             #"(?i)attachment://([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+             url)]
+    (fn [artifacts]
+      (some #(when (= (str/lower-case attachment-id) (get % "attachment_id")) %) artifacts))
+    (when-let [[_ path] (re-matches #"(?i)sandbox:(.*[^/])" url)]
+      (let [wanted (link-name path)]
+        (fn [artifacts]
+          (reduce (fn [newest artifact]
+                    (if (and (= wanted (get artifact "filename"))
+                             (or (nil? newest)
+                                 (<= (long (or (get newest "version") 1))
+                                     (long (or (get artifact "version") 1)))))
+                      artifact
+                      newest))
+                  nil
+                  artifacts))))))
+
 (defn- artifact-link-row!
   [session-id url]
-  (when-let [[_ attachment-id]
-             (re-matches
-               #"(?i)attachment://([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
-               url)]
-    (when-let [artifact (some #(when (= (str/lower-case attachment-id) (get % "attachment_id")) %)
-                              (:artifacts (fetch-session-artifacts! session-id)))]
+  (when-let [pick (link-matcher url)]
+    (when-let [artifact (pick (:artifacts (fetch-session-artifacts! session-id)))]
       {:filename (get artifact "filename")
        :media-type (get artifact "media_type")
        :iteration-id (get artifact "iteration_id")
@@ -950,8 +977,8 @@
 
 (defn artifact-row!
   "The inspector row that `target` names: the row itself, or the row of an
-   attachment://<uuid> link in this session's human-visible index. nil when the
-   link names no artifact."
+   attachment://<uuid> or sandbox:<path> link in this session's human-visible
+   index. nil when the link names no artifact."
   [session-id target]
   (if (string? target) (artifact-link-row! session-id target) target))
 

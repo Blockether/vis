@@ -776,9 +776,8 @@
 
 (defn- copy-path
   [state rows copy!]
-  (if-let [path (:path (nth rows (:selected state) nil))]
-    (do (copy! path) (assoc state :notice (str "Copied " path)))
-    state))
+  (when-let [path (:path (nth rows (:selected state) nil))] (copy! path))
+  state)
 
 (defn- find-code
   [state rows text after & [direction]]
