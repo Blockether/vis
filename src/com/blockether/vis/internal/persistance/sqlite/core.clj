@@ -1344,9 +1344,9 @@
 
 (defn- open-disk-pool!
   "Fresh pool over `file`, schema installed under the cross-process migration
-   lock, then the fortnightly space reclaim handed to the janitor
-   (`maintenance/vacuum-async!` — off the open path, since VACUUM rewrites the
-   whole file). Closes the pool if the migration fails so a failed open leaks
+   lock (a new store first gets `auto_vacuum=INCREMENTAL`), then the fortnightly
+   space reclaim handed to the janitor (`maintenance/vacuum-async!`, off the open
+   path). Closes the pool if the migration fails so a failed open leaks
    nothing."
   ^HikariDataSource [^String path ^String file]
   (let [raw
@@ -1355,7 +1355,9 @@
         pool
         (pooled-datasource raw (str "vis-rlm-disk-" (.incrementAndGet ^AtomicLong pool-counter)))]
 
-    (try (with-migration-lock! path #(install-schema! pool {:shared? (claim-store! path)}))
+    (try (with-migration-lock! path
+                               #(do (maintenance/use-incremental-vacuum! pool)
+                                    (install-schema! pool {:shared? (claim-store! path)})))
          (maintenance/vacuum-async! pool
                                     file
                                     {:before #(rewrite-older-store! pool)

@@ -80,6 +80,21 @@
                           (expect (> (double free-bytes) (* 0.5 (double (long file-bytes))))))
                         (finally (cleanup! path))))))
 
+(defdescribe new-store-test
+             (it "gives a new store incremental vacuum and never rewrites a store with tables"
+                 (let [[path ds]
+                       (wal-store)
+
+                       [old-path old-ds]
+                       (wal-store)]
+
+                   (try (maintenance/use-incremental-vacuum! ds)
+                        (expect (= 2 (:auto-vacuum (maintenance/free-space ds))))
+                        (fill! old-ds 10)
+                        (maintenance/use-incremental-vacuum! old-ds)
+                        (expect (zero? (long (:auto-vacuum (maintenance/free-space old-ds)))))
+                        (finally (cleanup! path) (cleanup! old-path))))))
+
 (defdescribe compact-store-is-left-alone-test
              (it "a store with nothing to reclaim is never rewritten and leaves no marker"
                  (let [[path ds] (temp-store)]
@@ -113,6 +128,8 @@
              ;; The FILE gave the space back, not just the freelist.
              (expect (< (.length (File. path)) before))
              (expect (zero? (long (:freelist-count (maintenance/free-space ds)))))
+             ;; The rewrite converts the store, so it never needs a full VACUUM again.
+             (expect (= 2 (:auto-vacuum (maintenance/free-space ds))))
              (expect (.isFile (File. (str path ".vacuum")))))
            ;; Inside the window a fresh freelist waits its turn.
            (fill! ds 2000)
@@ -164,6 +181,19 @@
                (expect (= :too-large (:reason report)))
                (expect (= freelist-count (:freelist-count (maintenance/free-space ds))))
                (expect (not (.exists (File. (str path ".vacuum"))))))
+             (finally (cleanup! path)))))
+  (it "reclaims an incremental store of any size in chunks, without a full rewrite"
+      (let [[path ds] (temp-store)]
+        (try (maintenance/use-incremental-vacuum! ds)
+             (fill! ds 3000)
+             (exec! ds "DELETE FROM bulk")
+             (let [before (.length (File. path))
+                   report
+                   (maintenance/maybe-vacuum! ds path {:min-free-bytes 1024 :max-file-bytes 1})]
+
+               (expect (= :vacuumed (:reason report)))
+               (expect (zero? (long (:freelist-count (maintenance/free-space ds)))))
+               (expect (< (.length (File. path)) before)))
              (finally (cleanup! path)))))
   (it "truncates the WAL after changing a store with an open connection"
       (let [[path ^javax.sql.DataSource ds]
