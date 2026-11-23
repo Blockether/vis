@@ -1532,6 +1532,9 @@ def test_frozen_sync_keeps_the_installed_package_when_a_changed_pin_fails(releas
     assert (updated["status"], updated["version"]) == ("updated", "1.1.0")
 
 
+_catalog = package._catalog
+
+
 def _pinned(version):
     return {
         "vis-greeter": {
@@ -1552,17 +1555,57 @@ def test_frozen_sync_does_not_keep_a_broken_installed_package(releases):
         assert row["status"] == "failed", version
 
 
-# A load does not keep a snapshot whose receipt names another revision.
-def test_frozen_sync_does_not_keep_a_snapshot_with_another_revision(releases):
+# A load does not keep a snapshot whose receipt names another or no revision.
+@pytest.mark.parametrize("revision", ["0" * 40, None])
+def test_frozen_sync_does_not_keep_a_snapshot_with_another_revision(releases, revision):
     _metadata, target, _commands = releases
     installed = package.sync(_pinned("1.0.0"), target, trust=True, frozen=True)[0]
     receipt = Path(installed["path"]) / "receipt.json"
     data = json.loads(receipt.read_text())
-    data["revision"] = "0" * 40
+    data["revision"] = revision
     receipt.write_text(json.dumps(data))
     assert package.sync(_pinned("9.9.9"), target, trust=True, frozen=True)[0][
         "status"
     ] == ("failed")
+
+
+# Issue #504: a corrupt installed receipt fails its package; the sync does not stop.
+@pytest.mark.parametrize("field", ["repository_url", "subdirectory"])
+def test_sync_fails_only_the_package_of_a_receipt_with_a_missing_field(releases, field):
+    _metadata, target, _commands = releases
+    installed = package.sync(_pinned("1.0.0"), target, trust=True, frozen=True)[0]
+    receipt = Path(installed["path"]) / "receipt.json"
+    receipt.write_text(json.dumps({**json.loads(receipt.read_text()), field: None}))
+    row = package.sync(_pinned("1.1.0"), target, trust=True, frozen=True)[0]
+    assert row["status"] == "failed"
+
+
+# Issue #504: a broken catalog reply fails only its package, and a load keeps the installed one.
+@pytest.mark.parametrize(
+    "reply",
+    [
+        package.HTTPException("truncated reply"),
+        {"revision": 123},
+    ],
+)
+def test_frozen_sync_keeps_the_installed_package_on_a_broken_catalog_reply(
+    releases, monkeypatch, reply
+):
+    metadata, target, _commands = releases
+    installed = package.sync(_pinned("1.0.0"), target, trust=True, frozen=True)[0]
+
+    def open_request(*_args, **_kwargs):
+        if isinstance(reply, Exception):
+            raise reply
+        return io.BytesIO(json.dumps({"releases": [{**metadata[0], **reply}]}).encode())
+
+    monkeypatch.setattr(package, "_catalog", _catalog)
+    monkeypatch.setattr(
+        package, "build_opener", lambda *_: SimpleNamespace(open=open_request)
+    )
+    kept = package.sync(_pinned("1.1.0"), target, trust=True, frozen=True)[0]
+    assert (kept["status"], kept["path"]) == ("kept", installed["path"])
+    assert package.sync(_pinned("1.1.0"), target, trust=True)[0]["status"] == "failed"
 
 
 # A read-only scope keeps the installed package on a load; an explicit sync fails.

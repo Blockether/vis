@@ -543,7 +543,13 @@ def _catalog(repository, subdirectory):
         raise ValueError(
             f"Extension Center is unavailable (HTTP {exc.code}); no code was changed"
         ) from exc
-    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+    except (
+        URLError,
+        TimeoutError,
+        OSError,
+        HTTPException,
+        json.JSONDecodeError,
+    ) as exc:
         # The message of a network error can hold a path or a proxy address: name its kind only.
         reason = getattr(exc, "reason", None)
         cause = reason if isinstance(reason, Exception) else exc
@@ -593,7 +599,8 @@ def _releases(repository, subdirectory):
             or github_repository(item.get("repository_url")).lower()
             != repository.lower()
             or project_subdirectory(item.get("subdirectory", "")) != subdirectory
-            or not re.fullmatch(r"[0-9a-f]{40}", item.get("revision", ""))
+            or not isinstance(item.get("revision"), str)
+            or not re.fullmatch(r"[0-9a-f]{40}", item["revision"])
             or not isinstance(item.get("version"), str)
         ):
             raise ValueError("Invalid release metadata from Extension Center")
@@ -665,7 +672,10 @@ def _receipt(snapshot, name):
         not isinstance(record, dict)
         or record.get("name") != name
         or _version(record.get("version")) != snapshot.name
-        or not re.fullmatch(r"[0-9a-f]{40}", record.get("revision", ""))
+        or not isinstance(record.get("revision"), str)
+        or not re.fullmatch(r"[0-9a-f]{40}", record["revision"])
+        or not isinstance(record.get("repository_url"), str)
+        or not isinstance(record.get("subdirectory"), str)
     ):
         raise ValueError("Invalid installed package receipt")
     return record
