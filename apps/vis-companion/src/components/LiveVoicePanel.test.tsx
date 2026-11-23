@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LiveVoicePanel, LiveVoicePanelContent } from './LiveVoicePanel';
 import type { LiveVoiceGateway } from '../lib/live-voice';
+import { currentLiveVoice } from '../lib/live-voice-owner';
 
 const media = vi.hoisted(() => ({
   reason: null as string | null,
@@ -52,8 +53,11 @@ class Socket {
     Socket.last = this;
   }
 }
-function gateway(enabled = true): LiveVoiceGateway {
+let gateways = 0;
+// Each test has its own gateway, so the closed voice of one test never shows in the next.
+function gateway(enabled = true): LiveVoiceGateway & { base: string } {
   return {
+    base: `https://gateway-${++gateways}.example.com`,
     liveVoiceCapabilities: vi.fn(async () => ({ enabled, available: enabled })),
     startLiveVoice: vi.fn(async () => ({
       voice_session_id: 'v',
@@ -78,7 +82,10 @@ beforeEach(() => {
   media.capture.mockReset().mockResolvedValue(undefined);
   vi.stubGlobal('WebSocket', Socket);
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(async () => {
+  await currentLiveVoice()?.session.stop();
+  vi.unstubAllGlobals();
+});
 
 describe('hands-free opt-in panel', () => {
   it('keeps one live session when its controls move to an artifact overlay', async () => {
@@ -89,14 +96,14 @@ describe('hands-free opt-in panel', () => {
       client, sid: 's', disabled: false, startRequest: 1,
       onActive: vi.fn(), onBegin: vi.fn(),
     };
-    const rendered = render(<LiveVoicePanel {...props} />);
+    const rendered = render(<LiveVoicePanel title="Chat" {...props} />);
     try {
       await waitFor(() => expect(client.startLiveVoice).toHaveBeenCalledTimes(1));
-      rendered.rerender(<LiveVoicePanel {...props} controlsTarget={target} />);
+      rendered.rerender(<LiveVoicePanel title="Chat" {...props} controlsTarget={target} />);
       expect(within(target).getByRole('button', { name: 'End voice mode' })).toBeVisible();
       expect(client.endLiveVoice).not.toHaveBeenCalled();
       expect(media.close).not.toHaveBeenCalled();
-      rendered.rerender(<LiveVoicePanel {...props} controlsTarget={null} />);
+      rendered.rerender(<LiveVoicePanel title="Chat" {...props} controlsTarget={null} />);
       expect(target).toBeEmptyDOMElement();
       expect(client.startLiveVoice).toHaveBeenCalledTimes(1);
       fireEvent.click(screen.getByRole('button', { name: 'End voice mode' }));
@@ -192,14 +199,14 @@ describe('hands-free opt-in panel', () => {
   });
   it('stays hidden and does not request media before a microphone action', async () => {
     const client = gateway();
-    const { container } = render(<LiveVoicePanel client={client} sid="s" disabled={false} onActive={vi.fn()} onBegin={vi.fn()} />);
+    const { container } = render(<LiveVoicePanel title="Chat" client={client} sid="s" disabled={false} onActive={vi.fn()} onBegin={vi.fn()} />);
     expect(container).toBeEmptyDOMElement();
     expect(client.liveVoiceCapabilities).not.toHaveBeenCalled();
     expect(media.factory).not.toHaveBeenCalled();
   });
   it('reports an unavailable gateway after an explicit request and allows retry', async () => {
     const client = gateway(false);
-    render(<LiveVoicePanel client={client} sid="s" startRequest={1} disabled={false} onActive={vi.fn()} onBegin={vi.fn()} />);
+    render(<LiveVoicePanel title="Chat" client={client} sid="s" startRequest={1} disabled={false} onActive={vi.fn()} onBegin={vi.fn()} />);
     expect(await screen.findByText('Hands-free voice is unavailable on this gateway.')).toBeInTheDocument();
     expect(client.startLiveVoice).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Retry voice' }));
@@ -209,7 +216,7 @@ describe('hands-free opt-in panel', () => {
     media.mobile = true;
     media.platform = 'ios';
     const client = gateway();
-    render(<LiveVoicePanel client={client} sid="s" startRequest={1} disabled={false} onActive={vi.fn()} onBegin={vi.fn()} />);
+    render(<LiveVoicePanel title="Chat" client={client} sid="s" startRequest={1} disabled={false} onActive={vi.fn()} onBegin={vi.fn()} />);
     await waitFor(() => expect(client.startLiveVoice).toHaveBeenCalledTimes(1));
     expect(media.factory).toHaveBeenCalledWith(true);
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
@@ -222,7 +229,7 @@ describe('hands-free opt-in panel', () => {
     media.mobile = true;
     media.platform = 'android';
     const client = gateway();
-    render(<LiveVoicePanel client={client} sid="s" startRequest={1} disabled={false} onActive={vi.fn()} onBegin={vi.fn()} />);
+    render(<LiveVoicePanel title="Chat" client={client} sid="s" startRequest={1} disabled={false} onActive={vi.fn()} onBegin={vi.fn()} />);
     expect(await screen.findByRole('button', { name: 'Start voice' })).toBeDisabled();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Enable mobile audio testing' }));
     fireEvent.click(screen.getByRole('button', { name: 'Start voice' }));
@@ -233,13 +240,13 @@ describe('hands-free opt-in panel', () => {
     media.platform = 'android';
     const client = gateway();
     const props = { client, sid: 's', disabled: false, onActive: vi.fn(), onBegin: vi.fn() };
-    const rendered = render(<LiveVoicePanel {...props} startRequest={1} />);
+    const rendered = render(<LiveVoicePanel title="Chat" {...props} startRequest={1} />);
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Enable mobile audio testing' }));
     fireEvent.click(screen.getByRole('button', { name: 'Start voice' }));
     await waitFor(() => expect(client.startLiveVoice).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: 'End voice mode' }));
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Hands-free voice' })).not.toBeInTheDocument());
-    rendered.rerender(<LiveVoicePanel {...props} startRequest={2} />);
+    rendered.rerender(<LiveVoicePanel title="Chat" {...props} startRequest={2} />);
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Enable mobile audio testing' }));
     fireEvent.click(screen.getByRole('button', { name: 'Start voice' }));
     await waitFor(() => expect(client.startLiveVoice).toHaveBeenCalledTimes(2));
@@ -247,7 +254,7 @@ describe('hands-free opt-in panel', () => {
   it('reports unsupported media only after a start request', async () => {
     media.reason = 'Install an app build with native hands-free audio support.';
     const client = gateway();
-    render(<LiveVoicePanel client={client} sid="s" startRequest={1} disabled={false} onActive={vi.fn()} onBegin={vi.fn()} />);
+    render(<LiveVoicePanel title="Chat" client={client} sid="s" startRequest={1} disabled={false} onActive={vi.fn()} onBegin={vi.fn()} />);
     expect(await screen.findByText(media.reason)).toBeInTheDocument();
     expect(client.startLiveVoice).not.toHaveBeenCalled();
   });
@@ -255,7 +262,7 @@ describe('hands-free opt-in panel', () => {
     const client = gateway();
     const onActive = vi.fn();
     const props = { client, sid: 's', disabled: false, onActive, onBegin: vi.fn() };
-    const rendered = render(<LiveVoicePanel {...props} startRequest={1} />);
+    const rendered = render(<LiveVoicePanel title="Chat" {...props} startRequest={1} />);
     await waitFor(() => expect(client.startLiveVoice).toHaveBeenCalled());
     await act(async () => {
       Socket.last.onmessage?.({ data: JSON.stringify({ type: 'session.ready', state, capabilities: {}, limits: {} }) });
@@ -272,10 +279,34 @@ describe('hands-free opt-in panel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'End voice mode' }));
     await waitFor(() => expect(client.endLiveVoice).toHaveBeenCalled());
     expect(onActive).toHaveBeenLastCalledWith(false);
-    rendered.rerender(<LiveVoicePanel {...props} startRequest={2} />);
+    rendered.rerender(<LiveVoicePanel title="Chat" {...props} startRequest={2} />);
     await waitFor(() => expect(client.startLiveVoice).toHaveBeenLastCalledWith('s', expect.any(String), true));
     rendered.unmount();
-    expect(media.close).toHaveBeenCalledTimes(2);
+    expect(media.close).toHaveBeenCalledTimes(1);
+  });
+  // Regression, user report: the voice ended when the phone opened another session.
+  it('keeps the voice of a closed session, shows it on return and refuses a second voice', async () => {
+    const client = gateway();
+    const props = { client, disabled: false, onActive: vi.fn(), onBegin: vi.fn() };
+    const first = render(<LiveVoicePanel title="Chat" {...props} sid="a" startRequest={1} />);
+    await waitFor(() => expect(client.startLiveVoice).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      Socket.last.onmessage?.({ data: JSON.stringify({ type: 'session.ready', state, capabilities: {}, limits: {} }) });
+    });
+    first.unmount();
+    expect(client.endLiveVoice).not.toHaveBeenCalled();
+    expect(media.close).not.toHaveBeenCalled();
+    const other = render(<LiveVoicePanel title="Chat" {...props} sid="b" startRequest={1} />);
+    expect(
+      await screen.findByText('Hands-free voice is live in another session. End it there first.'),
+    ).toBeInTheDocument();
+    expect(client.startLiveVoice).toHaveBeenCalledTimes(1);
+    other.unmount();
+    render(<LiveVoicePanel title="Chat" {...props} sid="a" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Mute microphone' }));
+    expect(Socket.last.send).toHaveBeenCalledWith(JSON.stringify({ type: 'capture.mute', muted: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'End voice mode' }));
+    await waitFor(() => expect(client.endLiveVoice).toHaveBeenCalledTimes(1));
   });
   it('ends a pending connection and ignores its late capabilities', async () => {
     const client = gateway();
@@ -285,7 +316,7 @@ describe('hands-free opt-in panel', () => {
     }));
     const onActive = vi.fn();
     render(
-      <LiveVoicePanel client={client} sid="s" startRequest={1} disabled={false}
+      <LiveVoicePanel title="Chat" client={client} sid="s" startRequest={1} disabled={false}
         onActive={onActive} onBegin={vi.fn()} />,
     );
     await waitFor(() => expect(client.liveVoiceCapabilities).toHaveBeenCalled());
@@ -299,7 +330,7 @@ describe('hands-free opt-in panel', () => {
     const client = gateway();
     vi.mocked(client.liveVoiceCapabilities).mockRejectedValueOnce(new Error('Gateway unreachable.'));
     render(
-      <LiveVoicePanel client={client} sid="s" startRequest={1} disabled={false}
+      <LiveVoicePanel title="Chat" client={client} sid="s" startRequest={1} disabled={false}
         onActive={vi.fn()} onBegin={vi.fn()} />,
     );
     expect(await screen.findByText('Gateway unreachable.')).toBeInTheDocument();
@@ -312,9 +343,9 @@ describe('hands-free opt-in panel', () => {
     let resolve!: (value: { enabled: boolean; available: boolean }) => void;
     vi.mocked(client.liveVoiceCapabilities).mockImplementation(() => new Promise((done) => { resolve = done; }));
     const props = { client, disabled: false, onActive: vi.fn(), onBegin: vi.fn() };
-    const rendered = render(<LiveVoicePanel {...props} key="a" sid="a" startRequest={1} />);
+    const rendered = render(<LiveVoicePanel title="Chat" {...props} key="a" sid="a" startRequest={1} />);
     await waitFor(() => expect(client.liveVoiceCapabilities).toHaveBeenCalled());
-    rendered.rerender(<LiveVoicePanel {...props} key="b" sid="b" />);
+    rendered.rerender(<LiveVoicePanel title="Chat" {...props} key="b" sid="b" />);
     await act(async () => resolve({ enabled: true, available: true }));
     expect(client.startLiveVoice).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Start voice' })).not.toBeInTheDocument();

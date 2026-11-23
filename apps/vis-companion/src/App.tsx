@@ -95,6 +95,8 @@ import { CommandSurface } from './components/CommandSurface';
 import { CommandProvider, CommandRegistry, useCommands, type CommandHandlers } from './lib/commands';
 import { AppIcon, AppsIcon, SearchIcon, SettingsIcon } from './components/icons';
 import { GlobalApps } from './components/GlobalApps';
+import { LiveVoiceDock } from './components/LiveVoiceDock';
+import { isLiveVoiceActive, isLiveVoiceOf, useLiveVoice } from './lib/live-voice-owner';
 import { listedGlobalApps, useGlobalApps } from './lib/global-apps';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
@@ -494,6 +496,8 @@ export function App({ launch = null }: AppProps = {}) {
   const [isGlobalAppsOpen, setGlobalAppsOpen] = useState(false);
   const openGlobalApps = useCallback(() => setGlobalAppsOpen(true), []);
   const closeGlobalApps = useCallback(() => setGlobalAppsOpen(false), []);
+  // The one hands-free voice of this device, wherever it was started.
+  const voice = useLiveVoice();
   const refresh = useCallback(async () => {
     const [connections, primaryConnection] = await Promise.all([
       loadConnections(),
@@ -1514,6 +1518,11 @@ export function App({ launch = null }: AppProps = {}) {
   const sessionsMounted = conns.length > 0 && !!active;
   const sessionsVisible =
     isSplit || edgeBack.isSwiping || (shellView === 'sessions' && (!isDesk || isSidebarShown));
+  // Voice that runs in a session that is not on screen keeps a way back and a way out.
+  const voiceConn = voice && conns.find((conn) => normalizeBase(conn.url) === voice.base);
+  const isVoiceDocked =
+    isLiveVoiceActive(voice) &&
+    !(shellView === 'session' && openTarget && isLiveVoiceOf(voice, normalizeBase(openTarget.conn.url), openTarget.sid));
   const listBox = sessionListBox({
     screen: shellView,
     isVisible: sessionsVisible,
@@ -1547,6 +1556,12 @@ export function App({ launch = null }: AppProps = {}) {
                   ? { count: listedApps.length, isOpen: isGlobalAppsOpen, onOpen: openGlobalApps }
                   : undefined
               }
+            />
+          )}
+          {isVoiceDocked && voice && (
+            <LiveVoiceDock
+              voice={voice}
+              onOpen={voiceConn ? () => openGatewaySession(voiceConn, voice.sid) : null}
             />
           )}
 

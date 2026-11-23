@@ -68,6 +68,7 @@ import { MicIcon, SendIcon, StopIcon, ZenIcon } from '../components/icons';
 import { ZenPictures } from '../components/ZenPictures';
 import { setZenMode, useZenMode } from '../lib/transcript-display';
 import { useCommands } from '../lib/commands';
+import { isLiveVoiceActive, isLiveVoiceOf, useLiveVoice } from '../lib/live-voice-owner';
 import { AppRevealContext, SessionAppsReadContext, SessionAppViewsContext, useSessionApps } from '../components/AppAttachment';
 import { SessionAppSlot } from '../components/SessionAppSlot';
 import { useVisitState } from '../lib/review-memory';
@@ -1321,6 +1322,11 @@ export function SessionScreen({
   const voiceVisitRef = useRef(0);
   const voiceMountedRef = useRef(true);
   const [liveVoiceRequest, setLiveVoiceRequest] = useState({ sid, count: 0 });
+  // The device voice outlives this screen: it shows here again on return.
+  const deviceVoice = useLiveVoice();
+  const isVoiceHere = isLiveVoiceOf(deviceVoice, client.base, sid);
+  const isVoiceElsewhere = isLiveVoiceActive(deviceVoice) && !isVoiceHere;
+  const isVoicePanelShown = (liveVoiceRequest.sid === sid && liveVoiceRequest.count > 0) || isVoiceHere;
   // Where the transcription IS, straight from the gateway job. Null means the
   // engine has not reported yet (the bytes are still leaving this phone).
   const [voiceProgress, setVoiceProgress] = useState<VoiceProgress | null>(null);
@@ -4284,6 +4290,10 @@ export function SessionScreen({
 
   async function toggleVoice() {
     if (liveVoiceActive || voiceAcquisitionRef.current || voiceHandoffRef.current) return;
+    if (isVoiceElsewhere) {
+      setComposerNotice('Hands-free voice is live in another session. End it before you use the microphone here.');
+      return;
+    }
     setVoiceRequested(true);
     setComposerNotice(null);
 
@@ -5917,6 +5927,10 @@ export function SessionScreen({
   // A hold starts hands-free voice. A tap keeps dictation.
   const requestHandsFreeVoice = async () => {
     if (liveVoiceActive) return;
+    if (isVoiceElsewhere) {
+      setComposerNotice('Hands-free voice is live in another session. End it before you use the microphone here.');
+      return;
+    }
     if (Boolean(composerRef.current?.value.trim()) || attachments.length > 0 || pastes.size > 0) {
       setComposerNotice('Send or clear the current message before starting hands-free voice.');
       return;
@@ -6221,11 +6235,7 @@ export function SessionScreen({
                 sid={sid}
                 artifacts={artifacts}
                 initialArtifact={linkedArtifact}
-                voiceControl={
-                  liveVoiceRequest.sid === sid && liveVoiceRequest.count > 0
-                    ? <div ref={setVoiceControlsTarget} />
-                    : undefined
-                }
+                voiceControl={isVoicePanelShown ? <div ref={setVoiceControlsTarget} /> : undefined}
                 onClose={closeArtifacts}
               />
             )}
@@ -6401,11 +6411,12 @@ export function SessionScreen({
                 onSelect={completeSlash}
               />
 
-              {liveVoiceRequest.sid === sid && liveVoiceRequest.count > 0 && (
+              {isVoicePanelShown && (
                 <LiveVoicePanel
                   key={`${client.base}:${sid}`}
                   client={client}
                   sid={sid}
+                  title={title}
                   startRequest={liveVoiceRequest.count}
                   controlsTarget={voiceControlsTarget}
                   disabled={voiceStarting || voicePhase !== 'idle'}

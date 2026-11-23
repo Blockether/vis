@@ -22,26 +22,46 @@ import {
 } from '../lib/live-voice-audio';
 import { LiveVoiceSession, liveVoiceStatus } from '../lib/live-voice';
 import type { LiveVoiceView, LiveVoiceGateway } from '../lib/live-voice';
+import {
+  claimLiveVoice,
+  currentLiveVoice,
+  isLiveVoiceActive,
+  isLiveVoiceOf,
+  updateLiveVoice,
+  useLiveVoice,
+} from '../lib/live-voice-owner';
 
-/** Start voice only after an explicit microphone action. */
+const VOICE_ELSEWHERE = 'Hands-free voice is live in another session. End it there first.';
+
+/** Start voice only after an explicit microphone action. Leaving the session keeps the voice. */
 export function LiveVoicePanel({
   client,
   sid,
+  title,
   disabled,
   startRequest = 0,
   controlsTarget,
   onActive,
   onBegin,
 }: {
-  client: LiveVoiceGateway;
+  client: LiveVoiceGateway & { readonly base: string };
   sid: string;
+  title: string;
   disabled: boolean;
   startRequest?: number;
   controlsTarget?: Element | null;
   onActive: (active: boolean) => void;
   onBegin: () => void;
 }) {
-  const [view, setView] = useState<LiveVoiceView | null>(null);
+  const voice = useLiveVoice();
+  const mine = isLiveVoiceOf(voice, client.base, sid) ? voice : null;
+  // A restart hides the closed view of the voice that it replaces.
+  const [dismissed, setDismissed] = useState<object | null>(null);
+  const view = mine && mine.session !== dismissed ? mine.view : null;
+  const mineSession = mine?.session;
+  useEffect(() => {
+    if (mineSession) updateLiveVoice(mineSession, { title });
+  }, [mineSession, title]);
   const [reason, setReason] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [requested, setRequested] = useState(false);
@@ -51,30 +71,43 @@ export function LiveVoicePanel({
     () => liveVoiceNeedsVerification() && Capacitor.getPlatform() !== 'ios',
   );
   const [consent, setConsent] = useState(false);
-  const session = useRef<LiveVoiceSession | null>(null);
+  const ownSession = useCallback(() => {
+    const current = currentLiveVoice();
+    return isLiveVoiceOf(current, client.base, sid) ? current?.session ?? null : null;
+  }, [client, sid]);
   const attempt = useRef(0);
   const handledRequest = useRef(0);
   const pending = useRef(false);
+  // Only a pending start ends with the screen. A started voice belongs to the device.
   useEffect(() => {
     return () => {
       attempt.current += 1;
       pending.current = false;
-      const previous = session.current;
-      session.current = null;
-      void previous?.stop();
       onActive(false);
     };
   }, [client, sid, onActive]);
+  useEffect(() => {
+    if (!view) return;
+    const active = view.phase === 'starting' || view.phase === 'live';
+    // A lock-screen control can mute. A retry starts with the same microphone state.
+    if (active) setMuted(view.muted);
+    onActive(active);
+    if (!active) setConsent(false);
+  }, [view, onActive]);
   const start = useCallback(async () => {
     if (disabled || pending.current) return;
     setRequested(true);
     if (needsConsent && !consent) {
       // Consent is absent only after the last session ended. Show the consent again,
       // not that session: its closed view hides the panel.
-      const previous = session.current;
-      session.current = null;
+      const previous = ownSession();
       void previous?.stop();
-      setView(null);
+      setDismissed(previous);
+      return;
+    }
+    const other = currentLiveVoice();
+    if (isLiveVoiceActive(other) && !isLiveVoiceOf(other, client.base, sid)) {
+      setReason(VOICE_ELSEWHERE);
       return;
     }
     const id = ++attempt.current;
@@ -84,10 +117,10 @@ export function LiveVoicePanel({
     onBegin();
     onActive(true);
     try {
-      await session.current?.stop();
+      const previous = ownSession();
+      await previous?.stop();
       if (attempt.current !== id) return;
-      session.current = null;
-      setView(null);
+      setDismissed(previous);
       const deviceReason = liveVoiceDeviceReason();
       if (deviceReason) throw new Error(deviceReason);
       const capabilities = await client.liveVoiceCapabilities();
@@ -100,17 +133,10 @@ export function LiveVoicePanel({
         sid,
         audio: createLiveVoiceAudio(mobile),
         muted,
-        changed: (state) => {
-          if (session.current !== next) return;
-          setView(state);
-          const active = state.phase === 'starting' || state.phase === 'live';
-          // A lock-screen control can mute. A retry starts with the same microphone state.
-          if (active) setMuted(state.muted);
-          onActive(active);
-          if (!active) setConsent(false);
-        },
+        changed: (state) => updateLiveVoice(next, { view: state }),
       });
-      session.current = next;
+      if (!claimLiveVoice({ base: client.base, sid, title, session: next, view: next.current() }))
+        throw new Error(VOICE_ELSEWHERE);
       void next.start();
     } catch (error) {
       if (attempt.current !== id) return;
@@ -122,7 +148,7 @@ export function LiveVoicePanel({
         setLoading(false);
       }
     }
-  }, [client, sid, disabled, needsConsent, consent, mobile, muted, onActive, onBegin]);
+  }, [client, sid, title, disabled, needsConsent, consent, mobile, muted, onActive, onBegin, ownSession]);
   useEffect(() => {
     if (!startRequest || handledRequest.current === startRequest) return;
     handledRequest.current = startRequest;
@@ -130,7 +156,7 @@ export function LiveVoicePanel({
   }, [startRequest, start]);
   const renderControls = (content: ReactNode) =>
     controlsTarget ? createPortal(content, controlsTarget) : content;
-  if (!requested) return null;
+  if (!requested && !view) return null;
   if (loading) {
     return renderControls(
       <LiveVoicePanelContent
@@ -165,13 +191,13 @@ export function LiveVoicePanel({
       onStart={() => void start()}
       onMute={(next) => {
         setMuted(next);
-        session.current?.setMuted(next);
+        ownSession()?.setMuted(next);
       }}
-      onOutputMute={(next) => session.current?.setOutputMuted(next)}
-      onStopSpeech={() => session.current?.interrupt()}
-      onCancelTask={(turnId) => session.current?.cancelTask(turnId)}
+      onOutputMute={(next) => ownSession()?.setOutputMuted(next)}
+      onStopSpeech={() => ownSession()?.interrupt()}
+      onCancelTask={(turnId) => ownSession()?.cancelTask(turnId)}
       onEnd={() => {
-        void session.current?.stop();
+        void ownSession()?.stop();
       }}
     />
   );

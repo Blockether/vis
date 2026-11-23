@@ -138,6 +138,9 @@ export class LiveVoiceSession {
       receipts: [],
     };
   }
+  current(): LiveVoiceView {
+    return this.view;
+  }
   private update(patch: Partial<LiveVoiceView>): void {
     this.view = { ...this.view, ...patch };
     this.changed(this.view);
