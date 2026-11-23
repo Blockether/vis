@@ -241,6 +241,38 @@
           (expect (= [["shot.png" "cGljdHVyZQ=="]]
                      (mapv (juxt #(get % "filename") #(get % "base64")) rows))))))))
 
+(defdescribe turn-attachment-bytes-test
+             (it "serves the stored bytes of one turn attachment with its media type"
+                 (let [db
+                       (h/store)
+
+                       sid
+                       (h/store-session! db {:channel :api})
+
+                       tid
+                       (persistence/db-store-session-turn!
+                         db
+                         {:parent-session-id sid :user-request "Listen" :attachments [recording]})
+
+                       id
+                       (str (:id (first (persistence/db-list-turn-attachments db tid))))
+
+                       read-bytes
+                       #(#'turns-api/turn-attachment-bytes-handler
+                          {:path-params {:sid (str sid) :tid (str tid) :aid %}})]
+
+                   (with-redefs [lp/db-info
+                                 (constantly db)
+
+                                 state/soul
+                                 (constantly {:id sid})]
+
+                     (let [response (read-bytes id)]
+                       (expect (= 200 (:status response)))
+                       (expect (= "audio/mp4" (get-in response [:headers "Content-Type"])))
+                       (expect (= "audio" (slurp (:body response)))))
+                     (expect (= 404 (:status (read-bytes "missing"))))))))
+
 (defdescribe recording-watchdog-test
              (it "does not mistake a long recording join for a stalled provider or model output"
                  (let [waiting (#'state/advance-turn-stall-state

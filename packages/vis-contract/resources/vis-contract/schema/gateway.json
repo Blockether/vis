@@ -1464,6 +1464,17 @@
     {
       "audience": "sdk",
       "operations": {
+        "get": {
+          "request": "none",
+          "response": "binary",
+          "extension": "background"
+        }
+      },
+      "path": "/v1/sessions/:sid/turns/:tid/attachments/:aid"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "post": {
           "request": "none",
           "response": "json",

@@ -740,6 +740,15 @@ function trackSseActivity() {
   };
 }
 
+/** `bytes` as base64, in slices that stay below the argument limit of a call. */
+function bytesAsBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let at = 0; at < bytes.length; at += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  }
+  return btoa(binary);
+}
+
 /** The gateway's canonical `error.message`, or the bare status when it sent none. */
 function errorText(parsed: unknown, status: number): string {
   const message = (parsed as { error?: { message?: unknown } } | undefined)?.error?.message;
@@ -4235,12 +4244,13 @@ export class GatewayClient {
   private readonly attachmentFetches = new Map<string, Promise<TranscriptAttachment[]>>();
 
   /**
-   * The bytes of ONE stored attachment of a turn: the same route with `?id=`.
+   * The bytes of ONE stored attachment of a turn, as base64.
    *
    * A transcript row leaves the bytes of a large attachment in the store, so that
    * a 32 MiB recording does not come with each read of the transcript. The row
    * that shows the attachment reads its bytes here. The copy that this device
-   * sent is used first.
+   * sent is used first. The binary route sends the bytes as they are; an older
+   * gateway does not have it, and the JSON route with `?id=` answers.
    */
   async fetchAttachmentBytes(
     sid: string,
@@ -4251,11 +4261,19 @@ export class GatewayClient {
   ): Promise<string> {
     const own = this.cachedSentAttachments(sid, tid)?.find((row) => row.id === id)?.base64;
     if (own) return own;
+    const turn = `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments`;
+    try {
+      const response = await this.sessionFile(`${turn}/${encodeURIComponent(id)}`, { signal });
+      return bytesAsBase64(new Uint8Array(await response.arrayBuffer()));
+    } catch (error) {
+      const type = (error as { body?: { error?: { type?: unknown } } }).body?.error?.type;
+      if (!(error instanceof GatewayError && error.status === 404 && type === 'not-found')) throw error;
+    }
     // The answer holds the bytes as base64: four characters for each three bytes.
     const res = (
       await this.requestFull<{ attachments?: TranscriptAttachment[] }>(
         'GET',
-        `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments?id=${encodeURIComponent(id)}`,
+        `${turn}?id=${encodeURIComponent(id)}`,
         undefined,
         signal,
         undefined,

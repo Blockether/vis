@@ -1632,6 +1632,28 @@ class Routes:
         )
         return response.json()
 
+    def get_session_turn_attachment(
+        self,
+        sid: str,
+        tid: str,
+        aid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> Response:
+        """GET /v1/sessions/:sid/turns/:tid/attachments/:aid — binary response.
+
+        The bytes of one attachment that the user sent with the turn.
+        """
+        response = self._client._request(
+            "GET",
+            "/v1/sessions/:sid/turns/:tid/attachments/:aid",
+            path={"sid": sid, "tid": tid, "aid": aid},
+            query=query,
+            timeout=timeout,
+        )
+        return response
+
     def post_session_turn_cancel(
         self,
         sid: str,

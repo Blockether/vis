@@ -1383,7 +1383,7 @@
 
         (try (reset! registry {sid {:next-seq 0 :turns {}}})
              (with-redefs [persistance/db-list-turns-attachments
-                           (fn [_ ids]
+                           (fn [_ ids & _]
                              {(str (first ids))
                               [{:filename "landed.png" :media-type "image/png" :base64 "REVG"}]})]
                (let [rows (state/turn-attachments sid "t9")]
@@ -1424,7 +1424,7 @@
                          [{:id "a1" :filename "chart.png" :media-type "image/png" :base64 "REVG"}]})
 
                       persistance/db-list-turns-attachments
-                      (fn [_ ids]
+                      (fn [_ ids & _]
                         {(str (first ids))
                          [{:filename "other.png" :media-type "image/png" :base64 "T1RI"}]})]
 
@@ -1445,7 +1445,7 @@
 
         (try (reset! registry {sid {:next-seq 0 :turns {}}})
              (with-redefs [persistance/db-list-turns-attachments
-                           (fn [_ _]
+                           (fn [_ _ & _]
                              {})
 
                            persistance/db-list-queued-turn-attachments

@@ -1416,21 +1416,29 @@ describe('GatewayClient turn cancellation', () => {
   // Session 475b983a-62be-400c-aaf7-ff7bb4822c88: a transcript row leaves large bytes
   // in the store, and the row that shows the attachment reads them.
   it('reads the bytes of one stored attachment by its id', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          attachments: [{ id: 'a1', filename: 'talk.m4a', media_type: 'audio/mp4', base64: 'AAAA' }],
-        }),
-      ),
-    );
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Uint8Array([0, 0, 0])));
     vi.stubGlobal('fetch', fetchMock);
     const { GatewayClient } = await import('./gateway');
 
     const bytes = await new GatewayClient(conn).fetchAttachmentBytes('session-1', 'turn-1', 'a1');
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      '/v1/sessions/session-1/turns/turn-1/attachments?id=a1',
-    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/v1/sessions/session-1/turns/turn-1/attachments/a1');
+    expect(bytes).toBe('AAAA');
+  });
+
+  it('reads one attachment from an older gateway with the JSON route', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { type: 'not-found', message: 'no such route' } }), { status: 404 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ attachments: [{ id: 'a1', base64: 'AAAA' }] })));
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+
+    const bytes = await new GatewayClient(conn).fetchAttachmentBytes('session-1', 'turn-1', 'a1');
+
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/v1/sessions/session-1/turns/turn-1/attachments?id=a1');
     expect(bytes).toBe('AAAA');
   });
 
@@ -1475,7 +1483,7 @@ describe('GatewayClient turn cancellation', () => {
       () =>
         new Promise<Response>((resolve) => {
           setTimeout(
-            () => resolve(new Response(JSON.stringify({ attachments: [{ id: 'a1', base64: 'AAAA' }] }))),
+            () => resolve(new Response(new Uint8Array([0, 0, 0]))),
             40_000,
           );
         }),

@@ -486,6 +486,22 @@
             (reference-response request sid att reference)
             (http/error-response 401 :invalid-ticket "missing or invalid content ticket"))))))
 
+(defn- stored-bytes-response
+  "The 200 answer with the stored bytes `bs` of attachment `att`. The bytes of an
+   attachment id never change, so the answer is `immutable`-cacheable."
+  [att ^bytes bs]
+  {:status 200
+   :headers {"Content-Type" (or (not-empty (str (:media-type att))) "application/octet-stream")
+             "Content-Length" (str (alength bs))
+             "Cache-Control" "private, max-age=31536000, immutable"
+             ;; The web app shares this origin (`vis-agent web`) and keeps
+             ;; its saved gateway tokens there. An agent-made HTML or SVG
+             ;; file opened straight from this URL must not run script as
+             ;; that origin.
+             "Content-Security-Policy" "sandbox"
+             "X-Content-Type-Options" "nosniff"}
+   :body (java.io.ByteArrayInputStream. bs)})
+
 (defn- attachment-bytes-handler
   "GET /v1/sessions/:sid/iterations/:iid/attachments/:idx — the raw bytes of ONE
    outbound artifact (a produced image or document) a tool call emitted
@@ -515,18 +531,7 @@
                                           state/attachment-bytes))]
 
                   (cond reference (reference-response request sid att reference)
-                        bs {:status 200
-                            :headers {"Content-Type" (or (not-empty (str (:media-type att)))
-                                                         "application/octet-stream")
-                                      "Content-Length" (str (alength bs))
-                                      "Cache-Control" "private, max-age=31536000, immutable"
-                                      ;; The web app shares this origin (`vis-agent web`) and keeps
-                                      ;; its saved gateway tokens there. An agent-made HTML or SVG
-                                      ;; file opened straight from this URL must not run script as
-                                      ;; that origin.
-                                      "Content-Security-Policy" "sandbox"
-                                      "X-Content-Type-Options" "nosniff"}
-                            :body (java.io.ByteArrayInputStream. bs)}
+                        bs (stored-bytes-response att bs)
                         :else (http/error-response 404
                                                    :attachment-not-found "unknown attachment"
                                                    :iteration_id (str (path-iid request))
@@ -624,8 +629,12 @@
   [request]
   (if-let [sid (http/path-sid request)]
     (let [tid (path-tid request)
+          id (http/query-str request "id")
           rows (state/turn-attachments sid tid)
-          original (wire/->engine rows)
+          original (cond->> (wire/->engine rows)
+                     ;; Only the named attachment waits for its words.
+                     id
+                     (filterv #(= id (str (:id %)))))
           refreshed (audio-transcribe/request-attachments! original)
           ;; A cancelled/finished turn can outlive its joiner. Collecting its words
           ;; must repair the durable row too, not only this one HTTP response.
@@ -643,13 +652,33 @@
                                                                  position
                                                                  words
                                                                  (:transcription-segments after)))
-          id (http/query-str request "id")
-          named (if id (filterv #(= id (str (:id %))) refreshed) refreshed)
           response (if (= "true" (http/query-str request "transcription_only"))
-                     (mapv #(dissoc % :base64) named)
-                     named)]
+                     (mapv #(dissoc % :base64) refreshed)
+                     refreshed)]
 
       (http/json-response {:attachments response}))
+    (http/session-404 (get-in request [:path-params :sid]))))
+
+(defn- turn-attachment-bytes-handler
+  "GET /v1/sessions/:sid/turns/:tid/attachments/:aid — the raw bytes of ONE
+   attachment that a user sent with turn `:tid`, with its own Content-Type. The
+   JSON route sends the bytes as base64, a third larger, and reads the payload of
+   each attachment of the turn. This route reads only the payload of `:aid`."
+  [request]
+  (if-let [sid (http/path-sid request)]
+    (let [tid (path-tid request)
+          aid (get-in request [:path-params :aid])
+          att (some-> (state/turn-attachment sid tid aid)
+                      wire/->engine)
+          reference (attachment-storage/reference-path (:storage-uri att))
+          ^bytes bs (when (and att (not reference)) (state/attachment-bytes att))]
+
+      (cond reference (reference-response request sid att reference)
+            bs (stored-bytes-response att bs)
+            :else (http/error-response 404
+                                       :attachment-not-found "unknown attachment"
+                                       :turn_id (str tid)
+                                       :attachment_id (str aid))))
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (def handlers
@@ -667,6 +696,7 @@
    [:delete "/v1/sessions/:sid/turns/:tid"] delete-queued-turn-handler
    [:get "/v1/sessions/:sid/turns/:tid/trace"] turn-trace-handler
    [:get "/v1/sessions/:sid/turns/:tid/attachments"] turn-attachments-handler
+   [:get "/v1/sessions/:sid/turns/:tid/attachments/:aid"] turn-attachment-bytes-handler
    [:post "/v1/sessions/:sid/turns/:tid/cancel"] cancel-turn-handler
    [:post "/v1/sessions/:sid/cancel-current"] cancel-current-turn-handler
    [:post "/v1/sessions/:sid/drain-queue"] drain-idle-handler

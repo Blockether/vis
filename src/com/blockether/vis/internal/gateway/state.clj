@@ -2701,25 +2701,39 @@
    turn is unknown or carried no images.
 
    A queued message that was sent into a running turn (`→ Send now`) answers the
-   files its step stored on that turn, also after a gateway restart."
-  [sid tid]
-  (when (and sid tid)
-    (let [turn
-          (read-turn-record (turn-record sid tid))
+   files its step stored on that turn, also after a gateway restart.
 
-          live
-          #(live-turn-attachments turn)
+   `opts` goes to [[persistance/db-list-turns-attachments]]: with `:inline-limit`,
+   a larger stored row has no `:base64` and its payload is not read."
+  ([sid tid] (turn-attachments sid tid nil))
+  ([sid tid opts]
+   (when (and sid tid)
+     (let [turn
+           (read-turn-record (turn-record sid tid))
 
-          stored
-          (fn [lister]
-            (try (seq (wire/canonical (vec (get (lister (lp/db-info) [tid]) (str tid)))))
-                 (catch Throwable _ nil)))]
+           live
+           #(live-turn-attachments turn)
 
-      (if (= "sent" (:status turn))
-        (or (stored persistance/db-list-queued-turn-attachments) (live))
-        (or (live)
-            (stored persistance/db-list-turns-attachments)
-            (stored persistance/db-list-queued-turn-attachments))))))
+           stored
+           (fn [lister]
+             (try (seq (wire/canonical (vec (get (lister (lp/db-info) [tid]) (str tid)))))
+                  (catch Throwable _ nil)))
+
+           turn-rows
+           #(persistance/db-list-turns-attachments %1 %2 opts)]
+
+       (if (= "sent" (:status turn))
+         (or (stored persistance/db-list-queued-turn-attachments) (live))
+         (or (live) (stored turn-rows) (stored persistance/db-list-queued-turn-attachments)))))))
+
+(defn turn-attachment
+  "The attachment `aid` of turn `tid` in the shape of [[turn-attachments]], or nil.
+   The payloads of the other stored attachments are not read, and a stored row has
+   no `:base64`: [[attachment-bytes]] reads its payload by `:id`."
+  [sid tid aid]
+  (when-not (str/blank? (str aid))
+    (some #(when (= (str aid) (str (get % "id"))) %)
+          (turn-attachments sid tid {:inline-limit -1}))))
 
 (def ^:private TRANSCRIPT_INLINE_ATTACHMENT_BYTES
   "The largest user attachment, in decoded bytes, that a transcript row or a turn
