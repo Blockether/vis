@@ -268,6 +268,7 @@
                   true))
               (try ((get (:engines runtime) 'synthesize-stream!)
                      {:text (:text segment)
+                      :voice-id (:pocket-voice-id runtime)
                       :on-pcm (fn [samples rate]
                                 (emit-pcm! runtime segment samples rate))
                       :cancelled? #(not (coordinator/output-current? coordinator (:epoch segment)))
@@ -586,6 +587,7 @@
          :sid (str sid)
          :origin origin
          :coordinator coordinator
+         :pocket-voice-id (:pocket-voice-id body)
          :engines api
          :capabilities capabilities
          :created-at now

@@ -615,7 +615,7 @@
 
 (defn synthesize-live!
   "Deliver native Pocket chunks. Abort is cooperative at the next native callback."
-  [{:keys [text on-pcm cancelled? register-abort!]
+  [{:keys [text voice-id on-pcm cancelled? register-abort!]
     :or {cancelled? (constantly false)
          register-abort! (fn [_])}}]
   (let [spoken (str/trim (str text))]
@@ -639,7 +639,11 @@
              {:state :aborted}
              (let [^OfflineTts model (loaded-live!)
                    rate (long (.getSampleRate model))
-                   voice (live-voice)]
+                   voice (if voice-id
+                           (let [catalogue (pocket-voice-catalogue)]
+                             (or (named-voice catalogue voice-id)
+                                 (unknown-voice! :pocket-tts voice-id catalogue)))
+                           (live-voice))]
 
                (when-not (cancel?)
                  (.generateWithConfigAndCallback

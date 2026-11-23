@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest';
 import { GatewayClient } from './gateway';
+import { setSpeechGatewayVoice, setSpeechTtsEngine } from './storage';
 import type { LiveVoiceCapabilities } from './live-voice-protocol';
 
 afterEach(() => {
@@ -42,6 +43,26 @@ it('uses authenticated HTTP lifecycle requests and sends only the one-use ticket
   expect(prefixed.liveVoiceMediaUrl('/v1/sessions/a/voice/live/v/media')).toBe(
     'wss://gateway.example.com/vis/v1/sessions/a/voice/live/v/media',
   );
+});
+
+it.each([
+  ['pocket-tts-local', 'my-recording'],
+  ['piper-local', undefined],
+])('sends the saved voice only for Pocket: %s', async (engine, expected) => {
+  await setSpeechTtsEngine(engine!);
+  await setSpeechGatewayVoice('my-recording');
+  const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+    expect(JSON.parse(String(init.body)).pocket_voice_id).toBe(expected);
+    return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+  });
+  vi.stubGlobal('fetch', fetcher);
+  try {
+    await new GatewayClient({ url: 'https://gateway.example.com' }).startLiveVoice('s', 'c', false);
+    expect(fetcher).toHaveBeenCalledOnce();
+  } finally {
+    await setSpeechGatewayVoice(null);
+    await setSpeechTtsEngine(null);
+  }
 });
 
 // Match gateway.voice/capabilities after canonical snake_case transport encoding.

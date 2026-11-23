@@ -6,6 +6,7 @@
 // we send it on every request. A 401 surfaces as GatewayError so the UI can
 // prompt a re-pair.
 
+import { getSpeechPrefs } from './storage';
 import { privateLinkRoute, type PrivateLinkRoute, type ProxyAnswer } from './private-links';
 import {
   activityProjectionFromWire,
@@ -2128,8 +2129,10 @@ export class GatewayClient {
     return this.request('GET', '/v1/voice/live/capabilities', undefined, signal);
   }
 
-  startLiveVoice(sid: string, clientId: string, muted: boolean): Promise<LiveVoiceStart> {
+  async startLiveVoice(sid: string, clientId: string, muted: boolean): Promise<LiveVoiceStart> {
+    const { ttsEngine, gatewayVoice } = await getSpeechPrefs();
     return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/voice/live`, {
+      ...(ttsEngine === 'pocket-tts-local' && gatewayVoice ? { pocket_voice_id: gatewayVoice } : {}),
       schema: 1,
       client_id: clientId,
       language: 'en',
