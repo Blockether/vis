@@ -10500,9 +10500,6 @@
    to read as a frozen screen. Teardown now runs on `teardown-session-async!`,
    after the session has already stopped existing for every client."
   [sid]
-  ;; The log bytes are on disk, outside the DB tree, so the delete has to name
-  ;; them: a shell log dies with the session that produced it and nothing else.
-  (shell-log/delete-session-logs! sid)
   (let [child (some->> (agents/info (lp/db-info) (str sid))
                        (agent-view (lp/db-info)))
         {:keys [extension-session-ids]} (persistance/db-delete-session-tree! (lp/db-info) sid)]
