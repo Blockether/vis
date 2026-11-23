@@ -1958,15 +1958,16 @@
                   (doseq [native? [false true]]
                     (with-redefs-fn
                       {#'worker/child-argv
-                       (fn [lib socket guest-dir run-directory runtime-roots]
+                       (fn [lib socket guest-dir run-directory runtime-roots scratch]
                          (if native?
                            (let [executable (runtime/resolve-worker {:path lib})]
                              (expect executable "The runtime archive must carry its worker")
-                             (into [executable (str "-Duser.home=" dir) socket "--resolved-sources"]
-                                   (conj runtime-roots guest-dir)))
+                             (into (cond-> [executable (str "-Duser.home=" dir)]
+                                     scratch (conj (str "-Djava.io.tmpdir=" scratch)))
+                                   (into [socket "--resolved-sources"] (conj runtime-roots guest-dir))))
                            ;; Exercise the JVM even when the archive has a worker.
                            (with-redefs [runtime/resolve-worker (constantly nil)]
-                             (jvm-worker lib socket guest-dir run-directory runtime-roots))))}
+                             (jvm-worker lib socket guest-dir run-directory runtime-roots scratch))))}
                       (fn []
                         (let [made (ep/create-python-context
                                      {}
