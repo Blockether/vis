@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Extensions: when a changed pin in `vis.yml` cannot be installed, sync keeps the installed version of the package. Sync reports the package with the status `kept` and the gateway log shows a warning. Before, the extension stopped loading (#504).
+- Extensions: new releases of first-party extensions reach the Extension Center in at most 15 minutes, without a manual dispatch (#504).
 - Gateway: a new session in a project whose extensions are not prepared yet does not wait for them (#508). The session starts with the global extensions at once, and Vis prepares the project extensions in the background. The first turn gets the project extensions; it waits only for the part of the preparation that is not complete. In a new worktree of the Vis repository, session creation took 0.3 s instead of 12 s to 33 s.
 - Extensions: a sync of an exact package version that is in the source cache does not read the package catalog. `--refresh` still reads the catalog (#508).
 - Extensions: the first session in a new project folder, for example a new Git worktree, starts faster (#508). Vis keeps each fetched GitHub commit of an extension package in `~/.vis/package-sources`. Another project that declares the same commit copies it from there and does not run Git. In a new worktree of the Vis repository with five packages, the preparation took 4.2 s instead of 11.4 s.
