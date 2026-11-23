@@ -112,6 +112,11 @@ def call_env():
     return {}
 
 
+def tool_call_provider():
+    """No model reply starts a call outside a Vis process, so no provider sent it."""
+    return None
+
+
 # -- Where the outside host keeps things --------------------------------------
 
 
@@ -1736,6 +1741,7 @@ _IMPLEMENTATIONS = {
     "shell": shell,
     "jailed_shell": jailed_shell,
     "call_env": call_env,
+    "tool_call_provider": tool_call_provider,
     "request": request,
     "bound_session": bound_session,
     "call_tool": call_tool,

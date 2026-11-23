@@ -14367,6 +14367,67 @@
            (finally (loop-env/dispose-environment! environment))))))
 
 (defdescribe
+  tool-call-provider-test
+  ;; #507: a tool-call policy needs the provider that served the reply, not the selection.
+  (it
+    "gives each block the provider that served its reply, and none without a route"
+    (let [router
+          (svar/make-router [{:id :fixture
+                              :api-key "test"
+                              :base-url "http://127.0.0.1:1/v1"
+                              :models [{:name "large"}]}
+                             {:id :peer
+                              :api-key "test"
+                              :base-url "http://127.0.0.1:1/v1"
+                              :models [{:name "small"}]}])
+
+          environment
+          (loop-env/create-environment router {:db :memory})
+
+          replies
+          [{:stop-reason :tool-calls
+            :tool-calls [{:id "call-0" :name "py3" :input {:code "x = 1"}}]
+            :routed/provider-id :peer
+            :routed/model "small"}
+           {:stop-reason :tool-calls
+            :tool-calls [{:id "call-1" :name "py3" :input {:code "x = 2"}}]}
+           {:stop-reason :end :tool-calls [] :content "Done" :routed/provider-id :fixture}]
+
+          asked
+          (atom 0)
+
+          seen
+          (atom [])
+
+          execute
+          python-exec/execute-code]
+
+      (try (with-redefs [svar/session-capability
+                         (constantly nil)
+
+                         svar/ask-code!
+                         (fn [_ _]
+                           (merge {:api-usage {:input-tokens 100 :output-tokens 1} :tokens {}}
+                                  (nth replies (dec (swap! asked inc)))))
+
+                         python-exec/execute-code
+                         (fn [env & args]
+                           (swap! seen conj (:tool-call/provider env))
+                           (apply execute env args))]
+
+             (iteration/iteration-loop environment
+                                       "Run two blocks"
+                                       {:routing {:provider :fixture :model "large"}
+                                        :session-turn-id
+                                        (persistance/db-store-session-turn!
+                                          (:db-info environment)
+                                          {:parent-session-id (:session-id environment)
+                                           :user-request "Run two blocks"})})
+             (expect (= ["peer" nil] @seen))
+             (expect (nil? (:tool-call/provider environment))))
+           (finally (loop-env/dispose-environment! environment))))))
+
+(defdescribe
   project-folder-test
   (it
     "names a new project by its folder and moves it with its sessions"

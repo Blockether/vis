@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Extensions: `vis.tool_call_provider()` returns the provider that actually served the model reply of the tool call that runs now, after any provider fallback. Nested tool calls and before hooks get the same provider, so a hook can refuse a tool for a provider before the tool runs. The value is `None` for a call that no model reply started, and when the route is not known (#507).
 - Gateway: while a turn waits more than one second for its extensions, `turn.progress` sends `extension_wait` with the stage (`waiting` or `preparing`), the start time, and the package. The terminal and the Companion app show "Waiting for extensions" or "Preparing extensions" with the time (#498).
 - Extensions: `vis.run(..., is_child=True)` and `vis.sessions.create(is_child=True)` make a child session of the bound session. A child session is not in the session list, and Vis deletes it with its parent. The usage of the parent shows the cost of its child sessions in a separate Extensions part, in the Companion app and in the TUI. The AI review of vis-review runs in a child session.
 - Extensions: `vis.SessionApp(..., roles=("leader",))` lists a session app only in sessions of these agent roles.

@@ -1166,6 +1166,11 @@
                                                                    :render-segments render-segments
                                                                    :tool-event tool-event}))))
                                     r (let [activity-env (assoc environment
+                                                           ;; #507: the provider that sent this tool call, for
+                                                           ;; `vis.tool_call_provider()`. Only the served route
+                                                           ;; counts: no fallback to the selected model.
+                                                           :tool-call/provider
+                                                           (some-> (:routed/provider-id ask-result) name)
                                                            ;; Activity belongs to the form and routes on the
                                                            ;; position shared by all of that form's frames.
                                                            :activity/on-snapshot

@@ -1283,6 +1283,12 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
           (fn []
             (or *call-env* {})))
     (put! g
+          "__vis_host_tool_call_provider__"
+          (fn []
+            ;; #507: the served provider of the model tool call that runs now, else nil.
+            ;; The bound session is no source: it knows only the selected model.
+            (:tool-call/provider extension/*current-environment*)))
+    (put! g
           "__vis_host_bound_session__"
           (fn []
             (some-> (or (:session-id extension/*current-environment*) (:session-id bound-session))

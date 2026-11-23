@@ -146,6 +146,10 @@ class Host(Protocol):
         """Read the variables that `before` op hooks added to the current tool call."""
         ...
 
+    def tool_call_provider(self) -> str | None:
+        """Return the provider that served the model tool call that runs now, or None."""
+        ...
+
     def request_input(
         self,
         request_json: str,
@@ -4088,6 +4092,18 @@ def call_env() -> dict[str, str | None]:
     The result is empty when no hook added any, and outside a Vis process.
     """
     return dict(_host.call_env() or {})
+
+
+def tool_call_provider() -> str | None:
+    """Return the ID of the provider that sent the tool call that runs now.
+
+    It is the provider that actually served the model reply, after any provider
+    fallback, and not the selected model. A nested tool call and a `before` op
+    hook get the provider of the tool call that started them. The result is None
+    for a call that no model reply started, for example an SDK, manual or
+    background call, when the route is not known, and outside a Vis process.
+    """
+    return _host.tool_call_provider()
 
 
 def strings_of(value):

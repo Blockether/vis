@@ -1337,6 +1337,24 @@ and names the variables, never their values. Stop the REPL, then start it again.
 uses a live REPL only when that REPL has the same variables. If not, the tests run in a new JVM.
 Do not set one variable in two hooks, because the order of the hooks is not fixed.
 
+### Check the provider of a tool call
+
+`vis.tool_call_provider()` returns the ID of the provider that sent the tool call that runs now.
+It is the provider that actually served the model reply, after any provider fallback. It is not
+the selected model of the session. A nested tool call and a before hook get the provider of the
+tool call that started them. So a before hook can refuse a tool for a provider before the tool
+runs:
+
+```python
+def before(call):
+    if vis.tool_call_provider() != "prod":
+        return vis.block("Only the prod provider can run this tool.")
+```
+
+The result is `None` when no model reply started the call, for example an SDK, manual, or
+background call. It is also `None` when the route is not known, and outside Vis. Do not use
+arguments, environment variables, or the transcript in place of this value.
+
 ### Ask the person in a hook
 
 A hook can ask the person before it decides. It can call `vis.ask`, open a `vis.live` view, or

@@ -4397,6 +4397,91 @@ vis.register_extension(vis.Extension(
                                     (json/read-json (:stdout result) :key-fn identity)))))
                  (finally (ep/dispose-python-context! ctx))))))))
 
+(def ^:private provider-tool-py
+  "import time
+import blockether.vis.extension as vis
+
+def provider() -> dict:
+    'Report the provider of this call and of a nested call.'
+    first = vis.tool_call_provider()
+    time.sleep(0.3)
+    return {'direct': first, 'nested': vis.tools.inner()['provider']}
+
+def guarded() -> str:
+    'Run only for the prod provider.'
+    return 'ran'
+
+vis.register_extension(vis.Extension(
+    name='provider-tool', description='Provider fixture.', alias='prov',
+    symbols=[vis.Symbol(provider, activity=vis.Activity(label='Provider', show_start=False)),
+             vis.Symbol(guarded, activity=vis.Activity(label='Guarded', show_start=False))]))
+")
+
+(def ^:private provider-inner-py
+  "import blockether.vis.extension as vis
+
+def inner() -> dict:
+    'Report the provider of a nested call.'
+    return {'provider': vis.tool_call_provider()}
+
+vis.register_extension(vis.Extension(
+    name='provider-inner', description='Nested provider fixture.', alias='provin',
+    symbols=[vis.Symbol(inner, activity=vis.Activity(label='Inner', show_start=False))]))
+")
+
+(def ^:private provider-hook-py
+  "import blockether.vis.extension as vis
+
+def before(call):
+    if vis.tool_call_provider() != 'prod':
+        return vis.block('provider ' + str(vis.tool_call_provider()) + ' may not run it')
+
+vis.register_extension(vis.Extension(
+    name='provider-hook', description='Allow one provider.',
+    op_hooks=[vis.OpHook(['guarded'], before)]))
+")
+
+(defdescribe
+  tool-call-provider-test
+  ;; #507: a policy decides on the provider that sent the tool call, before the tool runs.
+  (it "gives tools and before hooks the provider of their own call only"
+      (with-fresh-loaded
+        {"provider_tool.py" provider-tool-py
+         "provider_inner.py" provider-inner-py
+         "provider_hook.py" provider-hook-py}
+        (fn [_ {:keys [ext-dir store]}]
+          (let [exts
+                (mapv registered ["provider-tool" "provider-inner" "provider-hook"])
+
+                run
+                (fn [provider code]
+                  (let [ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                        env (cond-> {:python-context ctx
+                                     :db-info store
+                                     :session-id (str (db-test/store-session! store {:channel :api}))
+                                     :cwd (str ext-dir)
+                                     :extensions (atom exts)
+                                     :active-extensions (atom exts)}
+                              provider (assoc :tool-call/provider provider))]
+                    (try (loop-env/sync-active-extension-symbols! env exts)
+                         (let [result (#'python-exec/run-python-code ctx code :env env)]
+                           (or (get-in result [:error :message]) (:stdout result)))
+                         (finally (ep/dispose-python-context! ctx)))))
+
+                report
+                "import json\nr = provider()\nprint(json.dumps([r['direct'], r['nested']]))"
+
+                [a b]
+                ;; Two sessions at the same time: each call keeps its own provider.
+                (mapv deref [(future (run "prod" report)) (future (run "peer" report))])]
+
+            (expect (= "[\"prod\", \"prod\"]\n" a))
+            (expect (= "[\"peer\", \"peer\"]\n" b))
+            (expect (= "[null, null]\n" (run nil report)))
+            (expect (= "ran\n" (run "prod" "print(guarded())")))
+            (expect (str/includes? (run "peer" "print(guarded())") "provider peer may not run it"))
+            (expect (str/includes? (run nil "print(guarded())") "provider None may not run it")))))))
+
 (def ^:private python-name-tool-py
   "import blockether.vis.extension as vis
 
