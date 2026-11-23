@@ -1382,11 +1382,20 @@
                   (expect (:id project)))
                 (binding [workspace/*workspace-root* root]
                   (expect (nil? (registered "vis-project-fixture"))))
-                (let [ws (workspace/create-trunk-at! db root)]
-                  (swap! opened conj (loop-env/open-env! nil {:workspace-id (:id ws)})))
+                ;; #508: the first session does not wait for its project. It opens with
+                ;; the global catalog, and its first turn gets the project catalog.
+                (let [ws (workspace/create-trunk-at! db root)
+                      deferred (loop-env/open-env! nil {:workspace-id (:id ws)})
+                      sid (:session-id deferred)]
+                  (expect (:extensions/deferred? deferred))
+                  (loop-env/cache-env! sid deferred)
+                  (let [environment (loop-env/with-turn-lock sid identity)]
+                    (swap! @#'loop-env/cache dissoc (loop-env/cache-key sid))
+                    (swap! opened conj environment)
+                    (expect (not (:extensions/deferred? environment)))))
                 (binding [workspace/*workspace-root* root]
                   (expect (registered "vis-project-fixture"))))
-              (expect (= roots @router-roots))
+              (expect (= roots (distinct @router-roots)))
               ;; Calls overlap across independently imported versions of the same package.
               (doseq [worker (mapv (fn [[environment value]]
                                      (future (check! environment value)))

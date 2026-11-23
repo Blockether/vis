@@ -508,7 +508,8 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id sources tools origin parent-session-id]}]
+  [router {:keys [db session channel external-id title workspace-id sources tools origin parent-session-id
+                 defer-project-extensions?]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   ;; Everything from here to the end runs with the sandbox GUARDED: the session is
   ;; built ~130 lines before this function returns, and workspace resolution,
@@ -956,7 +957,8 @@
                   :extensions (atom [])
                   :active-extensions (atom [])
                   :bound-extension-symbols (atom #{})
-                  :extension-sync (atom nil))]
+                  :extension-sync (atom nil)
+                  :extensions/deferred? (boolean defer-project-extensions?))]
 
         (reset! environment-atom env)
         (swap! state-atom assoc :environment env :session-id session-id)
@@ -986,8 +988,11 @@
         (manifest/initialize!)
         ;; The gateway serves many projects. Discovery and registration both resolve
         ;; under this session's pinned workspace, including on resume and recycle.
+        ;; A deferred env installs only the global catalog: its first turn rebuilds it
+        ;; with the project catalog that is prepared meanwhile (#508).
         (extension/with-context {:env env}
-                                (python-extensions/ensure-python-extensions-loaded!)
+                                (python-extensions/ensure-python-extensions-loaded!
+                                  (when defer-project-extensions? {:global-only? true}))
                                 (extension/register-extensions! env install-extension!))
         (doseq [ext (client-extensions/extensions-for session-id)]
           (install-extension! env ext))
@@ -2144,11 +2149,18 @@
         (reset! values (merge (scoped/values db-info session-id)
                               toggles/*invocation-overrides*))))))
 
+(declare complete-deferred-env!)
+
 (defn open-env!
   "Open or resume a session with its project and configuration tiers bound before
    resolving config and providers. A new session takes `:sources`, `:extensions` (see
    `extension-selection`), `:tools` (see [[tool-selection]]) and `:origin`; a resumed
-   session keeps what it was created with."
+   session keeps what it was created with.
+
+   A new session without a selection does not wait for a project that is not prepared:
+   it opens with the global catalog, and the project is prepared in the background. The
+   first turn, or the end of that preparation when the session is idle, rebuilds the env
+   with the project catalog (#508)."
   [id {:keys [channel external-id title workspace-id sources extensions tools origin parent-session-id]}]
   (let [db
         (config/resolve-db-spec)
@@ -2172,8 +2184,16 @@
               workspace/*config-sources*
               sources]
 
-      (python-extensions/prepare-project! (workspace/cwd))
-      (let [turned-off
+      (let [deferred?
+            (and (not id)
+                 (nil? extensions)
+                 (nil? tools)
+                 (not (python-extensions/project-ready? (workspace/cwd))))
+
+            _
+            (when-not deferred? (python-extensions/prepare-project! (workspace/cwd)))
+
+            turned-off
             (when-not id (check-extension-selection! extensions))
 
             tools
@@ -2182,6 +2202,9 @@
             env
             (create-environment (loop-router/get-router)
                                 (cond-> {:db db :sources sources}
+                                  deferred?
+                                  (assoc :defer-project-extensions? true)
+
                                   tools
                                   (assoc :tools tools)
 
@@ -2207,6 +2230,7 @@
                                   (assoc :parent-session-id parent-session-id)))]
 
         (turn-off-extensions! env turned-off)
+        (when deferred? (complete-deferred-env! (:session-id env) (workspace/cwd)))
         env))))
 
 (defn set-session-tools!
@@ -2269,27 +2293,55 @@
    stable. The transcript lives in the DB; `open-env!` resumes it, and the
    session snapshot restores the helpers and variables the old sandbox saved.
    The session lives on, so the processes that its Python started keep running."
+  ([k] (recycle-env! k :settings-change settings-change-detail))
+  ([k cause detail]
+   (when-let [old (get @cache k)]
+     (when cause (env/log-sandbox-stop! (:session-id (:environment old)) cause detail))
+     (let [fresh-env (open-env! k {})]
+       (swap! cache assoc
+         k
+         (assoc old
+           :environment fresh-env
+           :last-active (java.util.concurrent.atomic.AtomicLong. (util/now-ms))
+           ;; Restamp to the current epoch: the fresh env carries the latest
+           ;; security-policy snapshot, so it is no longer reload-stale.
+           :policy-epoch (java.util.concurrent.atomic.AtomicLong.
+                           (long @python-exec/policy-reload-epoch))))
+       ;; A teardown failure must not take the swap down, but it must not vanish
+       ;; either: an unreported failure leaks a worker nobody can find.
+       (try (binding [python-worker/*keep-children?* true]
+              (dispose-environment! (:environment old)))
+            (catch Throwable t
+              (tel/log! :error
+                        ["gateway: recycle failed to dispose the old env" (str k)
+                         (ex-message t)])))))))
+
+(defn- recycle-deferred-env!
+  "Rebuild the deferred env of `k` with its project catalog. Call it under the entry lock.
+   No sandbox ran in that env, so a stop is logged only for a sandbox that was built."
   [k]
-  (when-let [old (get @cache k)]
-    (env/log-sandbox-stop! (:session-id (:environment old)) :settings-change settings-change-detail)
-    (let [fresh-env (open-env! k {})]
-      (swap! cache assoc
-        k
-        (assoc old
-          :environment fresh-env
-          :last-active (java.util.concurrent.atomic.AtomicLong. (util/now-ms))
-          ;; Restamp to the current epoch: the fresh env carries the latest
-          ;; security-policy snapshot, so it is no longer reload-stale.
-          :policy-epoch (java.util.concurrent.atomic.AtomicLong.
-                          (long @python-exec/policy-reload-epoch))))
-      ;; A teardown failure must not take the swap down, but it must not vanish
-      ;; either: an unreported failure leaks a worker nobody can find.
-      (try (binding [python-worker/*keep-children?* true]
-             (dispose-environment! (:environment old)))
-           (catch Throwable t
-             (tel/log! :error
-                       ["gateway: recycle failed to dispose the old env" (str k)
-                        (ex-message t)]))))))
+  (let [old (:environment (get @cache k))]
+    (if (env/python-context-if-built old)
+      (recycle-env! k :extensions-ready "the project extensions are ready")
+      (recycle-env! k nil nil))))
+
+(defn- complete-deferred-env!
+  "Prepare project `root` of the deferred session `session-id` in the background. Then
+   rebuild the env when it is idle; a busy or uncached session rebuilds at its next turn."
+  [session-id root]
+  (future
+    (try (python-extensions/prepare-project! root)
+         (let [k (cache-key session-id)]
+           (when-let [{:keys [^java.util.concurrent.locks.ReentrantLock lock]} (get @cache k)]
+             (when (.tryLock lock)
+               (try (when (:extensions/deferred? (:environment (get @cache k)))
+                      (recycle-deferred-env! k))
+                    (finally (.unlock lock))))))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::deferred-extensions-failed
+                      :data {:session-id (str session-id) :root root :error (ex-message t)}}
+                     "could not prepare the extensions of a new session in the background")))))
 
 (def ^:private ENGINE_LOCK_POLL_MS
   "How long one attempt at a session's turn lock waits before `send!` re-reads
@@ -2413,6 +2465,10 @@
          ;; (new network domains / filesystem roots take effect here). Done under
          ;; the lock, before the turn, so no eval races the swap.
          (when (policy-stale? (or (get @cache k) entry)) (recycle-env! k))
+         ;; A session that opened before its project was prepared gets the project
+         ;; catalog now. The rebuild waits for that preparation (#508).
+         (when (:extensions/deferred? (:environment (or (get @cache k) entry)))
+           (recycle-deferred-env! k))
          ;; Re-read :environment UNDER the lock: a `/reload` recycle by an earlier
          ;; queued turn or a router/extension reseat may have swapped it since we
          ;; captured `entry`, so the queued turn runs against the CURRENT context.
@@ -2459,7 +2515,9 @@
    answers from the extensions of its saved workspace: nothing starts for it. An
    unknown session has none."
   [session-id]
-  (if-let [environment (:environment (get @cache (cache-key session-id)))]
+  (if-let [environment (some-> (get @cache (cache-key session-id))
+                               :environment
+                               (as-> e (when-not (:extensions/deferred? e) e)))]
     (for-agent (:db-info environment) session-id (extension/session-apps environment))
     (let [db-info (persistance/db-shared-connection! (config/resolve-db-spec))
           sid (persistance/db-resolve-session-id db-info session-id)]

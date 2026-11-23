@@ -453,31 +453,121 @@ def releases(tmp_path, monkeypatch):
     return metadata, tmp_path / "installed", commands
 
 
-# A new worktree is a new project: it installed every package again with Git.
-def test_sync_in_another_project_reuses_the_fetched_commit_without_git(
-    releases, tmp_path, counted_downloads
-):
-    _, _, commands = releases
-    declared = {
-        "vis-greeter": {
-            "source": REPOSITORY,
-            "subdirectory": "plugins/greeting",
-            "version": "1.0.0",
-        }
+@pytest.fixture
+def pinned_release_sync(releases, tmp_path):
+    spec = {
+        "source": REPOSITORY,
+        "subdirectory": "plugins/greeting",
+        "version": "1.0.0",
     }
     cache = tmp_path / "home/package-sources"
-    first, second = tmp_path / "a/.vis/extensions", tmp_path / "b/.vis/extensions"
-    [one] = package.sync(declared, first, trust=True, source_cache=cache)
+
+    def sync(project_name, version="1.0.0", **options):
+        [result] = package.sync(
+            {"vis-greeter": {**spec, "version": version}},
+            tmp_path / project_name / ".vis/extensions",
+            trust=True,
+            source_cache=cache,
+            **options,
+        )
+        return result
+
+    return cache, sync
+
+
+def test_sync_in_another_project_reuses_the_approved_release_offline(
+    releases, pinned_release_sync, counted_downloads, monkeypatch
+):
+    _, _, commands = releases
+    _, sync = pinned_release_sync
+    one = sync("a")
     assert one["status"] == "installed" and commands
     commands.clear()
-    [two] = package.sync(declared, second, trust=True, source_cache=cache)
+
+    def offline(*_):
+        pytest.fail("The catalog must not be read for a fetched exact version")
+
+    monkeypatch.setattr(package, "_catalog", offline)
+    two = sync("b")
     assert two["status"] == "installed"
     assert not commands and len(counted_downloads) == 1
     assert two["revision"] == one["revision"]
     for name in ("src/greeter.py", "pyproject.toml"):
-        assert (second / "vis-greeter/current" / name).read_text() == (
-            first / "vis-greeter/current" / name
+        assert (Path(two["path"]) / name).read_text() == (
+            Path(one["path"]) / name
         ).read_text()
+
+
+def test_sync_latest_uses_the_live_catalog_and_does_not_cache_release_records(
+    releases, pinned_release_sync, monkeypatch
+):
+    metadata, _, _ = releases
+    _, sync = pinned_release_sync
+    newer = metadata.pop(1)
+    assert sync("a")["status"] == "installed"
+
+    calls = []
+    monkeypatch.setattr(
+        package, "_catalog", lambda *args: calls.append(args) or {"releases": metadata}
+    )
+    assert sync("b")["version"] == "1.0.0"
+    assert not calls
+    assert sync("c", "latest")["version"] == "1.0.0"
+    metadata.append(newer)
+    assert sync("d", "latest")["version"] == "1.1.0"
+    assert len(calls) == 2
+    # A fetched `latest` commit is not an exact release record.
+    assert sync("e", "1.1.0")["version"] == "1.1.0"
+    assert len(calls) == 3
+
+
+def test_sync_refresh_reads_the_catalog_for_a_cached_exact_version(
+    releases, pinned_release_sync, monkeypatch
+):
+    metadata, _, commands = releases
+    _, sync = pinned_release_sync
+    assert sync("a")["status"] == "installed"
+    commands.clear()
+
+    calls = []
+    monkeypatch.setattr(
+        package, "_catalog", lambda *args: calls.append(args) or {"releases": metadata}
+    )
+    assert sync("b")["status"] == "installed"
+    assert not calls
+    assert sync("b", refresh=True)["status"] == "cached"
+    assert len(calls) == 1 and not commands
+
+
+def test_sync_installs_when_the_source_cache_cannot_be_written(pinned_release_sync):
+    cache, sync = pinned_release_sync
+    cache.parent.mkdir()
+    cache.touch()
+    assert sync("a")["status"] == "installed"
+
+
+@pytest.mark.parametrize("corrupt", [None, {"name": "other"}, {"revision": None}])
+def test_sync_corrupt_release_record_uses_the_live_catalog(
+    releases, pinned_release_sync, monkeypatch, corrupt
+):
+    metadata, _, commands = releases
+    cache, sync = pinned_release_sync
+    assert sync("a")["status"] == "installed"
+    [record] = (cache / "releases").glob("*.json")
+    if corrupt is None:
+        record.write_bytes(b"\xff")
+    else:
+        record.write_text(json.dumps({**metadata[0], **corrupt}))
+    commands.clear()
+
+    calls = []
+    monkeypatch.setattr(
+        package, "_catalog", lambda *args: calls.append(args) or {"releases": metadata}
+    )
+    assert sync("b")["revision"] == metadata[0]["revision"]
+    assert len(calls) == 1 and not commands
+    assert sync("c")["revision"] == metadata[0]["revision"]
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize("scope", ["workspace/.vis/extensions", "home/.vis/extensions"])

@@ -426,15 +426,59 @@ def _shared_source(cache, repository, subdirectory, revision):
 
 def _keep_source(cache, selected):
     """Copy a fetched folder into the source cache. The cache is optional: errors are ignored."""
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    stage = Path(tempfile.mkdtemp(prefix=".staging-", dir=cache.parent))
     try:
-        _copy_project(selected, stage / "source")
-        os.rename(stage / "source", cache)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".staging-", dir=cache.parent) as stage:
+            prepared = Path(stage) / "source"
+            _copy_project(selected, prepared)
+            os.rename(prepared, cache)
     except (OSError, ValueError):
         pass
-    finally:
-        shutil.rmtree(stage, ignore_errors=True)
+
+
+def _release_record(cache, repository, subdirectory, version):
+    key = hashlib.sha256(
+        "\n".join((repository.lower(), subdirectory, version)).encode()
+    ).hexdigest()
+    return Path(cache).expanduser() / "releases" / f"{key}.json"
+
+
+def _cached_release(path, name, repository, subdirectory, version):
+    """Read the approved release, or use the live catalog if the record is not valid."""
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        with path.open("rb") as record:
+            data = record.read(MAX_METADATA + 1)
+        if len(data) > MAX_METADATA:
+            return None
+        release = json.loads(data)
+        if (
+            isinstance(release, dict)
+            and release.get("name") == name
+            and isinstance(release.get("version"), str)
+            and Version(release["version"]) == Version(version)
+            and github_repository(release.get("repository_url")) == repository
+            and project_subdirectory(release.get("subdirectory", "")) == subdirectory
+            and isinstance(release.get("revision"), str)
+            and re.fullmatch(r"[0-9a-f]{40}", release["revision"])
+        ):
+            return release
+    except (OSError, ValueError, RecursionError):
+        pass
+    return None
+
+
+def _keep_release(path, release):
+    """Save the release after admission. A cache write failure does not affect sync."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".staging-", dir=path.parent) as stage:
+            prepared = Path(stage) / path.name
+            prepared.write_text(json.dumps(release), encoding="utf-8")
+            os.replace(prepared, path)
+    except OSError:
+        pass
 
 
 def _copy_project(source, destination):
@@ -1638,12 +1682,20 @@ def _sync_one(
     source, folder = spec["source"], spec["subdirectory"]
     remote = source.startswith("https://")
     release, revision = None, spec["revision"]
-    active = None
+    active = record_path = None
+    save_release = False
     if remote:
         if revision is None:
-            release = _select(
-                _releases(source, folder), None if tracking else spec["version"]
-            )
+            version = None if tracking else spec["version"]
+            if source_cache and version is not None:
+                record_path = _release_record(source_cache, source, folder, version)
+                if not refresh:
+                    release = _cached_release(
+                        record_path, name, source, folder, version
+                    )
+            if release is None:
+                release = _select(_releases(source, folder), version)
+                save_release = record_path is not None
             revision = release["revision"]
         if exists and not missing and current["result"]["mode"] == "github":
             active, receipt = _managed(directory, name)
@@ -1663,6 +1715,8 @@ def _sync_one(
                     raise ValueError(
                         "Installed source no longer matches the selected release"
                     )
+                if save_release:
+                    _keep_release(record_path, release)
                 return {**current["result"], "status": "cached"}
     result = _admit(
         source,
@@ -1677,6 +1731,8 @@ def _sync_one(
         expected_target=current["target"] if exists and active is None else None,
         source_cache=source_cache,
     )
+    if save_release:
+        _keep_release(record_path, release)
     return {**result, "status": "updated" if exists and not missing else "installed"}
 
 
@@ -1767,8 +1823,9 @@ def sync(
     failed package is reported, and its previous source and other packages stay. Dry-run
     makes no writes, imports or network calls. After source admission, the host prepares
     dependencies with upstream uv's own readiness and cache checks.
-    A `source_cache` folder keeps each fetched GitHub commit, so that another project
-    installs the same commit without Git.
+    A `source_cache` folder keeps each fetched GitHub commit so that another project
+    can install it without Git. It also keeps approved exact versions, which use the
+    local record instead of the catalog unless refresh is set.
     """
     if not dry_run:
         _trust(trust)

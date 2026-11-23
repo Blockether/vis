@@ -5512,6 +5512,17 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   (binding [*background-load?* true]
     (prepare-project! root)))
 
+(defn project-ready?
+  "True when the catalog of project `root` is prepared and no preparation of it runs.
+   Never waits and never starts a preparation (#508)."
+  [root]
+  (binding [workspace/*workspace-root* (.getCanonicalPath (io/file root))]
+    (let [[^File global-dir ^File project-dir] (default-extension-dirs)]
+      (or (= (.getCanonicalPath global-dir) (.getCanonicalPath project-dir))
+          (some? (locking scope-flights
+                   (ready-scope {:dirs [project-dir] :project true :project-root (workspace/cwd-root)}
+                                false)))))))
+
 (defn reload-python-extensions!
   "Reload global extensions and the calling project, preserving other project catalogs.
    Only new, changed and failed extension files load again; `{:all? true}` loads all (#393)."
