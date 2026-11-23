@@ -152,6 +152,23 @@
                                      (state/sync-terminal-background! theme-name))
                                    (.toString out "UTF-8")))]
                    (try (reset! state/terminal-background-polled? true)
-                        (expect (= "\u001B]111\u0007" (written :auto)))
+                        (expect (= "\u001B]111\u0007\u001B]112\u0007" (written :auto)))
                         (expect (re-find #"^\u001B]11;rgb:" (written :vis-light)))
-                        (finally (reset! state/terminal-background-polled? false))))))
+                        (finally (reset! state/terminal-background-polled? false)))))
+             (it "gives the cursor the text color of the theme"
+                 (let [saved
+                       @t/active-theme-id
+
+                       out
+                       (java.io.ByteArrayOutputStream.)]
+
+                   (try (t/apply-theme! :vis-dark)
+                        (with-redefs [vis/tty-out (delay out)]
+                          (state/sync-terminal-background! :vis-dark))
+                        (let [^com.googlecode.lanterna.TextColor$RGB fg t/text-fg]
+                          (expect (.contains (.toString out "UTF-8")
+                                             (format "\u001B]12;rgb:%02x/%02x/%02x\u0007"
+                                                     (.getRed fg)
+                                                     (.getGreen fg)
+                                                     (.getBlue fg)))))
+                        (finally (t/apply-theme! saved))))))

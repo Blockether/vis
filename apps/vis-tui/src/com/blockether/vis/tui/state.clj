@@ -946,16 +946,23 @@
   (atom false))
 
 (defn sync-terminal-background!
-  "Give the padding of the emulator the background of the applied theme (OSC 11).
+  "Give the padding of the emulator the background of the applied theme (OSC 11), and
+   the cursor its text color (OSC 12).
    With the `auto` theme, give the default background back instead in tmux and on a
    terminal that the TUI asks for its background again. The color scheme comes from
    that background there, so an override hides each later change of the system."
   [theme-name]
   (try (if (and (tui-theme/follows-system? theme-name)
                 (or (seq (System/getenv "TMUX")) @terminal-background-polled?))
-         (input/reset-default-bg! @vis/tty-out)
-         (let [^com.googlecode.lanterna.TextColor$RGB c tui-theme/terminal-bg]
-           (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))))
+         (do (input/reset-default-bg! @vis/tty-out) (input/reset-cursor-color! @vis/tty-out))
+         (let [^com.googlecode.lanterna.TextColor$RGB c
+               tui-theme/terminal-bg
+
+               ^com.googlecode.lanterna.TextColor$RGB fg
+               tui-theme/text-fg]
+
+           (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))
+           (input/set-cursor-color! @vis/tty-out (.getRed fg) (.getGreen fg) (.getBlue fg))))
        (catch Throwable _ nil)))
 
 (defn- paint-theme!

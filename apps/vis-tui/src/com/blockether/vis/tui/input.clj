@@ -106,6 +106,21 @@
   [^java.io.OutputStream out]
   (try (.write out (.getBytes "\u001B]111\u0007" "UTF-8")) (.flush out) (catch Throwable _ nil)))
 
+(defn set-cursor-color!
+  "Set the terminal cursor color via OSC 12. Without it the cursor keeps the color of
+   the terminal profile, which can be dark on a dark theme."
+  [^java.io.OutputStream out r g b]
+  (try (.write out
+               (.getBytes (format "\u001B]12;rgb:%02x/%02x/%02x\u0007" (long r) (long g) (long b))
+                          "UTF-8"))
+       (.flush out)
+       (catch Throwable _ nil)))
+
+(defn reset-cursor-color!
+  "Reverse of `set-cursor-color!` via OSC 112 (reset cursor color)."
+  [^java.io.OutputStream out]
+  (try (.write out (.getBytes "\u001B]112\u0007" "UTF-8")) (.flush out) (catch Throwable _ nil)))
+
 ;;; ── Clipboard (shell helpers) ───────────────────────────────────────────────
 ;;
 ;; Two shell candidate lists, one per direction. Ordered most-likely

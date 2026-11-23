@@ -6978,6 +6978,7 @@
                                            SignalHandler
                                              (handle [_ received]
                                                (try (input/reset-default-bg! @vis/tty-out)
+                                                    (input/reset-cursor-color! @vis/tty-out)
                                                     (catch Throwable _ nil))
                                                (try (Signal/handle received @previous)
                                                     (Signal/raise received)
@@ -9471,7 +9472,10 @@
 
 (defn- disable-terminal-state!
   [opts]
-  (when-not (:html? opts) (try (input/reset-default-bg! @vis/tty-out) (catch Throwable _ nil))))
+  (when-not (:html? opts)
+    (try (input/reset-default-bg! @vis/tty-out)
+         (input/reset-cursor-color! @vis/tty-out)
+         (catch Throwable _ nil))))
 
 ;; Encrypted SSH key passphrase prompt — retired.
 ;;
