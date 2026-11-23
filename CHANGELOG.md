@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.31] - 2026-11-23
+
 ### Added
 
 - Extensions: `vis.tool_call_provider()` returns the provider that actually served the model reply of the tool call that runs now, after any provider fallback. Nested tool calls and before hooks get the same provider, so a hook can refuse a tool for a provider before the tool runs. The value is `None` for a call that no model reply started, and when the route is not known (#507).

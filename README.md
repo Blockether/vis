@@ -46,14 +46,14 @@ Then run `vis-agent tui` for the terminal, `vis-agent web` for the browser, or `
 for the desktop app.
 
 <p>
-<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.30/vis-companion-0.5.30-windows-x64.msi"><img src="resources/vis-docs/assets/install-windows.png" alt="Download Vis for Windows x64" height="40"></a>
-<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.30/vis-companion-0.5.30-macos-universal.dmg"><img src="resources/vis-docs/assets/install-macos.png" alt="Download Vis for macOS" height="40"></a>
-<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.30/vis-companion-0.5.30-linux-x64.AppImage"><img src="resources/vis-docs/assets/install-linux.png" alt="Download Vis for Linux x64" height="40"></a>
+<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.5.31/vis-companion-0.5.31-windows-x64.msi"><img src="resources/vis-docs/assets/install-windows.png" alt="Download Vis for Windows x64" height="40"></a>
+<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.5.31/vis-companion-0.5.31-macos-universal.dmg"><img src="resources/vis-docs/assets/install-macos.png" alt="Download Vis for macOS" height="40"></a>
+<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.5.31/vis-companion-0.5.31-linux-x64.AppImage"><img src="resources/vis-docs/assets/install-linux.png" alt="Download Vis for Linux x64" height="40"></a>
 <a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="resources/vis-docs/assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" height="40"></a>
 <a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" height="40"></a>
 </p>
 
-[Linux ARM64](https://github.com/Blockether/vis/releases/download/v0.5.30/vis-companion-0.5.30-linux-arm64.AppImage) · [All packages](https://github.com/Blockether/vis/releases/latest) · [Other installation options](resources/vis-docs/distributions.md) · [Pair a phone](resources/vis-docs/quickstart.md#pair-a-phone)
+[Linux ARM64](https://github.com/Blockether/vis/releases/download/v0.5.31/vis-companion-0.5.31-linux-arm64.AppImage) · [All packages](https://github.com/Blockether/vis/releases/latest) · [Other installation options](resources/vis-docs/distributions.md) · [Pair a phone](resources/vis-docs/quickstart.md#pair-a-phone)
 
 ## [Documentation](https://vis.blockether.com/)
 
