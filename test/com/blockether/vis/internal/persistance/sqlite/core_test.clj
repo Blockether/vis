@@ -1810,21 +1810,66 @@
                                         :error (ex-info "Disk quota reached" {}))))
     (:invocation-id inv)))
 
-(defn- activity-search-texts
-  [store]
-  (mapv :search_text (raw-query store {:select [:search_text] :from [:activity_invocation]})))
-
 (def ^:private rewrite-older-store! (private-core-fn "rewrite-older-store!"))
 
 (defn- user-version [store] (:user_version (first (raw-query store {:raw "PRAGMA user_version"}))))
 
 (defn- rewrite-count "The number of store rewrites that a new open runs." [] (count @#'sqlite-core/store-rewrites))
 
+(defn- rewrite-index
+  "The position of the store rewrite `rewrite-var` in the store rewrites."
+  [rewrite-var]
+  (.indexOf ^java.util.List @#'sqlite-core/store-rewrites @rewrite-var))
+
+(defn- rewind-store!
+  "Mark each store rewrite from `rewrite-var` on as not done."
+  [store rewrite-var]
+  (jdbc/execute! (:datasource store) [(str "PRAGMA user_version = " (rewrite-index rewrite-var))]))
+
+(defn- add-older-search-column!
+  "Build `activity_invocation` again with the NOT NULL `search_text` column of older stores."
+  [store]
+  (jdbc/with-transaction
+    [tx (:datasource store)]
+    (jdbc/execute! tx ["ALTER TABLE activity_invocation RENAME TO activity_invocation_older"])
+    (jdbc/execute! tx
+                   [(str "CREATE TABLE activity_invocation ("
+                         " history_id TEXT NOT NULL REFERENCES activity_history(id) ON DELETE CASCADE,"
+                         " id TEXT NOT NULL, sequence INTEGER NOT NULL, state TEXT NOT NULL,"
+                         " visible INTEGER NOT NULL, payload BLOB NOT NULL, search_text TEXT NOT NULL,"
+                         " PRIMARY KEY (history_id, id), UNIQUE (history_id, sequence))")])
+    (jdbc/execute! tx
+                   [(str "INSERT INTO activity_invocation"
+                         " SELECT history_id, id, sequence, state, visible, payload, 'older text'"
+                         " FROM activity_invocation_older")])
+    (jdbc/execute! tx ["DROP TABLE activity_invocation_older"])))
+
+(defn- searched-ids
+  [store sid aid q]
+  (mapv :id (:rows (persistance/db-activity-page store sid aid {:q q}))))
+
 (defdescribe
-  activity-search-text-size-test
-  ;; The whole JSON presentation of every invocation filled 5.8 GB of one real store,
-  ;; with each tool output stored three times. Search keeps bounded plain text.
-  (it "stores bounded plain text with labels before long output"
+  activity-search-test
+  ;; A plain copy of each presentation, cut at 4096 characters, filled 2.4 GB of one real
+  ;; store, and search did not see the end of a long output.
+  (it "matches each presentation text of the payloads, also the end of a long output"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {})
+
+            aid
+            (str (random-uuid))
+
+            id
+            (write-long-activity! s sid aid)]
+
+        (expect (not (contains? (table-columns s "activity_invocation") "search_text")))
+        (expect (= [id] (searched-ids s sid aid "DISK quota")))
+        (expect (= [id] (searched-ids s sid aid "tail-marker")))
+        (expect (= [] (searched-ids s sid aid "not in any text")))))
+  (it "writes to an older store, then drops its search text once"
       (let [s
             (h/store)
 
@@ -1837,47 +1882,141 @@
             id
             (write-long-activity! s sid aid)
 
-            [text]
-            (activity-search-texts s)]
+            _
+            (add-older-search-column! s)
 
-        (expect (<= (count text) 4096))
-        (expect (not (str/starts-with? text "{")))
-        (expect (str/includes? text "Disk quota reached"))
-        (expect (str/includes? text "Record 1"))
-        (expect (not (str/includes? text "tail-marker")))
-        (expect (= [id]
-                   (mapv :id (:rows (persistance/db-activity-page s sid aid {:q "disk quota"})))))))
-  (it "rewrites the JSON search text of an older store once"
+            other
+            (str (random-uuid))
+
+            other-id
+            (write-long-activity! s sid other)]
+
+        (expect (= ["older text" ""]
+                   (mapv :search_text
+                         (raw-query s
+                                    {:select [:search_text]
+                                     :from [:activity_invocation]
+                                     :order-by [[:rowid :asc]]}))))
+        (rewind-store! s #'sqlite-core/drop-activity-search-text!)
+        (rewrite-older-store! (:datasource s))
+        (expect (= (rewrite-count) (user-version s)))
+        (expect (not (contains? (table-columns s "activity_invocation") "search_text")))
+        (expect (= [id] (searched-ids s sid aid "tail-marker")))
+        (expect (= [other-id] (searched-ids s sid other "disk quota"))))))
+
+(defn- stored-forms
+  [store]
+  (mapv #(nippy/thaw (:tool_calls %))
+        (raw-query store {:select [:tool_calls] :from [:session_turn_iteration] :order-by [[:rowid :asc]]})))
+
+(defn- read-forms
+  [store tid]
+  (mapv :forms (persistance/db-list-session-turn-iterations store tid)))
+
+(defdescribe
+  iteration-form-source-test
+  ;; The source of a single form repeated the `code` column of its iteration.
+  (it "stores the source of a single form once and reads it back"
       (let [s
             (h/store)
 
             sid
             (h/store-session! s {})
 
-            aid
-            (str (random-uuid))
+            tid
+            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "forms"})
 
-            id
-            (write-long-activity! s sid aid)
+            one
+            [{:scope nil :tag :observation :src "cat('a')"}]
 
-            old-text
-            (wire/json-str {:state "idle" :rows [{:summary "Record 1"}]})]
+            two
+            [{:scope nil :tag :observation :src "cat('b')"}
+             {:scope nil :tag :observation :src "cat('c')"}]]
 
-        ;; Rewind this store to the shape that older Vis versions wrote.
-        (jdbc/execute! (:datasource s) ["UPDATE activity_invocation SET search_text = ?" old-text])
-        (expect (= 0 (user-version s)))
+        (h/store-iteration! s {:session-turn-id tid :status :done :code "cat('a')" :forms one})
+        (h/store-iteration! s {:session-turn-id tid :status :done :code "cat('b')" :forms two})
+        (expect (= [[{:scope nil :tag :observation}] two] (stored-forms s)))
+        (expect (= [one two] (read-forms s tid)))))
+  (it "drops the source copy of an older store once"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {})
+
+            tid
+            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "forms"})
+
+            one
+            [{:scope nil :tag :observation :src "cat('a')"}]]
+
+        (h/store-iteration! s {:session-turn-id tid :status :done :code "cat('a')" :forms one})
+        ;; Older Vis versions kept the source and wrote the blob without compression.
+        (jdbc/execute! (:datasource s)
+                       ["UPDATE session_turn_iteration SET tool_calls = ?"
+                        (nippy/freeze one {:compressor nil})])
+        (rewind-store! s #'sqlite-core/drop-code-form-sources!)
         (rewrite-older-store! (:datasource s))
-        (let [[text] (activity-search-texts s)]
-          (expect (= (rewrite-count) (user-version s)))
-          (expect (not= old-text text))
-          (expect (str/includes? text "Disk quota reached"))
-          (expect (<= (count text) 4096))
-          (expect
-            (= [id] (mapv :id (:rows (persistance/db-activity-page s sid aid {:q "disk quota"}))))))
-        ;; A done rewrite does not run again.
-        (jdbc/execute! (:datasource s) ["UPDATE activity_invocation SET search_text = ?" old-text])
+        (expect (= (rewrite-count) (user-version s)))
+        (expect (= [[{:scope nil :tag :observation}]] (stored-forms s)))
+        (expect (= [one] (read-forms s tid))))))
+
+(defn- stored-healths
+  [store]
+  (into []
+        (keep #(some-> (:request_health %) nippy/thaw))
+        (raw-query store
+                   {:select [:request_health] :from [:session_turn_iteration] :order-by [[:rowid :asc]]})))
+
+(defdescribe
+  request-roots-test
+  ;; Each request of a session repeated the same root list: 61% of the request health.
+  (it "stores one copy of a root list and reads it back for each request"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {})
+
+            tid
+            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "roots"})
+
+            health
+            {:budget-tokens 200000 :roots [{:path "/work/linked" :guidance {:status "missing"}}]}]
+
+        (dotimes [_ 2]
+          (h/store-iteration! s
+                              {:session-turn-id tid
+                               :code ""
+                               :tokens {"input" 100 "output" 1}
+                               :request-health health}))
+        (expect (= 1 (raw-count s :request_roots)))
+        (expect (every? #(and (:roots-digest %) (not (contains? % :roots))) (stored-healths s)))
+        (expect (= [health health] (mapv :request-health (persistance/db-list-session-turn-iterations s tid))))
+        (expect (= (:roots health) (get-in (persistance/db-session-usage-stats s (str sid)) [:health :roots])))))
+  (it "stores the root lists of an older store once"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {})
+
+            tid
+            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "roots"})
+
+            health
+            {:budget-tokens 200000 :roots [{:path "/work/linked"}]}]
+
+        (dotimes [_ 2]
+          (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 100 "output" 1}}))
+        ;; Older Vis versions kept the root list in each request health.
+        (jdbc/execute! (:datasource s) ["UPDATE session_turn_iteration SET request_health = ?" (nippy/freeze health)])
+        (rewind-store! s #'sqlite-core/store-request-roots-once!)
         (rewrite-older-store! (:datasource s))
-        (expect (= [old-text] (activity-search-texts s))))))
+        (expect (= (rewrite-count) (user-version s)))
+        (expect (= 1 (raw-count s :request_roots)))
+        (expect (not-any? #(contains? % :roots) (stored-healths s)))
+        (expect (= [health health] (mapv :request-health (persistance/db-list-session-turn-iterations s tid)))))))
 
 (defn- store-activity-iteration!
   "Store one iteration whose two forms carry Activity: one with a saved history, one without."

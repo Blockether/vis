@@ -385,6 +385,16 @@
    ["workspace" "filesystem_roots"] ["workspace" "workspace_kind"] ["workspace" "workspace_backend"]
    ["workspace" "workspace_mechanism"] ["workspace" "parent_workspace_id"]])
 
+(def ^:private janitor-retired-columns
+  "Columns DELETED from the canonical V1 that a janitor store rewrite drops, not the
+   open, as `[table column]`: the DROP builds a large table again. Append only: the
+   entry count is part of `schema-generation`, so an older Vis refuses the store as
+   soon as a newer Vis opened it.
+
+   `activity_invocation.search_text` held a plain copy of each Activity presentation:
+   2.4 GB of a 17 GB store. Search matches the payloads of one history."
+  [["activity_invocation" "search_text"]])
+
 (def ^:private retired-values
   "Values a narrowed CHECK no longer admits, as `[table column old new]`.
 
@@ -419,11 +429,16 @@
 
 (def ^:private schema-generation
   "The generation of the store shape that this Vis leaves: one step for each entry in
-   `retired-columns`, `retired-values`, `retired-rows` and `retired-copies`. Those lists
+   `retired-columns`, `janitor-retired-columns`, `retired-values`, `retired-rows` and
+   `retired-copies`. Those lists
    only grow, never remove an entry, so a newer Vis always has a higher generation. An
    older Vis cannot run against a store that a newer Vis removed columns or values from
    (#455)."
-  (+ (count retired-columns) (count retired-values) (count retired-rows) (count retired-copies)))
+  (+ (count retired-columns)
+     (count janitor-retired-columns)
+     (count retired-values)
+     (count retired-rows)
+     (count retired-copies)))
 
 (defn- stored-generation
   "The generation that `conn`'s store records, or 0 for a store from before the record."
@@ -1017,6 +1032,26 @@
                           :else (do (execute-ddl! conn "ROLLBACK") false)))
                   (catch Throwable error (execute-ddl! conn "ROLLBACK") (throw error)))
              (finally (execute-ddl! conn (str "PRAGMA foreign_keys = " fk))))))))
+
+(defn drop-column!
+  "Drop `column` from `table` in one transaction, and build again each schema object
+   of the canonical SQL that names it. Answer true when the column was dropped, false
+   when the table has no such column, and `:low-disk` when there is no space for the
+   copy of the table that SQLite writes."
+  [^DataSource ds locations ^String table ^String column]
+  (let [objects (canonical-objects (migration-sql-texts (if (string? locations) [locations] locations)))]
+    (with-open [conn (.getConnection ds)]
+      (cond (not (contains? (existing-columns conn table) (str/lower-case column))) false
+            (not (reorder-space? conn)) :low-disk
+            :else (let [auto (.getAutoCommit conn)]
+                    (try (.setAutoCommit conn false)
+                         (retire-column! conn objects table column)
+                         (.commit conn)
+                         true
+                         (catch Throwable e
+                           (try (.rollback conn) (catch Throwable _ nil))
+                           (throw e))
+                         (finally (.setAutoCommit conn auto))))))))
 
 (defn- drifted-columns
   "Columns whose definition in the STORE no longer reads like the canonical

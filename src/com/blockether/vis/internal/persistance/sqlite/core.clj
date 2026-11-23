@@ -252,62 +252,75 @@
      AND trim(substr(workspace_root,
                      length(rtrim(workspace_root, replace(workspace_root, '/', ''))) + 1)) <> ''")
 
-(def ^:private ^:const activity-search-char-limit
-  "Characters of one Activity invocation that search matches. Short labels come first,
-   so a long tool output never pushes the command, summary or error out."
-  4096)
-
-(def ^:private ^:const activity-search-short-chars
-  "Texts up to this length are labels: they go before long output in search text."
-  256)
-
 (def ^:private activity-search-id-keys
   "Presentation keys whose values are opaque identifiers, not text that a person searches."
   #{:id :argument-key :read-key :handle-id :group-token})
 
-(defn- activity-search-text
-  "Bounded plain text that Activity search matches for one invocation `row`. It holds each
-   distinct presentation text once, labels before long output, without JSON keys."
-  [row]
-  (let [texts
-        (->> (activity/presentation (assoc activity/empty-state :rows [row]))
-             :rows
-             (tree-seq coll? #(if (map? %) (vals (apply dissoc % activity-search-id-keys)) (seq %)))
-             (filter util/non-blank-string?)
-             distinct)
+(defn- activity-search-match?
+  "True when one presentation text of the invocation `row` holds `needle`, a lowercase
+   query. Identifiers and JSON keys do not match."
+  [row ^String needle]
+  (->> (activity/presentation (assoc activity/empty-state :rows [row]))
+       :rows
+       (tree-seq coll? #(if (map? %) (vals (apply dissoc % activity-search-id-keys)) (seq %)))
+       (some #(and (string? %) (str/includes? (str/lower-case ^String %) needle)))
+       boolean))
 
-        {labels true output false}
-        (group-by #(<= (count %) activity-search-short-chars) texts)
+(defn- activity-search-records
+  "The decoded payloads of `rows` that match the query `q`: at most `limit`, and one more
+   that only marks more pages. A row is decoded only until the page is full."
+  [rows q limit]
+  (let [needle (str/lower-case q)]
+    (into []
+          (comp (map #(<-blob (:payload %)))
+                (filter #(activity-search-match? % needle))
+                (take (inc (long limit))))
+          rows)))
 
-        text
-        (str/join "\n" (concat labels output))]
+(defn- activity-search-column?
+  "True while an older store still has `activity_invocation.search_text`. The column is
+   NOT NULL, so a new row gives it an empty text until `drop-activity-search-text!` drops it."
+  [db-info]
+  (boolean (seq (query-sql! db-info
+                            [(str
+                               "SELECT 1 AS present FROM pragma_table_info('activity_invocation')"
+                               " WHERE name = 'search_text'")]))))
 
-    (subs text 0 (min (count text) activity-search-char-limit))))
+(def ^:private activity-search-blank-sql
+  "Empty the search text of the invocations in one rowid range."
+  (str "UPDATE activity_invocation SET search_text = '' "
+       "WHERE rowid > ? AND rowid <= ? AND search_text <> ''"))
 
-(def ^:private activity-search-batch-sql
-  "The next batch of Activity invocations after a rowid, for the search text rewrite."
-  "SELECT rowid AS row_id, payload FROM activity_invocation WHERE rowid > ? ORDER BY rowid LIMIT 500")
+(def ^:private activity-search-blank-rows
+  "Rowids in one short transaction of the search text rewrite."
+  2000)
 
-(def ^:private activity-search-update-sql
-  "Set the search text of one invocation unless a live write changed its payload."
-  "UPDATE activity_invocation SET search_text = ? WHERE rowid = ? AND payload = ?")
-
-(defn- rewrite-activity-search-text!
-  "Rewrite the Activity search text that older stores kept as whole JSON presentations.
-   Each batch commits, so an interrupted rewrite continues at the next open."
+(defn- drop-activity-search-text!
+  "Drop `activity_invocation.search_text`. Activity search matches the decoded payloads
+   of one history, so the plain copy of each presentation is not necessary: it held
+   2.4 GB of a 17 GB store. The text is emptied first in short transactions, so the
+   DROP that builds the table again holds the write lock for seconds, not for a minute.
+   Answer `:low-disk` when there is no space for that copy."
   [^DataSource ds]
-  (let [opts {:builder-fn rs/as-unqualified-lower-maps}]
-    (loop [after 0]
-      (let [rows (jdbc/execute! ds [activity-search-batch-sql after] opts)]
-        (when (seq rows)
-          (jdbc/with-transaction
-            [tx ds]
-            (with-open [ps (jdbc/prepare tx [activity-search-update-sql])]
-              (jdbc/execute-batch! ps
-                                   (mapv (fn [{:keys [row_id payload]}]
-                                           [(activity-search-text (<-blob payload)) row_id payload])
-                                         rows))))
-          (recur (:row_id (peek rows))))))))
+  (let [db-info {:datasource ds :conn ds}]
+    (when (activity-search-column? db-info)
+      (let [top (long (or (:top (jdbc/execute-one!
+                                  ds
+                                  ["SELECT max(rowid) AS top FROM activity_invocation"]
+                                  {:builder-fn rs/as-unqualified-lower-maps}))
+                          0))]
+        (loop [after 0]
+          (when (< after top)
+            (let [to (+ after (long activity-search-blank-rows))]
+              (jdbc/execute! ds [activity-search-blank-sql after to])
+              (recur to)))))
+      (migration/drop-column! ds MIGRATIONS "activity_invocation" "search_text"))))
+
+(defn- retired-store-rewrite!
+  "A store rewrite that a later rewrite made unnecessary. It keeps its place in
+   `store-rewrites`, so the count in `PRAGMA user_version` keeps its meaning."
+  [_ds]
+  nil)
 
 (defn- form-without-activity-rows
   "`form` without the Activity rows that its durable history already holds.
@@ -316,6 +329,23 @@
   (if (and (map? form) (some? (get-in form [:activity :history :id])))
     (update form :activity dissoc :rows)
     form))
+
+(defn- forms-without-code-source
+  "`forms` without the source of a single form that repeats the iteration `code`.
+   [[forms-with-code-source]] gives it back from the `code` column."
+  [forms code]
+  (let [form (first forms)]
+    (if (and (= 1 (count forms)) (map? form) (some? code) (= code (:src form)))
+      [(dissoc form :src)]
+      forms)))
+
+(defn- forms-with-code-source
+  "`forms` with the source that [[forms-without-code-source]] left in the `code` column."
+  [forms code]
+  (let [form (first forms)]
+    (if (and (= 1 (count forms)) (map? form) (some? code) (not (contains? form :src)))
+      [(assoc form :src code)]
+      forms)))
 
 (defn- activity-page-projection
   "The page projection of `history` over its ordered `records` after a sequence.
@@ -368,16 +398,16 @@
 
 (defn- activity-page-rows
   "The stored rows of one bounded keyset page of the Activity `history` row, without an
-   owner check. Holds one row past `limit`, which only marks more pages."
+   owner check. Holds one row past `limit`, which only marks more pages. A search holds
+   each later row: [[activity-search-records]] matches their payloads."
   [db history {:keys [after limit q] :or {after 0 limit activity-contract/page-row-limit}}]
   (query! db
-          {:select [:payload]
-           :from [:activity_invocation]
-           :where (cond-> [:and [:= :history_id (:id history)] [:> :sequence after] [:= :visible 1]]
-                    (not (str/blank? q))
-                    (conj [:> [:instr [:lower :search_text] [:lower q]] 0]))
-           :order-by [[:sequence :asc]]
-           :limit (inc (long limit))}))
+          (cond-> {:select [:payload]
+                   :from [:activity_invocation]
+                   :where [:and [:= :history_id (:id history)] [:> :sequence after] [:= :visible 1]]
+                   :order-by [[:sequence :asc]]}
+            (str/blank? q)
+            (assoc :limit (inc (long limit))))))
 
 (def ^:private activity-first-records-sql
   "The visible records of each history up to one past the page row limit, in order.
@@ -493,6 +523,114 @@
                                   (when (not= kept forms) [(->blob kept) row_id tool_calls])))
                               decoded)]
 
+            (when (seq changed)
+              (jdbc/with-transaction [tx ds]
+                                     (with-open [ps (jdbc/prepare tx [activity-rows-update-sql])]
+                                       (jdbc/execute-batch! ps (vec changed))))))
+          (recur (:row_id (peek rows))))))))
+
+(defn- store-request-roots!
+  "`health` with its root list stored once in `request_roots` and named by its digest.
+   Each request of a session repeats the same list: it was 61% of the request health."
+  [db-info health]
+  (if-let [roots (not-empty (:roots health))]
+    (let [data (->blob roots)
+          digest (util/sha256-hex data)]
+
+      (execute! db-info
+                {:insert-into :request_roots
+                 :values [{:digest digest :roots data}]
+                 :on-conflict [:digest]
+                 :do-nothing true})
+      (-> health
+          (dissoc :roots)
+          (assoc :roots-digest digest)))
+    health))
+
+(defn- request-roots
+  "The root lists of `digests`, keyed by digest. One query for each 500 digests."
+  [db-info digests]
+  (into {}
+        (comp (partition-all 500)
+              (mapcat #(query! db-info
+                               {:select [:digest :roots]
+                                :from :request_roots
+                                :where [:in :digest (vec %)]}))
+              (map (juxt :digest (comp <-blob :roots))))
+        (distinct digests)))
+
+(defn- health-with-roots
+  "`health` with the root list that [[store-request-roots!]] stored once."
+  [health roots-by-digest]
+  (if-let [digest (:roots-digest health)]
+    (-> health
+        (dissoc :roots-digest)
+        (assoc :roots (get roots-by-digest digest [])))
+    health))
+
+(defn- with-request-roots
+  "`iterations` with the root lists of their request health."
+  [db-info iterations]
+  (let [digests (into [] (keep #(get-in % [:request-health :roots-digest])) iterations)]
+    (if (empty? digests)
+      (vec iterations)
+      (let [roots-by-digest (request-roots db-info digests)]
+        (mapv
+          #(cond-> % (:request-health %) (update :request-health health-with-roots roots-by-digest))
+          iterations)))))
+
+(def ^:private request-health-batch-sql
+  "The next batch of iterations with request health after a rowid."
+  (str "SELECT rowid AS row_id, request_health FROM session_turn_iteration "
+       "WHERE rowid > ? AND request_health IS NOT NULL ORDER BY rowid LIMIT 500"))
+
+(def ^:private request-health-update-sql
+  "Replace the request health of one iteration unless another write changed it."
+  "UPDATE session_turn_iteration SET request_health = ? WHERE rowid = ? AND request_health = ?")
+
+(defn- store-request-roots-once!
+  "Store the root list of each older request health once, in `request_roots`. Each
+   batch commits, so an interrupted rewrite continues at the next open."
+  [^DataSource ds]
+  (let [opts {:builder-fn rs/as-unqualified-lower-maps}]
+    (loop [after 0]
+      (let [rows (jdbc/execute! ds [request-health-batch-sql after] opts)]
+        (when (seq rows)
+          (jdbc/with-transaction [tx ds]
+                                 (let [db-info {:datasource tx :conn tx}]
+                                   (doseq [{:keys [row_id request_health]} rows
+                                           :let [health (<-blob request_health)]
+                                           :when (seq (:roots health))]
+
+                                     (jdbc/execute! tx
+                                                    [request-health-update-sql
+                                                     (->blob (store-request-roots! db-info health))
+                                                     row_id request_health]))))
+          (recur (:row_id (peek rows))))))))
+
+(def ^:private form-source-batch-sql
+  "The next batch of iterations with tool calls after a rowid, with their code."
+  (str "SELECT rowid AS row_id, code, tool_calls FROM session_turn_iteration "
+       "WHERE rowid > ? AND tool_calls IS NOT NULL ORDER BY rowid LIMIT 200"))
+
+(defn- drop-code-form-sources!
+  "Drop the source of each single form that repeats its iteration `code`, and store the
+   tool calls of older stores with zstd: some had no compression or LZ4. Each batch
+   commits, so an interrupted rewrite continues at the next open."
+  [^DataSource ds]
+  (let [opts {:builder-fn rs/as-unqualified-lower-maps}]
+    (loop [after 0]
+      (let [rows (jdbc/execute! ds [form-source-batch-sql after] opts)]
+        (when (seq rows)
+          (let [changed (keep (fn [{:keys [row_id code tool_calls]}]
+                                (let [forms (<-blob tool_calls)
+                                      kept (forms-without-code-source forms code)
+                                      data (->blob kept)]
+
+                                  (when (or (not= kept forms)
+                                            (< (alength ^bytes data) (alength ^bytes tool_calls)))
+                                    [data row_id tool_calls])))
+                              rows)]
             (when (seq changed)
               (jdbc/with-transaction [tx ds]
                                      (with-open [ps (jdbc/prepare tx [activity-rows-update-sql])]
@@ -758,15 +896,15 @@
   (jdbc/execute! ds
                  [(str "UPDATE session_attachment SET size_bytes = length(bytes) "
                        "WHERE bytes IS NOT NULL AND storage_codec = ? "
-                       "AND size_bytes IS NOT length(bytes)")
-                  attachment-codec/raw]))
+                       "AND size_bytes IS NOT length(bytes)") attachment-codec/raw]))
 
 (def ^:private store-rewrites
   "One-time data rewrites of older stores, in order. `PRAGMA user_version` counts the
    rewrites that a store has already done. Append new rewrites; never reorder them."
-  [rewrite-activity-search-text! drop-stored-activity-rows! drop-log-table! drop-improve-tables!
+  [retired-store-rewrite! drop-stored-activity-rows! drop-log-table! drop-improve-tables!
    drop-council-machine-table! store-agent-teams! store-team-clocks! queue-attachment-compaction!
-   move-attachment-bytes-last! requeue-unpacked-attachments! store-attachment-lengths!])
+   move-attachment-bytes-last! requeue-unpacked-attachments! store-attachment-lengths!
+   drop-activity-search-text! store-request-roots-once! drop-code-form-sources!])
 
 (defn- rewrites-done
   "The count of the store rewrites that this store has already done."
@@ -1103,7 +1241,8 @@
   [db-info]
   (let [pool (ds db-info)]
     (when (and (instance? HikariDataSource pool) (= :persistent (:mode db-info)))
-      (when-let [version (data-version pool)] [pool version]))))
+      (when-let [version (data-version pool)]
+        [pool version]))))
 
 (defn- read-at-version
   "Answer `(f)` from the last answer for `read-key` while the file is unchanged.
@@ -2735,7 +2874,8 @@
                           :select [[[:count :qti.id] :n]]
                           :where (conj where [:not through])))]
 
-        (merge (<-blob (:request_health measured))
+        (merge (let [health (<-blob (:request_health measured))]
+                 (health-with-roots health (request-roots db-info (keep :roots-digest [health]))))
                {:last-request-tokens (long (:input_tokens measured))
                 :call (long (:n ordinal))
                 :turn (long (:turn measured))
@@ -2911,23 +3051,26 @@
   "Find descendants by state links and, for usage, agent links. `UNION` stops
    cycles and counts a session once. Only state links cascade on delete."
   [agent-links?]
-  (str "WITH RECURSIVE root(id) AS (VALUES (?)), tree(id) AS (
+  (str
+    "WITH RECURSIVE root(id) AS (VALUES (?)), tree(id) AS (
       SELECT id FROM root
       UNION
       SELECT child.id FROM tree t
         CROSS JOIN session_state parent ON parent.session_soul_id = t.id
         CROSS JOIN session_soul child ON child.parent_state_id = parent.id"
-       (when agent-links?
-         "
+    (when agent-links?
+      "
       UNION
       SELECT a.session_id FROM tree t
         CROSS JOIN session_agent a ON a.parent_id = t.id")
-       "), descendants(id) AS (
+    "), descendants(id) AS (
       SELECT t.id FROM tree t WHERE t.id <> (SELECT id FROM root))"))
 
 (defn- extension-descendants-sql
   [agent-links?]
-  (str (session-descendants-sql agent-links?) ", extensions(id) AS (
+  (str
+    (session-descendants-sql agent-links?)
+    ", extensions(id) AS (
       SELECT d.id FROM descendants d
         WHERE NOT EXISTS (SELECT 1 FROM session_agent a WHERE a.session_id = d.id))"))
 
@@ -2938,7 +3081,9 @@
    plain `JOIN`, the planner scanned all of `session_turn_iteration` first:
    34 s on a 16 GB store for a leader with 72 children, 5 ms with this order.
    The query must start from the small tree and use an index at each step."
-  (str (session-descendants-sql true) ", agents(id, status, inherited_turns) AS (
+  (str
+    (session-descendants-sql true)
+    ", agents(id, status, inherited_turns) AS (
       SELECT a.session_id, a.status, a.inherited_turns FROM descendants d
         CROSS JOIN session_agent a ON a.session_id = d.id)
     SELECT (SELECT COUNT(*) FROM agents) AS agents,
@@ -2977,7 +3122,9 @@
 
 (def ^:private extension-usage-sql
   "Use the same indexed join order as `subagent-usage-sql`."
-  (str (extension-descendants-sql true) "
+  (str
+    (extension-descendants-sql true)
+    "
    SELECT (SELECT COUNT(*) FROM extensions) AS sessions,
           COUNT(qti.id) AS iterations,
           SUM(qti.input_tokens) AS input_tokens,
@@ -3086,7 +3233,8 @@
               extension-session-ids
               (mapv :id
                     (query-sql! tx-info
-                                [(str (extension-descendants-sql false) " SELECT id FROM extensions") id]))
+                                [(str (extension-descendants-sql false)
+                                      " SELECT id FROM extensions") id]))
 
               ;; The delete takes the agent rows of this session and of its children. Their
               ;; leader keeps the clocks of its teams, so those follow the rows that stay.
@@ -4200,7 +4348,8 @@
 
 ;; Turn - session_turn_soul + session_turn_state
 
-(defn- compaction-pending [^bytes data]
+(defn- compaction-pending
+  [^bytes data]
   (if (>= (alength data) (long attachment-codec/min-bytes)) 1 0))
 
 (defn- attachment-payload-cols
@@ -4219,6 +4368,7 @@
     {:storage_uri uri :bytes nil :size_bytes (long (or (:size att) 0))}
     (let [^String base64 (str (:base64 att))
           limit (long attachments/max-stored-attachment-bytes)]
+
       (when (<= (.length base64) (* 4 (quot (+ limit 2) 3)))
         (when-let [^bytes data (try (.decode (java.util.Base64/getDecoder) base64)
                                     (catch IllegalArgumentException _ nil))]
@@ -4543,31 +4693,40 @@
 (defn- inbound-attachments
   [db-info sql params inline-limit]
   (reduce (fn [m {:keys [source_id id bytes] :as row}]
-            (update m source_id
+            (update m
+                    source_id
                     (fn [rows]
                       (cond-> (or rows [])
-                        id (conj (cond-> (row->attachment row)
-                                   (and inline-limit (nil? bytes)) (dissoc :base64)))))))
+                        id
+                        (conj (cond-> (row->attachment row)
+                                (and inline-limit (nil? bytes))
+                                (dissoc :base64)))))))
           {}
           (query-sql! db-info (into [sql] params))))
 
-(defn- attachment-columns [inline-limit]
-  (if inline-limit turn-attachment-inline-columns "*"))
+(defn- attachment-columns [inline-limit] (if inline-limit turn-attachment-inline-columns "*"))
 
 (defn- query-attachment-source
   "Select the source before filtering its payload rows. Keep a source with no match."
   [db-info sources ids join-on {:keys [inline-limit attachment-id]}]
-  (inbound-attachments
-    db-info
-    (str "WITH sources AS (" sources ") "
-         "SELECT sources.source_id, payload.* FROM sources LEFT JOIN (SELECT "
-         (attachment-columns inline-limit) " FROM session_attachment"
-         (when attachment-id " WHERE id = ?")
-         ") AS payload ON " join-on " ORDER BY sources.source_id, payload.position")
-    (cond-> ids
-      inline-limit (conj (long inline-limit))
-      attachment-id (conj (str attachment-id)))
-    inline-limit))
+  (inbound-attachments db-info
+                       (str "WITH sources AS ("
+                            sources
+                            ") "
+                            "SELECT sources.source_id, payload.* FROM sources LEFT JOIN (SELECT "
+                            (attachment-columns inline-limit)
+                            " FROM session_attachment"
+                            (when attachment-id " WHERE id = ?")
+                            ") AS payload ON "
+                            join-on
+                            " ORDER BY sources.source_id, payload.position")
+                       (cond-> ids
+                         inline-limit
+                         (conj (long inline-limit))
+
+                         attachment-id
+                         (conj (str attachment-id)))
+                       inline-limit))
 
 (defn db-list-turns-attachments
   "User attachments by turn id, in position order. `:inline-limit` omits payloads
@@ -4586,15 +4745,18 @@
              db-info
              (str "SELECT DISTINCT session_turn_soul_id AS source_id FROM session_attachment" where)
              ids
-             (str "payload.session_turn_soul_id = sources.source_id "
-                  "AND payload.session_turn_iteration_id IS NULL AND payload.queued_turn_id IS NULL")
+             (str
+               "payload.session_turn_soul_id = sources.source_id "
+               "AND payload.session_turn_iteration_id IS NULL AND payload.queued_turn_id IS NULL")
              opts)
-           (inbound-attachments
-             db-info
-             (str "SELECT session_turn_soul_id AS source_id, " (attachment-columns inline-limit)
-                  " FROM session_attachment" where " ORDER BY source_id, position")
-             (if inline-limit (cons (long inline-limit) ids) ids)
-             inline-limit)))))))
+           (inbound-attachments db-info
+                                (str "SELECT session_turn_soul_id AS source_id, "
+                                     (attachment-columns inline-limit)
+                                     " FROM session_attachment"
+                                     where
+                                     " ORDER BY source_id, position")
+                                (if inline-limit (cons (long inline-limit) ids) ids)
+                                inline-limit)))))))
 
 (defn db-list-queued-turn-attachments
   "Attachments by queued turn id, in position order. The oldest source wins
@@ -4610,7 +4772,8 @@
          (str "SELECT oldest.queued_turn_id AS source_id, oldest.session_turn_soul_id AS soul_id "
               "FROM session_attachment AS oldest WHERE oldest.rowid IN "
               "(SELECT MIN(rowid) FROM session_attachment WHERE queued_turn_id IN ("
-              (str/join "," (repeat (count ids) "?")) ") GROUP BY queued_turn_id)")
+              (str/join "," (repeat (count ids) "?"))
+              ") GROUP BY queued_turn_id)")
          ids
          "payload.queued_turn_id = sources.source_id AND payload.session_turn_soul_id = sources.soul_id"
          opts)))))
@@ -4940,11 +5103,10 @@
   "Read the inline payload of one attachment without building an envelope."
   [db-info attachment-id]
   (when-let [id-s (and (ds db-info) (->ref attachment-id))]
-    (when-let [{:keys [bytes storage_codec]}
-               (query-one! db-info
-                           {:select [:bytes :storage_codec]
-                            :from :session_attachment
-                            :where [:= :id id-s]})]
+    (when-let [{:keys [bytes storage_codec]} (query-one! db-info
+                                                         {:select [:bytes :storage_codec]
+                                                          :from :session_attachment
+                                                          :where [:= :id id-s]})]
       (attachment-codec/unpack bytes storage_codec))))
 
 (def ^:private latest-turn-state-sql
@@ -5174,7 +5336,9 @@
         (->blob (select-keys (:presentation-repair opts) [:api-usage :duration-ms])))
 
       (seq forms)
-      (assoc :tool_calls (->blob (freeze-safe (mapv form-without-activity-rows forms))))
+      (assoc :tool_calls
+        (->blob (freeze-safe (mapv form-without-activity-rows
+                                   (forms-without-code-source forms code-out)))))
 
       (some? duration-ms)
       (assoc :eval_duration_ms (long duration-ms))
@@ -5643,7 +5807,8 @@
                         (and (:request-health opts)
                              (or (pos? (long (or (get tokens "input") 0)))
                                  (seq (get-in opts [:request-health :cache-warms]))))
-                        (assoc :request_health (->blob (:request-health opts)))
+                        (assoc :request_health
+                          (->blob (store-request-roots! tx-info (:request-health opts))))
 
                         (seq routing)
                         (merge (routing-summary-columns routing)))]})
@@ -5876,13 +6041,13 @@
                            :from :activity_history
                            :where [:= :id old-s]}]})
               (execute! tx-info
-                        {:insert-into [[:activity_invocation
-                                        [:history_id :id :sequence :state :visible :payload
-                                         :search_text]]
-                                       {:select [[[:lift new-id]] :id :sequence :state :visible
-                                                 :payload :search_text]
-                                        :from :activity_invocation
-                                        :where [:= :history_id old-s]}]})
+                        (let [columns (cond-> [:id :sequence :state :visible :payload]
+                                        (activity-search-column? tx-info)
+                                        (conj :search_text))]
+                          {:insert-into [[:activity_invocation (into [:history_id] columns)]
+                                         {:select (into [[[:lift new-id]]] columns)
+                                          :from :activity_invocation
+                                          :where [:= :history_id old-s]}]}))
               [old-id new-id]))))
 
 (defn- fork-iteration-tool-calls
@@ -6875,10 +7040,9 @@
                                ;; A reference names a file on this machine and has no
                                ;; bytes to carry (#450): it travels as its path.
                                att
-                               (let [^bytes data (or (attachment-codec/unpack (:bytes att)
-                                                                              (:storage_codec att))
-                                                     (attachment-storage/resolve-bytes (:storage_uri
-                                                                                         att)))]
+                               (let [^bytes data
+                                     (or (attachment-codec/unpack (:bytes att) (:storage_codec att))
+                                         (attachment-storage/resolve-bytes (:storage_uri att)))]
                                  (when-not data
                                    (throw (ex-info "An attachment payload is not readable"
                                                    {:type :session/snapshot-incomplete
@@ -6985,7 +7149,7 @@
                             (assoc :bytes data
                                    :storage_codec attachment-codec/raw
                                    :storage_uri nil
-                                    :compaction_pending (compaction-pending data))))))
+                                   :compaction_pending (compaction-pending data))))))
                   atts))))
 
 (defn- fit-snapshot-rows
@@ -7382,7 +7546,7 @@
       (assoc :code (:code row))
 
       (some? forms-vec)
-      (assoc :forms forms-vec)
+      (assoc :forms (forms-with-code-source forms-vec (:code row)))
 
       (:council_input row)
       (assoc :council-input (<-blob (:council_input row)))
@@ -7502,16 +7666,18 @@
         traces
         (when (seq rows) (routing-events-for-state db-info state-id-s))]
 
-    (with-activity-rows db-info
-                        (mapv (fn [row]
-                                (let [trace
-                                      (get traces (:id row) [])
+    (with-request-roots db-info
+                        (with-activity-rows db-info
+                                            (mapv (fn [row]
+                                                    (let [trace
+                                                          (get traces (:id row) [])
 
-                                      routing
-                                      (row-routing-summary row trace)]
+                                                          routing
+                                                          (row-routing-summary row trace)]
 
-                                  (attach-routing (row->iteration row) routing)))
-                              rows))))
+                                                      (attach-routing (row->iteration row)
+                                                                      routing)))
+                                                  rows)))))
 
 (defn db-list-session-turn-iterations
   "List the latest state's iterations for canonical turn soul `session-turn-id`."
@@ -7574,15 +7740,17 @@
                  (zipmap ids (repeat []))
                  (map vector
                       rows
-                      (with-activity-rows
+                      (with-request-roots
                         db-info
-                        (mapv (fn [row]
-                                (attach-routing (row->iteration (cond-> row
-                                                                  (not request-health?)
-                                                                  (dissoc :request_health)))
-                                                (row-routing-summary row
-                                                                     (get traces (:id row) []))))
-                              rows)))))
+                        (with-activity-rows
+                          db-info
+                          (mapv (fn [row]
+                                  (attach-routing (row->iteration (cond-> row
+                                                                    (not request-health?)
+                                                                    (dissoc :request_health)))
+                                                  (row-routing-summary row
+                                                                       (get traces (:id row) []))))
+                                rows))))))
        {}))))
 
 (def ^:private iteration-read-batch-size
@@ -7664,7 +7832,11 @@
                                        batch))))
                            {}
                            (partition-all iteration-read-batch-size ids))]
-         (if activity? (zipmap (keys by-id) (with-activity-rows db-info (vals by-id))) by-id))
+         (zipmap (keys by-id)
+                 (with-request-roots db-info
+                                     (cond->> (vals by-id)
+                                       activity?
+                                       (with-activity-rows db-info)))))
        {}))))
 
 (defn db-latest-turn-request-usage
@@ -8470,8 +8642,7 @@
    :sequence (:sequence row)
    :state (name (:state row))
    :visible (if (and (= :running (:state row)) (false? (:show-start row))) 0 1)
-   :payload (->blob row)
-   :search_text (activity-search-text row)})
+   :payload (->blob row)})
 
 (defn db-activity-apply!
   "Persist one admitted lifecycle edge without retaining the history in heap."
@@ -8529,7 +8700,11 @@
                         {:update :activity_invocation
                          :set (dissoc record :history_id :id)
                          :where [:and [:= :history_id aid] [:= :id (:id row)]]})
-              (execute! tx {:insert-into :activity_invocation :values [record]}))
+              (execute! tx
+                        {:insert-into :activity_invocation
+                         :values [(cond-> record
+                                    (activity-search-column? tx)
+                                    (assoc :search_text ""))]}))
             (execute! tx
                       {:update :activity_history
                        :set {:metadata (->blob (dissoc state :rows))
@@ -8596,7 +8771,11 @@
                                                                              [:= :session_soul_id
                                                                               (str sid)]]})]
                                                  [history (activity-page-rows db history opts)])))]
-    (activity-page-projection history (mapv #(<-blob (:payload %)) rows) after limit)))
+    (activity-page-projection
+      history
+      (if (str/blank? q) (mapv #(<-blob (:payload %)) rows) (activity-search-records rows q limit))
+      after
+      limit)))
 
 ;; Automations
 
@@ -8858,24 +9037,22 @@
                            :from :session_attachment
                            :where [:= :compaction_pending 1]
                            :limit 1})))
-    (sqlite-write-tx! db
-                      (fn [tx]
-                        (when-let [id (:id (query-one! tx
-                                                       {:select [:id]
-                                                        :from :session_attachment
-                                                        :where [:= :compaction_pending 1]
-                                                        :limit 1}))]
-                          (execute! tx
-                                    {:update :session_attachment
-                                     :set {:compaction_pending 0}
-                                     :where [:= :id id]})
-                          {:id id
-                           :bytes (:bytes (query-one! tx
-                                                      {:select [:bytes]
-                                                       :from :session_attachment
-                                                       :where [:and [:= :id id]
-                                                               [:= :storage_codec
-                                                                attachment-codec/raw]]}))})))))
+    (sqlite-write-tx!
+      db
+      (fn [tx]
+        (when-let [id (:id (query-one! tx
+                                       {:select [:id]
+                                        :from :session_attachment
+                                        :where [:= :compaction_pending 1]
+                                        :limit 1}))]
+          (execute! tx
+                    {:update :session_attachment :set {:compaction_pending 0} :where [:= :id id]})
+          {:id id
+           :bytes (:bytes (query-one! tx
+                                      {:select [:bytes]
+                                       :from :session_attachment
+                                       :where [:and [:= :id id]
+                                               [:= :storage_codec attachment-codec/raw]]}))})))))
 
 (defn db-finish-attachment-compaction!
   "Write the compacted payload of the taken attachment `id`: `compacted` is

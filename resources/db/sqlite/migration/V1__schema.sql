@@ -637,6 +637,12 @@ BEGIN
   END;
 END;
 
+-- Each distinct root list of request health, stored once. Request health names it by digest.
+CREATE TABLE request_roots (
+  digest TEXT PRIMARY KEY NOT NULL,
+  roots BLOB NOT NULL
+);
+
 -- Turn counts and reply times for the session lists, across all states of a soul.
 -- Each trigger refreshes only the affected session. The migration fills older
 -- stores before they read the table. Keep both results equal to the transcript.
@@ -1225,7 +1231,6 @@ CREATE TABLE activity_invocation (
   state TEXT NOT NULL,
   visible INTEGER NOT NULL,
   payload BLOB NOT NULL,
-  search_text TEXT NOT NULL,
   PRIMARY KEY (history_id, id),
   UNIQUE (history_id, sequence)
 );
