@@ -929,7 +929,7 @@
                          (pyx/ensure-python-extensions-loaded! {:global-only? true})
                          (some-> ((:ext/prompt-fn (registered "python-extensions")) {})
                                  str/split-lines))]
-              (expect (= [(str "Extension package 'a' in " directory
+              (expect (= [(str "Extension package 'a' in " (paths/abbreviate-home directory)
                                " runs its installed version 1.0.0; "
                                "its declared version failed: "
                                "Requested version is not approved in Extension Center")]
