@@ -8,7 +8,7 @@
 import { useSyncExternalStore } from 'react';
 import { desktopInvoke } from './desktop';
 import { normalizeAddress } from './endpoints';
-import { GatewayClient } from './gateway';
+import { GatewayClient, onGatewayUnauthorized } from './gateway';
 import type { GatewayConn } from './types';
 
 export type EngineTask = 'install' | 'update' | 'start';
@@ -303,6 +303,25 @@ export function clearLocalPairing(): void {
   if (state.wantsPairing) set({ wantsPairing: false });
 }
 
+const RECHECK_GAP_MS = 5_000;
+let lastRecheck = 0;
+
+/**
+ * Read the gateway of this computer again after it refused a call with 401. A
+ * restart can make it ask for a token, and the read gives that token to the app.
+ * The read does not interrupt a task of the host.
+ */
+async function recheckAfterRefusal(base: string): Promise<void> {
+  if (normalizeAddress(base) !== LOCAL_GATEWAY_URL) return;
+  const kind = state.engine?.kind;
+  if (kind !== 'running' && kind !== 'stopped') return;
+  // The read itself can get a 401, so it must not start the next read.
+  if (Date.now() - lastRecheck < RECHECK_GAP_MS) return;
+  lastRecheck = Date.now();
+  const mine = ++turn;
+  await settle(mine).catch(() => {});
+}
+
 /**
  * Read this computer one time for each page. An installed engine gets its gateway
  * started. A task of the host continues through a reload of the page, so follow it.
@@ -310,6 +329,7 @@ export function clearLocalPairing(): void {
 export async function bootLocalEngine(): Promise<void> {
   if (hasBooted || !desktopInvoke()) return;
   hasBooted = true;
+  onGatewayUnauthorized((base) => void recheckAfterRefusal(base));
   // A host without the engine commands refuses the call or gives no answer: no view shows.
   const progress = await host<HostProgress | null>('engine_progress').catch(() => null);
   if (!progress) return;

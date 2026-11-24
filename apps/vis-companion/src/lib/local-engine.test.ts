@@ -139,6 +139,25 @@ describe('Vis on this computer', () => {
     });
   });
 
+  // Report: the gateway restarted with `--pair` while the desktop ran, and the
+  // desktop showed "Reconnecting" until the person paired it again by hand.
+  it('reads the token again when the gateway of this computer starts to ask for one', async () => {
+    const start: Parameters<typeof computer>[0] = { isInstalled: true, installs: true, saved: 'secret' };
+    computer(start);
+    const engine = await bootedEngine();
+    expect(engine.localEngineState().gatewayToken).toBeNull();
+
+    start.token = 'secret';
+    const { GatewayClient } = await import('./gateway');
+    await new GatewayClient({ url: 'http://127.0.0.1:7890' })
+      .capabilities(undefined, { force: true })
+      .catch(() => {});
+
+    await vi.waitFor(() =>
+      expect(engine.localEngineState()).toMatchObject({ isGatewayOpen: true, gatewayToken: 'secret' }),
+    );
+  });
+
   // Report: a dev build at the newest commit of main showed the Update button.
   it('finds an update for a dev build only when main has a newer commit', async () => {
     const installed = { isInstalled: true, installs: true, build: 'c0ffee' };

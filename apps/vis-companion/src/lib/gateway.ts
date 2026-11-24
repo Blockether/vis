@@ -201,6 +201,18 @@ export function onGatewayIncompatible(listener: (error: GatewayError) => void): 
   };
 }
 
+const unauthorizedListeners = new Set<(base: string) => void>();
+
+/**
+ * Watch for a gateway refusing the token of a call with 401. `base` is the address
+ * of the client that made the call. A gateway can start to ask for a token while
+ * the app runs, for example after a restart with `--pair`.
+ */
+export function onGatewayUnauthorized(listener: (base: string) => void): () => void {
+  unauthorizedListeners.add(listener);
+  return () => unauthorizedListeners.delete(listener);
+}
+
 const turnSubmissionListeners = new Set<(sid: string, gateway: string) => void>();
 
 /**
@@ -2091,6 +2103,7 @@ export class GatewayClient {
         // connection's: announce it so the app can re-read the verdict and show
         // the screen, rather than let one failed request explain it alone.
         if (res.status === INCOMPATIBLE_STATUS) incompatibleListener?.(error);
+        if (res.status === 401) for (const listener of unauthorizedListeners) listener(this.base);
         throw error;
       }
       return {
