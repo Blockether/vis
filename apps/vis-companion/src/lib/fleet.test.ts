@@ -364,12 +364,15 @@ describe('timeLabel', () => {
   const now = Date.parse('2024-05-02T12:00:00Z');
 
   it('stays relative inside a day', () => {
-    expect(timeLabel('2024-05-02T09:00:00Z', now)).toMatch(/hour/);
-    expect(timeLabel('2024-05-02T11:40:00Z', now)).toMatch(/minute/);
+    // The label speaks the host locale, so the expected text comes from it too.
+    const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+    expect(timeLabel('2024-05-02T09:00:00Z', now)).toBe(relative.format(-3, 'hour'));
+    expect(timeLabel('2024-05-02T11:40:00Z', now)).toBe(relative.format(-20, 'minute'));
   });
 
   it('names the actual date once the row is older than a day', () => {
-    const label = timeLabel('2024-04-20T08:30:00Z', now);
+    // A local-time stamp keeps the day the 20th in every host timezone.
+    const label = timeLabel(new Date(2024, 3, 20, 8, 30).getTime(), now);
     expect(label).toMatch(/20/);
     expect(label).toMatch(/:/);
     expect(label).not.toMatch(/ago/);

@@ -40,7 +40,7 @@ describe('review comments in the composer', () => {
     expect(await screen.findByText('[COMMENT a.clj:4]')).toBeInTheDocument();
     expect(screen.getByText('Rename this')).toBeInTheDocument();
     const editor = screen.getByLabelText('Message Vis') as HTMLTextAreaElement;
-    expect(editor.value).toBe('[COMMENT a.clj:4]');
+    await waitFor(() => expect(editor.value).toBe('[COMMENT a.clj:4]'));
     fireEvent.change(editor, { target: { value: 'Look at [COMMENT a.clj:4] first' } });
 
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
