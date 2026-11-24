@@ -29,6 +29,7 @@ import {
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
 import { TurnAgents, agentsByTurn, currentTurn, dockTeams, leaderLane, storedAgents, storedClocks, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
+import { useSessionActive } from '../lib/session-active';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
 import {
@@ -1146,7 +1147,10 @@ export function SessionScreen({
     () => visibleAnsweredTurnCount(session, turns, runningTurn?.status, runningTurn?.requestKind),
     [session, turns, runningTurn],
   );
+  // A screen in the background is not read: it is marked when it comes to the front.
+  const isActive = useSessionActive();
   useEffect(() => {
+    if (!isActive) return;
     if (!markedOpenRef.current) {
       markedOpenRef.current = true;
       void client.markSessionRead(sid);
@@ -1155,7 +1159,7 @@ export function SessionScreen({
     }
     // A mounted session may stay in the background through a suspend. Waking is a read.
     return onWake(() => void client.markSessionRead(sid, readTurns));
-  }, [client, sid, readTurns]);
+  }, [client, sid, readTurns, isActive]);
   // Turns that exist on the gateway BEFORE the window we hold. The transcript is
   // fetched newest-page-first (a long session is tens of megabytes whole), so
   // "earlier" can mean rows we have but hide, or rows we have not read yet.
@@ -4872,7 +4876,7 @@ export function SessionScreen({
   // A subagent session has no stop: the stop of its leader also stops it.
   const stopsTurn = running && session?.agent?.role !== 'subagent';
   useEffect(() => {
-    if (!stopsTurn && !zen) return;
+    if (!isActive || (!stopsTurn && !zen)) return;
     let forLayer: KeyboardEvent | null = null;
     const onKeyArrives = (event: KeyboardEvent) => {
       forLayer = event.key === 'Escape' && isLayerUp() ? event : null;
@@ -4889,7 +4893,7 @@ export function SessionScreen({
       window.removeEventListener('keydown', onKeyArrives, true);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [stopsTurn, zen]);
+  }, [stopsTurn, zen, isActive]);
 
   const slashText = prompt.trimStart();
   const slashOpen =
@@ -5275,7 +5279,7 @@ export function SessionScreen({
   // A list entry has no nodes: the review app is the app with the review icon.
   const reviewAppId = listedApps.find((view) => view.icon === 'review' || view.nodes.some((node) => node.type === 'diff'))?.id;
   useEffect(() => {
-    if (!reviewAppId) return;
+    if (!reviewAppId || !isActive) return;
     const toggleReview = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.repeat || event.altKey || event.shiftKey) return;
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'd') return;
@@ -5284,7 +5288,7 @@ export function SessionScreen({
     };
     window.addEventListener('keydown', toggleReview);
     return () => window.removeEventListener('keydown', toggleReview);
-  }, [reviewAppId, toggleApp]);
+  }, [reviewAppId, toggleApp, isActive]);
   // The side panel holds one thing: an app picked into it replaces the live views.
   const isPanelOpen = panelViews.length > 0 && (panelChoice ?? docksPanel) && pickedApp?.slot !== 'sidebar';
   const watching = liveViews.at(-1)?.title ?? null;
@@ -6136,9 +6140,11 @@ export function SessionScreen({
     'export-session': canExport && (() => askExport()),
     'agent-parent': !!parentId && (() => onOpenSession(parentId)),
   });
+  // Before the session loads, its parent is not known: no parent yet is not "no parent".
+  const isLoaded = !!session;
   useEffect(() => {
-    onParent?.(sid, parentId ?? null);
-  }, [onParent, sid, parentId]);
+    if (isLoaded) onParent?.(sid, parentId ?? null);
+  }, [onParent, sid, parentId, isLoaded]);
 
   const screen = (
     <AttachImageContext.Provider value={attachCapturedImage}>

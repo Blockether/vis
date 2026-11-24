@@ -71,6 +71,12 @@ export function CommandProvider({ registry, children }: { registry: CommandRegis
   return <CommandContext.Provider value={registry}>{children}</CommandContext.Provider>;
 }
 
+/** The commands of `children` run only while `isOn`; a screen in the background registers none. */
+export function CommandScope({ isOn, children }: { isOn: boolean; children: ReactNode }) {
+  const registry = useContext(CommandContext);
+  return <CommandContext.Provider value={isOn ? registry : null}>{children}</CommandContext.Provider>;
+}
+
 export function useCommandRegistry(): CommandRegistry | null {
   return useContext(CommandContext);
 }

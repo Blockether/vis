@@ -92,7 +92,8 @@ import { BrandLogo } from './components/BrandLogo';
 import { useBrand, VIS_NAME } from './lib/brand';
 import { appIconName } from './lib/view';
 import { CommandSurface } from './components/CommandSurface';
-import { CommandProvider, CommandRegistry, useCommands, type CommandHandlers } from './lib/commands';
+import { CommandProvider, CommandRegistry, CommandScope, useCommands, type CommandHandlers } from './lib/commands';
+import { SessionActive } from './lib/session-active';
 import { AppIcon, AppsIcon, SearchIcon, SettingsIcon } from './components/icons';
 import { GlobalApps } from './components/GlobalApps';
 import { LiveVoiceDock } from './components/LiveVoiceDock';
@@ -321,11 +322,19 @@ function SessionsList(props: ComponentProps<typeof SessionsScreen>) {
   return <MemoSessionsScreen {...props} isVisible={isVisible} openSession={openSession} />;
 }
 
+/** The pane of session `sid` on `conn`: one key for each session screen. */
+const paneKey = (conn: GatewayConn, sid: string) => `${conn.url}:${sid}`;
+
+/** A screen in the background has no way back of its own. */
+const ignoreBack = () => {};
+
 interface SessionPaneProps {
   paneRef: (element: HTMLElement | null) => void;
   className: string;
   /** Closing now uncovers the phone's list: hold the pane for that list's first frame. */
   isHeld: boolean;
+  /** The pane stands under the open one: it is seen during the back swipe and takes nothing. */
+  isBackground?: boolean;
   /** The open session's screen; nothing once no session is open. */
   children: ReactNode;
 }
@@ -340,7 +349,7 @@ interface SessionPaneProps {
  * list is on screen takes it down. Anything else that closes the pane closes it at
  * once.
  */
-function SessionPane({ paneRef, className, isHeld, children }: SessionPaneProps) {
+function SessionPane({ paneRef, className, isHeld, isBackground = false, children }: SessionPaneProps) {
   // The screen it last showed, kept the way React keeps a previous prop: the render
   // that closes the pane is the one that still needs it.
   const [held, setHeld] = useState<ReactNode>(null);
@@ -364,7 +373,8 @@ function SessionPane({ paneRef, className, isHeld, children }: SessionPaneProps)
     <div
       ref={paneRef}
       className={isClosing ? `${className} translate-x-full` : className}
-      aria-hidden={isClosing || undefined}
+      aria-hidden={isClosing || isBackground || undefined}
+      inert={isBackground || undefined}
     >
       {shown}
     </div>
@@ -423,6 +433,8 @@ export function App({ launch = null }: AppProps = {}) {
     fresh?: boolean;
     /** The nonce of a Talk link: a new value requests hands-free voice once. */
     talk?: string;
+    /** The session that opened this one. On a phone it waits under it until the parent is known. */
+    from?: string;
   } | null>(null);
   // A Talk link waits here until the launch route is applied.
   const [talkIntent, setTalkIntent] = useState<TalkLink | null>(null);
@@ -591,9 +603,13 @@ export function App({ launch = null }: AppProps = {}) {
   // them back, so they are persisted underneath the navigation, not in front of
   // it.
   const openGatewaySession = useCallback(
-    (conn: GatewayConn, sid: string, fresh = false, talk?: string) => {
+    (conn: GatewayConn, sid: string, fresh = false, talk?: string, from?: string) => {
       setActive(conn);
-      setOpenTarget({ conn, sid, fresh, ...(talk ? { talk } : {}) });
+      // The hash echo of this step opens the same session again: it keeps the session that opened it.
+      setOpenTarget((current) => {
+        const opener = from ?? (current?.sid === sid && current.conn.url === conn.url ? current.from : undefined);
+        return { conn, sid, fresh, ...(talk ? { talk } : {}), ...(opener ? { from: opener } : {}) };
+      });
       void rememberSubscribedSession(conn.url, sid).catch(() => undefined);
       void rememberOpenSession(conn.url, sid).catch(() => undefined);
     },
@@ -813,11 +829,21 @@ export function App({ launch = null }: AppProps = {}) {
   // A SUBAGENT SESSION GOES BACK TO THE SESSION THAT STARTED IT, as its header chevron
   // does: the edge stroke and the phone's back too. The open session says who its parent
   // is, because only its snapshot knows. Without a parent, back leaves to the list.
-  const [agentParent, setAgentParent] = useState<{ sid: string; parentId: string } | null>(null);
+  const [parents, setParents] = useState<Readonly<Record<string, string | null>>>({});
   const reportParent = useCallback((sid: string, parentId: string | null) => {
-    setAgentParent(parentId ? { sid, parentId } : null);
+    setParents((known) => (known[sid] === parentId ? known : { ...known, [sid]: parentId }));
   }, []);
-  const parentSid = openTarget && agentParent?.sid === openTarget.sid ? agentParent.parentId : null;
+  const parentSid = openTarget ? (parents[openTarget.sid] ?? null) : null;
+  // THE SESSION PANES ARE A STACK ON A PHONE: the parent of a subagent session stands under
+  // it, so the back swipe uncovers the parent as it was left, and the step back mounts
+  // nothing. Each pane keeps its key, so a screen that moves between the two places keeps
+  // its state. `fresh` belongs to the visit: a screen keeps it when it moves.
+  const openKey = openTarget ? paneKey(openTarget.conn, openTarget.sid) : null;
+  const [freshKeys, setFreshKeys] = useState<ReadonlySet<string>>(() => new Set());
+  if (openTarget?.fresh && openKey && !freshKeys.has(openKey)) setFreshKeys(new Set(freshKeys).add(openKey));
+  if (!openTarget && freshKeys.size > 0) setFreshKeys(new Set());
+  const [lastPaneKey, setLastPaneKey] = useState<string | null>(null);
+  if (openKey && openKey !== lastPaneKey) setLastPaneKey(openKey);
   const goBack = useCallback(() => {
     if (openTarget && parentSid) openGatewaySession(openTarget.conn, parentSid);
     else leaveSession();
@@ -1542,6 +1568,19 @@ export function App({ launch = null }: AppProps = {}) {
   const isVoiceDocked =
     isLiveVoiceActive(voice) &&
     !(shellView === 'session' && openTarget && isLiveVoiceOf(voice, normalizeBase(openTarget.conn.url), openTarget.sid));
+  // The pane under the open one: its parent, or until that is known, the session that opened it.
+  const isScreenUp = shellView === 'session' && !!openTarget && !!client && !!subscriptions;
+  const underSid =
+    !canSplit && isScreenUp && openTarget
+      ? openTarget.sid in parents
+        ? parents[openTarget.sid]
+        : (openTarget.from ?? null)
+      : null;
+  const panes: { key: string; target: typeof openTarget; isTop: boolean }[] = [];
+  if (underSid && openTarget)
+    panes.push({ key: paneKey(openTarget.conn, underSid), target: { conn: openTarget.conn, sid: underSid }, isTop: false });
+  const topKey = isScreenUp ? openKey : lastPaneKey;
+  if (topKey) panes.push({ key: topKey, target: isScreenUp ? openTarget : null, isTop: true });
   const listBox = sessionListBox({
     screen: shellView,
     isVisible: sessionsVisible,
@@ -1593,7 +1632,7 @@ export function App({ launch = null }: AppProps = {}) {
                 width — its scroll, scope and folds are the reader's frame either way. */}
             {sessionsMounted && (
               <div
-                ref={edgeBack.under}
+                ref={underSid ? undefined : edgeBack.under}
                 className={isParentStroke && !canSplit ? `${listBox.className} invisible` : listBox.className}
                 style={listBox.style}
                 aria-hidden={!sessionsVisible || undefined}
@@ -1654,29 +1693,40 @@ export function App({ launch = null }: AppProps = {}) {
             {canSplit && shellView === 'sessions' && (
               <EmptyPane sidebar={{ isShown: isSidebarShown, onToggle: toggleSidebar }} />
             )}
-            <SessionPane
-              paneRef={edgeBack.pane}
-              className={canSplit ? DESK_PANE_CLASS : PHONE_PANE_CLASS}
-              isHeld={!canSplit && shellView === 'sessions'}
-            >
-              {shellView === 'session' && openTarget && client && subscriptions && (
-                <SessionEventsContext.Provider value={subscriptions}>
-                  <SessionScreen
-                    key={`${openTarget.conn.url}:${openTarget.sid}`}
-                    client={client}
-                    subscriptions={subscriptions}
-                    sid={openTarget.sid}
-                    fresh={openTarget.fresh}
-                    talk={openTarget.talk}
-                    onBack={isDesk ? leaveSession : edgeBack.leave}
-                    sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
-                    onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
-                    onParent={reportParent}
-                    onManageProviders={openProviderSettings}
-                  />
-                </SessionEventsContext.Provider>
-              )}
-            </SessionPane>
+            {panes.map((entry) => (
+              <SessionPane
+                key={entry.key}
+                paneRef={entry.isTop ? edgeBack.pane : edgeBack.under}
+                className={canSplit ? DESK_PANE_CLASS : PHONE_PANE_CLASS}
+                isHeld={entry.isTop && !canSplit && shellView === 'sessions'}
+                isBackground={!entry.isTop}
+              >
+                {entry.target && client && subscriptions && (
+                  <SessionActive.Provider value={entry.isTop}>
+                    <CommandScope isOn={entry.isTop}>
+                      <SessionEventsContext.Provider value={subscriptions}>
+                        <SessionScreen
+                          client={client}
+                          subscriptions={subscriptions}
+                          sid={entry.target.sid}
+                          fresh={freshKeys.has(entry.key)}
+                          talk={entry.isTop ? entry.target.talk : undefined}
+                          onBack={entry.isTop ? (isDesk ? leaveSession : edgeBack.leave) : ignoreBack}
+                          sidebar={
+                            entry.isTop && canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined
+                          }
+                          onOpenSession={(sid, fresh) =>
+                            void openGatewaySession(entry.target!.conn, sid, fresh, undefined, entry.target!.sid)
+                          }
+                          onParent={reportParent}
+                          onManageProviders={openProviderSettings}
+                        />
+                      </SessionEventsContext.Provider>
+                    </CommandScope>
+                  </SessionActive.Provider>
+                )}
+              </SessionPane>
+            ))}
           </main>
 
           {settingsDestination && (

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type InputHTMLAttributes } from 'react';
+import { useSessionActive } from '../lib/session-active';
 import {
   Banner,
   Button,
@@ -214,7 +215,9 @@ function ActiveHumanInput({
   const cancel = useCallback(() => send({ action: 'cancel' }), [send]);
 
   // Match the TUI shortcuts. Leave handled keys with the control that took them.
+  const isActive = useSessionActive();
   useEffect(() => {
+    if (!isActive) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (event.key === 'Escape' && request.is_cancellable) {
@@ -227,7 +230,7 @@ function ActiveHumanInput({
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [cancel, request.is_cancellable, submit]);
+  }, [cancel, request.is_cancellable, submit, isActive]);
 
   // Do not raise a phone keyboard over the question when it opens.
   useEffect(() => {

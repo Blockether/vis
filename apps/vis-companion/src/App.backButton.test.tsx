@@ -127,4 +127,82 @@ describe("the phone's back button", () => {
     expect(native.exits).toBe(0);
     view.unmount();
   });
+
+  // Reported: during the back swipe of a subagent, the phone showed white under it, and
+  // the leader came up only after the stroke.
+  it('keeps the parent session mounted under its subagent, and brings up the same pane', async () => {
+    const lead = listSession({ id: 'lead', title: 'Leader session' });
+    const child = listSession({
+      id: 'child',
+      title: 'Child task',
+      agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' },
+    });
+    window.location.hash = '#/s/child';
+    const view = renderApp({
+      machines: [
+        {
+          sessions: [lead],
+          routes: {
+            '/v1/sessions/lead': { ...lead, queued_turns: [] },
+            '/v1/sessions/child': { ...child, queued_turns: [] },
+          },
+        },
+      ],
+    });
+    restore = view.restore;
+    const under = await waitFor(() => {
+      const pane = document.querySelector<HTMLElement>('[inert]');
+      expect(pane?.textContent).toContain('Leader session');
+      return pane!;
+    });
+
+    act(() => native.back?.());
+
+    await waitFor(() => expect(window.location.hash).toMatch(/^#\/s\/lead/));
+    await waitFor(() => expect(under.hasAttribute('inert')).toBe(false));
+    expect(under.isConnected).toBe(true);
+    view.unmount();
+  });
+
+  // Reported: the leader came back at another place after its first subagent was opened.
+  it('keeps the leader pane when it opens a subagent for the first time', async () => {
+    const lead = listSession({ id: 'lead', title: 'Leader session' });
+    const child = listSession({
+      id: 'child',
+      title: 'Child task',
+      agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' },
+    });
+    const agent = {
+      session_id: 'child', parent_id: 'lead', leader_id: 'lead', team_id: 'turn-1', task: 'Check',
+      title: 'Child task', role: 'verify', status: 'completed', iteration_budget: 4, iterations_used: 2,
+      created_at: Date.now(),
+    };
+    window.location.hash = '#/s/lead';
+    const view = renderApp({
+      machines: [
+        {
+          sessions: [lead],
+          routes: {
+            '/v1/sessions/lead': { ...lead, queued_turns: [] },
+            '/v1/sessions/child': { ...child, queued_turns: [] },
+            '/v1/sessions/lead/transcript': {
+              turns: [{ turn_id: 'turn-1', request: 'Go', status: 'done', answer: 'Done.', iterations: [], agents: [agent] }],
+              total: 1,
+            },
+          },
+        },
+      ],
+    });
+    restore = view.restore;
+    const fold = await screen.findByRole('button', { name: /^team/ });
+    const leaderPane = fold.closest<HTMLElement>('.inset-0.bg-ink')!;
+    fireEvent.click(fold);
+    fireEvent.click(await screen.findByRole('button', { name: /^verify/i }));
+
+    await waitFor(() => expect(window.location.hash).toMatch(/^#\/s\/child/));
+    await screen.findAllByTitle('Open the parent session');
+    expect(leaderPane.isConnected).toBe(true);
+    expect(leaderPane.hasAttribute('inert')).toBe(true);
+    view.unmount();
+  });
 });

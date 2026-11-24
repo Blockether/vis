@@ -30,6 +30,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useSessionActive } from './session-active';
 import { isAppForeground, isKeyboardInputElement } from './viewport';
 
 /** A finger, in client coordinates. */
@@ -492,7 +493,9 @@ export function useBackLayer(onDismiss: (() => void) | null): void {
   useEffect(() => {
     latest.current = onDismiss;
   });
-  const isUp = onDismiss !== null;
+  // A screen in the background holds no layer: back belongs to the screen in front.
+  const isActive = useSessionActive();
+  const isUp = onDismiss !== null && isActive;
   useEffect(() => {
     if (!isUp) return;
     const dismiss = () => latest.current?.();

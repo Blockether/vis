@@ -13,6 +13,7 @@ import {
   type HTMLAttributes,
   type ReactNode,
 } from 'react';
+import { useSessionActive } from '../lib/session-active';
 import {
   BandLabel,
   Button,
@@ -2845,7 +2846,9 @@ export function RunDialog({
 }) {
   // Escape is the way out a keyboard has. An ARMED interrupt inside the run stops the
   // key before it reaches here, so Escape sends that stop rather than closing the run.
+  const isActive = useSessionActive();
   useEffect(() => {
+    if (!isActive) return;
     function onKey(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
       event.preventDefault();
@@ -2853,7 +2856,7 @@ export function RunDialog({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, isActive]);
   return (
     <Modal within={within} onDismiss={onClose}>
       <DialogFrame
