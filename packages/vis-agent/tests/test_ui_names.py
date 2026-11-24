@@ -18,7 +18,11 @@ def _builder(node):
 def _parts(node):
     # A domain lists its class and instance names. A builder function lists the names
     # that code sets on it, such as `vis.ui.button.primary = ...`.
-    names = getattr(node, "__dict__", {}) if callable(node) and type(node).__module__ != vis.__name__ else dir(node)
+    names = (
+        getattr(node, "__dict__", {})
+        if callable(node) and type(node).__module__ != vis.__name__
+        else dir(node)
+    )
     return sorted(n for n in names if not n.startswith("_"))
 
 
@@ -31,13 +35,22 @@ def _walk(node, path):
 
 def test_each_domain_lists_all_its_parts():
     # A custom `__getattr__` or `__dir__` hides a part from the walk.
-    domains = [vis.ui, *(node for _, _, node in _walk(vis.ui, "vis.ui") if type(node).__module__ == vis.__name__)]
+    domains = [
+        vis.ui,
+        *(
+            node
+            for _, _, node in _walk(vis.ui, "vis.ui")
+            if type(node).__module__ == vis.__name__
+        ),
+    ]
     hidden = [
         type(one).__name__
         for one in domains
         if hasattr(type(one), "__getattr__") or type(one).__dir__ is not object.__dir__
     ]
-    assert not hidden, f"list each part as a class attribute, without __getattr__ or __dir__: {hidden}"
+    assert not hidden, (
+        f"list each part as a class attribute, without __getattr__ or __dir__: {hidden}"
+    )
 
 
 def test_each_ui_builder_has_one_domain_path():
@@ -45,13 +58,16 @@ def test_each_ui_builder_has_one_domain_path():
     paths = defaultdict(list)
     for path, name, node in _walk(vis.ui, "vis.ui"):
         assert SEGMENT.fullmatch(name), f"{path}: name a part with one lowercase word"
-        assert path.count(".") <= 3, f"{path}: use vis.ui.<domain> or vis.ui.<domain>.<part>"
+        assert path.count(".") <= 3, (
+            f"{path}: use vis.ui.<domain> or vis.ui.<domain>.<part>"
+        )
         if not callable(node):
             # A domain may only group its parts, such as `vis.ui.limit`.
             assert type(node).__module__ == vis.__name__, f"{path} builds nothing"
-            assert any(not n.startswith("_") for n in dir(node)), f"{path} builds nothing"
+            assert any(not n.startswith("_") for n in dir(node)), (
+                f"{path} builds nothing"
+            )
             continue
         paths[_builder(node)].append(path)
     aliases = [found for found in paths.values() if len(found) > 1]
     assert not aliases, f"one builder has more than one path: {aliases}"
-

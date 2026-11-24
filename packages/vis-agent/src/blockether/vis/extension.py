@@ -6301,8 +6301,15 @@ class Board(_KeyedNode):
             issue = dict(held.get(event.item_id) or {"id": event.item_id})
         else:
             column = values.get("column")
-            ranks = [one.get("rank", 0) for one in held.values() if one.get("column") == column]
-            issue = {"id": f"issue-{uuid.uuid4().hex[:12]}", "rank": max(ranks, default=-1) + 1}
+            ranks = [
+                one.get("rank", 0)
+                for one in held.values()
+                if one.get("column") == column
+            ]
+            issue = {
+                "id": f"issue-{uuid.uuid4().hex[:12]}",
+                "rank": max(ranks, default=-1) + 1,
+            }
             if key_prefix:
                 issue["key"] = _board_next_key(held.values(), str(key_prefix))
         for name, value in values.items():
@@ -6337,7 +6344,11 @@ def _board_moved(issues, issue_id, column, index):
     if issue_id not in issues:
         raise ValueError(f"the board has no issue {issue_id!r}")
     others = sorted(
-        (one for one in issues.values() if one.get("column") == column and one["id"] != issue_id),
+        (
+            one
+            for one in issues.values()
+            if one.get("column") == column and one["id"] != issue_id
+        ),
         key=lambda one: one.get("rank", 0),
     )
     at = min(max(index, 0), len(others))
@@ -8391,7 +8402,11 @@ class _LiveRecorder:
     def _board_refusal(self, node_id, item_id, column=None):
         """Why the board `node_id` refuses a move or an edit, as the host says it, or None."""
         node = next(
-            (one for one in self._nodes(self._open_view().get("nodes")) if one.get("id") == node_id),
+            (
+                one
+                for one in self._nodes(self._open_view().get("nodes"))
+                if one.get("id") == node_id
+            ),
             None,
         )
         if node is None:
@@ -8400,9 +8415,13 @@ class _LiveRecorder:
             return "not_board"
         if not node.get("is_editable"):
             return "not_editable"
-        if item_id is not None and item_id not in {one["id"] for one in node.get("issues") or []}:
+        if item_id is not None and item_id not in {
+            one["id"] for one in node.get("issues") or []
+        }:
             return "unknown_item"
-        if column is not None and column not in {one["id"] for one in node.get("columns") or []}:
+        if column is not None and column not in {
+            one["id"] for one in node.get("columns") or []
+        }:
             return "unknown_column"
         return None
 
@@ -8426,7 +8445,13 @@ class _LiveRecorder:
                             "op": "patch",
                             "view_id": self.view_id,
                             "patch": {
-                                "ops": [{"op": "append", "node_id": node_id, "issues": changed}]
+                                "ops": [
+                                    {
+                                        "op": "append",
+                                        "node_id": node_id,
+                                        "issues": changed,
+                                    }
+                                ]
                             },
                         }
                     )
@@ -8435,7 +8460,9 @@ class _LiveRecorder:
             if answer.get("error"):
                 return answer
         with self._condition:
-            self._event("move", node_id, item_id=item_id, column=column, index=int(index))
+            self._event(
+                "move", node_id, item_id=item_id, column=column, index=int(index)
+            )
             self._condition.notify_all()
         return {"is_accepted": True}
 
@@ -8448,7 +8475,9 @@ class _LiveRecorder:
         item_id = None if item_id is None else str(item_id)
         if reason := self._board_refusal(node_id, item_id):
             return {"is_accepted": False, "reason": reason}
-        if item_id is None and (is_removed or "title" not in values or "column" not in values):
+        if item_id is None and (
+            is_removed or "title" not in values or "column" not in values
+        ):
             return {"is_accepted": False, "reason": "missing_values"}
         payload: dict[str, Any] = {"values": dict(values)}
         if item_id is not None:
@@ -9239,7 +9268,9 @@ def _ui_shortcut(key, action=None, *, node_id=None, label=None):
             f"or one of {', '.join(rules['names'])}, got {key!r}"
         )
     if (action is None) == (node_id is None):
-        raise ValueError("vis.ui.app.shortcut requires exactly one of action and node_id")
+        raise ValueError(
+            "vis.ui.app.shortcut requires exactly one of action and node_id"
+        )
     shortcut = {"key": key}
     for name, value in (("action", action), ("node_id", node_id), ("label", label)):
         if value is None:
@@ -9391,7 +9422,8 @@ def _ui_board_column(column_id, title, *, tone=None, limit=None, is_done=None):
     """One column of a board. `limit` marks a column that holds too many issues.
     `is_done=True` marks the issues in it as done."""
     return _live_item(
-        column_id, {"title": str(title), "tone": tone, "limit": limit, "is_done": is_done}
+        column_id,
+        {"title": str(title), "tone": tone, "limit": limit, "is_done": is_done},
     )
 
 
