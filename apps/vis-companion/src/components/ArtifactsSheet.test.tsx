@@ -220,8 +220,8 @@ describe('the artifacts sheet', () => {
     expect(filters).toHaveFocus();
   });
 
-  // Live apps: the header counted the open apps, while the All chip said 0.
-  it('counts the open apps under All, as the header does', async () => {
+  // Live apps are not artifacts: the sheet listed the session apps above the files.
+  it('keeps the live apps out of the artifacts', async () => {
     const appClient = {
       ...client,
       appViews: async () => [
@@ -230,8 +230,11 @@ describe('the artifacts sheet', () => {
       ],
     } as unknown as GatewayClient;
     const view = render(<ArtifactsSheet client={appClient} sid="s1" artifacts={[document]} onClose={() => {}} />);
-    expect(await view.findByRole('button', { name: 'All, 3 artifacts' })).toBeEnabled();
-    expect(view.getByRole('button', { name: 'Documents, 1 artifacts' })).toBeEnabled();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(view.getByRole('button', { name: 'All, 1 artifacts' })).toBeEnabled();
+    expect(view.queryByText('Counter')).toBeNull();
     view.unmount();
   });
 

@@ -271,36 +271,12 @@
 
 (defdescribe
   artifact-inspector-gateway
-  (it "lists every app of the session, also an app that no block filed"
+  (it "keeps the live apps out of the artifacts"
       (with-redefs [vis/gateway-session-artifacts
                     (constantly [{"media_type" app-model/media-type
                                   "view_id" "app-1"
-                                  "filename" "counter.app.json"}])
-
-                    vis/gateway-app-views
-                    (fn [_ archived?]
-                      (if archived?
-                        [{"id" "app-3" "title" "Old" "key" "old" "is_archived" true}]
-                        [{"id" "app-1" "title" "Counter" "key" "counter"}
-                         {"id" "app-2" "title" "Todo" "key" "todo" "is_stale" true}]))]
-
-        (let [rows (inspector/inspector-rows []
-                                             []
-                                             (:artifacts (inspector/fetch-session-artifacts!
-                                                           "session-1")))]
-          (expect (= #{"app-1" "app-2" "app-3"} (set (map :view-id rows))))
-          (expect (= 3 (count rows)) "a filed app keeps one row")
-          (expect (= :archived (:app-status (first (filter #(= "app-3" (:view-id %)) rows)))))
-          (expect (every? app-model/app-row? rows))
-          (expect (= :stale (:app-status (first (filter #(= "app-2" (:view-id %)) rows))))))))
-  (it "keeps the artifacts when the app list cannot be read"
-      (with-redefs [vis/gateway-session-artifacts
-                    (constantly [{"filename" "a.txt"}])
-
-                    vis/gateway-app-views
-                    (fn [_ _]
-                      (throw (ex-info "down" {})))]
-
+                                  "filename" "counter.app.json"}
+                                 {"filename" "a.txt"}])]
         (expect (= [{"filename" "a.txt"}]
                    (:artifacts (inspector/fetch-session-artifacts! "session-1"))))))
   (it "paints an index it could not read as unavailable, never as empty"
@@ -374,31 +350,13 @@
                  (expect (nil? (inspector/reference-local-path (dissoc local :storage) true))))
                (finally (.delete file)))))))
 
-(def ^:private app-artifacts
-  [{"filename" "review.app.json"
-    "media_type" "application/vnd.vis.app+json"
-    "view_id" "view-1"
-    "title" "Review"
-    "version" 1}
-   {"filename" "review.app.json"
-    "media_type" "application/vnd.vis.app+json"
-    "view_id" "view-2"
-    "title" "Second review"
-    "app_status" "stale"
-    "version" 1}])
-
 (defdescribe
-  app-attachment-rows
-  (it "keeps one row for each app, also when two apps share a file name"
-      (let [rows (inspector/inspector-rows [] [] app-artifacts)]
-        (expect (= #{"view-1" "view-2"} (set (map :view-id rows))))
-        (expect (= :stale (:app-status (first (filter #(= "view-2" (:view-id %)) rows)))))))
-  (it "opens an app on the app surface and other text in its viewer"
+  inspector-enter
+  (it "opens a produced artifact in its viewer"
       (let [enter (fn [artifacts]
                     (let [component (inspector/inspector-modal-component [] [] artifacts nil)]
                       (get-in ((:on-key component) (:init component) (KeyStroke. KeyType/Enter) {})
                               [:com.blockether.vis.tui.dialogs/done :action])))]
-        (expect (= :app (enter [(first app-artifacts)])))
         (expect (= :open (enter [{"filename" "PLAN.md" "media_type" "text/markdown" "version" 1}])))
         (expect (= :open
                    (enter [{"filename" "DIFF.json"

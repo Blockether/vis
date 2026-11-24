@@ -3922,11 +3922,6 @@
     (open-image-viewer! screen sent (:index row))
     (open-image-externally! (get-in row [:image :path]))))
 
-(defn- inspect-app!
-  [screen session-id row]
-  (with-dialog-lock
-    #(app-surface/show! screen session-id row {:open-picture! (partial open-app-picture! screen)})))
-
 (defn- inspect-artifact-row!
   [session-id row]
   ((get {:staged #(inspect-attachment! (:attachment row))
@@ -3939,7 +3934,6 @@
   [screen session-id sent {:keys [action row]}]
   ((get {:remove #(do (state/dispatch [:remove-attachment (get-in row [:attachment :id])]) true)
          :view #(do (inspect-sent-picture! screen sent row) false)
-         :app #(do (inspect-app! screen session-id row) true)
          :open #(do (inspect-artifact-row! session-id row) false)}
         action
         (constantly false))))
@@ -3955,7 +3949,7 @@
     (inspector-action! screen session-id sent choice)))
 
 (defn- open-attachment-inspector!
-  "Open staged files and session artifacts. Removal and app inspection return here."
+  "Open staged files and session artifacts. Removal returns here."
   [screen]
   (let [session-id (get-in @state/app-db [:session :id])]
     (while (inspector-step! screen session-id))))

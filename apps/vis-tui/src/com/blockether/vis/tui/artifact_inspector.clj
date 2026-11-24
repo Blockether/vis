@@ -19,64 +19,15 @@
 
 (set! *unchecked-math* :warn-on-boxed)
 
-(defn- session-apps
-  "The app views of `session-id` in wire shape, the active ones and then the
-   archived ones, or nil when the gateway cannot answer."
-  [session-id]
-  (try (into (vis/gateway-app-views session-id false) (vis/gateway-app-views session-id true))
-       (catch Throwable e
-         (tel/log!
-           {:level :warn :id ::app-statuses-failed :error e :data {:session-id (str session-id)}})
-         nil)))
-
-(defn- wire-app-id
-  [wire]
-  (some-> (get wire "view_id" (get wire "id"))
-          str
-          str/trim
-          not-empty))
-
-(defn- wire-view-id
-  "The app view id of artifact index entry `artifact`, which has wire keys, or nil."
-  [artifact]
-  (when (= app-model/media-type (get artifact "media_type"))
-    (some-> (get artifact "view_id")
-            str
-            str/trim
-            not-empty)))
-
-(defn- listed-app
-  "An artifact index entry for app `wire` that no block filed: an app that a slash
-   command or a program outside a turn opened. Its row opens the app."
-  [wire]
-  {"media_type" app-model/media-type
-   "view_id" (wire-app-id wire)
-   "title" (get wire "title")
-   "filename" (str (or (not-empty (str (get wire "key"))) (wire-app-id wire)) ".app.json")})
-
 (defn fetch-session-artifacts!
   "Whole-session artifact index through the facade. Returns `{:artifacts [...]}`,
-   or `{:artifacts [] :error string}` when the daemon cannot answer. An app row
-   also holds its lifecycle state in \"app_status\". Every app of the session has a
-   row, also an app that no block filed."
+   or `{:artifacts [] :error string}` when the daemon cannot answer. A live app is
+   not an artifact, so its rows stay out."
   [session-id]
   (if (str/blank? (str session-id))
     {:artifacts []}
     (if-let [artifacts (vis/gateway-session-artifacts session-id)]
-      (let [apps (session-apps session-id)
-            statuses (into {}
-                           (keep #(when-let [id (wire-app-id %)] [id
-                                                                  (app-model/status
-                                                                    (vis/wire->engine %))]))
-                           apps)
-            filed (set (keep wire-view-id artifacts))
-            all
-            (into (vec artifacts) (comp (remove #(filed (wire-app-id %))) (map listed-app)) apps)]
-
-        {:artifacts (mapv #(if-let [status (get statuses (wire-view-id %))] (assoc %
-                                                                              "app_status"
-                                                                              (name status)) %)
-                          all)})
+      {:artifacts (into [] (remove #(= app-model/media-type (get % "media_type"))) artifacts)}
       {:artifacts [] :error "Artifact index unavailable"})))
 
 (defn- produced-rows
@@ -86,10 +37,7 @@
         (reverse (vec artifacts))
 
         identity-of
-        (fn [artifact]
-          (or (some->> (wire-view-id artifact)
-                       (str "app:"))
-              (str (or (get artifact "filename") "artifact"))))
+        (fn [artifact] (str (or (get artifact "filename") "artifact")))
 
         counts
         (frequencies (map identity-of newest))]
@@ -114,10 +62,6 @@
                                   :version (get artifact "version")
                                   :version-count (get counts key 1)
                                   :iteration-id (str (get artifact "iteration_id"))
-                                  :view-id (wire-view-id artifact)
-                                  :title (get artifact "title")
-                                  :app-status (some-> (get artifact "app_status")
-                                                      keyword)
                                   :index (get artifact "index")
                                   :storage (get artifact "storage")
                                   :path (get artifact "path")
@@ -157,39 +101,31 @@
   "True for a picture that the table can show as a thumbnail. A reference to a file on
    the gateway machine (#450) is too large to fetch for a thumbnail, so it shows its badge."
   [{:keys [media-type] :as row}]
-  (and (not (app-model/app-row? row))
-       (not (attachments/reference-artifact? row))
+  (and (not (attachments/reference-artifact? row))
        (str/starts-with? (str media-type) "image/")))
 
 (defn- kind-badge
   "The short type name that the thumbnail cell shows for a row without a picture."
-  [{:keys [filename media-type] :as row}]
-  (if (app-model/app-row? row)
-    "App"
-    (or (some-> (or (re-find #"\.([A-Za-z0-9]{1,5})$" (str filename))
-                    (re-find #"/([A-Za-z0-9]{1,5})$" (str media-type)))
-                second
-                str/upper-case)
-        "File")))
+  [{:keys [filename media-type]}]
+  (or (some-> (or (re-find #"\.([A-Za-z0-9]{1,5})$" (str filename))
+                  (re-find #"/([A-Za-z0-9]{1,5})$" (str media-type)))
+              second
+              str/upper-case)
+      "File"))
 
 (defn- row-lines
   "The text lines of one attachment row: its name, then its details."
-  [{:keys [source filename size version version-count title app-status label] :as row}]
-  (if (app-model/app-row? row)
-    [(or (not-empty (str title)) filename)
-     (str "App"
-          (when-let [word (get app-model/status-label app-status)]
-            (str " · " word)))]
-    (if (= :sent source)
-      [filename (not-empty (str label))]
-      [filename
-       (str/join " · "
-                 (remove nil?
-                   [(kind-badge row) (size-label size)
-                    (when (and (= source :produced) version) (str "v" version))
-                    (when (and (= source :produced) version-count (> (long version-count) 1))
-                      (str version-count " versions"))]))
-       (when (attachments/reference-artifact? row) (str "On gateway: " (:path row)))])))
+  [{:keys [source filename size version version-count label] :as row}]
+  (if (= :sent source)
+    [filename (not-empty (str label))]
+    [filename
+     (str/join " · "
+               (remove nil?
+                 [(kind-badge row) (size-label size)
+                  (when (and (= source :produced) version) (str "v" version))
+                  (when (and (= source :produced) version-count (> (long version-count) 1))
+                    (str version-count " versions"))]))
+     (when (attachments/reference-artifact? row) (str "On gateway: " (:path row)))]))
 
 (defn- table-lines
   "The painted lines of the attachment table. Each section has a heading and a ruled
@@ -455,12 +391,9 @@
                     KeyType/Home (assoc state :selected 0)
                     KeyType/End (assoc state :selected (max 0 (dec total)))
                     KeyType/Enter {::dlg/done (when selected-row
-                                                {:action (cond
-                                                           (and (= :produced (:source selected-row))
-                                                                (app-model/app-row? selected-row))
-                                                           :app
-                                                           (= :sent (:source selected-row)) :view
-                                                           :else :open)
+                                                {:action (if (= :sent (:source selected-row))
+                                                           :view
+                                                           :open)
                                                  :row selected-row})}
                     KeyType/Character (if (and (= \o (.getCharacter key)) selected-row)
                                         {::dlg/done {:action :open :row selected-row}}

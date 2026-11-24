@@ -58,9 +58,6 @@ import { AlertIcon, DotsIcon, MicIcon, PlayIcon } from './icons';
 import { ZipArchive } from './ZipArchive';
 import { ReferenceAttachment } from './ReferenceAttachment';
 import { Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
-import { AppListRow, AppSurface, useSessionApps } from './AppAttachment';
-import type { LiveView as LiveViewModel } from '../lib/live-view';
-import { canOpenApp } from '../lib/app-view';
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -672,13 +669,10 @@ function Tile({
  */
 function FilterStrip({
   list,
-  appCount,
   active,
   onPick,
 }: {
   list: SessionArtifact[];
-  /** The open apps, which the All list shows above the files: the header counts them too. */
-  appCount: number;
   active: string;
   onPick: (label: string) => void;
 }) {
@@ -691,8 +685,7 @@ function FilterStrip({
         className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-1.5"
       >
         {ARTIFACT_FILTERS.map((filter) => {
-          const files = list.filter((entry) => filter.kinds.includes(entry.kind)).length;
-          const count = filter.label === 'All' ? files + appCount : files;
+          const count = list.filter((entry) => filter.kinds.includes(entry.kind)).length;
           const on = filter.label === active;
           return (
             <Chip
@@ -1161,11 +1154,6 @@ export function ArtifactsSheet({
   // The version list is its own surface, opened from the tile's dot and layered
   // UNDER the detail: opening a cut from it must return here, not to the grid.
   const [versionsOf, setVersionsOf] = useState<SessionArtifact | null>(null);
-  const apps = useSessionApps(client, sid);
-  const [openedApp, setOpenedApp] = useState<LiveViewModel | null>(null);
-  const openApp = useCallback((view: LiveViewModel) => {
-    if (canOpenApp(view)) setOpenedApp(view);
-  }, []);
   // A thumbnail is a DOWNLOAD, so a session with two hundred artifacts in it is
   // two hundred requests the moment this sheet opens. One page at a time, by
   // count AND by weight, and a new filter starts its own first page.
@@ -1185,10 +1173,6 @@ export function ArtifactsSheet({
   // from, then the sheet itself. A keyboard says that with Escape and a phone says it
   // with its own back button, so both walk the same ladder.
   const dismiss = useCallback(() => {
-    if (openedApp) {
-      setOpenedApp(null);
-      return;
-    }
     if (opened) {
       setOpened(null);
       return;
@@ -1198,7 +1182,7 @@ export function ArtifactsSheet({
       return;
     }
     onClose();
-  }, [onClose, opened, openedApp, versionsOf]);
+  }, [onClose, opened, versionsOf]);
   useBackLayer(dismiss);
 
   useEffect(() => {
@@ -1230,7 +1214,6 @@ export function ArtifactsSheet({
       />
       <FilterStrip
         list={artifacts}
-        appCount={apps.length}
         active={filter}
         onPick={(label) => {
           setFilter(label);
@@ -1240,15 +1223,6 @@ export function ArtifactsSheet({
       {/* The sheet is the whole box, composer included, so the bottom safe area is
           this scroller's own: the last row of tiles must clear the home indicator. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4 sm:pt-4">
-        {filter === 'All' && apps.length > 0 && (
-          <ul aria-label="Apps" className="mb-3 border border-edge">
-            {apps.map((view) => (
-              <li key={view.id}>
-                <AppListRow view={view} onOpen={openApp} />
-              </li>
-            ))}
-          </ul>
-        )}
         {shown.length ? (
           <>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 mouse:grid-cols-5">
@@ -1273,11 +1247,9 @@ export function ArtifactsSheet({
             )}
           </>
         ) : (
-          !(filter === 'All' && apps.length > 0) && (
-            <p className="font-mono text-meta text-dialog-hint">
-              Nothing of that kind in this session.
-            </p>
-          )
+          <p className="font-mono text-meta text-dialog-hint">
+            Nothing of that kind in this session.
+          </p>
         )}
       </div>
       {versionsOf && (
@@ -1293,15 +1265,6 @@ export function ArtifactsSheet({
           sid={sid}
           artifact={opened}
           onClose={() => setOpened(null)}
-        />
-      )}
-      {openedApp && (
-        <AppSurface
-          client={client}
-          sid={sid}
-          viewId={openedApp.id}
-          fallbackTitle={openedApp.title}
-          onClose={() => setOpenedApp(null)}
         />
       )}
       {voiceControl && (
