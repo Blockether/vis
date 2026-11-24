@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.34] - 2026-11-24
+
+### Added
+
+- Board app: the Board is now one global app that shows the boards of all projects, with a project filter. Its columns follow the work flow: Backlog, Review, Ready for implementation, Implementing, Verification and Done. Old boards move their issues to the new columns. When a tool changes an issue, each open Board shows the change at once.
+- Board app: a move to Implementing starts the work on an issue. The Board settings choose where the work occurs (a new git worktree, a new branch or the project folder), who gets the issue (a Vis agent session or a person), and the sync with GitHub or Linear. A move to Done closes the linked GitHub or Linear issue. A second start uses the same place and session again.
+- Python SDK: `vis.GlobalApp` declares a global app. The gateway lists the app before it opens, and the first open starts the extension. The Companion shows each global app as an icon in the header. The terminal app lists the global apps under `C-x b o`, after the session apps. A callback of a global extension can create a session with a root, and can change only the sessions that it created.
+- Python SDK: `vis.bus.publish` and `vis.bus.subscribe` send signals between the extension processes of one gateway, with the scope `global` or `session`. A topic has dotted words. A pattern can use `*` for one word and a last `#` for zero or more words. Vis publishes `vis.automation.changed`, `vis.automation.run.<status>` and `vis.session.deleted`, and only Vis can publish a topic whose first word is `vis`. Outside Vis, the SDK delivers signals in the same order and with the same limits as the engine.
+- Python SDK: `vis.ui.toolbar` and `vis.ui.dialog` let an app make its own search, filters and forms. The Companion and the terminal app show them.
+- MCP: Vis follows a task of the MCP Tasks extension to its result. It polls the task, answers each input request one time and cancels the task on an interrupt.
+- MCP: Vis supports the MCP Skills extension. `apropos` finds each skill of a server as `<server>.skills.<name>`. `doc` loads its `SKILL.md`, and `doc("<server>.skills.<name>/<path>")` loads one of its other files. Each read checks the listing, the size, the SHA-256 digest and the frontmatter.
+
+### Changed
+
+- Board app: the package needs `vis-agent>=0.5.34`, the first SDK with global apps and `vis.bus`.
+- Companion and terminal app: the global apps command `C-x b O` is removed. Use the header icons or `C-x b o`.
+- Companion: the desktop sidebar has one fixed width of 26rem. The resize edge is removed.
+
+### Fixed
+
+- Speech: Parakeet transcription converts an attached recording to 16 kHz. Before, the recording kept its source rate, usually 44.1 or 48 kHz, and used three times the memory.
+- Review app: the "Push to branch" field has its own id. Before, the gateway refused each change of the Review app view.
+- Chat: a progress note no longer starts with a stray colon or ampersand.
+- Companion and terminal app: the artifact lists show only files. Before, they also showed the live apps of the session.
+- Companion: the board search and the Create button are in the app band, and Create is not cut off. The options of a select show the hand cursor. A list legend has a gap above the first setting card, and a folded card uses a larger text.
+
 ## [v0.5.33] - 2026-11-24
 
 ### Added
