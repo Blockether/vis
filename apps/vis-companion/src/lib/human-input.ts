@@ -16,6 +16,8 @@ import {
   viewGroupDirection,
   viewKind,
   viewMaxColumns,
+  viewCommandIcon,
+  type ViewCommandIcon,
 } from './view';
 
 /** The closed set of fields that can carry an ANSWER (`view.spec/field-types`). */
@@ -131,6 +133,8 @@ export interface HumanInputField {
   /** Prose under the label. Always rendered in italic. */
   description?: string;
   placeholder?: string;
+  /** `plaintext` only — a picture in the box. The label stays the accessible name. */
+  icon?: ViewCommandIcon;
   options?: HumanInputOption[];
   /** Text length bounds; on an `otp` field, how many boxes there are. */
   min_length?: number;
@@ -300,6 +304,7 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
     is_required: row.is_required === true,
     ...(description ? { description } : {}),
     ...(placeholder ? { placeholder } : {}),
+    ...(type === 'plaintext' ? viewCommandIcon(row.icon) : {}),
     ...(options ? { options } : {}),
     ...(minLength ? { min_length: minLength } : {}),
     ...(maxLength ? { max_length: maxLength } : {}),

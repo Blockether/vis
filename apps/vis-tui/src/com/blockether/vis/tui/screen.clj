@@ -3052,8 +3052,12 @@
   (if-let [{:keys [row]} (app-pane-point db mx my)]
     (do (state/dispatch [:focus-area :panel])
         (when row
-          (update-app-pane! (get-in db [:live-panel :app])
-                            #(update % :state (fn [st] (assoc (dissoc st :reading? :canvas-focus) :selected row)))))
+          (let [{:keys [bounds rows]} (:geom (current-app-pane))
+                cell (app-surface/mouse-cell (nth rows row nil) bounds mx)]
+            (update-app-pane! (get-in db [:live-panel :app])
+                              #(update % :state (fn [st]
+                                                 (assoc (dissoc st :reading? :canvas-focus)
+                                                   :selected row :cell cell))))))
         (state/dispatch [:bump-render-version])
         true)
     (let [{:keys [left top width height]} (:box (current-app-pane))]

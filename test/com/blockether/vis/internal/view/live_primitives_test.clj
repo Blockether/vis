@@ -14,37 +14,38 @@
 
 (defn- node [view id] (first (filter #(= id (:id %)) (nodes view))))
 
+(def ^:private presentation-nodes
+  [{:id "title" :type "heading" :text "Build results" :level 1}
+   {:id "intro" :type "paragraph" :text "A **live** paragraph"}
+   {:id "source" :type "code" :text "  <button>\n" :language "html"}
+   {:id "wait" :type "spinner" :text "Loading" :variant :dots}
+   {:id "details"
+    :type "group"
+    :label "Details"
+    :direction "column"
+    :is-collapsible true
+    :children [{:id "refresh" :type "button" :label "Refresh"}
+               {:id "disabled" :type "button" :label "Unavailable" :is-disabled true}
+               {:id "a" :type "log" :lines ["retained"]}
+               {:id "b" :type "log" :lines ["independent"] :default-expanded true}]}])
+
 (defn- watching
-  [f]
-  (let [dir
-        (io/file (System/getProperty "java.io.tmpdir") (str "vis-primitives-" (random-uuid)))
+  ([f] (watching presentation-nodes f))
+  ([live-nodes f]
+   (let [dir
+         (io/file (System/getProperty "java.io.tmpdir") (str "vis-primitives-" (random-uuid)))
 
-        views-dir
-        (requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)]
+         views-dir
+         (requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)]
 
-    (with-redefs-fn {views-dir (constantly dir)}
-      #(let [view
-             (engine/open-live!
-               {:title "Presentation"
-                :session-id (str (random-uuid))
-                :nodes [{:id "title" :type "heading" :text "Build results" :level 1}
-                        {:id "intro" :type "paragraph" :text "A **live** paragraph"}
-                        {:id "source" :type "code" :text "  <button>\n" :language "html"}
-                        {:id "wait" :type "spinner" :text "Loading" :variant :dots}
-                        {:id "details"
-                         :type "group"
-                         :label "Details"
-                         :direction "column"
-                         :is-collapsible true
-                         :children
-                         [{:id "refresh" :type "button" :label "Refresh"}
-                          {:id "disabled" :type "button" :label "Unavailable" :is-disabled true}
-                          {:id "a" :type "log" :lines ["retained"]}
-                          {:id "b" :type "log" :lines ["independent"] :default-expanded true}]}]})]
-         (try (f view)
-              (finally (engine/close-live! (:id view))
-                       (doseq [file (reverse (file-seq dir))]
-                         (io/delete-file file true))))))))
+     (with-redefs-fn {views-dir (constantly dir)}
+       #(let [view
+              (engine/open-live!
+                {:title "Presentation" :session-id (str (random-uuid)) :nodes live-nodes})]
+          (try (f view)
+               (finally (engine/close-live! (:id view))
+                        (doseq [file (reverse (file-seq dir))]
+                          (io/delete-file file true)))))))))
 
 (defdescribe
   all-primitives-contract-test
@@ -180,6 +181,25 @@
             (expect (= 12 (count (filter #(some :clicks (get-in % [:patch :ops])) entries))))
             (expect (false? (:is-accepted
                               (engine/action! id {:action :activate :node-id "refresh"}))))))))))
+
+(defdescribe
+  dialog-test
+  (it "closes an open dialog when the person closes it, and refuses a closed one"
+      (watching [{:id "new-issue"
+                  :type "group"
+                  :label "New issue"
+                  :is-dialog true
+                  :children [{:id "title" :type "plaintext" :label "Title"}]}]
+                (fn [view]
+                  (let [id (:id view)]
+                    (expect (= "closed"
+                               (:reason (engine/action! id
+                                                        {:action :activate :node-id "new-issue"}))))
+                    (engine/patch-live! id [{:op :set :node-id "new-issue" :is-open true}])
+                    (expect (true? (:is-open (node (engine/live-view id) "new-issue"))))
+                    (expect (true? (:is-accepted
+                                     (engine/action! id {:action :activate :node-id "new-issue"}))))
+                    (expect (false? (:is-open (node (engine/live-view id) "new-issue")))))))))
 
 (defdescribe
   nested-history-test
@@ -558,35 +578,66 @@
 (defdescribe
   canvas-owner-patch-test
   (it "does not restore the human draft when the owner removes and adds a thread in one patch"
-      (let [view (materializer/materialize
-                   (engine/normalize-live-view
-                     {:title "Board"
-                      :nodes [{:id "board" :type :canvas
-                               :cards [{:id "frame" :title "Frame"} {:id "child" :title "Child"}]
-                               :threads [{:id "t" :item-id "frame" :messages []}]}]}))
-            op (app/draft-op (node view "board") {:thread-id "t" :body "Check the frame"} "unused")
-            with-draft (binding [engine/*host-patch* true]
-                         (materializer/apply-patch view (engine/landed-patch view [op])))
-            patch (engine/landed-patch with-draft
-                                       [{:op :remove :node-id "board" :item-ids ["t"]}
-                                        {:op :thread :node-id "board"
-                                         :thread {:id "t" :item-id "child" :messages []}}])
-            after (materializer/apply-patch with-draft patch)]
+      (let [view
+            (materializer/materialize
+              (engine/normalize-live-view
+                {:title "Board"
+                 :nodes [{:id "board"
+                          :type :canvas
+                          :cards [{:id "frame" :title "Frame"} {:id "child" :title "Child"}]
+                          :threads [{:id "t" :item-id "frame" :messages []}]}]}))
+
+            op
+            (app/draft-op (node view "board") {:thread-id "t" :body "Check the frame"} "unused")
+
+            with-draft
+            (binding [engine/*host-patch* true]
+              (materializer/apply-patch view (engine/landed-patch view [op])))
+
+            patch
+            (engine/landed-patch
+              with-draft
+              [{:op :remove :node-id "board" :item-ids ["t"]}
+               {:op :thread :node-id "board" :thread {:id "t" :item-id "child" :messages []}}])
+
+            after
+            (materializer/apply-patch with-draft patch)]
+
         (expect (= "Check the frame" (:body (first (app/drafts (:nodes with-draft))))))
         (expect (= "child" (:item-id (app/find-thread (node after "board") "t"))))
         (expect (empty? (app/drafts (:nodes after))))))
-  (it "refuses a new canvas picture with a blank description"
-      (let [fixture (json/read-json (slurp (io/resource "vis-contract/fixtures/live-primitives.json")))
-            canvas (first (filter #(= "canvas" (get % "type")) (get fixture "nodes")))
-            picture (some #(get % "picture") (get canvas "cards"))
-            picture {:alt "   " :media-type "image/png" :data (get picture "data")}
-            cards [{:id "a" :title "Preview" :picture picture}]
-            board {:id "board" :type :canvas :cards cards}
-            view (materializer/materialize
-                   (engine/normalize-live-view {:title "Board" :nodes [(assoc board :cards [])]}))
-            op {:op :append :node-id "board" :cards cards}
-            legacy {:view-id (:id view) :seq (inc (:seq view)) :ops [op]}]
-        (expect (throws? clojure.lang.ExceptionInfo #(engine/normalize-live-node board)))
-        (expect (throws? clojure.lang.ExceptionInfo #(engine/landed-patch view [op])))
-        (expect (= "   " (get-in (node (materializer/apply-patch view legacy) "board")
-                                 [:cards 0 :picture :alt]))))))
+  (it
+    "refuses a new canvas picture with a blank description"
+    (let [fixture
+          (json/read-json (slurp (io/resource "vis-contract/fixtures/live-primitives.json")))
+
+          canvas
+          (first (filter #(= "canvas" (get % "type")) (get fixture "nodes")))
+
+          picture
+          (some #(get % "picture") (get canvas "cards"))
+
+          picture
+          {:alt "   " :media-type "image/png" :data (get picture "data")}
+
+          cards
+          [{:id "a" :title "Preview" :picture picture}]
+
+          board
+          {:id "board" :type :canvas :cards cards}
+
+          view
+          (materializer/materialize (engine/normalize-live-view {:title "Board"
+                                                                 :nodes [(assoc board :cards [])]}))
+
+          op
+          {:op :append :node-id "board" :cards cards}
+
+          legacy
+          {:view-id (:id view) :seq (inc (:seq view)) :ops [op]}]
+
+      (expect (throws? clojure.lang.ExceptionInfo #(engine/normalize-live-node board)))
+      (expect (throws? clojure.lang.ExceptionInfo #(engine/landed-patch view [op])))
+      (expect (= "   "
+                 (get-in (node (materializer/apply-patch view legacy) "board")
+                         [:cards 0 :picture :alt]))))))

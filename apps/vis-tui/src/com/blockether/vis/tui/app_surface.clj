@@ -137,7 +137,8 @@
 
 (defn- node-rows
   [view node width folded opts]
-  (cond (= :diff (:type node))
+  (cond (:is-dialog node) []
+        (= :diff (:type node))
         ;; Toolbar buttons that no key covers stand above the diff as rows.
         (into (into [] (mapcat #(plan-rows view % width (:disclosures opts))) (:children node))
               (model/diff-rows (dissoc node :children) width folded opts))
@@ -178,7 +179,8 @@
   "The buttons of `nodes` in reading order. A button of a strip of tabs has `::tab?`."
   [nodes]
   (mapcat (fn [node]
-            (cond (= :button (:type node)) [node]
+            (cond (or (:is-dialog node) (lv/toolbar? node)) []
+                  (= :button (:type node)) [node]
                   (choice-strip? node) (map #(assoc % ::tab? true) (:children node))
                   :else (buttons-in (:children node))))
           nodes))
@@ -196,6 +198,20 @@
                             (map #(str/lower-case %) (rest letters)))))]
 
     (some #(when-not (contains? taken %) %) candidates)))
+
+(defn- dialog-nodes [nodes]
+  (mapcat (fn [node]
+            (if (:is-dialog node)
+              [node]
+              (dialog-nodes (:children node))))
+          nodes))
+
+(defn- without-dialog-shortcuts [view]
+  (if (seq (:shortcuts view))
+    (let [dialogs (dialog-nodes (:nodes view))
+          ids (into #{} (comp (mapcat #(tree-seq (comp seq :children) :children %)) (map :id)) dialogs)]
+      (update view :shortcuts #(into [] (remove (comp ids :node-id)) %)))
+    view))
 
 (defn auto-keyed
   "`view` with a key for each button, when the app declares no shortcut of its own:
@@ -244,7 +260,7 @@
   (into []
         (comp (remove #(and (= :button (:type %)) (contains? covered (:id %))))
               (keep (fn [node]
-                      (if (seq (:children node))
+                      (if (and (seq (:children node)) (not (lv/toolbar? node)))
                         (let [children (keyed-buttons (:children node) covered)]
                           (cond (seq children) (assoc node :children children)
                                 ;; A diff toolbar is optional; the diff stays without it.
@@ -270,7 +286,10 @@
                          (filter some?)
                          (interpose [{:kind :section-gap :text ""}])
                          cat)
-                   (:nodes view))
+                   ;; The first top-level toolbar stands at the top, as in the app band.
+                   (let [nodes (:nodes view)
+                         band (first (filter #(and (lv/toolbar? %) (not (:is-dialog %))) nodes))]
+                     (if band (cons band (remove #(identical? band %) nodes)) nodes)))
        (seq receipts)
        (into (cons {:kind :receipts-head :text "Send receipts"} receipts))))))
 
@@ -950,7 +969,7 @@
 (defn- map-enter [state geom node effects comment?]
   (if-let [id (get-in state [:canvas-map :focus])]
     (let [{:keys [view items]} geom
-          index (get items [(:id node) id])
+          [index] (get items [(:id node) id])
           comment? (or comment? (not (:is-selectable node)))
           thread (when comment? (first (filter #(= id (:item-id %)) (:threads node))))]
       (cond (and (:is-locked node)
@@ -1106,6 +1125,22 @@
 
       (when (and (<= 0 dy) (< dy (long list-h)) (:is-selectable (nth rows i nil))) i))))
 
+(defn mouse-cell
+  "The selectable cell at terminal column `col`, or nil for a full row."
+  [row {:keys [left inner-w]} col]
+  (when (seq (:cells row))
+    (let [entry (:entry row)
+          indent (long (or (:indent entry) 0))
+          w (- (long inner-w) indent)
+          x (- (long col) (long left) indent)
+          cells (if-let [ws (:cell-widths entry)]
+                  (columns/width-slots w ws)
+                  (columns/slots w (count (:cells entry))))]
+      (some (fn [i]
+              (let [[at width] (nth cells i)]
+                (when (<= (inc (long at)) x (+ (long at) (long width))) i)))
+            (:cells row)))))
+
 (defn- mouse-key
   [state ^MouseAction key geom effects]
   (let [action (.getActionType key)
@@ -1121,7 +1156,7 @@
                               (quot (long (get-in geom [:bounds :inner-w])) 2))
                   selected (assoc (dissoc state :reading?)
                              :selected i
-                             :cell nil
+                             :cell (mouse-cell row (:bounds geom) (.getColumn pos))
                              :diff-side (if (< (.getColumn pos) midpoint) :left :right))]
               (if (= :file (:kind row)) (enter-row selected geom effects) selected))
             state)
@@ -1129,12 +1164,24 @@
           :else state)))
 
 (defn- canvas-focus
-  [row]
-  (when (:item-id row)
-    (cond (= :board-issue (get-in row [:entry :kind]))
-          [(:node-id row) (:item-id row) nil :board-issue]
-          (or (:thread-id row) (#{:canvas-select :canvas-comment} (:kind row)))
+  [row cell]
+  (let [entry (focused-entry row cell)]
+    (cond (= :board-issue (:kind entry))
+          [(:node-id entry) (:item-id entry) nil :board-issue]
+          (and (:item-id row) (or (:thread-id row) (#{:canvas-select :canvas-comment} (:kind row))))
           ((juxt :node-id :item-id :thread-id :kind) row))))
+
+(defn- dialog-key
+  [state ^KeyStroke key {:keys [view dialog-id] :as geom} effects]
+  (cond (instance? MouseAction key) (mouse-key state key geom effects)
+        (= KeyType/Escape (.getKeyType key))
+        (if (model/stale? view)
+          (assoc state :notice (waiting-notice view))
+          (do ((:activate! effects) {:action :activate :node-id dialog-id}) state))
+        (#{KeyType/Tab KeyType/ReverseTab} (.getKeyType key))
+        (move geom state (if (or (.isShiftDown key) (= KeyType/ReverseTab (.getKeyType key))) -1 1))
+        (= KeyType/Character (.getKeyType key)) state
+        :else (surface-key (dissoc state :notice) key geom effects)))
 
 (defn handle-key
   "The next surface state for `key`. `geom` holds `:rows`, `:view` and `:list-h`;
@@ -1148,14 +1195,17 @@
   (let [next-state
         (cond (pasted-key? key) (paste-key state (:paste key) paste)
               (not (instance? KeyStroke key)) state
+              (:dialog-id geom) (dialog-key state key geom effects)
               (log-chip-click? key (:log-chip geom)) (do ((:log! effects)) state)
               (instance? MouseAction key) (or (map-mouse state key geom) (mouse-key state key geom effects))
               (:key-menu state) (menu-key state key geom effects)
               (:editor state) (editor-key state key view effects)
               (:search state) (search-key state key (:rows geom))
               :else (command-key state key geom effects))]
-    (if (and (contains? next-state :selected) (not= (:selected state) (:selected next-state)))
-      (assoc next-state :canvas-focus (canvas-focus (nth (:rows geom) (:selected next-state) nil)))
+    (if (and (contains? next-state :selected)
+             (not= ((juxt :selected :cell) state) ((juxt :selected :cell) next-state)))
+      (assoc next-state :canvas-focus (canvas-focus (nth (:rows geom) (:selected next-state) nil)
+                                                  (:cell next-state)))
       next-state)))
 
 ;;; ── Outcomes ───────────────────────────────────────────────────────────────
@@ -1940,19 +1990,22 @@
         cached @surface-plan-cache]
     (if (and (identical? view (:source cached)) (= inputs (:inputs cached)))
       (:plan cached)
-      (let [view* (auto-keyed view)
+      (let [view* (without-dialog-shortcuts (auto-keyed view))
             rows (surface-rows view* width (:folded state) opts)
-            stops (selectable-indexes rows)
-            anchors (into {} (keep (fn [idx] (when-let [anchor (canvas-focus (nth rows idx))]
-                                              [anchor idx]))) stops)
-            items (reduce-kv (fn [acc anchor idx]
-                               (update acc (subvec anchor 0 2) (fnil min idx) idx))
-                             {} anchors)
+            selectable (selectable-indexes rows)
+            anchors (into {} (keep (fn [[idx cell :as pos]]
+                                     (when-let [anchor (canvas-focus (nth rows idx) cell)]
+                                       [anchor pos]))) (stops rows))
+            items (reduce-kv (fn [acc anchor [idx :as pos]]
+                               (let [k (subvec anchor 0 2)]
+                                 (if (< (long idx) (long (get-in acc [k 0] Long/MAX_VALUE)))
+                                   (assoc acc k pos)
+                                   acc))) {} anchors)
             nodes (tree-seq #(seq (:children %)) :children {:children (:nodes view*)})
             ;; Timelines measure their live bars on each pass.
             static? (not-any? #(or (#{:timeline :scene} (:type %))
                                   (and (= :spinner (:type %)) (:is-active %))) nodes)
-            plan {:view view* :rows rows :stops stops :anchors anchors :items items
+            plan {:view view* :rows rows :stops selectable :anchors anchors :items items
                   :canvas? (boolean (some #(not= :board-issue (peek %)) (keys anchors))) :canvases (cm/cards-in view*)
                    :static? static? :legend (shortcut-legend view*)
                   :paint-version (Object.)}]
@@ -2002,17 +2055,41 @@
       :log-chip (log-chip bounds view)
       :list-h (- content-h (if status? 1 0) (if editor-title? 1 0) field-h))))
 
+(defn- inset-dialog
+  "Measure the first open dialog inside the app box. Its controls use the app's owner."
+  [state {:keys [bounds view] :as geom}]
+  (if-let [node (and (not (model/read-only? view))
+                    (first (filter :is-open (dialog-nodes (:nodes view)))))]
+    (let [{:keys [left right top bottom]} bounds
+          inset (if (>= (- (long right) (long left)) 20) 2 0)
+          inner-w (- (long right) (long left) 1 (* 2 inset))
+          content (-> view
+                      (dissoc :shortcuts :submissions)
+                      (assoc :nodes [(dissoc node :is-dialog :is-open :label)]))
+          rows (surface-rows content (max 1 (- inner-w 3)) #{} (select-keys state [:disclosures]))
+          height (min (inc (- (long bottom) (long top))) (+ (count rows) 8))
+          y (+ (long top) (quot (- (inc (- (long bottom) (long top))) height) 2))
+          bounds {:left (+ (long left) inset) :right (- (long right) inset)
+                  :top y :bottom (+ y height -1) :inner-w inner-w :inner-h (- height 2)}
+          layout (dlg/dialog-layout bounds)
+          status? (> (long (:content-h layout)) 1)]
+      (merge geom layout
+             {:background geom :dialog-id (:id node) :dialog-title (:label node)
+              :bounds bounds :rows rows :stops (selectable-indexes rows)
+              :list-h (- (long (:content-h layout)) (if status? 1 0))
+              :status? status? :canvases [] :canvas? false :anchors {} :items {}
+              :legend [] :log-chip nil}))
+    geom))
+
 (defn measure
   "The surface geometry for `state` in a `cols`x`rows` terminal."
   [state cols rows-count view]
   (let [content-w (dlg/default-content-width cols)]
-    (geom-in state
-             cols
-             rows-count
-             content-w
-             (in-app-region
-               #(dlg/dialog-bounds cols rows-count content-w (app-content-h rows-count)))
-             view)))
+    (inset-dialog state
+                  (geom-in state cols rows-count content-w
+                           (in-app-region
+                             #(dlg/dialog-bounds cols rows-count content-w (app-content-h rows-count)))
+                           view))))
 
 (defn pane-measure
   "The surface geometry for `state` in a side pane: the box at `left` and `top`,
@@ -2039,20 +2116,36 @@
          :inner-h (- height 2)}]
 
     ;; The pane title has its own row, so the log chip sits on that row.
-    (assoc (geom-in state (+ left width) (+ top height) width bounds view)
-      :pane? true
-      :log-chip (log-chip (update bounds :top inc) view))))
+    (inset-dialog state
+                  (assoc (geom-in state (+ left width) (+ top height) width bounds view)
+                    :pane? true
+                    :log-chip (log-chip (update bounds :top inc) view)))))
+
+(defn- reconcile-dialog-focus
+  [state dialog-id]
+  (if (= (:dialog-id state) dialog-id)
+    state
+    (let [state (dissoc state :key-menu :editor :search :prefix :canvas-map :reading? :notice)]
+      (if dialog-id
+        (assoc state :dialog-id dialog-id
+                     :background-focus (or (:background-focus state)
+                                           (select-keys state [:selected :cell :scroll :canvas-focus]))
+                     :selected 0 :cell nil :scroll 0 :canvas-focus nil)
+        (merge (dissoc state :dialog-id :background-focus :canvas-focus) (:background-focus state))))))
 
 (defn reconcile
   "Keep the cursor on a stop and in view."
-  [state {:keys [rows list-h view canvas? anchors items stops] :as geom}]
-  (let [stops
+  [state {:keys [rows list-h view canvas? anchors items stops dialog-id] :as geom}]
+  (let [state (reconcile-dialog-focus state dialog-id)
+        stops
         (or stops (selectable-indexes rows))
 
+        [anchor-row anchor-cell]
+        (when-let [anchor (:canvas-focus state)]
+          (or (get anchors anchor) (get items (subvec anchor 0 2))))
+
         selected
-        (long (or (when-let [anchor (:canvas-focus state)]
-                    (or (get anchors anchor) (get items (subvec anchor 0 2))))
-                  (:selected state)))
+        (long (or anchor-row (:selected state)))
 
         selected
         (long (cond (empty? stops) 0
@@ -2063,7 +2156,9 @@
         (:cells (nth rows selected nil))
 
         cell
-        (when (seq cells) (if (some #{(:cell state)} cells) (:cell state) (first cells)))
+        (when (seq cells)
+          (let [cell (if (some? anchor-row) anchor-cell (:cell state))]
+            (if (some #{cell} cells) cell (first cells))))
 
         list-h
         (long list-h)
@@ -2079,7 +2174,7 @@
               :selected selected
               :cell cell
               :scroll scroll
-              :canvas-focus (canvas-focus (nth rows selected nil)))
+              :canvas-focus (canvas-focus (nth rows selected nil) cell))
       (map-node state geom)
       (update :canvas-map cm/reconcile (map-node state geom) (map-viewport geom) (System/currentTimeMillis))
 
@@ -2095,7 +2190,7 @@
 (defn- paint-pane-chrome!
   "Paint the side pane like the project sidebar: a box, the title on its own row
    and rules under the title and over the footer. The pane key chord hides it."
-  [g {:keys [left top right bottom inner-w]} view chip]
+  [g {:keys [left top right bottom inner-w]} title chip]
   (let [left
         (long left)
 
@@ -2126,7 +2221,7 @@
                   (+ left 2)
                   (inc top)
                   (p/ellipsize
-                    (title view)
+                    title
                     (max 0 (if chip (- (long (:col chip)) left 4) (- (long inner-w) 2)))))))))
 
 (defn- paint-log-hit!
@@ -2151,7 +2246,7 @@
 (defn- paint-frame-chrome!
   [g {:keys [bounds view pane? cols rows-count content-w log-chip]}]
   (if pane?
-    (paint-pane-chrome! g bounds view log-chip)
+    (paint-pane-chrome! g bounds (title view) log-chip)
     (in-app-region #(dlg/draw-dialog-chrome! g
                                              cols
                                              rows-count
@@ -2325,7 +2420,7 @@
 
     (if (and (:editor state) (= 1 (count fitted))) [["C-s" "save"]] fitted)))
 
-(defn- paint!
+(defn- paint-surface!
   [g state {:keys [bounds hint-row] :as geom}]
   (paint-chrome! g geom)
   (paint-body! g state geom)
@@ -2343,6 +2438,25 @@
                         inner-w
                         (fitted-footer state geom (max 0 (- (long inner-w) 2))))
     (if (:key-menu state) (paint-key-menu! g state geom) cursor)))
+
+(defn- paint-dialog!
+  [g state {:keys [bounds dialog-title hint-row list-h rows view] :as geom}]
+  (let [{:keys [left inner-w]} bounds
+        enter (when-let [label (enter-label state view (nth rows (:selected state) nil))]
+                ["Enter" label])]
+    (paint-pane-chrome! g bounds (or dialog-title "") nil)
+    (when (pos? (long list-h)) (paint-body-rows! g state geom))
+    (when (:status? geom) (paint-status! g state geom))
+    (dlg/draw-hint-bar! g left hint-row inner-w (cond-> [["Esc" "close form"]] enter (conj enter)))
+    nil))
+
+(defn- paint!
+  [g state {:keys [background] :as geom}]
+  (if background
+    (do (binding [interactions/hit-map (interactions/create-hit-map)]
+          (paint-surface! g (merge (initial-state) (:background-focus state)) background))
+        (paint-dialog! g state geom))
+    (paint-surface! g state geom)))
 
 ;;; ── Driver ─────────────────────────────────────────────────────────────────
 

@@ -1,16 +1,14 @@
-import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Bug, CalendarDays, Check, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Equal, Flag, GripVertical, Layers, Plus, Search, SlidersHorizontal, UserRound, Zap } from 'lucide-react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Bug, CalendarDays, Check, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Equal, Flag, GripVertical, Layers, Plus, UserRound, Zap } from 'lucide-react';
 
 import {
-  BOARD_KINDS, BOARD_PRIORITIES, DEFAULT_KIND, DEFAULT_PRIORITY, EMPTY_FILTERS, ISSUE_LIMITS,
-  boardFilterCount, boardPlace, boardWord, filterBoard, groupBoard, moveBoardIssue, orderBoard,
-  type BoardAction, type BoardColumn, type BoardEpic, type BoardFilters, type BoardGroup,
-  type BoardIssue, type BoardIssueChange, type BoardKind, type BoardPerson, type BoardPlace, type BoardPriority,
+  BOARD_KINDS, BOARD_PRIORITIES, DEFAULT_KIND, DEFAULT_PRIORITY, ISSUE_LIMITS,
+  boardPlace, boardWord, groupBoard, moveBoardIssue, orderBoard,
+  type BoardAction, type BoardColumn, type BoardEpic, type BoardIssue, type BoardIssueChange, type BoardKind, type BoardPerson, type BoardPlace, type BoardPriority,
 } from '../lib/board';
 import type { LiveBoardNode } from '../lib/live-view';
 import { Markdown } from './ChatContent';
-import { BandButton, BandSlotContext, Button, Checkbox, DialogFrame, Input, Modal, Select } from './ui';
+import { Button, Checkbox, DialogFrame, Input, Modal, Select } from './ui';
 
 const KIND_MARK = {
   task: [CheckSquare, 'text-link'], story: [Layers, 'text-ok-ink'], bug: [Bug, 'text-err-ink'],
@@ -22,10 +20,6 @@ const PRIORITY_MARK = {
 } as const;
 const KIND_OPTIONS = BOARD_KINDS.map((value) => ({ value, label: boardWord(value) }));
 const PRIORITY_OPTIONS = BOARD_PRIORITIES.map((value) => ({ value, label: boardWord(value) }));
-const GROUP_OPTIONS = [
-  { value: 'none', label: 'No grouping' }, { value: 'assignee', label: 'By assignee' },
-  { value: 'epic', label: 'By epic' }, { value: 'priority', label: 'By priority' },
-];
 const TONE_MARK = { idle: 'bg-dialog-hint', running: 'bg-link', ok: 'bg-ok', warn: 'bg-warn', error: 'bg-err' };
 const CONTROL = 'min-h-11 sm:min-h-8';
 const INPUT_CONTROL = 'board-input';
@@ -103,51 +97,6 @@ function IssueCard({ issue, person, epic, today, open, move, canDrag, isDragged 
         </Button>
       </div>}
     </article>
-  );
-}
-
-function FilterControls({ people, epics, labels, filters, group, setFilters, setGroup, inSheet }: {
-  people: BoardPerson[]; epics: BoardEpic[]; labels: string[]; filters: BoardFilters; group: BoardGroup;
-  setFilters: (next: BoardFilters) => void; setGroup: (group: BoardGroup) => void; inSheet?: boolean;
-}) {
-  const count = boardFilterCount(filters);
-  const togglePerson = (id: string | null) => setFilters({ ...filters, assignees: filters.assignees.includes(id)
-    ? filters.assignees.filter((one) => one !== id) : [...filters.assignees, id] });
-  const peopleShown = inSheet ? people : people.slice(0, 6);
-  const quick = ([['flagged', 'Flagged'], ['recent', 'Updated this week'], ['hideDone', 'Hide done']] as const);
-  return (
-    <div className={inSheet ? 'flex flex-col gap-4' : 'flex min-w-0 flex-wrap items-center gap-2'}>
-      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Filter by assignee">
-        {peopleShown.map((person) => <Button type="button" key={person.id} variant="quiet" className={`${CONTROL} board-person px-1`}
-          aria-pressed={filters.assignees.includes(person.id)} aria-label={person.name} onClick={() => togglePerson(person.id)}>
-          <Avatar person={person} />{inSheet && <span>{person.name}</span>}
-        </Button>)}
-        {people.length > peopleShown.length && <Select aria-label="Assignees" className={CONTROL} values={filters.assignees.map((id) => id ?? '')}
-          noneLabel={`+${people.length - peopleShown.length} people`} options={[{ value: '', label: 'Unassigned' }, ...people.map((person) => ({ value: person.id, label: person.name }))]}
-          onValuesChange={(values) => setFilters({ ...filters, assignees: values.map((id) => id || null) })} />}
-        <Button type="button" variant="quiet" className={`${CONTROL} board-person px-1`} aria-label="Unassigned" aria-pressed={filters.assignees.includes(null)} onClick={() => togglePerson(null)}>
-          <Avatar />{inSheet && <span>Unassigned</span>}
-        </Button>
-      </div>
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Quick filters">
-        {quick.map(([key, label]) => <Button type="button" key={key} className={CONTROL} variant={filters[key] ? 'primary' : 'secondary'}
-          aria-pressed={filters[key]} onClick={() => setFilters({ ...filters, [key]: !filters[key] })}>{label}</Button>)}
-      </div>
-      <div className={`flex flex-wrap gap-2 ${inSheet ? '[&>*]:min-w-32 [&>*]:flex-1' : ''}`}>
-        <Select aria-label="Filter by epic" className={CONTROL} value={filters.epic ?? ''} options={[{ value: '', label: 'All epics' }, ...epics.map((one) => ({ value: one.id, label: one.title }))]}
-          onValueChange={(epic) => setFilters({ ...filters, epic: epic || null })} />
-        <Select aria-label="Filter by label" className={CONTROL} value={filters.label} options={[{ value: '', label: 'All labels' }, ...labels.map((label) => ({ value: label, label }))]}
-          onValueChange={(label) => setFilters({ ...filters, label })} />
-        <Select aria-label="Filter by priority" className={CONTROL} value={filters.priority} options={[{ value: '', label: 'All priorities' }, ...PRIORITY_OPTIONS]}
-          onValueChange={(priority) => setFilters({ ...filters, priority: priority as BoardPriority | '' })} />
-        <Select aria-label="Filter by type" className={CONTROL} value={filters.kind} options={[{ value: '', label: 'All types' }, ...KIND_OPTIONS]}
-          onValueChange={(kind) => setFilters({ ...filters, kind: kind as BoardKind | '' })} />
-        <Select aria-label="Group by" className={CONTROL} value={group} options={GROUP_OPTIONS} onValueChange={(value) => setGroup(value as BoardGroup)} />
-      </div>
-      {/* The sheet keeps the button, so a tap that empties the filters does not move the next control under the finger. */}
-      {(inSheet || count > 0 || filters.query) && <Button type="button" variant="quiet" className={CONTROL}
-        disabled={count === 0 && !filters.query} onClick={() => setFilters(EMPTY_FILTERS)}>Clear filters</Button>}
-    </div>
   );
 }
 
@@ -365,32 +314,6 @@ function IssueDetail({ issue, node, issues, close, edit, remove, move, error }: 
   </BoardDialog>;
 }
 
-function CreateIssue({ node, close, create, error }: { node: LiveBoardNode; close: () => void; create: (values: BoardIssueChange) => Promise<boolean>; error?: string }) {
-  const [values, setValues] = useState<BoardIssueChange>({ title: '', column: node.columns[0]?.id });
-  const [saving, setSaving] = useState(false);
-  const set = (change: BoardIssueChange) => setValues((held) => ({ ...held, ...change }));
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const title = values.title?.trim();
-    if (!title || !values.column || saving) return;
-    setSaving(true);
-    void create({ ...values, title }).then((ok) => { setSaving(false); if (ok) close(); });
-  };
-  return <BoardDialog title="Create issue" close={close} error={error}>
-    <form className="grid gap-4" onSubmit={submit}>
-      <Field label="Title"><Input aria-label="Title" className={`${INPUT_CONTROL} w-full`} maxLength={ISSUE_LIMITS.title.maxLength}
-        required value={values.title} onChange={(event) => set({ title: event.target.value })} /></Field>
-      <Field label="Description"><textarea aria-label="Description" className="board-textarea" rows={5}
-        maxLength={ISSUE_LIMITS.text.maxLength} value={values.text ?? ''} onChange={(event) => set({ text: event.target.value })} /></Field>
-      <div className="grid grid-cols-2 gap-3"><IssueFields values={values} columns={node.columns} people={node.people} epics={node.epics} set={set} /></div>
-      <div className="flex gap-2">
-        <Button type="submit" className={CONTROL} disabled={saving || !values.title?.trim()}>Create issue</Button>
-        <Button type="button" variant="quiet" className={CONTROL} onClick={close}>Cancel</Button>
-      </div>
-    </form>
-  </BoardDialog>;
-}
-
 function InlineCreate({ column, create }: { column: BoardColumn; create: (values: BoardIssueChange) => Promise<boolean> }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
@@ -561,45 +484,31 @@ function useBoardDrag(seq: number, move: (id: string, drop: BoardDrop) => void) 
   return { drag, start, stop, blockClick, blockRelease };
 }
 
-type BoardOverlay = { type: 'filters' | 'create' } | { type: 'move'; id: string } | null;
+type BoardOverlay = { type: 'move'; id: string } | null;
 
 export function LiveBoard({ node, seq, onSelect, onAction }: {
   node: LiveBoardNode; seq: number; onSelect?: (nodeId: string, itemIds: string[]) => void;
   onAction?: (action: BoardAction) => Promise<boolean> | boolean;
 }) {
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
-  const [group, setGroup] = useState<BoardGroup>('none');
   const [closedColumns, setClosedColumns] = useState<string[]>([]);
   const [closedLanes, setClosedLanes] = useState<string[]>([]);
   const [optimistic, setOptimistic] = useState<{ seq: number; issues: BoardIssue[]; action: BoardAction } | null>(null);
   const [failure, setFailure] = useState('');
   const [overlay, setOverlay] = useState<BoardOverlay>(null);
   const [selection, setSelection] = useState<{ seq: number; id?: string }>();
-  const bandSlot = useContext(BandSlotContext);
   const canEdit = node.is_editable && Boolean(onAction);
   const issues = optimistic?.seq === seq ? optimistic.issues : node.issues;
   const issueIds = new Set(issues.map((issue) => issue.id));
-  const now = Date.now();
-  const today = localDay(now);
-  const visible = filterBoard(issues, node.columns, filters, now);
-  const lanes = groupBoard(visible, group, node.people, node.epics);
-  const labels = [...new Set(issues.flatMap((issue) => issue.labels ?? []))].sort((a, b) => a.localeCompare(b));
+  const today = localDay(Date.now());
+  // The owner chooses which issues show and how they group; the board only lays them out.
+  const group = node.group_by;
+  const lanes = groupBoard(issues, group, node.people, node.epics);
   const peopleById = new Map(node.people.map((person) => [person.id, person]));
   const epicsById = new Map(node.epics.map((epic) => [epic.id, epic]));
   const selectedId = selection?.seq === seq ? selection.id : node.selected_ids[0];
   const selected = node.is_selectable ? issues.find((issue) => issue.id === selectedId) : undefined;
   const toMove = canEdit && overlay?.type === 'move' ? issues.find((issue) => issue.id === overlay.id) : undefined;
-  const activeFilters = boardFilterCount(filters);
   const closeOverlay = () => setOverlay(null);
-  const openCreate = () => setOverlay({ type: 'create' });
-  const canCreate = canEdit && node.columns.length > 0;
-  const search = (className: string) => <Input type="search" aria-label="Search issues" placeholder="Search issues" className={className}
-    icon={<Search size={16} aria-hidden="true" />} value={filters.query} onChange={(event) => setFilters({ ...filters, query: event.target.value })} />;
-  // In an app the search and the verb stand in the app's band, which already names the board.
-  const band = bandSlot && createPortal(<>
-    <span className="flex w-40 min-w-24 shrink sm:w-56">{search('')}</span>
-    {canCreate && <BandButton label="Create issue" onClick={openCreate}><Plus className="size-4" aria-hidden="true" /></BandButton>}
-  </>, bandSlot);
   const choose = (id?: string) => {
     setFailure('');
     setSelection({ seq, id });
@@ -631,35 +540,20 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
   });
   const { drag, start, stop, blockClick, blockRelease } = useBoardDrag(seq, (id, drop) => move(id, boardPlace(issues, id, drop.column, drop.near)));
   const toggle = (held: string[], id: string) => held.includes(id) ? held.filter((one) => one !== id) : [...held, id];
-  const filterProps = { people: node.people, epics: node.epics, labels, filters, group, setFilters, setGroup };
   const totals = new Map<string, number>();
   for (const issue of issues) totals.set(issue.column, (totals.get(issue.column) ?? 0) + 1);
-  const visibleTotals = new Map<string, number>();
-  for (const issue of visible) visibleTotals.set(issue.column, (visibleTotals.get(issue.column) ?? 0) + 1);
 
   return <section className="board min-w-0" aria-label={node.label ?? 'Board'} data-dragging={drag ? true : undefined}
     onPointerDown={start} onPointerUpCapture={blockRelease} onClickCapture={(event) => {
       if (event.detail > 0 && blockClick()) { event.preventDefault(); event.stopPropagation(); }
     }}>
-    <header className="border-b border-edge pb-3">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {!bandSlot && search(`${INPUT_CONTROL} min-w-28 flex-1 sm:max-w-64`)}
-        <div className="sm:hidden"><Button type="button" variant="secondary" className={ICON_CONTROL} onClick={() => setOverlay({ type: 'filters' })}>
-          <SlidersHorizontal size={16} aria-hidden="true" /> Filters{activeFilters > 0 ? ` (${activeFilters})` : ''}
-        </Button></div>
-        <div className="hidden min-w-0 flex-wrap sm:flex"><FilterControls {...filterProps} /></div>
-        {!bandSlot && canCreate && <Button type="button" className={`${ICON_CONTROL} ml-auto`} onClick={openCreate}><Plus size={16} aria-hidden="true" /> Create</Button>}
-      </div>
-      {band}
-    </header>
-    {failure && !selected && overlay?.type !== 'create' && <BoardError text={failure} />}
+    {failure && !selected && <BoardError text={failure} />}
     {node.columns.length === 0 ? <p className="py-6 text-ui text-dialog-hint">No columns yet</p> :
       <div className="board-scroll" data-board-scroll tabIndex={0} role="region" aria-label="Board columns">
         <div className="board-grid" style={{ '--board-columns': node.columns.map((column) => closedColumns.includes(column.id) ? '2.75rem' : 'minmax(var(--board-column-width), 1fr)').join(' ') } as CSSProperties}>
           {node.columns.map((column) => {
             const closed = closedColumns.includes(column.id);
             const total = totals.get(column.id) ?? 0;
-            const count = visibleTotals.get(column.id) ?? 0;
             const over = column.limit !== undefined && total > column.limit;
             const Collapse = closed ? ChevronRight : ChevronLeft;
             return <div className="board-column-head" key={column.id} data-collapsed={closed || undefined} data-over-limit={over || undefined}>
@@ -667,7 +561,7 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
                 <span className={`size-2 shrink-0 ${TONE_MARK[column.tone ?? (column.is_done ? 'ok' : 'idle')]}`} aria-hidden="true" />
                 <h4 className="min-w-0 truncate text-ui font-semibold uppercase tracking-wide" title={column.title}>{column.title}</h4>
                 {column.is_done && <span role="img" aria-label="Done column" className="text-ok-ink"><Check size={15} aria-hidden="true" /></span>}
-                <span className="shrink-0 border border-edge px-1 font-mono text-meta tabular-nums text-dialog-hint" title={`${count} of ${total} issues shown`}>{count}</span>
+                <span className="shrink-0 border border-edge px-1 font-mono text-meta tabular-nums text-dialog-hint" title={`${total} ${total === 1 ? 'issue' : 'issues'}`}>{total}</span>
               </div>
               {column.limit !== undefined && <span className={`shrink-0 whitespace-nowrap font-mono text-meta ${over ? 'font-bold text-err-ink' : 'text-dialog-hint'}`}
                 title={over ? 'Work in progress is over the limit' : 'Work in progress'} aria-label={`${total} of ${column.limit} work in progress${over ? ', over limit' : ''}`}>{total} / {column.limit}</span>}
@@ -677,7 +571,7 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
               </Button>
             </div>;
           })}
-          {lanes.length === 0 && <p className="board-lane-head p-3 text-ui text-dialog-hint">No issues match the filters</p>}
+          {lanes.length === 0 && <p className="board-lane-head p-3 text-ui text-dialog-hint">No issues</p>}
           {lanes.map((lane) => {
             const laneKey = JSON.stringify([group, lane.id]);
             const laneClosed = group !== 'none' && closedLanes.includes(laneKey);
@@ -716,8 +610,6 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
           </div>)}
         </div>
       </div>}
-    {overlay?.type === 'filters' && <BoardDialog title="Filters" sheet close={closeOverlay}><FilterControls {...filterProps} inSheet /></BoardDialog>}
-    {overlay?.type === 'create' && canEdit && <CreateIssue node={node} close={closeOverlay} create={edit} error={failure} />}
     {toMove && <BoardDialog title={`Move ${toMove.key ?? 'issue'}`} sheet close={closeOverlay}>
       <p className="mb-3 text-body text-dialog-foreground">{toMove.title}</p>
       <MovePicker issue={toMove} issues={issues} columns={node.columns} onMove={(place) => move(toMove.id, place)} close={closeOverlay} />

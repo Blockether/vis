@@ -1,12 +1,12 @@
 import { expect, it } from 'vitest';
-import { boardPlace, EMPTY_FILTERS, filterBoard, groupBoard, moveBoardIssue, orderBoard, WEEK_MS, type BoardIssue } from './board';
+import { boardPlace, groupBoard, moveBoardIssue, orderBoard, type BoardIssue } from './board';
 import { applyLivePatch, liveViewFromWire } from './live-view';
 
 const now = Date.UTC(2026, 5, 1);
 const columns = [{ id: 'open', title: 'Open' }, { id: 'done', title: 'Done', is_done: true }];
 const issues: BoardIssue[] = [
-  { id: 'a', title: 'Read the guide', column: 'open', rank: 1, key: 'APP-8', labels: ['Docs'], priority: 'low', assignee: 'sam', epic: 'guide', is_flagged: true, updated_at: now - WEEK_MS },
-  { id: 'b', title: 'Test the shell', column: 'open', rank: 0, kind: 'bug', priority: 'high', updated_at: now - WEEK_MS - 1 },
+  { id: 'a', title: 'Read the guide', column: 'open', rank: 1, key: 'APP-8', labels: ['Docs'], priority: 'low', assignee: 'sam', epic: 'guide', is_flagged: true, updated_at: now - 2 },
+  { id: 'b', title: 'Test the shell', column: 'open', rank: 0, kind: 'bug', priority: 'high', updated_at: now - 1 },
   { id: 'c', title: 'Check the list', column: 'open', rank: 1, priority: 'low', assignee: 'sam' },
   { id: 'd', title: 'Proofread the guide', column: 'done', rank: 1, labels: ['Docs'], is_flagged: true, updated_at: now },
 ];
@@ -19,14 +19,6 @@ it('preserves array order for tied ranks and inserts at the full column index', 
   const moved = moveBoardIssue(issues, 'd', place);
   expect(ids(orderBoard(moved.filter((issue) => issue.column === 'open')))).toEqual(['b', 'a', 'd', 'c']);
   expect(ids(orderBoard(moveBoardIssue(moved, 'b', boardPlace(moved, 'b', 'open', { id: 'c', after: true }))))).toEqual(['a', 'd', 'c', 'b']);
-});
-
-it('combines filters and searches title, key and labels without case', () => {
-  expect(ids(filterBoard(issues, columns, { ...EMPTY_FILTERS, query: 'APP-8' }, now))).toEqual(['a']);
-  expect(ids(filterBoard(issues, columns, { ...EMPTY_FILTERS, query: 'guide' }, now))).toEqual(['a', 'd']);
-  expect(ids(filterBoard(issues, columns, { ...EMPTY_FILTERS, query: 'docs', flagged: true, recent: true, hideDone: true, assignees: ['sam'], epic: 'guide', label: 'Docs', priority: 'low' }, now))).toEqual(['a']);
-  expect(ids(filterBoard(issues, columns, { ...EMPTY_FILTERS, recent: true, assignees: [null] }, now))).toEqual(['d']);
-  expect(ids(filterBoard(issues, columns, { ...EMPTY_FILTERS, kind: 'bug' }, now))).toEqual(['b']);
 });
 
 it('groups the shown issues by person, epic or priority', () => {
@@ -45,10 +37,12 @@ it('replaces issues by id and clears a selection when the issue goes away', () =
   const changed = applyLivePatch(view, { patch: { seq: 1, ops: [
     { op: 'append', node_id: 'b', issues: [{ ...issues[0], title: 'Read the new guide' }] },
     { op: 'remove', node_id: 'b', item_ids: ['b'] },
-    { op: 'set', node_id: 'b', columns: [{ ...columns[0], title: 'Next' }, columns[1]] },
+    { op: 'set', node_id: 'b', columns: [{ ...columns[0], title: 'Next' }, columns[1]], group_by: 'epic' },
   ] } });
   const node = changed.nodes[0];
   if (node?.type !== 'board') throw new Error('Expected a board');
+  expect(view.nodes[0]).toMatchObject({ group_by: 'none' });
+  expect(node).toMatchObject({ group_by: 'epic' });
   expect(node.columns[0].title).toBe('Next');
   expect(node.issues.map(({ id, title }) => [id, title])).toEqual([['a', 'Read the new guide'], ['c', 'Check the list'], ['d', 'Proofread the guide']]);
   expect(node.selected_ids).toEqual(['a']);

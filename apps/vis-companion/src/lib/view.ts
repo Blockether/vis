@@ -12,7 +12,7 @@ export const VIEW_EVENT_TYPES = [VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, VIEW_CLOSE_E
 
 export type ViewKind = (typeof VIEW_KINDS)[number];
 
-export type ViewGroupDirection = 'column' | 'row' | 'grid' | 'wrap';
+export type ViewGroupDirection = 'column' | 'row' | 'grid' | 'wrap' | 'toolbar';
 /** How a group lays out its children (`group_direction` in view.json). CLOSED. */
 export const VIEW_GROUP_DIRECTIONS = viewSchema.$defs.group_direction
   .enum as readonly ViewGroupDirection[];
@@ -43,7 +43,7 @@ export function appIconName(raw: unknown): AppIconName {
     : (viewSchema.$defs.app_icon.default as AppIconName);
 }
 
-export type ViewCommandIcon = 'refresh' | 'more';
+export type ViewCommandIcon = 'refresh' | 'more' | 'plus' | 'search' | 'filter';
 /** The pictures of diff toolbar commands (`command_icon` in view.json). CLOSED. */
 export const VIEW_COMMAND_ICONS = viewSchema.$defs.command_icon.enum as readonly ViewCommandIcon[];
 

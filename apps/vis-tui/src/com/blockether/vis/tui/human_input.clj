@@ -1370,6 +1370,21 @@
 
     nil))
 
+(defn toolbar-field-row
+  "One editable row of a toolbar field, with its label as the fallback hint."
+  [{:keys [type label value] :as field} text-w]
+  (if (contains? hi-spec/choice-types type)
+    (let [chosen (if (= :multiselect type) (set value) #{value})
+          labels (keep (fn [{:keys [value label]}]
+                         (when (contains? chosen value) (or label (str value))))
+                       (field-options field))]
+      {:kind :input :text (str/join ", " labels) :cursor 0 :is-active-field true
+       :placeholder (or (:placeholder field) label)})
+    (let [row (first (remove #(#{:label :blank :description} (:kind %))
+                             (view-field-rows (dissoc field :description) text-w)))]
+      (cond-> row
+        (= :input (:kind row)) (update :placeholder #(or % label))))))
+
 (defn paint-field-row!
   "Paint one row of [[view-field-rows]] with the form's own field painters."
   [g left row inner-w entry]

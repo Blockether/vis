@@ -1857,7 +1857,6 @@ ol.markdown-list > li::before {
   place-items: center;
   font: 600 0.625rem / 1 var(--font-mono);
 }
-.board-person[aria-pressed='true'] { border-color: var(--color-accent); }
 .board-progress {
   height: 0.25rem;
   appearance: none;
@@ -1885,7 +1884,6 @@ ol.markdown-list > li::before {
   .board-scroll { max-height: 72dvh; overflow-y: auto; scroll-snap-type: x proximity; }
   .board[data-dragging] .board-scroll { scroll-snap-type: none; }
   .board-column-head { position: sticky; top: 0; scroll-snap-align: start; }
-  .board-person { min-width: 2.75rem; }
   .board .board-input > input, .board-dialog .board-input > input { min-height: 2.75rem; font-size: 1rem; }
 }
 

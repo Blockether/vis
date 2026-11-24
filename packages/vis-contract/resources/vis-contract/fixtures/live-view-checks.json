@@ -922,6 +922,96 @@
       }
     },
     {
+      "name": "a toolbar, a field icon, a dialog and a board row field are valid",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "tools",
+            "type": "group",
+            "direction": "toolbar",
+            "children": [
+              {
+                "id": "query",
+                "type": "plaintext",
+                "name": "query",
+                "label": "Search issues",
+                "placeholder": "Search issues",
+                "icon": "search"
+              },
+              {
+                "id": "create",
+                "type": "button",
+                "label": "Create issue",
+                "icon": "plus"
+              }
+            ]
+          },
+          {
+            "id": "issues",
+            "type": "board",
+            "group_by": "assignee",
+            "columns": [],
+            "issues": []
+          },
+          {
+            "id": "new-issue",
+            "type": "group",
+            "label": "New issue",
+            "is_dialog": true,
+            "is_open": false,
+            "children": [
+              {
+                "id": "title",
+                "type": "plaintext",
+                "name": "title",
+                "label": "Title"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
+    },
+    {
+      "name": "is_open on a group that is not a dialog is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "g",
+            "type": "group",
+            "is_open": true,
+            "children": [
+              {
+                "id": "c",
+                "type": "paragraph",
+                "text": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "g"
+        ],
+        "text": [
+          "node g /is_open - only a dialog group takes is_open (dialog)"
+        ]
+      }
+    },
+    {
       "name": "a declaration does not write clicks",
       "view": {
         "title": "Checks",

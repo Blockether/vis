@@ -41,45 +41,11 @@ export type BoardAction =
   | { action: 'edit'; node_id: string; item_id?: string; values: BoardIssueChange; is_removed?: boolean };
 
 export type BoardGroup = 'none' | 'assignee' | 'epic' | 'priority';
-export interface BoardFilters {
-  query: string;
-  assignees: (string | null)[];
-  flagged: boolean;
-  recent: boolean;
-  hideDone: boolean;
-  epic: string | null;
-  label: string;
-  priority: BoardPriority | '';
-  kind: BoardKind | '';
-}
-
-export const EMPTY_FILTERS: BoardFilters = {
-  query: '', assignees: [], flagged: false, recent: false, hideDone: false,
-  epic: null, label: '', priority: '', kind: '',
-};
-
-export const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
-export function boardFilterCount(filters: BoardFilters): number {
-  return filters.assignees.length + Number(filters.flagged) + Number(filters.recent) +
-    Number(filters.hideDone) + Number(filters.epic !== null) + Number(Boolean(filters.label)) +
-    Number(Boolean(filters.priority)) + Number(Boolean(filters.kind));
-}
-
-export function filterBoard(issues: readonly BoardIssue[], columns: readonly BoardColumn[], filters: BoardFilters, now: number) {
-  const query = filters.query.trim().toLocaleLowerCase();
-  const done = new Set(columns.filter((column) => column.is_done).map((column) => column.id));
-  return issues.filter((issue) =>
-    (!query || [issue.title, issue.key, ...issue.labels ?? []].some((word) => word?.toLocaleLowerCase().includes(query))) &&
-    (!filters.assignees.length || filters.assignees.includes(issue.assignee ?? null)) &&
-    (!filters.flagged || issue.is_flagged) &&
-    (!filters.recent || (issue.updated_at !== undefined && issue.updated_at >= now - WEEK_MS && issue.updated_at <= now)) &&
-    (!filters.hideDone || !done.has(issue.column)) &&
-    (filters.epic === null || issue.epic === filters.epic) &&
-    (!filters.label || issue.labels?.includes(filters.label)) &&
-    (!filters.priority || (issue.priority ?? DEFAULT_PRIORITY) === filters.priority) &&
-    (!filters.kind || (issue.kind ?? DEFAULT_KIND) === filters.kind),
-  );
+/** How the board puts the shown issues in lanes (`board_group` in view.json). CLOSED. */
+export const BOARD_GROUPS = defs.board_group.enum as readonly BoardGroup[];
+/** Read a grouping; an absent or unknown one is the schema default. */
+export function boardGroup(raw: unknown): BoardGroup {
+  return (BOARD_GROUPS as readonly unknown[]).includes(raw) ? (raw as BoardGroup) : (defs.board_group.default as BoardGroup);
 }
 
 export function orderBoard(issues: readonly BoardIssue[]): BoardIssue[] {

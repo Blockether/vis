@@ -1114,6 +1114,73 @@
                        {:id "off" :type :button :label "Off" :is-disabled true}
                        {:id "clear" :type :button :label "Clear" :action :activate}]}]})
 
+(def ^:private composed-app
+  {:id "composed" :title "Work" :seq 1 :placement :attachment
+   :nodes [{:id "content" :type :paragraph :text "App body"}
+           {:id "tools" :type :group :direction :toolbar
+            :children [{:id "search" :type :plaintext :label "Find an issue"
+                        :placeholder "Search issues" :icon :search}
+                       {:id "new" :type :button :label "Create" :icon :plus}]}
+           {:id "form" :type :group :direction :column :label "New issue"
+            :is-dialog true :is-open false
+            :children [{:id "name" :type :plaintext :label "Summary" :value "Next task"}
+                       {:id "save" :type :button :label "Save issue" :action :submit}]}]})
+
+(defn- screen-lines [frame]
+  (mapv #(apply str (map :ch %)) (:cells frame)))
+
+(defdescribe composed-toolbar
+  (it "puts the search and its action together above the body, then wraps on a narrow screen"
+      (let [st (surface/initial-state)
+            rows (screen-lines (app-frame composed-app st 100 30))
+            narrow (screen-lines (app-frame composed-app st 34 24))]
+        (expect (some #(re-find #"Search issues.*Create" %) rows))
+        (expect (> (count (take-while #(not (str/includes? % "App body")) rows))
+                   (count (take-while #(not (str/includes? % "Search issues")) rows))))
+        (expect (not-any? #(str/includes? % "Find an issue") rows))
+        (expect (some #(str/includes? % "Search issues") narrow))
+        (expect (some #(str/includes? % "Create") narrow))
+        (expect (not-any? #(re-find #"Search issues.*Create" %) narrow)))))
+
+(defdescribe composed-dialog
+  (it "shows the form only when it is open, above the app"
+      (let [st (surface/initial-state)
+            shut (screen-lines (app-frame composed-app st 100 30))
+            open (screen-lines (app-frame (assoc-in composed-app [:nodes 2 :is-open] true) st 100 30))]
+        (expect (not-any? #(re-find #"New issue|Summary|Save issue" %) shut))
+        (doseq [text ["New issue" "Summary" "Save issue"]]
+          (expect (some #(str/includes? % text) open)))))
+  (it "edits and submits the form, then sends its close action on Escape"
+      (let [v (assoc-in composed-app [:nodes 2 :is-open] true)
+            {:keys [calls press start]} (game-harness v)
+            save (press start (k KeyType/ArrowDown))]
+        (press start (k KeyType/Enter))
+        (press save (k KeyType/Enter))
+        (let [closed (press start (k KeyType/Escape))]
+          (expect (not (contains? closed ::dlg/done))))
+        (expect (= [[:edit "name"] [:send :submit "save"]
+                    [:activate {:action :activate :node-id "form"}]]
+                   (mapv (fn [[kind action node-id :as call]]
+                           (if (= :send kind) [kind (:action action) node-id] call)) @calls))))))
+
+(defdescribe grouped-board
+  (it "shows the columns across each lane and selects an issue in the second column"
+      (let [v (view-model/live-view<-wire
+                {:id "work" :title "Work" :placement "attachment"
+                 :nodes [{:id "board" :type "board" :group_by "assignee" :is_selectable true
+                          :columns [{:id "todo" :title "Todo"} {:id "done" :title "Done"}]
+                          :people [{:id "ada" :name "Ada"}]
+                          :issues [{:id "a" :column "todo" :title "Write a test" :assignee "ada"}
+                                   {:id "b" :column "done" :title "Read a test" :assignee "ada"}
+                                   {:id "c" :column "todo" :title "Review a test"}]}]})
+            {:keys [press start calls]} (game-harness v)
+            rows (screen-lines (app-frame v start 100 30))]
+        (expect (some #(re-find #"Todo.*Done" %) rows))
+        (expect (some #(re-find #"Write a test.*Read a test" %) rows))
+        (expect (some #(str/includes? % "Unassigned") rows))
+        (press (press start (k KeyType/ArrowDown)) (k KeyType/Enter))
+        (expect (= [[:select {:action :select :node-id "board" :item-ids ["b"]}]] @calls)))))
+
 (defdescribe side-by-side-controls
              (it "stops on each control of a row and skips a disabled one"
                  (let [{:keys [press start]}

@@ -186,3 +186,38 @@ def test_store_change_refreshes_another_runtime(saved, monkeypatch):
         assert rec.node("issues")["issues"] == [made]
     finally:
         board.stop()
+
+
+def test_app_filters_the_board_with_its_own_inputs(saved, app):
+    board, rec = app
+    rec.edit("issues", {"title": "Write tests", "column": "todo", "labels": ["qa"]})
+    rec.edit(
+        "issues",
+        {"title": "Ship it", "column": "todo", "priority": "high", "is_flagged": True},
+    )
+    titles = lambda: [one["title"] for one in rec.node("issues")["issues"]]  # noqa: E731
+    rec.change("query", "ship")
+    assert titles() == ["Ship it"]
+    rec.change("query", None)
+    rec.change("label", "qa")
+    assert titles() == ["Write tests"]
+    rec.change("label", "any")
+    rec.change("flagged", True)
+    assert titles() == ["Ship it"]
+    rec.change("group", "priority")
+    assert rec.node("issues")["group_by"] == "priority"
+    assert {one["title"] for one in saved.read()["issues"]} == {"Write tests", "Ship it"}
+
+
+def test_app_creates_an_issue_in_its_dialog(saved, app):
+    board, rec = app
+    assert rec.node("new-issue")["is_open"] is False
+    rec.activate("create")
+    assert rec.node("new-issue")["is_open"] is True
+    assert rec.submit("new-submit", {"new_title": "Plan release"})["is_accepted"]
+    assert rec.node("new-issue")["is_open"] is False
+    [issue] = saved.read()["issues"]
+    assert (issue["title"], issue["column"], issue.get("assignee")) == ("Plan release", "todo", None)
+    rec.activate("create")
+    rec.activate("new-issue")
+    assert rec.node("new-issue")["is_open"] is False

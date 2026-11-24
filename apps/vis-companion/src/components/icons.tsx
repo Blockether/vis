@@ -94,6 +94,7 @@ import {
   Pause,
   Pencil,
   Play,
+  ListFilter,
   Plus,
   RefreshCw,
   Search,
@@ -110,7 +111,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { appIconName, type AppIconName } from '../lib/view';
+import { appIconName, type AppIconName, type ViewCommandIcon } from '../lib/view';
 
 /** One class list from parts, so an absent one leaves no hole behind. */
 const classes = (...parts: (string | false | undefined)[]) =>
@@ -501,6 +502,20 @@ export function WrapIcon({ className }: { className?: string }) {
 export function MoreIcon({ className }: { className?: string }) {
   return <Mark icon={Ellipsis} className={className} />;
 }
+
+/** Narrow what shows. */
+export function FilterIcon({ className }: { className?: string }) {
+  return <Mark icon={ListFilter} className={className} />;
+}
+
+/** The picture of each `command_icon` of view.json. An app names one; it draws no icon. */
+export const COMMAND_ICONS = {
+  refresh: RefreshIcon,
+  more: MoreIcon,
+  plus: PlusIcon,
+  search: SearchIcon,
+  filter: FilterIcon,
+} as const satisfies Record<ViewCommandIcon, unknown>;
 
 /** Every file folds to its header. */
 export function CollapseAllIcon({ className }: { className?: string }) {

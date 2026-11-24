@@ -1447,8 +1447,11 @@
             [(line "/line_tones" "line_tones")]))
 
         "group"
-        (when (and (contains? node "max_columns") (not= "grid" (get node "direction")))
-          [(line "/max_columns" "grid_columns")])
+        (concat
+          (when (and (contains? node "max_columns") (not= "grid" (get node "direction")))
+            [(line "/max_columns" "grid_columns")])
+          (when (and (contains? node "is_open") (not (true? (get node "is_dialog"))))
+            [(line "/is_open" "dialog_open")]))
 
         "diff"
         (concat

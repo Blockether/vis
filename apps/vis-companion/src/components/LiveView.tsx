@@ -3,6 +3,7 @@ import {
   memo,
   startTransition,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useMemo,
@@ -13,6 +14,7 @@ import {
   type HTMLAttributes,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { useSessionActive } from '../lib/session-active';
 import {
   BandLabel,
@@ -20,6 +22,7 @@ import {
   Chip,
   ChoiceRow,
   CopyChip,
+  BandSlotContext,
   DialogFrame,
   Disclosure,
   ExecutionAction,
@@ -52,6 +55,7 @@ import {
   CircleDotIcon,
   CircleXIcon,
 } from './icons';
+import { COMMAND_ICONS } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent } from '../lib/types';
@@ -1935,12 +1939,22 @@ function liveSubmitValues(
 }
 
 /** A form input inside a live view: the same control a question uses. */
-function LiveInput({ node, presentation }: { node: LiveInputNode; presentation: NodePresentation }) {
+function LiveInput({
+  node,
+  presentation,
+  isInline = false,
+}: {
+  node: LiveInputNode;
+  presentation: NodePresentation;
+  /** The input stands in a toolbar. */
+  isInline?: boolean;
+}) {
   const { onChange, onCommit } = presentation;
   return (
     <div className="min-w-0" onBlur={() => onCommit?.(node.id)}>
       <HumanInputFieldRow
         isCompact
+        isInline={isInline}
         field={node.field}
         values={{ [node.field.id]: liveInputValue(node, presentation.values) }}
         errors={presentation.errors?.[node.id] ? { [node.field.id]: presentation.errors[node.id] } : {}}
@@ -2048,6 +2062,7 @@ function ActionButton({
   shortcut,
   isTab = false,
   isSelected,
+  isIconOnly = false,
 }: {
   node: Extract<LiveNode, { type: 'button' }>;
   onActivate?: NodePresentation['onActivate'];
@@ -2057,8 +2072,12 @@ function ActionButton({
   isTab?: boolean;
   /** The choice that the strip shows, when it is not yet the choice of the owner. */
   isSelected?: boolean;
+  /** The button stands in a toolbar: its icon, when it has one, replaces the words. */
+  isIconOnly?: boolean;
 }) {
   const [pending, setPending] = useState(false);
+  const Icon = node.icon ? COMMAND_ICONS[node.icon] : undefined;
+  const isBare = Boolean(Icon) && isIconOnly;
   const activate = async () => {
     if (!onActivate || pending) return;
     setPending(true);
@@ -2097,8 +2116,10 @@ function ActionButton({
       disabled={isSettled || node.is_disabled || pending || !onActivate}
       aria-busy={pending}
       onClick={activate}
+      {...(isBare ? { 'aria-label': node.label, title: node.label } : {})}
     >
-      {node.label}
+      {Icon && <Icon className="size-4" />}
+      {!isBare && node.label}
       <NodeKey shortcut={shortcut} />
     </Button>
   );
@@ -2157,6 +2178,49 @@ function ChoiceStrip({ node, presentation }: { node: LiveGroupNode; presentation
   );
 }
 
+/**
+ * A dialog group: it shows over the view while its owner holds it open. A close asks
+ * the owner with `activate` on the group; the host closes it at once.
+ */
+function ViewDialog({
+  node,
+  load,
+  onSelect,
+  presentation,
+}: {
+  node: LiveGroupNode;
+  load?: (nodeId: string, from: number, limit: number, query?: string) => Promise<LiveLogPage>;
+  onSelect?: (nodeId: string, itemIds: string[]) => void;
+  presentation: NodePresentation;
+}) {
+  if (!node.is_open || presentation.isSettled) return null;
+  const close = () => void presentation.onActivate?.(node.id);
+  return (
+    <Modal size="fit" onDismiss={close}>
+      {/* Escape closes the dialog and not the app around it. A control that uses the key stops it first. */}
+      <div
+        className="contents"
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape' || event.defaultPrevented) return;
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+        }}
+      >
+        <DialogFrame title={node.label ?? node.id} onClose={close}>
+          <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
+            <ViewLayout direction={node.direction === 'toolbar' ? 'column' : node.direction} maxColumns={node.max_columns}>
+              {node.children.map((child) => (
+                <NodeCell key={child.id} node={child} load={load} onSelect={onSelect} presentation={presentation} />
+              ))}
+            </ViewLayout>
+          </div>
+        </DialogFrame>
+      </div>
+    </Modal>
+  );
+}
+
 function NodeCell({
   node,
   load,
@@ -2164,6 +2228,7 @@ function NodeCell({
   presentation,
   statusAction,
   inWrap = false,
+  inToolbar = false,
 }: {
   node: LiveNode;
   load?: (nodeId: string, from: number, limit: number, query?: string) => Promise<LiveLogPage>;
@@ -2173,8 +2238,14 @@ function NodeCell({
   statusAction?: ReactNode;
   /** The node is a direct child of a `wrap` group: it stands on a line with its siblings. */
   inWrap?: boolean;
+  /** The node is a direct child of a `toolbar` group. */
+  inToolbar?: boolean;
 }) {
   const contentId = useId();
+  if (node.type === 'group' && node.is_dialog) {
+    return <ViewDialog node={node} load={load} onSelect={onSelect} presentation={presentation} />;
+  }
+  const isToolbar = node.type === 'group' && node.direction === 'toolbar';
   const isDisclosure = node.type === 'log' || (node.type === 'group' && node.is_collapsible);
   const isOpen = Object.hasOwn(presentation.expanded, node.id)
     ? presentation.expanded[node.id]
@@ -2185,7 +2256,7 @@ function NodeCell({
   return (
     <div className="min-w-0 space-y-2">
       {isLiveInputNode(node) ? (
-        <LiveInput node={node} presentation={presentation} />
+        <LiveInput node={node} presentation={presentation} isInline={inToolbar} />
       ) : isDisclosure ? (
         // The name starts on the column of every other section name, and the chevron
         // follows it: a chevron in front pushed `Output` 20px in from `Services`.
@@ -2214,6 +2285,8 @@ function NodeCell({
         node.label &&
         node.type !== 'button' &&
         node.type !== 'card' &&
+        // A toolbar is named for a screen reader only.
+        !isToolbar &&
         // These nodes show their names in their own toolbars.
         node.type !== 'diff' && node.type !== 'board' && <NodeLabel>{node.label}</NodeLabel>
       )}
@@ -2229,7 +2302,11 @@ function NodeCell({
             <ChoiceStrip node={node} presentation={presentation} />
           )}
           {node.type === 'group' && !isChoiceStrip(node) && (
-            <ViewLayout direction={node.direction} maxColumns={node.max_columns}>
+            <ViewLayout
+              direction={node.direction}
+              maxColumns={node.max_columns}
+              {...(isToolbar ? { role: 'toolbar', 'aria-label': node.label ?? node.id } : {})}
+            >
               {node.children.map((child) => (
                 <NodeCell
                   key={child.id}
@@ -2237,7 +2314,8 @@ function NodeCell({
                   load={load}
                   onSelect={onSelect}
                   presentation={presentation}
-                  inWrap={node.direction === 'wrap'}
+                  inWrap={node.direction === 'wrap' || isToolbar}
+                  inToolbar={isToolbar}
                 />
               ))}
             </ViewLayout>
@@ -2296,6 +2374,7 @@ function NodeCell({
               isSettled={presentation.isSettled}
               onActivate={node.action === 'submit' ? presentation.onSubmit : presentation.onActivate}
               shortcut={presentation.keys?.get(node.id)}
+              isIconOnly={inToolbar}
             />
           )}
           {node.type === 'card' && (
@@ -2465,6 +2544,11 @@ export function LiveViewPanel({
   // was stopped and not merely that it was. `null` is "not armed" — an empty
   // string is an armed stop nobody has typed into yet.
   const phase = `${view.id}:${isSettled}`;
+  // A top-level toolbar of an app stands in the app band, when the frame has one.
+  const band = useContext(BandSlotContext);
+  const bandToolbar = view.nodes.find(
+    (node) => node.type === 'group' && node.direction === 'toolbar' && !node.is_dialog,
+  )?.id;
   const [disclosures, setDisclosures] = useState<{
     phase: string;
     values: Record<string, boolean>;
@@ -2747,6 +2831,15 @@ export function LiveViewPanel({
               const inHeader = node.type === 'status' && node.id === headlineId;
               const detail = inHeader ? node.detail : undefined;
               if (inHeader && !detail) return null;
+              if (band && node.id === bandToolbar) {
+                return createPortal(
+                  <span key={node.id} className="flex min-w-0 shrink items-center px-2">
+                    <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
+                  </span>,
+                  band,
+                  node.id,
+                );
+              }
               return (
                 <li
                   key={node.id}

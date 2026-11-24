@@ -106,6 +106,10 @@
         "only a grid group takes max_columns",
         "grid"
       ],
+      "dialog_open": [
+        "only a dialog group takes is_open",
+        "dialog"
+      ],
       "toolbar_menu": [
         "a toolbar menu holds only buttons and groups of buttons",
         "toolbar"

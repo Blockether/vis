@@ -930,3 +930,49 @@ describe('a strip of tabs', () => {
     expect(held()).toEqual(['one']);
   });
 });
+
+// An app builds its own chrome from view parts: a toolbar names its fields for a
+// screen reader, and a dialog shows while its owner holds it open.
+describe('a toolbar and a dialog of an app', () => {
+  const view = (isOpen: boolean): LiveView => {
+    const parsed = liveViewFromWire({
+      ...fixture,
+      nodes: [
+        {
+          id: 'tools',
+          type: 'group',
+          direction: 'toolbar',
+          label: 'Tools',
+          children: [
+            { id: 'query', type: 'plaintext', label: 'Search issues', icon: 'search' },
+            { id: 'create', type: 'button', label: 'Create issue', icon: 'plus' },
+          ],
+        },
+        {
+          id: 'new-issue',
+          type: 'group',
+          label: 'New issue',
+          is_dialog: true,
+          is_open: isOpen,
+          children: [{ id: 'title', type: 'plaintext', label: 'Title' }],
+        },
+      ],
+    });
+    if (!parsed) throw new Error('the view must be paintable');
+    return parsed;
+  };
+
+  it('names the toolbar fields and closes an open dialog through its owner', () => {
+    const onActivate = vi.fn(async () => {});
+    const { rerender } = render(<LiveViewPanel view={view(false)} onActivate={onActivate} />);
+    const tools = screen.getByRole('toolbar', { name: 'Tools' });
+    expect(tools.querySelector('input')?.getAttribute('placeholder')).toBe('Search issues');
+    expect(screen.getByRole('textbox', { name: 'Search issues' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create issue' }).textContent).not.toContain('Create issue');
+    expect(screen.queryByRole('textbox', { name: 'Title' })).toBeNull();
+    rerender(<LiveViewPanel view={view(true)} onActivate={onActivate} />);
+    expect(screen.getByRole('textbox', { name: 'Title' })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Title' }), { key: 'Escape' });
+    expect(onActivate).toHaveBeenCalledWith('new-issue');
+  });
+});

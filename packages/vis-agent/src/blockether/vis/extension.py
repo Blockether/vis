@@ -6223,6 +6223,14 @@ class Canvas(_KeyedNode):
         return list(self._view._node_state(self.node_id).get("selected_ids") or [])
 
 
+class Dialog(_Node):
+    """A dialog group. It shows its nodes over the view while it is open."""
+
+    def set(self, *, is_open=None, label=None):
+        """Open or close the dialog, or change its title."""
+        return self._op("set", is_open=is_open, label=label)
+
+
 class Board(_KeyedNode):
     """Columns of issues that people drag from column to column.
 
@@ -6240,8 +6248,9 @@ class Board(_KeyedNode):
         is_editable=None,
         is_selectable=None,
         label=None,
+        group_by=None,
     ):
-        """Change the columns, people, epics or controls of the board."""
+        """Change the columns, people, epics, rows or controls of the board."""
         return self._op(
             "set",
             columns=None if columns is None else list(columns),
@@ -6250,6 +6259,7 @@ class Board(_KeyedNode):
             is_editable=is_editable,
             is_selectable=is_selectable,
             label=label,
+            group_by=group_by,
         )
 
     def put(self, *issues):
@@ -6393,6 +6403,7 @@ _LIVE_NODES = {
     "scene": Scene,
     "canvas": Canvas,
     "board": Board,
+    "group": Dialog,
 }
 # The typed handle of each node type that is not an input. Each input type of the
 # view schema has an `Input` handle. A test compares this table with the schema.
@@ -6578,8 +6589,13 @@ class LiveView:
                 continue
             self._parents[str(node_id)] = parent
             children = node.get("children")
-            # The toolbar of a diff is in `children` too, and the diff takes ops.
-            if node.get("type") != "group" or not isinstance(children, list):
+            # The toolbar of a diff is in `children` too, and the diff takes ops. A
+            # dialog is a group that opens and closes, so it answers by its id.
+            if (
+                node.get("type") != "group"
+                or node.get("is_dialog")
+                or not isinstance(children, list)
+            ):
                 self._nodes[str(node_id)] = str(node.get("type") or "plaintext")
                 self._order.append(str(node_id))
             if isinstance(children, list):
@@ -8110,30 +8126,30 @@ class _LiveRecorder:
         with self._condition:
             node = self.node(node_id)
             is_card = node.get("type") == "card" and node.get("is_selectable")
+            is_dialog = bool(node.get("is_dialog") and node.get("is_open"))
             if (
                 self._result is not None
-                or (node.get("type") != "button" and not is_card)
+                or (node.get("type") != "button" and not is_card and not is_dialog)
                 or node.get("is_disabled")
             ):
                 raise AssertionError(
-                    "only an enabled button or a selectable card in an open view "
-                    "can be activated"
+                    "only an enabled button, a selectable card or an open dialog "
+                    "in an open view can be activated"
                 )
-            # The host counts the press before a callback sees it: the callback can
-            # repaint the view and remove this button.
+            # The host counts the press, or closes the dialog, before a callback sees
+            # it: the callback can repaint the view and remove this node.
+            change = (
+                {"is_open": False}
+                if is_dialog
+                else {"clicks": node.get("clicks", 0) + 1}
+            )
             answer = json.loads(
                 self.host_live(
                     json.dumps(
                         {
                             "op": "patch",
                             "patch": {
-                                "ops": [
-                                    {
-                                        "op": "set",
-                                        "node_id": node_id,
-                                        "clicks": node.get("clicks", 0) + 1,
-                                    }
-                                ]
+                                "ops": [{"op": "set", "node_id": node_id, **change}]
                             },
                         }
                     )
@@ -8641,6 +8657,36 @@ def _ui_disclosure(node_id, label, *nodes, default_expanded=False):
             "children": _group_fields("disclosure", nodes),
             "is_collapsible": True,
             "default_expanded": default_expanded,
+        },
+    )
+
+
+def _ui_toolbar(*fields):
+    """Put compact ``fields`` on one line that wraps, such as a search and filters.
+
+    An input in a toolbar shows its label only as its accessible name, so give it a
+    ``placeholder``. The first toolbar at the top level of an app stands in the app band.
+    """
+    return _group("toolbar", fields)
+
+
+def _ui_dialog(node_id, title, *nodes, is_open=False, description=None):
+    """A dialog with ``title`` that shows ``nodes`` over the view while it is open.
+
+    Open or close it with ``view[node_id].set(is_open=...)``. When the person
+    closes it, the host sets ``is_open`` to false and sends an ``activate`` event
+    for ``node_id``. A submit button in it collects the inputs of the dialog.
+    """
+    return _live_node(
+        "group",
+        node_id,
+        {
+            "label": str(title),
+            "description": description,
+            "direction": "column",
+            "children": _group_fields("dialog", nodes),
+            "is_dialog": True,
+            "is_open": bool(is_open),
         },
     )
 
@@ -9399,6 +9445,8 @@ def _ui_board(node_id, columns, issues=None, *, people=None, epics=None, **spec)
     `vis.ui.board.issue`, `people` with `vis.ui.board.person` and `epics` with
     `vis.ui.board.epic`. `is_editable=True` lets people move, make, change and
     delete issues. `is_selectable=True` lets a person select one issue.
+    `group_by` ("assignee", "epic" or "priority") puts the issues in rows. The
+    board shows the issues that it gets: filter them in the app.
     """
     from blockether.vis import _contracts
 
@@ -9542,6 +9590,8 @@ class _UI:
     grid = staticmethod(_ui_grid)
     wrap = staticmethod(_ui_wrap)
     group = staticmethod(_ui_group)
+    toolbar = staticmethod(_ui_toolbar)
+    dialog = staticmethod(_ui_dialog)
     card = staticmethod(_ui_card)
     disclosure = staticmethod(_ui_disclosure)
 

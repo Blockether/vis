@@ -13,6 +13,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 import blockether.vis.extension as vis
+from blockether.vis import _contracts
+
+_BOARD = _contracts.schema("view")["$defs"]
+PRIORITIES = tuple(_BOARD["board_priority"]["enum"])
+KINDS = tuple(_BOARD["board_issue_kind"]["enum"])
+GROUPS = tuple(_BOARD["board_group"]["enum"])
+DEFAULT_PRIORITY = _BOARD["board_priority"]["default"]
+DEFAULT_KIND = _BOARD["board_issue_kind"]["default"]
 
 CHANGES = frozenset(
     {
@@ -126,8 +134,24 @@ class Store:
             return result
 
 
-def matching(issues, *, query="", assignees=(), epic=None, flagged=False):
-    """Find issues that match all the given filters."""
+def matching(
+    issues,
+    *,
+    query="",
+    assignees=(),
+    epic=None,
+    flagged=False,
+    label=None,
+    priority=None,
+    kind=None,
+    since=None,
+    hidden_columns=(),
+):
+    """Find issues that match all the given filters.
+
+    `None` in `assignees` matches an issue without an assignee. `since` is a time
+    in epoch milliseconds: only issues changed at or after it match.
+    """
     words = query.casefold().split()
 
     def matches(issue):
@@ -139,6 +163,11 @@ def matching(issues, *, query="", assignees=(), epic=None, flagged=False):
             and (not assignees or issue.get("assignee") in assignees)
             and (not epic or issue.get("epic") == epic)
             and (not flagged or issue.get("is_flagged", False))
+            and (not label or label in issue.get("labels", []))
+            and (not priority or issue.get("priority", DEFAULT_PRIORITY) == priority)
+            and (not kind or issue.get("kind", DEFAULT_KIND) == kind)
+            and (since is None or issue.get("updated_at", 0) >= since)
+            and issue["column"] not in hidden_columns
         )
 
     return [issue for issue in issues if matches(issue)]

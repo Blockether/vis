@@ -1336,10 +1336,13 @@
       ]
     },
     "command_icon": {
-      "description": "A picture that a surface can show instead of the label of a diff toolbar command. The label stays the accessible name.",
+      "description": "A picture that a surface can show next to the label of a command or a field, or instead of it in a toolbar. The label stays the accessible name.",
       "enum": [
         "refresh",
-        "more"
+        "more",
+        "plus",
+        "search",
+        "filter"
       ]
     },
     "reveals": {
@@ -1869,6 +1872,14 @@
             },
             "icon": {
               "$ref": "#/$defs/command_icon"
+            },
+            "is_dialog": {
+              "type": "boolean",
+              "description": "True when the group is a dialog. A surface shows it over the view, with its label as the title, only while `is_open` is true. A person closes it with `activate` on the group: the host sets `is_open` to false and then sends the owner the `activate` event."
+            },
+            "is_open": {
+              "type": "boolean",
+              "description": "True while a dialog group shows. Only a dialog takes it."
             }
           },
           "required": [
@@ -2260,7 +2271,7 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "description": "A board of issues in columns, as a team plans its work. A person drags an issue to another column or place, opens an issue to read and change it, and makes new issues. A surface filters, searches and groups the issues for the person who looks at it; these choices do not change the board.",
+          "description": "A board of issues in columns, as a team plans its work. A person drags an issue to another column or place, opens an issue to read and change it, and makes new issues. The owner chooses which issues the board shows: an app filters and searches them with its own inputs.",
           "properties": {
             "id": {
               "$ref": "common.json#/$defs/non_blank_string",
@@ -2272,6 +2283,10 @@
             },
             "type": {
               "const": "board"
+            },
+            "group_by": {
+              "description": "The field that puts the issues in rows across the columns. Absent means one row.",
+              "$ref": "#/$defs/board_group"
             },
             "is_editable": {
               "type": "boolean",
@@ -2890,6 +2905,9 @@
             },
             "value": {
               "$ref": "#/$defs/input_value"
+            },
+            "icon": {
+              "$ref": "#/$defs/command_icon"
             },
             "type": {
               "const": "plaintext"
@@ -3560,7 +3578,7 @@
           "table": ["label", "selected_ids"],
           "link": ["label", "links"],
           "card": ["clicks", "is_selectable", "label", "meta", "text", "title", "tone"],
-          "group": ["label"],
+          "group": ["is_open", "label"],
           "paragraph": ["label", "text"],
           "heading": ["label", "level", "text"],
           "code": ["label", "language", "text"],
@@ -3570,7 +3588,7 @@
           "image": ["label"],
           "scene": ["background", "fov", "is_wrapping", "label", "tick_ms"],
           "canvas": ["flow", "focus", "is_locked", "is_selectable", "label", "pattern", "selected_ids", "zoom"],
-          "board": ["columns", "epics", "is_editable", "is_selectable", "label", "people", "selected_ids"],
+          "board": ["columns", "epics", "group_by", "is_editable", "is_selectable", "label", "people", "selected_ids"],
           "thread": ["label"],
           "checkbox": ["label"],
           "datetime": ["label"],
@@ -3826,6 +3844,12 @@
               "$ref": "#/$defs/canvas_pattern"
             },
             "is_editable": {
+              "type": "boolean"
+            },
+            "group_by": {
+              "$ref": "#/$defs/board_group"
+            },
+            "is_open": {
               "type": "boolean"
             },
             "columns": {
@@ -4576,14 +4600,26 @@
         "undeliverable"
       ]
     },
+    "board_group": {
+      "type": "string",
+      "enum": [
+        "none",
+        "assignee",
+        "epic",
+        "priority"
+      ],
+      "default": "none"
+    },
     "group_direction": {
       "type": "string",
       "enum": [
         "column",
         "row",
         "grid",
-        "wrap"
-      ]
+        "wrap",
+        "toolbar"
+      ],
+      "description": "How a group arranges its children. A `toolbar` puts compact children on one line that wraps: a text or choice input shows its label only as its accessible name, and a checkbox keeps its label next to the box. A surface shows the first toolbar at the top level of an app in the band of the app. The other toolbars stay in their places."
     },
     "spinner_variant": {
       "oneOf": [

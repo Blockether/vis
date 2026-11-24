@@ -1240,6 +1240,7 @@ function viewTemplate(direction: ViewGroupDirection, maxColumns?: number): strin
  * - `grid` lays equal 12rem-or-wider tracks that wrap into aligned rows;
  *   `maxColumns` caps the tracks.
  * - `wrap` keeps each child at its own width and wraps onto new lines.
+ * - `toolbar` is one compact line of controls at their own width that wraps when too narrow.
  *
  * Each nested layout measures its own space through CSS, not the viewport.
  * This component owns no label, fieldset, disclosure, focus or value state.
@@ -1262,10 +1263,12 @@ export function ViewLayout({
       {...props}
       data-view-layout={direction}
       style={template ? { ...style, gridTemplateColumns: template } : style}
-      className={`min-w-0 items-start gap-3 [overflow-wrap:anywhere] [&>*]:min-w-0 ${
-        direction === 'wrap'
-          ? 'flex flex-wrap [&>*]:max-w-full'
-          : `grid ${template ? '' : 'grid-cols-1'}`
+      className={`min-w-0 [overflow-wrap:anywhere] [&>*]:min-w-0 ${
+        direction === 'toolbar'
+          ? 'flex flex-wrap items-center gap-2 [&>*]:max-w-full'
+          : direction === 'wrap'
+            ? 'flex flex-wrap items-start gap-3 [&>*]:max-w-full'
+            : `grid items-start gap-3 ${template ? '' : 'grid-cols-1'}`
       } ${className}`}
     >
       {children}
@@ -2240,7 +2243,7 @@ export function CloseButton({
  * With the ink on the whole cell, the rule was ink at 20% on amber and the dark cell
  * before ran into the amber with no line between them.
  */
-/** The band cell where a node of an app puts its own verb, such as the Create of a board. */
+/** The band cell where an app shows its first top-level toolbar (`toolbar` in view.json). */
 export const BandSlotContext = createContext<Element | null>(null);
 
 export function BandButton({

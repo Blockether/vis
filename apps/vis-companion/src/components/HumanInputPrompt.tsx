@@ -15,6 +15,7 @@ import {
   ViewLayout,
   ViewParagraph,
 } from './ui';
+import { COMMAND_ICONS } from './icons';
 import { Clipboard } from '@capacitor/clipboard';
 import { Capacitor } from '@capacitor/core';
 import { Markdown } from './ChatContent';
@@ -446,6 +447,7 @@ function FieldShell({
   error,
   controlId,
   labelInControl = false,
+  isInline = false,
   children,
 }: {
   field: HumanInputField;
@@ -454,9 +456,11 @@ function FieldShell({
   controlId?: string;
   /** The control already shows the label beside its own mark. */
   labelInControl?: boolean;
+  /** The field stands in a toolbar: the label and the description are only for a screen reader. */
+  isInline?: boolean;
   children: React.ReactNode;
 }) {
-  const labelClass = 'block font-mono text-ui font-bold text-white [overflow-wrap:anywhere]';
+  const labelClass = isInline ? 'sr-only' : 'block font-mono text-ui font-bold text-white [overflow-wrap:anywhere]';
   return (
     <div className="min-w-0 space-y-1">
       {!labelInControl &&
@@ -465,14 +469,16 @@ function FieldShell({
             <HumanInputFieldLabel field={field} />
           </label>
         ) : (
-          <span className={labelClass}>
-            <HumanInputFieldLabel field={field} />
-          </span>
+          !isInline && (
+            <span className={labelClass}>
+              <HumanInputFieldLabel field={field} />
+            </span>
+          )
         ))}
       {field.description && (
         <p
           id={controlId ? `${controlId}-description` : undefined}
-          className="font-mono text-meta text-dialog-hint"
+          className={isInline ? 'sr-only' : 'font-mono text-meta text-dialog-hint'}
         >
           {field.description}
         </p>
@@ -497,6 +503,7 @@ export function HumanInputFieldRow({
   errors,
   disabled,
   isCompact = false,
+  isInline = false,
   onChange,
   onSubmit,
 }: {
@@ -509,6 +516,11 @@ export function HumanInputFieldRow({
    * A question shows every choice: the choices are the question.
    */
   isCompact?: boolean;
+  /**
+   * The field stands in a toolbar (`toolbar` in view.json): every choice folds into one
+   * line, and only a checkbox shows its label.
+   */
+  isInline?: boolean;
   onChange: (id: string, value: HumanInputValues[string]) => void;
   onSubmit: () => void;
 }) {
@@ -601,6 +613,35 @@ export function HumanInputFieldRow({
   if (field.type === 'select' || field.type === 'multiselect') {
     const isMulti = field.type === 'multiselect';
     const picked = typeof value === 'string' ? value : '';
+    // In a toolbar every choice is one line that opens a list; the label names it.
+    if (isInline) {
+      const empty = field.placeholder ?? field.label;
+      return (
+        <FieldShell field={field} controlId={controlId} isInline {...(error ? { error } : {})}>
+          {isMulti ? (
+            <Select
+              id={controlId}
+              disabled={disabled}
+              aria-describedby={describedBy}
+              options={options}
+              values={chosen}
+              noneLabel={empty}
+              onValuesChange={(next) => onChange(field.id, next)}
+            />
+          ) : (
+            <Select
+              id={controlId}
+              disabled={disabled}
+              aria-describedby={describedBy}
+              options={options}
+              value={picked}
+              placeholder={empty}
+              onValueChange={(next) => onChange(field.id, next)}
+            />
+          )}
+        </FieldShell>
+      );
+    }
     // Three faces for one exclusive choice. A few short words are a strip of cells.
     // Many choices in a view fold into one line that opens a list. The rest is a list.
     if (!isMulti && isCompact && options.length >= FOLDED_CHOICES) {
@@ -771,18 +812,21 @@ export function HumanInputFieldRow({
     );
   }
 
+  const Icon = field.icon ? COMMAND_ICONS[field.icon] : undefined;
   return (
-    <FieldShell field={field} controlId={controlId} {...(error ? { error } : {})}>
+    <FieldShell field={field} controlId={controlId} isInline={isInline} {...(error ? { error } : {})}>
       <Input
         id={controlId}
         type={field.type === 'password' ? 'password' : 'text'}
+        {...(isInline ? { className: 'w-48 sm:w-56' } : {})}
+        {...(Icon ? { icon: <Icon className="size-4" /> } : {})}
         disabled={disabled}
         value={text}
         aria-describedby={describedBy}
         aria-invalid={Boolean(error)}
         aria-required={field.is_required}
         {...(field.max_length ? { maxLength: field.max_length } : {})}
-        {...(field.placeholder ? { placeholder: field.placeholder } : {})}
+        {...(field.placeholder || isInline ? { placeholder: field.placeholder ?? field.label } : {})}
         onChange={(event) => onChange(field.id, event.target.value)}
         // A one-line field has nothing to do with a bare Enter, so it answers
         // the question — the reflex every login form in the world has taught.

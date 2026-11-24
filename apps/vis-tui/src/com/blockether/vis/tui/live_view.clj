@@ -2458,38 +2458,74 @@
           (map #(assoc % :kind :board-detail :node-id (:id node)))
           (when open? (canvas-markdown-rows text (- (long width) 2) 2)))))
 
+(declare split-rows)
+
+(def ^:private board-priority-order
+  (zipmap (get-in (document/schema-document "view") ["$defs" "board_priority" "enum"]) (range)))
+
+(defn- board-lane-title [group names epics lane]
+  (case group
+    :assignee (or (get names lane lane) "Unassigned")
+    :epic (or (get epics lane lane) "No epic")
+    :priority (if lane (str/capitalize (name lane)) "No priority")))
+
+(defn- board-column-rows
+  [node {:keys [title tone limit]} issues names text-w interactive?]
+  (let [items (sort-by #(or (:rank %) 0) issues)
+        n (count items)
+        over? (and limit (> n (long limit)))
+        count-text (str "  " n (when limit (str "/" limit)))
+        title-w (max 1 (- (long text-w) (long (p/display-width count-text))))
+        head (board-row :board-column (:id node)
+                        [{:text (str (p/ellipsize (flat-text title) title-w) count-text)
+                          :fg (tone-fg (if over? :warn (keyword tone)))
+                          :styles [p/BOLD]}] text-w)]
+    (into [head] (mapcat #(board-issue-rows node % names text-w interactive?)) items)))
+
 (defmethod node-rows :board
-  [{:keys [id columns issues people] :as node} {:keys [text-w is-interactive]}]
-  (let [names (into {} (map (juxt :id :name)) people)
-        by-column (group-by :column issues)]
-    (if (seq columns)
+  [{:keys [id columns issues people epics group-by] :as node} {:keys [text-w is-interactive]}]
+  (if (seq columns)
+    (let [names (into {} (map (juxt :id :name)) people)
+          titles (into {} (map (juxt :id :title)) epics)
+          group (keyword group-by)
+          grouped? (and group (not= :none group) (seq issues))
+          lane-title (partial board-lane-title group names titles)
+          lanes (if grouped?
+                  (sort-by (fn [[lane]]
+                             [(nil? lane) (if (= :priority group)
+                                            (get board-priority-order (some-> lane name) 0)
+                                            (str/lower-case (lane-title lane)))])
+                           (clojure.core/group-by group issues))
+                  [[nil issues]])
+          split? (and grouped? (< 1 (count columns)) (columns/row-fits? text-w (count columns)))
+          column-w (if split? (columns/cell-width text-w (count columns)) text-w)]
       (into []
-            (mapcat (fn [{column :id :keys [title tone limit]}]
-                      (let [items (sort-by #(or (:rank %) 0) (get by-column column))
-                            n (count items)
-                            over? (and limit (> n (long limit)))
-                            count-text (str "  " n (when limit (str "/" limit)))
-                            title-w (max 1 (- (long text-w) (long (p/display-width count-text))))
-                            head (board-row :board-column id
-                                            [{:text (str (p/ellipsize (flat-text title) title-w) count-text)
-                                              :fg (tone-fg (if over? :warn (keyword tone)))
-                                              :styles [p/BOLD]}] text-w)]
-                        (cons head (mapcat #(board-issue-rows node % names text-w is-interactive) items)))))
-            columns)
-      [{:kind :empty :node-id id :text (empty-text :board)}])))
+            (mapcat (fn [[lane items]]
+                      (let [by-column (clojure.core/group-by :column items)
+                            parts (mapv #(board-column-rows node % (get by-column (:id %)) names column-w
+                                                            is-interactive) columns)]
+                        (cond-> []
+                          grouped? (conj (board-row :board-lane id [{:text (flat-text (lane-title lane))
+                                                                      :fg t/dialog-fg :styles [p/BOLD]}] text-w))
+                          true (into (if split? (split-rows parts) (into [] cat parts)))))))
+            lanes))
+    [{:kind :empty :node-id id :text (empty-text :board)}]))
 
 (defn- input-rows
   "An input node is a FIELD: the form's own renderer draws it, so a field in a
    view and the same field in a form read alike. Each row keeps the field row it
    came from for that painter, and its text for the plan."
-  [{:keys [id] :as node} {:keys [text-w is-interactive]}]
+  [{:keys [id label] :as node} {:keys [text-w is-interactive toolbar?]}]
   (mapv (fn [row]
-          {:kind :field
-           :node-id id
-           :field row
-           :text (str (:text row))
-           :is-disabled (not is-interactive)})
-        (hi/view-field-rows node text-w)))
+          (cond-> {:kind :field
+                   :node-id id
+                   :field row
+                   :text (str (:text row))
+                   :is-disabled (not is-interactive)}
+            toolbar? (assoc :label label :is-compact true)))
+        (if toolbar?
+          [(hi/toolbar-field-row node text-w)]
+          (hi/view-field-rows node text-w))))
 
 (def ^:private input-node-types
   "The node types a view edits: every field type a form knows."
@@ -2614,7 +2650,8 @@
     (long text-w)
 
     (:field :progress)
-    (max (long columns/min-cell-width) (+ 3 (long (p/display-width (str (:text row))))))
+    (max (long columns/min-cell-width)
+         (+ 3 (long (p/display-width (or (not-empty (:text row)) (get-in row [:field :placeholder]) "")))))
 
     :stats
     (reduce + 0 (map #(+ 4 (runs-width (:label %)) (runs-width (:value %))) (:items row)))
@@ -2641,17 +2678,23 @@
    ONE child paints that full-width plan; a line of several plans each child
    again at its own width through `replan` (`(fn [idx w] rows)`) and carries the
    widths as `:cell-widths` for the painter. Lines stack like sections do."
-  [text-w sections replan]
+  [text-w sections replan compact?]
   (let [widths (mapv (fn [rows]
                        (columns/natural-width text-w (map #(row-text-width text-w %) rows)))
                      sections)]
-    (stacked-rows (mapv (fn [line]
-                          (if (= 1 (count line))
-                            (nth sections (first line))
-                            (let [ws (mapv widths line)]
-                              (mapv #(assoc % :cell-widths ws)
-                                    (split-rows (mapv replan line ws))))))
-                        (columns/wrap-lines text-w widths)))))
+    (let [lines (mapv (fn [line]
+                        (if (= 1 (count line))
+                          (nth sections (first line))
+                          (let [ws (mapv widths line)]
+                            (mapv #(assoc % :cell-widths ws)
+                                  (split-rows (mapv replan line ws))))))
+                      (columns/wrap-lines text-w widths))]
+      (if compact? (into [] cat lines) (stacked-rows lines)))))
+
+(defn toolbar?
+  "True for a toolbar layout group."
+  [node]
+  (and (= :group (:type node)) (= :toolbar (:direction node))))
 
 (defn- node-section
   "One node's rows, `text-w` columns wide: its label, then what the node paints.
@@ -2687,10 +2730,16 @@
         is-open
         (or (not disclosure?) (:is-open node-ctx))
 
+        toolbar
+        (toolbar? node)
+
         children
-        (cond->> (not-empty (:children node))
-          (= :wrap (:direction node))
+        (cond->> (not-empty (remove :is-dialog (:children node)))
+          (or toolbar (= :wrap (:direction node)))
           (mapv #(cond-> % (= :divider (:type %)) (assoc :is-upright true))))
+
+        child-ctx
+        (if toolbar (fn [child w] (assoc (ctx child w) :toolbar? true)) ctx)
 
         n
         (count children)
@@ -2704,7 +2753,7 @@
         (cond (nil? children) :leaf
               (and (= :row (:direction node)) (columns/row-fits? body-w n)) :row
               (< 1 span) :grid
-              (and (= :wrap (:direction node)) (< 1 n)) :wrap
+              (and (or toolbar (= :wrap (:direction node))) (< 1 n)) :wrap
               :else :stack)
 
         cell-w
@@ -2718,7 +2767,7 @@
           body-w)
 
         parts
-        (when (and is-open children) (mapv #(node-section % ctx fresh cell-w) children))
+        (when (and is-open children) (mapv #(node-section % child-ctx fresh cell-w) children))
 
         body
         (cond (not is-open) []
@@ -2729,7 +2778,8 @@
               (= :wrap layout) (wrap-sections body-w
                                               parts
                                               (fn [idx w]
-                                                (node-section (nth children idx) ctx fresh w)))
+                                                (node-section (nth children idx) child-ctx fresh w))
+                                               toolbar)
               :else (stacked-rows parts))
 
         label
@@ -2791,7 +2841,8 @@
                (md-lines (:description view) text-w))
 
          sections
-         (mapv #(node-section % ctx fresh (long text-w)) (:nodes view))]
+         (into [] (comp (remove :is-dialog)
+                        (map #(node-section % ctx fresh (long text-w)))) (:nodes view))]
 
      (with-meta (stacked-rows (cond-> []
                                 (seq head)
@@ -2867,7 +2918,8 @@
 
                              :field
                              (when (and (not (:is-disabled entry))
-                                        (#{:label :checkbox} (get-in entry [:field :kind])))
+                                        (or (:is-compact entry)
+                                             (#{:label :checkbox} (get-in entry [:field :kind]))))
                                :live-edit)
 
                              nil)

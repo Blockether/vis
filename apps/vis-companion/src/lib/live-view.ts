@@ -33,7 +33,7 @@ import {
   type LiveSceneMesh,
   type LiveSceneObject,
 } from './scene';
-import { BOARD_KINDS, BOARD_PRIORITIES, type BoardColumn, type BoardEpic, type BoardIssue, type BoardPerson } from './board';
+import { BOARD_KINDS, BOARD_PRIORITIES, boardGroup, type BoardColumn, type BoardEpic, type BoardGroup, type BoardIssue, type BoardPerson } from './board';
 import { CANVAS_MAX_ZOOM } from './canvas';
 import {
   CANVAS_DEFAULT_FLOW,
@@ -467,6 +467,9 @@ export interface LiveGroupNode extends LiveNodeBase {
   default_expanded?: boolean;
   /** A picture for the menu trigger, in a diff toolbar. The label stays the accessible name. */
   icon?: ViewCommandIcon;
+  /** The group shows over the view, with its label as the title, while `is_open`. */
+  is_dialog?: boolean;
+  is_open?: boolean;
 }
 
 /** Who wrote a message. The host sets it; a client never sends it. */
@@ -608,6 +611,8 @@ export interface LiveBoardNode extends LiveNodeBase {
   people: BoardPerson[];
   epics: BoardEpic[];
   issues: BoardIssue[];
+  /** The field that puts the issues in lanes. The owner chooses which issues show. */
+  group_by: BoardGroup;
 }
 
 /** One picture as base64 data (`view.json` `picture`). */
@@ -1478,6 +1483,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         ? {}
         : { default_expanded: node.default_expanded === true }),
       ...viewCommandIcon(node.icon),
+      ...(node.is_dialog === true ? { is_dialog: true, is_open: node.is_open === true } : {}),
     };
   }
   if ((LIVE_INPUT_TYPES as readonly string[]).includes(type)) {
@@ -1671,6 +1677,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         columns: upsert([], keyed(node.columns, boardColumnFromWire)),
         people: upsert([], keyed(node.people, boardPersonFromWire)),
         epics: upsert([], keyed(node.epics, boardEpicFromWire)),
+        group_by: boardGroup(node.group_by),
       };
     }
     case 'canvas': {
@@ -2061,6 +2068,15 @@ function appendKey(
   }
 }
 
+/** `set` on a group: the label, and whether a dialog shows (`live/apply-set`). */
+function setGroup(node: LiveGroupNode, op: Record<string, unknown>): LiveNode {
+  return {
+    ...node,
+    label: 'label' in op ? optionalText(op.label) : node.label,
+    ...(node.is_dialog && typeof op.is_open === 'boolean' ? { is_open: op.is_open } : {}),
+  };
+}
+
 /** `set` MERGES the keys it carries onto the node (`live/apply-set`). */
 function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
   switch (node.type) {
@@ -2170,6 +2186,7 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
         columns: 'columns' in op ? upsert([], keyed(op.columns, boardColumnFromWire)) : node.columns,
         people: 'people' in op ? upsert([], keyed(op.people, boardPersonFromWire)) : node.people,
         epics: 'epics' in op ? upsert([], keyed(op.epics, boardEpicFromWire)) : node.epics,
+        group_by: 'group_by' in op ? boardGroup(op.group_by) : node.group_by,
       };
     }
     case 'canvas': {
@@ -2531,9 +2548,10 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
     return kept === view.nodes ? view : { ...view, nodes: kept };
   }
   const nodes = mapNode(view.nodes, nodeId, (node) => {
-    // Layout is declared and no op carries it (`live-op-key-sets` names no
-    // group), so a frame naming a row leaves the arrangement where it stands.
-    if (node.type === 'group') return node;
+    // Layout is declared and no op carries it, so a frame naming a row leaves the
+    // arrangement where it stands. Only `set` reaches a group: its label, and the
+    // `is_open` of a dialog.
+    if (node.type === 'group') return name === 'set' ? setGroup(node, op) : node;
     switch (name) {
       case 'set':
         return applySet(node, op);

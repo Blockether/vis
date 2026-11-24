@@ -49,7 +49,7 @@ import type { ViewAnchor } from '../lib/view';
 import {
   ChevronIcon,
   DiffChangeIcon,
-  MoreIcon,
+  COMMAND_ICONS,
   RefreshIcon,
   ReviewFileIcon,
   RenameArrowIcon,
@@ -1376,8 +1376,6 @@ function useDiffCommands({ onActivate, isSettled }: DiffCommandActions) {
 }
 
 type DiffCommandState = ReturnType<typeof useDiffCommands>;
-
-const COMMAND_ICONS = { refresh: RefreshIcon, more: MoreIcon } as const;
 
 interface DiffCommandProps {
   node: LiveNode;

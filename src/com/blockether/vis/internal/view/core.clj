@@ -575,6 +575,9 @@
                (trimmed (:placeholder field))
                (assoc :placeholder (trimmed (:placeholder field)))
 
+               (some? (:icon field))
+               (assoc :icon (name (:icon field)))
+
                (contains? view-spec/choice-types field-type)
                (assoc :options
                  (normalize-options field-id field-type (:options field) (= :form context)))
@@ -1341,7 +1344,13 @@
                                 (assoc :default-expanded (schema-bool (:default-expanded node)))
 
                                 (some? (:icon node))
-                                (assoc :icon (enum-text (:icon node))))
+                                (assoc :icon (enum-text (:icon node)))
+
+                                (some? (:is-dialog node))
+                                (assoc :is-dialog (schema-bool (:is-dialog node)))
+
+                                (some? (:is-open node))
+                                (assoc :is-open (schema-bool (:is-open node))))
                               node
                               allowed))
          (let [id
@@ -1541,7 +1550,10 @@
                  (assoc :is-selectable (schema-bool (:is-selectable node)))
 
                  (some? (:selected-ids node))
-                 (assoc :selected-ids (text-items (:selected-ids node))))
+                 (assoc :selected-ids (text-items (:selected-ids node)))
+
+                 (some? (:group-by node))
+                 (assoc :group-by (enum-text (:group-by node))))
 
                :diff
                (cond-> (assoc base :patch (:patch node))
@@ -2033,6 +2045,10 @@
              (normalize-live-items :issues value))
    :is-editable (fn [_ value]
                   (schema-bool value))
+   :group-by (fn [_ value]
+               (enum-text value))
+   :is-open (fn [_ value]
+              (schema-bool value))
    :flow (fn [_ value]
            value)
    :pattern (fn [_ value]
@@ -5032,7 +5048,8 @@
 
 (defn- press-node!
   "Press button or selectable card `node-id` of live `entry`, as a surface does:
-   one more click and one owner `activate` event. `base` starts the answer."
+   one more click and one owner `activate` event. A press on an open dialog group
+   closes it before the owner hears of it. `base` starts the answer."
   [entry view-id node-id base]
   (let [cell (:view entry)]
     (locking cell
@@ -5043,12 +5060,28 @@
         (let [node (first (filter
                             #(= node-id (:id %))
                             (tree-seq #(seq (:children %)) :children {:children (:nodes @cell)})))]
-          (when-not (or (= :button (:type node)) (and (= :card (:type node)) (:is-selectable node)))
-            (invalid-view-action! view-id "activate requires a button or a selectable card node"))
-          (if (:is-disabled node)
+          (when-not (or (= :button (:type node))
+                        (and (= :card (:type node)) (:is-selectable node))
+                        (:is-dialog node))
+            (invalid-view-action! view-id "activate requires a button, a selectable card or a dialog node"))
+          (cond
+            (:is-dialog node)
+            (if-not (:is-open node)
+              (assoc base
+                :is-accepted false
+                :reason "closed")
+              (do (patch-live! view-id [{:op :set :node-id node-id :is-open false}])
+                  (push-live-event! entry {:type :activate :node-id node-id})
+                  (assoc base
+                    :is-accepted true
+                    :node-id node-id)))
+
+            (:is-disabled node)
             (assoc base
               :is-accepted false
               :reason "disabled")
+
+            :else
             (do (patch-live!
                   view-id
                   [{:op :set :node-id node-id :clicks (inc (long (or (:clicks node) 0)))}])

@@ -1368,6 +1368,8 @@ def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
     elif kind == "group":
         if "max_columns" in node and node.get("direction") != "grid":
             lines.append(named_line("/max_columns", "grid_columns"))
+        if "is_open" in node and node.get("is_dialog") is not True:
+            lines.append(named_line("/is_open", "dialog_open"))
     elif kind == "diff":
         if is_declaration:
             lines += _toolbar_stamp_lines(node.get("children"), "/children")
