@@ -50,10 +50,11 @@ const announcedStates = (root: HTMLElement) =>
 const count = (html: string, pattern: RegExp) => (html.match(pattern) ?? []).length;
 
 // User report: a progress note showed a colon before its first word.
-it('removes the initial colon from progress notes', () => {
-  const view = render(<IterationTrace iterations={[{ assistant_prose: ":I'll check the time: 10:30." }]} />);
-  expect(view.container.textContent).toContain("I'll check the time: 10:30.");
-  expect(view.container.textContent).not.toContain(":I'll");
+it.each([':', '&'])('removes a leading %s from progress notes', (prefix) => {
+  const note = "I'll check R&D at 10:30.";
+  const view = render(<IterationTrace iterations={[{ assistant_prose: prefix + note }]} />);
+  expect(view.container.textContent).toContain(note);
+  expect(view.container.textContent).not.toContain(prefix + note);
 });
 
 // Regression, user screenshot: code blocks used a wide Copy label instead of an icon.

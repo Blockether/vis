@@ -6782,11 +6782,13 @@ h = 8"
                                            {:settings {:show-python-code false
                                                        :show-thinking false}}))))))
     ;; User report: a progress note showed a colon before its first word.
-    (it "removes the initial colon from progress notes"
-        (doseq [key [:assistant-prose :content-stream]]
-          (let [text (text-of (render* [{key ":I'll check the time: 10:30."}] {}))]
-            (expect (str/includes? text "I'll check the time: 10:30."))
-            (expect (not (str/includes? text ":I'll"))))))
+    (it "removes a leading colon or ampersand from progress notes"
+        (doseq [key [:assistant-prose :content-stream]
+                prefix [":" "&"]]
+          (let [note "I'll check R&D at 10:30."
+                text (text-of (render* [{key (str prefix note)}] {}))]
+            (expect (str/includes? text note))
+            (expect (not (str/includes? text (str prefix note)))))))
     (it "keeps visible output between reasoning groups in its original position"
         (doseq [[separator label]
                 [[{:forms [(first (grouped-activity-forms #{}))]} "ACTIVITY"]
