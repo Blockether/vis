@@ -30,7 +30,7 @@ import time
 from bisect import bisect_left
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from vis_lang_interface import process
@@ -72,6 +72,11 @@ class Entry:
     kind: str
     label: str
     files: Mapping[str, str | None] = field(default_factory=dict)
+    turn: int | None = None
+    iteration: int | None = None
+    call: str | None = None
+    commit: str | None = None
+    started_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +104,30 @@ class Undone:
     missing: tuple[str, ...] = ()
 
 
+def _entry_line(entry: Entry) -> str:
+    extra = {
+        "turn": entry.turn,
+        "iteration": entry.iteration,
+        "call": entry.call,
+        "commit": entry.commit,
+        "from": entry.started_at,
+    }
+    return (
+        json.dumps(
+            {
+                "seq": entry.seq,
+                "at": entry.at,
+                "kind": entry.kind,
+                "label": entry.label,
+                "files": entry.files,
+                **{key: value for key, value in extra.items() if value is not None},
+            },
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+
+
 def base_dir() -> Path:
     """`$VIS_HOME/review`, or `~/.vis/review`."""
     return Path(os.environ.get("VIS_HOME") or Path.home() / ".vis") / "review"
@@ -119,6 +148,14 @@ def member_key(leader: str, member: str) -> str:
     its subagents are its own changes too.
     """
     return f"{_safe(leader)}{TEAM_MARK}{_safe(member)}"
+
+
+def _status(before: str | None, after: str | None) -> str:
+    return "added" if before is None else "deleted" if after is None else "modified"
+
+
+def _undo_label(rel: str) -> str:
+    return f"Undo the own changes of {rel}"
 
 
 def _covers(_path) -> bool:
@@ -169,8 +206,12 @@ class Journal:
         self._members: dict[
             Path, tuple[tuple, list[tuple[float, float, str, str | None]]]
         ] = {}
-        # The own replay: team stamp, entries seen, state, spans, time of the last entry.
+        # Own spans and their rendered diffs, by journal and team revision.
         self._own: tuple | None = None
+        self._own_views: OrderedDict[tuple, tuple[tuple[FileDiff, bool], ...]] = (
+            OrderedDict()
+        )
+        self._merge_checked: tuple | None = None
         self.entries: list[Entry] = []
         self.state: dict[str, str] = {}
         self._load()
@@ -191,6 +232,11 @@ class Journal:
                     str(raw["kind"]),
                     str(raw.get("label", "")),
                     dict(raw.get("files") or {}),
+                    turn=raw.get("turn"),
+                    iteration=raw.get("iteration"),
+                    call=raw.get("call"),
+                    commit=raw.get("commit"),
+                    started_at=raw.get("from"),
                 )
             except (ValueError, KeyError, TypeError):
                 # A line cut short by an interrupted write holds nothing it promised.
@@ -237,19 +283,36 @@ class Journal:
         kind: str = "manual",
         label: str = "",
         wrote: Callable[[str], bool] | None = None,
+        *,
+        started_at: float | None = None,
+        ended_at: float | None = None,
+        turn: int | None = None,
+        iteration: int | None = None,
+        call: str | None = None,
     ) -> Entry | None:
         """Record the files that changed since the newest checkpoint.
 
         The first checkpoint is the baseline and records every file. Later ones
         answer None when nothing changed. `wrote` is true for a path that the step
-        shows it wrote; see `_of_others`.
+        shows it wrote; see `_of_others`. With a time window, a newer file is
+        left for the next checkpoint. Call identifiers also apply to outside
+        changes that this checkpoint observes.
         """
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}, not {kind!r}")
         with self._lock:
             since, head = self._scanned_at, self._head
             try:
-                return self._checkpoint(kind, label, wrote, since, head)
+                return self._checkpoint(
+                    kind,
+                    label,
+                    wrote,
+                    since,
+                    head,
+                    started_at,
+                    ended_at,
+                    {"turn": turn, "iteration": iteration, "call": call},
+                )
             except BaseException:
                 # The scan settled the file stamps before the checkpoint was written.
                 # Forget them: the next checkpoint reads every file and loses no change.
@@ -257,34 +320,112 @@ class Journal:
                 self._scanned_at, self._head = since, head
                 raise
 
-    def _checkpoint(self, kind, label, wrote, since, head) -> Entry | None:
-        delta = self._scan()
-        self._scanned_at = self._clock()
+    def _checkpoint(self, kind, label, wrote, since, head, start, end, metadata):
+        # A scan can have a time window only for a tool call.
+        timed = kind in STEP_KINDS and start is not None
+        delta, stamps, deferred = self._scan(end if timed else None)
+        self._scanned_at = end if timed and end is not None else self._clock()
         self._head = self._head_now()
+        between = set()
+        if timed:
+            between = {
+                rel
+                for rel in delta
+                if (
+                    stamps[rel][0] < start * 1_000_000_000
+                    if stamps[rel]
+                    else not (wrote and wrote(rel))
+                )
+            }
+        baseline_entry = None
         if not self.entries:
-            return self._append("baseline", label or "Baseline", delta)
+            # There is no preimage before the first after hook. Git supplies
+            # it for tracked paths; do not claim an edit with no known preimage.
+            old = git_files(self.root, "HEAD") if timed else None
+            if old is None:
+                return self._append(
+                    "baseline", label or "Baseline", delta, at=start, **metadata
+                )
+            for rel, data in old.items():
+                if data is None or rel in delta or rel in deferred:
+                    continue
+                try:
+                    os.stat(self._inside(rel))
+                except FileNotFoundError:
+                    delta[rel] = None
+                    if wrote is None or not wrote(rel):
+                        between.add(rel)
+                except OSError:
+                    continue
+            # A newer tracked file can match HEAD and so be absent from git diff.
+            unknown = deferred - old.keys()
+            if unknown:
+                place = _place(self.root, "HEAD")
+                if place is not None:
+                    prefix, top, commit = place
+                    tracked = self._oids_at(commit, sorted(unknown))
+                    paths = sorted(unknown & tracked.keys()) if tracked else []
+                    if paths:
+                        old.update(
+                            _restored(
+                                top, commit, [prefix + rel for rel in paths], prefix
+                            )
+                            or {}
+                        )
+            baseline = {
+                rel: sha
+                for rel, sha in delta.items()
+                if rel in between or rel not in old
+            }
+            for rel in (set(delta) - between) | deferred:
+                data = old.get(rel)
+                if data is not None:
+                    baseline[rel] = self.store.put(data)
+                elif rel in old:
+                    baseline.pop(rel, None)
+            baseline_entry = self._append(
+                "baseline", "Baseline", baseline, at=start, **metadata
+            )
+            delta = {
+                rel: sha for rel, sha in delta.items() if self.state.get(rel) != sha
+            }
         if not delta:
-            return None
+            return baseline_entry
+        start = start if timed else since
         ours = self._of_team(delta, since, wrote if kind in STEP_KINDS else None)
         if ours:
             team = self._append(
                 "team",
                 "Changes of subagents",
                 {rel: delta.pop(rel) for rel in ours},
+                start,
+                at=end,
+                **metadata,
             )
             if not delta:
                 return team
         if kind in STEP_KINDS:
-            theirs = self._of_others(delta, since, head, wrote)
+            theirs = self._of_others(delta, start, head, wrote) | (
+                between & delta.keys()
+            )
             if theirs:
                 other = self._append(
                     "outside",
                     "Changes of others during a step",
                     {rel: delta.pop(rel) for rel in theirs},
+                    at=end if timed else None,
+                    **metadata,
                 )
                 if not delta:
                     return other
-        return self._append(kind, label, delta, since if kind in STEP_KINDS else None)
+        return self._append(
+            kind,
+            label,
+            delta,
+            start if kind in STEP_KINDS else None,
+            at=end,
+            **metadata,
+        )
 
     def _head_now(self) -> str | None:
         """The commit of HEAD. The reflog gives it without a git process."""
@@ -352,14 +493,11 @@ class Journal:
         claimed = self._peer_claims(since)
         contested = {rel for rel in delta if (rel, delta[rel]) in claimed} - theirs
         if contested:
-            before = {
-                rel
-                for entry in self.entries
-                if entry.kind in OWN_KINDS
-                for rel in entry.files
-            }
+            before = self._own_changes()
             theirs |= {
-                rel for rel in contested - before if wrote is None or not wrote(rel)
+                rel
+                for rel in contested - before.keys()
+                if wrote is None or not wrote(rel)
             }
         return theirs
 
@@ -555,42 +693,73 @@ class Journal:
             found[rel] = head.split()[2]
         return found
 
-    def _scan(self) -> dict[str, str | None]:
-        """`{path: digest or None}` of each file whose content differs from `state`."""
+    def _scan(self, ended_at: float | None = None):
+        """Read only paths with changed stamps; leave newer paths unsettled."""
         tree = self._tree
         if tree is None or time.monotonic() - tree.listed_at > REFRESH_S:
-            fresh = Tree(self.root, self._files(self.root), _covers, previous=tree)
-            self._tree = fresh
-            if tree is None:
-                # A new process trusts no stamp: read every file and every recorded one.
-                inside = os.path.join(self.root, "")
-                candidates = dict.fromkeys(fresh.seen)
-                candidates.update(dict.fromkeys(inside + rel for rel in self.state))
-                return self._read(candidates)
-        changed = self._tree.changes(_covers)
-        delta = self._read(changed)
-        self._tree.settle(changed)
-        return delta
-
-    def _read(self, paths: Iterable[str]) -> dict[str, str | None]:
+            files = self._files(self.root)
+            if tree is not None:
+                # A removed path may no longer be listed at this refresh.
+                files = dict.fromkeys(os.fspath(path) for path in files)
+                files.update(
+                    dict.fromkeys(os.path.join(self.root, rel) for rel in self.state)
+                )
+            self._tree = Tree(self.root, files, _covers, previous=tree)
+        if tree is None:
+            # A new process trusts no stamp: read every file and every recorded one.
+            candidates = dict(self._tree.seen)
+            for rel in self.state:
+                path = os.path.join(self.root, rel)
+                if path not in candidates:
+                    candidates[path] = stamp_of(path)
+        else:
+            candidates = self._tree.changes(_covers)
+        limit = None if ended_at is None else ended_at * 1_000_000_000
         delta: dict[str, str | None] = {}
-        for path in paths:
+        stamps = {}
+        settled = {}
+        deferred = set()
+        for path, stamp in candidates.items():
             rel = os.path.relpath(path, self.root).replace(os.sep, "/")
             if rel.startswith("../"):
                 continue
-            try:
-                with open(path, "rb") as source:
-                    data = source.read()
-            except FileNotFoundError:
-                if rel in self.state:
-                    delta[rel] = None
+            if limit is not None and stamp is not None and stamp[0] > limit:
+                deferred.add(rel)
+                if tree is None:
+                    self._tree.seen[path] = None
                 continue
-            except (IsADirectoryError, PermissionError, OSError):
-                continue
-            sha = self.store.put(data)
-            if self.state.get(rel) != sha:
-                delta[rel] = sha
-        return delta
+            if stamp is None:
+                try:
+                    os.stat(path)
+                except FileNotFoundError:
+                    if rel in self.state:
+                        delta[rel] = None
+                        stamps[rel] = None
+                except OSError:
+                    self._tree.seen[path] = None
+                    continue
+                else:
+                    self._tree.seen[path] = None
+                    continue
+            else:
+                try:
+                    with open(path, "rb") as source:
+                        data = source.read()
+                except OSError:
+                    # A file disturbed during the scan still needs a scan.
+                    self._tree.seen[path] = None
+                    continue
+                if stamp_of(path) != stamp:
+                    deferred.add(rel)
+                    self._tree.seen[path] = None
+                    continue
+                sha = self.store.put(data)
+                if self.state.get(rel) != sha:
+                    delta[rel] = sha
+                    stamps[rel] = stamp
+            settled[path] = stamp
+        self._tree.settle(settled)
+        return delta, stamps, deferred
 
     def _append(
         self,
@@ -598,32 +767,156 @@ class Journal:
         label: str,
         files: Mapping[str, str | None],
         start: float | None = None,
+        *,
+        at: float | None = None,
+        turn: int | None = None,
+        iteration: int | None = None,
+        call: str | None = None,
     ) -> Entry:
         """Write one checkpoint. `start` is the time when a step started, if known."""
         entry = Entry(
-            self.last + 1, self._clock(), kind, label, dict(sorted(files.items()))
+            self.last + 1,
+            self._clock() if at is None else at,
+            kind,
+            label,
+            dict(sorted(files.items())),
+            turn=turn,
+            iteration=iteration,
+            call=call,
+            started_at=start,
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         root_note = self._folder / "ROOT"
         if not root_note.exists():
             root_note.write_text(self.root + "\n", encoding="utf-8")
-        line = json.dumps(
-            {
-                "seq": entry.seq,
-                "at": entry.at,
-                "kind": entry.kind,
-                "label": entry.label,
-                "files": entry.files,
-                **({} if start is None else {"from": start}),
-            },
-            separators=(",", ":"),
-        )
-        with open(self.path, "a", encoding="utf-8") as out:
-            out.write(line + "\n")
+        with self.path.open("a", encoding="utf-8") as out:
+            out.write(_entry_line(entry))
             out.flush()
             os.fsync(out.fileno())
         self._apply(entry)
         return entry
+
+    def snapshots(self) -> list[Entry]:
+        """The changes after the baseline or the last merge, oldest first."""
+        with self._lock:
+            return [e for e in self.entries if e.kind not in ("baseline", "merge")]
+
+    def merge_point(self) -> Entry | None:
+        """The most recent merge, if there is one."""
+        with self._lock:
+            first = self.entries[0] if self.entries else None
+            return first if first is not None and first.kind == "merge" else None
+
+    def refresh_merge(self) -> Entry | None:
+        """Prune when the tip of the default branch has all the own contents."""
+        with self._lock:
+            key, spans, _mixed = self._own_state()
+            if not spans:
+                return None
+            stamp = (key, self.refs_stamp())
+            if stamp == self._merge_checked:
+                return None
+            base = base_ref(self.root)
+            if base is None:
+                self._merge_checked = stamp
+                return None
+            place = _place(self.root, base.branch)
+            if place is None:
+                return None
+            commit = place[2]
+            at_ref = self._oids_at(commit, list(spans))
+            if at_ref is None:
+                return None
+            if self._matches(at_ref, spans):
+                return self._compact(self._last_own_seq(), commit)
+            self._merge_checked = stamp
+            return None
+
+    def mark_merged(self, commit: str) -> Entry | None:
+        """Replace the snapshots present in `commit` with a single merge point."""
+        with self._lock:
+            place = _place(self.root, commit)
+            if place is None:
+                return None
+            commit = place[2]
+            previous = self.merge_point()
+            if previous is not None and previous.commit == commit:
+                return None
+            at_ref = self._oids_at(commit, [])
+            if at_ref is None:
+                return None
+            spans = self._own_changes()
+            if spans and self._matches(at_ref, spans):
+                return self._compact(self._last_own_seq(), commit)
+            # A commit can contain an earlier checkpoint while a later one is open.
+            for index in range(len(self.entries) - 2, 0, -1):
+                entry = self.entries[index]
+                if entry.kind not in OWN_KINDS and entry.kind != "outside":
+                    continue
+                spans, _mixed = self._own_spans(self.entries[: index + 1])
+                if spans and self._matches(at_ref, spans):
+                    return self._compact(entry.seq, commit)
+            return None
+
+    def _last_own_seq(self) -> int:
+        """The last checkpoint with an own change, including a subagent's change."""
+        team = self._team_changes()
+        for index in range(len(self.entries) - 1, 0, -1):
+            entry = self.entries[index]
+            if entry.kind in OWN_KINDS:
+                return entry.seq
+            if entry.kind == "outside":
+                older = self.entries[index - 1].at
+                before = self.state_at(entry.seq - 1) if team else {}
+                if any(
+                    self._team_step(
+                        team.get(rel), older, entry.at, before.get(rel), sha
+                    )
+                    is not None
+                    for rel, sha in entry.files.items()
+                ):
+                    return entry.seq
+        return self.last
+
+    def _matches(self, at_ref, spans) -> bool:
+        return all(
+            at_ref.get(rel) == self._oid(after)
+            for rel, (_before, after) in spans.items()
+        )
+
+    def _compact(self, seq: int, commit: str) -> Entry:
+        """Replace the old history in one rename, then remove unreferenced blobs."""
+        mark = Entry(
+            seq,
+            self.entry(seq).at,
+            "merge",
+            "Merged",
+            self.state_at(seq),
+            commit=commit,
+        )
+        retained = [mark, *(entry for entry in self.entries if entry.seq > seq)]
+        fd, temporary = tempfile.mkstemp(dir=self.path.parent, prefix=".merge-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                for entry in retained:
+                    out.write(_entry_line(entry))
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(temporary, self.path)
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary)
+            # If the rename finished before an interrupt, use the durable state.
+            self.entries, self.state = [], {}
+            self._load()
+            self._own = self._merge_checked = None
+            self._own_views.clear()
+            raise
+        self.entries = retained
+        self._own = self._merge_checked = None
+        self._own_views.clear()
+        self.store.sweep()
+        return mark
 
     # Diffs -------------------------------------------------------------------
 
@@ -654,62 +947,77 @@ class Journal:
     def changes_of(self, seq: int) -> list[FileDiff]:
         """What checkpoint `seq` itself changed."""
         entry = self.entry(seq)
-        return self.diff(seq - 1, seq, entry.files)
+        return [] if entry.kind == "merge" else self.diff(seq - 1, seq, entry.files)
 
     def own_diff(self, context: int = 3) -> list[FileDiff]:
-        """The changes that the session itself made, without the edits of others.
+        """Diff the first before and last after of each path with an own change."""
+        with self._lock:
+            key, spans, mixed = self._own_state()
+            return self._own_view((key, context), spans, mixed, context)
 
-        Each file goes from its content before the first own change to its
-        content after the last own change. An edit of another session after the
-        first own change is on both sides, so the diff does not show it. Only an
-        edit of the same lines that the session changed stays in.
+    def own_files(
+        self, ref: str | None = None
+    ) -> list[tuple[str, str, str | None, str | None]] | None:
+        """List own file changes without building patches.
+
+        With `ref`, omit changes that are already in that commit. Return None
+        when git cannot read the ref.
         """
-        return [
-            self.file_diff(rel, before, after, context)
-            for rel, (before, after) in self._own_changes().items()
-        ]
+        commit = None
+        if ref is not None:
+            place = _place(self.root, ref)
+            if place is None:
+                return None
+            commit = place[2]
+        with self._lock:
+            spans = self._own_changes()
+            if commit is not None:
+                spans = self._open_spans(commit, spans)
+                if spans is None:
+                    return None
+            return [
+                (rel, _status(before, after), before, after)
+                for rel, (before, after) in spans.items()
+            ]
+
+    def own_file_diff(
+        self, rel: str, before: str | None, after: str | None, context: int = 3
+    ) -> FileDiff:
+        """Build a patch for one `own_files` row, with its outside-edit note."""
+        with self._lock:
+            _key, spans, mixed = self._own_state()
+            has_outside = rel in mixed and spans.get(rel) == (before, after)
+        return self._own_patch(rel, before, after, context, has_outside)
+
+    def _own_patch(self, rel, before, after, context, has_outside) -> FileDiff:
+        diff = self.file_diff(rel, before, after, context)
+        if has_outside:
+            note = "This diff includes changes made between this session's edits."
+            diff = replace(diff, note=" ".join(filter(None, (diff.note, note))))
+        return diff
 
     def own_paths(self) -> list[str]:
         """The paths that the session itself changed, in order."""
         return list(self._own_changes())
 
     def _own_changes(self) -> dict[str, tuple[str | None, str | None]]:
-        """`{path: (digest before, digest after)}` of each own change, by path.
-
-        A change of others that a subagent step made is an own change too: a
-        subagent records its step only when the step ends. See `_team_step`.
-        """
         with self._lock:
-            stamp = self.team_stamp()
-            if self._own is None or self._own[0] != stamp:
-                self._own = (stamp, 0, {}, {}, None)
-            _stamp, done, state, spans, since = self._own
-            try:
-                since = self._replay(self.entries[done:], state, spans, since)
-            except BaseException:
-                # A replay cut short leaves `state` and `spans` half done.
-                self._own = None
-                raise
-            self._own = (stamp, len(self.entries), state, spans, since)
-            return {
-                rel: spans[rel]
-                for rel in sorted(spans)
-                if spans[rel][0] != spans[rel][1]
-            }
+            return self._own_state()[1]
 
-    def _replay(
-        self,
-        entries: list[Entry],
-        state: dict[str, str],
-        spans: dict[str, tuple[str | None, str | None]],
-        since: float | None,
-    ) -> float | None:
-        """Fold `entries` into the own spans, in place; answer the time of the last one.
+    def _own_state(self):
+        key = (self.last, self.team_stamp())
+        if self._own is None or self._own[0] != key:
+            spans, mixed = self._own_spans(self.entries)
+            self._own = (key, spans, mixed)
+        return self._own
 
-        A replay goes on from the last entry it saw, so a repaint replays only new
-        checkpoints. A change of a subagent journal starts it again: see `team_stamp`.
-        """
-        team = self._team_changes() if entries else {}
+    def _own_spans(self, entries):
+        state = {}
+        spans = {}
+        mixed = set()
+        outside = set()
+        since = None
+        team = self._team_changes()
         for entry in entries:
             for rel, sha in entry.files.items():
                 old = state.get(rel)
@@ -718,49 +1026,88 @@ class Journal:
                     if entry.kind == "outside"
                     else None
                 )
-                if entry.kind in OWN_KINDS:
-                    spans[rel] = (spans.get(rel, (old,))[0], sha)
-                elif step is not None:
-                    spans[rel] = (spans.get(rel, (old,))[0], step[0])
-                    if step[0] != sha:
-                        spans[rel] = self._carry(spans[rel], step[0], sha)
-                elif rel in spans:
-                    spans[rel] = self._carry(spans[rel], old, sha)
-                if sha is None:
-                    state.pop(rel, None)
-                else:
-                    state[rel] = sha
+                if entry.kind == "undo" and entry.label == _undo_label(rel):
+                    spans.pop(rel, None)
+                    mixed.discard(rel)
+                    outside.discard(rel)
+                elif entry.kind in OWN_KINDS or step is not None:
+                    spans[rel] = (
+                        spans.get(rel, (old,))[0],
+                        sha if step is None else step[0],
+                    )
+                    if rel in outside:
+                        mixed.add(rel)
+                        outside.discard(rel)
+                if (
+                    rel in spans
+                    and entry.kind not in OWN_KINDS
+                    and (step is None or step[0] != sha)
+                ):
+                    outside.add(rel)
+                state[rel] = sha
             since = entry.at
-        return since
+        return (
+            {rel: span for rel, span in sorted(spans.items()) if span[0] != span[1]},
+            mixed,
+        )
 
     def own_open(self, ref: str, context: int = 3) -> list[FileDiff] | None:
-        """The own changes that git commit `ref` does not have; None where git cannot tell.
-
-        Each file is the own change of `own_diff` without the changed lines that
-        `ref` has too. A file that `ref` has with the same content is left out:
-        its change is merged.
-        """
+        """Own snapshot changes whose final content is not in commit `ref`."""
         place = _place(self.root, ref)
         if place is None:
             return None
-        prefix, top, commit = place
-        own = self._own_changes()
-        at_ref = self._oids_at(commit, list(own))
+        with self._lock:
+            key, spans, mixed = self._own_state()
+            commit = place[2]
+            cache_key = (key, context, commit)
+            if cache_key not in self._own_views:
+                spans = self._open_spans(commit, spans)
+                if spans is None:
+                    return None
+            return self._own_view(cache_key, spans, mixed, context)
+
+    def _open_spans(self, commit, spans):
+        """Keep only spans whose after-content differs from `commit`."""
+        at_ref = self._oids_at(commit, list(spans)) if spans else {}
         if at_ref is None:
             return None
-        changed = [rel for rel in own if at_ref.get(rel) != self._oid(own[rel][1])]
-        names = [prefix + rel for rel in changed if rel in at_ref]
-        old = _restored(top, commit, names, prefix) if names else {}
-        if old is None:
-            return None
-        diffs = []
-        for rel in changed:
-            before, after = own[rel]
-            if rel in old:
-                before = self._unmerged_base(before, after, self.store.put(old[rel]))
-            if before != after:
-                diffs.append(self.file_diff(rel, before, after, context))
-        return diffs
+        return {
+            rel: span
+            for rel, span in spans.items()
+            if (
+                span[1] is not None
+                if rel not in at_ref
+                else at_ref[rel] != self._oid(span[1])
+            )
+        }
+
+    def _own_view(self, key, spans, mixed, context):
+        found = self._own_views.get(key)
+        if found is None:
+            # A new checkpoint may change only one span. Keep the diffs that
+            # still have the same sides, even when this view exceeds the LRU.
+            known = {
+                (diff.path, diff.before, diff.after): (diff, has_outside)
+                for previous, view in self._own_views.items()
+                if previous[1] == context
+                for diff, has_outside in view
+            }
+            result = []
+            for rel, (before, after) in spans.items():
+                has_outside = rel in mixed
+                cached = known.get((rel, before, after))
+                if cached is not None and cached[1] == has_outside:
+                    diff = cached[0]
+                else:
+                    diff = self._own_patch(rel, before, after, context, has_outside)
+                result.append((diff, has_outside))
+            found = tuple(result)
+            self._own_views[key] = found
+            if len(self._own_views) > 2:
+                self._own_views.popitem(last=False)
+        else:
+            self._own_views.move_to_end(key)
+        return [diff for diff, _ in found]
 
     def _carry(
         self, span: tuple[str | None, str | None], old: str | None, new: str | None
@@ -775,15 +1122,6 @@ class Journal:
             new if after == old else self._merged(old, after, new),
         )
         return span if None in merged else merged
-
-    def _unmerged_base(self, before: str | None, after: str | None, ref: str) -> str:
-        """`before` with each own changed block that `ref` has too; `ref` for a binary file."""
-        lines = [self._lines_of(sha) for sha in (before, after, ref)]
-        if None in lines:
-            return ref
-        own, at_ref = _hunks(lines[0], lines[1]), set(_hunks(lines[0], lines[2]))
-        kept = _merge(lines[0], [], [hunk for hunk in own if hunk in at_ref])
-        return self.store.put("".join(kept).encode("utf-8"))
 
     def _merged(
         self, base: str | None, ours: str | None, theirs: str | None
@@ -854,9 +1192,7 @@ class Journal:
     def _file_diff(
         self, rel: str, before: str | None, after: str | None, context: int
     ) -> FileDiff:
-        status = (
-            "added" if before is None else "deleted" if after is None else "modified"
-        )
+        status = _status(before, after)
         old = b"" if before is None else self.store.get(before)
         new = b"" if after is None else self.store.get(after)
         if old is None or new is None:
@@ -913,8 +1249,7 @@ class Journal:
         """Bring the files back to how checkpoint `seq` left them; `paths` limits it."""
         with self._lock:
             self.checkpoint("outside", "Changes before an undo")
-            if seq < 1 or seq > self.last:
-                raise KeyError(f"no checkpoint {seq}")
+            self.entry(seq)
             target = self.state_at(seq)
             wanted = None if paths is None else set(paths)
             plan = {
@@ -933,7 +1268,7 @@ class Journal:
         with self._lock:
             self.checkpoint("outside", "Changes before an undo")
             entry = self.entry(seq)
-            if entry.kind == "baseline":
+            if entry.kind in ("baseline", "merge"):
                 raise ValueError(
                     "The baseline has no change to undo; restore a checkpoint instead."
                 )
@@ -959,14 +1294,41 @@ class Journal:
         """
         with self._lock:
             self.checkpoint("outside", "Changes before an undo")
-            span = self._own_changes().get(rel)
-            if span is None:
+            if rel not in self._own_changes():
                 return Undone(None, ())
-            before, after = span
-            target = self._merged(after, self.state.get(rel), before)
-            if target is None:
+            span = self._undo_span(rel)
+            if span is None or span[1] != self.state.get(rel):
                 return Undone(None, (), (rel,))
-            return self._write({rel: target}, (), f"Undo the own changes of {rel}")
+            return self._write({rel: span[0]}, (), _undo_label(rel))
+
+    def _undo_span(self, rel: str) -> tuple[str | None, str | None] | None:
+        """Apply the outside edits to both sides for this file only."""
+        team = self._team_changes().get(rel)
+        span = None
+        old = None
+        since = None
+        for entry in self.entries:
+            if rel in entry.files:
+                sha = entry.files[rel]
+                step = (
+                    self._team_step(team, since, entry.at, old, sha)
+                    if entry.kind == "outside"
+                    else None
+                )
+                if entry.kind == "undo" and entry.label == _undo_label(rel):
+                    span = None
+                elif entry.kind in OWN_KINDS or step is not None:
+                    span = (
+                        (span[0] if span else old),
+                        sha if step is None else step[0],
+                    )
+                    if step is not None and step[0] != sha:
+                        span = self._carry(span, step[0], sha)
+                elif span is not None:
+                    span = self._carry(span, old, sha)
+                old = sha
+            since = entry.at
+        return span
 
     def _write(self, plan: Mapping[str, str | None], conflicts, label: str) -> Undone:
         written: dict[str, str | None] = {}

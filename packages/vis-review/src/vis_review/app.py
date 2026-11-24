@@ -26,8 +26,9 @@ from typing import Any
 
 import blockether.vis.extension as vis
 from blockether.vis import _contracts
+from pydantic import BaseModel
 
-from vis_review import ai, checks
+from vis_review import ai, checks, git
 from vis_review.journal import FileDiff, Journal, base_ref
 
 LOG = logging.getLogger("vis_review")
@@ -62,6 +63,15 @@ BUTTONS = (
     "undo-file",
     "undo",
     "restore",
+    "git-commit",
+    "git-commit-push",
+    "git-push",
+    "git-push-branch",
+    "git-pull",
+    "git-rebase",
+    "git-merge",
+    "git-pr",
+    "git-abort",
 )
 # The key of each button, the same in every surface. A terminal shows them in its
 # key legend instead of a button row; the Companion keeps the button too.
@@ -80,7 +90,51 @@ KEYS = {
     "undo-file": "U",
     "undo": "Z",
     "restore": "B",
+    "git-commit": "K",
+    "git-commit-push": "J",
+    "git-push": "P",
+    "git-push-branch": "N",
+    "git-pull": "L",
+    "git-rebase": "E",
+    "git-merge": "G",
+    "git-pr": "Q",
+    "git-abort": "X",
 }
+_GIT_LABELS = {
+    "git-commit": "Commit",
+    "git-commit-push": "Commit and push",
+    "git-push": "Push",
+    "git-push-branch": "Push to branch",
+    "git-pull": "Pull with rebase",
+    "git-rebase": "Rebase onto base",
+    "git-merge": "Merge into base and push",
+    "git-pr": "Create pull request",
+    "git-abort": "Abort merge or rebase",
+}
+_GIT_INPUTS = {
+    "git-commit": ("message", "Commit message"),
+    "git-commit-push": ("message", "Commit message"),
+    "git-push-branch": ("branch", "Remote branch name"),
+}
+_GIT_ACTIONS = {
+    "git-commit": git.commit,
+    "git-commit-push": git.commit_and_push,
+    "git-push": git.push,
+    "git-push-branch": git.push_to_branch,
+    "git-pull": git.pull,
+    "git-rebase": git.rebase,
+    "git-merge": git.merge,
+    "git-pr": git.create_pr,
+    "git-abort": git.abort,
+}
+
+
+class CommitMessage(BaseModel):
+    """A proposed commit message that a person can edit before use."""
+
+    message: str
+
+
 # Buttons that call a tool or a model: they run outside the lock.
 SLOW = ("checks", "tests", "ai")
 # Git scopes: the "Uncommitted" scope and the "Automatic" base branch.
@@ -196,6 +250,10 @@ class ReviewApp:
         self._painted: dict[str, dict] = {}
         self._lock = threading.RLock()
         self._busy: str | None = None
+        self._git_state = git.Status()
+        self._git_stamp: tuple | None = None
+        self._git_form: str | None = None
+        self._git_message = ""
         # Image nodes by (path, old digest, new digest): a paint reads no blob twice.
         self._images: OrderedDict[tuple, dict | None] = OrderedDict()
         # Whether a changed binary file is a picture, by the key of its image node.
@@ -209,10 +267,11 @@ class ReviewApp:
 
     # Opening and painting ----------------------------------------------------
 
-    def open(self) -> ReviewApp:
+    def open(self, *, checkpoint: bool = True) -> ReviewApp:
         """Open the app, or adopt the open app with the same key, and paint it."""
-        with self._lock:
+        if checkpoint:
             self.journal.checkpoint("manual", "Review opened")
+        with self._lock:
             nodes = self.render()
             declaration = ui.app(
                 self.title,
@@ -231,7 +290,11 @@ class ReviewApp:
             return self
 
     def refresh(self, notice: tuple[str, str] | None = None) -> None:
-        """Paint the newest journal state; a range that ends at the newest follows it."""
+        """Check the base and then paint the newest journal state."""
+        self.journal.refresh_merge()
+        self._repaint(notice)
+
+    def _repaint(self, notice: tuple[str, str] | None = None) -> None:
         with self._lock:
             if notice is not None:
                 self.notice = notice
@@ -348,7 +411,7 @@ class ReviewApp:
         self, diffs: list[FileDiff], *, cut: set[str] | None = None
     ) -> list[checks.Finding]:
         """Diff checks except on cut files, then the findings of the last runs."""
-        paths = {d.path for d in diffs}
+        paths = {d.path for d in diffs} | (cut or set())
         visible = diffs if not cut else [d for d in diffs if d.path not in cut]
         found = checks.diff_checks(visible, self.journal.store.get)
         return found + [f for f in self.findings if not f.path or f.path in paths]
@@ -357,13 +420,20 @@ class ReviewApp:
         """Every node of the app for the current state: the diff first."""
         self._refs = self.journal.refs_stamp()
         self._team = self.journal.team_stamp()
-        diffs_all = self._scope_diffs()
-        if all(d.path != self.path for d in diffs_all):
-            # An undo or a new range can take the chosen file out of the list.
-            self.path = None
-        diffs = [d for d in diffs_all if self.path is None or d.path == self.path]
+        self._sync_git()
+        if self.selected is not None and all(
+            e.seq != self.selected or e.kind == "merge" for e in self.journal.entries
+        ):
+            self._first_range(is_own=self.is_session_scoped)
+        if self.against is None and self._is_own_range():
+            paths, diffs, patch, cut = self._own_render()
+        else:
+            diffs_all = self._scope_diffs()
+            paths = [d.path for d in diffs_all]
+            self._keep_path(paths)
+            diffs = [d for d in diffs_all if self.path is None or d.path == self.path]
+            patch, cut = _patch_of(diffs)
         end = self.end or self.journal.last
-        patch, cut = _patch_of(diffs)
         cut_paths = set(cut)
         findings = self.all_findings(diffs, cut=cut_paths)
         shown = {d.path for d in diffs if d.patch and d.path not in cut_paths}
@@ -374,8 +444,11 @@ class ReviewApp:
         notice = self._notice()
         notes = self._notes([*_left_out(cut, left), *_off_lines(findings, shown)])
         nodes = [
-            self._diff(patch, threads, diffs, diffs_all, end),
+            self._diff(
+                patch, threads, paths, bool(diffs or cut), end, is_cut=bool(cut)
+            ),
             *([notice] if notice else []),
+            *self._git_nodes(),
             *([notes] if notes else []),
         ]
         # The group of the images and its table are two nodes.
@@ -385,8 +458,55 @@ class ReviewApp:
             nodes.append(ui.group("images", *images, label="Changed images"))
         return nodes
 
+    def _keep_path(self, paths: list[str]) -> None:
+        if self.path is not None and self.path not in paths:
+            self.path = None
+
+    def _own_render(self) -> tuple[list[str], list[FileDiff], str, list[str]]:
+        self.own_base = None
+        base = None if self.is_merged_shown else base_ref(self.journal.root)
+        rows = None if base is None else self.journal.own_files(base.commit)
+        if rows is None:
+            rows = self.journal.own_files()
+        else:
+            self.own_base = base.label
+        paths = [row[0] for row in rows]
+        self._keep_path(paths)
+        diffs, parts, cut = [], [], []
+        size = 0
+        for path, _status, before, after in rows:
+            if self.path is not None and path != self.path:
+                continue
+            if cut or size >= MOST_PATCH_CHARS:
+                cut.append(path)
+                continue
+            diff = self.journal.own_file_diff(path, before, after, self._context())
+            text = _patch_text(diff)
+            if size + len(text) > MOST_PATCH_CHARS:
+                cut.append(path)
+            else:
+                diffs.append(diff)
+                parts.append(text)
+                size += len(text)
+        return paths, diffs, "".join(parts), cut
+
+    def _own_patch(self, most: int) -> str:
+        """The own patch text, built only until it holds `most` characters."""
+        parts, size = [], 0
+        for path, _status, before, after in self.journal.own_files():
+            if size >= most:
+                break
+            text = _patch_text(self.journal.own_file_diff(path, before, after))
+            parts.append(text)
+            size += len(text)
+        return "".join(parts)
+
     def _context(self) -> int:
         return FULL_CONTEXT if self.is_full else CONTEXT_LINES
+
+    def _baseline(self) -> int:
+        point = self.journal.merge_point()
+        return point.seq if point is not None else 1
 
     def _scope_diffs(self) -> list[FileDiff]:
         """Every diff of the scope: a checkpoint range, or a git commit to now."""
@@ -407,13 +527,21 @@ class ReviewApp:
                 self.own_base = base.label
                 return found
             return self.journal.own_diff(self._context())
-        return self.journal.diff(self.start, self.end, context=self._context())
+        paths = None
+        if self.selected is not None and self.end == self.selected:
+            paths = self.journal.entry(self.selected).files
+        return self.journal.diff(
+            max(self.start, self._baseline()),
+            self.end,
+            paths=paths,
+            context=self._context(),
+        )
 
-    def _merged_count(self, diffs_all: list[FileDiff]) -> int:
+    def _merged_count(self, paths: list[str]) -> int:
         """The own changed files that "This session" leaves out: the base branch has them."""
         if self.own_base is None:
             return 0
-        return len(set(self.journal.own_paths()) - {d.path for d in diffs_all})
+        return len(set(self.journal.own_paths()).difference(paths))
 
     def _is_own_range(self) -> bool:
         """True when the app shows only the changes of its own session."""
@@ -482,7 +610,7 @@ class ReviewApp:
             return "This session"
         return "All changes" if self._is_all() else f"#{self.start} to now"
 
-    def _toolbar(self, diffs_all: list[FileDiff], has_diffs: bool) -> list[dict]:
+    def _toolbar(self, paths: list[str], has_diffs: bool) -> list[dict]:
         """The diff toolbar of a T3 Code review: the scope menu, refresh and one more menu.
 
         A nested group is a submenu. The choice that holds now is selected, like a T3 Code
@@ -490,17 +618,10 @@ class ReviewApp:
         """
         has_change = self.selected is not None and self.selected > 1
         own = self._is_own_range() and self.against is None
-        checkpoints = [
-            ui.button(
-                f"checkpoint-{e.seq}",
-                f"#{e.seq} {e.label or e.kind}",
-                is_selected=e.seq == self.selected,
-            )
-            for e in reversed(self.journal.entries[-MOST_MENU_ITEMS:])
-        ]
+        checkpoints = self._checkpoint_buttons()
         files = [
-            ui.button(f"file:{d.path}", d.path, is_selected=d.path == self.path)
-            for d in diffs_all[:MOST_MENU_ITEMS]
+            ui.button(f"file:{path}", path, is_selected=path == self.path)
+            for path in paths[:MOST_MENU_ITEMS]
         ]
         scope = [
             *(
@@ -519,7 +640,7 @@ class ReviewApp:
             ui.button(
                 "latest",
                 "Latest change",
-                is_disabled=self.journal.last <= 1,
+                is_disabled=self.journal.last <= self._baseline(),
                 is_selected=self.selected == self.journal.last,
             ),
             ui.button(
@@ -531,7 +652,7 @@ class ReviewApp:
                 else []
             ),
         ]
-        merged = self._merged_count(diffs_all)
+        merged = self._merged_count(paths)
         more = [
             ui.button("checks", "Run checks", is_disabled=not has_diffs),
             ui.button(
@@ -594,25 +715,189 @@ class ReviewApp:
         return [
             ui.group(*scope, id="scope", label=self._scope_label()),
             ui.button("refresh", "Refresh", icon="refresh"),
+            self._git_toolbar(),
             ui.group(*more, id="actions", label="More actions", icon="more"),
+        ]
+
+    def _checkpoint_buttons(self) -> list[dict]:
+        baseline = self.journal.entries[:1]
+        if baseline and baseline[0].kind == "merge":
+            baseline = []
+        snapshots = [*baseline, *self.journal.snapshots()]
+        groups: dict[tuple[int, int | None], list[dict]] = {}
+        items = []
+        for entry in reversed(snapshots[-MOST_MENU_ITEMS:]):
+            turn, iteration = (
+                getattr(entry, "turn", None),
+                getattr(entry, "iteration", None),
+            )
+            label = entry.label or entry.kind
+            if entry.kind == "outside" and not entry.files:
+                continue
+            if turn is not None:
+                at = f"t{turn}" + (f"/i{iteration}" if iteration is not None else "")
+                label = f"{at} · {label}"
+            item = ui.button(
+                f"checkpoint-{entry.seq}",
+                f"#{entry.seq} {label}"[:300],
+                is_selected=entry.seq == self.selected,
+            )
+            if turn is not None:
+                groups.setdefault((turn, iteration), []).append(item)
+            else:
+                items.append(item)
+        point = self.journal.merge_point()
+        return [
+            *(
+                ui.group(
+                    *nodes,
+                    id=f"snapshots-{turn}-{iteration}",
+                    label=f"Turn {turn}"
+                    + (f" · Iteration {iteration}" if iteration is not None else ""),
+                )
+                for (turn, iteration), nodes in groups.items()
+            ),
+            *items,
+            *(
+                [
+                    ui.button(
+                        "merge-point",
+                        f"Merged at {point.commit[:12]}",
+                        is_disabled=True,
+                    )
+                ]
+                if point is not None and point.commit
+                else []
+            ),
+        ]
+
+    def _sync_git(self) -> None:
+        # Commands that write or contact a remote run only from an app event.
+        stamp = (self._refs, self._team, self.journal.last)
+        if stamp != self._git_stamp and not (self._busy or "").startswith("git-"):
+            self._git_state = git.status(self.journal)
+            self._git_stamp = stamp
+
+    def _git_enabled(self) -> set[str]:
+        state = self._git_state
+        if not state.ok or self._busy:
+            return set()
+        if state.operation:
+            return {"git-abort"} if state.operation in ("merge", "rebase") else set()
+        buttons = set()
+        if state.own_dirty:
+            buttons.add("git-commit")
+            if state.upstream and not state.behind:
+                buttons.add("git-commit-push")
+        if state.branch:
+            if state.upstream and state.ahead and not state.behind:
+                buttons.add("git-push")
+            if state.has_origin:
+                buttons.add("git-push-branch")
+            if (
+                state.has_gh
+                and state.upstream
+                and state.ahead_of_base
+                and not (state.behind or state.ahead)
+            ):
+                buttons.add("git-pr")
+            if not state.dirty:
+                if state.upstream:
+                    buttons.add("git-pull")
+                if state.base:
+                    buttons.add("git-rebase")
+                    if (
+                        state.has_origin
+                        and state.ahead_of_base
+                        and state.branch != state.base.removeprefix("origin/")
+                    ):
+                        buttons.add("git-merge")
+        return buttons
+
+    def _git_toolbar(self) -> dict:
+        state = self._git_state
+        available = self._git_enabled()
+        label = "No Git work tree"
+        if state.ok:
+            label = state.branch or "Detached HEAD"
+            if state.upstream:
+                label += f" ↑{state.ahead} ↓{state.behind}"
+            if state.operation:
+                label += f" · {state.operation}"
+        return ui.group(
+            *(
+                ui.button(node, text, is_disabled=node not in available)
+                for node, text in _GIT_LABELS.items()
+            ),
+            id="git-actions",
+            label=f"Git · {label}"[:300],
+        )
+
+    def _git_nodes(self) -> list[dict]:
+        if not self._git_form:
+            return []
+        field, label = _GIT_INPUTS[self._git_form]
+        return [
+            ui.group(
+                "git-form",
+                (ui.multiline if field == "message" else ui.plaintext)(
+                    field,
+                    id=field,
+                    label=label,
+                    value=self._git_message,
+                    is_required=True,
+                ),
+                *(
+                    [
+                        ui.button(
+                            "git-suggest",
+                            "Suggest message",
+                            is_disabled=bool(self._busy),
+                        )
+                    ]
+                    if field == "message" and self._ask is not None
+                    else []
+                ),
+                ui.button(
+                    f"submit-{self._git_form}",
+                    _GIT_LABELS[self._git_form],
+                    action="submit",
+                    variant="primary",
+                    is_disabled=bool(self._busy),
+                ),
+                ui.button("git-cancel", "Cancel"),
+                label=_GIT_LABELS[self._git_form],
+            )
         ]
 
     def _old_revision(self) -> str:
         """What the diff compares with: a git ref or the first checkpoint of the range."""
         if self.against is not None:
             return self.against_ref or self.against
+        point = self.journal.merge_point()
+        if self.own_base is None and point is not None and self.start <= point.seq:
+            return f"{point.commit[:12]}" if point.commit else f"#{point.seq}"
         return self.own_base or f"#{max(self.start, 0)}"
 
     def _diff(
-        self, patch: str, threads: list[dict], diffs, diffs_all, end: int
+        self,
+        patch: str,
+        threads: list[dict],
+        paths: list[str],
+        has_diffs: bool,
+        end: int,
+        *,
+        is_cut: bool,
     ) -> dict:
         """The diff node of `patch` with its toolbar and `threads`, one for each finding on a line."""
         return ui.diff(
             "diff",
             patch
             or (
-                "Every change of this session is merged.\n"
-                if self._merged_count(diffs_all)
+                "The diff exceeds the view limit.\n"
+                if is_cut
+                else "Every change of this session is merged.\n"
+                if not has_diffs and self._merged_count(paths)
                 else "No change in this range.\n"
             ),
             old_revision=self._old_revision(),
@@ -620,7 +905,7 @@ class ReviewApp:
             if self.end is not None and not self.against
             else "now",
             threads=threads,
-            children=self._toolbar(diffs_all, bool(diffs)),
+            children=self._toolbar(paths, has_diffs),
         )
 
     def image_nodes(self, diffs: list[FileDiff], room: int) -> list[dict]:
@@ -711,22 +996,131 @@ class ReviewApp:
         if kind == "draft":
             self._seen()
             return
+        if kind == "activate" and node in _GIT_ACTIONS:
+            self._activate_git(node)
+            return
+        if kind == "submit" and isinstance(node, str):
+            action = node.removeprefix("submit-")
+            if action in _GIT_INPUTS and node != action:
+                value = (event.get("values") or {}).get(_GIT_INPUTS[action][0])
+                if isinstance(value, str):
+                    self._run_git(action, value)
+                return
+        if kind == "activate" and node == "git-suggest":
+            self._suggest_commit()
+            return
+        if kind == "activate" and node == "refresh":
+            self.journal.checkpoint("manual", "Refresh")
+            with self._lock:
+                self._git_stamp = None
+            self.refresh()
+            return
         if kind == "activate" and node in SLOW:
             self._slow(node)
             return
         with self._lock:
-            if kind == "activate" and str(node).startswith("checkpoint-"):
+            if kind == "activate" and node == "git-cancel":
+                self._git_form = None
+                self._repaint()
+            elif kind == "activate" and str(node).startswith("checkpoint-"):
                 self._choose_checkpoint([str(node).removeprefix("checkpoint-")])
             elif kind == "activate" and (
                 node == "file-all" or str(node).startswith("file:")
             ):
                 path = str(node).removeprefix("file:")
                 self.path = None if node == "file-all" or path == self.path else path
-                self.refresh()
+                self._repaint()
             elif kind == "activate" and node in BUTTONS:
                 getattr(self, "_" + node.replace("-", "_"))()
             elif kind == "select" and node == IMAGE_TABLE:
                 self._press_images(list(event.get("item_ids") or []))
+
+    def _activate_git(self, node: str) -> None:
+        with self._lock:
+            if node not in self._git_enabled():
+                return
+            if node in _GIT_INPUTS:
+                self._git_form, self._git_message = node, ""
+                self._repaint()
+                return
+        self._run_git(node)
+
+    def _run_git(self, node: str, value: str | None = None) -> None:
+        with self._lock:
+            if (
+                node in _GIT_INPUTS and self._git_form != node
+            ) or node not in self._git_enabled():
+                return
+            self._busy = node
+            self._repaint((f"{_GIT_LABELS[node]} in progress", "running"))
+        try:
+            done = (
+                _GIT_ACTIONS[node](self.journal, value)
+                if value is not None
+                else _GIT_ACTIONS[node](self.journal)
+            )
+            if node in ("git-pull", "git-rebase", "git-merge", "git-abort"):
+                self.journal.checkpoint("outside", done.message)
+            if node in (
+                "git-commit",
+                "git-commit-push",
+                "git-push",
+                "git-push-branch",
+                "git-pull",
+                "git-rebase",
+                "git-merge",
+                "git-abort",
+            ):
+                self.journal.refresh_merge()
+            state = git.status(self.journal)
+        except BaseException:
+            with self._lock:
+                self._busy = self._git_stamp = None
+            raise
+        with self._lock:
+            self._busy = None
+            if done.ok:
+                self._git_form = None
+            self._git_state = state
+            self._git_stamp = (
+                self.journal.refs_stamp(),
+                self.journal.team_stamp(),
+                self.journal.last,
+            )
+            text = done.message
+            if done.conflicts:
+                text += (
+                    ": "
+                    + ", ".join(done.conflicts[:5])
+                    + ". Use Abort or resolve them in Git."
+                )
+            self.log(text[:300], "info" if done.ok else "warn")
+            self._repaint((text[:300], "ok" if done.ok else "warn"))
+
+    def _suggest_commit(self) -> None:
+        with self._lock:
+            form = self._git_form
+            if (
+                self._busy
+                or self._ask is None
+                or form not in ("git-commit", "git-commit-push")
+            ):
+                return
+            self._busy = "git-suggest"
+        try:
+            patch = self._own_patch(ai.MOST_PROMPT_CHARS)
+            answer = self._ask(
+                "Suggest a short Git commit message for the change below. Do not edit files.\n\n"
+                + patch[: ai.MOST_PROMPT_CHARS],
+                CommitMessage,
+            )
+        finally:
+            with self._lock:
+                self._busy = None
+        with self._lock:
+            if self._git_form == form and answer is not None:
+                self._git_message = answer.message.strip()[:2000]
+                self._repaint()
 
     def _press_images(self, ids: list[str]) -> None:
         """A press on one row opens or closes its picture; a longer selection is the open set."""
@@ -735,17 +1129,21 @@ class ReviewApp:
             self._open = [i for i in self._open if i != ids[0]] + ids * (not is_open)
         else:
             self._open = ids
-        self.refresh()
+        self._repaint()
 
     def _seen(self) -> None:
         """A person works on a comment: the result of the last action leaves the app."""
         with self._lock:
             # A run that is not done keeps its state.
             if not self._busy and self.notice[1] not in ("idle", "running"):
-                self.refresh(("Ready", "idle"))
+                self._repaint(("Ready", "idle"))
 
     def _choose_checkpoint(self, ids) -> None:
         seq = int(ids[0]) if ids else None
+        if seq is not None and all(
+            e.seq != seq or e.kind == "merge" for e in self.journal.entries
+        ):
+            return
         if seq is None or seq == self.selected or seq <= 1:
             self.selected = (
                 seq if seq is not None and seq <= 1 and seq != self.selected else None
@@ -756,7 +1154,7 @@ class ReviewApp:
             self.start, self.end = seq - 1, seq
         self.against = None
         self._clear()
-        self.refresh(
+        self._repaint(
             (
                 "Showing "
                 + (self._range_text(0) if self.end is None else f"checkpoint #{seq}"),
@@ -770,11 +1168,11 @@ class ReviewApp:
 
     def _all(self) -> None:
         self._first_range(is_own=False)
-        self.refresh(("Showing all changes", "idle"))
+        self._repaint(("Showing all changes", "idle"))
 
     def _session(self) -> None:
         self._first_range(is_own=self.is_session_scoped)
-        self.refresh(("Showing the changes of this session", "idle"))
+        self._repaint(("Showing the changes of this session", "idle"))
 
     def _first_range(self, *, is_own: bool) -> None:
         self.start, self.end, self.selected, self.path = 1, None, None, None
@@ -793,7 +1191,7 @@ class ReviewApp:
         self.against, self.selected = against, None
         self._clear()
         self.notice = (f"Showing {_AGAINST[against]}", "idle")
-        self.refresh(self.notice)
+        self._repaint(self.notice)
 
     def _latest(self) -> None:
         self._choose_checkpoint([str(self.journal.last)])
@@ -801,21 +1199,17 @@ class ReviewApp:
     def _full(self) -> None:
         # The same changes in another picture: the result of the last run stays.
         self.is_full = not self.is_full
-        self.refresh()
+        self._repaint()
 
     def _merged(self) -> None:
         self.is_merged_shown = not self.is_merged_shown
-        self.refresh()
-
-    def _refresh(self) -> None:
-        self.journal.checkpoint("manual", "Refresh")
-        self.refresh()
+        self._repaint()
 
     def _checks(self, *, is_tested: bool = False) -> None:
         name = _RUN_NAMES[is_tested]
         with self._lock:
             diffs, scope = self.diffs(), self._scope()
-            self.refresh((f"Running {name.lower()}", "running"))
+            self._repaint((f"Running {name.lower()}", "running"))
         started = time.perf_counter()
         found = self._language_findings(diffs, is_tested)
         with self._lock:
@@ -856,7 +1250,7 @@ class ReviewApp:
             f"{ran} on {len(diffs)} files: {counts['error']} errors, "
             f"{counts['warning']} warnings"
         )
-        self.refresh(
+        self._repaint(
             (
                 f"Checks done: {counts['error']} errors, {counts['warning']} warnings",
                 _tone(counts),
@@ -873,7 +1267,7 @@ class ReviewApp:
             known = [f for f in shown if f.source != "ai"]
             # The model checks each finding of the last AI review again.
             earlier = [f for f in shown if f.source == "ai"]
-            self.refresh(("AI review in progress", "running"))
+            self._repaint(("AI review in progress", "running"))
         started = time.perf_counter()
         summary, found = ai.review(self.journal.root, diffs, self._ask, known, earlier)
         self.log(f"The AI review ran in {_ms(started)} ms: {len(found)} findings")
@@ -884,7 +1278,7 @@ class ReviewApp:
             self.findings = [f for f in self.findings if f not in earlier] + found
             self.ai_summary = summary
             count = f"{len(found)} finding{'' if len(found) == 1 else 's'}"
-            self.refresh((f"AI review done: {count}", "warn" if found else "ok"))
+            self._repaint((f"AI review done: {count}", "warn" if found else "ok"))
 
     def _scope(self) -> tuple:
         """What the shown results belong to: a result for another scope is dropped."""
@@ -895,7 +1289,7 @@ class ReviewApp:
         with self._lock:
             if self._busy:
                 self.log(f"Refused {node}: {self._busy} is still running", "warn")
-                self.refresh((f"Wait: {self._busy} is still running", "warn"))
+                self._repaint((f"Wait: {self._busy} is still running", "warn"))
                 return
             self._busy = node
         try:
@@ -912,7 +1306,7 @@ class ReviewApp:
         elif self._is_own_range() and self.against is None:
             done = self.journal.undo_own(self.path)
         else:
-            done = self.journal.restore(max(self.start, 1), [self.path])
+            done = self.journal.restore(max(self.start, self._baseline()), [self.path])
         self._after_undo(done)
 
     def _undo(self) -> None:
@@ -934,7 +1328,7 @@ class ReviewApp:
             self.log("Undo kept some files: " + "; ".join(parts[1:]), "warn")
         self.start, self.end, self.selected = 1, None, None
         self._clear()
-        self.refresh(
+        self._repaint(
             ("; ".join(parts) + (f" (#{done.entry.seq})" if done.entry else ""), tone)
         )
 
@@ -1003,14 +1397,18 @@ def _ms(started: float) -> int:
     return round((time.perf_counter() - started) * 1000)
 
 
+def _patch_text(diff: FileDiff) -> str:
+    return (
+        diff.patch
+        or f"diff --git a/{diff.path} b/{diff.path}\n# {diff.note or 'No line diff.'}\n"
+    )
+
+
 def _patch_of(diffs: list[FileDiff]) -> tuple[str, list[str]]:
     """The patch text of `diffs` within the node limit, and the files left out."""
     parts, size, cut = [], 0, []
     for diff in diffs:
-        text = (
-            diff.patch
-            or f"diff --git a/{diff.path} b/{diff.path}\n# {diff.note or 'No line diff.'}\n"
-        )
+        text = _patch_text(diff)
         if size + len(text) > MOST_PATCH_CHARS:
             cut.append(diff.path)
             continue

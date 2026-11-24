@@ -1,8 +1,7 @@
 """Vis entrypoint: a write journal of every block, and the Review app.
 
-Before each Python block, the journal records the changes made since the last
-block, by a person or another program. After each block, it
-records what that step changed. Each leader session lists the app from its start:
+After each Python block, the journal records what changed before and during it,
+without delaying the block. Each leader session lists the app from its start:
 the checkpoints, the changed files and their diff, the checks, an AI review and undo.
 The app opens when a person opens it, or at the first step of the session. After a
 reload, the `on_reload` hook of the app connects it again. A subagent has no app:
@@ -12,7 +11,6 @@ The logic lives in `vis_review`; the SDK program `python -m vis_review` uses it 
 """
 
 import hashlib
-import logging
 import threading
 
 import blockether.vis.extension as vis
@@ -25,7 +23,6 @@ from vis_review.recorder import (
     block_wrote,
 )
 
-LOG = logging.getLogger("vis_review")
 RECORDER = Recorder()
 # A block hook and `reopen` can ask for the app of one journal at the same time.
 _MAKING = threading.Lock()
@@ -59,40 +56,32 @@ def _journal_key(session_id):
     return _KEYS[session_id]
 
 
-def _record(kind, label_of, wrote_of=None):
-    session_id = _session_id()
+def after_step(call):
+    """Record the changes since the last scan without delaying the block."""
+    session_id = call.get("session_id") or _session_id()
     key = _journal_key(session_id) if session_id else None
     if not key:
         return
     root = vis.workspace_root()
-    wrote = wrote_of(str(root)) if wrote_of else None
-    RECORDER.record(key, root, kind, label_of(str(root)), wrote)
-    # The first step of a leader opens the app, so a person sees it at once.
-    journal = RECORDER.journal(key, root)
-    # An open that an interrupt cut short leaves an app without a view: open it again.
-    app = RECORDER.app(session_id, journal.root) if key == session_id else None
-    if key == session_id and (app is None or app.view is None):
-        _app(session_id, journal).open()
-
-
-def before_block(call):
-    """Record the changes made since the last block, before this block runs."""
-    try:
-        _record("outside", lambda _root: "Changes between blocks")
-    except Exception:  # noqa: BLE001 - a journal error must never stop a block
-        LOG.exception("vis-review: before py3")
-
-
-def after_step(call):
-    """Record what a block changed."""
-    try:
-        _record(
-            "block",
-            lambda _root: block_label(call.get("args")),
-            lambda _root: block_wrote(call.get("args")),
-        )
-    except Exception:  # noqa: BLE001 - a journal error must never stop a block
-        LOG.exception("vis-review: after %s", call.get("op"))
+    args = call.get("args")
+    RECORDER.record(
+        key,
+        root,
+        "block",
+        block_label(args),
+        block_wrote(args),
+        started_at=call.get("started_at"),
+        ended_at=call.get("ended_at"),
+        turn=call.get("turn"),
+        iteration=call.get("iteration"),
+        call=call.get("call_id"),
+    )
+    # An open that an interrupt cut short leaves an app without a view.
+    if key == session_id:
+        journal = RECORDER.journal(key, root)
+        app = RECORDER.app(key, journal.root)
+        if app is None or app.view is None:
+            _app(key, journal).open(checkpoint=False)
 
 
 def _call(tool, verb, **arguments):
@@ -165,8 +154,7 @@ vis.register_extension(
             roles=("leader",),
         ),
         op_hooks=[
-            vis.OpHook(["py3"], before_block),
-            vis.OpHook(["py3"], after_step, phase="after"),
+            vis.OpHook(["py3"], after_step, phase="after", is_async=True),
         ],
     )
 )

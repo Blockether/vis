@@ -1,6 +1,6 @@
 # vis-review
 
-Review what a session changed: a write journal of every block, diffs, checks, an AI review and undo. It needs no Git.
+Review what a session changed: a write journal of every block, diffs, checks, an AI review and undo. The journal works without Git. The **Git** menu is active in a Git work tree.
 
 One package `vis_review` holds all the logic. Two thin doors use it:
 
@@ -9,7 +9,7 @@ One package `vis_review` holds all the logic. Two thin doors use it:
 
 ## Write journal
 
-The journal keeps checkpoints of the files of one root, without Git refs.
+The journal keeps checkpoints of the files of one root.
 
 - The first checkpoint is the baseline. It records every file of the root.
 - A later checkpoint records only the files that changed. A step that changes nothing records nothing.
@@ -24,7 +24,7 @@ The file list follows the ignore rules of the workspace (`vis_lang_interface.tre
 Data is under `$VIS_HOME/review/`, else `~/.vis/review/`:
 
 - `objects/`: file contents, by SHA-256 and compressed. Each content is kept once.
-- One journal file for each session and root. It is append-only JSON lines.
+- One journal file for each session and root. After changes reach the base branch, a merge point takes the place of the snapshots that reached it.
 - One state file next to each journal: the scope of the app and the results of the last checks and AI review. After a restart, the app shows them again.
 - A file larger than 8 MiB keeps only its digest. Undo cannot bring it back.
 
@@ -32,7 +32,7 @@ Data is under `$VIS_HOME/review/`, else `~/.vis/review/`:
 
 Each leader session lists the app from its start. A subagent session does not list the app: open the app of its leader. The app opens when you open it, or at the first Python block or patch of the session. After you closed it, the session lists it again. After `/reload`, the open app connects again by itself. After a gateway restart, the app connects when you open it. The app shows:
 
-- The checkpoints. Pick one to see its changes, or pick **All changes**.
+- The checkpoints. The menu groups snapshots by their turn and iteration when these are known. Pick one to see its changes, or pick **All changes**.
 - The changed files with their added and removed line counts. Pick one to see only its diff.
 - The diff. A comment on a line becomes a review thread. When you send the review, the session gets the threads.
 - The findings of the checks and of the AI review, on their lines.
@@ -62,6 +62,28 @@ The terminal shows the keys in its key legend instead of a row of buttons.
 | Restore to here | `B` | Bring every file back to how the chosen checkpoint left it. |
 
 An undo records a checkpoint first, so you can undo the undo. A repeated undo changes nothing.
+
+### Git actions
+
+Open **Git** in the diff toolbar to see the current branch and its ahead and behind counts. The counts use the last known upstream. Use **Pull with rebase** to get upstream changes.
+
+| Button | Key | Action |
+| --- | --- | --- |
+| Commit | `K` | Commit changed paths from this session. Other staged paths stay in the index. |
+| Commit and push | `J` | Commit the changes, then push to the upstream branch. A failed push leaves the commit. |
+| Push | `P` | Push the current branch to its upstream. |
+| Push to branch | `N` | Enter a remote branch name, push to `origin`, and set it as the upstream. This does not rename the local branch. |
+| Pull with rebase | `L` | Pull from upstream and rebase local commits. |
+| Rebase onto base | `E` | Rebase onto the last known base branch. |
+| Merge into base and push | `G` | Fetch the base branch from `origin` and switch to it. Merge the previous branch, then push the base branch. |
+| Create pull request | `Q` | Use `gh pr create` for a pushed branch with commits that the base does not have. Sign in to GitHub CLI first. |
+| Abort merge or rebase | `X` | Stop an interrupted merge or rebase. |
+
+Enter the message before you commit. If **Suggest message** is available, you can edit its suggestion before you submit the form.
+
+Before you pull, rebase, or merge, commit or remove all work tree changes. A merge updates the base branch without a merge commit if Git can fast-forward it. Review does not force-push.
+
+If Git finds conflicts, Review names the affected files. Resolve the conflicts in Git or click **Abort merge or rebase**. After you abort a merge, the base branch stays checked out. If only the push fails, the merge stays in the local base branch.
 
 **This session** compares the files of the session with the base branch (`origin/HEAD`, else the default branch):
 

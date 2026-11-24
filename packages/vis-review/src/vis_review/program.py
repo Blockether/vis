@@ -5,7 +5,7 @@
 
 The program records a checkpoint each time it sees a change, every `--every`
 seconds, so it catches each change but cannot name the block that made it. Run
-the `vis-review` extension instead to get one checkpoint for each block and patch.
+the `vis-review` extension instead to link changes to Python blocks.
 Language checks run the language packages that this program can import.
 """
 

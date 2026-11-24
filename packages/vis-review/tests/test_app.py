@@ -4,11 +4,14 @@ import os
 import re
 import subprocess
 import time
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import blockether.vis.extension as vis
 from vis_lang_interface.tree import walked
 
+import vis_review.app as review_app
+from vis_review import git as review_git
 from vis_review.ai import AiFinding, AiReview
 from vis_review.app import ReviewApp, extension_opener, image_node
 from vis_review.journal import FileDiff, Journal
@@ -859,3 +862,207 @@ def test_a_finding_in_a_file_cut_from_the_patch_is_no_thread(
     # User report 2026-11-15: the names of the cut files were the heading of the diff.
     assert not diff.get("label")
     assert "Too large to show: z.py" in notes(recorder)
+
+
+def test_git_commit_form_suggests_a_message_but_commits_the_persons_message(
+    tmp_path, recorder
+):
+    requests = []
+
+    def ask(request, model):
+        requests.append(request)
+        return model(message="Proposed message")
+
+    root, journal, app = setup(tmp_path, recorder, ask=ask, is_session_scoped=True)
+    git = repository(root)
+    git("config", "user.name", "Test Person")
+    git("config", "user.email", "test@example.com")
+    edit(root, "a.py", "a = 2\n")
+    journal.checkpoint("block", "Own edit")
+    app.refresh()
+    buttons = controls(recorder)
+    assert not buttons["git-commit"]
+    assert buttons["git-commit-push"] and buttons["git-push"] and buttons["git-rebase"]
+    recorder.send("activate", "git-commit")
+    assert wait_for(lambda: "git-form" in recorder.ids())
+    recorder.send("activate", "git-suggest")
+    assert wait_for(
+        lambda: recorder.node("git-form")["children"][0]["value"] == "Proposed message"
+    )
+    assert "+a = 2" in requests[0]
+    assert recorder.submit("submit-git-commit", {"message": "The person's message"})[
+        "is_accepted"
+    ]
+    assert wait_for(lambda: recorder.node("notice")["tone"] == "ok")
+    actual = subprocess.check_output(
+        ["git", "log", "-1", "--format=%s"], cwd=root, text=True
+    )
+    assert actual.strip() == "The person's message"
+    assert controls(recorder)["git-commit"]
+
+
+def test_git_operation_does_not_hold_the_app_lock(tmp_path, recorder, monkeypatch):
+    root, journal, app = setup(tmp_path, recorder, is_session_scoped=True)
+    repository(root)
+    edit(root, "a.py", "a = 2\n")
+    journal.checkpoint("block")
+    app.refresh()
+    started, finish = Event(), Event()
+
+    def slow(_journal, _message):
+        started.set()
+        assert finish.wait(3)
+        return review_git.Result(True, "Commit created")
+
+    monkeypatch.setitem(review_app._GIT_ACTIONS, "git-commit", slow)
+    recorder.send("activate", "git-commit")
+    assert wait_for(lambda: "git-form" in recorder.ids())
+    worker = Thread(
+        target=app.dispatch,
+        args=(
+            {
+                "type": "submit",
+                "node_id": "submit-git-commit",
+                "values": {"message": "Example"},
+            },
+        ),
+    )
+    worker.start()
+    try:
+        assert started.wait(2)
+        # A hook can take the lock to paint even while the Git process is running.
+        assert app._lock.acquire(timeout=0.5)
+        app._lock.release()
+    finally:
+        finish.set()
+        worker.join(5)
+    assert recorder.node("notice")["tone"] == "ok"
+
+
+def test_snapshot_group_shows_the_change_and_restores_its_state(tmp_path, recorder):
+    root, journal, app = setup(tmp_path, recorder)
+    edit(root, "a.py", "a = 2\n")
+    first = journal.checkpoint(
+        "block", "Update a", turn=3, iteration=7, call="call-one"
+    )
+    edit(root, "a.py", "a = 3\n")
+    journal.checkpoint("block", "Update a again", turn=3, iteration=8, call="call-two")
+    app.refresh()
+    assert f"checkpoint-{first.seq}" in items(recorder, "snapshots-3-7")
+    recorder.send("activate", f"checkpoint-{first.seq}")
+    assert wait_for(lambda: "+a = 2" in recorder.node("diff")["patch"])
+    assert "+a = 3" not in recorder.node("diff")["patch"]
+    recorder.send("activate", "restore")
+    assert wait_for(lambda: (root / "a.py").read_text() == "a = 2\n")
+
+
+def test_push_replaces_the_merged_snapshots_with_the_base_commit(tmp_path, recorder):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.py").write_text("a = 1\n")
+    git = repository(root)
+    git("config", "user.name", "Test Person")
+    git("config", "user.email", "test@example.com")
+    remote = tmp_path / "remote.git"
+    git("init", "-q", "--bare", "-b", "main", str(remote))
+    git("remote", "add", "origin", str(remote))
+    git("push", "-qu", "origin", "main")
+    journal = Journal(root, "s1", tmp_path / "base", files=walked)
+    app = ReviewApp(journal, extension_opener, is_session_scoped=True).open()
+    edit(root, "a.py", "a = 2\n")
+    first = journal.checkpoint(
+        "block", "Own edit", turn=3, iteration=7, call="call-one"
+    )
+    committed = review_git.commit(journal, "Own edit")
+    assert committed.ok, committed
+    app.refresh()
+    recorder.send("activate", f"checkpoint-{first.seq}")
+    assert wait_for(lambda: "+a = 2" in recorder.node("diff")["patch"])
+    assert not controls(recorder)["git-push"]
+    recorder.send("activate", "git-push")
+    assert wait_for(lambda: recorder.node("notice")["tone"] == "ok", timeout=10)
+    marker = journal.merge_point()
+    assert marker is not None and marker.seq == first.seq
+    assert (
+        marker.commit
+        == subprocess.check_output(
+            ["git", "rev-parse", "main"],
+            cwd=remote,
+            text=True,
+        ).strip()
+    )
+    assert journal.snapshots() == []
+    assert controls(recorder)["git-push"] and controls(recorder)["restore"]
+    recorder.send("activate", "all")
+    assert "No change" in recorder.node("diff")["patch"]
+    recorder.send("activate", f"checkpoint-{first.seq}")
+    assert controls(recorder)["restore"]
+
+
+def test_open_without_checkpoint_does_not_scan_the_tree(
+    tmp_path, recorder, monkeypatch
+):
+    root = tmp_path / "root"
+    root.mkdir()
+    journal = Journal(root, "s1", tmp_path / "base", files=walked)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("open must not record another checkpoint")
+
+    monkeypatch.setattr(journal, "checkpoint", unexpected)
+    ReviewApp(journal, extension_opener).open(checkpoint=False)
+    assert recorder.node("diff")["patch"] == "No change in this range.\n"
+
+
+def test_render_leaves_cut_files_in_the_menu_without_building_their_patches(
+    tmp_path, recorder, monkeypatch
+):
+    root, journal, app = setup(tmp_path, recorder, is_session_scoped=True)
+    for name in ("a.py", "b.py", "c.py", "d.py"):
+        edit(root, name, f"{name[0]} = 123\n")
+    journal.checkpoint("block")
+    made = []
+    real = journal.own_file_diff
+
+    def counted(path, *args):
+        made.append(path)
+        return real(path, *args)
+
+    monkeypatch.setattr(journal, "own_file_diff", counted)
+    monkeypatch.setattr(review_app, "MOST_PATCH_CHARS", 95)
+    app.refresh()
+    assert made == ["a.py", "b.py"]
+    assert items(recorder, "file") == [
+        "file-all",
+        "file:a.py",
+        "file:b.py",
+        "file:c.py",
+        "file:d.py",
+    ]
+    assert any("b.py, c.py, d.py" in line for line in notes(recorder))
+    made.clear()
+    recorder.send("activate", "file:d.py")
+    assert wait_for(lambda: "+d = 123" in recorder.node("diff")["patch"])
+    assert made == ["d.py"]
+
+
+def test_refresh_checks_the_base_before_taking_the_app_lock(
+    tmp_path, recorder, monkeypatch
+):
+    _, journal, app = setup(tmp_path, recorder)
+    started, finish = Event(), Event()
+
+    def compact():
+        started.set()
+        assert finish.wait(3)
+
+    monkeypatch.setattr(journal, "refresh_merge", compact)
+    worker = Thread(target=app.refresh)
+    worker.start()
+    try:
+        assert started.wait(2)
+        assert app._lock.acquire(timeout=0.5)
+        app._lock.release()
+    finally:
+        finish.set()
+        worker.join(5)

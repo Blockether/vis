@@ -1,6 +1,6 @@
 """The journals and review apps of one process, for each session key and root.
 
-The extension records a checkpoint around each block and each patch. The SDK
+The extension records a checkpoint after each block. The SDK
 program records one each time it polls. Both use one `Recorder`, so each journal
 has one writer. A root can change during a session, for example with `/cd`, so
 each root of a session has its own journal.
@@ -101,6 +101,12 @@ class Recorder:
         kind: str,
         label: str,
         wrote: Callable[[str], bool] | None = None,
+        *,
+        started_at: float | None = None,
+        ended_at: float | None = None,
+        turn: int | None = None,
+        iteration: int | None = None,
+        call: str | None = None,
     ) -> Entry | None:
         """Record what changed under `root`. Repaint the open app when files changed.
 
@@ -109,9 +115,21 @@ class Recorder:
         the step shows it wrote; the journal then keeps that path as an own change.
         """
         journal = self.journal(key, root)
-        entry = journal.checkpoint(kind, label, wrote)
+        entry = journal.checkpoint(
+            kind,
+            label,
+            wrote,
+            started_at=started_at,
+            ended_at=ended_at,
+            turn=turn,
+            iteration=iteration,
+            call=call,
+        )
+        merged = journal.refresh_merge()
         app = self.app(key, journal.root)
-        if app is not None and (entry is not None or app.is_behind()):
+        if app is not None and (
+            entry is not None or merged is not None or app.is_behind()
+        ):
             app.refresh()
         return entry
 

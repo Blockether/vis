@@ -341,8 +341,7 @@ def _lines_with(**changed):
 
 
 @pytest.mark.parametrize("view", ["own_diff", "own_open"])
-def test_two_sessions_that_change_one_file_see_only_their_own_lines(tmp_path, view):
-    # Each session that changed the same file must show only its own changes.
+def test_the_own_diff_marks_an_outside_edit_between_own_edits(tmp_path, view):
     top = repo(tmp_path)
     (top / "sub" / "shared.py").write_text(_lines_with())
     git(top, "add", "-A")
@@ -373,11 +372,13 @@ def test_two_sessions_that_change_one_file_see_only_their_own_lines(tmp_path, vi
     own, other = patch(mine), patch(theirs)
     assert "-line 2\n+mine 2\n" in own.patch
     assert "-line 28\n+mine 28\n" in own.patch
-    assert "+theirs 15" not in own.patch
-    assert (own.added, own.removed) == (2, 2)
+    assert "+theirs 15" in own.patch and own.note
+    assert (own.added, own.removed) == (3, 3)
+    [(rel, _status, before, after)] = mine.own_files()
+    assert mine.own_file_diff(rel, before, after) == own
     assert "-line 15\n+theirs 15\n" in other.patch
     assert "+mine" not in other.patch
-    assert (other.added, other.removed) == (1, 1)
+    assert (other.added, other.removed) == (1, 1) and not other.note
 
 
 def test_undo_of_an_own_file_keeps_the_lines_of_another_session(tmp_path):
@@ -768,3 +769,216 @@ def test_a_subagent_step_starts_at_its_last_scan_and_not_at_its_last_change(tmp_
     write(member, "f.py", "b\n")
     member.checkpoint("block", "a subagent block")
     assert leader.own_paths() == []
+
+
+def _write_at(j, rel, value, at):
+    write(j, rel, value)
+    os.utime(os.path.join(j.root, rel), (at, at))
+
+
+def test_a_delayed_after_hook_does_not_take_the_next_blocks_files(tmp_path):
+    j = journal(tmp_path)
+    for rel in ("a.py", "b.py", "c.py", "gone.py"):
+        _write_at(j, rel, "old\n", 1)
+    j.checkpoint()
+    _write_at(j, "a.py", "between\n", 9)
+    _write_at(j, "b.py", "this block\n", 11)
+    _write_at(j, "c.py", "next block\n", 21)
+    os.unlink(os.path.join(j.root, "gone.py"))
+    j.checkpoint(
+        "block",
+        "first",
+        lambda rel: rel in ("b.py", "gone.py"),
+        started_at=10,
+        ended_at=12,
+        turn=1,
+        iteration=2,
+        call="call1",
+    )
+    j.checkpoint("block", "next", started_at=20, ended_at=22, call="call2")
+    snapshots = journal(tmp_path).snapshots()
+    assert [(e.kind, e.call, set(e.files)) for e in snapshots] == [
+        ("outside", "call1", {"a.py"}),
+        ("block", "call1", {"b.py", "gone.py"}),
+        ("block", "call2", {"c.py"}),
+    ]
+    assert (snapshots[1].turn, snapshots[1].iteration) == (1, 2)
+    assert snapshots[1].files["gone.py"] is None
+
+
+def test_first_block_uses_git_to_keep_a_tracked_preimage(tmp_path):
+    top = repo(tmp_path)
+    j = Journal(top / "sub", "first", tmp_path / "base", files=walked)
+    _write_at(j, "a.py", "first call\n", 11)
+    _write_at(j, "keep.py", "future\n", 21)
+    _write_at(j, "logo.bin", "\n", 21)
+    (top / "sub" / "logo.bin").write_bytes(b"\x89PNG\0old")
+    os.utime(top / "sub" / "logo.bin", (21, 21))
+    (top / "sub" / "gone.py").unlink()
+    j.checkpoint(
+        "block",
+        "first",
+        lambda rel: rel == "gone.py",
+        started_at=10,
+        ended_at=12,
+        call="call1",
+    )
+    diff, deleted = j.own_diff()
+    assert diff.path == "a.py" and "-one\n+first call\n" in diff.patch
+    assert deleted.path == "gone.py" and deleted.status == "deleted"
+    j.checkpoint("block", "second", started_at=20, ended_at=22, call="call2")
+    assert [d.path for d in j.own_diff()] == ["a.py", "gone.py", "keep.py"]
+
+
+def test_marking_a_merge_keeps_later_snapshots_and_preserves_sequence(tmp_path):
+    top = repo(tmp_path)
+    j = Journal(top / "sub", "s1", tmp_path / "base", files=walked)
+    first = j.checkpoint()
+    write(j, "a.py", "merged\n")
+    merged = j.checkpoint("block")
+    git(top, "commit", "-qam", "merged")
+    commit = git(top, "rev-parse", "HEAD").strip()
+    write(j, "a.py", "unmerged\n")
+    later = j.checkpoint("block")
+    mark = j.mark_merged(commit)
+    assert (mark.kind, mark.seq, mark.commit) == ("merge", merged.seq, commit)
+    again = Journal(j.root, j.key, j.path.parent.parent, files=walked)
+    assert again.merge_point() == mark
+    assert again.snapshots() == [later]
+    assert again.own_paths() == ["a.py"]
+    assert again.mark_merged(commit) is None
+    with pytest.raises(KeyError):
+        again.restore(first.seq)
+    assert again.restore(mark.seq).restored == ("a.py",)
+    assert read(again, "a.py") == "merged\n"
+
+
+def test_refresh_compacts_when_the_default_branch_tip_has_the_own_contents(tmp_path):
+    top = repo(tmp_path)
+    original = git(top, "rev-parse", "HEAD").strip()
+    git(top, "switch", "-qc", "feature")
+    j = Journal(top / "sub", "s1", tmp_path / "base", files=walked)
+    j.checkpoint()
+    write(j, "a.py", "mine\n")
+    j.checkpoint("block")
+    git(top, "commit", "-qam", "topic change")
+    assert j.refresh_merge() is None
+    write(j, "outside.py", "later outside edit\n")
+    later = j.checkpoint("outside")
+    git(top, "switch", "-q", "main")
+    git(top, "checkout", "feature", "--", "sub/a.py")
+    git(top, "commit", "-qm", "Merged independently")
+    merged = git(top, "rev-parse", "HEAD").strip()
+    git(top, "switch", "-q", "feature")
+    assert base_ref(j.root).commit == original
+    assert j.refresh_merge().commit == merged
+    assert j.snapshots() == [later] and j.own_paths() == []
+    assert j.refresh_merge() is None
+
+
+def test_an_interrupted_compaction_keeps_the_old_journal(tmp_path, monkeypatch):
+    top = repo(tmp_path)
+    j = Journal(top / "sub", "s1", tmp_path / "base", files=walked)
+    j.checkpoint()
+    write(j, "a.py", "mine\n")
+    j.checkpoint("block")
+    git(top, "commit", "-qam", "merged")
+    original = j.path.read_bytes()
+
+    def cut(source, target):
+        assert target == j.path
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as patch:
+        patch.setattr(journal_module.os, "replace", cut)
+        with pytest.raises(KeyboardInterrupt):
+            j.mark_merged("HEAD")
+    assert j.path.read_bytes() == original
+    assert j.merge_point() is None
+    assert j.mark_merged("HEAD").kind == "merge"
+
+
+def test_the_object_sweep_keeps_live_blobs_in_all_journals_and_recent_blobs(tmp_path):
+    j = journal(tmp_path)
+    other = journal(tmp_path, "other")
+    write(j, "mine.py", "mine\n")
+    j.checkpoint()
+    write(j, "mine.py", "theirs\n")
+    other.checkpoint()
+    old = j.store.put(b"stale")
+    fresh = j.store.put(b"fresh")
+    for sha in (old, j.state["mine.py"], other.state["mine.py"]):
+        os.utime(j.store._path(sha), (1, 1))
+    assert j.store.sweep() == 1
+    assert j.store.get(old) is None
+    assert j.store.get(fresh) == b"fresh"
+    assert j.store.get(j.state["mine.py"]) == b"mine\n"
+    assert j.store.get(other.state["mine.py"]) == b"theirs\n"
+
+
+def test_a_new_checkpoint_reuses_unchanged_diffs_in_a_large_own_view(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(journal_module, "MOST_CACHED_DIFFS", 1)
+    j = journal(tmp_path)
+    j.checkpoint()
+    write(j, "a.py", "own a\n")
+    write(j, "b.py", "own b\n")
+    j.checkpoint("block")
+    before = j.own_diff()
+    real = Journal._file_diff
+    diffed = []
+
+    def file_diff(self, rel, *args):
+        diffed.append(rel)
+        return real(self, rel, *args)
+
+    monkeypatch.setattr(Journal, "_file_diff", file_diff)
+    write(j, "c.py", "own c\n")
+    j.checkpoint("block")
+    after = j.own_diff()
+    assert after[:2] == before
+    assert diffed == ["c.py"]
+
+
+def test_own_file_list_does_not_read_contents(tmp_path, monkeypatch):
+    j = journal(tmp_path)
+    write(j, "old.py", "gone\n")
+    j.checkpoint()
+    write(j, "new.py", "new\n")
+    os.unlink(os.path.join(j.root, "old.py"))
+    j.checkpoint("block")
+
+    def no_read(_sha):
+        pytest.fail("Listing files must not read a blob")
+
+    monkeypatch.setattr(j.store, "get", no_read)
+    assert j.own_files() == [
+        ("new.py", "added", None, store.digest(b"new\n")),
+        ("old.py", "deleted", store.digest(b"gone\n"), None),
+    ]
+
+
+def test_own_file_list_at_ref_leaves_out_merged_changes(tmp_path, monkeypatch):
+    top = repo(tmp_path)
+    j = Journal(top / "sub", "s1", tmp_path / "base", files=walked)
+    j.checkpoint()
+    write(j, "a.py", "merged\n")
+    (top / "sub" / "gone.py").unlink()
+    write(j, "open.py", "open\n")
+    j.checkpoint("block")
+    git(top, "commit", "-qam", "merge the tracked changes")
+
+    def no_patch(*_args):
+        pytest.fail("Listing own changes must not build patches")
+
+    monkeypatch.setattr(j, "file_diff", no_patch)
+    expected = [("open.py", "added", None, store.digest(b"open\n"))]
+    assert j.own_files("HEAD") == expected
+
+    def no_read(_sha):
+        pytest.fail("Listing files with cached Git blob IDs must not read contents")
+
+    monkeypatch.setattr(j.store, "get", no_read)
+    assert j.own_files("HEAD") == expected
+    assert j.own_files("no-such-ref") is None
