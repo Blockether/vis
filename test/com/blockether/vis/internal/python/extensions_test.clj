@@ -8523,7 +8523,88 @@ vis.register_extension(vis.Extension(name='board', description='Board fixture.',
                       (expect (= {:id view-id :key "board-1" :scope "global"}
                                  (select-keys opened [:id :key :scope])))
                       (expect (nil? (:is-stale opened))))
-                    (finally (when view-id (human-input/close-live! view-id))))))))))
+                    (finally (when view-id (human-input/close-live! view-id)))))))))))
+
+(def ^:private where-py
+  "A global extension whose global app and tool write the PID of their process to
+   the file `NOTES`, one `name pid` line each."
+  "import os
+import blockether.vis.extension as vis
+
+def _note(name):
+    with open(NOTES, 'a', encoding='utf-8') as stream:
+        stream.write(f'{name} {os.getpid()}\\n')
+
+def reopen(app):
+    _open()
+
+def _open():
+    _note('open')
+    vis.attach(vis.ui.app('Where', vis.ui.button('go', 'Go'), key='where-1', scope='global'),
+               on_event=lambda event: _note('event'), on_reload=reopen)
+
+def open_where(app):
+    _open()
+
+def where():
+    'Note the process of this tool.'
+    _note('tool')
+    return 'ok'
+
+vis.register_extension(vis.Extension(name='where', description='Process probe.', alias='where',
+    symbols=[vis.Symbol(where)],
+    global_app=vis.GlobalApp('where', 'Where', open_where, icon='review')))
+")
+
+(defdescribe
+  global-app-process-test
+  ;; User request 2026-11-24: check that a global app runs once, in the shared
+  ;; worker, and that the tools of the same extension run in each session's worker.
+  (it
+    "runs the open hook and the events of a global app in the shared worker, and its tools in the session worker"
+    (let [notes (io/file (temp-dir) "where.txt")]
+      (with-fresh-loaded
+           {"extension.py" (str/replace where-py "NOTES" (json-text (.getCanonicalPath notes)))}
+           (fn [loaded {:keys [store]}]
+             (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+             (let [root (.getCanonicalPath ^java.io.File (temp-dir))
+                   ext (registered "where")
+                   ws (ps/db-workspace-insert! store {:repo-id "where" :root root})
+                   ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                   env {:python-context ctx
+                        :db-info store
+                        :session-id (ps/db-store-session! store {:channel :tui :workspace-id (:id ws) :title "where"})
+                        :cwd root
+                        :extensions (atom [ext])
+                        :active-extensions (atom [ext])
+                        :workspace-atom (atom ws)}
+                   lines #(when (.exists notes) (str/split-lines (slurp notes)))
+                   pids (fn [name] (into #{} (keep (fn [line] (let [[n pid] (str/split line #" ")] (when (= name n) (parse-long pid))))) (lines)))]
+               (try
+                 (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                                  (constantly (io/file root "views"))
+                                  #'pyx/ensure-python-extensions-loaded! (constantly nil)}
+                   (fn []
+                     (let [view-id (:id (first (human-input/global-apps)))]
+                       (try
+                         (expect (:is-accepted (human-input/action! view-id {:action "connect"})))
+                         (expect (:is-accepted (human-input/action! view-id {:action "activate" :node-id "go"})))
+                         (loop-env/sync-active-extension-symbols! env [ext])
+                         (let [result (#'python-exec/run-python-code ctx "print(where())" :env env)]
+                           (expect (nil? (:error result)) (pr-str result)))
+                         (loop [attempt 0]
+                           (when (and (empty? (pids "event")) (< attempt 100))
+                             (Thread/sleep 100)
+                             (recur (inc attempt))))
+                         (let [shared (worker/worker-pid worker/shared-key)
+                               session-worker (worker/worker-pid (worker/extension-worker-key ctx))]
+                           (expect (some? shared))
+                           (expect (= #{shared} (pids "open")) (pr-str (lines)))
+                           (expect (= #{shared} (pids "event")) (pr-str (lines)))
+                           (expect (= #{session-worker} (pids "tool")) (pr-str (lines)))
+                           (expect (not= shared session-worker)))
+                         (finally (when view-id (human-input/close-live! view-id)))))))
+                 (finally (ep/dispose-python-context! ctx)))))))))
 
 (defdescribe
   declared-session-app-test
@@ -12132,4 +12213,4 @@ vis.register_extension(vis.Extension(
                (it "leaves session_root out where vis.workspace_root() fails"
                    (expect (not (contains? (slim-env {:session-id "s1"} nil) "session_root")))
                    (expect (not (contains? (slim-env {:workspace/root root} nil)
-                                           "session_root")))))))
+                                           "session_root"))))))

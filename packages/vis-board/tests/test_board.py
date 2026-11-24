@@ -1,6 +1,7 @@
 """Check the saved board and the SDK events that change it."""
 
 import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -180,6 +181,15 @@ def test_tools_change_the_board_and_refresh_open_views(saved, app, monkeypatch):
     assert not rec.node("issues")["issues"]
     assert not saved.read()["issues"]
 
+
+def test_stop_ends_the_file_watch_at_once(saved, monkeypatch):
+    # A reload opens the Board again; the old app must stop repainting at once.
+    monkeypatch.setattr(vis._host, "live", vis.testing.LiveRecorder(object()).live)
+    board = _board(saved).open()
+    watcher = next(one for one in threading.enumerate() if one.name == "vis-board")
+    board.stop()
+    watcher.join(1)
+    assert not watcher.is_alive()
 
 def test_store_change_refreshes_another_runtime(saved, monkeypatch):
     rec = vis.testing.LiveRecorder(object())

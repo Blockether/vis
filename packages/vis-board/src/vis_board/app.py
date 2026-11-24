@@ -23,6 +23,7 @@ from vis_board.store import (
     move,
     reference_matches,
 )
+from vis_board.watch import FolderWatch
 
 LOG = logging.getLogger(__name__)
 ANY = "any"
@@ -266,7 +267,7 @@ class BoardApp:
         self.projects = projects
         self.lock = threading.RLock()
         self.view = None
-        self._stop = threading.Event()
+        self._events = None
         self._file_version = None
         self.filters = dict(FILTERS)
         self._choices = None
@@ -322,6 +323,11 @@ class BoardApp:
 
     def open(self, *, on_reload=None, watch=True):
         """Open the board, or connect to the board with the same key."""
+        if watch:
+            # Watch before the first read, so that no save falls between them.
+            folder = board_dir(self.home)
+            folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._events = FolderWatch(folder)
         with self.lock:
             version = self._stamp()
             self._boards = self._read()
@@ -349,29 +355,33 @@ class BoardApp:
             self._file_version = version
             self._paint()
         if watch:
-            threading.Thread(target=self._watch, name="vis-board", daemon=True).start()
+            threading.Thread(
+                target=self._watch, args=(self._events,), name="vis-board", daemon=True
+            ).start()
         return self
 
     def stop(self):
         """Stop watching the board files."""
-        self._stop.set()
+        if self._events is not None:
+            self._events.close()
 
-    def _watch(self):
-        """Repaint after a session or another process saves a board."""
-        while not self._stop.wait(0.75):
-            try:
+    def _watch(self, events):
+        """Repaint when the kernel reports that a session or a process saved a board."""
+        try:
+            while events.wait():
                 with self.lock:
                     self.view.state()
                     if self.view.is_interrupted:
                         return
                     if self._stamp() != self._file_version:
                         self.refresh()
-            except vis.Interrupted:
-                return
-            except Exception:
-                with self.lock:
-                    self._log_failure("Refresh board")
-                return
+        except vis.Interrupted:
+            return
+        except Exception:
+            with self.lock:
+                self._log_failure("Refresh board")
+        finally:
+            events.release()
 
     def _paint(self):
         data = merged(self._visible())
@@ -558,7 +568,7 @@ class GlobalBoard:
             self.app = BoardApp().open(on_reload=on_reload)
 
     def refresh(self):
-        """Paint the open app of this runtime now. Other runtimes watch the files."""
+        """Paint the open app of this runtime now. Other runtimes get file events."""
         with self._lock:
             app = self.app
         if app is None:
