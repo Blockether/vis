@@ -119,6 +119,7 @@ class ClientExtensions:
                     "slash_commands",
                     "keybindings",
                     "session_app",
+                    "global_app",
                     "automations",
                     "settings",
                     "grants",

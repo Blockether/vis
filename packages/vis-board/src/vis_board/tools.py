@@ -1,8 +1,8 @@
-"""List and change issues of the active workspace."""
+"""List and change issues of the board of the active project folder."""
 
 import blockether.vis.extension as vis
 
-from vis_board.app import BOARDS
+from vis_board.app import BOARD
 from vis_board.store import Store, edit, matching, move
 
 
@@ -26,12 +26,18 @@ def list_issues(
 def _change(apply):
     workspace = vis.workspace_root()
     issue = Store(workspace).change(apply)
-    BOARDS.refresh(workspace)
+    BOARD.refresh()
     return issue
 
 
-def create_issue(title: str, column: str = "todo", values: dict | None = None) -> dict:
-    """Make an issue. Give a column ID and optional fields such as text or assignee."""
+def create_issue(
+    title: str, column: str = "backlog", values: dict | None = None
+) -> dict:
+    """Make an issue. Give a column ID and optional fields such as text or assignee.
+
+    The columns are the SDLC flow: backlog, review, ready (for implementation),
+    implementing, verification and done.
+    """
     return _change(
         lambda data: edit(data, {**(values or {}), "title": title, "column": column})
     )
@@ -43,7 +49,7 @@ def change_issue(issue: str, values: dict) -> dict:
 
 
 def move_issue(issue: str, column: str, index: int) -> dict:
-    """Move an issue by key or ID to a column. Index 0 is the top."""
+    """Move an issue by key or ID to a column ID of the SDLC flow. Index 0 is the top."""
     return _change(lambda data: move(data, issue, column, index))
 
 

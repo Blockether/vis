@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Bug, CalendarDays, Check, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Equal, Flag, GripVertical, Layers, Plus, UserRound, Zap } from 'lucide-react';
 
 import {
@@ -8,7 +8,7 @@ import {
 } from '../lib/board';
 import type { LiveBoardNode } from '../lib/live-view';
 import { Markdown } from './ChatContent';
-import { Button, Checkbox, DialogFrame, Input, Modal, Select } from './ui';
+import { Banner, Button, Checkbox, CommitInput, DialogFrame, Field, IconButton, Input, Modal, Select, SurfaceButton, TextArea } from './ui';
 
 const KIND_MARK = {
   task: [CheckSquare, 'text-link'], story: [Layers, 'text-ok-ink'], bug: [Bug, 'text-err-ink'],
@@ -21,9 +21,6 @@ const PRIORITY_MARK = {
 const KIND_OPTIONS = BOARD_KINDS.map((value) => ({ value, label: boardWord(value) }));
 const PRIORITY_OPTIONS = BOARD_PRIORITIES.map((value) => ({ value, label: boardWord(value) }));
 const TONE_MARK = { idle: 'bg-dialog-hint', running: 'bg-link', ok: 'bg-ok', warn: 'bg-warn', error: 'bg-err' };
-const CONTROL = 'min-h-11 sm:min-h-8';
-const INPUT_CONTROL = 'board-input';
-const ICON_CONTROL = `${CONTROL} inline-flex items-center justify-center gap-1.5`;
 
 function KindMark({ kind = DEFAULT_KIND }: { kind?: BoardKind }) {
   const [Icon, color] = KIND_MARK[kind];
@@ -38,10 +35,12 @@ function PriorityMark({ priority = DEFAULT_PRIORITY }: { priority?: BoardPriorit
 
 function Avatar({ person, name = person?.name ?? 'Unassigned' }: { person?: BoardPerson; name?: string }) {
   const initials = name.trim().split(/\s+/).slice(0, 2).map((word) => Array.from(word)[0]).join('').toUpperCase();
-  return <span className="board-avatar" title={name} role="img" aria-label={name} style={colorStyle(person?.color)}>
+  return <span className={`inline-grid size-6 place-items-center font-mono text-[0.625rem]/none font-semibold ${markClass}`} title={name} role="img" aria-label={name} style={colorStyle(person?.color)}>
     {name === 'Unassigned' ? <UserRound size={14} aria-hidden="true" /> : initials}
   </span>;
 }
+
+const markClass = 'border border-[color-mix(in_oklab,var(--board-mark,var(--color-accent))_50%,var(--color-edge))] bg-[color-mix(in_oklab,var(--board-mark,var(--color-accent))_18%,var(--color-panel))] text-[color:color-mix(in_oklab,var(--board-mark,var(--color-accent))_35%,var(--color-dialog-foreground))]';
 
 function colorStyle(color?: string): CSSProperties | undefined {
   return color ? ({ '--board-mark': color } as CSSProperties) : undefined;
@@ -61,10 +60,9 @@ function IssueCard({ issue, person, epic, today, open, move, canDrag, isDragged 
   const total = issue.subtasks_total ?? 0;
   const done = Math.min(total, issue.subtasks_done ?? 0);
   return (
-    <article className="board-card relative min-w-0 border border-edge bg-panel" data-board-issue={issue.id}
-      data-flagged={issue.is_flagged || undefined} data-dragged={isDragged || undefined}
+    <article className={`relative min-w-0 border border-edge bg-panel motion-safe:transition-colors hover:border-edge-strong focus-within:border-edge-strong ${issue.is_flagged ? 'border-s-2 border-s-warn bg-warn-surface' : ''} ${isDragged ? 'opacity-45' : ''}`} data-board-issue={issue.id}
       data-mouse-drag={canDrag || undefined}>
-      {open && <button type="button" className="board-open absolute inset-0 z-10 text-left"
+      {open && <SurfaceButton className="z-10"
         aria-label={[issue.key, issue.title].filter(Boolean).join(' ')} aria-describedby={metadata} onClick={open} />}
       <div id={metadata} className="pointer-events-none flex flex-col gap-2 p-3">
         <div className={`flex min-w-0 items-center gap-2 text-meta text-dialog-hint ${move ? 'pr-10' : ''}`}>
@@ -74,7 +72,7 @@ function IssueCard({ issue, person, epic, today, open, move, canDrag, isDragged 
         </div>
         <p className="line-clamp-2 break-words text-body font-medium leading-snug text-dialog-foreground">{issue.title}</p>
         {(issue.epic || Boolean(issue.labels?.length)) && <div className="flex flex-wrap gap-1 text-meta leading-snug">
-          {issue.epic && <span className="board-epic max-w-full truncate px-1.5 py-0.5" style={colorStyle(epic?.color)}>{epic?.title ?? issue.epic}</span>}
+          {issue.epic && <span className={`max-w-full truncate px-1.5 py-0.5 ${markClass}`} style={colorStyle(epic?.color)}>{epic?.title ?? issue.epic}</span>}
           {issue.labels?.map((label) => <span key={label} className="max-w-full truncate border border-edge bg-panel-2 px-1.5 py-0.5 text-dialog-hint">{label}</span>)}
         </div>}
         <div className="flex min-h-6 items-center gap-2 text-meta text-dialog-hint">
@@ -86,63 +84,17 @@ function IssueCard({ issue, person, epic, today, open, move, canDrag, isDragged 
           <div className="ml-auto"><Avatar person={person} name={person?.name ?? issue.assignee ?? 'Unassigned'} /></div>
         </div>
         {total > 0 && <div className="flex items-center gap-2 text-meta text-dialog-hint">
-          <progress className="board-progress min-w-0 flex-1" aria-label="Subtasks" value={done} max={total} />
+          <progress className="h-1 min-w-0 flex-1 appearance-none bg-edge [&::-webkit-progress-bar]:bg-edge [&::-webkit-progress-value]:bg-ok [&::-moz-progress-bar]:bg-ok" aria-label="Subtasks" value={done} max={total} />
           <span className="font-mono tabular-nums">{done}/{total}</span>
         </div>}
       </div>
-      {move && <div className="absolute right-0 top-0 z-20">
-        <Button type="button" variant="quiet" pressEffect="none" className="board-grip min-h-11 min-w-11 px-0"
-          aria-label={`Move ${issue.key ?? issue.title}`} data-board-grip onClick={move}>
+      {move && <div className="absolute right-1.5 top-1.5 z-20">
+        <IconButton variant="quiet" className="touch-none" label={`Move ${issue.key ?? issue.title}`} data-board-grip onClick={move}>
           <GripVertical size={16} aria-hidden="true" />
-        </Button>
+        </IconButton>
       </div>}
     </article>
   );
-}
-
-function BoardDialog({ title, close, children, sheet = false, error }: {
-  title: string; close: () => void; children: ReactNode; sheet?: boolean; error?: string;
-}) {
-  const restore = useRef<Element | null>(null);
-  const body = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!restore.current) restore.current = document.activeElement;
-    body.current?.focus();
-    return () => {
-      const opener = restore.current;
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
-    };
-  }, []);
-  const key = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented) return;
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      close();
-    } else if (event.key === 'Tab' && event.target instanceof HTMLElement && event.currentTarget.contains(event.target)) {
-      const stops = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]')]
-        .filter((node) => node.getClientRects().length > 0);
-      const at = stops.indexOf(event.target);
-      if (event.shiftKey ? at <= 0 : at >= stops.length - 1) {
-        event.preventDefault();
-        (event.shiftKey ? stops.at(-1) : stops[0])?.focus();
-      }
-    }
-  };
-  return <Modal size={sheet ? 'fit' : 'split'} onDismiss={close}>
-    <div className="contents" onKeyDown={key}>
-      <DialogFrame title={title} onClose={close} className="board-dialog">
-        <div ref={body} tabIndex={-1} className="min-h-0 flex-1 overflow-auto p-4 outline-none sm:p-6">
-          {error && <BoardError text={error} />}{children}
-        </div>
-      </DialogFrame>
-    </div>
-  </Modal>;
-}
-
-
-function BoardError({ text }: { text: string }) {
-  return <p role="alert" className="mb-2 border border-err/50 bg-err/10 p-2 text-ui text-err-ink">{text}</p>;
 }
 
 function MovePicker({ issue, issues, columns, onMove, close }: {
@@ -161,45 +113,14 @@ function MovePicker({ issue, issues, columns, onMove, close }: {
     close?.();
   };
   return <div className="flex flex-col gap-3">
-    <Select aria-label="Move to column" placeholder="Move to column" className={CONTROL} value=""
+    <Select aria-label="Move to column" placeholder="Move to column" value=""
       options={columns.filter((column) => column.id !== issue.column).map((column) => ({ value: column.id, label: column.title }))}
       onValueChange={(column) => choose(boardPlace(issues, issue.id, column))} />
     <div className="flex flex-wrap gap-2" role="group" aria-label="Order in column">
-      {buttons.map(({ label, Icon, index, disabled }) => <Button key={label} type="button" variant="secondary" className={ICON_CONTROL} disabled={disabled}
+      {buttons.map(({ label, Icon, index, disabled }) => <Button key={label} type="button" variant="secondary" className="inline-flex items-center gap-1.5" disabled={disabled}
         onClick={() => choose({ column: issue.column, index })}><Icon size={14} aria-hidden="true" />{label}</Button>)}
     </div>
   </div>;
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <div className="flex min-w-0 flex-col gap-1 text-meta font-medium text-dialog-hint">
-    <span aria-hidden="true">{label}</span>{children}
-  </div>;
-}
-
-function TextField({ label, value, limit, onCommit, inputType = 'text' }: {
-  label: string; value: string; limit?: number; onCommit: (value: string) => void; inputType?: 'text' | 'date' | 'number';
-}) {
-  const [draft, setDraft] = useState(value);
-  const cancel = useRef(false);
-  return <Input className={`${INPUT_CONTROL} w-full`} aria-label={label} type={inputType} maxLength={limit}
-    value={draft} min={inputType === 'number' ? ISSUE_LIMITS.points.minimum : undefined}
-    max={inputType === 'number' ? ISSUE_LIMITS.points.maximum : undefined} step={inputType === 'number' ? 'any' : undefined}
-    onChange={(event) => setDraft(event.target.value)} onBlur={(event) => {
-      const next = event.target.value.trim();
-      if (!cancel.current && event.target.validity.valid && (label !== 'Title' || next)) {
-        if (next !== value) onCommit(next);
-        setDraft(next);
-      } else setDraft(value);
-      cancel.current = false;
-    }} onKeyDown={(event) => {
-      if (event.nativeEvent.isComposing) return;
-      if (event.key === 'Enter' || (event.key === 'Escape' && draft !== value)) {
-        event.preventDefault();
-        cancel.current = event.key === 'Escape';
-        event.currentTarget.blur();
-      }
-    }} />;
 }
 
 function Description({ text, edit }: { text: string; edit?: (text: string) => void }) {
@@ -208,14 +129,14 @@ function Description({ text, edit }: { text: string; edit?: (text: string) => vo
   return <section className="grid min-w-0 gap-3" aria-label="Description">
     <div className="flex items-center justify-between gap-2">
       <h4 className="text-body font-semibold">Description</h4>
-      {edit && !isEditing && <Button type="button" variant="secondary" className={CONTROL} onClick={() => { setDraft(text); setIsEditing(true); }}>Edit description</Button>}
+      {edit && !isEditing && <Button type="button" variant="secondary" onClick={() => { setDraft(text); setIsEditing(true); }}>Edit description</Button>}
     </div>
     {isEditing && edit ? <>
-      <textarea aria-label="Description" className="board-textarea" value={draft} rows={8} maxLength={ISSUE_LIMITS.text.maxLength}
+      <TextArea aria-label="Description" value={draft} rows={8} maxLength={ISSUE_LIMITS.text.maxLength}
         onChange={(event) => setDraft(event.target.value)} />
       <div className="flex flex-wrap gap-2">
-        <Button type="button" className={CONTROL} onClick={() => { if (draft !== text) edit(draft); setIsEditing(false); }}>Save description</Button>
-        <Button type="button" className={CONTROL} variant="quiet" onClick={() => setIsEditing(false)}>Cancel</Button>
+        <Button type="button" onClick={() => { if (draft !== text) edit(draft); setIsEditing(false); }}>Save description</Button>
+        <Button type="button" variant="quiet" onClick={() => setIsEditing(false)}>Cancel</Button>
       </div>
       {draft && <div className="border-t border-edge pt-3"><p className="mb-2 text-meta text-dialog-hint">Preview</p><Markdown>{draft}</Markdown></div>}
     </> : text ? <Markdown>{text}</Markdown> : <p className="text-ui text-dialog-hint">No description</p>}
@@ -234,22 +155,22 @@ function IssueFields({ values, columns, people, epics, set }: {
   const points = String(values.points ?? '');
   const labels = values.labels?.join(', ') ?? '';
   return <>
-    <Field label="Status"><Select aria-label="Status" className={CONTROL} value={values.column ?? ''}
+    <Field label="Status"><Select aria-label="Status" value={values.column ?? ''}
       options={columns.map((one) => ({ value: one.id, label: one.title }))} onValueChange={(column) => set({ column })} /></Field>
-    <Field label="Assignee"><Select aria-label="Assignee" className={CONTROL} value={values.assignee ?? ''}
+    <Field label="Assignee"><Select aria-label="Assignee" value={values.assignee ?? ''}
       options={[{ value: '', label: 'Unassigned' }, ...people.map((one) => ({ value: one.id, label: one.name }))]}
       onValueChange={(assignee) => set({ assignee: assignee || null })} /></Field>
-    <Field label="Priority"><Select aria-label="Priority" className={CONTROL} value={values.priority ?? DEFAULT_PRIORITY}
+    <Field label="Priority"><Select aria-label="Priority" value={values.priority ?? DEFAULT_PRIORITY}
       options={PRIORITY_OPTIONS} onValueChange={(priority) => set({ priority: priority as BoardPriority })} /></Field>
-    <Field label="Kind"><Select aria-label="Kind" className={CONTROL} value={values.kind ?? DEFAULT_KIND}
+    <Field label="Kind"><Select aria-label="Kind" value={values.kind ?? DEFAULT_KIND}
       options={KIND_OPTIONS} onValueChange={(kind) => set({ kind: kind as BoardKind })} /></Field>
-    <Field label="Epic"><Select aria-label="Epic" className={CONTROL} value={values.epic ?? ''}
+    <Field label="Epic"><Select aria-label="Epic" value={values.epic ?? ''}
       options={[{ value: '', label: 'No epic' }, ...epics.map((one) => ({ value: one.id, label: one.title }))]}
       onValueChange={(epic) => set({ epic: epic || null })} /></Field>
-    <Field label="Points"><TextField key={points} label="Points" value={points} inputType="number" onCommit={(text) => set({ points: text === '' ? null : Number(text) })} /></Field>
-    <Field label="Labels"><TextField key={labels} label="Labels" value={labels} onCommit={(text) => set({ labels: parseLabels(text) })} /></Field>
-    <Field label="Due date"><TextField key={values.due} label="Due date" value={values.due ?? ''} inputType="date" onCommit={(due) => set({ due: due || null })} /></Field>
-    <Checkbox type="button" className={`${CONTROL} col-span-full`} isOn={values.is_flagged === true} onClick={() => set({ is_flagged: !values.is_flagged })}>Flagged</Checkbox>
+    <Field label="Points"><CommitInput value={points} type="number" min={ISSUE_LIMITS.points.minimum} max={ISSUE_LIMITS.points.maximum} step="any" onCommit={(text) => set({ points: text === '' ? null : Number(text) })} /></Field>
+    <Field label="Labels"><CommitInput value={labels} onCommit={(text) => set({ labels: parseLabels(text) })} /></Field>
+    <Field label="Due date"><CommitInput value={values.due ?? ''} type="date" onCommit={(due) => set({ due: due || null })} /></Field>
+    <Checkbox type="button" className="col-span-full" isOn={values.is_flagged === true} onClick={() => set({ is_flagged: !values.is_flagged })}>Flagged</Checkbox>
   </>;
 }
 
@@ -282,36 +203,39 @@ function IssueDetail({ issue, node, issues, close, edit, remove, move, error }: 
     ['Epic', epic?.title ?? issue.epic ?? 'No epic'], ['Points', issue.points ?? 'None'],
     ['Labels', issue.labels?.join(', ') || 'None'], ['Due date', issue.due ?? 'None'], ['Flagged', issue.is_flagged ? 'Yes' : 'No'],
   ];
-  return <BoardDialog title={issue.key ?? 'Issue details'} close={close} error={error}>
-    <div className="grid gap-6 text-dialog-foreground sm:grid-cols-[minmax(0,1fr)_minmax(12rem,36%)]">
-      <div className="grid min-w-0 content-start gap-5">
-        {edit ? <Field label="Title"><TextField key={values.title} label="Title" limit={ISSUE_LIMITS.title.maxLength}
-          value={values.title} onCommit={(title) => change({ title })} /></Field> : <h3 className="text-title font-semibold">{values.title}</h3>}
-        <Description text={values.text ?? ''} edit={edit ? (text) => change({ text }) : undefined} />
+  return <Modal size="split" onDismiss={close}>
+    <DialogFrame title={issue.key ?? 'Issue details'} onClose={close} manageFocus>
+      <div className="grid gap-6 p-4 text-dialog-foreground sm:grid-cols-[minmax(0,1fr)_minmax(12rem,36%)] sm:p-6">
+        {error && <div className="col-span-full"><Banner kind="err" role="alert">{error}</Banner></div>}
+        <div className="grid min-w-0 content-start gap-5">
+          {edit ? <Field label="Title"><CommitInput required maxLength={ISSUE_LIMITS.title.maxLength}
+            value={values.title} onCommit={(title) => change({ title })} /></Field> : <h3 className="text-title font-semibold">{values.title}</h3>}
+          <Description text={values.text ?? ''} edit={edit ? (text) => change({ text }) : undefined} />
+        </div>
+        <section className="min-w-0 border-t border-edge pt-4 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0" aria-label="Issue fields">
+          <h4 className="mb-3 text-body font-semibold">Details</h4>
+          {edit ? <div className="grid gap-3"><IssueFields values={values} columns={node.columns} people={node.people} epics={node.epics} set={change} /></div>
+            : <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-ui">
+              {details.map(([label, value]) => <div className="contents" key={label}><dt className="text-dialog-hint">{label}</dt><dd className="break-words">{value}</dd></div>)}
+            </dl>}
+        </section>
+        {move && <section className="grid gap-3 border-t border-edge pt-4 sm:col-span-full" aria-label="Move issue">
+          <h4 className="text-body font-semibold">Move to</h4>
+          <MovePicker issue={issue} issues={issues} columns={node.columns} onMove={move} />
+        </section>}
+        {remove && <div className="flex flex-wrap items-center gap-2 border-t border-edge pt-4 sm:col-span-full">
+          {confirmation ? <>
+            <p className="w-full text-ui" role="status">Delete this issue? You cannot undo this change.</p>
+            <Button type="button" variant="danger" disabled={removing} onClick={() => {
+              setRemoving(true);
+              void remove().then((ok) => { setRemoving(false); if (ok) close(); });
+            }}>Confirm delete</Button>
+            <Button type="button" variant="quiet" disabled={removing} onClick={() => setConfirmation(false)}>Cancel</Button>
+          </> : <Button type="button" variant="danger" onClick={() => setConfirmation(true)}>Delete issue</Button>}
+        </div>}
       </div>
-      <section className="min-w-0 border-t border-edge pt-4 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0" aria-label="Issue fields">
-        <h4 className="mb-3 text-body font-semibold">Details</h4>
-        {edit ? <div className="grid gap-3"><IssueFields values={values} columns={node.columns} people={node.people} epics={node.epics} set={change} /></div>
-          : <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-ui">
-            {details.map(([label, value]) => <div className="contents" key={label}><dt className="text-dialog-hint">{label}</dt><dd className="break-words">{value}</dd></div>)}
-          </dl>}
-      </section>
-      {move && <section className="grid gap-3 border-t border-edge pt-4 sm:col-span-full" aria-label="Move issue">
-        <h4 className="text-body font-semibold">Move to</h4>
-        <MovePicker issue={issue} issues={issues} columns={node.columns} onMove={move} />
-      </section>}
-      {remove && <div className="flex flex-wrap items-center gap-2 border-t border-edge pt-4 sm:col-span-full">
-        {confirmation ? <>
-          <p className="w-full text-ui" role="status">Delete this issue? You cannot undo this change.</p>
-          <Button type="button" variant="danger" className={CONTROL} disabled={removing} onClick={() => {
-            setRemoving(true);
-            void remove().then((ok) => { setRemoving(false); if (ok) close(); });
-          }}>Confirm delete</Button>
-          <Button type="button" variant="quiet" className={CONTROL} disabled={removing} onClick={() => setConfirmation(false)}>Cancel</Button>
-        </> : <Button type="button" variant="danger" className={CONTROL} onClick={() => setConfirmation(true)}>Delete issue</Button>}
-      </div>}
-    </div>
-  </BoardDialog>;
+    </DialogFrame>
+  </Modal>;
 }
 
 function InlineCreate({ column, create }: { column: BoardColumn; create: (values: BoardIssueChange) => Promise<boolean> }) {
@@ -319,23 +243,40 @@ function InlineCreate({ column, create }: { column: BoardColumn; create: (values
   const [title, setTitle] = useState('');
   const [saving, setSaving] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-  const close = () => { setTitle(''); setOpen(false); };
-  useEffect(() => { if (open) input.current?.focus(); }, [open]);
+  const opener = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  const close = (shouldRestoreFocus: boolean) => {
+    restoreFocus.current = shouldRestoreFocus;
+    setTitle('');
+    setOpen(false);
+  };
+  useLayoutEffect(() => {
+    if (open) input.current?.focus();
+    else if (restoreFocus.current) {
+      restoreFocus.current = false;
+      opener.current?.focus({ preventScroll: true });
+    }
+  }, [open]);
   return open ? <form className="flex min-w-0 items-start gap-1" onSubmit={(event) => {
     event.preventDefault();
     if (!title.trim() || saving) return;
     setSaving(true);
-    void create({ title: title.trim(), column: column.id }).then((ok) => { setSaving(false); if (ok) close(); });
+    const form = event.currentTarget;
+    void create({ title: title.trim(), column: column.id }).then((ok) => {
+      setSaving(false);
+      if (ok) close(form.contains(form.ownerDocument.activeElement));
+    });
   }}>
-    <Input ref={input} aria-label={`Title in ${column.title}`} className={`${INPUT_CONTROL} min-w-0 flex-1`}
+    <Input ref={input} aria-label={`Title in ${column.title}`} sizeMode="form" className="flex-1"
       value={title} maxLength={ISSUE_LIMITS.title.maxLength} placeholder="Issue title" onChange={(event) => setTitle(event.target.value)}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
-          event.preventDefault(); event.stopPropagation(); close();
+          event.preventDefault(); event.stopPropagation();
+          if (!saving) close(true);
         }
       }} />
-    <Button type="submit" variant="primary" className={CONTROL} disabled={saving || !title.trim()}>Add</Button>
-  </form> : <Button type="button" variant="quiet" className={`${ICON_CONTROL} w-full justify-start`} aria-label={`Create in ${column.title}`} onClick={() => setOpen(true)}>
+    <Button type="submit" variant="primary" className="self-center" disabled={saving || !title.trim()}>Add</Button>
+  </form> : <Button ref={opener} type="button" variant="quiet" className="flex w-full items-center gap-1.5 text-left" aria-label={`Create in ${column.title}`} onClick={() => setOpen(true)}>
     <Plus size={16} aria-hidden="true" /> Create
   </Button>;
 }
@@ -543,54 +484,54 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
   const totals = new Map<string, number>();
   for (const issue of issues) totals.set(issue.column, (totals.get(issue.column) ?? 0) + 1);
 
-  return <section className="board min-w-0" aria-label={node.label ?? 'Board'} data-dragging={drag ? true : undefined}
+  return <section className="board min-w-0 [--board-column-width:max(15rem,85vw)] sm:[--board-column-width:17rem] data-[dragging]:select-none" aria-label={node.label ?? 'Board'} data-dragging={drag ? true : undefined}
     onPointerDown={start} onPointerUpCapture={blockRelease} onClickCapture={(event) => {
       if (event.detail > 0 && blockClick()) { event.preventDefault(); event.stopPropagation(); }
     }}>
-    {failure && !selected && <BoardError text={failure} />}
+    {failure && !selected && <Banner kind="err" role="alert">{failure}</Banner>}
     {node.columns.length === 0 ? <p className="py-6 text-ui text-dialog-hint">No columns yet</p> :
-      <div className="board-scroll" data-board-scroll tabIndex={0} role="region" aria-label="Board columns">
-        <div className="board-grid" style={{ '--board-columns': node.columns.map((column) => closedColumns.includes(column.id) ? '2.75rem' : 'minmax(var(--board-column-width), 1fr)').join(' ') } as CSSProperties}>
+      <div className={`overflow-x-auto overscroll-x-contain py-2.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent max-sm:max-h-[72dvh] max-sm:overflow-y-auto ${drag ? '' : 'max-sm:snap-x max-sm:snap-proximity'}`} data-board-scroll tabIndex={0} role="region" aria-label="Board columns">
+        <div className="grid min-w-full gap-2.5" style={{ gridTemplateColumns: node.columns.map((column) => closedColumns.includes(column.id) ? '2.75rem' : 'minmax(var(--board-column-width), 1fr)').join(' ') }}>
           {node.columns.map((column) => {
             const closed = closedColumns.includes(column.id);
             const total = totals.get(column.id) ?? 0;
             const over = column.limit !== undefined && total > column.limit;
             const Collapse = closed ? ChevronRight : ChevronLeft;
-            return <div className="board-column-head" key={column.id} data-collapsed={closed || undefined} data-over-limit={over || undefined}>
-              <div className="flex min-w-0 items-center gap-2">
+            return <div className={`z-[2] flex min-h-11 min-w-0 items-center gap-1.5 border max-sm:sticky max-sm:top-0 max-sm:snap-start ${closed ? 'justify-center' : 'justify-between pl-2.5 pr-1.5'} ${over ? 'border-edge border-t-err bg-err/10' : 'border-edge bg-panel-2'}`} key={column.id}>
+              {!closed && <><div className="flex min-w-0 items-center gap-2">
                 <span className={`size-2 shrink-0 ${TONE_MARK[column.tone ?? (column.is_done ? 'ok' : 'idle')]}`} aria-hidden="true" />
                 <h4 className="min-w-0 truncate text-ui font-semibold uppercase tracking-wide" title={column.title}>{column.title}</h4>
                 {column.is_done && <span role="img" aria-label="Done column" className="text-ok-ink"><Check size={15} aria-hidden="true" /></span>}
                 <span className="shrink-0 border border-edge px-1 font-mono text-meta tabular-nums text-dialog-hint" title={`${total} ${total === 1 ? 'issue' : 'issues'}`}>{total}</span>
               </div>
               {column.limit !== undefined && <span className={`shrink-0 whitespace-nowrap font-mono text-meta ${over ? 'font-bold text-err-ink' : 'text-dialog-hint'}`}
-                title={over ? 'Work in progress is over the limit' : 'Work in progress'} aria-label={`${total} of ${column.limit} work in progress${over ? ', over limit' : ''}`}>{total} / {column.limit}</span>}
-              <Button type="button" variant="quiet" pressEffect="none" className="board-collapse px-0" aria-expanded={!closed}
-                aria-label={`${closed ? 'Expand' : 'Collapse'} ${column.title}`} onClick={() => { stop(); setClosedColumns(toggle(closedColumns, column.id)); }}>
+                title={over ? 'Work in progress is over the limit' : 'Work in progress'} aria-label={`${total} of ${column.limit} work in progress${over ? ', over limit' : ''}`}>{total} / {column.limit}</span>}</>}
+              <IconButton variant="quiet" aria-expanded={!closed}
+                label={`${closed ? 'Expand' : 'Collapse'} ${column.title}`} onClick={() => { stop(); setClosedColumns(toggle(closedColumns, column.id)); }}>
                 <Collapse size={16} aria-hidden="true" />
-              </Button>
+              </IconButton>
             </div>;
           })}
-          {lanes.length === 0 && <p className="board-lane-head p-3 text-ui text-dialog-hint">No issues</p>}
+          {lanes.length === 0 && <p className="col-span-full border-b border-edge bg-panel-2 p-3 text-ui text-dialog-hint">No issues</p>}
           {lanes.map((lane) => {
             const laneKey = JSON.stringify([group, lane.id]);
             const laneClosed = group !== 'none' && closedLanes.includes(laneKey);
             return <div className="contents" key={laneKey}>
-              {group !== 'none' && <div className="board-lane-head">
-                <Button type="button" variant="quiet" className={ICON_CONTROL} aria-expanded={!laneClosed}
+              {group !== 'none' && <div className="col-span-full border-b border-edge bg-panel-2">
+                <div className="sticky left-0 inline-flex"><Button type="button" variant="quiet" className="inline-flex items-center gap-1.5" aria-expanded={!laneClosed}
                   aria-label={`${lane.title}, ${lane.count} ${lane.count === 1 ? 'issue' : 'issues'}`}
                   onClick={() => { stop(); setClosedLanes(toggle(closedLanes, laneKey)); }}>
                   {laneClosed ? <ChevronRight size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
                   <span className="max-w-48 truncate">{lane.title}</span><span className="px-1 font-mono text-meta text-dialog-hint">{lane.count}</span>
-                </Button>
+                </Button></div>
               </div>}
               {!laneClosed && node.columns.map((column) => {
-                if (closedColumns.includes(column.id)) return <div key={column.id} className="board-column-rail" />;
+                if (closedColumns.includes(column.id)) return <div key={column.id} className="min-w-0 border border-edge bg-panel-2" />;
                 const cards = lane.columns.get(column.id) ?? [];
                 const drop = drag?.drop?.column === column.id && drag.drop.lane === laneKey ? drag.drop : null;
-                return <div key={column.id} className="board-column" data-board-column={column.id} data-board-lane={laneKey} data-dropping={Boolean(drop) || undefined}>
-                  <div className="board-card-list" data-board-column-scroll aria-label={`${column.title} issues`}>
-                    {cards.map((issue) => <div className="board-card-slot" key={issue.id}
+                return <div key={column.id} className={`flex min-h-32 min-w-0 flex-col gap-1.5 border bg-panel-2 p-1.5 ${drop ? 'border-accent' : 'border-edge'}`} data-board-column={column.id} data-board-lane={laneKey}>
+                  <div className="min-h-11 max-h-[min(55dvh,34rem)] space-y-2.5 overflow-auto overscroll-y-contain p-1.5 [scrollbar-width:thin]" data-board-column-scroll aria-label={`${column.title} issues`}>
+                    {cards.map((issue) => <div className="relative data-[drop]:after:pointer-events-none data-[drop]:after:absolute data-[drop]:after:inset-x-0 data-[drop]:after:z-[3] data-[drop]:after:h-[3px] data-[drop]:after:bg-accent data-[drop=before]:after:-top-1.5 data-[drop=after]:after:-bottom-1.5" key={issue.id}
                       data-drop={drop?.near?.id === issue.id ? (drop.near.after ? 'after' : 'before') : undefined}>
                       <IssueCard issue={issue} person={issue.assignee ? peopleById.get(issue.assignee) : undefined}
                         epic={issue.epic ? epicsById.get(issue.epic) : undefined} today={today}
@@ -610,10 +551,14 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
           </div>)}
         </div>
       </div>}
-    {toMove && <BoardDialog title={`Move ${toMove.key ?? 'issue'}`} sheet close={closeOverlay}>
-      <p className="mb-3 text-body text-dialog-foreground">{toMove.title}</p>
-      <MovePicker issue={toMove} issues={issues} columns={node.columns} onMove={(place) => move(toMove.id, place)} close={closeOverlay} />
-    </BoardDialog>}
+    {toMove && <Modal size="fit" onDismiss={closeOverlay}>
+      <DialogFrame title={`Move ${toMove.key ?? 'issue'}`} onClose={closeOverlay} manageFocus>
+        <div className="grid gap-3 p-4 sm:p-6">
+          <p className="text-body text-dialog-foreground">{toMove.title}</p>
+          <MovePicker issue={toMove} issues={issues} columns={node.columns} onMove={(place) => move(toMove.id, place)} close={closeOverlay} />
+        </div>
+      </DialogFrame>
+    </Modal>}
     {selected && !overlay && <IssueDetail key={selected.id} node={node} issue={selected} issues={issues} close={() => choose()} error={failure}
       edit={canEdit ? (values) => edit(values, selected.id) : undefined}
       remove={canEdit ? () => edit({}, selected.id, true) : undefined}

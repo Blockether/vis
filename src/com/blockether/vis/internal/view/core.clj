@@ -1838,8 +1838,8 @@
         (when (and owned? (not (trimmed (:key view))))
           (invalid-live-view! (str "a " (name placement) " view needs a :key that names it")))
 
-        ;; A global app belongs to no session. Only an SDK program opens one, and a
-        ;; key lets its owner adopt it again after a restart.
+        ;; A global app belongs to no session. An SDK program or extension code opens
+        ;; one, and a key lets its owner adopt it again after a restart.
         scope
         (when (contains? view :scope)
           (when-not app? (invalid-live-view! "only an app (placement attachment) takes :scope"))
@@ -1854,7 +1854,8 @@
         _
         (when global?
           (when-not extension-name
-            (invalid-live-view! "only an SDK program opens a global app: POST /v1/apps"))
+            (invalid-live-view!
+              "only an SDK program (POST /v1/apps) or extension code opens a global app"))
           (when-not (trimmed (:key view))
             (invalid-live-view! "a global app needs a :key that names it"))
           (when (trimmed (:session-id view))
@@ -2967,10 +2968,12 @@
 
 (defn- reconnectable?
   "True for app `entry` without an owner that the `connect` action can connect again:
-   an app of a session whose last owner named a `reload` hook."
+   an app of a session or a global app whose last owner named a `reload` hook."
   [entry]
-  (boolean
-    (and (app-stale? entry) (first (:app-key entry)) (get (:hooks entry) "reload") @connector)))
+  (boolean (and (app-stale? entry)
+                (or (first (:app-key entry)) (app/global? @(:view entry)))
+                (get (:hooks entry) "reload")
+                @connector)))
 
 (defn- app-picture
   "The picture of live `entry` as the surfaces paint it: an app that waits for its
@@ -3039,22 +3042,31 @@
 
 (defn- declared-entry
   "The entry of the app that `declaration` lists in session `sid`, before its
-   extension opens it. `opened` counts the apps that the extension opened in the
-   session, so an app that comes after a closed one gets a new view id."
+   extension opens it. A nil `sid` lists a global app. `opened` counts the apps that
+   the extension opened in the session, so an app that comes after a closed one gets
+   a new view id."
   [sid {:keys [extension key title icon surfaces hook]} opened]
   (let [id
-        (str (java.util.UUID/nameUUIDFromBytes (.getBytes (str sid "/" extension "/" key "/" opened)
-                                                          java.nio.charset.StandardCharsets/UTF_8)))
+        (str (java.util.UUID/nameUUIDFromBytes
+               (.getBytes (str (or sid "global") "/" extension "/" key "/" opened)
+                          java.nio.charset.StandardCharsets/UTF_8)))
 
         record
         (binding [*live-owner* {:extension extension}]
           (-> (cond-> {:title title
                        :key key
                        :placement (name app/placement)
-                       :session-id sid
                        :nodes [{:id "opening"
                                 :type "paragraph"
-                                :text "The app opens when the Python of the session starts."}]}
+                                :text (if sid
+                                        "The app opens when the Python of the session starts."
+                                        "The app opens when its extension starts.")}]}
+                sid
+                (assoc :session-id sid)
+
+                (nil? sid)
+                (assoc :scope "global")
+
                 icon
                 (assoc :icon icon)
 
@@ -3072,8 +3084,9 @@
 
 (defn- declared-pictures
   "The pictures of the apps that the extensions of session `sid` declare and that
-   wait for a person to open them. `apps` holds the pictures of the apps of the
-   session. An extension with an app that is not closed shows that app only."
+   wait for a person to open them. A nil `sid` reads the global apps. `apps` holds
+   the pictures of the apps of the session. An extension with an app that is not
+   closed shows that app only."
   [sid apps]
   (let [entries
         (try (vec (for [{:keys [extension] :as declaration}
@@ -3118,7 +3131,7 @@
               (= (:extension record) (second (:app-key %))))
 
         id
-        (when (and (:session-id record) (:extension record))
+        (when (and (or (:session-id record) (app/global? record)) (:extension record))
           (some #(when (mine? %) (:id %)) (vals @declared-apps)))
 
         [held _]
@@ -3274,20 +3287,27 @@
                    (sink/app-index (str sid)))]
     (into apps (declared-pictures (str sid) apps))))
 
+(declare global-apps)
+
 (defn app-view
   "App `view-id` of session `sid` as the surfaces paint it, open or closed, or
    nil. A nil `sid` reads a global app. After a restart, the first read replays
    its record. An app that an extension declared and did not open yet answers too."
   [sid view-id]
   (or (recorded-app sid view-id)
-      (when (and sid (parse-uuid (str view-id)))
-        (some #(when (and (= (str view-id) (:id %)) (:is-stale %)) %) (session-apps sid)))))
+      (when (parse-uuid (str view-id))
+        (some #(when (and (= (str view-id) (:id %)) (:is-stale %)) %)
+              (if sid (session-apps sid) (global-apps))))))
 
 (defn global-apps
   "Every global app, open or closed, in the order they opened. A global app that
-   its SDK program did not keep is gone after a restart."
+   its SDK program did not keep is gone after a restart. Then the apps that the
+   global extensions declare and did not open yet."
   []
-  (into [] (comp (map :view-id) (distinct) (keep #(app-view nil %))) (sink/app-index nil)))
+  (let [apps (into []
+                   (comp (map :view-id) (distinct) (keep #(recorded-app nil %)))
+                   (sink/app-index nil))]
+    (into apps (declared-pictures nil apps))))
 
 (defn agent-notes
   "What the open apps and the HTML pages of session `sid` tell the model: one map
@@ -4047,12 +4067,12 @@
   (reset! disconnect-listener f))
 
 (defn- app-disconnected!
-  "Tell the listener that app `entry` of a session lost the owner that named
-   function `hook` for a reload. Never throws."
+  "Tell the listener that app `entry` of a session, or a global app, lost the owner
+   that named function `hook` for a reload. Never throws."
   [entry hook]
   (when-let [f (and hook @disconnect-listener)]
     (when-let [[session-id extension k] (:app-key entry)]
-      (when session-id
+      (when (or session-id (app/global? @(:view entry)))
         (try (f
                {:session-id session-id :extension extension :key k :view-id (:id entry) :hook hook})
              (catch Throwable t

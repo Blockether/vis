@@ -8,7 +8,7 @@ import blockether.vis.extension as vis
 import pytest
 
 from vis_board import store, tools
-from vis_board.app import BoardApp, WorkspaceBoards
+from vis_board.app import BoardApp, GlobalBoard
 from vis_board.store import Store, edit
 
 
@@ -21,11 +21,16 @@ def saved(tmp_path, monkeypatch):
     return Store(workspace)
 
 
+def _board(saved):
+    saved.read()
+    return BoardApp(projects=lambda: [saved.workspace])
+
+
 @pytest.fixture
 def app(saved, monkeypatch):
     recorder = vis.testing.LiveRecorder(object())
     monkeypatch.setattr(vis._host, "live", recorder.live)
-    board = BoardApp(saved).open(watch=False)
+    board = _board(saved).open(watch=False)
     yield board, recorder
     board.stop()
 
@@ -68,7 +73,9 @@ def test_concurrent_changes_make_different_keys(saved):
 
 def test_edit_create_change_delete_and_next_key(saved, app):
     board, rec = app
-    assert rec.edit("issues", {"title": "Write tests", "column": "todo"})["is_accepted"]
+    assert rec.edit("issues", {"title": "Write tests", "column": "backlog"})[
+        "is_accepted"
+    ]
     first = rec.node("issues")["issues"][0]
     assert first["key"] == "ABPR-1"
     rec.edit("issues", {"title": "Run tests", "assignee": "owner"}, first["id"])
@@ -94,24 +101,24 @@ def _order(issues, column):
 def test_move_uses_the_full_column_order(saved, app):
     _, rec = app
     for name in ("First", "Middle", "Last"):
-        rec.edit("issues", {"title": name, "column": "todo"})
+        rec.edit("issues", {"title": name, "column": "backlog"})
     rec.edit("issues", {"title": "Moved", "column": "review"})
     issue = next(one for one in saved.read()["issues"] if one["title"] == "Moved")
-    assert rec.move("issues", issue["id"], "todo", 2)["is_accepted"]
-    assert _order(saved.read()["issues"], "todo") == [
+    assert rec.move("issues", issue["id"], "backlog", 2)["is_accepted"]
+    assert _order(saved.read()["issues"], "backlog") == [
         "First",
         "Middle",
         "Moved",
         "Last",
     ]
-    assert _order(rec.node("issues")["issues"], "todo") == [
+    assert _order(rec.node("issues")["issues"], "backlog") == [
         "First",
         "Middle",
         "Moved",
         "Last",
     ]
-    assert rec.move("issues", issue["id"], "todo", 0)["is_accepted"]
-    assert _order(saved.read()["issues"], "todo") == [
+    assert rec.move("issues", issue["id"], "backlog", 0)["is_accepted"]
+    assert _order(saved.read()["issues"], "backlog") == [
         "Moved",
         "First",
         "Middle",
@@ -148,18 +155,18 @@ def test_list_issues_combines_filters(saved):
 
 def test_bad_event_does_not_end_the_app(saved, app):
     board, rec = app
-    rec.edit("issues", {"title": "", "column": "todo"})
+    rec.edit("issues", {"title": "", "column": "backlog"})
     assert not saved.read()["issues"]
     assert board.view.state()["log"][-1]["level"] == "error"
-    rec.edit("issues", {"title": "Try again", "column": "todo"})
+    rec.edit("issues", {"title": "Try again", "column": "backlog"})
     assert rec.node("issues")["issues"][0]["key"] == "ABPR-1"
 
 
 def test_tools_change_the_board_and_refresh_open_views(saved, app, monkeypatch):
     board, rec = app
-    registry = WorkspaceBoards()
-    registry._apps["first"] = board
-    monkeypatch.setattr(tools, "BOARDS", registry)
+    registry = GlobalBoard()
+    registry.app = board
+    monkeypatch.setattr(tools, "BOARD", registry)
     made = tools.create_issue(
         "Make a test", values={"labels": ["sdk"], "is_flagged": True}
     )
@@ -177,7 +184,7 @@ def test_tools_change_the_board_and_refresh_open_views(saved, app, monkeypatch):
 def test_store_change_refreshes_another_runtime(saved, monkeypatch):
     rec = vis.testing.LiveRecorder(object())
     monkeypatch.setattr(vis._host, "live", rec.live)
-    board = BoardApp(saved).open()
+    board = _board(saved).open()
     try:
         made = tools.create_issue("Made in a different runtime")
         end = time.monotonic() + 4
@@ -190,10 +197,15 @@ def test_store_change_refreshes_another_runtime(saved, monkeypatch):
 
 def test_app_filters_the_board_with_its_own_inputs(saved, app):
     board, rec = app
-    rec.edit("issues", {"title": "Write tests", "column": "todo", "labels": ["qa"]})
+    rec.edit("issues", {"title": "Write tests", "column": "backlog", "labels": ["qa"]})
     rec.edit(
         "issues",
-        {"title": "Ship it", "column": "todo", "priority": "high", "is_flagged": True},
+        {
+            "title": "Ship it",
+            "column": "backlog",
+            "priority": "high",
+            "is_flagged": True,
+        },
     )
     titles = lambda: [one["title"] for one in rec.node("issues")["issues"]]  # noqa: E731
     rec.change("query", "ship")
@@ -206,7 +218,10 @@ def test_app_filters_the_board_with_its_own_inputs(saved, app):
     assert titles() == ["Ship it"]
     rec.change("group", "priority")
     assert rec.node("issues")["group_by"] == "priority"
-    assert {one["title"] for one in saved.read()["issues"]} == {"Write tests", "Ship it"}
+    assert {one["title"] for one in saved.read()["issues"]} == {
+        "Write tests",
+        "Ship it",
+    }
 
 
 def test_app_creates_an_issue_in_its_dialog(saved, app):
@@ -214,10 +229,81 @@ def test_app_creates_an_issue_in_its_dialog(saved, app):
     assert rec.node("new-issue")["is_open"] is False
     rec.activate("create")
     assert rec.node("new-issue")["is_open"] is True
-    assert rec.submit("new-submit", {"new_title": "Plan release"})["is_accepted"]
+    assert rec.submit(
+        "new-submit", {"new_title": "Plan release", "new_project": str(saved.workspace)}
+    )["is_accepted"]
     assert rec.node("new-issue")["is_open"] is False
     [issue] = saved.read()["issues"]
-    assert (issue["title"], issue["column"], issue.get("assignee")) == ("Plan release", "todo", None)
+    assert (issue["title"], issue["column"], issue.get("assignee")) == (
+        "Plan release",
+        "backlog",
+        None,
+    )
     rec.activate("create")
     rec.activate("new-issue")
     assert rec.node("new-issue")["is_open"] is False
+
+
+def test_old_board_moves_its_issues_to_the_sdlc_columns(saved):
+    saved.path.parent.mkdir(parents=True, exist_ok=True)
+    old = [
+        ("todo", "To do"),
+        ("progress", "In progress"),
+        ("review", "In review"),
+        ("done", "Done"),
+    ]
+    issues = [
+        {"id": str(i), "key": f"ABPR-{i}", "title": column, "column": column, "rank": 0}
+        for i, (column, _) in enumerate(old)
+    ]
+    saved.path.write_text(
+        json.dumps(
+            {
+                "key_prefix": "ABPR",
+                "next_number": 5,
+                "columns": [vis.ui.board.column(i, title) for i, title in old],
+                "people": [],
+                "epics": [],
+                "issues": issues,
+            }
+        )
+    )
+    data = Store(saved.workspace).read()
+    assert [one["id"] for one in data["columns"]] == list(store.COLUMN_IDS)
+    assert {one["title"]: one["column"] for one in data["issues"]} == {
+        "todo": "backlog",
+        "progress": "implementing",
+        "review": "verification",
+        "done": "done",
+    }
+    assert data["workspace"] == str(saved.workspace)
+    assert [one.path for one in Store.all()] == [saved.path]
+
+
+def test_app_shows_the_boards_of_all_projects(saved, tmp_path, monkeypatch):
+    other = tmp_path / "Other"
+    other.mkdir()
+    saved.change(lambda data: edit(data, {"title": "First project"}))
+    Store(other).change(lambda data: edit(data, {"title": "Second project"}))
+    rec = vis.testing.LiveRecorder(object())
+    monkeypatch.setattr(vis._host, "live", rec.live)
+    board = BoardApp(projects=lambda: []).open(watch=False)
+    try:
+        titles = lambda: sorted(one["title"] for one in rec.node("issues")["issues"])  # noqa: E731
+        assert titles() == ["First project", "Second project"]
+        rec.change("project", str(other.resolve()))
+        assert titles() == ["Second project"]
+        # An issue that the board makes goes to the project that it shows.
+        rec.edit("issues", {"title": "Made here", "column": "ready"})
+        assert sorted(one["title"] for one in Store(other).read()["issues"]) == [
+            "Made here",
+            "Second project",
+        ]
+        rec.change("project", "all")
+        rec.activate("create")
+        assert rec.submit(
+            "new-submit", {"new_title": "Chosen", "new_project": str(saved.workspace)}
+        )["is_accepted"]
+        assert "Chosen" in [one["title"] for one in saved.read()["issues"]]
+    finally:
+        board.stop()

@@ -115,6 +115,7 @@ SDK declarations and is stored as a tuple, not as a mutable registry.
 | `automations` | `()` | `vis.Automation` declarations for scheduled runs without a model (see [automations](#automations)) |
 | `keybindings` | `()` | `vis.Keybinding` declarations for terminal keys (see [key bindings](#key-bindings)) |
 | `session_app` | `None` | One `vis.SessionApp` that each session lists from its start (see [session apps](#session-apps)) |
+| `global_app` | `None` | One `vis.GlobalApp` that the global apps button lists before it opens (see [global apps](#global-apps)) |
 | `op_hooks` | `()` | `vis.OpHook` guards or observers |
 | `network_filters` | `()` | `vis.NetworkFilter` policy for requests and responses (see [network filters](jail.md#project-network-filters)) |
 | `providers` | `()` | `vis.Provider` declarations |
@@ -1217,6 +1218,48 @@ A session app follows these rules:
   each session.
 - While a turn runs in a session that has no Python yet, the app does not open. The app opens
   when the extension opens it in that turn, or when the person opens it after the turn.
+
+## Global apps
+
+```python
+vis.GlobalApp(key, title, open, icon=None)
+```
+
+A global app belongs to no session. The global apps button in the header lists it, between
+**Search** and **Settings**. Declare one global app in `vis.Extension(global_app=...)`. The
+button shows the title and the icon before the extension runs. When the person opens the app,
+Vis calls `open` in the extension, outside each session.
+
+```python
+import blockether.vis.extension as vis
+
+
+def open_board(app):
+    vis.attach(
+        vis.ui.app("Board", vis.ui.thread("general"), key="board", scope="global"),
+        on_event=lambda event: None,
+        on_reload=open_board,
+    )
+
+
+vis.register_extension(
+    vis.Extension(
+        name="board",
+        description="One board for all projects.",
+        global_app=vis.GlobalApp("board", "Board", open_board, icon="board"),
+    )
+)
+```
+
+A global app follows these rules:
+
+- `open` is a function at module level. Vis finds the function by its name.
+- `open` gets one dict with `key` and `view_id`. It has no session and no project folder.
+- The real app needs `scope="global"` and a `key`. It replaces the listed app and keeps its
+  `view_id`.
+- Give the real app `on_reload`. Vis then calls that function after a reload or a restart, when
+  the person opens the app again.
+- The button lists the app again after the person closed the real app.
 
 ## Op hooks
 

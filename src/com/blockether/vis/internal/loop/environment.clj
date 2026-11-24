@@ -1942,10 +1942,13 @@
    app. The hook opens the app again. A session without a live sandbox is not asked,
    because its first step loads the extension. Answers true when the hook ran."
   [{:keys [session-id extension] :as app}]
-  (when-let [environment (:environment (get @cache (cache-key session-id)))]
-    (when-let [context (env/python-context-if-built environment)]
-      (when-not (env/python-context-disposed? context)
-        (extension/run-app-hook environment extension app)))))
+  (if (nil? session-id)
+    ;; A global app runs in its extension outside each session.
+    (extension/run-app-hook nil extension app)
+    (when-let [environment (:environment (get @cache (cache-key session-id)))]
+      (when-let [context (env/python-context-if-built environment)]
+        (when-not (env/python-context-disposed? context)
+          (extension/run-app-hook environment extension app))))))
 
 (defn- reconnect-app-soon!
   "[[reconnect-app!]] on another thread: the caller retires the owner of the app and
@@ -2509,7 +2512,8 @@
    a turn holds that lock: the first step of the turn loads the extension."
   [{:keys [session-id extension] :as app}]
   (or (reconnect-app! app)
-      (with-turn-lock session-id #(extension/run-app-hook % extension app) false)))
+      (when session-id
+        (with-turn-lock session-id #(extension/run-app-hook % extension app) false))))
 
 ;; Keep the Var so namespace reloads retain live wiring.
 (defonce ^:private _app-connect (view/set-connector! #'connect-app!))
@@ -2528,18 +2532,24 @@
   "The apps that the extensions of session `session-id` declare for each session. A
    session with an environment answers from its own extensions. Another session
    answers from the extensions of its saved workspace: nothing starts for it. An
-   unknown session has none."
+   unknown session has none. A nil `session-id` answers the global apps of the
+   global extensions."
   [session-id]
-  (if-let [environment (some-> (get @cache (cache-key session-id))
-                               :environment
-                               (as-> e (when-not (:extensions/deferred? e) e)))]
-    (for-agent (:db-info environment) session-id (extension/session-apps environment))
-    (let [db-info (persistance/db-shared-connection! (config/resolve-db-spec))
-          sid (persistance/db-resolve-session-id db-info session-id)]
-      (when-let [workspace (saved-workspace db-info sid)]
-        (extension/with-context {:env {:session-id session-id :workspace/root (:root workspace)}}
-                                (python-extensions/ensure-python-extensions-loaded!)
-                                (for-agent db-info sid (extension/session-apps)))))))
+  (cond
+    (nil? session-id)
+    (do (python-extensions/ensure-python-extensions-loaded! {:global-only? true})
+        (extension/global-apps))
+    :else
+    (if-let [environment (some-> (get @cache (cache-key session-id))
+                                 :environment
+                                 (as-> e (when-not (:extensions/deferred? e) e)))]
+      (for-agent (:db-info environment) session-id (extension/session-apps environment))
+      (let [db-info (persistance/db-shared-connection! (config/resolve-db-spec))
+            sid (persistance/db-resolve-session-id db-info session-id)]
+        (when-let [workspace (saved-workspace db-info sid)]
+          (extension/with-context {:env {:session-id session-id :workspace/root (:root workspace)}}
+                                  (python-extensions/ensure-python-extensions-loaded!)
+                                  (for-agent db-info sid (extension/session-apps))))))))
 
 ;; Keep the Var so namespace reloads retain live wiring.
 (defonce ^:private _app-declare (view/set-declarer! #'declared-apps))

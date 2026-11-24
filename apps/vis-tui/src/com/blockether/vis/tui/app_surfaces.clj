@@ -65,12 +65,12 @@
 
 (defn global-apps
   "The global app views of `global-apps` (`{view-id {:view v}}`) that the global apps
-   picker lists, by title. Only a live app whose program is connected is listed: a
-   closed, archived or stale app is not."
+   picker lists, by title. A live app is listed, and so is an app that its open
+   connects. A closed, archived or stale app is not."
   [global-apps]
   (->> (vals global-apps)
        (keep :view)
-       (filter #(and (open-view? %) (= :live (model/status %))))
+       (filter #(and (open-view? %) (#{:live :away} (model/status %))))
        by-title))
 
 (defn picker-views

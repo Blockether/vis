@@ -1,4 +1,4 @@
-"""Open a Board app and paint the latest workspace board."""
+"""Open the global Board app and paint the boards of all projects."""
 
 import logging
 import threading
@@ -14,18 +14,22 @@ from vis_board.store import (
     KINDS,
     PRIORITIES,
     Store,
+    board_dir,
     board_node,
+    columns,
     edit,
     matching,
     move,
+    reference_matches,
 )
 
 LOG = logging.getLogger(__name__)
-SURFACES = {"inline": False, "session": "chat"}
 ANY = "any"
+ALL = "all"
 NO_ONE = "none"
 WEEK_MS = 7 * 24 * 60 * 60 * 1000
 FILTERS = {
+    "project": ALL,
     "query": "",
     "assignees": [],
     "epic": ANY,
@@ -37,8 +41,12 @@ FILTERS = {
     "recent": False,
     "hide_done": False,
 }
-GROUP_WORDS = {"none": "No rows", "assignee": "Assignee", "epic": "Epic", "priority": "Priority"}
-NEW_FIELDS = ("new_title", "new_column", "new_assignee", "new_priority", "new_kind", "new_text")
+GROUP_WORDS = {
+    "none": "No rows",
+    "assignee": "Assignee",
+    "epic": "Epic",
+    "priority": "Priority",
+}
 
 
 def _option(value, label):
@@ -61,7 +69,9 @@ def tools_node():
 
 
 def _labels(data):
-    return sorted({label for issue in data["issues"] for label in issue.get("labels", [])})
+    return sorted(
+        {label for issue in data["issues"] for label in issue.get("labels", [])}
+    )
 
 
 def _choices(data):
@@ -73,11 +83,31 @@ def _choices(data):
     )
 
 
-def filters_node(data, filters):
+def _project_options(folders):
+    """One option for each project folder. A repeated name also shows its parent."""
+    names = [folder.name for folder in folders]
+    return [
+        _option(
+            str(folder),
+            folder.name
+            if names.count(folder.name) == 1
+            else f"{folder.name} ({folder.parent})",
+        )
+        for folder in folders
+    ]
+
+
+def filters_node(data, filters, folders=()):
     """The filters of the board, with the values that the person chose."""
     people, epics, labels = _choices(data)
     return vis.ui.toolbar(
         "filters",
+        vis.ui.select(
+            "project",
+            [_option(ALL, "All projects")] + _project_options(folders),
+            label="Project",
+            value=filters["project"],
+        ),
         vis.ui.select.many(
             "assignees",
             [_option(i, name) for i, name in people] + [_option(NO_ONE, "Unassigned")],
@@ -121,11 +151,27 @@ def filters_node(data, filters):
     )
 
 
-def create_node(data, *, is_open=False):
+def _project_field(folders, project):
+    """The project of a new issue: a choice, or a folder path when Vis knows none."""
+    if not folders:
+        return vis.ui.plaintext(
+            "new_project", label="Project folder", is_required=True, max_length=4096
+        )
+    known = {str(folder) for folder in folders}
+    return vis.ui.select(
+        "new_project",
+        _project_options(folders),
+        label="Project",
+        value=project if project in known else str(folders[0]),
+    )
+
+
+def create_node(data, *, folders=(), project=ALL, is_open=False):
     """The dialog that makes a new issue."""
     return vis.ui.dialog(
         "new-issue",
         "Create issue",
+        _project_field(folders, project),
         vis.ui.plaintext("new_title", label="Title", is_required=True, max_length=200),
         vis.ui.row(
             "new-place",
@@ -146,7 +192,10 @@ def create_node(data, *, is_open=False):
         vis.ui.row(
             "new-kind",
             vis.ui.select(
-                "new_priority", _words(PRIORITIES), label="Priority", value=DEFAULT_PRIORITY
+                "new_priority",
+                _words(PRIORITIES),
+                label="Priority",
+                value=DEFAULT_PRIORITY,
             ),
             vis.ui.select("new_kind", _words(KINDS), label="Type", value=DEFAULT_KIND),
         ),
@@ -176,44 +225,120 @@ def shown(data, filters, now_ms=None):
     )
 
 
-class BoardApp:
-    """Show one person's view of the workspace board."""
+def merged(boards):
+    """One board of the issues, people and epics of `(store, data)` pairs."""
+    people, epics, issues = {}, {}, []
+    for _, data in boards:
+        for one in data["people"]:
+            people.setdefault(one["id"], one)
+        for one in data["epics"]:
+            epics.setdefault(one["id"], one)
+        issues.extend(data["issues"])
+    return {
+        "columns": columns(),
+        "people": list(people.values()),
+        "epics": list(epics.values()),
+        "issues": issues,
+    }
 
-    def __init__(self, store, *, opener=vis.attach):
-        self.store = store
+
+def vis_projects():
+    """The folders of the Vis projects that are not archived. None when Vis does not answer."""
+    try:
+        page = vis._host_layer().routes.get_projects()
+    except Exception:
+        LOG.debug("Cannot list the Vis projects", exc_info=True)
+        return []
+    return [
+        Path(one["workspace_root"])
+        for one in page.get("projects") or []
+        if one.get("workspace_root") and not one.get("archived_at")
+    ]
+
+
+class BoardApp:
+    """Show one person's view of the boards of all projects."""
+
+    def __init__(self, *, home=None, opener=vis.attach, projects=vis_projects):
+        self.home = home
         self.opener = opener
+        self.projects = projects
         self.lock = threading.RLock()
         self.view = None
         self._stop = threading.Event()
         self._file_version = None
         self.filters = dict(FILTERS)
         self._choices = None
-        self._data = None
+        self._boards = []
+        self._known = []
 
     def _stamp(self):
-        try:
-            stat = self.store.path.stat()
-            return stat.st_ino, stat.st_mtime_ns
-        except FileNotFoundError:
-            return None
+        """The name, inode and change time of each saved board."""
+        stamps = []
+        for path in sorted(board_dir(self.home).glob("*.json")):
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            stamps.append((path.name, stat.st_ino, stat.st_mtime_ns))
+        return tuple(stamps)
+
+    def _read(self):
+        """Read each saved board of a project."""
+        return [(store, store.read()) for store in Store.all(self.home)]
+
+    def folders(self):
+        """The project folders: those with a board, then the other Vis projects."""
+        seen = {store.workspace for store, _ in self._boards}
+        more = []
+        for folder in self._known:
+            path = folder.resolve()
+            if path not in seen:
+                seen.add(path)
+                more.append(path)
+        return [store.workspace for store, _ in self._boards] + sorted(
+            more, key=lambda one: (one.name.casefold(), str(one))
+        )
+
+    def _visible(self):
+        """The boards that the project filter shows."""
+        project = self.filters["project"]
+        return [
+            pair
+            for pair in self._boards
+            if project == ALL or str(pair[0].workspace) == project
+        ]
+
+    def _store(self, folder):
+        return Store(folder, self.home)
+
+    def _owner(self, issue_id):
+        """The store of the board that holds issue `issue_id`."""
+        for store, data in self._boards:
+            if any(reference_matches(one, issue_id) for one in data["issues"]):
+                return store
+        raise ValueError(f"No issue with ID or key {issue_id!r}.")
 
     def open(self, *, on_reload=None, watch=True):
         """Open the board, or connect to the board with the same key."""
         with self.lock:
             version = self._stamp()
-            data = self.store.read()
-            self._choices = _choices(data)
+            self._boards = self._read()
+            self._known = list(self.projects())
+            data = merged(self._visible())
+            self._choices = (_choices(data), tuple(self.folders()))
             declaration = vis.ui.app(
                 "Board",
                 tools_node(),
-                filters_node(data, self.filters),
+                filters_node(data, self.filters, self.folders()),
                 board_node(data, shown(data, self.filters)),
-                create_node(data),
-                description="Plan and track work in this workspace.",
+                create_node(
+                    data, folders=self.folders(), project=self.filters["project"]
+                ),
+                description="Plan and track the work of all projects.",
                 key="board",
                 icon="board",
-                surfaces=SURFACES,
-                settings_name="board",
+                scope="global",
             )
             self.view = self.opener(
                 declaration,
@@ -221,17 +346,17 @@ class BoardApp:
                 on_reload=on_reload,
             )
             self._file_version = version
-            self._paint(data)
+            self._paint()
         if watch:
             threading.Thread(target=self._watch, name="vis-board", daemon=True).start()
         return self
 
     def stop(self):
-        """Stop watching the board file."""
+        """Stop watching the board files."""
         self._stop.set()
 
     def _watch(self):
-        """Repaint after another session or process saves this board."""
+        """Repaint after a session or another process saves a board."""
         while not self._stop.wait(0.75):
             try:
                 with self.lock:
@@ -247,13 +372,15 @@ class BoardApp:
                     self._log_failure("Refresh board")
                 return
 
-    def _paint(self, data):
-        self._data = data
+    def _paint(self):
+        data = merged(self._visible())
         with self.view.batch():
-            if (choices := _choices(data)) != self._choices:
+            if (choices := (_choices(data), tuple(self.folders()))) != self._choices:
                 self._choices = choices
                 self.view.drop("filters")
-                self.view.add(filters_node(data, self.filters), after="tools")
+                self.view.add(
+                    filters_node(data, self.filters, self.folders()), after="tools"
+                )
             self.view["issues"].set(
                 columns=data["columns"],
                 people=data["people"],
@@ -263,13 +390,33 @@ class BoardApp:
             self.view["issues"].replace(shown(data, self.filters))
 
     def _open_create(self):
-        """Open a new Create dialog with the latest columns and people."""
-        data = self._data or self.store.read()
+        """Open a new Create dialog with the latest projects, columns and people."""
+        self._known = list(self.projects())
+        data = merged(self._visible())
         with self.view.batch():
             self.view.drop("new-issue")
-            self.view.add(create_node(data, is_open=True), after="issues")
+            self.view.add(
+                create_node(
+                    data,
+                    folders=self.folders(),
+                    project=self.filters["project"],
+                    is_open=True,
+                ),
+                after="issues",
+            )
+
+    def _target(self):
+        """The board of a new issue that the board itself makes: the shown project."""
+        if self.filters["project"] != ALL:
+            return self._store(self.filters["project"])
+        if len(self._boards) == 1:
+            return self._boards[0][0]
+        raise ValueError("Choose a project first.")
 
     def _create(self, values):
+        folder = str(values.get("new_project") or "").strip()
+        if not folder or not Path(folder).expanduser().is_dir():
+            raise ValueError("The project folder does not exist.")
         assignee = values.get("new_assignee")
         change = {
             "title": str(values.get("new_title") or "").strip(),
@@ -280,15 +427,16 @@ class BoardApp:
         }
         if text := str(values.get("new_text") or "").strip():
             change["text"] = text
-        self.store.change(lambda data: edit(data, change))
+        self._store(Path(folder).expanduser()).change(lambda data: edit(data, change))
         self.view["new-issue"].set(is_open=False)
         self.refresh()
 
     def refresh(self):
-        """Paint the latest store contents."""
+        """Paint the latest saved boards."""
         with self.lock:
             version = self._stamp()
-            self._paint(self.store.read())
+            self._boards = self._read()
+            self._paint()
             self._file_version = version
 
     def _log_failure(self, action):
@@ -298,6 +446,22 @@ class BoardApp:
         except Exception:
             LOG.exception("Cannot write to the board log")
 
+    def _edit(self, event):
+        store = self._owner(event.item_id) if event.item_id else self._target()
+        store.change(
+            lambda data: edit(
+                data, event.values or {}, event.item_id, remove=event.is_removed
+            )
+        )
+
+    def _move(self, event):
+        visible = {one["id"] for one in shown(merged(self._visible()), self.filters)}
+        self._owner(event.item_id).change(
+            lambda data: move(
+                data, event.item_id, event.column, event.index, visible=visible
+            )
+        )
+
     def on_event(self, event):
         """Handle one action. Keep the app open if the event fails."""
         with self.lock:
@@ -306,31 +470,16 @@ class BoardApp:
                     self.filters[event.node_id] = (
                         FILTERS[event.node_id] if event.value is None else event.value
                     )
-                    self._paint(self._data or self.store.read())
+                    self._paint()
                 elif event.type == "activate" and event.node_id == "create":
                     self._open_create()
                 elif event.type == "submit" and event.node_id == "new-submit":
                     self._create(event.values or {})
                 elif event.node_id == "issues" and event.type == "edit":
-                    self.store.change(
-                        lambda data: edit(
-                            data,
-                            event.values or {},
-                            event.item_id,
-                            remove=event.is_removed,
-                        )
-                    )
+                    self._edit(event)
                     self.refresh()
                 elif event.node_id == "issues" and event.type == "move":
-                    self.store.change(
-                        lambda data: move(
-                            data,
-                            event.item_id,
-                            event.column,
-                            event.index,
-                            visible={one["id"] for one in shown(data, self.filters)},
-                        )
-                    )
+                    self._move(event)
                     self.refresh()
             except Exception:
                 self._log_failure("Update board")
@@ -343,38 +492,35 @@ class BoardApp:
                         self._log_failure("Restore board")
 
 
-class WorkspaceBoards:
-    """Keep the app handles that this extension runtime opened."""
+class GlobalBoard:
+    """Keep the one Board app that this extension runtime opened."""
 
     def __init__(self):
-        self._apps = {}
+        self.app = None
         self._lock = threading.Lock()
 
-    def open(self, session_id, workspace, on_reload):
-        """Open or reconnect the board of a session."""
+    def open(self, on_reload):
+        """Open or reconnect the Board app."""
         with self._lock:
-            if old := self._apps.get(session_id):
-                old.stop()
-            app = BoardApp(Store(workspace)).open(on_reload=on_reload)
-            self._apps[session_id] = app
+            if self.app:
+                self.app.stop()
+            self.app = BoardApp().open(on_reload=on_reload)
 
-    def refresh(self, workspace):
-        """Paint open apps of this runtime now. Other runtimes watch the file."""
-        path = Path(workspace).resolve()
+    def refresh(self):
+        """Paint the open app of this runtime now. Other runtimes watch the files."""
         with self._lock:
-            apps = [
-                item for item in self._apps.items() if item[1].store.workspace == path
-            ]
-        for session_id, app in apps:
-            try:
-                app.refresh()
-            except vis.Interrupted:
-                app.stop()
-                with self._lock:
-                    if self._apps.get(session_id) is app:
-                        del self._apps[session_id]
-            except Exception:
-                LOG.exception("Cannot refresh the open board")
+            app = self.app
+        if app is None:
+            return
+        try:
+            app.refresh()
+        except vis.Interrupted:
+            app.stop()
+            with self._lock:
+                if self.app is app:
+                    self.app = None
+        except Exception:
+            LOG.exception("Cannot refresh the open board")
 
 
-BOARDS = WorkspaceBoards()
+BOARD = GlobalBoard()

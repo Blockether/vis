@@ -109,7 +109,14 @@
                             "4" {:view (app "4" "Lost" nil :is-stale true)}}]
                   (expect (= ["1"] (mapv :id (app-surfaces/global-apps apps))))
                   (expect (false? (keymap/verb-available? {:global-apps (dissoc apps "1")}
-                                                          {:show-when :has-global-apps}))))))
+                                                          {:show-when :has-global-apps})))))
+            ;; User request 2026-11-23: an extension declares the global Board, and the
+            ;; picker lists it before its first open connects it.
+            (it "lists an app that its open connects"
+                (let [apps {"5" {:view (app "5" "Board" nil :is-stale true :is-reconnectable true)}}]
+                  (expect (= ["5"] (mapv :id (app-surfaces/global-apps apps))))
+                  (expect (true? (keymap/verb-available? {:global-apps apps}
+                                                         {:show-when :has-global-apps}))))))
   (describe
     "the held global apps"
     (it "follow the list read, mark a patch gap for a full read"

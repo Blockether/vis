@@ -1,4 +1,4 @@
-"""Read and change one saved board for each workspace."""
+"""Read and change one saved board for each project folder."""
 
 import fcntl
 import hashlib
@@ -39,6 +39,29 @@ CHANGES = frozenset(
 )
 CLEARABLE = frozenset({"assignee", "epic", "points", "due"})
 
+# The SDLC flow of every board. An issue goes through these columns in order.
+COLUMNS = (
+    ("backlog", "Backlog", {}),
+    ("review", "Review", {"tone": "warn"}),
+    ("ready", "Ready for implementation", {}),
+    ("implementing", "Implementing", {"tone": "running", "limit": 3}),
+    ("verification", "Verification", {"tone": "warn"}),
+    ("done", "Done", {"tone": "ok", "is_done": True}),
+)
+COLUMN_IDS = tuple(one[0] for one in COLUMNS)
+# The columns of the first boards, and their place in the SDLC flow.
+OLD_COLUMNS = {
+    "todo": "backlog",
+    "progress": "implementing",
+    "review": "verification",
+    "done": "done",
+}
+
+
+def columns():
+    """The columns of the SDLC flow, built with the SDK."""
+    return [vis.ui.board.column(i, title, **options) for i, title, options in COLUMNS]
+
 
 def board_node(data, issues):
     """Build and check the board with the SDK."""
@@ -73,16 +96,28 @@ def _initial(workspace):
     return {
         "key_prefix": prefix,
         "next_number": 1,
-        "columns": [
-            vis.ui.board.column("todo", "To do"),
-            vis.ui.board.column("progress", "In progress", tone="running", limit=3),
-            vis.ui.board.column("review", "In review", tone="warn"),
-            vis.ui.board.column("done", "Done", tone="ok", is_done=True),
-        ],
+        "columns": columns(),
         "people": people,
         "epics": [],
         "issues": [],
     }
+
+
+def _migrated(data, workspace):
+    """Give `data` the SDLC columns and its project folder. True when it changed."""
+    changed = False
+    ids = tuple(one["id"] for one in data["columns"])
+    if ids != COLUMN_IDS:
+        moved = OLD_COLUMNS if set(ids) == set(OLD_COLUMNS) else {}
+        for issue in data["issues"]:
+            column = moved.get(issue["column"], issue["column"])
+            issue["column"] = column if column in COLUMN_IDS else COLUMN_IDS[0]
+        data["columns"] = columns()
+        changed = True
+    if data.get("workspace") != str(workspace):
+        data.update(workspace=str(workspace), name=workspace.name)
+        changed = True
+    return changed
 
 
 def _save(path, data):
@@ -98,15 +133,43 @@ def _save(path, data):
         Path(name).unlink(missing_ok=True)
 
 
+def board_dir(home=None):
+    """The folder of the saved boards."""
+    if home is None:
+        home = os.environ.get("VIS_HOME") or Path.home() / ".vis"
+    return Path(home).expanduser() / "board"
+
+
 class Store:
     """Lock each read or change, also when another process has the board open."""
 
     def __init__(self, workspace, home=None):
         self.workspace = Path(workspace).resolve()
-        if home is None:
-            home = os.environ.get("VIS_HOME") or Path.home() / ".vis"
         key = hashlib.sha256(os.fsencode(self.workspace)).hexdigest()
-        self.path = Path(home).expanduser() / "board" / f"{key}.json"
+        self.path = board_dir(home) / f"{key}.json"
+
+    @classmethod
+    def all(cls, home=None):
+        """The saved boards that name their project folder, by folder name.
+
+        A board from before the folder was saved gets it at its next use in a
+        session of its project.
+        """
+        stores = []
+        for path in sorted(board_dir(home).glob("*.json")):
+            try:
+                workspace = json.loads(path.read_text(encoding="utf-8")).get(
+                    "workspace"
+                )
+            except (OSError, ValueError):
+                continue
+            if isinstance(workspace, str) and workspace:
+                store = cls(workspace, home)
+                if store.path == path:
+                    stores.append(store)
+        return sorted(
+            stores, key=lambda one: (one.workspace.name.casefold(), str(one.workspace))
+        )
 
     def read(self):
         """Read the latest board. Make it if the workspace has no board."""
@@ -127,8 +190,9 @@ class Store:
                 is_new = True
             else:
                 is_new = False
+            is_migrated = _migrated(data, self.workspace)
             result = data if apply is None else apply(data)
-            if is_new or apply is not None:
+            if is_new or is_migrated or apply is not None:
                 board_node(data, data["issues"])
                 _save(self.path, data)
             return result
@@ -178,9 +242,14 @@ def _column(data, column):
         raise ValueError(f"No column with ID {column!r}.")
 
 
+def reference_matches(issue, reference):
+    """True when `reference` is the ID or the key of `issue`."""
+    return reference == issue["id"] or bool(reference and reference == issue.get("key"))
+
+
 def _issue(data, reference):
     for issue in data["issues"]:
-        if reference == issue["id"] or (reference and reference == issue.get("key")):
+        if reference_matches(issue, reference):
             return issue
     raise ValueError(f"No issue with ID or key {reference!r}.")
 

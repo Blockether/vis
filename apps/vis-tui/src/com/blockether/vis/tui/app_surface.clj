@@ -2754,7 +2754,9 @@
           (vis/worker-future
             "vis-app-connect"
             (fn []
-              (if (:is-accepted (vis/gateway-app-action! session-id view-id {:action :connect}))
+              (if (:is-accepted (if session-id
+                                  (vis/gateway-app-action! session-id view-id {:action :connect})
+                                  (vis/gateway-global-app-action! view-id {:action :connect})))
                 (read-view! box session-id view-id true)
                 (reset! connect :refused))
               ((:on-change box)))))))

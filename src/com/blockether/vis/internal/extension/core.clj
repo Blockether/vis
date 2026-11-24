@@ -738,6 +738,9 @@
                                   (and (vector? (:roles %))
                                        (seq (:roles %))
                                        (every? contract-gateway/agent-roles (:roles %))))))
+       (optional-field? x
+                        :ext/global-app
+                        #(and (map? %) (every? (comp non-blank-string? %) [:key :title :hook])))
        (optional-field? x :ext/sandbox-shims #(vector-of? sandbox-shim? %))
        (optional-field? x :ext/engine engine?)
        (optional-field? x :ext/source-scope workspace/config-sources)
@@ -3572,6 +3575,18 @@
                      (when (or (nil? env) (not= "off" (scoped/engine-mode env ext values)))
                        (assoc app :extension (:ext/name ext))))))
            (if-let [rows (:extensions env)] @rows (registered-extensions))))))
+
+(defn global-apps
+  "The apps that the global extensions declare outside each session: each
+   `:ext/global-app` with its `:extension` name, in extension order, without those
+   that the machine settings turn off."
+  []
+  (into []
+        (keep (fn [ext]
+                (when-let [app (:ext/global-app ext)]
+                  (when (not= "off" (scoped/engine-mode nil ext))
+                    (assoc app :extension (:ext/name ext))))))
+        (registered-extensions nil)))
 
 (defn keybindings
   "The TUI key bindings of the registered extensions: each `:ext/keybindings`

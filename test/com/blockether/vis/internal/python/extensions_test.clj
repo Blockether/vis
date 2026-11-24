@@ -8446,6 +8446,63 @@ vis.register_extension(vis.Extension(name='board', description='Board fixture.',
   "The extension of `declared-board-py`, with its app only in leader sessions."
   (str/replace declared-board-py "icon='review')" "icon='review', roles=('leader',))"))
 
+(def ^:private global-board-py
+  "An extension that declares the global app `board` and opens it as the global app
+   `board-1`."
+  "import blockether.vis.extension as vis
+
+def reopen(app):
+    _open()
+
+def _open():
+    vis.attach(vis.ui.app('Board', vis.ui.thread('general'), key='board-1', scope='global'),
+               on_event=lambda event: None, on_reload=reopen)
+
+def open_board(app):
+    _open()
+
+vis.register_extension(vis.Extension(name='board', description='Board fixture.',
+    global_app=vis.GlobalApp('board', 'Board', open_board, icon='review')))
+")
+
+(defdescribe
+  declared-global-app-test
+  ;; User request 2026-11-23: the Board must be a global app beside Search and
+  ;; Settings, not an app of each session. An extension now declares a global app.
+  (it
+    "lists a declared global app before it opens, and opens it outside each session"
+    (with-fresh-loaded
+      {"extension.py" global-board-py}
+      (fn [loaded _]
+        (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+        (let [root (.getCanonicalPath ^java.io.File (temp-dir))]
+          (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                           (constantly (io/file root "views"))
+                           #'pyx/ensure-python-extensions-loaded! (constantly nil)}
+            #(let [[declared :as listed] (human-input/global-apps)
+                   view-id (:id declared)]
+               (try (expect (= [{:title "Board"
+                                 :icon "review"
+                                 :scope "global"
+                                 :is-stale true
+                                 :is-reconnectable true}]
+                               (mapv (fn [app]
+                                       (select-keys app
+                                                    [:title :icon :scope :is-stale
+                                                     :is-reconnectable]))
+                                     listed))
+                            (pr-str listed))
+                    (expect (nil? (:session-id declared)))
+                    (expect (= "Board" (:title (human-input/app-view nil view-id))))
+                    (let [outcome (human-input/action! view-id {:action "connect"})
+                          [opened :as after] (human-input/global-apps)]
+                      (expect (:is-accepted outcome) (pr-str outcome))
+                      (expect (= 1 (count after)) (pr-str after))
+                      (expect (= {:id view-id :key "board-1" :scope "global"}
+                                 (select-keys opened [:id :key :scope])))
+                      (expect (nil? (:is-stale opened))))
+                    (finally (when view-id (human-input/close-live! view-id))))))))))
+
 (defdescribe
   declared-session-app-test
   ;; User request 2026-11-22: a session with no block had no Review app, so only
@@ -12053,4 +12110,4 @@ vis.register_extension(vis.Extension(
                (it "leaves session_root out where vis.workspace_root() fails"
                    (expect (not (contains? (slim-env {:session-id "s1"} nil) "session_root")))
                    (expect (not (contains? (slim-env {:workspace/root root} nil)
-                                           "session_root"))))))
+                                           "session_root")))))))

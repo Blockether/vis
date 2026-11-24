@@ -1351,6 +1351,8 @@ class Extension:
         keybindings: `Keybinding` declarations: TUI keys after C-x.
         session_app: One `SessionApp`: an app that each session lists before
             the extension runs there.
+        global_app: One `GlobalApp`: an app of no session that the global apps
+            button lists before the extension opens it.
         automations: `Automation` declarations: scheduled runs that call a
             function of the extension and no model. Keys are unique.
         op_hooks: `OpHook` declarations for host lifecycle operations.
@@ -1385,6 +1387,7 @@ class Extension:
     slash_commands: Sequence[SlashCommand] = ()
     keybindings: Sequence[Keybinding] = ()
     session_app: SessionApp | None = None
+    global_app: GlobalApp | None = None
     automations: Sequence[Automation] = ()
     op_hooks: Sequence[OpHook] = ()
     ctx: Callable[..., Any] | None = None
@@ -1440,6 +1443,8 @@ class Extension:
             self.session_app, SessionApp
         ):
             raise TypeError("vis.Extension session_app must be a SessionApp")
+        if self.global_app is not None and not isinstance(self.global_app, GlobalApp):
+            raise TypeError("vis.Extension global_app must be a GlobalApp")
         if not isinstance(self.env, (tuple, list)):
             raise ValueError(
                 "vis.Extension env must be a list or tuple of environment variable names"
@@ -1481,6 +1486,8 @@ class Extension:
                 if field.name == "env"
                 else self.session_app._spec()
                 if field.name == "session_app" and self.session_app is not None
+                else self.global_app._spec()
+                if field.name == "global_app" and self.global_app is not None
                 else getattr(self, field.name)
             )
             for field in fields(self)
@@ -3401,6 +3408,56 @@ class SessionApp:
             **({} if self.icon is None else {"icon": self.icon}),
             **({} if self.surfaces is None else {"surfaces": dict(self.surfaces)}),
             **({} if self.roles is None else {"roles": list(self.roles)}),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GlobalApp:
+    """An app of no session that the global apps button lists before it opens.
+
+    The button shows the title and the icon at once. When the person opens the
+    app, Vis calls `open` in the extension, outside each session. `open` then
+    opens the real app with `vis.attach(vis.ui.app(..., scope="global",
+    key=key))`, and that app takes the place of the listed one. Give the real app
+    an `on_reload` hook, so the app connects again after a reload or a restart.
+
+    Args:
+        key: A short nonblank name of the app, unique in the extension.
+        title: The title that the button shows.
+        open: A function at module level. It receives a dict with `key` and
+            `view_id`.
+        icon: An app icon name, as for `vis.attach_app(...)`.
+
+    Raises:
+        ValueError: A text is blank or the icon is unknown.
+        TypeError: `open` is not a function at module level.
+    """
+
+    key: str
+    title: str
+    open: Callable[..., Any]
+    icon: str | None = None
+
+    def __post_init__(self):
+        for name in ("key", "title"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"vis.GlobalApp {name} must be nonblank text")
+        _app_hook_ref("vis.GlobalApp open", self.open)
+        if self.icon is not None:
+            from blockether.vis import _contracts
+
+            icons = _contracts.definition("view", "app_icon")["enum"]
+            if self.icon not in icons:
+                raise ValueError("vis.GlobalApp icon must be one of " + ", ".join(icons))
+
+    def _spec(self):
+        return {
+            "marker": "global_app",
+            "key": self.key,
+            "title": self.title,
+            "open": _app_hook_ref("vis.GlobalApp open", self.open),
+            **({} if self.icon is None else {"icon": self.icon}),
         }
 
 
@@ -9221,8 +9278,9 @@ def _ui_app(
     that have different keys and are one app for the person: they then share one
     pair of settings. The default is the `key`.
     `scope="global"` makes an app of no session, which people open from the
-    global apps button. Only an SDK program opens one, with
-    `client.attach_app(...)`, and it needs a `key`. `is_persistent=False` lets a
+    global apps button. An SDK program opens one with `client.attach_app(...)`,
+    and an extension opens one from the `open` function of its `vis.GlobalApp`.
+    It needs a `key`. `is_persistent=False` lets a
     global app end at a gateway restart; by default it comes back.
     """
     request = {str(k): v for k, v in options.items()}

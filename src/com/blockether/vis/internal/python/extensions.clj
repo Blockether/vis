@@ -1096,6 +1096,16 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    `vis.call_env()` reads it, so the tool can give it to the processes it starts."
   nil)
 
+(declare loaded)
+
+(defn- context-extension-name
+  "The name of the extension that registered in context `ctx`, else `label`."
+  [ctx label]
+  (or (some (fn [[_ entry]]
+              (when (= ctx (:context entry)) (:ext-name entry)))
+            @loaded)
+      label))
+
 (defn ^:no-doc host-doors
   "The `__vis_host_*` callables an extension context receives as `{name fn}`.
    The bootstrap and inert checker derive their members from these bindings.
@@ -1407,6 +1417,11 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             (let [env
                   extension/*current-environment*
 
+                  ;; A registration namespace outside each session has the file as its
+                  ;; label, so an app that it opens takes the name of its extension.
+                  owner
+                  (context-extension-name sess label)
+
                   f
                   (when (some? listener) (unseal sess listener))
 
@@ -1422,10 +1437,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                                        (persistance/db-shared-connection!
                                          (config/resolve-db-spec))))]
                         (extension/with-context
-                          {:ext {:ext/name label} :env cb-env}
+                          {:ext {:ext/name owner} :env cb-env}
                           (python-host/conveying sess (f [(wire/->wire event)]))))))]
 
-              (view/live-json! envelope {:extension label :context sess :listener callback}))))
+              (view/live-json! envelope {:extension owner :context sess :listener callback}))))
     (put! g
           "__vis_host_reveal_secret__"
           (fn [handle]
@@ -3172,6 +3187,12 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             (get app "roles")
             (assoc :roles (vec (get app "roles")))))
 
+        global-app
+        (when-let [app (get reg "global_app")]
+          (cond-> {:key (get app "key") :title (get app "title") :hook (get app "open")}
+            (get app "icon")
+            (assoc :icon (get app "icon"))))
+
         op-hooks
         (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
 
@@ -3251,6 +3272,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
       session-app
       (assoc :ext/session-app session-app)
+
+      global-app
+      (assoc :ext/global-app global-app)
 
       (seq op-hooks)
       (assoc :ext/op-hooks op-hooks)

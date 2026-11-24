@@ -45,7 +45,8 @@ it('creates a new issue in the chosen column and does not create one on Escape',
   await user.click(screen.getByRole('button', { name: 'Create in Done' }));
   await user.type(screen.getByRole('textbox', { name: 'Title in Done' }), 'Drop this draft{Escape}');
   expect(onBoardAction).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: 'Create in Done' }));
+  expect(screen.getByRole('button', { name: 'Create in Done' })).toHaveFocus();
+  await user.keyboard('{Enter}');
   await user.type(screen.getByRole('textbox', { name: 'Title in Done' }), 'Check the new issue{Enter}');
   expect(onBoardAction).toHaveBeenCalledWith({ action: 'edit', node_id: 'board', values: { title: 'Check the new issue', column: 'done' } });
   await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Title in Done' })).not.toBeInTheDocument());
@@ -64,6 +65,18 @@ it('opens the issue, edits only its title, and sends a close selection', async (
   expect(onBoardAction).toHaveBeenCalledWith({ action: 'edit', node_id: 'board', item_id: 'a', values: { title: 'Update the guide' } });
   await user.click(within(dialog).getByRole('button', { name: 'Close APP-1' }));
   expect(onSelect).toHaveBeenLastCalledWith('board', []);
+});
+
+it('restores the saved title when an edit is refused', async () => {
+  const user = userEvent.setup();
+  const { onBoardAction } = board();
+  onBoardAction.mockResolvedValueOnce(false);
+  await user.click(screen.getByRole('button', { name: 'APP-1 Write the guide' }));
+  const title = screen.getByRole('textbox', { name: 'Title' });
+  await user.clear(title);
+  await user.type(title, 'Unaccepted title{Enter}');
+  expect(await screen.findByRole('alert')).toHaveTextContent('The board did not accept the change.');
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue('Write the guide'));
 });
 
 it('allows reading an issue on a read-only board but offers no edit actions', async () => {

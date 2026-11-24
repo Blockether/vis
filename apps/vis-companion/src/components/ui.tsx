@@ -49,6 +49,7 @@ import {
   type PointerEvent,
   type ReactNode,
   type RefObject,
+  type TextareaHTMLAttributes,
 } from 'react';
 
 import { createPortal } from 'react-dom';
@@ -126,6 +127,16 @@ export function Text({
     <Tag
       {...props}
       className={`font-mono normal-case tracking-normal ${role} ${ink} ${className}`}
+    />
+  );
+}
+
+/** A transparent action over a card. Other actions sit beside it, never inside it. */
+export function SurfaceButton({ onClick, className = '', ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button type="button" onClick={onClick}
+      className={`absolute inset-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${className}`}
+      {...props}
     />
   );
 }
@@ -2298,10 +2309,12 @@ export function BandButton({
  * Optional icon/action slots share this geometry; className only positions the field.
  * Chat composers and inline title editing keep their separate controls.
  */
+const fieldClass = 'block w-full rounded-none border border-field-edge bg-input font-mono text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none';
+
 export const Input = forwardRef<
   HTMLInputElement,
-  InputHTMLAttributes<HTMLInputElement> & { icon?: ReactNode; action?: ReactNode }
->(function Input({ className = '', icon, action, ...props }, ref) {
+  InputHTMLAttributes<HTMLInputElement> & { icon?: ReactNode; action?: ReactNode; sizeMode?: 'compact' | 'form' }
+>(function Input({ className = '', icon, action, sizeMode = 'compact', ...props }, ref) {
   // Keep password mask dots distinct without changing plain-text spacing.
   const masked = props.type === 'password' ? 'tracking-[0.15em]' : '';
   return (
@@ -2317,7 +2330,7 @@ export const Input = forwardRef<
     >
       <input
         ref={ref}
-        className={`block h-8 w-full rounded-none border border-field-edge bg-input py-0.5 font-mono text-ui text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none mouse:h-7 ${icon ? 'pl-8 sm:pl-9' : 'pl-2.5 sm:pl-3'} ${action ? 'pr-10 mouse:pr-8 [&::-webkit-search-cancel-button]:hidden' : 'pr-2.5 sm:pr-3'} ${masked}`}
+        className={`${fieldClass} py-0.5 ${sizeMode === 'form' ? 'h-11 text-base mouse:h-8 mouse:text-ui' : 'h-8 text-ui mouse:h-7'} ${icon ? 'pl-8 sm:pl-9' : 'pl-2.5 sm:pl-3'} ${action ? 'pr-10 mouse:pr-8 [&::-webkit-search-cancel-button]:hidden' : 'pr-2.5 sm:pr-3'} ${masked}`}
         {...props}
       />
       {icon && (
@@ -2334,6 +2347,51 @@ export const Input = forwardRef<
     </span>
   );
 });
+
+/** Label one field with its visible name. */
+export function Field({ label, children }: { label: ReactNode; children: ReactNode }) {
+  return (
+    <label className="flex min-w-0 flex-col items-start gap-1 font-mono text-meta font-medium text-dialog-hint">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function TextArea({ className = '', ...props }, ref) {
+    return <textarea ref={ref} className={`${fieldClass} min-h-20 resize-y p-2.5 text-base mouse:text-ui ${className}`} {...props} />;
+  },
+);
+
+/** Edit one saved value. Enter or blur saves; Escape discards the unsaved text. */
+export function CommitInput({ value, onCommit, ...props }: Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'onBlur' | 'onKeyDown'> & {
+  value: string;
+  onCommit: (value: string) => void;
+}) {
+  const [pending, setPending] = useState<{ base: string; text: string }>();
+  const draft = pending?.base === value ? pending.text : value;
+  const commit = (input: HTMLInputElement) => {
+    const next = input.value.trim();
+    const valid = input.validity.valid && (!props.required || next !== '');
+    setPending(undefined);
+    if (valid && next !== value) onCommit(next);
+  };
+  return <Input {...props} sizeMode="form" value={draft}
+    onChange={(event) => setPending({ base: value, text: event.currentTarget.value })}
+    onBlur={(event) => commit(event.currentTarget)}
+    onKeyDown={(event) => {
+      if (event.nativeEvent.isComposing) return;
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.currentTarget.blur();
+      } else if (event.key === 'Escape' && draft !== value) {
+        event.preventDefault();
+        setPending(undefined);
+      }
+    }}
+  />;
+}
 
 /**
  * Hide every other branch from assistive tools while a panel is open; restore only
@@ -2955,9 +3013,11 @@ export function Banner({
   kind,
   title,
   dismiss,
+  role = 'status',
   children,
 }: {
   kind: 'neutral' | 'ok' | 'warn' | 'err';
+  role?: 'status' | 'alert';
   title?: ReactNode;
   dismiss?: { label: string; onClick: () => void };
   children: ReactNode;
@@ -2975,7 +3035,7 @@ export function Banner({
       className={`border font-mono text-body [overflow-wrap:anywhere] ${colors} ${
         isTitled ? 'flex min-h-12 items-stretch p-0' : dismiss ? 'flex items-center gap-2 py-1 pr-1 pl-3' : 'px-3 py-2'
       }`}
-      role="status"
+      role={role}
     >
       {isTitled ? (
         <>
@@ -3501,6 +3561,7 @@ export function DialogFrame({
   footer,
   onClose,
   closeLabel,
+  manageFocus = false,
   className = '',
 }: {
   title: string;
@@ -3526,8 +3587,44 @@ export function DialogFrame({
    * dialog's way out CANCELS the request it is asking about.
    */
   closeLabel?: string;
+  /** Keep Tab and Escape in the dialog and return focus to the opener on close. */
+  manageFocus?: boolean;
   className?: string;
 }) {
+  const frame = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (!manageFocus) return;
+    const node = frame.current;
+    if (!node) return;
+    const opener = node.ownerDocument.activeElement;
+    if (!node.contains(opener)) node.focus({ preventScroll: true });
+    return () => {
+      if (opener instanceof HTMLElement && opener.isConnected && !node.contains(opener)) {
+        opener.focus({ preventScroll: true });
+      }
+    };
+  }, [manageFocus]);
+
+  const dialogKey = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+    const dialog = event.currentTarget;
+    if (!dialog.contains(event.target as Node)) return;
+    if (event.key === 'Escape' && onClose) {
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    } else if (event.key === 'Tab') {
+      const tabs = [...dialog.querySelectorAll<HTMLElement>(
+        'button, input, select, textarea, a[href], [tabindex], [contenteditable="true"]',
+      )].filter((node) => node.tabIndex >= 0 && !node.matches(':disabled') && node.getClientRects().length !== 0);
+      const index = tabs.indexOf(event.target as HTMLElement);
+      if (!tabs.length || index === -1 || (event.shiftKey ? index === 0 : index === tabs.length - 1)) {
+        event.preventDefault();
+        (event.shiftKey ? tabs.at(-1) : tabs[0])?.focus();
+      }
+    }
+  };
+
   // A sheet that stops at its content starts partway down the glass, so the notch
   // is not above it and the top inset is dead space (`IsContentSheet`).
   const isContentSheet = useContext(IsContentSheet);
@@ -3535,10 +3632,11 @@ export function DialogFrame({
     <section
       className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-t-2 border-accent bg-panel ${
         isContentSheet ? '' : 'pt-[env(safe-area-inset-top)]'
-      } pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-float sm:duration-200 sm:starting:translate-y-2 ${className}`}
+      } pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-float sm:duration-200 sm:starting:translate-y-2 ${manageFocus ? 'outline-none' : ''} ${className}`}
       role="dialog"
       aria-modal="true"
       aria-label={title}
+      {...(manageFocus ? { ref: frame, tabIndex: -1, onKeyDown: dialogKey } : {})}
     >
       {/* A dialog knows its own title, so it is never told the name of its own way
           out — five surfaces used to hand a screen reader the same two words. */}
