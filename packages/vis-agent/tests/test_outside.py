@@ -824,8 +824,8 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
                 vis.ui.table(
                     "jobs",
                     columns=[
-                        vis.ui.table_column("job", "Job"),
-                        vis.ui.table_column("state", "State"),
+                        vis.ui.table.column("job", "Job"),
+                        vis.ui.table.column("state", "State"),
                     ],
                     is_selectable=True,
                     selected_ids=[],
@@ -895,9 +895,9 @@ def test_a_live_table_declares_the_groups_its_rows_hang_under():
         [
             vis.ui.table(
                 "checks",
-                columns=[vis.ui.table_column("job", "Job")],
-                groups=[vis.ui.table_group("build", label="Build", order=0)],
-                rows=[vis.ui.table_row("compile", ["compile"], parent="build")],
+                columns=[vis.ui.table.column("job", "Job")],
+                groups=[vis.ui.table.group("build", label="Build", order=0)],
+                rows=[vis.ui.table.row("compile", ["compile"], parent="build")],
             )
         ],
     ) as view:
@@ -1096,8 +1096,8 @@ def test_a_nap_answers_a_surface_the_moment_it_touches_the_view(monkeypatch):
         [
             vis.ui.table(
                 "jobs",
-                columns=[vis.ui.table_column("job", "Job")],
-                rows=[vis.ui.table_row("a", ["one"]), vis.ui.table_row("b", ["two"])],
+                columns=[vis.ui.table.column("job", "Job")],
+                rows=[vis.ui.table.row("a", ["one"]), vis.ui.table.row("b", ["two"])],
                 is_selectable=True,
                 selected_ids=["a"],
             )

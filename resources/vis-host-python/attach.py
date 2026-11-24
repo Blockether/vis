@@ -291,7 +291,7 @@ def __vis_install_attach__():
             "\n\nAPPS: attach(ui.app(title, *nodes)) opens an app, after "
             "`from blockether.vis.extension import ui`. An app is a live view that "
             "stays in this session. It uses the same ui components, plus ui.diff and "
-            "ui.thread. ui.scene(node_id, width, height, objects=[ui.scene_object(...)]) "
+            "ui.thread. ui.scene(node_id, width, height, objects=[ui.scene.object(...)]) "
             "draws a 3D world from shapes, places and colors. "
             "ui.canvas(node_id, [ui.canvas.card(card_id, title, after=[...])]) draws "
             "a board with arrows that people can pan and zoom. People save drafts and "

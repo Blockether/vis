@@ -9204,7 +9204,7 @@ def forms_report():
         vis.ui.row(
             vis.ui.select(
                 'env',
-                [vis.ui.option('staging', 'Staging'), vis.ui.option('prod')],
+                [vis.ui.select.option('staging', 'Staging'), vis.ui.select.option('prod')],
                 is_required=True,
                 default='prod',
             ),

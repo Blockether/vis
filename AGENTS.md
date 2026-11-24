@@ -24,6 +24,8 @@ Run each project's tools from its own directory.
 - `apps/vis-companion/` controls are in `src/components/ui.tsx`.
 - `apps/vis-docs/` is the public Extension Center. It is never a `doc()` page.
 - The engine also runs `packages/vis-agent/src/blockether/vis/extension.py`. Never mirror it.
+- Give each `vis.ui` builder one domain path: `vis.ui.<domain>` or `vis.ui.<domain>.<part>`, one
+  lowercase word for each part. Do not keep an old name as an alias. `test_ui_names.py` enforces it.
 - `sandbox/` is host policy, `python/` is host execution. Guest runtime code belongs in `~/vis-python-runtime`.
 - Put host shims flat in `resources/vis-host-python/`. Regenerate apropos with `apropos-resource-test/regenerate!`.
 - Encode gateway output with `wire/->wire` and `wire/json-str`. An encoding failure can break event replay.

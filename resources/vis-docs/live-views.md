@@ -90,8 +90,8 @@ def watch_run(run_id: int) -> dict:
         [
             vis.ui.status("run", "Watching", tone="running"),
             vis.ui.progress("progress"),
-            vis.ui.table("jobs", columns=[vis.ui.table_column("job", "Job"),
-                                       vis.ui.table_column("state", "Status")]),
+            vis.ui.table("jobs", columns=[vis.ui.table.column("job", "Job"),
+                                       vis.ui.table.column("state", "Status")]),
             vis.ui.link("links", links=[{"id": "run", "label": "This run", "target": run["url"]}]),
         ],
     ) as view:
@@ -184,9 +184,9 @@ def watch_builds(builds, read_once, *, timeout_s=600.0, poll_s=5.0):
     outcome = "completed"
     with vis.live("Watch builds", [
         vis.ui.status("status", "Watching pinned builds", tone="running"),
-        vis.ui.table("builds", columns=[vis.ui.table_column("environment", "Environment"),
-                                    vis.ui.table_column("build", "Build"),
-                                    vis.ui.table_column("state", "Last observation")]),
+        vis.ui.table("builds", columns=[vis.ui.table.column("environment", "Environment"),
+                                    vis.ui.table.column("build", "Build"),
+                                    vis.ui.table.column("state", "Last observation")]),
     ]) as view:
         pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ci-reader")
         try:
@@ -331,7 +331,7 @@ returns a typed handle that has only the verbs of its node type:
 | `vis.ui.listing(id, items=[…], is_ordered=False)` | A list of points with bullets or numbers | `.set(item_id, text, detail=, tone=)`, `.order(is_ordered)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.chart(id, series=[…], kind="bar", categories=[…])` | Numbers as bars or lines | `.set(series_id, label, values, tone=)`, `.configure(kind=, categories=, label=)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.output(id, label=…, default_expanded=False)` | Retained lines that collapse on their own | `.write(*lines, tone=)`, `.clear()` |
-| `vis.ui.table(id, columns=[vis.ui.table_column(…)], groups=[vis.ui.table_group(…)])` | Rows with IDs, which can fold into groups | `.upsert(row_id, cells, tone=, parent=)`, `.group(group_id, label=, tone=, order=, is_open=)`, `.replace(rows)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.table(id, columns=[vis.ui.table.column(…)], groups=[vis.ui.table.group(…)])` | Rows with IDs, which can fold into groups | `.upsert(row_id, cells, tone=, parent=)`, `.group(group_id, label=, tone=, order=, is_open=)`, `.replace(rows)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.link(id, links=[…])` | Links that a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
 | `vis.ui.paragraph(id, text)` | A paragraph with inline formatting | `.set(text)` |
 | `vis.ui.heading(id, text, level=2)` | A heading at level 1 to 6 | `.set(text, level=)` |
@@ -340,7 +340,7 @@ returns a typed handle that has only the verbs of its node type:
 | `vis.ui.spinner(id, text="Working", variant="braille")` | An activity indicator | `.set(text=, variant=, is_active=)` |
 | `vis.ui.button(id, label, is_disabled=False, variant=None)` | An action for the person. `variant` is `primary`, `secondary`, or `destructive`. `is_selected=True` or `False` makes the button one choice of a row, such as a tab, and the Companion app marks the current choice. | `.set(label=, is_disabled=)` |
 | `vis.ui.disclosure(id, label, *nodes, default_expanded=False)` | A column that collapses | Children update by their own IDs. |
-| `vis.ui.scene(id, width, height, objects=[vis.ui.scene_object(…)])` | A 3D world, which [each client draws](#draw-a-3d-scene) | `.put(object_id, **changes)`, `.mesh(mesh_id, vertices, faces)`, `.set(background=, fov=, is_wrapping=, tick_ms=)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.scene(id, width, height, objects=[vis.ui.scene.object(…)])` | A 3D world, which [each client draws](#draw-a-3d-scene) | `.put(object_id, **changes)`, `.mesh(mesh_id, vertices, faces)`, `.set(background=, fov=, is_wrapping=, tick_ms=)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.canvas(id, cards=[vis.ui.canvas.card(…)])` | A [board with items and arrows](#draw-a-board-on-a-canvas) | `.card(id, title, **keys)`, `.shape(…)`, `.note(…)`, `.frame(…)`, `.text(…)`, `.put(*cards)`, `.focus(id, zoom=)`, `.fit()`, `.select(*ids)`, `.set(…)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.board(id, columns, issues)` | Columns of [issues that people move and change](#track-issues-on-a-board) | `.issue(id, title, column, **keys)`, `.put(*issues)`, `.move(id, column, index)`, `.apply(event)`, `.replace(issues)`, `.select(id)`, `.set(…)`, `.remove(*ids)`, `.clear()` |
 
@@ -487,7 +487,7 @@ A group that you do not declare takes its ID as its name. It sorts after the dec
 the order in which its first row arrived.
 
 Declare a group to name, color, or order it. In the table builder, use
-`vis.ui.table_group("tests", label="Tests", tone="error", order=0)`. During the run, use
+`vis.ui.table.group("tests", label="Tests", tone="error", order=0)`. During the run, use
 `view["jobs"].group("tests", tone="error")`.
 
 Declarations merge by ID, so a later call changes only the keys that it passes. A renamed group
@@ -501,7 +501,7 @@ selected. A row that is not in the new set goes away with its selection. `.clear
 `.upsert(...)` drops the whole selection.
 
 ```python
-view["chats"].replace([vis.ui.table_row(chat.id, [chat.title, chat.category])
+view["chats"].replace([vis.ui.table.row(chat.id, [chat.title, chat.category])
                        for chat in chats if chat.category == category])
 ```
 
@@ -520,7 +520,7 @@ field = vis.ui.scene(
     fov=30,
     is_wrapping=True,
     tick_ms=100,
-    objects=[vis.ui.scene_object("ship", "cone", x=24, y=12, scale=1.2, color="#7dd3fc")],
+    objects=[vis.ui.scene.object("ship", "cone", x=24, y=12, scale=1.2, color="#7dd3fc")],
 )
 app = vis.attach(vis.ui.app("Asteroids", field, key="asteroids"))
 
@@ -536,7 +536,7 @@ app["field"].remove("rock-1")
 - `rx`, `ry`, and `rz` turn an object in degrees, first about x, then about y, then about z.
 - The built-in meshes are `box`, `tetrahedron`, `octahedron`, `icosahedron`, `sphere`, and `cone`.
   The tip of a cone points to +y. Add your own shape with
-  `vis.ui.scene_mesh(mesh_id, vertices, faces)` or `.mesh(...)`. List the corners of each face
+  `vis.ui.scene.mesh(mesh_id, vertices, faces)` or `.mesh(...)`. List the corners of each face
   counterclockwise, as seen from outside.
 - One light shades each face. An object with `is_emissive=True` shows its own color without shade.
 - A scene holds at most 32 custom meshes and 512 objects.
@@ -1131,8 +1131,8 @@ import blockether.vis.extension as vis
 
 app = vis.attach(vis.ui.app(
     "Triage the failures",
-    vis.ui.table("failures", columns=[vis.ui.table_column("test", "Test"),
-                                      vis.ui.table_column("error", "Error")]),
+    vis.ui.table("failures", columns=[vis.ui.table.column("test", "Test"),
+                                      vis.ui.table.column("error", "Error")]),
     vis.ui.button("rerun", label="Run again"),
     key="triage",
     shortcuts=[

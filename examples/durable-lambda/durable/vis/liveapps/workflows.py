@@ -91,11 +91,11 @@ class Workflows(threading.Thread):
         flows, sessions = self.lists
         return vis.ui.group(
             "start",
-            vis.ui.select("workflow", [vis.ui.option(name, title) for name, title in flows], label="Workflow", is_required=True),
+            vis.ui.select("workflow", [vis.ui.select.option(name, title) for name, title in flows], label="Workflow", is_required=True),
             vis.ui.multiline("input", label="Input", description="A text for the first input of the workflow, or a JSON object."),
             vis.ui.select(
                 "session",
-                [vis.ui.option(NEW, "A new session for this run"), *(vis.ui.option(session, title) for session, title in sessions)],
+                [vis.ui.select.option(NEW, "A new session for this run"), *(vis.ui.select.option(session, title) for session, title in sessions)],
                 label="Session",
                 description="In a session that you select, the run works in the directory of that session.",
             ),
@@ -132,7 +132,7 @@ class Workflows(threading.Thread):
         return vis.ui.column(
             "body",
             vis.ui.stat("counts", [{"id": count, "label": label, "value_text": "0"} for count, label, _, _ in COUNTS]),
-            vis.ui.table("runs", [vis.ui.table_column(column, label) for column, label in columns]),
+            vis.ui.table("runs", [vis.ui.table.column(column, label) for column, label in columns]),
         )
 
     def picture(self) -> dict[str, Any]:
@@ -200,7 +200,7 @@ class Workflows(threading.Thread):
             if "rows" in picture:
                 for count, label, _, tone in COUNTS:
                     app["counts"].set(count, str(picture["counts"][count]), label, tone=tone if picture["counts"][count] else None)
-                app["runs"].replace([vis.ui.table_row(run, cells, tone=tone) for run, cells, tone in picture["rows"]])
+                app["runs"].replace([vis.ui.table.row(run, cells, tone=tone) for run, cells, tone in picture["rows"]])
             if "state" in picture:
                 text, tone, detail = picture["state"]
                 if not self.has_status:

@@ -216,14 +216,14 @@ def test_table_replace_keeps_selection_of_rows_that_remain(monkeypatch, host_kin
     monkeypatch.setattr(vis, "_host", host)
     table = vis.ui.table(
         "chats",
-        columns=[vis.ui.table_column("chat", "Chat")],
-        rows=[vis.ui.table_row("a", ["A"]), vis.ui.table_row("b", ["B"])],
+        columns=[vis.ui.table.column("chat", "Chat")],
+        rows=[vis.ui.table.row("a", ["A"]), vis.ui.table.row("b", ["B"])],
         is_selectable=True,
     )
     with vis.live("Chats", [table], flush_ms=0) as view:
         chats = view["chats"]
         chats.select("a", "b")
-        chats.replace([vis.ui.table_row("c", ["C"]), vis.ui.table_row("b", ["B*"])])
+        chats.replace([vis.ui.table.row("c", ["C"]), vis.ui.table.row("b", ["B*"])])
         node = view.state()["nodes"][0]
         assert [(row["id"], row["cells"]) for row in node["rows"]] == [
             ("c", ["C"]),
@@ -234,7 +234,7 @@ def test_table_replace_keeps_selection_of_rows_that_remain(monkeypatch, host_kin
         assert view.state()["nodes"][0]["selected_ids"] == []
         chats.replace([])
         assert view.state()["nodes"][0]["rows"] == []
-        with pytest.raises(TypeError, match="table_row"):
+        with pytest.raises(TypeError, match=r"table\.row"):
             chats.replace([("d", ["D"])])
 
 
@@ -250,7 +250,7 @@ def test_scene_changes_merge_onto_their_objects(monkeypatch, host_kind):
         "world",
         16,
         9,
-        objects=[vis.ui.scene_object("ship", "cone", x=8, y=4, color="#88c0d0")],
+        objects=[vis.ui.scene.object("ship", "cone", x=8, y=4, color="#88c0d0")],
     )
     with vis.live("Game", [scene], flush_ms=10000) as view:
         world = view["world"]
@@ -596,9 +596,9 @@ def test_table_builder_refuses_text_columns():
     # #428: text columns passed every SDK check and failed only when a real app opened.
     with pytest.raises(
         TypeError,
-        match=r"columns\[1\] is 'Category'.*table_column\('category', 'Category'\)",
+        match=r"columns\[1\] is 'Category'.*table\.column\('category', 'Category'\)",
     ):
-        vis.ui.table("chats", columns=[vis.ui.table_column("chat", "Chat"), "Category"])
+        vis.ui.table("chats", columns=[vis.ui.table.column("chat", "Chat"), "Category"])
 
 
 def test_button_variant_is_kept_and_a_typo_names_the_variants():

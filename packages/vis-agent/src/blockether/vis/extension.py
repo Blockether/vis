@@ -5060,14 +5060,15 @@ def _ui_multiline(name, **spec):
 
 
 def _ui_select(name, options, **spec):
-    # Choose exactly ONE of `options` (plain strings, or `vis.ui.option(...)`
+    # Choose exactly ONE of `options` (plain strings, or `vis.ui.select.option(...)`
     # pairs); answered as the chosen value.
     spec["options"] = list(options)
     return _node("select", name, spec)
 
 
 def _ui_multiselect(name, options, **spec):
-    # Choose ANY of `options`; answered as a list, empty when nothing is ticked.
+    # Choose ANY of `options` (plain strings, or `vis.ui.select.option(...)` pairs);
+    # answered as a list, empty when nothing is ticked.
     spec["options"] = list(options)
     return _node("multiselect", name, spec)
 
@@ -5588,8 +5589,8 @@ def list_sessions(search=None):
 # move and may stop it; the model reads the finished picture as DATA.
 #
 #   with vis.live('CI', [vis.ui.status('now', 'Polling'),
-#                        vis.ui.table('jobs', columns=[vis.ui.table_column('job', 'Job'),
-#                                                   vis.ui.table_column('state', 'State')])]) as view:
+#                        vis.ui.table('jobs', columns=[vis.ui.table.column('job', 'Job'),
+#                                                   vis.ui.table.column('state', 'State')])]) as view:
 #       for job in poll():
 #           view['jobs'].upsert(job.id, [job.name, job.state], tone=job.tone)
 #       view['now'].set('Finished', tone='ok')
@@ -6005,17 +6006,17 @@ class Table(_KeyedNode):
     def replace(self, rows):
         """Make ``rows`` the whole table, in their order, in one step.
 
-        Each row is a ``vis.ui.table_row(row_id, cells, tone=, parent=)``. Rows not
+        Each row is a ``vis.ui.table.row(row_id, cells, tone=, parent=)``. Rows not
         given are dropped. A selected row that comes back stays selected, and a
         selected row that is gone loses its selection. An empty list empties the table.
         """
         if isinstance(rows, (str, dict)) or not hasattr(rows, "__iter__"):
-            raise TypeError("replace takes a list of vis.ui.table_row(...) values")
+            raise TypeError("replace takes a list of vis.ui.table.row(...) values")
         given = list(rows)
         for row in given:
             if not isinstance(row, dict) or "id" not in row:
                 raise TypeError(
-                    f"replace takes vis.ui.table_row(row_id, cells) values, got {row!r}"
+                    f"replace takes vis.ui.table.row(row_id, cells) values, got {row!r}"
                 )
         return self._op("replace", rows=[dict(row) for row in given])
 
@@ -6100,7 +6101,7 @@ class Scene(_KeyedNode):
         return self._op("append", objects=[_live_item(object_id, changes)])
 
     def mesh(self, mesh_id, vertices, faces):
-        """Add or replace a custom mesh. See `vis.ui.scene_mesh`."""
+        """Add or replace a custom mesh. See `vis.ui.scene.mesh`."""
         return self._op("append", meshes=[_ui_scene_mesh(mesh_id, vertices, faces)])
 
     @property
@@ -8748,14 +8749,14 @@ def _ui_table(node_id, columns=None, **spec):
     # Rows keyed by id. `order` declares how they paint — 'insertion' (the
     # default), 'newest-first', or {'by': 'duration', 'dir': 'desc'}.
     # `is_selectable=True` makes rows controls; `selected_ids` is shared state.
-    # `groups` declares the heads rows hang under — see `table_group`; a row
+    # `groups` declares the heads rows hang under — see `table.group`; a row
     # whose `parent` names no declared group still gets one, labelled with the id.
     for index, column in enumerate(columns or []):
         if not isinstance(column, dict):
             fix = (
-                f"vis.ui.table_column({column.lower()!r}, {column!r})"
+                f"vis.ui.table.column({column.lower()!r}, {column!r})"
                 if isinstance(column, str)
-                else 'vis.ui.table_column("id", "Label")'
+                else 'vis.ui.table.column("id", "Label")'
             )
             raise TypeError(
                 f"vis.ui.table({node_id!r}): columns[{index}] is {column!r}; use {fix}"
@@ -8912,7 +8913,7 @@ def _ui_scene(node_id, width, height, *, objects=None, meshes=None, **spec):
     (0, 0) to (width, height) at z=0. `fov` is the vertical field of view in
     degrees; 0 draws orthographic. Surfaces ease objects between ticks of
     `tick_ms`. With `is_wrapping`, an object that crosses an edge eases across
-    it. Build items with `ui.scene_object` and `ui.scene_mesh`. Options:
+    it. Build items with `ui.scene.object` and `ui.scene.mesh`. Options:
     `background`, `fov`, `is_wrapping`, `tick_ms`, `label`.
     """
     return _live_node(
@@ -9417,6 +9418,37 @@ def _ui_board_issue(issue_id, title, column, **spec):
     return _live_item(issue_id, dict(spec, title=str(title), column=str(column)))
 
 
+class _SelectUI:
+    """Build a select and the options that a select or a multiselect takes."""
+
+    __call__ = staticmethod(_ui_select)
+    option = staticmethod(_ui_option)
+
+
+class _TableUI:
+    """Build a table and its columns, rows, and groups."""
+
+    __call__ = staticmethod(_ui_table)
+    column = staticmethod(_ui_table_column)
+    row = staticmethod(_ui_table_row)
+    group = staticmethod(_ui_table_group)
+
+
+class _PictureUI:
+    """Build a picture, and read the media type of picture bytes."""
+
+    __call__ = staticmethod(_ui_picture)
+    type = staticmethod(_ui_picture_type)
+
+
+class _SceneUI:
+    """Build a 3D scene and its objects and meshes."""
+
+    __call__ = staticmethod(_ui_scene)
+    object = staticmethod(_ui_scene_object)
+    mesh = staticmethod(_ui_scene_mesh)
+
+
 class _BoardUI:
     """Build a board and its columns, people, epics and issues."""
 
@@ -9451,13 +9483,12 @@ class _UI:
     plaintext = staticmethod(_ui_plaintext)
     password = staticmethod(_ui_password)
     multiline = staticmethod(_ui_multiline)
-    select = staticmethod(_ui_select)
+    select = _SelectUI()
     multiselect = staticmethod(_ui_multiselect)
     checkbox = staticmethod(_ui_checkbox)
     slider = staticmethod(_ui_slider)
     datetime = staticmethod(_ui_datetime)
     otp = staticmethod(_ui_otp)
-    option = staticmethod(_ui_option)
 
     # Layout
     row = staticmethod(_ui_row)
@@ -9487,22 +9518,16 @@ class _UI:
     listing = staticmethod(_ui_listing)
     chart = staticmethod(_ui_chart)
     output = staticmethod(_ui_output)
-    table = staticmethod(_ui_table)
-    table_column = staticmethod(_ui_table_column)
-    table_row = staticmethod(_ui_table_row)
-    table_group = staticmethod(_ui_table_group)
+    table = _TableUI()
 
     # Apps
     app = staticmethod(_ui_app)
     shortcut = staticmethod(_ui_shortcut)
     diff = staticmethod(_ui_diff)
     image = staticmethod(_ui_image)
-    picture = staticmethod(_ui_picture)
-    picture_type = staticmethod(_ui_picture_type)
+    picture = _PictureUI()
     thread = staticmethod(_ui_thread)
-    scene = staticmethod(_ui_scene)
-    scene_object = staticmethod(_ui_scene_object)
-    scene_mesh = staticmethod(_ui_scene_mesh)
+    scene = _SceneUI()
     canvas = _CanvasUI()
     board = _BoardUI()
 

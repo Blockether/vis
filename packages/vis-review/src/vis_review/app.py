@@ -941,8 +941,8 @@ class ReviewApp:
         self._open = [row_id for row_id in self._open if row_id not in closed]
         table = ui.table(
             IMAGE_TABLE,
-            columns=[ui.table_column("file", "File")],
-            rows=[ui.table_row(i, [_file_label(diff)]) for i, diff in files.items()],
+            columns=[ui.table.column("file", "File")],
+            rows=[ui.table.row(i, [_file_label(diff)]) for i, diff in files.items()],
             is_selectable=True,
             selected_ids=[row_id for row_id in files if row_id in shown],
         )
@@ -1362,8 +1362,8 @@ def image_node(diff: FileDiff, blob: Callable[[str], bytes | None]) -> dict | No
     """
     old = blob(diff.before) if diff.before else None
     new = blob(diff.after) if diff.after else None
-    is_old = bool(old) and ui.picture_type(old) is not None
-    is_new = bool(new) and ui.picture_type(new) is not None
+    is_old = bool(old) and ui.picture.type(old) is not None
+    is_new = bool(new) and ui.picture.type(new) is not None
     if not (is_old or is_new):
         return None
     node_id = _image_id(diff.path)

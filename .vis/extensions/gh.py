@@ -743,16 +743,16 @@ def declared_nodes(shape):
         vis.ui.table(
             "jobs",
             columns=[
-                vis.ui.table_column("job", "Job"),
-                vis.ui.table_column("state", "Now"),
-                vis.ui.table_column("took", "Took"),
+                vis.ui.table.column("job", "Job"),
+                vis.ui.table.column("state", "Now"),
+                vis.ui.table.column("took", "Took"),
             ],
             groups=[
-                vis.ui.table_group(one["id"], tone=one.get("tone"), order=one["order"])
+                vis.ui.table.group(one["id"], tone=one.get("tone"), order=one["order"])
                 for one in shape["groups"]
             ],
             rows=[
-                vis.ui.table_row(
+                vis.ui.table.row(
                     row["id"], row["cells"], tone=row["tone"], parent=row.get("parent")
                 )
                 for row in shape["rows"]

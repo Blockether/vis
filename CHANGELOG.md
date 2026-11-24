@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Python SDK: each `vis.ui` builder has one domain path. Use `vis.ui.table.column`, `vis.ui.table.row`, `vis.ui.table.group`, `vis.ui.scene.object`, `vis.ui.scene.mesh`, `vis.ui.picture.type`, and `vis.ui.select.option`. The old flat names are removed. An extension that uses an old name fails until you change the call.
+
 ## [v0.5.32] - 2026-11-24
 
 ### Added

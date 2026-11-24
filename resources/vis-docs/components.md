@@ -117,7 +117,7 @@ output](live-views.md#add-severity-to-streaming-output) explains windows, search
 ### Table
 
 `vis.ui.table(id, columns=[...], rows=[...])` shows rows, each with an id. Build them with
-`vis.ui.table_column`, `vis.ui.table_row`, and `vis.ui.table_group`. With `is_selectable=True`, a
+`vis.ui.table.column`, `vis.ui.table.row`, and `vis.ui.table.group`. With `is_selectable=True`, a
 person can select rows, and `selected_ids` holds the selection. Each client marks a selected row
 with `●` and an unselected row with `○`.
 
@@ -251,7 +251,7 @@ Read the text on the trusted side with `vis.reveal(handle)`. A live view never s
 ### Select
 
 `vis.ui.select(name, options, label="Target")` takes exactly one option. An option is a string, or
-`vis.ui.option(value, label)` when the value and the shown text differ.
+`vis.ui.select.option(value, label)` when the value and the shown text differ.
 
 The Companion app shows two to four short options as one strip. In a live view, it shows six or
 more options as a list that opens on a press. It shows other sets of options as rows.

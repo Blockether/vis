@@ -151,7 +151,7 @@ form = vis.ui.column(
     vis.ui.heading("Target"),
     vis.ui.paragraph("Staging does not send on-call alerts."),
     vis.ui.row(
-        vis.ui.select("env", [vis.ui.option("staging", "Staging"), vis.ui.option("prod")],
+        vis.ui.select("env", [vis.ui.select.option("staging", "Staging"), vis.ui.select.option("prod")],
                    is_required=True),
         vis.ui.slider("canary", label="Canary %", min=0, max=100, step=5, default=10),
     ),
