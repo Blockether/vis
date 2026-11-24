@@ -25,6 +25,8 @@ contracts, callbacks, and host operations.
   version that Vis bundles](#editor-types).
 - **A jailed tool cannot find its JDK, package cache, or launcher.** Declare [toolchain
   grants](#toolchain-grants).
+- **A tool must tell your global app or another session about a change.** Publish an
+  [event](#events-between-processes).
 
 For a complete entry file, start with the [tutorial](extending.md). For design and test
 guidance, read [Extension design](extension-design.md).
@@ -1262,6 +1264,63 @@ A global app follows these rules:
 - Give the real app `on_reload`. Vis then calls that function after a reload or a restart, when
   the person opens the app again.
 - The button lists the app again after the person closed the real app.
+
+## Events between processes
+
+```python
+vis.events.publish(topic, data=None)
+vis.events.subscribe(pattern, handler)
+```
+
+The tools of each session and the global app of an extension run in different Python processes.
+`vis.events` sends a message from one of these processes to the others in the same gateway. The
+board extension uses it. A tool publishes `board.changed` after each change, and the open board
+repaints at once.
+
+```python
+import blockether.vis.extension as vis
+
+
+def open_board(app):
+    subscription = vis.events.subscribe("board.#", lambda event: repaint(event.data))
+    ...
+
+
+@vis.tool
+def move_issue(issue: str, column: str) -> str:
+    """Move an issue to another column."""
+    ...
+    vis.events.publish("board.issue.moved", {"issue": issue, "column": column})
+    return column
+```
+
+Topics and patterns follow these rules:
+
+- A topic is one or more words, joined with `.`. A word has the characters `a` to `z`, `0` to
+  `9`, `_`, and `-`. A topic has at most 200 characters.
+- In a pattern, `*` matches one word. A last word `#` matches zero or more words. `board.#`
+  matches `board`, `board.changed`, and `board.issue.moved`.
+- `data` is JSON data of at most 64 KiB. `publish` raises `ValueError` for a bad topic or for
+  data that is too large. It raises `TypeError` for data that is not JSON data.
+
+Delivery follows these rules:
+
+- Each extension has its own topics. A subscriber gets only the events of its own extension.
+- `publish` returns the number of subscriptions that get the event. It does not wait for them.
+- `handler` gets a `vis.Event` with `topic`, `data`, and `published_at_ms`. Each subscription
+  gets its events in publish order, on a thread of Vis.
+- A subscription keeps at most 1000 events that wait for its handler. Vis drops the next events
+  and writes a warning to the log.
+- An error in `handler` goes to the Vis log. Later events still come.
+- Events stay in memory. A subscriber gets only the events that come after its subscription.
+- Only an extension callback can publish or subscribe, such as a tool, a hook, or the open
+  function of an app. A thread that your extension started cannot.
+- Subscribe in the callback that needs the events, not at import. Each process that loads the
+  extension runs its imports.
+- A subscription ends at `close()`, at the end of a `with` block, or when the extension
+  reloads.
+- Outside Vis, `publish` calls each matching handler at once, in the calling thread. Tests can
+  use this.
 
 ## Op hooks
 

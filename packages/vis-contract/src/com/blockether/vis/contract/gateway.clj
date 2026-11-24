@@ -190,6 +190,15 @@
    :duration-ms [(get-in notification-properties ["duration_ms" "minimum"])
                  (get-in notification-properties ["duration_ms" "maximum"])]})
 
+(def extension-event-limits
+  "Bounds of the extension event bus: the topic and pattern regexes, the largest
+   data in UTF-8 bytes of JSON and the events that can wait for one subscriber."
+  {:topic (re-pattern (get-in @source ["$defs" "extension_event_topic" "pattern"]))
+   :pattern (re-pattern (get-in @source ["$defs" "extension_event_pattern" "pattern"]))
+   :name-max-chars (get-in @source ["$defs" "extension_event_topic" "maxLength"])
+   :data-max-bytes (get-in @source ["$defs" "extension_event_data_bytes" "maximum"])
+   :backlog (get-in @source ["$defs" "extension_event_backlog" "maximum"])})
+
 (def speech-job-event "Speech synthesis job stream event name." (:synthesize job-events))
 
 (def push-event-types

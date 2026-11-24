@@ -51,6 +51,7 @@
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
+            [com.blockether.vis.internal.extension.events :as events]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
@@ -1120,6 +1121,19 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             @loaded)
       label))
 
+
+(defn- callback-env
+  "The env of an extension callback that the host starts later: the env at
+   registration over `bound-session`, with session `sid` when one is given. Without a
+   DB of its own, the callback uses the shared connection."
+  [bound-session env sid]
+  (let [merged (merge bound-session env)]
+    (cond-> merged
+      sid
+      (assoc :session-id sid)
+
+      (nil? (:db-info merged))
+      (assoc :db-info (persistance/db-shared-connection! (config/resolve-db-spec))))))
 (defn ^:no-doc host-doors
   "The `__vis_host_*` callables an extension context receives as `{name fn}`.
    The bootstrap and inert checker derive their members from these bindings.
@@ -1442,19 +1456,38 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                   callback
                   (when (fn? f)
                     (fn [event sid]
-                      (let [cb-env (cond-> (merge bound-session env)
-                                     sid
-                                     (assoc :session-id sid)
-
-                                     (nil? (:db-info (merge bound-session env)))
-                                     (assoc :db-info
-                                       (persistance/db-shared-connection!
-                                         (config/resolve-db-spec))))]
-                        (extension/with-context
-                          {:ext {:ext/name owner} :env cb-env}
-                          (python-host/conveying sess (f [(wire/->wire event)]))))))]
+                      (extension/with-context
+                        {:ext {:ext/name owner} :env (callback-env bound-session env sid)}
+                        (python-host/conveying sess (f [(wire/->wire event)])))))]
 
               (view/live-json! envelope {:extension owner :context sess :listener callback}))))
+    (put! g
+          "__vis_host_events_publish__"
+          ;; `vis.events`: the topics belong to the extension of this namespace.
+          (fn [topic data-json]
+            (events/publish! (context-extension-name sess label) topic (str data-json))))
+    (put! g
+          "__vis_host_events_subscribe__"
+          ;; `listener` is the sealed callable of the subscriber. Each event runs it as
+          ;; an extension callback, like the `on_event` of a live view.
+          (fn [pattern listener]
+            (let [owner (context-extension-name sess label)
+                  env extension/*current-environment*
+                  f (unseal sess listener)]
+              (when-not (fn? f)
+                (throw (ex-info "vis.events.subscribe needs a function"
+                                {:error :extension-event-listener})))
+              (events/subscribe! owner
+                                 sess
+                                 pattern
+                                 (fn [event]
+                                   (extension/with-context
+                                     {:ext {:ext/name owner} :env (callback-env bound-session env nil)}
+                                     (python-host/conveying sess (f [event]))))))))
+    (put! g
+          "__vis_host_events_unsubscribe__"
+          (fn [id]
+            (events/unsubscribe! (context-extension-name sess label) (str id))))
     (put! g
           "__vis_host_reveal_secret__"
           (fn [handle]
@@ -1604,8 +1637,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                  ;; A pending namespace was never opened in its worker.
                  opened? (not (pending-context? ctx))]
 
-             ;; An owned live view closes with the extension context that opened it.
+             ;; An owned live view and the subscriptions end with the context that made them.
              (try (view/close-owned-by! ctx) (catch Throwable _ nil))
+             (events/forget-context! ctx)
              (swap! pending-contexts dissoc ctx)
              (swap! live-contexts disj ctx)
              (swap! context-workers dissoc ctx)
@@ -1896,6 +1930,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (if-let [reopen (get-in @context-lifecycle [ctx :reopen])]
       ;; The Python that drove an owned live view is gone.
       (do (try (view/close-owned-by! ctx) (catch Throwable _ nil))
+          (events/forget-context! ctx)
           (swap! pending-contexts assoc ctx reopen))
       (do (swap! session-contexts #(into {}
                                          (remove (fn [[_ row]]

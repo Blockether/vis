@@ -9131,6 +9131,54 @@
         "scope"
       ]
     },
+    "extension_event_topic": {
+      "type": "string",
+      "description": "The topic of an extension event: words of a-z, 0-9, '_' and '-', joined with '.'. Each extension has its own topics.",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*$"
+    },
+    "extension_event_pattern": {
+      "type": "string",
+      "description": "The topics of one subscription: a topic in which '*' takes the place of one word. A last word '#' takes the place of zero or more words.",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^(#|(\\*|[a-z0-9][a-z0-9_-]*)(\\.(\\*|[a-z0-9][a-z0-9_-]*))*(\\.#)?)$"
+    },
+    "extension_event_data_bytes": {
+      "type": "integer",
+      "description": "The largest data of one extension event, as JSON text in UTF-8 bytes.",
+      "minimum": 0,
+      "maximum": 65536
+    },
+    "extension_event_backlog": {
+      "type": "integer",
+      "description": "The events that can wait for one subscriber. When more wait, the subscriber does not get the newest event, and Vis logs a warning.",
+      "minimum": 1,
+      "maximum": 1000
+    },
+    "extension_event": {
+      "type": "object",
+      "description": "One event that a subscriber gets. Delivery is in the gateway process, in publish order for each subscriber.",
+      "properties": {
+        "topic": {
+          "$ref": "#/$defs/extension_event_topic"
+        },
+        "data": {
+          "description": "The JSON data that the publisher gave."
+        },
+        "published_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "topic",
+        "data",
+        "published_at_ms"
+      ],
+      "additionalProperties": false
+    },
     "subscription_ready_payload": {
       "type": "object",
       "description": "The payload of subscription.ready: the fields after type and session_id.",

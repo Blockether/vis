@@ -8540,6 +8540,7 @@ def reopen(app):
 
 def _open():
     _note('open')
+    vis.events.subscribe('where.#', lambda event: _note('heard-' + event.topic))
     vis.attach(vis.ui.app('Where', vis.ui.button('go', 'Go'), key='where-1', scope='global'),
                on_event=lambda event: _note('event'), on_reload=reopen)
 
@@ -8549,7 +8550,7 @@ def open_where(app):
 def where():
     'Note the process of this tool.'
     _note('tool')
-    return 'ok'
+    return vis.events.publish('where.tool', {'pid': os.getpid()})
 
 vis.register_extension(vis.Extension(name='where', description='Process probe.', alias='where',
     symbols=[vis.Symbol(where)],
@@ -8559,9 +8560,10 @@ vis.register_extension(vis.Extension(name='where', description='Process probe.',
 (defdescribe
   global-app-process-test
   ;; User request 2026-11-24: check that a global app runs once, in the shared
-  ;; worker, and that the tools of the same extension run in each session's worker.
+  ;; worker, that the tools of the same extension run in each session's worker,
+  ;; and that a tool tells the app about a change by push, not by a poll.
   (it
-    "runs the open hook and the events of a global app in the shared worker, and its tools in the session worker"
+    "runs a global app in the shared worker, its tools in the session worker, and carries vis.events between them"
     (let [notes (io/file (temp-dir) "where.txt")]
       (with-fresh-loaded
            {"extension.py" (str/replace where-py "NOTES" (json-text (.getCanonicalPath notes)))}
@@ -8591,9 +8593,12 @@ vis.register_extension(vis.Extension(name='where', description='Process probe.',
                          (expect (:is-accepted (human-input/action! view-id {:action "activate" :node-id "go"})))
                          (loop-env/sync-active-extension-symbols! env [ext])
                          (let [result (#'python-exec/run-python-code ctx "print(where())" :env env)]
-                           (expect (nil? (:error result)) (pr-str result)))
+                           (expect (nil? (:error result)) (pr-str result))
+                           ;; One subscriber: the global app in the shared worker.
+                           (expect (= "1" (str/trim (str (:stdout result)))) (pr-str result)))
                          (loop [attempt 0]
-                           (when (and (empty? (pids "event")) (< attempt 100))
+                           (when (and (or (empty? (pids "event")) (empty? (pids "heard-where.tool")))
+                                      (< attempt 100))
                              (Thread/sleep 100)
                              (recur (inc attempt))))
                          (let [shared (worker/worker-pid worker/shared-key)
@@ -8602,6 +8607,8 @@ vis.register_extension(vis.Extension(name='where', description='Process probe.',
                            (expect (= #{shared} (pids "open")) (pr-str (lines)))
                            (expect (= #{shared} (pids "event")) (pr-str (lines)))
                            (expect (= #{session-worker} (pids "tool")) (pr-str (lines)))
+                           ;; The event of the session tool reaches the global app without a poll.
+                           (expect (= #{shared} (pids "heard-where.tool")) (pr-str (lines)))
                            (expect (not= shared session-worker)))
                          (finally (when view-id (human-input/close-live! view-id)))))))
                  (finally (ep/dispose-python-context! ctx)))))))))

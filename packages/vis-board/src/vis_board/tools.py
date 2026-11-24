@@ -2,7 +2,7 @@
 
 import blockether.vis.extension as vis
 
-from vis_board.app import BOARD
+from vis_board.app import CHANGED
 from vis_board.start import project_folder
 from vis_board.store import Store, edit, matching, move
 
@@ -30,8 +30,9 @@ def list_issues(
 
 
 def _change(apply):
-    issue = _store().change(apply)
-    BOARD.refresh()
+    store = _store()
+    issue = store.change(apply)
+    vis.events.publish(CHANGED, {"project": str(store.workspace)})
     return issue
 
 

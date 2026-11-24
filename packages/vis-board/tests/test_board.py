@@ -1,7 +1,6 @@
 """Check the saved board and the SDK events that change it."""
 
 import json
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -9,7 +8,7 @@ import blockether.vis.extension as vis
 import pytest
 
 from vis_board import start, store, tools
-from vis_board.app import BoardApp, GlobalBoard
+from vis_board.app import CHANGED, BoardApp
 from vis_board.store import Store, edit
 
 
@@ -163,33 +162,35 @@ def test_bad_event_does_not_end_the_app(saved, app):
     assert rec.node("issues")["issues"][0]["key"] == "ABPR-1"
 
 
-def test_tools_change_the_board_and_refresh_open_views(saved, app, monkeypatch):
-    board, rec = app
-    registry = GlobalBoard()
-    registry.app = board
-    monkeypatch.setattr(tools, "BOARD", registry)
-    made = tools.create_issue(
-        "Make a test", values={"labels": ["sdk"], "is_flagged": True}
-    )
-    assert rec.node("issues")["issues"][0]["key"] == made["key"]
-    assert tools.list_issues("sdk", flagged=True) == [made]
-    changed = tools.change_issue(made["key"], {"title": "Run the test"})
-    assert rec.node("issues")["issues"][0]["title"] == changed["title"]
-    tools.move_issue(made["key"], "done", 0)
-    assert rec.node("issues")["issues"][0]["column"] == "done"
-    tools.delete_issue(made["key"])
-    assert not rec.node("issues")["issues"]
-    assert not saved.read()["issues"]
+def test_tools_change_the_board_and_refresh_open_views(saved, monkeypatch):
+    rec = vis.testing.LiveRecorder(object())
+    monkeypatch.setattr(vis._host, "live", rec.live)
+    board = _board(saved).open()
+    try:
+        made = tools.create_issue(
+            "Make a test", values={"labels": ["sdk"], "is_flagged": True}
+        )
+        assert rec.node("issues")["issues"][0]["key"] == made["key"]
+        assert tools.list_issues("sdk", flagged=True) == [made]
+        changed = tools.change_issue(made["key"], {"title": "Run the test"})
+        assert rec.node("issues")["issues"][0]["title"] == changed["title"]
+        tools.move_issue(made["key"], "done", 0)
+        assert rec.node("issues")["issues"][0]["column"] == "done"
+        tools.delete_issue(made["key"])
+        assert not rec.node("issues")["issues"]
+        assert not saved.read()["issues"]
+    finally:
+        board.stop()
 
 
-def test_stop_ends_the_file_watch_at_once(saved, monkeypatch):
-    # A reload opens the Board again; the old app must stop repainting at once.
+def test_stop_ends_the_subscription(saved, monkeypatch):
+    # A reload opens the Board again; the old app must stop repainting.
     monkeypatch.setattr(vis._host, "live", vis.testing.LiveRecorder(object()).live)
     board = _board(saved).open()
-    watcher = next(one for one in threading.enumerate() if one.name == "vis-board")
+    assert vis.events.publish(CHANGED, {}) == 1
     board.stop()
-    watcher.join(1)
-    assert not watcher.is_alive()
+    assert vis.events.publish(CHANGED, {}) == 0
+
 
 def test_store_change_refreshes_another_runtime(saved, monkeypatch):
     rec = vis.testing.LiveRecorder(object())

@@ -23,7 +23,9 @@ from vis_board.store import (
     move,
     reference_matches,
 )
-from vis_board.watch import FolderWatch
+
+CHANGED = "board.changed"
+"""The `vis.events` topic of a saved board. The data names the project folder."""
 
 LOG = logging.getLogger(__name__)
 ANY = "any"
@@ -267,7 +269,7 @@ class BoardApp:
         self.projects = projects
         self.lock = threading.RLock()
         self.view = None
-        self._events = None
+        self._subscription = None
         self._file_version = None
         self.filters = dict(FILTERS)
         self._choices = None
@@ -324,10 +326,8 @@ class BoardApp:
     def open(self, *, on_reload=None, watch=True):
         """Open the board, or connect to the board with the same key."""
         if watch:
-            # Watch before the first read, so that no save falls between them.
-            folder = board_dir(self.home)
-            folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-            self._events = FolderWatch(folder)
+            # Subscribe before the first read, so that no save falls between them.
+            self._subscription = vis.events.subscribe(CHANGED, self._changed)
         with self.lock:
             version = self._stamp()
             self._boards = self._read()
@@ -354,34 +354,29 @@ class BoardApp:
             )
             self._file_version = version
             self._paint()
-        if watch:
-            threading.Thread(
-                target=self._watch, args=(self._events,), name="vis-board", daemon=True
-            ).start()
         return self
 
     def stop(self):
-        """Stop watching the board files."""
-        if self._events is not None:
-            self._events.close()
+        """Stop following the saved boards."""
+        if self._subscription is not None:
+            self._subscription.close()
 
-    def _watch(self, events):
-        """Repaint when the kernel reports that a session or a process saved a board."""
+    def _changed(self, event):
+        """Repaint after a tool of a session saved a board."""
         try:
-            while events.wait():
-                with self.lock:
-                    self.view.state()
-                    if self.view.is_interrupted:
-                        return
-                    if self._stamp() != self._file_version:
-                        self.refresh()
+            with self.lock:
+                if self.view is None:
+                    return
+                self.view.state()
+                if self.view.is_interrupted:
+                    self.stop()
+                elif self._stamp() != self._file_version:
+                    self.refresh()
         except vis.Interrupted:
-            return
+            self.stop()
         except Exception:
             with self.lock:
                 self._log_failure("Refresh board")
-        finally:
-            events.release()
 
     def _paint(self):
         data = merged(self._visible())
@@ -566,22 +561,6 @@ class GlobalBoard:
             if self.app:
                 self.app.stop()
             self.app = BoardApp().open(on_reload=on_reload)
-
-    def refresh(self):
-        """Paint the open app of this runtime now. Other runtimes get file events."""
-        with self._lock:
-            app = self.app
-        if app is None:
-            return
-        try:
-            app.refresh()
-        except vis.Interrupted:
-            app.stop()
-            with self._lock:
-                if self.app is app:
-                    self.app = None
-        except Exception:
-            LOG.exception("Cannot refresh the open board")
 
 
 BOARD = GlobalBoard()

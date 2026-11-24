@@ -126,6 +126,18 @@ class Host(Protocol):
         """Show one toast in the session, or in every open session for a global scope."""
         ...
 
+    def events_publish(self, topic: str, data_json: str) -> int:
+        """Give one event to the matching subscribers of this extension. Return their count."""
+        ...
+
+    def events_subscribe(self, pattern: str, listener: Callable[[Any], Any]) -> str:
+        """Call `listener` with each later event that matches `pattern`. Return the subscription ID."""
+        ...
+
+    def events_unsubscribe(self, subscription_id: str) -> bool:
+        """End one subscription of this extension. Return True when it was open."""
+        ...
+
     def request(self, frame: str) -> str:
         """Send one SDK request frame as JSON. Return the reply envelope as JSON."""
         ...
@@ -3451,7 +3463,9 @@ class GlobalApp:
 
             icons = _contracts.definition("view", "app_icon")["enum"]
             if self.icon not in icons:
-                raise ValueError("vis.GlobalApp icon must be one of " + ", ".join(icons))
+                raise ValueError(
+                    "vis.GlobalApp icon must be one of " + ", ".join(icons)
+                )
 
     def _spec(self):
         return {
@@ -4389,6 +4403,108 @@ def notify(
         None if notice_id is None else str(notice_id),
         None if scope is None else str(scope),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class Event:
+    """One event of `vis.events`, as a subscriber gets it.
+
+    Attributes:
+        topic: The topic that the publisher gave, for example `board.changed`.
+        data: The JSON data that the publisher gave.
+        published_at_ms: When Vis took the event, in Unix milliseconds.
+    """
+
+    topic: str
+    data: Any
+    published_at_ms: int
+
+
+class Subscription:
+    """One subscription of `vis.events.subscribe`. `close()` ends it.
+
+    A `with` block closes the subscription at its end.
+    """
+
+    __slots__ = ("id", "pattern")
+
+    def __init__(self, subscription_id: str, pattern: str):
+        self.id = subscription_id
+        self.pattern = pattern
+
+    def close(self) -> bool:
+        """End the subscription. Return False when it was already closed.
+
+        A delivery that runs now ends, and no other delivery starts.
+        """
+        return bool(_host.events_unsubscribe(self.id))
+
+    def __enter__(self) -> Subscription:
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
+    def __repr__(self) -> str:
+        return f"<vis.events subscription {self.pattern!r}>"
+
+
+class Events:
+    """Publish and subscribe in one Vis gateway, as `vis.events`.
+
+    Each extension has its own topics: a subscriber gets only the events that its
+    own extension publishes. The tools of each session and the global app of an
+    extension run in different processes, so a tool can tell the app about a
+    change without files or polls. A topic is words of a-z, 0-9, `_` and `-`,
+    joined with `.`, for example `board.issue.moved`. Events stay in memory: a
+    subscriber gets only the events that come after its subscription. Each
+    subscriber gets its events in publish order, on a thread of Vis, and a slow
+    subscriber never blocks the publisher. Only an extension callback can publish
+    or subscribe, not a thread that the extension started. Outside Vis, `publish`
+    calls each subscriber at once, in the calling thread.
+    """
+
+    def publish(self, topic: str, data: Any = None) -> int:
+        """Give `data` to each subscriber whose pattern matches `topic`.
+
+        `data` is JSON data of at most 64 KiB. Return how many subscriptions get
+        the event.
+
+        Raises:
+            ValueError: The topic is not valid, or the data is too large.
+            TypeError: The data is not JSON data.
+        """
+        text = json.dumps(data, ensure_ascii=False, allow_nan=False)
+        return int(_host.events_publish(str(topic), text))
+
+    def subscribe(self, pattern: str, handler: Callable[[Event], Any]) -> Subscription:
+        """Call `handler` with each later `Event` whose topic matches `pattern`.
+
+        A pattern is a topic in which `*` takes the place of one word. A last
+        word `#` takes the place of zero or more words: `board.#` matches `board`,
+        `board.changed` and `board.issue.moved`. An error of `handler` goes to the
+        Vis log, and later events still come. The subscription ends at `close()`,
+        or when the extension reloads. Subscribe in the callback that needs the
+        events, such as the open hook of an app, not at import: each Vis process
+        that loads the extension runs its imports.
+        """
+        if not callable(handler):
+            raise TypeError("vis.events.subscribe needs a function")
+
+        def deliver(event):
+            handler(
+                Event(
+                    str(event["topic"]),
+                    event.get("data"),
+                    int(event["published_at_ms"]),
+                )
+            )
+
+        subscription_id = _host.events_subscribe(str(pattern), deliver)
+        return Subscription(str(subscription_id), str(pattern))
+
+
+events = Events()
 
 
 def write_private_file(path: str | PathLike[str], text: str) -> None:
