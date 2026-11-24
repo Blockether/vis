@@ -1336,15 +1336,23 @@ The run statuses are `queued`, `running`, `completed`, `failed`, `cancelled`, `s
   or a handler that is not callable raises `TypeError`.
 - Publish and subscribe in extension callbacks, such as tools or app open hooks. Do not call
   these methods on import or from a thread that your extension started.
+- A handler gets the data as `json.loads` reads the JSON text of the publisher. The key order
+  and large integers stay as the publisher gave them, and each handler gets its own copy.
 - Vis keeps signals in memory and does not replay them. Each subscription gets signals in
   publish order. If 1000 signals are pending for a subscription, Vis drops the next signal for
-  that subscription and logs a warning. Vis also logs handler errors and continues delivery.
+  that subscription and logs a warning. Vis also logs handler errors, `SystemExit` included,
+  and continues delivery.
+- A handler runs on a thread of Vis, and only when no other callback of the same extension
+  process runs. So a callback never sees a handler of its own process run before it returns.
+  Do not wait in a callback for a signal that its own process handles.
 - `Subscription.close()` ends the subscription and returns `True` if it was open. After
   `close()` returns, no new delivery to the subscription starts. A delivery that started
   before can still end. A `with` block or an extension reload also ends the subscription.
-- Outside Vis, `publish` calls matching handlers in the calling thread. Use this to test your
-  handler without starting Vis. Outside Vis, the scope `session` raises `ValueError`, because no
-  session exists.
+- Outside Vis, the SDK delivers signals by the same rules, in one process without a session.
+  One thread of the SDK runs the handlers, one at a time, and `publish` does not wait for them.
+  No callback holds the process, so a handler can run while your code continues. To test a
+  handler, wait for it, for example with `threading.Event`. The scope `session` raises
+  `ValueError`, because no session exists.
 
 ## Op hooks
 

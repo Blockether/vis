@@ -133,7 +133,11 @@ class Host(Protocol):
     def bus_subscribe(
         self, pattern: str, listener: Callable[[Any], Any], scope: str | None
     ) -> str:
-        """Call `listener` with each later signal of `pattern`. Return the subscription ID."""
+        """Call `listener` with each later signal of `pattern`. Return the subscription ID.
+
+        A signal is a dict of `topic`, `data_json` (the JSON text of the publisher),
+        `scope` and `published_at_ms`.
+        """
         ...
 
     def bus_unsubscribe(self, subscription_id: str) -> bool:
@@ -4414,7 +4418,8 @@ class Signal:
 
     Attributes:
         topic: The topic that the publisher gave, for example `board.changed`.
-        data: The JSON data that the publisher gave.
+        data: The JSON data that the publisher gave, as `json.loads` reads it.
+            Each handler gets its own copy.
         scope: `global` or `session`, as the publisher gave it.
         published_at_ms: When Vis took the signal, in Unix milliseconds.
     """
@@ -4500,11 +4505,16 @@ class Bus:
 
     Signals stay in memory: a subscriber gets only the signals that come after its
     subscription. Each subscriber gets its signals in publish order, on a thread
-    of Vis, and a slow subscriber never blocks the publisher. Publish and subscribe
-    in an extension callback, such as a tool or the open hook of an app, not at
+    of Vis, and a slow subscriber never blocks the publisher. A handler runs only
+    when no other callback of its extension process runs. So do not wait in a
+    callback for a signal that the same process handles. Publish and subscribe in
+    an extension callback, such as a tool or the open hook of an app, not at
     import and not in a thread that the extension started.
-    Outside Vis, there is no session, and `publish` calls each subscriber at once,
-    in the calling thread.
+
+    Outside Vis, the bus delivers in the same way, in one process without a
+    session. No callback holds that process, so a handler can run while your code
+    continues. To check the work of a handler, wait for it, for example with
+    `threading.Event`.
     """
 
     def publish(self, topic: str, data: Any = None, *, scope: str = "global") -> int:
@@ -4566,10 +4576,13 @@ class Bus:
             raise TypeError("vis.bus.subscribe needs a function")
 
         def deliver(signal):
+            # Both hosts give the JSON text of the publisher, so each handler reads
+            # its own copy of the data, with the key order and the numbers of the
+            # publisher.
             handler(
                 Signal(
                     str(signal["topic"]),
-                    signal.get("data"),
+                    json.loads(signal["data_json"]),
                     str(signal["scope"]),
                     int(signal["published_at_ms"]),
                 )

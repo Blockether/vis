@@ -13,6 +13,7 @@ import atexit
 import base64
 import json
 import os
+import queue
 import secrets
 import shutil
 import signal
@@ -273,11 +274,26 @@ def notify(
 
 
 # -- Bus ----------------------------------------------------------------------
-# Outside Vis there is one process and no session, so the bus is a dict. A publish
-# calls each matching subscriber at once, in the calling thread, in subscribe order.
-# `vis.bus` checks the names, the scope and the size before it calls here.
+# Outside Vis there is one process, so one extension, and no session. The bus
+# delivers as the engine does: `publish` does not wait for a handler, one thread of
+# the bus runs one handler at a time, each subscription gets its signals in publish
+# order, and a subscription with `bus_backlog` waiting signals does not get the next
+# one. `vis.bus` checks the names, the scope and the size before it calls here.
 
-_SUBSCRIBERS = {}
+_SUBSCRIBERS = {}  # subscription ID -> _Subscriber
+_DELIVERIES = queue.SimpleQueue()  # (subscription ID, _Subscriber, signal)
+_BUS_LOCK = threading.Lock()  # guards the waiting counts and the thread of the bus
+_BUS_THREAD = []
+
+
+class _Subscriber:
+    __slots__ = ("pattern", "listener", "scope", "waiting")
+
+    def __init__(self, pattern, listener, scope):
+        self.pattern = pattern
+        self.listener = listener
+        self.scope = scope
+        self.waiting = 0
 
 
 def _bus_matches(pattern, topic):
@@ -293,35 +309,57 @@ def _bus_matches(pattern, topic):
     return len(words) == len(topic_words)
 
 
-def bus_publish(topic, data_json, scope):
-    published_at_ms = int(time.time() * 1000)
-    targets = [
-        subscription_id
-        for subscription_id, (pattern, _, wanted) in list(_SUBSCRIBERS.items())
-        if wanted in (None, scope) and _bus_matches(pattern, topic)
-    ]
-    for subscription_id in targets:
-        # As in the engine, no delivery starts after `close()` returns, and each
-        # handler gets its own copy of the data.
-        row = _SUBSCRIBERS.get(subscription_id)
-        if row is None:
-            continue
-        signal = {
-            "topic": topic,
-            "data": json.loads(data_json),
-            "scope": scope,
-            "published_at_ms": published_at_ms,
-        }
+def _bus_deliver():
+    """Run the handlers, one at a time, in the order of the signals."""
+    while True:
+        subscription_id, row, signal = _DELIVERIES.get()
         try:
-            row[1](signal)
-        except Exception as error:
-            log("warn", f"A signal subscriber failed: {error}")
+            # As in the engine, no delivery starts after `close()` returns.
+            if subscription_id in _SUBSCRIBERS:
+                row.listener(signal)
+        except BaseException as error:  # the engine logs each Throwable and goes on
+            log("warn", f"A signal subscriber failed: {signal['topic']}: {error!r}")
+        finally:
+            with _BUS_LOCK:
+                row.waiting -= 1
+
+
+def bus_publish(topic, data_json, scope):
+    signal = {
+        "topic": topic,
+        "data_json": data_json,
+        "scope": scope,
+        "published_at_ms": int(time.time() * 1000),
+    }
+    backlog = _contracts.definition("gateway", "bus_backlog")["maximum"]
+    targets = [
+        (subscription_id, row)
+        for subscription_id, row in list(_SUBSCRIBERS.items())
+        if row.scope in (None, scope) and _bus_matches(row.pattern, topic)
+    ]
+    dropped = 0
+    with _BUS_LOCK:
+        for subscription_id, row in targets:
+            if row.waiting >= backlog:
+                dropped += 1
+                continue
+            row.waiting += 1
+            _DELIVERIES.put((subscription_id, row, signal))
+        if targets and not (_BUS_THREAD and _BUS_THREAD[0].is_alive()):
+            thread = threading.Thread(target=_bus_deliver, name="vis-bus", daemon=True)
+            _BUS_THREAD[:] = [thread]
+            thread.start()
+    for _ in range(dropped):
+        log(
+            "warn",
+            f"A signal subscriber is too far behind; it does not get this signal: {topic}",
+        )
     return len(targets)
 
 
 def bus_subscribe(pattern, listener, scope):
-    subscription_id = uuid.uuid4().hex
-    _SUBSCRIBERS[subscription_id] = (pattern, listener, scope)
+    subscription_id = str(uuid.uuid4())
+    _SUBSCRIBERS[subscription_id] = _Subscriber(pattern, listener, scope)
     return subscription_id
 
 

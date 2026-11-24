@@ -13,7 +13,9 @@
    subscription without a scope gets both. Each subscription has one agent, so it
    gets its signals in publish order, and a slow subscriber never blocks a
    publisher. Signals live only in memory: a subscription gets only the signals
-   that come after it. The `bus_*` definitions of `gateway.json` give the bounds."
+   that come after it. A subscriber in Python reads the data from the JSON text of
+   the publisher: see [[data-json]]. The `bus_*` definitions of `gateway.json` give
+   the bounds."
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
@@ -110,6 +112,17 @@
         (swap-vals! subscriptions #(if (= owner (get-in % [id :owner])) (dissoc % id) %))]
     (and (contains? before id) (= owner (get-in before [id :owner])))))
 
+(defn open?
+  "True when subscription `id` is open."
+  [id]
+  (contains? @subscriptions id))
+
+(defn data-json
+  "The data of `signal` as the JSON text of its publisher. A subscriber in Python
+   reads this text, so it gets the key order and the numbers of the publisher."
+  [signal]
+  (::data-json (meta signal)))
+
 (defn forget-context!
   "End each subscription of extension namespace `context`, because its Python is gone."
   [context]
@@ -145,6 +158,39 @@
                      (finally (swap! waiting dec)))
                 nil))))
 
+(defn- publish-signal!
+  "[[publish!]], with `data-json` as the JSON text of `data`, or nil to write it."
+  [{:keys [owner session]} topic-name data data-json scope]
+  (let [topic-name
+        (checked "topic"
+                 topic-name
+                 (:topic gateway-contract/bus-limits)
+                 (:topic-max-chars gateway-contract/bus-limits)
+                 "use words of a-z, 0-9, '_' and '-', joined with '.'")
+
+        scope
+        (scope-for scope session)]
+
+    (cond (and (not= :vis owner) (vis-word? topic-name))
+          (fail! (str "only Vis publishes a topic that starts with 'vis.': " (pr-str topic-name))
+                 {:error :bus-topic :topic topic-name})
+          (and (= :vis owner)
+               (not (document/valid? "gateway" "bus_vis_signal" {"topic" topic-name "data" data})))
+          (fail! (str "a signal of Vis needs a topic and data of bus_vis_signal: " (pr-str topic-name))
+                 {:error :bus-topic :topic topic-name}))
+    (let [signal
+          (with-meta {"topic" topic-name "data" data "scope" scope "published_at_ms" (util/now-ms)}
+                     {::data-json (or data-json (json/write-json-str data))})
+
+          source
+          {:owner owner :topic topic-name :scope scope :session session}
+
+          targets
+          (filterv (fn [[_ row]] (hears? row source)) @subscriptions)]
+
+      (doseq [[id row] targets] (deliver! id row signal))
+      (count targets))))
+
 (defn publish!
   "Give `data`, JSON data with string keys, under `topic-name` to each subscription
    that gets it. Answer how many subscriptions get it. `publisher` is a map: `:owner`
@@ -152,35 +198,7 @@
    publisher or nil. `scope` is \"global\" or \"session\". The two-argument form
    publishes a global signal of Vis, which must be a `bus_vis_signal` of the contract."
   ([topic-name data] (publish! {:owner :vis} topic-name data "global"))
-  ([{:keys [owner session]} topic-name data scope]
-   (let [topic-name
-         (checked "topic"
-                  topic-name
-                  (:topic gateway-contract/bus-limits)
-                  (:topic-max-chars gateway-contract/bus-limits)
-                  "use words of a-z, 0-9, '_' and '-', joined with '.'")
-
-         scope
-         (scope-for scope session)]
-
-     (cond (and (not= :vis owner) (vis-word? topic-name))
-           (fail! (str "only Vis publishes a topic that starts with 'vis.': " (pr-str topic-name))
-                  {:error :bus-topic :topic topic-name})
-           (and (= :vis owner)
-                (not (document/valid? "gateway" "bus_vis_signal" {"topic" topic-name "data" data})))
-           (fail! (str "a signal of Vis needs a topic and data of bus_vis_signal: " (pr-str topic-name))
-                  {:error :bus-topic :topic topic-name}))
-     (let [signal
-           {"topic" topic-name "data" data "scope" scope "published_at_ms" (util/now-ms)}
-
-           source
-           {:owner owner :topic topic-name :scope scope :session session}
-
-           targets
-           (filterv (fn [[_ row]] (hears? row source)) @subscriptions)]
-
-       (doseq [[id row] targets] (deliver! id row signal))
-       (count targets)))))
+  ([publisher topic-name data scope] (publish-signal! publisher topic-name data nil scope)))
 
 (defn publish-json!
   "[[publish!]] for data given as JSON text, such as the data of an extension. The
@@ -195,4 +213,4 @@
     (when (> (alength (.getBytes text StandardCharsets/UTF_8)) limit)
       (fail! (str "the data of a signal is larger than " limit " bytes of JSON")
              {:error :bus-data :max limit}))
-    (publish! publisher topic-name (json/read-json text :key-fn identity) scope)))
+    (publish-signal! publisher topic-name (json/read-json text :key-fn identity) text scope)))

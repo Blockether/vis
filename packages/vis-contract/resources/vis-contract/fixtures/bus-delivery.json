@@ -1,0 +1,620 @@
+{
+  "description": "Delivery rules of vis.bus. `runner` is the Python source that both hosts run. `start(vis)` runs each case in one callback, and `finish(vis)` returns what the handlers kept, or None while a signal still waits. In `expect`, `calls` is the answer of the calls of the case in `start`, and `handlers` is what each subscription of the case kept. The engine test `bus-delivery-contract-test` runs the runner in a real extension worker. The SDK test `test_bus_contract.py` runs it outside Vis.",
+  "runner": [
+    "import json",
+    "import re",
+    "import threading",
+    "",
+    "# Data for a handler: more than 8 keys, big integers, -0.0, text that is not ASCII,",
+    "# and two keys that JSON writes as the same text.",
+    "DATA = {\"k%d\" % n: n for n in range(10)}",
+    "DATA.update(",
+    "    {",
+    "        \"big\": [2**63 - 1, 2**63, -(2**63) - 1, 10**30],",
+    "        \"floats\": [0.1, -0.0, 1.5e300, 5e-324, 2.0, 1e16],",
+    "        \"text\": [\"\\u00e9\", \"\\u0000\", \"\\U0001F600\", \"\"],",
+    "        \"nested\": {\"a\": [{\"b\": None}], \"t\": True, \"f\": False},",
+    "        \"empty\": [{}, []],",
+    "        \"keys\": {1: \"number\", \"1\": \"text\"},",
+    "    }",
+    ")",
+    "SCALARS = [None, 5, \"text\", [1, 2], 2**64, -0.0, True]",
+    "UUID = re.compile(r\"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\")",
+    "",
+    "GATE = threading.Event()",
+    "SECOND_RAN = threading.Event()",
+    "SUBS = {}  # subscription name -> [case, subscription, topic of its sentinel or None]",
+    "GOT = {}  # subscription name -> what its handler kept",
+    "ENDS = {}  # subscription name -> the number of the last sentinel that it got",
+    "SUMMARY = {}  # subscription name -> a function that shortens what it kept",
+    "SENT = [0]",
+    "",
+    "",
+    "def record(vis, case, name, pattern, topic, keep):",
+    "    \"\"\"Subscribe `name` of `case` to `pattern`. Its handler keeps `keep(signal)`.",
+    "",
+    "    A sentinel on `topic` is not kept: it shows that the earlier signals came.",
+    "    \"\"\"",
+    "    GOT[name] = []",
+    "",
+    "    def handler(signal):",
+    "        if isinstance(signal.data, dict) and list(signal.data) == [\"sentinel\"]:",
+    "            ENDS[name] = signal.data[\"sentinel\"]",
+    "        else:",
+    "            GOT[name].append(keep(signal))",
+    "",
+    "    subscription = vis.bus.subscribe(pattern, handler)",
+    "    SUBS[name] = [case, subscription, topic]",
+    "    return subscription",
+    "",
+    "",
+    "def closed(name):",
+    "    \"\"\"Do not wait for a sentinel of `name`: it is closed.\"\"\"",
+    "    SUBS[name][2] = None",
+    "",
+    "",
+    "def case_gate(vis):",
+    "    # The first handler waits until `start` returns. Outside Vis, it holds the thread",
+    "    # of the bus; in Vis, `start` holds the extension process. So each case sees the",
+    "    # same order in both hosts.",
+    "    record(vis, \"gate\", \"gate\", \"gate\", \"gate\", lambda signal: GATE.wait(5))",
+    "    return vis.bus.publish(\"gate\")",
+    "",
+    "",
+    "def case_data(vis):",
+    "    keep = lambda signal: [type(signal.data).__name__, repr(signal.data)]",
+    "    record(vis, \"data\", \"data\", \"data\", \"data\", keep)",
+    "    return [vis.bus.publish(\"data\", value) for value in [DATA, *SCALARS]]",
+    "",
+    "",
+    "def case_copy(vis):",
+    "    def change(signal):",
+    "        signal.data[\"list\"].append(3)",
+    "        return signal.data",
+    "",
+    "    record(vis, \"copy\", \"copy.changes\", \"copy\", \"copy\", change)",
+    "    record(vis, \"copy\", \"copy.reads\", \"copy\", \"copy\", lambda signal: signal.data)",
+    "    return vis.bus.publish(\"copy\", {\"list\": [1, 2]})",
+    "",
+    "",
+    "def case_order(vis):",
+    "    keep = lambda signal: [signal.topic, signal.data, signal.scope]",
+    "    record(vis, \"order\", \"order\", \"order.*\", \"order.0\", keep)",
+    "    return [vis.bus.publish(\"order.%d\" % (n % 3), n) for n in range(30)]",
+    "",
+    "",
+    "def case_later(vis):",
+    "    vis.bus.publish(\"later\", \"before\")",
+    "    record(vis, \"later\", \"later\", \"later\", \"later\", lambda signal: signal.data)",
+    "    return vis.bus.publish(\"later\", \"after\")",
+    "",
+    "",
+    "def case_errors(vis):",
+    "    def fail(signal):",
+    "        if signal.data == \"runtime\":",
+    "            raise RuntimeError(\"a handler failed\")",
+    "        if signal.data == \"exit\":",
+    "            raise SystemExit(3)",
+    "        return signal.data",
+    "",
+    "    record(vis, \"errors\", \"errors\", \"errors\", \"errors\", fail)",
+    "    return [vis.bus.publish(\"errors\", data) for data in [\"runtime\", \"exit\", \"after\"]]",
+    "",
+    "",
+    "def case_thread(vis):",
+    "    keep = lambda signal: threading.current_thread() is threading.main_thread()",
+    "    record(vis, \"thread\", \"thread\", \"thread\", \"thread\", keep)",
+    "    return vis.bus.publish(\"thread\")",
+    "",
+    "",
+    "def case_reentry(vis):",
+    "    def first(signal):",
+    "        vis.bus.publish(\"reentry.second\")",
+    "        return SECOND_RAN.wait(0.5)",
+    "",
+    "    def second(signal):",
+    "        SECOND_RAN.set()",
+    "        return signal.topic",
+    "",
+    "    record(vis, \"reentry\", \"reentry.first\", \"reentry.first\", \"reentry.first\", first)",
+    "    record(vis, \"reentry\", \"reentry.second\", \"reentry.second\", \"reentry.second\", second)",
+    "    return vis.bus.publish(\"reentry.first\")",
+    "",
+    "",
+    "def case_backlog(vis):",
+    "    record(vis, \"backlog\", \"backlog\", \"backlog\", \"backlog\", lambda signal: signal.data)",
+    "    SUMMARY[\"backlog\"] = lambda got: [len(got), got[0], got[-1]]",
+    "    return sorted({vis.bus.publish(\"backlog\", n) for n in range(1005)})",
+    "",
+    "",
+    "def case_close(vis):",
+    "    subscription = record(vis, \"close\", \"close\", \"close\", \"close\", lambda signal: signal.data)",
+    "    published = [vis.bus.publish(\"close\", n) for n in range(3)]",
+    "    answer = [published, subscription.close(), subscription.close()]",
+    "    closed(\"close\")",
+    "    return answer",
+    "",
+    "",
+    "def case_close_in_handler(vis):",
+    "    def keep(signal):",
+    "        SUBS[\"close-in-handler\"][1].close()",
+    "        closed(\"close-in-handler\")",
+    "        return signal.data",
+    "",
+    "    record(vis, \"close-in-handler\", \"close-in-handler\", \"close-in-handler\", None, keep)",
+    "    return [vis.bus.publish(\"close-in-handler\", n) for n in range(3)]",
+    "",
+    "",
+    "def case_count(vis):",
+    "    quiet = lambda signal: None",
+    "    subscriptions = [",
+    "        vis.bus.subscribe(\"count.*\", quiet),",
+    "        vis.bus.subscribe(\"count.#\", quiet),",
+    "        vis.bus.subscribe(\"count.#\", quiet, scope=\"global\"),",
+    "        vis.bus.subscribe(\"other\", quiet),",
+    "    ]",
+    "    topics = [\"count.a\", \"count\", \"count.a.b\", \"other\", \"none\"]",
+    "    answer = [vis.bus.publish(topic) for topic in topics]",
+    "    return [answer, [subscription.close() for subscription in subscriptions]]",
+    "",
+    "",
+    "def case_ids(vis):",
+    "    with vis.bus.subscribe(\"ids\", lambda signal: None) as subscription:",
+    "        return [bool(UUID.fullmatch(subscription.id)), subscription.pattern, repr(subscription)]",
+    "",
+    "",
+    "CASES = {",
+    "    \"gate\": case_gate,",
+    "    \"data\": case_data,",
+    "    \"copy\": case_copy,",
+    "    \"order\": case_order,",
+    "    \"later\": case_later,",
+    "    \"errors\": case_errors,",
+    "    \"thread\": case_thread,",
+    "    \"reentry\": case_reentry,",
+    "    \"backlog\": case_backlog,",
+    "    \"close\": case_close,",
+    "    \"close-in-handler\": case_close_in_handler,",
+    "    \"count\": case_count,",
+    "    \"ids\": case_ids,",
+    "}",
+    "",
+    "",
+    "def start(vis):",
+    "    \"\"\"Run each case in one callback. Return the answers of its calls, by case.\"\"\"",
+    "    answers = {name: run(vis) for name, run in CASES.items()}",
+    "    GATE.set()",
+    "    return answers",
+    "",
+    "",
+    "def finish(vis):",
+    "    \"\"\"Return what the handlers kept, by case, or None while a signal still waits.",
+    "",
+    "    Each open subscription gets a sentinel after the signals of `start`. One",
+    "    subscription gets its signals in publish order, so its sentinel comes last. A",
+    "    full backlog drops a sentinel, so a later call sends one again.",
+    "    \"\"\"",
+    "    waiting = [name for name, (_, _, topic) in SUBS.items() if topic and name not in ENDS]",
+    "    if SENT[0] and not waiting:",
+    "        answers = {name: {} for name in CASES}",
+    "        for name, (case, subscription, topic) in SUBS.items():",
+    "            answers[case][name] = SUMMARY.get(name, list)(GOT[name])",
+    "            if topic:",
+    "                subscription.close()",
+    "        return answers",
+    "    SENT[0] += 1",
+    "    for name in waiting:",
+    "        vis.bus.publish(SUBS[name][2], {\"sentinel\": SENT[0]})",
+    "    return None"
+  ],
+  "cases": [
+    {
+      "name": "gate",
+      "expect": {
+        "calls": 1,
+        "handlers": {
+          "gate": [
+            true
+          ]
+        }
+      }
+    },
+    {
+      "name": "data",
+      "expect": {
+        "calls": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "handlers": {
+          "data": [
+            [
+              "dict",
+              "{'k0': 0, 'k1': 1, 'k2': 2, 'k3': 3, 'k4': 4, 'k5': 5, 'k6': 6, 'k7': 7, 'k8': 8, 'k9': 9, 'big': [9223372036854775807, 9223372036854775808, -9223372036854775809, 1000000000000000000000000000000], 'floats': [0.1, -0.0, 1.5e+300, 5e-324, 2.0, 1e+16], 'text': ['é', '\\x00', '😀', ''], 'nested': {'a': [{'b': None}], 't': True, 'f': False}, 'empty': [{}, []], 'keys': {'1': 'text'}}"
+            ],
+            [
+              "NoneType",
+              "None"
+            ],
+            [
+              "int",
+              "5"
+            ],
+            [
+              "str",
+              "'text'"
+            ],
+            [
+              "list",
+              "[1, 2]"
+            ],
+            [
+              "int",
+              "18446744073709551616"
+            ],
+            [
+              "float",
+              "-0.0"
+            ],
+            [
+              "bool",
+              "True"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "name": "copy",
+      "expect": {
+        "calls": 2,
+        "handlers": {
+          "copy.changes": [
+            {
+              "list": [
+                1,
+                2,
+                3
+              ]
+            }
+          ],
+          "copy.reads": [
+            {
+              "list": [
+                1,
+                2
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "order",
+      "expect": {
+        "calls": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "handlers": {
+          "order": [
+            [
+              "order.0",
+              0,
+              "global"
+            ],
+            [
+              "order.1",
+              1,
+              "global"
+            ],
+            [
+              "order.2",
+              2,
+              "global"
+            ],
+            [
+              "order.0",
+              3,
+              "global"
+            ],
+            [
+              "order.1",
+              4,
+              "global"
+            ],
+            [
+              "order.2",
+              5,
+              "global"
+            ],
+            [
+              "order.0",
+              6,
+              "global"
+            ],
+            [
+              "order.1",
+              7,
+              "global"
+            ],
+            [
+              "order.2",
+              8,
+              "global"
+            ],
+            [
+              "order.0",
+              9,
+              "global"
+            ],
+            [
+              "order.1",
+              10,
+              "global"
+            ],
+            [
+              "order.2",
+              11,
+              "global"
+            ],
+            [
+              "order.0",
+              12,
+              "global"
+            ],
+            [
+              "order.1",
+              13,
+              "global"
+            ],
+            [
+              "order.2",
+              14,
+              "global"
+            ],
+            [
+              "order.0",
+              15,
+              "global"
+            ],
+            [
+              "order.1",
+              16,
+              "global"
+            ],
+            [
+              "order.2",
+              17,
+              "global"
+            ],
+            [
+              "order.0",
+              18,
+              "global"
+            ],
+            [
+              "order.1",
+              19,
+              "global"
+            ],
+            [
+              "order.2",
+              20,
+              "global"
+            ],
+            [
+              "order.0",
+              21,
+              "global"
+            ],
+            [
+              "order.1",
+              22,
+              "global"
+            ],
+            [
+              "order.2",
+              23,
+              "global"
+            ],
+            [
+              "order.0",
+              24,
+              "global"
+            ],
+            [
+              "order.1",
+              25,
+              "global"
+            ],
+            [
+              "order.2",
+              26,
+              "global"
+            ],
+            [
+              "order.0",
+              27,
+              "global"
+            ],
+            [
+              "order.1",
+              28,
+              "global"
+            ],
+            [
+              "order.2",
+              29,
+              "global"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "name": "later",
+      "expect": {
+        "calls": 1,
+        "handlers": {
+          "later": [
+            "after"
+          ]
+        }
+      }
+    },
+    {
+      "name": "errors",
+      "expect": {
+        "calls": [
+          1,
+          1,
+          1
+        ],
+        "handlers": {
+          "errors": [
+            "after"
+          ]
+        }
+      }
+    },
+    {
+      "name": "thread",
+      "expect": {
+        "calls": 1,
+        "handlers": {
+          "thread": [
+            false
+          ]
+        }
+      }
+    },
+    {
+      "name": "reentry",
+      "expect": {
+        "calls": 1,
+        "handlers": {
+          "reentry.first": [
+            false
+          ],
+          "reentry.second": [
+            "reentry.second"
+          ]
+        }
+      }
+    },
+    {
+      "name": "backlog",
+      "expect": {
+        "calls": [
+          1
+        ],
+        "handlers": {
+          "backlog": [
+            1000,
+            0,
+            999
+          ]
+        }
+      }
+    },
+    {
+      "name": "close",
+      "expect": {
+        "calls": [
+          [
+            1,
+            1,
+            1
+          ],
+          true,
+          false
+        ],
+        "handlers": {
+          "close": []
+        }
+      }
+    },
+    {
+      "name": "close-in-handler",
+      "expect": {
+        "calls": [
+          1,
+          1,
+          1
+        ],
+        "handlers": {
+          "close-in-handler": [
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "count",
+      "expect": {
+        "calls": [
+          [
+            3,
+            2,
+            2,
+            1,
+            0
+          ],
+          [
+            true,
+            true,
+            true,
+            true
+          ]
+        ],
+        "handlers": {}
+      }
+    },
+    {
+      "name": "ids",
+      "expect": {
+        "calls": [
+          true,
+          "ids",
+          "<vis.bus subscription 'ids'>"
+        ],
+        "handlers": {}
+      }
+    }
+  ]
+}

@@ -1483,19 +1483,32 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
           (fn [pattern listener scope]
             (let [owner (context-extension-name sess label)
                   env extension/*current-environment*
-                  f (unseal sess listener)]
+                  f (unseal sess listener)
+                  id (promise)]
               (when-not (fn? f)
                 (throw (ex-info "vis.bus.subscribe needs a function" {:error :bus-listener})))
-              (bus/subscribe! {:owner owner
-                               :context sess
-                               :session (call-session bound-session)
-                               :scope (some-> scope
-                                              str)}
-                              pattern
-                              (fn [signal]
-                                (extension/with-context
-                                  {:ext {:ext/name owner} :env (callback-env bound-session env nil)}
-                                  (python-host/conveying sess (f [signal]))))))))
+              (deliver id
+                       (bus/subscribe!
+                         {:owner owner
+                          :context sess
+                          :session (call-session bound-session)
+                          :scope (some-> scope
+                                         str)}
+                         pattern
+                         (fn [signal]
+                           (extension/with-context
+                             {:ext {:ext/name owner} :env (callback-env bound-session env nil)}
+                             ;; A callback of this namespace can close the subscription
+                             ;; while the signal waits for the namespace. So check again,
+                             ;; and no delivery starts after `close()` returns.
+                             (python-host/conveying
+                               sess
+                               (when (bus/open? @id)
+                                 (f [{"topic" (get signal "topic")
+                                      "data_json" (bus/data-json signal)
+                                      "scope" (get signal "scope")
+                                      "published_at_ms" (get signal "published_at_ms")}])))))))
+              @id)))
     (put! g
           "__vis_host_bus_unsubscribe__"
           (fn [id]
