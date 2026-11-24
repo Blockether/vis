@@ -2262,9 +2262,11 @@ export class GatewayClient {
     if (!opts?.force && held && Date.now() - (capabilityReads.get(key) ?? 0) < PANEL_TTL_MS)
       return held;
 
-    let flight = capabilityFlights.get(key);
+    // A client with another token gets another answer, for example a 401.
+    const flightKey = `${key}\u0000${this.token ?? ''}`;
+    let flight = capabilityFlights.get(flightKey);
     if (flight?.controller.signal.aborted) {
-      capabilityFlights.delete(key);
+      capabilityFlights.delete(flightKey);
       flight = undefined;
     }
     if (!flight) {
@@ -2281,9 +2283,9 @@ export class GatewayClient {
         return answer;
       });
       const created = { controller, promise };
-      capabilityFlights.set(key, created);
+      capabilityFlights.set(flightKey, created);
       const forget = () => {
-        if (capabilityFlights.get(key) === created) capabilityFlights.delete(key);
+        if (capabilityFlights.get(flightKey) === created) capabilityFlights.delete(flightKey);
       };
       void promise.then(forget, forget);
       flight = created;

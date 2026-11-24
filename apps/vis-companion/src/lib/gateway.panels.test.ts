@@ -245,6 +245,26 @@ describe('capabilities shared by one machine', () => {
     expect(answer).toHaveBeenCalledTimes(3);
   });
 
+  // Report: the desktop read the token of its own gateway, but its check joined
+  // the read of a client without the token and got that 401.
+  it('does not give a client with a token the refusal of a read without one', async () => {
+    const payload = { version: 1, features: {} };
+    vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) =>
+      new Headers(init?.headers).get('Authorization') === 'Bearer secret'
+        ? json(payload)
+        : json({ error: 'missing or invalid bearer token' }, 401),
+    );
+    const mod = await import('./gateway');
+
+    const [withoutToken, withToken] = await Promise.allSettled([
+      new mod.GatewayClient(conn).capabilities(undefined, { force: true }),
+      new mod.GatewayClient({ ...conn, token: 'secret' }).capabilities(undefined, { force: true }),
+    ]);
+
+    expect(withoutToken.status).toBe('rejected');
+    expect(withToken).toEqual({ status: 'fulfilled', value: payload });
+  });
+
   it('replaces an address probe aborted on wake', async () => {
     const payload = { version: 1, features: { voice: { enabled: true } } };
     const pending: Array<(response: Response) => void> = [];

@@ -313,8 +313,9 @@ let lastRecheck = 0;
  */
 async function recheckAfterRefusal(base: string): Promise<void> {
   if (normalizeAddress(base) !== LOCAL_GATEWAY_URL) return;
+  // A missing launcher reads as `absent`, also while the gateway runs.
   const kind = state.engine?.kind;
-  if (kind !== 'running' && kind !== 'stopped') return;
+  if (kind !== 'running' && kind !== 'stopped' && kind !== 'absent') return;
   // The read itself can get a 401, so it must not start the next read.
   if (Date.now() - lastRecheck < RECHECK_GAP_MS) return;
   lastRecheck = Date.now();
