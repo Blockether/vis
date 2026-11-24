@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.gateway.turn-metadata-test
-  (:require [com.blockether.vis.internal.gateway.bus :as bus]
+  (:require [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.turn-archive :as archive]
             [com.blockether.vis.internal.loop :as lp]
@@ -63,13 +63,13 @@
                       persistance/db-session-turn-stats
                       (constantly {:turn-count 41})
 
-                      bus/publish!
+                      journal/publish!
                       (fn [& _])
 
-                      bus/live-turn-id
+                      journal/live-turn-id
                       (constantly nil)
 
-                      bus/session-waiting?
+                      journal/session-waiting?
                       (constantly false)
 
                       smodel/pending-pref
@@ -185,7 +185,7 @@
                          archive/delete!
                          (fn [_])
 
-                         bus/publish!
+                         journal/publish!
                          (fn [& _])]
 
              ;; No progress event ran before the terminal archived the engine result.

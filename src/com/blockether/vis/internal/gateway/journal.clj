@@ -1,5 +1,5 @@
-(ns com.blockether.vis.internal.gateway.bus
-  "Cross-process gateway event bus.
+(ns com.blockether.vis.internal.gateway.journal
+  "Cross-process gateway event journal.
 
    The gateway's live event log + SSE fan-out (`gateway.state`) is a
    PROCESS-LOCAL in-memory registry: `append-event!` only reaches
@@ -9,7 +9,7 @@
    they share is the persisted DB (which lands whole turns, not the live
    token stream). So two watchers never stream together.
 
-   This bus closes that gap with the simplest transport that needs no
+   This journal closes that gap with the simplest transport that needs no
    schema change and no always-on daemon: a shared append-only journal
    under `~/.vis/gateway/events/<sid>.ndjson`. Every LOCALLY-produced
    gateway event is `publish!`ed there (one JSON line, tagged with this
@@ -72,7 +72,7 @@
   (try (when-let [^java.time.Instant at (.orElse (.startInstant (.info h)) nil)]
          (.toEpochMilli at))
        (catch Throwable t
-         (tel/log! :debug ["gateway-bus: process start time unavailable" (ex-message t)])
+         (tel/log! :debug ["gateway-journal: process start time unavailable" (ex-message t)])
          nil)))
 
 (defonce ^:private process-identity
@@ -194,7 +194,7 @@
                              :else (do (.delete f) acc))))
                    {}
                    (or (.listFiles dir) (make-array File 0)))))
-       (catch Throwable t (tel/log! :debug ["gateway-bus: live scan failed" (ex-message t)]) {})))
+       (catch Throwable t (tel/log! :debug ["gateway-journal: live scan failed" (ex-message t)]) {})))
 
 (defn live-turns
   "`{session-id-string turn-id-string}` for every turn in flight on this machine —
@@ -226,7 +226,7 @@
                                "pid" (producer-pid)
                                "started_at" (util/now-ms)}))
          (invalidate-live-cache!))
-       (catch Throwable t (tel/log! :debug ["gateway-bus: live mark failed" (ex-message t)])))
+       (catch Throwable t (tel/log! :debug ["gateway-journal: live mark failed" (ex-message t)])))
   nil)
 
 (defn- clear-live!
@@ -234,7 +234,7 @@
   [sid]
   (try (.delete (live-file sid))
        (invalidate-live-cache!)
-       (catch Throwable t (tel/log! :debug ["gateway-bus: live clear failed" (ex-message t)])))
+       (catch Throwable t (tel/log! :debug ["gateway-journal: live clear failed" (ex-message t)])))
   nil)
 
 ;; Fleet human-input index
@@ -291,7 +291,7 @@
                           :else (do (.delete f) acc))))
                 {}
                 (or (.listFiles dir) (make-array File 0)))))
-    (catch Throwable t (tel/log! :debug ["gateway-bus: waiting scan failed" (ex-message t)]) {})))
+    (catch Throwable t (tel/log! :debug ["gateway-journal: waiting scan failed" (ex-message t)]) {})))
 
 (defn waiting-requests
   "`{session-id-string [{\"id\" … \"since\" … \"session_id\" …} …]}` for every
@@ -377,7 +377,7 @@
                                                    "session_id" (str (or (get request "session_id")
                                                                          sid))})}))
            (invalidate-waiting-cache!)))
-       (catch Throwable t (tel/log! :debug ["gateway-bus: waiting mark failed" (ex-message t)])))
+       (catch Throwable t (tel/log! :debug ["gateway-journal: waiting mark failed" (ex-message t)])))
   nil)
 
 (defn- keep-waiting!
@@ -394,7 +394,7 @@
                  (spit (waiting-file sid) (wire/json-str (assoc marker "requests" kept)))
                  (.delete (waiting-file sid)))
                (invalidate-waiting-cache!)))))
-       (catch Throwable t (tel/log! :debug ["gateway-bus: waiting clear failed" (ex-message t)])))
+       (catch Throwable t (tel/log! :debug ["gateway-journal: waiting clear failed" (ex-message t)])))
   nil)
 
 (defn- clear-waiting!
@@ -421,7 +421,7 @@
   [sid]
   (try (locking waiting-lock (.delete (waiting-file sid)))
        (invalidate-waiting-cache!)
-       (catch Throwable t (tel/log! :debug ["gateway-bus: waiting clear failed" (ex-message t)])))
+       (catch Throwable t (tel/log! :debug ["gateway-journal: waiting clear failed" (ex-message t)])))
   nil)
 
 ;; Fleet watch index
@@ -490,7 +490,7 @@
                    (swap! watching conj sid))
                  (do (.delete (watch-file sid)) (swap! watching disj sid)))))
            (catch Throwable t
-             (tel/log! :debug ["gateway-bus: watch mark failed" (ex-message t)])))))
+             (tel/log! :debug ["gateway-journal: watch mark failed" (ex-message t)])))))
   nil)
 
 (defn clear-watching!
@@ -521,7 +521,7 @@
                        :else (do (.delete f) acc))))
              #{}
              (or (.listFiles dir) (make-array File 0)))))
-       (catch Throwable t (tel/log! :debug ["gateway-bus: watch scan failed" (ex-message t)]) #{})))
+       (catch Throwable t (tel/log! :debug ["gateway-journal: watch scan failed" (ex-message t)]) #{})))
 
 (defn- scan-watchers
   "[[read-watchers]], and give the `:added!` hook the sessions that the previous scan did not have."
@@ -537,7 +537,7 @@
 
     (when-let [added! (and (seq added) (:added! @watch-hooks))]
       (try (added! added)
-           (catch Throwable t (tel/log! :debug ["gateway-bus: watch hook failed" (ex-message t)]))))
+           (catch Throwable t (tel/log! :debug ["gateway-journal: watch hook failed" (ex-message t)]))))
     sids))
 
 (defn- watchers
@@ -556,7 +556,7 @@
   []
   (try (when-let [interested? (:interested? @watch-hooks)]
          (when (interested?) (watchers)))
-       (catch Throwable t (tel/log! :debug ["gateway-bus: watch tick failed" (ex-message t)])))
+       (catch Throwable t (tel/log! :debug ["gateway-journal: watch tick failed" (ex-message t)])))
   nil)
 
 ;; sid-str -> this process's tail of that session's journal:
@@ -746,7 +746,7 @@
   [^File f]
   (try (terminal-line? (tail-text f TAIL_SCAN_BYTES))
        (catch Throwable t
-         (tel/log! :debug ["gateway-bus: terminal tail scan failed" (str f) (ex-message t)])
+         (tel/log! :debug ["gateway-journal: terminal tail scan failed" (str f) (ex-message t)])
          false)))
 
 (def ^:private ^:const BLOCK_SCAN_CHUNK_BYTES "Bytes that [[scan-back]] reads in one step." 262144)
@@ -837,7 +837,7 @@
                                               (when (integer? ms) (long ms)))]
                                            (contains? BLOCK_END_TYPES type) [nil])))))))))
        (catch Throwable t
-         (tel/log! :debug ["gateway-bus: block tail scan failed" (str sid) (ex-message t)])
+         (tel/log! :debug ["gateway-journal: block tail scan failed" (str sid) (ex-message t)])
          nil)))
 
 (defn- journal-head
@@ -888,7 +888,7 @@
                                  [java.nio.file.StandardCopyOption/ATOMIC_MOVE
                                   java.nio.file.StandardCopyOption/REPLACE_EXISTING])))
        (catch Throwable t
-         (tel/log! :warn ["gateway-bus: seq floor write failed" (str sid) (ex-message t)])))
+         (tel/log! :warn ["gateway-journal: seq floor write failed" (str sid) (ex-message t)])))
   nil)
 
 (defn- read-floor
@@ -977,7 +977,7 @@
          nil)
        (catch Throwable t
          (tel/log! (if store? :warn :debug)
-                   ["gateway-bus: journal write failed" (str sid) (get event "type")
+                   ["gateway-journal: journal write failed" (str sid) (get event "type")
                     (ex-message t)])
          nil))
   nil)
@@ -995,8 +995,8 @@
                               (when done (deliver done true)))
                             (catch InterruptedException _ (.interrupt (Thread/currentThread)))
                             (catch Throwable t
-                              (tel/log! :debug ["gateway-bus: writer failed" (ex-message t)])))))
-                   "gateway-bus-writer")]
+                              (tel/log! :debug ["gateway-journal: writer failed" (ex-message t)])))))
+                   "gateway-journal-writer")]
     (.setDaemon t true)
     (.start t)
     t))
@@ -1022,7 +1022,7 @@
       (try (reset! writer (spawn-writer-thread!))
            (catch Throwable t
              (compare-and-set! writer ::starting nil)
-             (tel/log! :debug ["gateway-bus: writer start failed" (ex-message t)])))))
+             (tel/log! :debug ["gateway-journal: writer start failed" (ex-message t)])))))
   nil)
 
 (def ^:private durable-write-timeout-ms
@@ -1066,7 +1066,7 @@
                     TimeUnit/MILLISECONDS)
           (do (vreset! enqueued? true) (deref done durable-write-timeout-ms false))
           (tel/log! :warn
-                    ["gateway-bus: dropped durable event; writer queue wedged" (str sid)
+                    ["gateway-journal: dropped durable event; writer queue wedged" (str sid)
                      (get event "type")]))
         ;; An interrupt ARRIVING mid-wait gives up only the acknowledgement: a line
         ;; the writer already owns still lands, and one not yet handed over gets a
@@ -1080,7 +1080,7 @@
     ;; if the queue is saturated, sibling processes will catch the final canonical
     ;; text from the durable completion event instead of making the active TUI stutter.
     (when-not (.offer ^ArrayBlockingQueue writer-queue {:sid sid :event event :opts opts})
-      (tel/log! :debug ["gateway-bus: dropped transient event; writer queue full" (:type event)])))
+      (tel/log! :debug ["gateway-journal: dropped transient event; writer queue full" (:type event)])))
   nil)
 
 (defn publish!
@@ -1099,7 +1099,7 @@
      (enqueue-write! sid event (assoc opts :store? store?))
      (catch Throwable t
        (tel/log! :warn
-                 ["gateway-bus: publish enqueue failed" (str sid) (get event "type")
+                 ["gateway-journal: publish enqueue failed" (str sid) (get event "type")
                   (ex-message t)])
        nil))
    ;; A terminal retracts the marker HERE, on the producer, not only from the
@@ -1129,7 +1129,7 @@
         (start-writer!)
         (when-not (.offer ^ArrayBlockingQueue writer-queue {:sid sid :floor floor})
           (swap! floors dissoc k)
-          (tel/log! :debug ["gateway-bus: seq floor deferred; writer queue full" k])))))
+          (tel/log! :debug ["gateway-journal: seq floor deferred; writer queue full" k])))))
   nil)
 
 (defonce ^:private reaped-turns
@@ -1245,7 +1245,7 @@
 
             (try (f sid store? clean)
                  (catch Throwable t
-                   (tel/log! :debug ["gateway-bus: deliver failed" (ex-message t)])))
+                   (tel/log! :debug ["gateway-journal: deliver failed" (ex-message t)])))
             true))))))
 
 (defn- drain-file!
@@ -1352,7 +1352,7 @@
                   (map #(long (or (get % "seq") 0)))
                   (reduce max 0))
              0)))
-    (catch Throwable t (tel/log! :debug ["gateway-bus: high-water read failed" (ex-message t)]) 0)))
+    (catch Throwable t (tel/log! :debug ["gateway-journal: high-water read failed" (ex-message t)]) 0)))
 
 (defn hydrate!
   "Replay a session's CURRENT journal into this process's registry NOW, so a
@@ -1426,7 +1426,7 @@
                                 (gateway-contract/strip-journal-metadata ev))
                             (catch Throwable t
                               (tel/log! :debug
-                                        ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
+                                        ["gateway-journal: hydrate deliver failed" (ex-message t)])))))
                    ;; Orphan: producer process is gone. Reap it terminally.
                    (when-let [tid (get anchor "turn_id")]
                      ;; CAS-claim the reap BEFORE publishing: `publish!` lands the
@@ -1447,9 +1447,9 @@
                            (try (f' sid true term)
                                 (catch Throwable t
                                   (tel/log! :debug
-                                            ["gateway-bus: orphan-reap deliver failed"
+                                            ["gateway-journal: orphan-reap deliver failed"
                                              (ex-message t)]))))))))))))))
-     (catch Throwable t (tel/log! :debug ["gateway-bus: hydrate failed" (ex-message t)])))
+     (catch Throwable t (tel/log! :debug ["gateway-journal: hydrate failed" (ex-message t)])))
    nil))
 
 (defn- sweep!
@@ -1475,7 +1475,7 @@
                      (let [swept (subs n 0 (- (count n) (count ".seq")))]
                        (.delete f)
                        (swap! floors dissoc swept)))))))
-       (catch Throwable t (tel/log! :debug ["gateway-bus: sweep failed" (ex-message t)]))))
+       (catch Throwable t (tel/log! :debug ["gateway-journal: sweep failed" (ex-message t)]))))
 
 (defn- poll-once!
   "Drain the journals with a LOCAL consumer once. Returns true when any line was
@@ -1496,7 +1496,7 @@
                    (or (try (boolean (drain-file! sid (session-file sid)))
                             (catch Throwable t
                               (tel/log! :debug
-                                        ["gateway-bus: drain failed" (str sid) (ex-message t)])
+                                        ["gateway-journal: drain failed" (str sid) (ex-message t)])
                               false))
                        busy))
                  false
@@ -1509,7 +1509,7 @@
                            (or (try (boolean (drain-file! sid f))
                                     (catch Throwable t
                                       (tel/log! :debug
-                                                ["gateway-bus: drain failed" (.getName f)
+                                                ["gateway-journal: drain failed" (.getName f)
                                                  (ex-message t)])
                                       false))
                                busy)
@@ -1517,7 +1517,7 @@
                      false
                      (.listFiles dir))
              false)))
-       (catch Throwable t (tel/log! :debug ["gateway-bus: poll failed" (ex-message t)]) false)))
+       (catch Throwable t (tel/log! :debug ["gateway-journal: poll failed" (ex-message t)]) false)))
 
 (defn start!
   "Start the background tailer once. Idempotent."
@@ -1559,7 +1559,7 @@
                                            (if (>= quiet (long IDLE_AFTER)) IDLE_POLL_MS POLL_MS)))
                            (catch InterruptedException _ (.interrupt (Thread/currentThread))))
                       (recur quiet last-sweep last-watch)))))
-              "gateway-bus-tailer")]
+              "gateway-journal-tailer")]
       (.setDaemon t true)
       (.start t)
       (reset! tailer t)))

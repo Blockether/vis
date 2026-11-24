@@ -8540,7 +8540,7 @@ def reopen(app):
 
 def _open():
     _note('open')
-    vis.events.subscribe('where.#', lambda event: _note('heard-' + event.topic))
+    vis.bus.subscribe('where.#', lambda signal: _note('heard-' + signal.topic))
     vis.attach(vis.ui.app('Where', vis.ui.button('go', 'Go'), key='where-1', scope='global'),
                on_event=lambda event: _note('event'), on_reload=reopen)
 
@@ -8550,7 +8550,7 @@ def open_where(app):
 def where():
     'Note the process of this tool.'
     _note('tool')
-    return vis.events.publish('where.tool', {'pid': os.getpid()})
+    return vis.bus.publish('where.tool', {'pid': os.getpid()})
 
 vis.register_extension(vis.Extension(name='where', description='Process probe.', alias='where',
     symbols=[vis.Symbol(where)],
@@ -8563,7 +8563,7 @@ vis.register_extension(vis.Extension(name='where', description='Process probe.',
   ;; worker, that the tools of the same extension run in each session's worker,
   ;; and that a tool tells the app about a change by push, not by a poll.
   (it
-    "runs a global app in the shared worker, its tools in the session worker, and carries vis.events between them"
+    "runs a global app in the shared worker, its tools in the session worker, and carries vis.bus signals between them"
     (let [notes (io/file (temp-dir) "where.txt")]
       (with-fresh-loaded
            {"extension.py" (str/replace where-py "NOTES" (json-text (.getCanonicalPath notes)))}

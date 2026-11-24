@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.gateway.provider-limits-event-test
-  (:require [com.blockether.vis.internal.gateway.bus :as bus]
+  (:require [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.provider.limits :as limits]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
@@ -13,7 +13,7 @@
              (it "publishes one provider invalidation in each registered session stream"
                  (let [registry (atom {"active" {:next-seq 0} "idle" {:next-seq 0}})]
                    (with-redefs-fn {#'state/registry registry
-                                    #'bus/publish! (fn [& _])}
+                                    #'journal/publish! (fn [& _])}
                      #(do (limits/auth-changed! :corp)
                           (doseq [sid ["active" "idle"]]
                             (let [events (state/events-since sid 0)]

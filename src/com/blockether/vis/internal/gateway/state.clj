@@ -32,7 +32,8 @@
     [com.blockether.vis.internal.session.goals :as goals]
     [com.blockether.vis.internal.session.agents :as agents]
     [com.blockether.vis.internal.context.loop :as ctx-loop]
-    [com.blockether.vis.internal.gateway.bus :as bus]
+    [com.blockether.vis.internal.bus :as bus]
+    [com.blockether.vis.internal.gateway.journal :as journal]
     [com.blockether.vis.internal.gateway.turn-archive :as turn-archive]
     [com.blockether.vis.internal.gateway.event-store :as event-store]
     [com.blockether.vis.internal.gateway.replay-ring :as replay-ring]
@@ -208,7 +209,7 @@
    one, so a new call site cannot forget the conversion. The canonical spelling
    is the STRING one, because that is the spelling everything OUTSIDE this atom
    already uses: the `session_id` on the wire, the `<sid>.ndjson` journal the bus
-   tails, and the keys handed to `bus/set-relevant-sids-fn!`."
+   tails, and the keys handed to `journal/set-relevant-sids-fn!`."
   [sid]
   (str sid))
 
@@ -426,7 +427,7 @@
                                                                      :payload (turn-payload turn)})
                                                                   (first slice))
                                                      :hold (durable-value (second slice))
-                                                     :owner (bus/process-stamp)})
+                                                     :owner (journal/process-stamp)})
              (swap! persisted-queues #(if slice (assoc % sid slice) (dissoc % sid)))
              (catch Throwable t
                (tel/log! :warn ["gateway: queued turns not persisted" sid (ex-message t)])))))))
@@ -632,14 +633,14 @@
           (when-let [archive (::archive turn)]
             (turn-archive/delete! archive)))))
     ;; The record and its client streams are gone, so this process no longer watches `sid`.
-    (bus/sync-watching! sid #(client-watched? sid))
+    (journal/sync-watching! sid #(client-watched? sid))
     nil))
 
 (defn- drop-subscriber!
   "Unregister one SSE sink. The last client stream of `sid` removes its watch marker."
   [sid sub-id]
   (swap! registry update-in [(sid-key sid) :subscribers] dissoc sub-id)
-  (when (client-subscriber? sub-id) (bus/sync-watching! sid #(client-watched? sid)))
+  (when (client-subscriber? sub-id) (journal/sync-watching! sid #(client-watched? sid)))
   nil)
 
 (defonce ^:private metrics
@@ -1009,7 +1010,7 @@
    `seq > cursor` filter would silently drop — dropping a whole reconnect turn,
    the orphan-reap terminal included)."
   [sid]
-  {:next-seq (bus/journal-high-water-seq sid)})
+  {:next-seq (journal/journal-high-water-seq sid)})
 
 (defonce ^:private event-taps
   ;; key -> (fn [sid event]) run AFTER an event is stored, fanned out and
@@ -1144,8 +1145,8 @@
                                               descriptor)
                (fan-out! sid event)
                (if (or mirror? store?)
-                 (bus/publish! sid event {:store? store? :truncate? (= type "turn.started")})
-                 (bus/note-unjournaled! sid n))
+                 (journal/publish! sid event {:store? store? :truncate? (= type "turn.started")})
+                 (journal/note-unjournaled! sid n))
                event)))]
 
      ;; Observers can read other sessions; never call them under a replay lock.
@@ -1274,9 +1275,9 @@
   [sid]
   (when (claim-hydrate! sid)
     (try (when-not (some #(= (str sid) (str (:session-id %)))
-                         (remove bus/stamp-alive? (resumable-parked-rows (lp/db-info))))
-           ;; The tailer can mirror the turn after the claim: `bus/hydrate!` asks again under its lock.
-           (bus/hydrate! sid #(some? (:current-turn (session-entry sid)))))
+                         (remove journal/stamp-alive? (resumable-parked-rows (lp/db-info))))
+           ;; The tailer can mirror the turn after the claim: `journal/hydrate!` asks again under its lock.
+           (journal/hydrate! sid #(some? (:current-turn (session-entry sid)))))
          (finally (update-existing-session! sid
                                             (fn [entry]
                                               (dissoc entry :is-hydrating)))))))
@@ -1290,7 +1291,7 @@
    and the sink (see server.clj).
 
    Before capturing replay, HYDRATE any turn currently running in a sibling
-   process from the cross-process journal (`bus/hydrate!`) — but only when this
+   process from the cross-process journal (`journal/hydrate!`) — but only when this
    process isn't already tracking a live turn (`:current-turn` unset), so an
    already-mirrored turn isn't re-delivered to existing subscribers. This
    materializes the running turn's row + ring HERE, so a watcher joining a turn
@@ -1325,7 +1326,7 @@
 
      (when (client-subscriber? sub-id)
        (swap! team-watch-epoch inc)
-       (bus/sync-watching! sid #(client-watched? sid))
+       (journal/sync-watching! sid #(client-watched? sid))
        (team-subscribed! sid))
      ;; After registration, so each held notice reaches the new sink after its replay.
      (doseq [notice held]
@@ -1339,7 +1340,7 @@
 (def ^:private FLEET_POLL_MS
   "Tick of the fleet watcher: how fast a status change ANYWHERE on this machine
    reaches a list that is watching. One tick is two tiny directory listings
-   (`bus/live-turns`, `bus/waiting-requests`), both already cached for 200 ms —
+   (`journal/live-turns`, `journal/waiting-requests`), both already cached for 200 ms —
    far cheaper than the windowed list read a client used to repeat every 10 s to
    learn the same fact, and it runs only while a stream is open."
   1000)
@@ -1361,16 +1362,16 @@
    \"awaiting_input_count\" … \"current_turn_id\" …}}`, holding only sessions that
    are running or parked on a human — its size is the busy fleet, never the store.
 
-   Read from the cross-process markers (`bus/live-turns`, `bus/waiting-requests`),
+   Read from the cross-process markers (`journal/live-turns`, `journal/waiting-requests`),
    never from this registry: a sibling process's turn is mirrored here only once
    somebody SUBSCRIBES to that session, so a registry answer would light up
    exactly the sessions the asking client already watched."
   []
   (let [live
-        (bus/live-turns)
+        (journal/live-turns)
 
         waiting
-        (bus/waiting-requests)]
+        (journal/waiting-requests)]
 
     (reduce (fn [acc sid]
               ;; The COUNT beside the flag: a session parked on two requests is
@@ -1618,8 +1619,8 @@
     (boolean (and stall
                   (not (future-done? worker))
                   (contains? stall-exempt-phases (:phase @stall))
-                  (not (bus/session-waiting? sid))
-                  (zero? (long (bus/raised-waiting-count sid)))))))
+                  (not (journal/session-waiting? sid))
+                  (zero? (long (journal/raised-waiting-count sid)))))))
 
 (defn running-turn-progress
   "How many turns this gateway still counts as running, how far their event
@@ -3250,7 +3251,7 @@
   "True when a client can see the team of `leader`: a client stream of this process or of another
    live process watches it. A `/poll` client never gets a live-only event, so it does not count."
   [leader]
-  (or (client-watched? leader) (bus/watched-elsewhere? leader)))
+  (or (client-watched? leader) (journal/watched-elsewhere? leader)))
 
 (defn- team-row
   "The row of `cached` with a fresh Activity line. Only a queued or running row has one."
@@ -3617,7 +3618,7 @@
   [sid]
   (team-changed! sid true))
 
-(defonce team-watch (bus/set-watch-hooks! #'team-watch-interest? #'team-watched-elsewhere!))
+(defonce team-watch (journal/set-watch-hooks! #'team-watch-interest? #'team-watched-elsewhere!))
 
 (def ^:dynamic ^:private *turn-iterations*
   "Request-local iterations of a whole-transcript read, by string turn id, from
@@ -5515,7 +5516,7 @@
                  :clean? (boolean clean?)
                  :resumes (long (or (::resumes turn) 0))
                  :crashes 0}}
-      (bus/process-stamp))))
+      (journal/process-stamp))))
 
 (defn- park-turn!
   "Keep the running turn `tid` for the next gateway process and release its run.
@@ -6881,7 +6882,7 @@
              (and (not (:current-turn entry))
                   (not (:queue-paused entry))
                   ;; Local terminal state precedes journal cleanup and its cached marker.
-                  (let [live-tid (get (bus/live-turns) (str sid))]
+                  (let [live-tid (get (journal/live-turns) (str sid))]
                     (or (nil? live-tid)
                         (contains? #{"completed" "failed" "cancelled" "suspended"}
                                    (get-in entry [:turns live-tid :status])))))))))
@@ -7032,7 +7033,7 @@
 
 (defn reconcile-orphaned-turns!
   "Mark turns left running by a dead process as interrupted, and fail the managed
-   children it left queued or running. A turn that [[bus/live-turns]] reports is
+   children it left queued or running. A turn that [[journal/live-turns]] reports is
    still in flight in a live vis process, so the sweep leaves it to that process.
    A parked turn also stays running: [[restore-pending-turns!]] resumes it.
 
@@ -7042,7 +7043,7 @@
              (lp/db-info)
 
              live
-             (bus/live-turns)]
+             (journal/live-turns)]
 
          ;; A child with a queued or parked turn is not an orphan: the gateway resumes that turn.
          (try (agents/reconcile-orphans!
@@ -7206,7 +7207,7 @@
                                                                    :clean? false
                                                                    :resumes (inc resumes)
                                                                    :crashes (inc crashes))}
-                                                       (bus/process-stamp))
+                                                       (journal/process-stamp))
                     (tel/log! :info
                               ["gateway: parked turn resumed" turn-id
                                {:clean? (boolean clean?) :resume (inc resumes)}])
@@ -7305,7 +7306,7 @@
           owner (filter #(= owner (select-keys % [:owner_pid :owner_started_at]))))
 
         {live true dead false}
-        (group-by (comp boolean bus/stamp-alive?) turns)
+        (group-by (comp boolean journal/stamp-alive?) turns)
 
         _
         (doseq [stamp (distinct (map #(select-keys % [:owner_pid :owner_started_at]) live))]
@@ -8126,18 +8127,18 @@
           ;; once somebody subscribes to that session, so a registry-only answer lit
           ;; up exactly the sessions the asking client had already watched — the
           ;; desktop app and the phone reading the same gateway and being told two
-          ;; different fleets. `bus/live-turn-id` is the index every producer writes.
+          ;; different fleets. `journal/live-turn-id` is the index every producer writes.
           ;; A marker naming a turn THIS registry already holds at a terminal is a
           ;; stale announcement (the write that retracts it never landed): heal it
           ;; instead of reporting the ended turn as running until the gateway dies.
           live-turn-id (if *session-list-validation*
                           (get (:live *session-list-validation*) (str sid))
-                          (bus/live-turn-id sid))
+                          (journal/live-turn-id sid))
           current-turn-id (or (:current-turn entry)
                               (when live-turn-id
                                 (if (contains? #{"completed" "failed" "cancelled" "suspended"}
                                                (get-in entry [:turns live-turn-id :status]))
-                                  (do (bus/retract-live! sid) nil)
+                                  (do (journal/retract-live! sid) nil)
                                   live-turn-id)))
           current-turn (merge (get-in entry [:turns current-turn-id])
                               (turn-metadata sid current-turn-id))
@@ -8220,17 +8221,17 @@
                  ;; A run PARKED on a human is the one state no client can derive: the
                  ;; turn is still "running", nothing is streaming, and the only thing
                  ;; that will move it is the operator. Cross-process (see
-                 ;; `bus/waiting-requests`), so the phone, the TUI picker and this
+                 ;; `journal/waiting-requests`), so the phone, the TUI picker and this
                  ;; gateway's own list all say INPUT NEEDED about the same session.
                  :is_awaiting_input (if *session-list-validation*
                                        (boolean (seq (get (:waiting *session-list-validation*) (str sid))))
-                                       (bus/session-waiting? sid))
+                                       (journal/session-waiting? sid))
                  ;; …and HOW MANY. One boolean for N open requests is why
                  ;; answering one of two left INPUT NEEDED lit with nothing
                  ;; saying a second request was still parked behind it.
                  :awaiting_input_count (if *session-list-validation*
                                           (count (get (:waiting *session-list-validation*) (str sid)))
-                                          (bus/session-waiting-count sid))
+                                          (journal/session-waiting-count sid))
                  :current_turn_id current-turn-id
                  :turn_count (long (or (:turn-count stats) 0))
                  :answer_count (long (or (:answer-count stats) 0))
@@ -8413,7 +8414,7 @@
 
         ;; The leader session shows the forms of the child, so count by who asks.
         pending
-        (bus/raised-waiting-count sid)]
+        (journal/raised-waiting-count sid)]
 
     (cond-> (merge (dissoc child :spawn_key :spawn_fingerprint :started_at)
                    (smodel/model-of db sid)
@@ -9004,7 +9005,7 @@
 (defn- agent-pending-input
   "How many forms of session `sid` wait for the answer of the person, in any vis process."
   [sid]
-  (bus/raised-waiting-count sid))
+  (journal/raised-waiting-count sid))
 
 (defn- agent-held?
   "True when a human holds the queue of `sid`."
@@ -9542,11 +9543,11 @@
 
 (defn- session-list-live
   []
-  (or (:live *session-list-validation*) (read-or {:read :live-turns} {} bus/live-turns)))
+  (or (:live *session-list-validation*) (read-or {:read :live-turns} {} journal/live-turns)))
 
 (defn- session-list-waiting
   []
-  (or (:waiting *session-list-validation*) (bus/waiting-requests)))
+  (or (:waiting *session-list-validation*) (journal/waiting-requests)))
 
 (defn session-list-version
   "Read the shared list inputs. Return nil if the store has no stable version."
@@ -9558,8 +9559,8 @@
           :workspace-epoch (workspace/root-change-count)
           :registry @registry
           :envs @loop-env/cache
-          :live (bus/live-turns)
-          :waiting (bus/waiting-requests)})
+          :live (journal/live-turns)
+          :waiting (journal/waiting-requests)})
        (catch Exception _ nil)))
 
 (defn same-session-list-version?
@@ -9721,7 +9722,7 @@
          (if db (read-or {:read :read-marks} {} #(lp/session-read-marks reader-id)) {})
 
          ;; A running session is never empty, so liveness decides whether a
-         ;; title-less row is in the list at all. Cached per `bus/live-turns`.
+         ;; title-less row is in the list at all. Cached per `journal/live-turns`.
          live
          (session-list-live)
 
@@ -10562,7 +10563,7 @@
   (shell-log/delete-session-logs! sid)
   (append-event! sid "session.deleted" {} {:store? false})
   (drop-session! sid)
-  (bus/forget! sid)
+  (journal/forget! sid)
   (teardown-session-async! sid))
 
 (defn close-session!
@@ -10579,7 +10580,13 @@
   [sid]
   (let [child (some->> (agents/info (lp/db-info) (str sid))
                        (agent-view (lp/db-info)))
-        {:keys [extension-session-ids]} (persistance/db-delete-session-tree! (lp/db-info) sid)]
+        {:keys [deleted-session-ids extension-session-ids]}
+        (persistance/db-delete-session-tree! (lp/db-info) sid)]
+    ;; The rows are gone, so a failed signal must not stop the teardown below.
+    (doseq [deleted-id deleted-session-ids]
+      (try (bus/publish! "vis.session.deleted" {"session_id" deleted-id})
+           (catch Throwable t
+             (tel/log! :warn ["gateway: session deleted signal not published" deleted-id (ex-message t)]))))
     (swap! team-leaders dissoc (str sid))
     (team-dropped! sid)
     ;; The leader of a deleted child keeps its stream: its team lost a row, and maybe a clock.
@@ -10662,7 +10669,7 @@
    list naming it, and cancelling the turn behind a swipe would be worse - so the
    archive is refused while this is true."
   [sid]
-  (boolean (or (bus/live-turn-id sid) (bus/session-waiting? sid) (seq (list-queued-turns sid)))))
+  (boolean (or (journal/live-turn-id sid) (journal/session-waiting? sid) (seq (list-queued-turns sid)))))
 
 (defn busy-session-in-group
   "The id (string) of the first member of `gid` that is still working
@@ -10745,7 +10752,7 @@
 
         held?
         (locking lock
-          (when-not (or (client-watched? sid) (bus/watched-elsewhere? sid))
+          (when-not (or (client-watched? sid) (journal/watched-elsewhere? sid))
             (update-existing-session! sid #(update % :held-notices hold-notice notice))
             true))]
 

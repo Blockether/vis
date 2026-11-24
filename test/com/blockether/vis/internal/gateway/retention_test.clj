@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.gateway.retention-test
   (:require [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.turn-archive :as turn-archive]
             [com.blockether.vis.internal.persistance.core :as persistence]
             [com.blockether.vis.internal.loop :as lp]
@@ -354,7 +354,7 @@
 
         (with-redefs-fn {#'state/registry registry
                          #'lp/db-info (constantly nil)
-                         #'bus/publish! (fn [& _])}
+                         #'journal/publish! (fn [& _])}
           (fn []
             (try (doseq [sid sessions]
                    (state/append-event! sid "block.output" {:turn_id "turn" :output payload}))

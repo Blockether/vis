@@ -444,7 +444,7 @@
         (with-homes {:logs logs} #(housekeeping/sweep-stale! nil))
         (expect (.exists outside))
         (expect (Files/exists (.toPath link) (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])))))
-  ;; Regression: gateway journals were swept only by `gateway.bus/sweep!`, from
+  ;; Regression: gateway journals were swept only by `gateway.journal/sweep!`, from
   ;; inside a running daemon's tailer loop, so the journals of every crashed,
   ;; kill-9'd or never-restarted daemon were immortal — nothing bounded them at
   ;; startup, which is exactly when no daemon is running.

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.gateway.bus-test
+(ns com.blockether.vis.internal.gateway.journal-test
   "Cross-process journal hydration: a watcher joining a session mid-turn must
    MIRROR a turn genuinely streaming in a live sibling process, but must never
    RESURRECT one orphaned by a crashed/restarted daemon. Resurrecting an orphan
@@ -7,7 +7,7 @@
    watcher forever. The pid-liveness gate is what tells the two apart."
   (:require [clojure.string :as str]
             [com.blockether.vis.test-temp :as test-temp]
-            [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -24,37 +24,37 @@
         (atom [])
 
         prev
-        @(var-get #'bus/deliver-fn)]
+        @(var-get #'journal/deliver-fn)]
 
-    (with-redefs [bus/events-dir
+    (with-redefs [journal/events-dir
                   (fn []
                     tmp)
 
                   ;; In production the liveness index is a SIBLING of the journal dir; give
                   ;; it a home inside the throwaway one so no test ever marks a session live
                   ;; in the developer's own ~/.vis.
-                  bus/live-dir
+                  journal/live-dir
                   (fn []
                     (.resolve ^java.nio.file.Path tmp "live"))
 
-                  bus/waiting-dir
+                  journal/waiting-dir
                   (fn []
                     (.resolve ^java.nio.file.Path tmp "waiting"))]
 
       ;; a fresh journal dir is a fresh world: drop this process's orphan-reap
       ;; markers, tail cursors and cached liveness so re-running in one JVM starts
       ;; clean
-      (reset! (var-get #'bus/reaped-turns) {})
-      (reset! (var-get #'bus/tails) {})
-      (reset! (var-get #'bus/live-cache) {})
-      (reset! (var-get #'bus/waiting-cache) {})
-      (bus/set-deliver-fn! (fn [_sid _store? ev]
+      (reset! (var-get #'journal/reaped-turns) {})
+      (reset! (var-get #'journal/tails) {})
+      (reset! (var-get #'journal/live-cache) {})
+      (reset! (var-get #'journal/waiting-cache) {})
+      (journal/set-deliver-fn! (fn [_sid _store? ev]
                              (swap! capture conj ev)))
       (try (f capture
               (fn write-journal! [sid events]
-                (let [file (#'bus/session-file sid)]
+                (let [file (#'journal/session-file sid)]
                   (spit file (str/join (map #(str (wire/json-str %) "\n") events))))))
-           (finally (bus/set-deliver-fn! prev))))))
+           (finally (journal/set-deliver-fn! prev))))))
 
 (defdescribe canonical-journal-encoding-test
              (it "writes a canonical event without normalizing it again"
@@ -71,8 +71,8 @@
 
                        (with-redefs [wire/->wire (fn [_]
                                                    (throw (ex-info "reconverted" {})))]
-                         (#'bus/write-event! sid event {:store? true}))
-                       (let [row (wire/parse-json (first (str/split-lines (slurp (#'bus/session-file
+                         (#'journal/write-event! sid event {:store? true}))
+                       (let [row (wire/parse-json (first (str/split-lines (slurp (#'journal/session-file
                                                                                   sid)))))]
                          (expect (= event (select-keys row (keys event))))
                          (expect (true? (get row "_store")))))))))
@@ -104,12 +104,12 @@
                                  (str (java.util.UUID/randomUUID))
 
                                  live-pid
-                                 (bus/producer-pid)]
+                                 (journal/producer-pid)]
 
                              (write! "sid-live"
                                      [(turn-started prod live-pid "sid-live" "T-live")
                                       (delta prod live-pid "T-live")])
-                             (bus/hydrate! "sid-live")
+                             (journal/hydrate! "sid-live")
                              (expect (= ["turn.started" "content.delta"]
                                         (mapv #(get % "type") @capture)))))))
   (it "REAPS an orphan (dead producer) with a synthetic terminal, never resurrects it"
@@ -118,7 +118,7 @@
                              (write! "sid-orphan"
                                      [(turn-started prod dead-pid "sid-orphan" "T-orphan")
                                       (delta prod dead-pid "T-orphan")])
-                             (bus/hydrate! "sid-orphan")
+                             (journal/hydrate! "sid-orphan")
                              (let [ev (first @capture)]
                                ;; the ONLY thing delivered is a terminal for the orphaned turn —
                                ;; the live turn.started/deltas are NOT replayed
@@ -145,15 +145,15 @@
                        :type "turn.cancelled"
                        :status "cancelled"
                        :session_id sid)])
-            (bus/hydrate! sid)
+            (journal/hydrate! sid)
             (expect (empty? @capture))))))
   (it "is idempotent: a second hydrate of a reaped journal delivers nothing"
       (with-temp-journal (fn [capture write!]
                            (let [prod (str (java.util.UUID/randomUUID))]
                              (write! "sid-idem" [(turn-started prod dead-pid "sid-idem" "T-idem")])
-                             (bus/hydrate! "sid-idem") ; reaps, appends terminal to journal
+                             (journal/hydrate! "sid-idem") ; reaps, appends terminal to journal
                              (reset! capture [])
-                             (bus/hydrate! "sid-idem") ; terminal present now -> no-op
+                             (journal/hydrate! "sid-idem") ; terminal present now -> no-op
                              (expect (empty? @capture))))))
   (it "reaps ONCE even before the terminal lands in the journal (async publish! race)"
       (with-temp-journal (fn [capture write!]
@@ -162,10 +162,10 @@
                              ;; `publish!` is ASYNC: hold the terminal out of the journal to stand
                              ;; in for its write window. Without the CAS marker both hydrates read
                              ;; `terminal? = false` and each emit their own `turn.failed`.
-                             (with-redefs [bus/publish! (fn [& _]
+                             (with-redefs [journal/publish! (fn [& _]
                                                           nil)]
-                               (bus/hydrate! "sid-race")
-                               (bus/hydrate! "sid-race"))
+                               (journal/hydrate! "sid-race")
+                               (journal/hydrate! "sid-race"))
                              (expect (= 1 (count @capture)))
                              (expect (= "turn.failed" (get (first @capture) "type"))))))))
 
@@ -179,10 +179,10 @@
                                    [(turn-started prod dead-pid "sid-hw" "T-hw")
                                     (delta prod dead-pid "T-hw")])
                            ;; turn-started :seq 5, delta :seq 6 -> high-water 6
-                           (expect (= 6 (bus/journal-high-water-seq "sid-hw")))))))
+                           (expect (= 6 (journal/journal-high-water-seq "sid-hw")))))))
   (it "is 0 when the session has no journal file yet"
       (with-temp-journal (fn [_capture _write!]
-                           (expect (= 0 (bus/journal-high-water-seq "sid-none")))))))
+                           (expect (= 0 (journal/journal-high-water-seq "sid-none")))))))
 
 ;; An app frame skips the journal. A restart that seeded only from the journal
 ;; numbered below a client's cursor, and the client dropped the next turn.
@@ -190,28 +190,28 @@
   unjournaled-seq-floor-test
   (it "keeps a restart above the seq of an event that skipped the journal"
       (with-temp-journal (fn [_capture write!]
-                           (reset! (var-get #'bus/floors) {})
+                           (reset! (var-get #'journal/floors) {})
                            (write! "sid-floor" [(turn-started "prod-A" 1 "sid-floor" "T-f")])
-                           (bus/note-unjournaled! "sid-floor" 900)
+                           (journal/note-unjournaled! "sid-floor" 900)
                            ;; A durable event waits for the FIFO writer, so the floor is on disk.
-                           (bus/publish! "sid-floor" {"type" "session.title_updated" "seq" 901})
+                           (journal/publish! "sid-floor" {"type" "session.title_updated" "seq" 901})
                            ;; A restart forgets the floors of this process; the file keeps them.
-                           (reset! (var-get #'bus/floors) {})
-                           (expect (< 901 (bus/journal-high-water-seq "sid-floor"))))))
+                           (reset! (var-get #'journal/floors) {})
+                           (expect (< 901 (journal/journal-high-water-seq "sid-floor"))))))
   (it "writes no floor for a frame that the last floor already covers"
       (with-temp-journal (fn [_capture _write!]
-                           (reset! (var-get #'bus/floors) {})
-                           (bus/note-unjournaled! "sid-floor-2" 10)
-                           (bus/publish! "sid-floor-2" {"type" "session.title_updated" "seq" 11})
+                           (reset! (var-get #'journal/floors) {})
+                           (journal/note-unjournaled! "sid-floor-2" 10)
+                           (journal/publish! "sid-floor-2" {"type" "session.title_updated" "seq" 11})
                            (let [f
-                                 (#'bus/floor-file "sid-floor-2")
+                                 (#'journal/floor-file "sid-floor-2")
 
                                  floor
                                  (slurp f)]
 
                              (.delete ^java.io.File f)
-                             (bus/note-unjournaled! "sid-floor-2" 12)
-                             (bus/publish! "sid-floor-2" {"type" "session.title_updated" "seq" 13})
+                             (journal/note-unjournaled! "sid-floor-2" 12)
+                             (journal/publish! "sid-floor-2" {"type" "session.title_updated" "seq" 13})
                              (expect (not (.exists ^java.io.File f)))
                              (expect (< 13 (parse-long floor))))))))
 
@@ -232,36 +232,36 @@
               "sid-cursor"
 
               f
-              (#'bus/session-file sid)]
+              (#'journal/session-file sid)]
 
-          (write! sid [(turn-started prod (bus/producer-pid) sid "T-cursor")])
+          (write! sid [(turn-started prod (journal/producer-pid) sid "T-cursor")])
           (let [gate
                 (promise)
 
                 orig
-                @#'bus/deliver-line!
+                @#'journal/deliver-line!
 
                 ;; park the drain mid-file, holding the cursor it read at entry
                 drain
-                (future (with-redefs [bus/deliver-line! (fn [s l]
+                (future (with-redefs [journal/deliver-line! (fn [s l]
                                                           @gate
                                                           (orig s l))]
-                          (#'bus/drain-file! sid f)))]
+                          (#'journal/drain-file! sid f)))]
 
             (Thread/sleep 100)
             ;; producer appends while the drain is parked, then a subscriber hydrates
             (spit f
-                  (str (wire/json-str (delta prod (bus/producer-pid) "T-cursor")) "\n")
+                  (str (wire/json-str (delta prod (journal/producer-pid) "T-cursor")) "\n")
                   :append
                   true)
-            (future (bus/hydrate! sid))
+            (future (journal/hydrate! sid))
             (Thread/sleep 100)
             (deliver gate true)
             @drain
             (Thread/sleep 200)
-            (expect (= (.length f) (long (get-in @(var-get #'bus/tails) [sid :off]))))
+            (expect (= (.length f) (long (get-in @(var-get #'journal/tails) [sid :off]))))
             (reset! capture [])
-            (#'bus/drain-file! sid f)
+            (#'journal/drain-file! sid f)
             (expect (empty? @capture))))))))
 
 (defdescribe
@@ -273,22 +273,22 @@
   (it "revives a dead writer instead of dropping every later durable event"
       (with-temp-journal
         (fn [_capture _write!]
-          (bus/publish! "sid-writer" {"type" "turn.started" "seq" 1} {:store? true})
-          (let [dead @(var-get #'bus/writer)]
+          (journal/publish! "sid-writer" {"type" "turn.started" "seq" 1} {:store? true})
+          (let [dead @(var-get #'journal/writer)]
             (.interrupt ^Thread dead)
             (Thread/sleep 200)
             (expect (not (.isAlive ^Thread dead)))
             (let [t0 (System/currentTimeMillis)
-                  _ (bus/publish! "sid-writer" {"type" "turn.completed" "seq" 2} {:store? true})
+                  _ (journal/publish! "sid-writer" {"type" "turn.completed" "seq" 2} {:store? true})
                   ms (- (System/currentTimeMillis) t0)]
 
               (expect (< ms 2000))
-              (expect (not (identical? dead @(var-get #'bus/writer))))
+              (expect (not (identical? dead @(var-get #'journal/writer))))
               (Thread/sleep 200)
               (expect (= ["turn.started" "turn.completed"]
                          (mapv #(get (wire/parse-json %) "type")
                                (remove str/blank?
-                                 (str/split-lines (slurp (#'bus/session-file
+                                 (str/split-lines (slurp (#'journal/session-file
                                                           "sid-writer")))))))))))))
 
 (defdescribe
@@ -302,36 +302,36 @@
     "recovers when the writer thread cannot be created"
     (with-temp-journal
       (fn [_capture _write!]
-        (let [cur @(var-get #'bus/writer)]
+        (let [cur @(var-get #'journal/writer)]
           (when (instance? Thread cur) (.interrupt ^Thread cur))
           (Thread/sleep 100)
-          (reset! (var-get #'bus/writer) nil))
-        (with-redefs [bus/durable-write-timeout-ms
+          (reset! (var-get #'journal/writer) nil))
+        (with-redefs [journal/durable-write-timeout-ms
                       400
 
-                      bus/spawn-writer-thread!
+                      journal/spawn-writer-thread!
                       (fn []
                         (throw (OutOfMemoryError. "unable to create native thread")))]
 
-          (bus/publish! "sid-start-fail" {"type" "turn.started" "seq" 1} {:store? true}))
+          (journal/publish! "sid-start-fail" {"type" "turn.started" "seq" 1} {:store? true}))
         ;; the gate must be released, not stranded
-        (expect (not= ::bus/starting @(var-get #'bus/writer)))
+        (expect (not= ::journal/starting @(var-get #'journal/writer)))
         (let [t0
               (System/currentTimeMillis)
 
               _
-              (bus/publish! "sid-start-fail" {"type" "turn.completed" "seq" 2} {:store? true})
+              (journal/publish! "sid-start-fail" {"type" "turn.completed" "seq" 2} {:store? true})
 
               ms
               (- (System/currentTimeMillis) t0)]
 
           (expect (< ms 2000))
-          (expect (.isAlive ^Thread @(var-get #'bus/writer)))
+          (expect (.isAlive ^Thread @(var-get #'journal/writer)))
           (Thread/sleep 200)
           (expect (= ["turn.started" "turn.completed"]
                      (mapv #(get (wire/parse-json %) "type")
                            (remove str/blank?
-                             (str/split-lines (slurp (#'bus/session-file
+                             (str/split-lines (slurp (#'journal/session-file
                                                       "sid-start-fail"))))))))))))
 
 (defdescribe
@@ -348,21 +348,21 @@
               (str (java.util.UUID/randomUUID))
 
               pid
-              (bus/producer-pid)
+              (journal/producer-pid)
 
               sid
               "sid-generation"
 
               f
-              (#'bus/session-file sid)]
+              (#'journal/session-file sid)]
 
           ;; Turn 1: drained normally, cursor lands at EOF.
           (write! sid
                   [(turn-started prod pid sid "T-old") (delta prod pid "T-old")
                    (delta prod pid "T-old")])
-          (#'bus/drain-file! sid f)
+          (#'journal/drain-file! sid f)
           (expect (= 3 (count @capture)))
-          (let [off1 (long (get-in @(var-get #'bus/tails) [sid :off]))]
+          (let [off1 (long (get-in @(var-get #'journal/tails) [sid :off]))]
             (expect (= (.length f) off1))
             (reset! capture [])
             ;; Turn 2: the producer truncates and rewrites LONGER than turn 1,
@@ -371,15 +371,15 @@
                     (into [(assoc (turn-started prod pid sid "T-new") :seq 99)]
                           (repeat 4 (delta prod pid "T-new"))))
             (expect (> (.length f) off1))
-            (#'bus/drain-file! sid f)
+            (#'journal/drain-file! sid f)
             ;; The whole new generation is delivered, head first.
             (expect (= 5 (count @capture)))
             (expect (= "turn.started" (get (first @capture) "type")))
             (expect (= "T-new" (get (first @capture) "turn_id")))
-            (expect (= (.length f) (long (get-in @(var-get #'bus/tails) [sid :off]))))
+            (expect (= (.length f) (long (get-in @(var-get #'journal/tails) [sid :off]))))
             ;; …and exactly once: a same-generation re-drain delivers nothing.
             (reset! capture [])
-            (#'bus/drain-file! sid f)
+            (#'journal/drain-file! sid f)
             (expect (empty? @capture))))))))
 
 (defdescribe
@@ -394,7 +394,7 @@
                 "partial"
 
                 f
-                (#'bus/session-file sid)
+                (#'journal/session-file sid)
 
                 prod
                 (str (random-uuid))
@@ -409,13 +409,13 @@
                 (quot (count whole) 2)]
 
             (spit f (str (wire/json-str (turn-started prod pid sid "T")) "\n" (subs whole 0 cut)))
-            (bus/hydrate! sid)
+            (journal/hydrate! sid)
             (expect (= ["turn.started"] (mapv #(get % "type") @capture)))
-            (expect (< (long (get-in @(var-get #'bus/tails) [sid :off])) (.length f)))
+            (expect (< (long (get-in @(var-get #'journal/tails) [sid :off])) (.length f)))
             ;; the sibling finishes the line
             (spit f (subs whole cut) :append true)
             (reset! capture [])
-            (#'bus/drain-file! sid f)
+            (#'journal/drain-file! sid f)
             (expect (= ["IMPORTANT"] (mapv #(get % "text") @capture))))))))
 
 (defdescribe
@@ -435,11 +435,11 @@
                                  (.pid (java.lang.ProcessHandle/current))]
 
                              (write-journal! sid [(turn-started prod pid sid "T")])
-                             (#'bus/drain-file! sid (#'bus/session-file sid))
-                             (expect (contains? @(var-get #'bus/tails) sid))
-                             (bus/forget! sid)
-                             (#'bus/drain-file! sid (#'bus/session-file sid))
-                             (expect (not (contains? @(var-get #'bus/tails) sid))))))))
+                             (#'journal/drain-file! sid (#'journal/session-file sid))
+                             (expect (contains? @(var-get #'journal/tails) sid))
+                             (journal/forget! sid)
+                             (#'journal/drain-file! sid (#'journal/session-file sid))
+                             (expect (not (contains? @(var-get #'journal/tails) sid))))))))
 
 (defdescribe
   size-cap-test
@@ -455,17 +455,17 @@
                 "capped"
 
                 f
-                (#'bus/session-file sid)
+                (#'journal/session-file sid)
 
                 blob
                 (apply str (repeat (* 6 1024 1024) "x"))]
 
-            (#'bus/write-event!
+            (#'journal/write-event!
              sid
              {"schema" 1 "type" "turn.started" "turn_id" "T7" "session_id" sid "seq" 1}
              {:store? true :truncate? true})
             (dotimes [i 4]
-              (#'bus/write-event!
+              (#'journal/write-event!
                sid
                {"schema" 1 "type" "content.delta" "turn_id" "T7" "seq" (+ 2 i) "text" blob}
                {:store? true}))
@@ -482,7 +482,7 @@
                 (str (random-uuid))]
 
             (write-journal! sid [(assoc (delta prod dead-pid "T9") :session_id sid)])
-            (bus/hydrate! sid)
+            (journal/hydrate! sid)
             (expect (= [["turn.failed" "T9"]]
                        (mapv #(vector (get % "type") (get % "turn_id")) @capture))))))))
 
@@ -497,20 +497,20 @@
                 (str (random-uuid))
 
                 f
-                (#'bus/session-file sid)
+                (#'journal/session-file sid)
 
                 own
                 (fn [n]
-                  (#'bus/write-event!
+                  (#'journal/write-event!
                    sid
                    {"type" "content.delta" "seq" n "session_id" sid}
                    {:store? true}))
 
                 off
-                #(:off (get @(var-get #'bus/tails) sid))]
+                #(:off (get @(var-get #'journal/tails) sid))]
 
             (own 1)
-            (expect (not (#'bus/drain-file! sid f)) "Own lines are no work for the tailer")
+            (expect (not (#'journal/drain-file! sid f)) "Own lines are no work for the tailer")
             (expect (= (.length f) (off)))
             (own 2)
             (expect (= (.length f) (off)) "The writer moved the caught-up tail past its line")
@@ -519,7 +519,7 @@
                        "\n")
                   :append
                   true)
-            (expect (true? (#'bus/drain-file! sid f)) "A line of another process is work")
+            (expect (true? (#'journal/drain-file! sid f)) "A line of another process is work")
             (expect (= ["content.delta"] (mapv #(get % "type") @capture))))))))
 
 ;; Regression: the companion sat on "thinking" forever while the turn ran in
@@ -551,19 +551,19 @@
                 (.pid (java.lang.ProcessHandle/current))
 
                 prev-relevant-sids
-                @(var-get #'bus/relevant-sids-fn)]
+                @(var-get #'journal/relevant-sids-fn)]
 
-            (bus/set-deliver-fn! (fn [s _store? _ev]
+            (journal/set-deliver-fn! (fn [s _store? _ev]
                                    (swap! seen conj s)))
-            (bus/set-relevant-sids-fn! (fn []
+            (journal/set-relevant-sids-fn! (fn []
                                          (when (identical? poll-thread (Thread/currentThread))
                                            [sid])))
             (try (write! sid [(turn-started prod pid (str sid) "T-mirror")])
                  ;; A tailer started by an earlier suite test must not consume this fixture.
-                 (expect (false? @(future (#'bus/poll-once!))))
-                 (expect (true? (#'bus/poll-once!)))
+                 (expect (false? @(future (#'journal/poll-once!))))
+                 (expect (true? (#'journal/poll-once!)))
                  (expect (= [sid] @seen))
-                 (finally (bus/set-relevant-sids-fn! prev-relevant-sids))))))))
+                 (finally (journal/set-relevant-sids-fn! prev-relevant-sids))))))))
 
 (defdescribe
   fleet-liveness-test
@@ -580,27 +580,27 @@
       (with-temp-journal
         (fn [_capture _write!]
           (let [sid (str (random-uuid))]
-            (expect (nil? (bus/live-turn-id sid)))
-            (bus/publish!
+            (expect (nil? (journal/live-turn-id sid)))
+            (journal/publish!
               sid
               {"schema" 1 "seq" 1 "type" "turn.started" "session_id" sid "turn_id" "T-1"}
               {:store? true :truncate? true})
-            (expect (= "T-1" (bus/live-turn-id sid)))
-            (expect (= {sid "T-1"} (bus/live-turns)))))))
+            (expect (= "T-1" (journal/live-turn-id sid)))
+            (expect (= {sid "T-1"} (journal/live-turns)))))))
   (it "retracts it on the terminal, so a finished session never stays lit"
       (with-temp-journal
         (fn [_capture _write!]
           (let [sid (str (random-uuid))]
-            (bus/publish!
+            (journal/publish!
               sid
               {"schema" 1 "seq" 1 "type" "turn.started" "session_id" sid "turn_id" "T-2"}
               {:store? true :truncate? true})
-            (expect (= "T-2" (bus/live-turn-id sid)))
-            (bus/publish!
+            (expect (= "T-2" (journal/live-turn-id sid)))
+            (journal/publish!
               sid
               {"schema" 1 "seq" 2 "type" "turn.completed" "session_id" sid "turn_id" "T-2"}
               {:store? true})
-            (expect (nil? (bus/live-turn-id sid)))))))
+            (expect (nil? (journal/live-turn-id sid)))))))
   (it
     "retracts it on a terminal published from an INTERRUPTED producer thread"
     ;; Regression: cancelling a Codex (Responses WebSocket) turn from the companion
@@ -616,20 +616,20 @@
     (with-temp-journal
       (fn [_capture _write!]
         (let [sid (str (random-uuid))]
-          (bus/publish! sid
+          (journal/publish! sid
                         {"schema" 1 "seq" 1 "type" "turn.started" "session_id" sid "turn_id" "T-4"}
                         {:store? true :truncate? true})
-          (expect (= "T-4" (bus/live-turn-id sid)))
+          (expect (= "T-4" (journal/live-turn-id sid)))
           (.interrupt (Thread/currentThread))
           (let [still-interrupted?
-                (try (bus/publish!
+                (try (journal/publish!
                        sid
                        {"schema" 1 "seq" 2 "type" "turn.cancelled" "session_id" sid "turn_id" "T-4"}
                        {:store? true})
                      (.isInterrupted (Thread/currentThread))
                      (finally (Thread/interrupted)))]
-            (expect (nil? (bus/live-turn-id sid)))
-            (expect (str/includes? (slurp (#'bus/session-file sid)) "\"turn.cancelled\""))
+            (expect (nil? (journal/live-turn-id sid)))
+            (expect (str/includes? (slurp (#'journal/session-file sid)) "\"turn.cancelled\""))
             ;; The producer's cancellation is not the bus's to consume: the
             ;; interrupt still stands for the next interruptible call.
             (expect still-interrupted?))))))
@@ -643,21 +643,21 @@
       (with-temp-journal
         (fn [_capture _write!]
           (let [sid (str (random-uuid))]
-            (bus/publish!
+            (journal/publish!
               sid
               {"schema" 1 "seq" 1 "type" "turn.started" "session_id" sid "turn_id" "T-5"}
               {:store? true :truncate? true})
-            (expect (= "T-5" (bus/live-turn-id sid)))
-            (let [real-write! @#'bus/write-event!]
-              (with-redefs [bus/write-event! (fn [sid event opts]
+            (expect (= "T-5" (journal/live-turn-id sid)))
+            (let [real-write! @#'journal/write-event!]
+              (with-redefs [journal/write-event! (fn [sid event opts]
                                                (when-not (= "turn.failed" (get event "type"))
                                                  (real-write! sid event opts)))]
-                (bus/publish!
+                (journal/publish!
                   sid
                   {"schema" 1 "seq" 2 "type" "turn.failed" "session_id" sid "turn_id" "T-5"}
                   {:store? true})))
-            (expect (not (str/includes? (slurp (#'bus/session-file sid)) "\"turn.failed\"")))
-            (expect (nil? (bus/live-turn-id sid)))))))
+            (expect (not (str/includes? (slurp (#'journal/session-file sid)) "\"turn.failed\"")))
+            (expect (nil? (journal/live-turn-id sid)))))))
   (it "ignores AND deletes a marker whose producer process is gone"
       (with-temp-journal
         (fn [_capture _write!]
@@ -665,7 +665,7 @@
                 (str (random-uuid))
 
                 dir
-                ^java.nio.file.Path (#'bus/live-dir)
+                ^java.nio.file.Path (#'journal/live-dir)
 
                 f
                 (.toFile (.resolve dir (str sid ".json")))]
@@ -675,23 +675,23 @@
                                                                0))
             (spit f
                   (wire/json-str {"schema" 1 "session_id" sid "turn_id" "T-orphan" "pid" dead-pid}))
-            (reset! (var-get #'bus/live-cache) {})
+            (reset! (var-get #'journal/live-cache) {})
             ;; A crashed producer owes a retract it can no longer make, so the
             ;; reader retracts for it — otherwise one kill -9 lights a session up
             ;; forever on every client of this machine.
-            (expect (nil? (bus/live-turn-id sid)))
+            (expect (nil? (journal/live-turn-id sid)))
             (expect (not (.exists f)))))))
   (it "drops the marker when the session is forgotten"
       (with-temp-journal
         (fn [_capture _write!]
           (let [sid (str (random-uuid))]
-            (bus/publish!
+            (journal/publish!
               sid
               {"schema" 1 "seq" 1 "type" "turn.started" "session_id" sid "turn_id" "T-3"}
               {:store? true :truncate? true})
-            (expect (= "T-3" (bus/live-turn-id sid)))
-            (bus/forget! sid)
-            (expect (nil? (bus/live-turn-id sid))))))))
+            (expect (= "T-3" (journal/live-turn-id sid)))
+            (journal/forget! sid)
+            (expect (nil? (journal/live-turn-id sid))))))))
 
 (defdescribe
   fleet-waiting-index-test
@@ -704,8 +704,8 @@
       (with-temp-journal
         (fn [_capture _write!]
           (let [sid (str (random-uuid))]
-            (expect (not (bus/session-waiting? sid)))
-            (bus/publish! sid
+            (expect (not (journal/session-waiting? sid)))
+            (journal/publish! sid
                           {"schema" 1
                            "seq" 1
                            "type" "view.open"
@@ -713,9 +713,9 @@
                            "session_id" sid
                            "view" {"id" "req-1" "title" "Which branch?"}}
                           {:store? true})
-            (expect (bus/session-waiting? sid))
-            (expect (= ["req-1"] (mapv #(get % "id") (get (bus/waiting-requests) sid))))
-            (bus/publish! sid
+            (expect (journal/session-waiting? sid))
+            (expect (= ["req-1"] (mapv #(get % "id") (get (journal/waiting-requests) sid))))
+            (journal/publish! sid
                           {"schema" 1
                            "seq" 2
                            "type" "view.close"
@@ -723,13 +723,13 @@
                            "session_id" sid
                            "view_id" "req-1"}
                           {:store? true})
-            (expect (not (bus/session-waiting? sid)))))))
+            (expect (not (journal/session-waiting? sid)))))))
   (it "keeps waiting while a SECOND request of the same run is still open"
       (with-temp-journal
         (fn [_capture _write!]
           (let [sid (str (random-uuid))]
             (doseq [rid ["req-a" "req-b"]]
-              (bus/publish! sid
+              (journal/publish! sid
                             {"schema" 1
                              "seq" 1
                              "type" "view.open"
@@ -737,9 +737,9 @@
                              "session_id" sid
                              "view" {"id" rid}}
                             {:store? true}))
-            (expect (= ["req-a" "req-b"] (mapv #(get % "id") (get (bus/waiting-requests) sid))))
-            (expect (= 2 (bus/session-waiting-count sid)))
-            (bus/publish! sid
+            (expect (= ["req-a" "req-b"] (mapv #(get % "id") (get (journal/waiting-requests) sid))))
+            (expect (= 2 (journal/session-waiting-count sid)))
+            (journal/publish! sid
                           {"schema" 1
                            "seq" 2
                            "type" "view.close"
@@ -747,12 +747,12 @@
                            "session_id" sid
                            "view_id" "req-a"}
                           {:store? true})
-            (expect (bus/session-waiting? sid))
+            (expect (journal/session-waiting? sid))
             ;; The flag alone cannot say that answering one of the two moved
             ;; anything, which is exactly what a lit badge looked like. The
             ;; COUNT is what a surface counts down.
-            (expect (= 1 (bus/session-waiting-count sid)))
-            (expect (= ["req-b"] (mapv #(get % "id") (get (bus/waiting-requests) sid))))))))
+            (expect (= 1 (journal/session-waiting-count sid)))
+            (expect (= ["req-b"] (mapv #(get % "id") (get (journal/waiting-requests) sid))))))))
   (it "drops the demand at the turn's terminal, answered or not"
       (with-temp-journal
         (fn [_capture _write!]
@@ -760,7 +760,7 @@
           ;; close event is coming for a request nobody will ever settle, so a
           ;; terminal is the last chance to retract the demand.
           (let [sid (str (random-uuid))]
-            (bus/publish! sid
+            (journal/publish! sid
                           {"schema" 1
                            "seq" 1
                            "type" "view.open"
@@ -768,12 +768,12 @@
                            "session_id" sid
                            "view" {"id" "req-abandoned"}}
                           {:store? true})
-            (expect (bus/session-waiting? sid))
-            (bus/publish!
+            (expect (journal/session-waiting? sid))
+            (journal/publish!
               sid
               {"schema" 1 "seq" 2 "type" "turn.cancelled" "session_id" sid "turn_id" "T-9"}
               {:store? true})
-            (expect (not (bus/session-waiting? sid)))))))
+            (expect (not (journal/session-waiting? sid)))))))
   (it
     "keeps the form of a subagent through the terminal of the leader that shows it"
     (with-temp-journal
@@ -788,7 +788,7 @@
 
               open!
               (fn [seq-no rid raiser]
-                (bus/publish! leader
+                (journal/publish! leader
                               {"schema" 1
                                "seq" seq-no
                                "type" "view.open"
@@ -799,22 +799,22 @@
 
               terminal!
               (fn [sid seq-no]
-                (bus/publish!
+                (journal/publish!
                   sid
                   {"schema" 1 "seq" seq-no "type" "turn.cancelled" "session_id" sid "turn_id" "T"}
                   {:store? true}))]
 
           (open! 1 "req-own" leader)
           (open! 2 "req-child" child)
-          (expect (= 2 (bus/session-waiting-count leader)))
-          (expect (= [1 1] (mapv bus/raised-waiting-count [leader child])))
+          (expect (= 2 (journal/session-waiting-count leader)))
+          (expect (= [1 1] (mapv journal/raised-waiting-count [leader child])))
           (terminal! leader 3)
-          (expect (= ["req-child"] (mapv #(get % "id") (get (bus/waiting-requests) leader))))
-          (expect (= [0 1] (mapv bus/raised-waiting-count [leader child])))
+          (expect (= ["req-child"] (mapv #(get % "id") (get (journal/waiting-requests) leader))))
+          (expect (= [0 1] (mapv journal/raised-waiting-count [leader child])))
           ;; The terminal of the subagent takes its form out of the leader marker.
           (terminal! child 1)
-          (expect (not (bus/session-waiting? leader)))
-          (expect (zero? (long (bus/raised-waiting-count child))))))))
+          (expect (not (journal/session-waiting? leader)))
+          (expect (zero? (long (journal/raised-waiting-count child))))))))
   (it "ignores AND deletes a marker whose producer process is gone"
       (with-temp-journal
         (fn [_capture _write!]
@@ -822,7 +822,7 @@
                 (str (random-uuid))
 
                 dir
-                ^java.nio.file.Path (#'bus/waiting-dir)
+                ^java.nio.file.Path (#'journal/waiting-dir)
 
                 f
                 (.toFile (.resolve dir (str sid ".json")))]
@@ -835,16 +835,16 @@
                                   "session_id" sid
                                   "pid" dead-pid
                                   "requests" [{"id" "req-orphan" "since" 1}]}))
-            (reset! (var-get #'bus/waiting-cache) {})
+            (reset! (var-get #'journal/waiting-cache) {})
             ;; A dead process cannot answer its own dialog, and cannot retract
             ;; it either — without this reap one crash leaves a session demanding
             ;; input forever on every client of this machine.
-            (expect (not (bus/session-waiting? sid)))
+            (expect (not (journal/session-waiting? sid)))
             (expect (not (.exists f)))))))
   (it "drops the marker when the session is forgotten"
       (with-temp-journal (fn [_capture _write!]
                            (let [sid (str (random-uuid))]
-                             (bus/publish! sid
+                             (journal/publish! sid
                                            {"schema" 1
                                             "seq" 1
                                             "type" "view.open"
@@ -852,9 +852,9 @@
                                             "session_id" sid
                                             "view" {"id" "req-forgotten"}}
                                            {:store? true})
-                             (expect (bus/session-waiting? sid))
-                             (bus/forget! sid)
-                             (expect (not (bus/session-waiting? sid))))))))
+                             (expect (journal/session-waiting? sid))
+                             (journal/forget! sid)
+                             (expect (not (journal/session-waiting? sid))))))))
 
 (defdescribe
   terminal-tail-test
@@ -864,7 +864,7 @@
   ;; answer sits in the last few lines. The tail read must be SOUND: yes only
   ;; when the full parse would also say yes, so it can never skip a live turn.
   (let [tail?
-        (var-get #'bus/terminal-tail?)
+        (var-get #'journal/terminal-tail?)
 
         line
         (fn [type]
@@ -872,7 +872,7 @@
 
         journal!
         (fn [sid text]
-          (let [f (#'bus/session-file sid)]
+          (let [f (#'journal/session-file sid)]
             (spit f text)
             f))]
 
@@ -897,17 +897,17 @@
                   "tail-hydrate-no-newline"
 
                   started
-                  (turn-started "sibling" (bus/producer-pid) sid "T")
+                  (turn-started "sibling" (journal/producer-pid) sid "T")
 
                   f
                   (journal! sid (str (wire/json-str started) "\n" (line "turn.completed")))]
 
-              (bus/hydrate! sid)
+              (journal/hydrate! sid)
               (expect (= ["turn.started"] (mapv #(get % "type") @capture)))
-              (expect (< (long (get-in @(var-get #'bus/tails) [sid :off] 0)) (.length f)))
+              (expect (< (long (get-in @(var-get #'journal/tails) [sid :off] 0)) (.length f)))
               (spit f "\n" :append true)
               (reset! capture [])
-              (bus/hydrate! sid)
+              (journal/hydrate! sid)
               (expect (empty? @capture))))))
     (it "answers yes when the terminal is followed by what the producer appends after it"
         (with-temp-journal (fn [_ _]
@@ -949,7 +949,7 @@
                                                   (line "session.title_updated")
                                                   "\n"))]
 
-                               (expect (> (.length f) (long (var-get #'bus/TAIL_SCAN_BYTES))))
+                               (expect (> (.length f) (long (var-get #'journal/TAIL_SCAN_BYTES))))
                                (expect (true? (tail? f)))))))
     (it "answers no - never a false yes - when the terminal sits beyond the window"
         (with-temp-journal
@@ -972,10 +972,10 @@
                                    reads
                                    (atom 0)]
 
-                               (with-redefs [bus/set-tail! (fn [& _]
+                               (with-redefs [journal/set-tail! (fn [& _]
                                                              (swap! reads inc)
                                                              nil)]
-                                 (bus/hydrate! "tail-skip"))
+                                 (journal/hydrate! "tail-skip"))
                                (expect (.isFile f))
                                (expect (zero? @reads))
                                (expect (empty? @capture))))))))
@@ -991,7 +991,7 @@
              ;; `native-producer-identity-test` guards the linked image; this guards the
              ;; contract.
              (it "stamps the RUNNING process's pid"
-                 (expect (= (.pid (java.lang.ProcessHandle/current)) (bus/producer-pid))))
+                 (expect (= (.pid (java.lang.ProcessHandle/current)) (journal/producer-pid))))
              (it "builds the self marker from this process's own producer id"
-                 (expect (= (str "\"_producer\":\"" (bus/producer-id) "\"")
-                            @(var-get #'bus/self-marker)))))
+                 (expect (= (str "\"_producer\":\"" (journal/producer-id) "\"")
+                            @(var-get #'journal/self-marker)))))

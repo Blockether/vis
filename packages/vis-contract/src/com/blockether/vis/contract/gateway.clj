@@ -190,14 +190,21 @@
    :duration-ms [(get-in notification-properties ["duration_ms" "minimum"])
                  (get-in notification-properties ["duration_ms" "maximum"])]})
 
-(def extension-event-limits
-  "Bounds of the extension event bus: the topic and pattern regexes, the largest
-   data in UTF-8 bytes of JSON and the events that can wait for one subscriber."
-  {:topic (re-pattern (get-in @source ["$defs" "extension_event_topic" "pattern"]))
-   :pattern (re-pattern (get-in @source ["$defs" "extension_event_pattern" "pattern"]))
-   :name-max-chars (get-in @source ["$defs" "extension_event_topic" "maxLength"])
-   :data-max-bytes (get-in @source ["$defs" "extension_event_data_bytes" "maximum"])
-   :backlog (get-in @source ["$defs" "extension_event_backlog" "maximum"])})
+(def bus-limits
+  "Bounds of the signal bus: the topic and pattern regexes and their longest texts in
+   characters, the largest data in UTF-8 bytes of JSON and the signals that can wait
+   for one subscriber."
+  {:topic (re-pattern (get-in @source ["$defs" "bus_topic" "pattern"]))
+   :topic-max-chars (get-in @source ["$defs" "bus_topic" "maxLength"])
+   :pattern (re-pattern (get-in @source ["$defs" "bus_pattern" "pattern"]))
+   :pattern-max-chars (get-in @source ["$defs" "bus_pattern" "maxLength"])
+   :data-max-bytes (get-in @source ["$defs" "bus_data_bytes" "maximum"])
+   :backlog (get-in @source ["$defs" "bus_backlog" "maximum"])})
+
+(def bus-scopes
+  "The scopes of a signal: `global` reaches each subscriber of the extension, and
+   `session` only the subscribers in the session of the publisher."
+  (set (get-in @source ["$defs" "bus_scope" "enum"])))
 
 (def speech-job-event "Speech synthesis job stream event name." (:synthesize job-events))
 

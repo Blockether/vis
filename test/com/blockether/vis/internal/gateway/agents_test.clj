@@ -3,7 +3,7 @@
             [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as contract]
-            [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
@@ -114,19 +114,19 @@
     (with-redefs [lp/db-info
                   (constantly db)
 
-                  bus/publish!
+                  journal/publish!
                   (fn [& _])
 
-                  bus/note-unjournaled!
+                  journal/note-unjournaled!
                   (fn [& _])
 
-                  bus/events-dir
+                  journal/events-dir
                   (constantly journal)
 
                   state/team-step-ms
                   0]
 
-      (try (reset! @#'bus/watch-cache {})
+      (try (reset! @#'journal/watch-cache {})
            (state/add-event-tap! ::spy
                                  (fn [sid event]
                                    (when (= "session.team_updated" (get event "type"))
@@ -139,7 +139,7 @@
            (finally (state/remove-event-tap! ::spy)
                     (state/stop-team-pusher!)
                     (reset! registry saved)
-                    (reset! @#'bus/watch-cache {}))))))
+                    (reset! @#'journal/watch-cache {}))))))
 
 (defn- apply-team-event
   "The team `rows` after one `session.team_updated` `event`, as a client applies it: the whole
@@ -347,7 +347,7 @@
               {:turn_id tid :iteration 1 :form_index form-index :activity {:rows rows}}
               {:store? store?}))]
 
-      (with-redefs [bus/publish! (fn [& _])]
+      (with-redefs [journal/publish! (fn [& _])]
         (try (reset! registry {sid {:next-seq 0 :current-turn tid :turns {tid {:turn_id tid}}}})
              (expect (nil? (#'state/agent-activity sid)))
              (activity! 0 [(row "succeeded" "Read" "~/a.clj")] true)
@@ -405,10 +405,10 @@
       (with-redefs [lp/db-info
                     (constantly db)
 
-                    bus/publish!
+                    journal/publish!
                     (fn [& _])
 
-                    bus/note-unjournaled!
+                    journal/note-unjournaled!
                     (fn [& _])]
 
         (try (expect (= {"active" 1 "total" 1} (get (state/soul leader) "team")))
@@ -646,10 +646,10 @@
       (with-redefs [lp/db-info
                     (constantly db)
 
-                    bus/publish!
+                    journal/publish!
                     (fn [& _])
 
-                    bus/note-unjournaled!
+                    journal/note-unjournaled!
                     (fn [& _])]
 
         (try (state/add-event-tap! ::spy
@@ -743,7 +743,7 @@
       ;; The leader session shows the form of the child (issue #494), so the marker
       ;; of the leader holds it, with the child as the session that asks.
       (let [waiting (atom {})]
-        (with-redefs [bus/waiting-requests (fn []
+        (with-redefs [journal/waiting-requests (fn []
                                              @waiting)]
           (with-team {:statuses ["running" "running"] :watched? true}
                      (fn [{:keys [leader children events]}]
@@ -985,9 +985,9 @@
             (expect (not (contains? (ready-frame (str (h/store-session! db {:channel :api})))
                                     "agents"))
                     "A session without a team has no rows")
-            (expect (.exists (#'bus/watch-file leader)) "Other processes see the watcher")
+            (expect (.exists (#'journal/watch-file leader)) "Other processes see the watcher")
             (state/unsubscribe! leader "client-1")
-            (expect (not (.exists (#'bus/watch-file leader))))))))
+            (expect (not (.exists (#'journal/watch-file leader))))))))
   (it "counts the watch marker of another live process and deletes one of a dead process"
       (with-team
         {:statuses ["running"]}
@@ -996,7 +996,7 @@
                 children
 
                 dir
-                (#'bus/watch-dir)
+                (#'journal/watch-dir)
 
                 marker!
                 (fn [pid]
@@ -1005,7 +1005,7 @@
                       dir
                       (make-array java.nio.file.attribute.FileAttribute 0))
                     (spit f (json/write-json-str {"schema" 1 "session_id" leader "owner_pid" pid}))
-                    (reset! @#'bus/watch-cache {})
+                    (reset! @#'journal/watch-cache {})
                     f))
 
                 dead
@@ -1030,13 +1030,13 @@
               children
 
               dir
-              (#'bus/watch-dir)]
+              (#'journal/watch-dir)]
 
-          (reset! @#'bus/watch-seen #{})
+          (reset! @#'journal/watch-seen #{})
           (state/append-event! child "turn.started" {:turn_id "t"})
           (swap! @#'state/registry assoc-in [child :current-turn] "t")
           (drain!)
-          (#'bus/watch-tick!)
+          (#'journal/watch-tick!)
           (drain!)
           (expect (empty? @events) "Nobody watches the leader yet")
           (java.nio.file.Files/createDirectories dir
@@ -1051,8 +1051,8 @@
                                       "session_id" leader
                                       "owner_pid"
                                       (.pid (.get (.parent (java.lang.ProcessHandle/current))))}))
-          (reset! @#'bus/watch-cache {})
-          (#'bus/watch-tick!)
+          (reset! @#'journal/watch-cache {})
+          (#'journal/watch-tick!)
           (drain!)
           (expect (= [[child]]
                      (mapv #(mapv (fn [row]
@@ -1060,8 +1060,8 @@
                                   (get (second %) "agents"))
                            @events))
                   "The new watcher gets the row without another change")
-          (reset! @#'bus/watch-cache {})
-          (#'bus/watch-tick!)
+          (reset! @#'journal/watch-cache {})
+          (#'journal/watch-tick!)
           (drain!)
           (expect (= 1 (count @events)) "A watcher that stays gets no second push")))))
   ;; Leader follow-up #9243: a child that ended in the second before a new watcher in another
@@ -1075,12 +1075,12 @@
               children
 
               dir
-              (#'bus/watch-dir)
+              (#'journal/watch-dir)
 
               pid
               (.pid (.get (.parent (java.lang.ProcessHandle/current))))]
 
-          (reset! @#'bus/watch-seen #{})
+          (reset! @#'journal/watch-seen #{})
           (doseq [child children]
             (state/append-event! child "turn.completed" {:turn_id "t"}))
           (drain!)
@@ -1096,8 +1096,8 @@
                                                              0))
           (spit (.toFile (.resolve dir (str leader "." pid ".json")))
                 (json/write-json-str {"schema" 1 "session_id" leader "owner_pid" pid}))
-          (reset! @#'bus/watch-cache {})
-          (#'bus/watch-tick!)
+          (reset! @#'journal/watch-cache {})
+          (#'journal/watch-tick!)
           (drain!)
           (expect (= [[fresh]]
                      (mapv #(mapv (fn [row]

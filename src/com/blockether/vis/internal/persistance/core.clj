@@ -91,8 +91,8 @@
   (db-compare-session-goal! [db-info session-id revision goal])
   (db-claim-session! [db-info ref])
   (db-delete-session-tree! [db-info id]
-    "Delete the session tree. Return `:extension-session-ids` with the IDs of its
-     deleted extension descendants.")
+    "Delete the session tree. Return the IDs of all deleted sessions in
+     `:deleted-session-ids` and the extension descendants in `:extension-session-ids`.")
   (db-fork-session! [db-info session-id opts])
   (db-fork-session-at-turn! [db-info session-id opts])
   (db-agent-info [db-info session-id])

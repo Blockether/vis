@@ -3,7 +3,7 @@
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.mcp.sampling :as sampling]
-            [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.view :as gateway-view]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
@@ -36,11 +36,11 @@
                   :close-session-contexts! #'python-extensions/close-session-contexts!}
                  (slot #'python-env/extension-hooks)))
       (expect (identical? #'test-runner/test-slash (slot #'python-extensions/test-slash-fn)))
-      (expect (identical? #'state/ingest-mirrored-event! (slot #'bus/deliver-fn)))
-      (expect (identical? #'state/session-known? (slot #'bus/relevant-sid-fn)))
-      (expect (identical? #'bus/block-started-ms (slot #'introspection/block-clock)))
+      (expect (identical? #'state/ingest-mirrored-event! (slot #'journal/deliver-fn)))
+      (expect (identical? #'state/session-known? (slot #'journal/relevant-sid-fn)))
+      (expect (identical? #'journal/block-started-ms (slot #'introspection/block-clock)))
       (expect (identical? #'router/llm-text! (slot #'sampling/model)))
-      (expect (identical? #'state/tracked-session-ids (slot #'bus/relevant-sids-fn))))
+      (expect (identical? #'state/tracked-session-ids (slot #'journal/relevant-sids-fn))))
   (it "installs once, so a second call leaves the slots as they are"
       (wiring/install!)
       (let [waker (slot #'council/runtime-waker)]

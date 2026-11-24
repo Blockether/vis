@@ -3305,11 +3305,11 @@
         (let [id
               (str (->id session-soul-id))
 
-              extension-session-ids
-              (mapv :id
-                    (query-sql! tx-info
-                                [(str (extension-descendants-sql false)
-                                      " SELECT id FROM extensions") id]))
+              tree
+              (query-sql! tx-info
+                          [(str (extension-descendants-sql false)
+                                " SELECT t.id, e.id AS extension_id FROM tree t"
+                                " LEFT JOIN extensions e ON e.id = t.id") id])
 
               ;; The delete takes the agent rows of this session and of its children. Their
               ;; leader keeps the clocks of its teams, so those follow the rows that stay.
@@ -3319,11 +3319,17 @@
                     (query! tx-info
                             {:select-distinct [:leader_id]
                              :from :session_agent
-                             :where [:or [:= :session_id id] [:= :parent_id id]]}))]
+                             :where [:or [:= :session_id id] [:= :parent_id id]]}))
 
-          (execute! tx-info {:delete-from :session_soul :where [:= :id (->id session-soul-id)]})
+              result
+              (execute! tx-info {:delete-from :session_soul :where [:= :id id]})
+
+              deleted?
+              (pos? (long (or (:next.jdbc/update-count (first result)) 0)))]
+
           (run! #(refresh-teams! tx-info %) leaders)
-          {:extension-session-ids extension-session-ids})))))
+          {:extension-session-ids (into [] (keep :extension_id) tree)
+           :deleted-session-ids (if deleted? (mapv :id tree) [])})))))
 
 ;; Projects (cross-channel) + movable project sessions + ownership  (V6/V7)
 

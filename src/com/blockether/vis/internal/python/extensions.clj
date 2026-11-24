@@ -51,7 +51,7 @@
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
-            [com.blockether.vis.internal.extension.events :as events]
+            [com.blockether.vis.internal.bus :as bus]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
@@ -1134,6 +1134,13 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
       (nil? (:db-info merged))
       (assoc :db-info (persistance/db-shared-connection! (config/resolve-db-spec))))))
+(defn- call-session
+  "The session of the call that runs now, as a string, or nil: the session of the
+   current env, else the bound session. A global app has none."
+  [bound-session]
+  (some-> (or (:session-id extension/*current-environment*) (:session-id bound-session))
+          str))
+
 (defn ^:no-doc host-doors
   "The `__vis_host_*` callables an extension context receives as `{name fn}`.
    The bootstrap and inert checker derive their members from these bindings.
@@ -1462,32 +1469,39 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
               (view/live-json! envelope {:extension owner :context sess :listener callback}))))
     (put! g
-          "__vis_host_events_publish__"
-          ;; `vis.events`: the topics belong to the extension of this namespace.
-          (fn [topic data-json]
-            (events/publish! (context-extension-name sess label) topic (str data-json))))
+          "__vis_host_bus_publish__"
+          ;; `vis.bus`: the topics belong to the extension of this namespace, and a
+          ;; session signal to the session of the call.
+          (fn [topic data-json scope]
+            (bus/publish-json! {:owner (context-extension-name sess label)
+                                :session (call-session bound-session)}
+                               topic
+                               (str data-json)
+                               (str scope))))
     (put! g
-          "__vis_host_events_subscribe__"
-          ;; `listener` is the sealed callable of the subscriber. Each event runs it as
+          "__vis_host_bus_subscribe__"
+          ;; `listener` is the sealed callable of the subscriber. Each signal runs it as
           ;; an extension callback, like the `on_event` of a live view.
-          (fn [pattern listener]
+          (fn [pattern listener scope]
             (let [owner (context-extension-name sess label)
                   env extension/*current-environment*
                   f (unseal sess listener)]
               (when-not (fn? f)
-                (throw (ex-info "vis.events.subscribe needs a function"
-                                {:error :extension-event-listener})))
-              (events/subscribe! owner
-                                 sess
-                                 pattern
-                                 (fn [event]
-                                   (extension/with-context
-                                     {:ext {:ext/name owner} :env (callback-env bound-session env nil)}
-                                     (python-host/conveying sess (f [event]))))))))
+                (throw (ex-info "vis.bus.subscribe needs a function" {:error :bus-listener})))
+              (bus/subscribe! {:owner owner
+                               :context sess
+                               :session (call-session bound-session)
+                               :scope (some-> scope
+                                              str)}
+                              pattern
+                              (fn [signal]
+                                (extension/with-context
+                                  {:ext {:ext/name owner} :env (callback-env bound-session env nil)}
+                                  (python-host/conveying sess (f [signal]))))))))
     (put! g
-          "__vis_host_events_unsubscribe__"
+          "__vis_host_bus_unsubscribe__"
           (fn [id]
-            (events/unsubscribe! (context-extension-name sess label) (str id))))
+            (bus/unsubscribe! (context-extension-name sess label) (str id))))
     (put! g
           "__vis_host_reveal_secret__"
           (fn [handle]
@@ -1639,7 +1653,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
              ;; An owned live view and the subscriptions end with the context that made them.
              (try (view/close-owned-by! ctx) (catch Throwable _ nil))
-             (events/forget-context! ctx)
+             (bus/forget-context! ctx)
              (swap! pending-contexts dissoc ctx)
              (swap! live-contexts disj ctx)
              (swap! context-workers dissoc ctx)
@@ -1930,7 +1944,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (if-let [reopen (get-in @context-lifecycle [ctx :reopen])]
       ;; The Python that drove an owned live view is gone.
       (do (try (view/close-owned-by! ctx) (catch Throwable _ nil))
-          (events/forget-context! ctx)
+          (bus/forget-context! ctx)
           (swap! pending-contexts assoc ctx reopen))
       (do (swap! session-contexts #(into {}
                                          (remove (fn [[_ row]]

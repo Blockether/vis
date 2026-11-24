@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.gateway.event-store-test
   (:require [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.turn-archive :as archive]
             [com.blockether.vis.internal.gateway.event-store :as store]
             [taoensso.nippy :as nippy]
@@ -16,8 +16,8 @@
 
     (with-redefs-fn {#'state/registry registry
                      #'state/EVENT_RING_MAX (delay 2)
-                     #'bus/publish! (fn [& _])
-                     #'bus/hydrate! (fn [& _])}
+                     #'journal/publish! (fn [& _])
+                     #'journal/hydrate! (fn [& _])}
       (fn []
         (try (f sid registry) (finally (#'state/drop-session! sid)))))))
 
@@ -189,8 +189,8 @@
                      (let [observed (atom [])]
                        ;; Forget can win between hydration and the locked replay/live handoff.
                        ;; Recreating the entry must preserve the durable journal's cursor floor.
-                       (with-redefs [bus/journal-high-water-seq (constantly 40)
-                                     bus/hydrate! (fn [_ _]
+                       (with-redefs [journal/journal-high-water-seq (constantly 40)
+                                     journal/hydrate! (fn [_ _]
                                                     (#'state/drop-session! sid))]
 
                          (expect (empty? (state/subscribe! sid "sink" #(swap! observed conj %) 40)))

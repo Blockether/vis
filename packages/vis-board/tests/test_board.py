@@ -187,9 +187,9 @@ def test_stop_ends_the_subscription(saved, monkeypatch):
     # A reload opens the Board again; the old app must stop repainting.
     monkeypatch.setattr(vis._host, "live", vis.testing.LiveRecorder(object()).live)
     board = _board(saved).open()
-    assert vis.events.publish(CHANGED, {}) == 1
+    assert vis.bus.publish(CHANGED, {}) == 1
     board.stop()
-    assert vis.events.publish(CHANGED, {}) == 0
+    assert vis.bus.publish(CHANGED, {}) == 0
 
 
 def test_store_change_refreshes_another_runtime(saved, monkeypatch):

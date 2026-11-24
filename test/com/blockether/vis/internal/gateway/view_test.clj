@@ -16,7 +16,7 @@
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.activity.core :as activity]
-            [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.fixture-answers :as fixture]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.push :as push]
@@ -298,7 +298,7 @@
                                                        (map (fn [[sid event]]
                                                               [sid (get event "type")])))
                                                  @seen)))
-                                (expect (zero? (long (bus/raised-waiting-count child))))
+                                (expect (zero? (long (journal/raised-waiting-count child))))
                                 (finally (deliver resume true) (hi/cancel! rid "cleanup")))))))))))
   (it "shows no form that ends, or that loses its leader, before its open has a home"
       (gw-hi/install!)
@@ -335,7 +335,7 @@
                                       (expect (= reason (:reason (deref answer 2000 ::parked))))
                                       (expect (empty? (events-of seen "view.open" rid)))
                                       (expect (not (contains? @@#'gw-hi/input-homes rid)))
-                                      (expect (zero? (long (bus/raised-waiting-count child))))
+                                      (expect (zero? (long (journal/raised-waiting-count child))))
                                       (finally (deliver resume true)
                                                (hi/cancel! rid "cleanup")))))))))))))
   (it
@@ -1715,7 +1715,7 @@
    marker goes in first, so the FIFO writer has written every earlier frame."
   [sid]
   (state/append-event! sid "session.title_updated" {:title "marker"})
-  (let [f (#'bus/session-file sid)]
+  (let [f (#'journal/session-file sid)]
     (mapv #(get (wire/parse-json %) "type") (str/split-lines (slurp f)))))
 
 ;; A game patches its app on every tick. Each frame was stored in the session
@@ -1747,7 +1747,7 @@
                 (let [types (journal-types sid)]
                   (expect (some #{"session.title_updated"} types))
                   (expect (not-any? #{gateway-contract/view-patch-event} types)))
-                (bus/forget! sid)))))))
+                (journal/forget! sid)))))))
   (it "keeps the patch of a live view that is no app in the replay"
       (gw-hi/install!)
       (recorded (fn []
@@ -1867,7 +1867,7 @@
                             "view"
                             "patch_event"
                             (select-keys small ["kind" "view_id" "first_seq" "patch"]))))
-                (bus/forget! sid)))))))
+                (journal/forget! sid)))))))
   (it "keeps a large patch of a live view that is no app"
       (gw-hi/install!)
       (recorded
@@ -1943,7 +1943,7 @@
                      (expect (str/includes? (text plain) "a line of the change"))
                      (expect (not (str/includes? (text plain) "is_elided")))
                      (finally (run! #(future-cancel (:pump %)) [asked plain])
-                              (bus/forget! sid)))))))))))
+                              (journal/forget! sid)))))))))))
 
 ;; Report: a gateway restart sent the whole view of a large app to each stream two
 ;; times, only to say that its owner left and came back: 932,000 bytes each time.
@@ -1980,7 +1980,7 @@
                   (expect (document/valid-json? "view"
                                                 "open_event"
                                                 (select-keys event ["kind" "view_id" "view"]))))
-                (bus/forget! sid)))))))
+                (journal/forget! sid)))))))
   (it "keeps a large live view that is no app"
       (gw-hi/install!)
       (recorded
@@ -2049,7 +2049,7 @@
                        (expect (str/includes? (text plain) "a line of the change"))
                        (expect (not (str/includes? (text plain) "is_summary")))
                        (finally (run! #(future-cancel (:pump %)) [asked plain])
-                                (bus/forget! sid)))))))))))
+                                (journal/forget! sid)))))))))))
 
 ;; Report: a phone that showed a long review read the whole view again after each
 ;; change of one file: 955,000 characters a step.
@@ -2455,7 +2455,7 @@
                                      (coalesce ops op))]
         (buffer! 2))
       (expect (await-true #(nil? (get @buffered view-id))))
-      (bus/forget! sid))))
+      (journal/forget! sid))))
 
 (defdescribe
   app-attachments-over-http-test

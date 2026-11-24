@@ -16,7 +16,7 @@
    `tasks` gives each sweep to `internal.janitor`, the one maintenance worker of a
    process, and the worker repeats it while the process runs. `sweep-stale!` runs
    the same sweeps one time on the calling thread.
-   Journals also self-sweep inside the tailer loop (`gateway.bus/sweep!`) after a
+   Journals also self-sweep inside the tailer loop (`gateway.journal/sweep!`) after a
    single idle day, but that is a LIVENESS rule and it only runs while a daemon
    does — journals from crashed or never-restarted daemons used to stay forever.
 
@@ -60,7 +60,7 @@
   ^:dynamic
   ^{:doc
     "Test seam for the gateway journal directory. `nil` (production) resolves to
-                 `~/.vis/gateway/events`, mirroring the private `gateway.bus/events-dir` —
+                 `~/.vis/gateway/events`, mirroring the private `gateway.journal/events-dir` —
                  journals are addressed by absolute path from several processes, so that
                  location is a fixed contract rather than a user-facing configurable."}
   *events-home*

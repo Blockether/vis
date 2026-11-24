@@ -16,7 +16,7 @@
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.channel.form :as form]
-            [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.event-store :as event-store]
             [com.blockether.vis.internal.gateway.voice :as voice]
@@ -94,7 +94,7 @@
       (try (with-redefs-fn {#'state/registry registry
                             #'voice/sessions (atom {})
                             #'lp/db-info (constantly store)
-                            #'bus/publish! (fn [& _]
+                            #'journal/publish! (fn [& _]
                                              nil)
                             #'event-store/write-event! #(select-keys % ["seq" "type"])}
              (fn []
@@ -362,8 +362,8 @@
                                         #'state/append-event! (fn [& args]
                                                                 (swap! appended conj (vec args)))
                                         #'state/client-watched? (constantly watched?)
-                                        #'bus/watched-elsewhere? (constantly false)
-                                        #'bus/sync-watching! (fn [& _])
+                                        #'journal/watched-elsewhere? (constantly false)
+                                        #'journal/sync-watching! (fn [& _])
                                         #'state/hydrate-foreign-turn! (fn [_])
                                         #'state/read-replay! (fn [& _]
                                                                [])}
@@ -616,7 +616,7 @@
                     persistance/db-session-turn-stats
                     (constantly nil)
 
-                    bus/waiting-requests
+                    journal/waiting-requests
                     (constantly {"s-parked" [{"id" "req-1" "since" 1}]})]
 
         (expect (true? (get (state/soul "s-parked") "is_awaiting_input")))
@@ -2535,7 +2535,7 @@
                 live-state (:state-id (last (persistance/db-list-session-turn-states store live)))]
 
             (with-redefs [lp/db-info (constantly store)
-                          bus/live-turns (constantly {(str live-sid) (str live)})]
+                          journal/live-turns (constantly {(str live-sid) (str live)})]
 
               (expect (= 1 (state/reconcile-orphaned-turns!))))
             (expect (= :running (:status (persistance/db-read-session-turn store live-sid live))))
@@ -3410,7 +3410,7 @@
                                  [{:id "new" :rank 0} {:id "old" :rank 2} {:id "run" :rank 1}])
 
                                ;; A turn in flight is a FIELD on the row, never a place in the answer.
-                               bus/live-turns
+                               journal/live-turns
                                (constantly {"run" "turn-1"})]
 
                    (expect (= ["new" "old" "run"]
@@ -3438,10 +3438,10 @@
                                   #'lp/by-channel (constantly records)
                                   #'lp/by-id (into {} (map (juxt :id identity)) records)
                                   #'persistance/db-listed-session-turn-stats (constantly {})
-                                  #'bus/live-turns (constantly {})
-                                  #'bus/live-turn-id (constantly nil)
-                                  #'bus/session-waiting? (constantly false)
-                                  #'bus/waiting-requests (constantly {"a" [] "c" [] "d" []})
+                                  #'journal/live-turns (constantly {})
+                                  #'journal/live-turn-id (constantly nil)
+                                  #'journal/session-waiting? (constantly false)
+                                  #'journal/waiting-requests (constantly {"a" [] "c" [] "d" []})
                                   #'state/resolve-workspace (fn [_ sid]
                                                               {:root (get roots sid)})
                                   #'state/session-summary-extras (fn [rows _ _]
@@ -3563,10 +3563,10 @@
                        (constantly {"a" {:turn-count 3 :answer-count 2}})
                        #'persistance/db-session-turn-stats
                        (fn [_ _] (swap! per-session inc) nil)
-                       #'bus/live-turns (constantly {})
-                       #'bus/live-turn-id (constantly nil)
-                       #'bus/session-waiting? (constantly false)
-                       #'bus/waiting-requests (constantly {"b" []})
+                       #'journal/live-turns (constantly {})
+                       #'journal/live-turn-id (constantly nil)
+                       #'journal/session-waiting? (constantly false)
+                       #'journal/waiting-requests (constantly {"b" []})
                        #'state/resolve-workspace (fn [_ _]
                                                    (swap! resolutions inc)
                                                    {:root "/repo"})
@@ -3618,10 +3618,10 @@
                                                              (select-keys facts (map str ids)))
                        #'persistance/db-agent-info single!
                        #'persistance/db-routing-locked? single!
-                       #'bus/live-turns (constantly {})
-                       #'bus/live-turn-id (constantly nil)
-                       #'bus/session-waiting? (constantly false)
-                       #'bus/waiting-requests (constantly {"b" []})
+                       #'journal/live-turns (constantly {})
+                       #'journal/live-turn-id (constantly nil)
+                       #'journal/session-waiting? (constantly false)
+                       #'journal/waiting-requests (constantly {"b" []})
                        #'state/resolve-workspace single!
                        #'config/agent-name (constantly "vis")}
         (fn []
@@ -3657,10 +3657,10 @@
                                #'persistance/db-session-page-facts (fn [_ _]
                                                                      (throw (ex-info "store locked"
                                                                                      {})))
-                               #'bus/live-turns (constantly {})
-                               #'bus/live-turn-id (constantly nil)
-                               #'bus/session-waiting? (constantly false)
-                               #'bus/waiting-requests (constantly {})
+                               #'journal/live-turns (constantly {})
+                               #'journal/live-turn-id (constantly nil)
+                               #'journal/session-waiting? (constantly false)
+                               #'journal/waiting-requests (constantly {})
                                #'state/resolve-workspace (constantly {:root "/repo"})
                                #'config/agent-name (constantly "vis")}
                 #(state/list-sessions-page :all {:limit 2})))
@@ -3700,11 +3700,11 @@
                     lp/by-channel
                     (constantly records)
 
-                    bus/live-turns
+                    journal/live-turns
                     (fn []
                       @live)
 
-                    bus/waiting-requests
+                    journal/waiting-requests
                     (constantly {})
 
                     state/soul
@@ -3758,10 +3758,10 @@
                                   {:id "middle" :title "middle" :created-at 2000}
                                   {:id "parked" :title "parked" :created-at 1000}])
 
-                               bus/waiting-requests
+                               journal/waiting-requests
                                (constantly {"parked" [{"id" "req-1" "since" 1}]})
 
-                               bus/session-waiting?
+                               journal/session-waiting?
                                (fn [sid]
                                  (= "parked" (str sid)))
 
@@ -3793,7 +3793,7 @@
                     persistance/db-listed-session-turn-stats (constantly nil)
                     lp/by-channel (fn [_]
                                     @fleet)
-                    bus/waiting-requests (constantly {})
+                    journal/waiting-requests (constantly {})
                     state/soul (fn [sid]
                                  ;; The decoration reports the same content time the ranking read,
                                  ;; so the window is the cut a fully decorated sort would have made.
@@ -3830,7 +3830,7 @@
                     (fn [_]
                       [{:id "y" :title "y" :created-at 2000} {:id "x" :title "x" :created-at 2000}])
 
-                    bus/waiting-requests
+                    journal/waiting-requests
                     (constantly {})
 
                     state/soul
@@ -3876,8 +3876,8 @@
   (with-redefs-fn {#'lp/db-info (constantly nil)
                    #'persistance/db-listed-session-turn-stats (constantly nil)
                    #'lp/by-channel (constantly navigator-fleet)
-                   #'bus/live-turns (constantly {"busy" "turn-1"})
-                   #'bus/waiting-requests (constantly {})
+                   #'journal/live-turns (constantly {"busy" "turn-1"})
+                   #'journal/waiting-requests (constantly {})
                    #'state/soul (fn [sid]
                                   {"id" (str sid)})}
     (fn []
@@ -3891,8 +3891,8 @@
   (with-redefs-fn {#'lp/db-info (constantly nil)
                    #'persistance/db-listed-session-turn-stats (constantly nil)
                    #'lp/by-channel (constantly navigator-fleet)
-                   #'bus/live-turns (constantly {"busy" "turn-1"})
-                   #'bus/waiting-requests (constantly {})
+                   #'journal/live-turns (constantly {"busy" "turn-1"})
+                   #'journal/waiting-requests (constantly {})
                    #'state/soul (fn [sid]
                                   {"id" (str sid)})
                    #'state/search-session-matches (fn [_ _ & _scope]
@@ -3998,8 +3998,8 @@
                            #'lp/db-info (constantly store)
                            #'lp/by-channel (constantly rows)
                            #'lp/session-read-marks (constantly {})
-                           #'bus/live-turns (constantly {})
-                           #'bus/waiting-requests (constantly {})
+                           #'journal/live-turns (constantly {})
+                           #'journal/waiting-requests (constantly {})
                            #'state/soul (fn [sid]
                                           {"id" (str sid)})}
             (fn []
@@ -4077,8 +4077,8 @@
                              #'lp/by-channel (constantly [{:id "used"
                                                            :title "Refactor the pager"
                                                            :created-at 3000}])
-                             #'bus/live-turns (constantly {})
-                             #'bus/waiting-requests (constantly {})
+                             #'journal/live-turns (constantly {})
+                             #'journal/waiting-requests (constantly {})
                              #'state/soul (fn [sid]
                                             {"id" (str sid)})}
               (fn []
@@ -4103,8 +4103,8 @@
                                               :latest-turn-at (java.util.Date. 3000)
                                               :first-request
                                               "Refactor the pager so it stops draining"})
-                                 #'bus/live-turn-id (constantly nil)
-                                 #'bus/session-waiting? (constantly false)
+                                 #'journal/live-turn-id (constantly nil)
+                                 #'journal/session-waiting? (constantly false)
                                  #'smodel/pending-pref (constantly [false nil])}
                   (fn []
                     (state/soul "used")))]
@@ -4127,8 +4127,8 @@
                                  #'persistance/db-session-turn-stats
                                  (constantly
                                    {:turn-count 3 :answer-count 3 :latest-turn-interrupted? true})
-                                 #'bus/live-turn-id (constantly nil)
-                                 #'bus/session-waiting? (constantly false)
+                                 #'journal/live-turn-id (constantly nil)
+                                 #'journal/session-waiting? (constantly false)
                                  #'smodel/pending-pref (constantly [false nil])}
                   (fn []
                     (state/soul "s-killed")))]
@@ -4142,8 +4142,8 @@
                                  #'persistance/db-session-turn-stats
                                  (constantly
                                    {:turn-count 3 :answer-count 3 :latest-turn-interrupted? false})
-                                 #'bus/live-turn-id (constantly nil)
-                                 #'bus/session-waiting? (constantly false)
+                                 #'journal/live-turn-id (constantly nil)
+                                 #'journal/session-waiting? (constantly false)
                                  #'smodel/pending-pref (constantly [false nil])}
                   (fn []
                     (state/soul "s-idle")))]
@@ -4156,8 +4156,8 @@
                                  #'persistance/db-session-turn-stats
                                  (constantly
                                    {:turn-count 3 :answer-count 3 :latest-turn-failed? true})
-                                 #'bus/live-turn-id (constantly nil)
-                                 #'bus/session-waiting? (constantly false)
+                                 #'journal/live-turn-id (constantly nil)
+                                 #'journal/session-waiting? (constantly false)
                                  #'smodel/pending-pref (constantly [false nil])}
                   (fn []
                     (state/soul "s-failed")))]
@@ -4170,8 +4170,8 @@
       (let [row (with-redefs-fn {#'lp/by-id (constantly {:id "s-bare" :channel :api :title "t"})
                                  #'lp/db-info (constantly nil)
                                  #'persistance/db-session-turn-stats (constantly nil)
-                                 #'bus/live-turn-id (constantly nil)
-                                 #'bus/session-waiting? (constantly false)
+                                 #'journal/live-turn-id (constantly nil)
+                                 #'journal/session-waiting? (constantly false)
                                  #'smodel/pending-pref (constantly [false nil])}
                   (fn []
                     (state/soul "s-bare")))]
@@ -4190,8 +4190,8 @@
                          (with-redefs-fn {#'lp/by-id (constantly session)
                                           #'lp/db-info (constantly nil)
                                           #'persistance/db-session-turn-stats (constantly nil)
-                                          #'bus/live-turn-id (constantly nil)
-                                          #'bus/session-waiting? (constantly false)
+                                          #'journal/live-turn-id (constantly nil)
+                                          #'journal/session-waiting? (constantly false)
                                           #'smodel/pending-pref (constantly [false nil])}
                            (fn []
                              (state/soul (:id session)))))
@@ -4230,10 +4230,10 @@
                       :created-at 2000
                       :archived-at #inst "2024-05-01T10:00:00.000Z"}])
 
-                  bus/waiting-requests
+                  journal/waiting-requests
                   (constantly {"filed" [{:id "req-1" :since 1}]})
 
-                  bus/session-waiting?
+                  journal/session-waiting?
                   (fn [sid]
                     (= "filed" (str sid)))
 
@@ -4287,10 +4287,10 @@
                       :group-id "active"
                       :archived-at #inst "2024-05-01T10:00:00.000Z"}])
 
-                  bus/waiting-requests
+                  journal/waiting-requests
                   (constantly {"filed" [{:id "req-1" :since 1}]})
 
-                  bus/session-waiting?
+                  journal/session-waiting?
                   (fn [sid]
                     (= "filed" (str sid)))
 
@@ -4348,10 +4348,10 @@
                       :group-id "active"
                       :archived-at #inst "2024-05-01T10:00:00.000Z"}])
 
-                  bus/waiting-requests
+                  journal/waiting-requests
                   (constantly {})
 
-                  bus/session-waiting?
+                  journal/session-waiting?
                   (constantly false)
 
                   state/soul
@@ -4387,11 +4387,11 @@
                    ;; A session this gateway does not know is not archived - its 404 says so.
                    (expect (nil? (state/session-archived? "nobody")))))
              (it "counts a running turn, a queued turn and an open prompt as work in flight"
-                 (with-redefs [bus/live-turn-id
+                 (with-redefs [journal/live-turn-id
                                (fn [sid]
                                  (when (= "running" (str sid)) "turn-1"))
 
-                               bus/session-waiting?
+                               journal/session-waiting?
                                (fn [sid]
                                  (= "asked" (str sid)))
 
@@ -4409,11 +4409,11 @@
                                (fn [gid]
                                  (when (= "shelf" (str gid)) ["idle-one" "running" "idle-two"]))
 
-                               bus/live-turn-id
+                               journal/live-turn-id
                                (fn [sid]
                                  (when (= "running" (str sid)) "turn-1"))
 
-                               bus/session-waiting?
+                               journal/session-waiting?
                                (constantly false)
 
                                state/list-queued-turns
@@ -4429,20 +4429,20 @@
       (doseq [status ["completed" "failed" "cancelled" "suspended"]]
         (with-redefs-fn {#'state/registry (atom {"peer" {:turns {"ended" {:status status}}}})
                          #'persistance/db-get-session (constantly {:id "peer"})
-                         #'bus/live-turns (constantly {"peer" "ended"})}
+                         #'journal/live-turns (constantly {"peer" "ended"})}
           #(expect (true? (#'state/council-wake-eligible? ::db "peer")) status))))
   (it "does not treat a different live turn or an unfinished local turn as idle"
       (doseq [[status marker] [["completed" "elsewhere"] ["running" "ended"]]]
         (with-redefs-fn {#'state/registry (atom {"peer" {:turns {"ended" {:status status}}}})
                          #'persistance/db-get-session (constantly {:id "peer"})
-                         #'bus/live-turns (constantly {"peer" marker})}
+                         #'journal/live-turns (constantly {"peer" marker})}
           #(expect (false? (#'state/council-wake-eligible? ::db "peer")) [status marker]))))
   (it "still refuses a paused queue or a current local turn"
       (doseq [held [{:queue-paused true} {:current-turn "next"}]]
         (with-redefs-fn {#'state/registry (atom {"peer" (assoc held
                                                           :turns {"ended" {:status "completed"}})})
                          #'persistance/db-get-session (constantly {:id "peer"})
-                         #'bus/live-turns (constantly {"peer" "ended"})}
+                         #'journal/live-turns (constantly {"peer" "ended"})}
           #(expect (false? (#'state/council-wake-eligible? ::db "peer")) held)))))
 
 ;; Regression, reported in Vis session 74b502e2: a 429 failed the leader turn. Then each of its
@@ -4588,10 +4588,10 @@
                                         #'lp/by-id (constantly
                                                      {:id "stale" :channel :cli :title "Stalled"})
                                         #'lp/db-info (constantly nil)
-                                        #'bus/live-turn-id (constantly "T-1")
-                                        #'bus/retract-live! (fn [sid]
+                                        #'journal/live-turn-id (constantly "T-1")
+                                        #'journal/retract-live! (fn [sid]
                                                               (swap! retracted conj (str sid)))
-                                        #'bus/session-waiting? (constantly false)
+                                        #'journal/session-waiting? (constantly false)
                                         #'smodel/pending-pref (constantly [false nil])}
                          (fn []
                            (state/soul "stale")))]
@@ -4605,10 +4605,10 @@
                              {#'state/registry (atom {})
                               #'lp/by-id (constantly {:id "sib" :channel :cli :title "Elsewhere"})
                               #'lp/db-info (constantly nil)
-                              #'bus/live-turn-id (constantly "T-9")
-                              #'bus/retract-live! (fn [_]
+                              #'journal/live-turn-id (constantly "T-9")
+                              #'journal/retract-live! (fn [_]
                                                     (throw (ex-info "must not retract" {})))
-                              #'bus/session-waiting? (constantly false)
+                              #'journal/session-waiting? (constantly false)
                               #'smodel/pending-pref (constantly [false nil])}
                              (fn []
                                (state/soul "sib")))]
@@ -4630,8 +4630,8 @@
                          #'persistance/db-listed-session-turn-stats (constantly nil)
                          #'lp/by-channel (constantly fleet)
                          #'state/session-project-root (constantly "/repo/a")
-                         #'bus/live-turns (constantly {})
-                         #'bus/waiting-requests (constantly {})
+                         #'journal/live-turns (constantly {})
+                         #'journal/waiting-requests (constantly {})
                          #'state/soul (fn [sid]
                                         {"id" (str sid)})}
           (fn []
@@ -4672,8 +4672,8 @@
                               #'lp/by-channel (constantly fleet)
                               #'state/session-project-root (fn [_ sid]
                                                              (get roots (str sid)))
-                              #'bus/live-turns (constantly {})
-                              #'bus/waiting-requests (constantly {})
+                              #'journal/live-turns (constantly {})
+                              #'journal/waiting-requests (constantly {})
                               #'state/soul (fn [sid]
                                              {"id" (str sid)})}
                (fn []
@@ -4700,8 +4700,8 @@
                                      [{:id "aa11" :title "One" :created-at 300 :project-id "p1"}
                                       {:id "aa22" :title "Two" :created-at 200 :project-id "p2"}
                                       {:id "bb33" :title "Three" :created-at 100 :project-id "p1"}])
-                   #'bus/live-turns (constantly {})
-                   #'bus/waiting-requests (constantly {})
+                   #'journal/live-turns (constantly {})
+                   #'journal/waiting-requests (constantly {})
                    #'state/soul (fn [sid]
                                   {"id" (str sid)})}
     (fn []
@@ -4740,8 +4740,8 @@
                                                 {:id "rooted-2" :title "Three" :created-at 100}])
                    #'state/session-project-root (fn [_ sid]
                                                   (when-not (= "loose" (str sid)) "/repo/a"))
-                   #'bus/live-turns (constantly {})
-                   #'bus/waiting-requests (constantly {})
+                   #'journal/live-turns (constantly {})
+                   #'journal/waiting-requests (constantly {})
                    #'state/soul (fn [sid]
                                   {"id" (str sid)})}
     f))
@@ -4783,8 +4783,8 @@
                                       {:id "filed1" :title "Two" :created-at 300 :group-id "g1"}
                                       {:id "loose2" :title "Three" :created-at 200}
                                       {:id "filed2" :title "Four" :created-at 100 :group-id "g2"}])
-                   #'bus/live-turns (constantly {})
-                   #'bus/waiting-requests (constantly {})
+                   #'journal/live-turns (constantly {})
+                   #'journal/waiting-requests (constantly {})
                    #'state/soul (fn [sid]
                                   {"id" (str sid)})}
     (fn []
@@ -4863,10 +4863,10 @@
                      #'lp/by-channel (constantly records)
                      #'lp/by-id (into {} (map (juxt :id identity)) records)
                      #'persistance/db-listed-session-turn-stats (constantly {})
-                     #'bus/live-turns (constantly {})
-                     #'bus/live-turn-id (constantly nil)
-                     #'bus/waiting-requests (constantly {})
-                     #'bus/session-waiting? (constantly false)
+                     #'journal/live-turns (constantly {})
+                     #'journal/live-turn-id (constantly nil)
+                     #'journal/waiting-requests (constantly {})
+                     #'journal/session-waiting? (constantly false)
                      #'state/resolve-workspace (fn [_db sid]
                                                  (resolve sid))
                      #'config/agent-name (constantly "vis")}
@@ -4915,8 +4915,8 @@
                      #'persistance/db-listed-session-turn-stats (constantly {})
                      #'lp/by-channel (constantly records)
                      #'lp/session-read-marks (constantly (or marks {}))
-                     #'bus/live-turns (constantly (or live {}))
-                     #'bus/waiting-requests (constantly (or waiting {}))
+                     #'journal/live-turns (constantly (or live {}))
+                     #'journal/waiting-requests (constantly (or waiting {}))
                      #'state/resolve-workspace (fn [_db sid]
                                                  (swap! resolutions inc)
                                                  {:root (get roots sid)})}
@@ -4944,8 +4944,8 @@
                                                            {})
                      #'lp/by-channel (constantly records)
                      #'lp/session-read-marks (constantly {})
-                     #'bus/live-turns (constantly {})
-                     #'bus/waiting-requests (constantly {})
+                     #'journal/live-turns (constantly {})
+                     #'journal/waiting-requests (constantly {})
                      #'state/resolve-workspace (fn [_db sid]
                                                  {:root (get roots sid)})}
       (fn []
@@ -5212,7 +5212,7 @@
           saved
           @registry]
 
-      (with-redefs [bus/publish! (fn [& _])]
+      (with-redefs [journal/publish! (fn [& _])]
         (try
           (reset! registry {sid {:next-seq 0 :current-turn tid :turns {tid {:turn_id tid}}}})
           (state/append-event! sid "turn.started" {:turn_id tid :request "Inspect"})
@@ -5277,7 +5277,7 @@
           saved
           @registry]
 
-      (with-redefs [bus/publish! (fn [& _])]
+      (with-redefs [journal/publish! (fn [& _])]
         (try
           (reset! registry {sid {:next-seq 0 :current-turn tid :turns {tid {:turn_id tid}}}})
           (state/append-event! sid "turn.started" {:turn_id tid :request "Wait"})
@@ -5714,7 +5714,7 @@
                                                 (deliver entered true)
                                                 (deref release 5000 nil)
                                                 (deliver returned true))
-                            #'bus/waiting-requests (fn []
+                            #'journal/waiting-requests (fn []
                                                      (if @waiting? {sid [{"id" "ask-1"}]} {}))}
              (fn []
                (try (#'state/launch-turn-worker! sid tid "first" {:cancel-token token})
@@ -6457,12 +6457,12 @@
           subs-n
           4]
 
-      (with-redefs [bus/events-dir (fn []
+      (with-redefs [journal/events-dir (fn []
                                      tmp)]
-        (try (spit (#'bus/session-file sid)
+        (try (spit (#'journal/session-file sid)
                    (str/join (map #(str (wire/json-str %) "\n")
                                   [{:_producer (str (java.util.UUID/randomUUID))
-                                    :_pid (bus/producer-pid) ; a LIVE producer
+                                    :_pid (journal/producer-pid) ; a LIVE producer
                                     :_store true
                                     :schema 1
                                     :seq 5
@@ -6483,7 +6483,7 @@
              (expect
                (= 1 (count (filter #(= "turn.started" (get % "type")) (:events (get @reg sid))))))
              (expect (= "T-race" (:current-turn (get @reg sid))))
-             (finally (swap! reg dissoc sid) (.delete (#'bus/session-file sid)))))))
+             (finally (swap! reg dissoc sid) (.delete (#'journal/session-file sid)))))))
   (it
     "does not mirror again a turn that the tailer delivered after the claim"
     (let [tmp
@@ -6497,19 +6497,19 @@
           reg
           @#'state/registry]
 
-      (with-redefs [bus/events-dir
+      (with-redefs [journal/events-dir
                     (fn []
                       tmp)
 
-                    ;; The step between the claim and `bus/hydrate!`: one tailer tick runs here.
+                    ;; The step between the claim and `journal/hydrate!`: one tailer tick runs here.
                     state/resumable-parked-rows
                     (fn [_]
-                      (#'bus/drain-file! sid (#'bus/session-file sid))
+                      (#'journal/drain-file! sid (#'journal/session-file sid))
                       [])]
 
-        (try (spit (#'bus/session-file sid)
+        (try (spit (#'journal/session-file sid)
                    (str (wire/json-str {:_producer (str (java.util.UUID/randomUUID))
-                                        :_pid (bus/producer-pid)
+                                        :_pid (journal/producer-pid)
                                         :_store true
                                         :schema 1
                                         :seq 5
@@ -6525,7 +6525,7 @@
              (expect
                (= 1 (count (filter #(= "turn.started" (get % "type")) (:events (get @reg sid))))))
              (expect (= "T-tailer" (:current-turn (get @reg sid))))
-             (finally (swap! reg dissoc sid) (.delete (#'bus/session-file sid))))))))
+             (finally (swap! reg dissoc sid) (.delete (#'journal/session-file sid))))))))
 
 (defdescribe transcript-byte-budget-test
              "Windowed transcript pages stay bounded even when individual turns are large."
@@ -7065,7 +7065,7 @@
             saved
             @registry]
 
-        (try (with-redefs [bus/publish! (fn [& _]
+        (try (with-redefs [journal/publish! (fn [& _]
                                           nil)]
                (let [event (state/append-event! sid
                                                 "turn.delta"
@@ -7099,7 +7099,7 @@
           payload
           {:bug9 true :rows (vec (repeat 200 {:a 1 :b "x" :nested {:c [1 2 3]}}))}]
 
-      (try (with-redefs [bus/publish!
+      (try (with-redefs [journal/publish!
                          (fn [& _]
                            nil)
 
@@ -8543,7 +8543,7 @@
 
                     ;; No subscriber, so this process's registry holds no entry for the
                     ;; session at all — the index is the only thing that knows.
-                    bus/live-turns
+                    journal/live-turns
                     (constantly {"s-foreign" "T-foreign"})]
 
         (let [row (state/soul "s-foreign")]
@@ -8560,7 +8560,7 @@
                     persistance/db-session-turn-stats
                     (constantly nil)
 
-                    bus/live-turns
+                    journal/live-turns
                     (constantly {})]
 
         (let [row (state/soul "s-quiet")]
@@ -8767,8 +8767,8 @@
                                          [{:id "s1"} {:id "s2"} {:id "s3"}])
                        #'state/session-project-root (fn [_ sid]
                                                       (get roots (str sid)))
-                       #'bus/live-turns (constantly {"s1" "t1"})
-                       #'bus/waiting-requests (constantly {"s3" {}})}
+                       #'journal/live-turns (constantly {"s1" "t1"})
+                       #'journal/waiting-requests (constantly {"s3" {}})}
         (fn []
           (let [overview (state/projects-overview)
                 by-root (into {}
@@ -8809,8 +8809,8 @@
                                                    {"s1" 2 "s2" 1})
                          #'state/session-project-root (fn [_ sid]
                                                         (get roots (str sid)))
-                         #'bus/live-turns (constantly {})
-                         #'bus/waiting-requests (constantly {})}
+                         #'journal/live-turns (constantly {})
+                         #'journal/waiting-requests (constantly {})}
           (fn []
             (let [overview (state/projects-overview)
                   by-root (into {}
@@ -8838,8 +8838,8 @@
                        #'lp/by-channel (constantly [{:id "s1"} {:id "s2"} {:id "s3"}])
                        #'lp/session-read-marks (constantly {"s1" 1 "s2" 2 "s3" 1})
                        #'state/session-project-root (constantly "/repo/a")
-                       #'bus/live-turns (constantly {"s1" "council" "s3" "council"})
-                       #'bus/waiting-requests (constantly {})}
+                       #'journal/live-turns (constantly {"s1" "council" "s3" "council"})
+                       #'journal/waiting-requests (constantly {})}
         (fn []
           (let [overview (state/projects-overview)]
             (expect (= 2 (:live_count overview)))
@@ -8864,8 +8864,8 @@
                          ;; s4 stopped too, but its reader is caught up: no news.
                          #'lp/session-read-marks (constantly {"s1" 1 "s2" 1 "s3" 1 "s4" 1})
                          #'state/session-project-root (constantly "/repo/a")
-                         #'bus/live-turns (constantly {})
-                         #'bus/waiting-requests (constantly {})}
+                         #'journal/live-turns (constantly {})
+                         #'journal/waiting-requests (constantly {})}
           (fn []
             (let [overview (state/projects-overview)]
               (expect (= 3 (get (first (:projects overview)) "unread_count")))
@@ -8896,9 +8896,9 @@
                                            @rows)
                          #'state/session-project-root (fn [_ sid]
                                                         (str "/repo/" sid))
-                         #'bus/live-turns (fn []
+                         #'journal/live-turns (fn []
                                             @live)
-                         #'bus/waiting-requests (constantly {})}
+                         #'journal/waiting-requests (constantly {})}
           (fn []
             (let [roots #(mapv (fn [p]
                                  (get p "root"))
@@ -8918,8 +8918,8 @@
                          [{:id "p-empty" :name "Empty" :workspace-root "/repo/empty"}])
                        #'persistance/db-listed-session-turn-stats (constantly {})
                        #'lp/by-channel (constantly [])
-                       #'bus/live-turns (constantly {})
-                       #'bus/waiting-requests (constantly {})}
+                       #'journal/live-turns (constantly {})
+                       #'journal/waiting-requests (constantly {})}
         (fn []
           (let [overview (state/projects-overview)]
             (expect (= 1 (:project_count overview)))
@@ -8936,8 +8936,8 @@
   (it "answers empty totals, never an exception, when nothing is persisted"
       (with-redefs-fn {#'lp/db-info (constantly nil)
                        #'lp/by-channel (constantly [])
-                       #'bus/live-turns (constantly {})
-                       #'bus/waiting-requests (constantly {})}
+                       #'journal/live-turns (constantly {})
+                       #'journal/waiting-requests (constantly {})}
         (fn []
           (let [overview (state/projects-overview)]
             (expect (= [] (:projects overview)))
@@ -8952,8 +8952,8 @@
   "The fleet feed's entire vocabulary: one frame per session whose state changed,
    and nothing at all while the busy fleet stands still."
   (it "reads the fleet from the machine's markers, never from this process's registry"
-      (with-redefs-fn {#'bus/live-turns (constantly {"s1" "t1"})
-                       #'bus/waiting-requests (constantly {"s2" [{"id" "r1"}]})}
+      (with-redefs-fn {#'journal/live-turns (constantly {"s1" "t1"})
+                       #'journal/waiting-requests (constantly {"s2" [{"id" "r1"}]})}
         (fn []
           (let [snapshot (state/fleet-snapshot)]
             (expect (= {"is_live" true
@@ -9162,8 +9162,8 @@
                    #'lp/by-channel (constantly
                                      [{:id "read1" :title "One" :created-at 300}
                                       {:id "filed1" :title "Two" :created-at 100 :group-id "g1"}])
-                   #'bus/live-turns (constantly {})
-                   #'bus/waiting-requests (constantly {})
+                   #'journal/live-turns (constantly {})
+                   #'journal/waiting-requests (constantly {})
                    #'state/soul (fn [sid]
                                   {"id" (str sid)})}
     (fn []
@@ -9736,11 +9736,11 @@
             (with-redefs [lp/db-info
                           (constantly store)
 
-                          bus/events-dir
+                          journal/events-dir
                           (fn []
                             tmp)]
 
-              (spit (#'bus/session-file sid)
+              (spit (#'journal/session-file sid)
                     (str (wire/json-str {:_producer "stopped-gateway"
                                          :_pid 2147483646
                                          :_store true
@@ -9824,11 +9824,11 @@
           (with-redefs [lp/db-info
                         (constantly store)
 
-                        bus/events-dir
+                        journal/events-dir
                         (fn []
                           tmp)]
 
-            (spit (#'bus/session-file sid)
+            (spit (#'journal/session-file sid)
                   (str (wire/json-str {:_producer "sibling"
                                        :_pid (.pid parent)
                                        :_store true

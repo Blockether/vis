@@ -13,7 +13,6 @@ import atexit
 import base64
 import json
 import os
-import re
 import secrets
 import shutil
 import signal
@@ -273,26 +272,18 @@ def notify(
     return None
 
 
-# -- Events -------------------------------------------------------------------
-# Outside Vis there is one process, so the bus is a dict. A publish calls each
-# matching subscriber at once, in the calling thread, in subscribe order.
+# -- Bus ----------------------------------------------------------------------
+# Outside Vis there is one process and no session, so the bus is a dict. A publish
+# calls each matching subscriber at once, in the calling thread, in subscribe order.
+# `vis.bus` checks the names, the scope and the size before it calls here.
 
 _SUBSCRIBERS = {}
 
 
-def _event_name(kind, text):
-    rule = _contracts.definition("gateway", f"extension_event_{kind}")
-    if (
-        not isinstance(text, str)
-        or len(text) > rule["maxLength"]
-        or not re.fullmatch(rule["pattern"], text)
-    ):
-        raise ValueError(f"vis.events: {kind} {text!r} is not valid")
-    return text
-
-
-def _event_matches(pattern, topic):
+def _bus_matches(pattern, topic):
     """True when `topic` is one of the topics of `pattern`, as in the engine."""
+    if (pattern.split(".", 1)[0] == "vis") != (topic.split(".", 1)[0] == "vis"):
+        return False
     words, topic_words = pattern.split("."), topic.split(".")
     for index, word in enumerate(words):
         if word == "#":
@@ -302,39 +293,33 @@ def _event_matches(pattern, topic):
     return len(words) == len(topic_words)
 
 
-def events_publish(topic, data_json):
-    _event_name("topic", topic)
-    limit = _contracts.definition("gateway", "extension_event_data_bytes")["maximum"]
-    if len(str(data_json).encode("utf-8")) > limit:
-        raise ValueError(
-            f"vis.events: the data of an event is larger than {limit} bytes of JSON"
-        )
-    event = {
+def bus_publish(topic, data_json, scope):
+    signal = {
         "topic": topic,
         "data": json.loads(data_json),
+        "scope": scope,
         "published_at_ms": int(time.time() * 1000),
     }
     targets = [
         listener
-        for pattern, listener in list(_SUBSCRIBERS.values())
-        if _event_matches(pattern, topic)
+        for pattern, listener, wanted in list(_SUBSCRIBERS.values())
+        if wanted in (None, scope) and _bus_matches(pattern, topic)
     ]
     for listener in targets:
         try:
-            listener(event)
+            listener(signal)
         except Exception as error:
-            log("warn", f"An extension event subscriber failed: {error}")
+            log("warn", f"A signal subscriber failed: {error}")
     return len(targets)
 
 
-def events_subscribe(pattern, listener):
-    _event_name("pattern", pattern)
+def bus_subscribe(pattern, listener, scope):
     subscription_id = uuid.uuid4().hex
-    _SUBSCRIBERS[subscription_id] = (pattern, listener)
+    _SUBSCRIBERS[subscription_id] = (pattern, listener, scope)
     return subscription_id
 
 
-def events_unsubscribe(subscription_id):
+def bus_unsubscribe(subscription_id):
     return _SUBSCRIBERS.pop(str(subscription_id), None) is not None
 
 
@@ -1804,9 +1789,9 @@ _IMPLEMENTATIONS = {
     "state_keys": state_keys,
     "log": log,
     "notify": notify,
-    "events_publish": events_publish,
-    "events_subscribe": events_subscribe,
-    "events_unsubscribe": events_unsubscribe,
+    "bus_publish": bus_publish,
+    "bus_subscribe": bus_subscribe,
+    "bus_unsubscribe": bus_unsubscribe,
     "shell": shell,
     "jailed_shell": jailed_shell,
     "call_env": call_env,

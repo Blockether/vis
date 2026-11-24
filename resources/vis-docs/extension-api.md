@@ -25,8 +25,8 @@ contracts, callbacks, and host operations.
   version that Vis bundles](#editor-types).
 - **A jailed tool cannot find its JDK, package cache, or launcher.** Declare [toolchain
   grants](#toolchain-grants).
-- **A tool must tell your global app or another session about a change.** Publish an
-  [event](#events-between-processes).
+- **A tool must tell your global app or another session about a change.** Publish a
+  [signal](#signals-between-processes).
 
 For a complete entry file, start with the [tutorial](extending.md). For design and test
 guidance, read [Extension design](extension-design.md).
@@ -1266,62 +1266,83 @@ A global app follows these rules:
   the person opens the app again.
 - The button lists the app again after the person closed the real app.
 
-## Events between processes
+## Signals between processes
 
-```python
-vis.events.publish(topic, data=None)
-vis.events.subscribe(pattern, handler)
-```
-
-The tools of each session and the global app of an extension run in different Python processes.
-`vis.events` sends a message from one of these processes to the others in the same gateway. The
-board extension uses it. A tool publishes `board.changed` after each change, and the open board
-repaints at once.
+Use `vis.bus` to tell your app or another session about a change. For example, a Board tool
+publishes a signal after it moves an issue. The open hook of the global app subscribes so the app
+can show the change.
 
 ```python
 import blockether.vis.extension as vis
 
 
 def open_board(app):
-    subscription = vis.events.subscribe("board.#", lambda event: repaint(event.data))
-    ...
+    vis.bus.subscribe("board.issue.moved", lambda signal: repaint_board(signal.data))
+    # Open the app here.
 
 
 @vis.tool
 def move_issue(issue: str, column: str) -> str:
     """Move an issue to another column."""
-    ...
-    vis.events.publish("board.issue.moved", {"issue": issue, "column": column})
+    save_move(issue, column)
+    vis.bus.publish("board.issue.moved", {"issue": issue, "column": column})
     return column
 ```
 
-Topics and patterns follow these rules:
+```text
+vis.bus.publish(topic, data=None, *, scope="global") -> int
+vis.bus.subscribe(pattern, handler, *, scope=None) -> Subscription
+```
 
-- A topic is one or more words, joined with `.`. A word has the characters `a` to `z`, `0` to
-  `9`, `_`, and `-`. A topic has at most 200 characters.
-- In a pattern, `*` matches one word. A last word `#` matches zero or more words. `board.#`
-  matches `board`, `board.changed`, and `board.issue.moved`.
-- `data` is JSON data of at most 64 KiB. `publish` raises `ValueError` for a bad topic or for
-  data that is too large. It raises `TypeError` for data that is not JSON data.
+`publish` returns the number of matching subscriptions without waiting for their handlers.
+`handler` receives one `vis.Signal`. Its fields are `topic`, `data`, `scope`, and
+`published_at_ms`. The fields cannot change after Vis creates the signal.
 
-Delivery follows these rules:
+### Scopes
 
-- Each extension has its own topics. A subscriber gets only the events of its own extension.
-- `publish` returns the number of subscriptions that get the event. It does not wait for them.
-- `handler` gets a `vis.Event` with `topic`, `data`, and `published_at_ms`. Each subscription
-  gets its events in publish order, on a thread of Vis.
-- A subscription keeps at most 1000 events that wait for its handler. Vis drops the next events
-  and writes a warning to the log.
-- An error in `handler` goes to the Vis log. Later events still come.
-- Events stay in memory. A subscriber gets only the events that come after its subscription.
-- Only an extension callback can publish or subscribe, such as a tool, a hook, or the open
-  function of an app. A thread that your extension started cannot.
-- Subscribe in the callback that needs the events, not at import. Each process that loads the
-  extension runs its imports.
-- A subscription ends at `close()`, at the end of a `with` block, or when the extension
-  reloads.
-- Outside Vis, `publish` calls each matching handler at once, in the calling thread. Tests can
-  use this.
+Each extension has its own topics. Choose a publish scope:
+
+- `"global"` reaches matching subscribers of your extension in all sessions and the global app.
+- `"session"` reaches only matching subscribers of your extension in the publisher's session.
+
+A subscription with an explicit scope receives only signals with that scope. With `scope=None`,
+it receives global signals and signals of its own session, if it has one. A callback without a
+session, such as the open hook of a global app, gets `ValueError` if it uses `scope="session"`.
+
+### Signals of Vis
+
+Only Vis can publish a topic whose first word is `vis`. These signals have global scope. To receive
+one, use a pattern whose first word is `vis`, such as `vis.automation.run.*`. The pattern `#` does
+not receive signals of Vis.
+
+| Topic | Data | When Vis publishes |
+| --- | --- | --- |
+| `vis.automation.changed` | `automation_id` if only one automation changed | Stored automations or their due work changed. |
+| `vis.automation.run.<status>` | `automation_id`, `run_id`, `status`, `session_id` | A run gets a new status. |
+| `vis.session.deleted` | `session_id` | Vis deletes a session. |
+
+The run statuses are `queued`, `running`, `completed`, `failed`, `cancelled`, `skipped`, and
+`unknown`. The last word of the topic matches `status`. `session_id` can be `None` for a run.
+
+### Limits and delivery
+
+- Join topic words with `.`. Start each word with `a` to `z` or `0` to `9`. Later characters
+  can also be `_` or `-`. Topics and patterns have at most 200 characters.
+- In a pattern, `*` matches one word. A final `#` matches zero or more words. For example,
+  `board.#` matches `board` and `board.issue.moved`.
+- Give `data` as a JSON value. Its UTF-8 encoding can use at most 64 KiB.
+- A bad topic, pattern, or scope raises `ValueError`. So does data over the size limit or a
+  request to publish a topic whose first word is `vis`. Data that cannot be encoded as JSON
+  or a handler that is not callable raises `TypeError`.
+- Publish and subscribe in extension callbacks, such as tools or app open hooks. Do not call
+  these methods on import or from a thread that your extension started.
+- Vis keeps signals in memory and does not replay them. Each subscription gets signals in
+  publish order. If 1000 signals are pending for a subscription, Vis drops the next signal for
+  that subscription and logs a warning. Vis also logs handler errors and continues delivery.
+- `Subscription.close()` ends the subscription and returns `True` if it was open. A
+  `with` block or an extension reload also ends the subscription.
+- Outside Vis, `publish` calls matching handlers in the calling thread. Use this to test your
+  handler without starting Vis.
 
 ## Op hooks
 

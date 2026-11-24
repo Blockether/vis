@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.gateway.session-recency-test
   (:require [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.server.sessions :as sessions]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
@@ -44,10 +44,10 @@
                               (constantly [{:id "sent" :title "sent" :created-at 3000}
                                            {:id "answered" :title "answered" :created-at 5000}])
 
-                              bus/live-turns
+                              journal/live-turns
                               (constantly {})
 
-                              bus/waiting-requests
+                              journal/waiting-requests
                               (constantly {})
 
                               state/soul

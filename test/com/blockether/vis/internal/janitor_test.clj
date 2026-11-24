@@ -4,7 +4,8 @@
 
    The worker belongs to the whole process, so other tests can have tasks on it.
    Each test here uses its own ids and waits only for its own tasks."
-  (:require [com.blockether.vis.internal.janitor :as janitor]
+  (:require [com.blockether.vis.internal.bus :as bus]
+            [com.blockether.vis.internal.janitor :as janitor]
             [lazytest.core :refer [defdescribe expect it throws?]]
             [taoensso.telemere :as tel]))
 
@@ -156,3 +157,118 @@
                                :error
                                ex-message)))
            (finally (tel/remove-handler! ::janitor-test))))))
+
+(defn- drain!
+  "Wait for the janitor to finish all immediate work already on its queue."
+  []
+  (let [done (promise)]
+    (janitor/submit! {:id (random-uuid) :run #(do (deliver done true) nil)})
+    (expect (true? (wait-for done)))))
+
+(defdescribe
+  signal-trigger-test
+  (it "runs on a matching signal without moving or cancelling the repeating timer"
+      (let [runs (atom 0)
+            first-run (promise)
+            timer-run (promise)
+            third-run (promise)
+            start (System/nanoTime)]
+        (janitor/submit! {:id ::triggered
+                          :on "vis.session.*"
+                          :delay-ms 1000
+                          :every-ms 20
+                          :run (fn []
+                                 (let [n (swap! runs inc)]
+                                   (case n
+                                     1 (deliver first-run (System/nanoTime))
+                                     2 (deliver timer-run (System/nanoTime))
+                                     3 (deliver third-run true)
+                                     nil))
+                                 nil)})
+        (try
+          (bus/publish! "vis.session.deleted" {"session_id" "trigger-test"})
+          (let [first-at (wait-for first-run)
+                timer-at (wait-for timer-run)]
+            (expect (and (number? first-at) (< (- (long first-at) start) 900000000)))
+            (expect (and (number? timer-at) (<= 1000000000 (- (long timer-at) start)))))
+          (expect (true? (wait-for third-run)))
+          (finally (janitor/cancel! ::triggered)))))
+  (it "coalesces signals while work waits and while it runs on the janitor thread"
+      (let [subscribed (promise)
+            subscribe! bus/subscribe!
+            blocked (promise)
+            unblock (promise)
+            started (promise)
+            release (promise)
+            threads (atom [])]
+        (janitor/submit! {:id ::blocker
+                          :run #(do (deliver blocked (Thread/currentThread)) (wait-for unblock) nil)})
+        (try
+          (let [janitor-thread (wait-for blocked)]
+            (with-redefs [bus/subscribe! (fn [pattern receive]
+                                          (deliver subscribed receive)
+                                          (subscribe! {:owner :vis} pattern receive))]
+              (janitor/submit! {:id ::batch
+                                :on "vis.session.deleted"
+                                :delay-ms 60000
+                                :run (fn []
+                                       (when (= 1 (count (swap! threads conj (Thread/currentThread))))
+                                         (deliver started true)
+                                         (wait-for release))
+                                       nil)}))
+            (let [receive (deref subscribed 0 nil)]
+              (expect (ifn? receive))
+              (when receive (dotimes [_ 20] (receive nil)))
+              (expect (empty? @threads))
+              (deliver unblock true)
+              (expect (true? (wait-for started)))
+              (when receive (dotimes [_ 20] (receive nil)))
+              (deliver release true)
+              (drain!)
+              (expect (= [janitor-thread janitor-thread] @threads))))
+          (finally
+            (deliver unblock true)
+            (deliver release true)
+            (janitor/cancel! ::batch)))))
+  (it "removes triggers on cancel, replacement and completion of a one-time task"
+      (let [callbacks (atom [])
+            subscribe! bus/subscribe!
+            topic "vis.session.deleted"
+            runs (atom [])
+            blocked (promise)
+            unblock (promise)]
+        (janitor/submit! {:id ::block-cancel
+                          :run #(do (deliver blocked true) (wait-for unblock) nil)})
+        (try
+          (expect (true? (wait-for blocked)))
+          (with-redefs [bus/subscribe! (fn [pattern receive]
+                                        (let [id (subscribe! {:owner :vis} pattern receive)]
+                                          (swap! callbacks conj [id receive])
+                                          id))]
+            (janitor/submit! {:id ::cancel :on topic :delay-ms 60000
+                              :run #(swap! runs conj :cancelled)})
+            (janitor/submit! {:id ::replace :on topic :delay-ms 60000
+                              :run #(swap! runs conj :replaced)})
+            (janitor/submit! {:id ::complete :on topic
+                              :run #(do (swap! runs conj :completed) nil)}))
+          (expect (= 3 (count @callbacks)))
+          (let [[[cancel-id cancel-receive] [replace-id replace-receive] [complete-id complete-receive]] @callbacks]
+            ;; Queue work before cancel, then simulate a delivery already in flight.
+            (when cancel-receive (cancel-receive nil))
+            (when replace-receive (replace-receive nil))
+            (expect (true? (janitor/cancel! ::cancel)))
+            (janitor/submit! {:id ::replace :delay-ms 60000 :run #(swap! runs conj :replacement)})
+            (when cancel-receive (cancel-receive nil))
+            (when replace-receive (replace-receive nil))
+            (deliver unblock true)
+            (drain!)
+            (when complete-receive (complete-receive nil))
+            (drain!)
+            (expect (= [:completed] @runs))
+            (doseq [id [cancel-id replace-id complete-id]]
+              (when id (expect (false? (bus/unsubscribe! :vis id))))))
+          (finally
+            (deliver unblock true)
+            (janitor/cancel! ::cancel)
+            (janitor/cancel! ::replace)
+            (janitor/cancel! ::complete))))))

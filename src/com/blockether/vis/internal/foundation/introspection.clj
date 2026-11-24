@@ -871,7 +871,7 @@
 (defn install-block-clock!
   "Install the function of a session id and a turn id that gives the epoch
    milliseconds when the turn's running Python block started, or nil. It reads
-   the gateway journal in `gateway.bus`, a higher layer, so the process wiring
+   the gateway journal in `gateway.journal`, a higher layer, so the process wiring
    installs it. Without it, [[hung-turns]] counts from the newest iteration."
   [f]
   (reset! block-clock f)

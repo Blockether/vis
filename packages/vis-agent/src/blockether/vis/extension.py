@@ -126,15 +126,17 @@ class Host(Protocol):
         """Show one toast in the session, or in every open session for a global scope."""
         ...
 
-    def events_publish(self, topic: str, data_json: str) -> int:
-        """Give one event to the matching subscribers of this extension. Return their count."""
+    def bus_publish(self, topic: str, data_json: str, scope: str) -> int:
+        """Give one signal to the subscribers that get it. Return their count."""
         ...
 
-    def events_subscribe(self, pattern: str, listener: Callable[[Any], Any]) -> str:
-        """Call `listener` with each later event that matches `pattern`. Return the subscription ID."""
+    def bus_subscribe(
+        self, pattern: str, listener: Callable[[Any], Any], scope: str | None
+    ) -> str:
+        """Call `listener` with each later signal of `pattern`. Return the subscription ID."""
         ...
 
-    def events_unsubscribe(self, subscription_id: str) -> bool:
+    def bus_unsubscribe(self, subscription_id: str) -> bool:
         """End one subscription of this extension. Return True when it was open."""
         ...
 
@@ -4407,22 +4409,24 @@ def notify(
 
 
 @dataclass(frozen=True, slots=True)
-class Event:
-    """One event of `vis.events`, as a subscriber gets it.
+class Signal:
+    """One signal of `vis.bus`, as a subscriber gets it.
 
     Attributes:
         topic: The topic that the publisher gave, for example `board.changed`.
         data: The JSON data that the publisher gave.
-        published_at_ms: When Vis took the event, in Unix milliseconds.
+        scope: `global` or `session`, as the publisher gave it.
+        published_at_ms: When Vis took the signal, in Unix milliseconds.
     """
 
     topic: str
     data: Any
+    scope: str
     published_at_ms: int
 
 
 class Subscription:
-    """One subscription of `vis.events.subscribe`. `close()` ends it.
+    """One subscription of `vis.bus.subscribe`. `close()` ends it.
 
     A `with` block closes the subscription at its end.
     """
@@ -4438,7 +4442,7 @@ class Subscription:
 
         A delivery that runs now ends, and no other delivery starts.
         """
-        return bool(_host.events_unsubscribe(self.id))
+        return bool(_host.bus_unsubscribe(self.id))
 
     def __enter__(self) -> Subscription:
         return self
@@ -4447,65 +4451,135 @@ class Subscription:
         self.close()
 
     def __repr__(self) -> str:
-        return f"<vis.events subscription {self.pattern!r}>"
+        return f"<vis.bus subscription {self.pattern!r}>"
 
 
-class Events:
-    """Publish and subscribe in one Vis gateway, as `vis.events`.
+def _bus_name(kind: str, text: Any) -> str:
+    """`text` when it is a valid `kind` of the contract: a topic or a pattern."""
+    from blockether.vis import _contracts
 
-    Each extension has its own topics: a subscriber gets only the events that its
+    rule = _contracts.definition("gateway", f"bus_{kind}")
+    if (
+        not isinstance(text, str)
+        or len(text) > rule["maxLength"]
+        or not re.fullmatch(rule["pattern"], text)
+    ):
+        raise ValueError(f"vis.bus: {kind} {text!r} is not valid")
+    return text
+
+
+def _bus_scope(scope: Any) -> str:
+    """`scope` when it is a scope of the contract that this callback can use."""
+    from blockether.vis import _contracts
+
+    if scope not in _contracts.definition("gateway", "bus_scope")["enum"]:
+        raise ValueError(
+            f"vis.bus: scope {scope!r} is not valid: use 'global' or 'session'"
+        )
+    if scope == "session" and not _host.bound_session():
+        raise ValueError(
+            "vis.bus: scope 'session' needs a session, and this callback has no session"
+        )
+    return scope
+
+
+class Bus:
+    """Signals between the processes of one Vis gateway, as `vis.bus`.
+
+    Each extension has its own topics: a subscriber gets only the signals that its
     own extension publishes. The tools of each session and the global app of an
     extension run in different processes, so a tool can tell the app about a
     change without files or polls. A topic is words of a-z, 0-9, `_` and `-`,
-    joined with `.`, for example `board.issue.moved`. Events stay in memory: a
-    subscriber gets only the events that come after its subscription. Each
-    subscriber gets its events in publish order, on a thread of Vis, and a slow
-    subscriber never blocks the publisher. Only an extension callback can publish
-    or subscribe, not a thread that the extension started. Outside Vis, `publish`
-    calls each subscriber at once, in the calling thread.
+    joined with `.`, for example `board.issue.moved`.
+
+    A signal has a scope. `global` signals go to each subscriber of the
+    extension, in all sessions and in the global app. `session` signals go only to
+    the subscribers in the session of the publisher. Topics that start with `vis.`
+    are the signals of Vis, such as `vis.session.deleted`: subscribe to them with a
+    pattern that starts with `vis.`. Only Vis publishes them.
+
+    Signals stay in memory: a subscriber gets only the signals that come after its
+    subscription. Each subscriber gets its signals in publish order, on a thread
+    of Vis, and a slow subscriber never blocks the publisher. Publish and subscribe
+    in an extension callback, such as a tool or the open hook of an app, not at
+    import and not in a thread that the extension started.
+    Outside Vis, there is no session, and `publish` calls each subscriber at once,
+    in the calling thread.
     """
 
-    def publish(self, topic: str, data: Any = None) -> int:
-        """Give `data` to each subscriber whose pattern matches `topic`.
+    def publish(self, topic: str, data: Any = None, *, scope: str = "global") -> int:
+        """Give `data` to each subscriber that gets `topic` in `scope`.
 
         `data` is JSON data of at most 64 KiB. Return how many subscriptions get
-        the event.
+        the signal.
 
         Raises:
-            ValueError: The topic is not valid, or the data is too large.
+            ValueError: The topic or the scope is not valid, the topic starts with
+                `vis.`, the scope is `session` in a callback without a session,
+                or the data is too large.
             TypeError: The data is not JSON data.
         """
-        text = json.dumps(data, ensure_ascii=False, allow_nan=False)
-        return int(_host.events_publish(str(topic), text))
+        from blockether.vis import _contracts
 
-    def subscribe(self, pattern: str, handler: Callable[[Event], Any]) -> Subscription:
-        """Call `handler` with each later `Event` whose topic matches `pattern`.
+        _bus_name("topic", topic)
+        if topic.split(".", 1)[0] == "vis":
+            raise ValueError(
+                f"vis.bus: only Vis publishes a topic that starts with 'vis.': {topic!r}"
+            )
+        _bus_scope(scope)
+        text = json.dumps(data, ensure_ascii=False, allow_nan=False)
+        limit = _contracts.definition("gateway", "bus_data_bytes")["maximum"]
+        if len(text.encode("utf-8")) > limit:
+            raise ValueError(
+                f"vis.bus: the data of a signal is larger than {limit} bytes of JSON"
+            )
+        return int(_host.bus_publish(topic, text, scope))
+
+    def subscribe(
+        self,
+        pattern: str,
+        handler: Callable[[Signal], Any],
+        *,
+        scope: str | None = None,
+    ) -> Subscription:
+        """Call `handler` with each later `Signal` whose topic matches `pattern`.
 
         A pattern is a topic in which `*` takes the place of one word. A last
         word `#` takes the place of zero or more words: `board.#` matches `board`,
-        `board.changed` and `board.issue.moved`. An error of `handler` goes to the
-        Vis log, and later events still come. The subscription ends at `close()`,
-        or when the extension reloads. Subscribe in the callback that needs the
-        events, such as the open hook of an app, not at import: each Vis process
-        that loads the extension runs its imports.
-        """
-        if not callable(handler):
-            raise TypeError("vis.events.subscribe needs a function")
+        `board.changed` and `board.issue.moved`. Without `scope`, the subscriber
+        gets the global signals and the session signals of its own session. With
+        `scope`, it gets only the signals of that scope. An error of `handler` goes
+        to the Vis log, and later signals still come. The subscription ends at
+        `close()`, or when the extension reloads. Subscribe in the callback that
+        needs the signals, such as the open hook of an app, not at import: each
+        Vis process that loads the extension runs its imports.
 
-        def deliver(event):
+        Raises:
+            ValueError: The pattern or the scope is not valid, or the scope is
+                `session` in a callback without a session.
+            TypeError: `handler` is not a function.
+        """
+        _bus_name("pattern", pattern)
+        if scope is not None:
+            _bus_scope(scope)
+        if not callable(handler):
+            raise TypeError("vis.bus.subscribe needs a function")
+
+        def deliver(signal):
             handler(
-                Event(
-                    str(event["topic"]),
-                    event.get("data"),
-                    int(event["published_at_ms"]),
+                Signal(
+                    str(signal["topic"]),
+                    signal.get("data"),
+                    str(signal["scope"]),
+                    int(signal["published_at_ms"]),
                 )
             )
 
-        subscription_id = _host.events_subscribe(str(pattern), deliver)
-        return Subscription(str(subscription_id), str(pattern))
+        subscription_id = _host.bus_subscribe(pattern, deliver, scope)
+        return Subscription(str(subscription_id), pattern)
 
 
-events = Events()
+bus = Bus()
 
 
 def write_private_file(path: str | PathLike[str], text: str) -> None:

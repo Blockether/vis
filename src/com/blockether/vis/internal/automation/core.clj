@@ -7,31 +7,24 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.automation.cron :as cron]
+            [com.blockether.vis.internal.bus :as bus]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import (java.net URI URISyntaxException)
-           (java.util Base64 UUID)
-           (java.util.concurrent LinkedBlockingQueue TimeUnit)))
+           (java.util Base64 UUID)))
 
 (def ^:private schema (document/schema-document "automations"))
 
-(defonce ^:private ^LinkedBlockingQueue scheduler-wakes
-  ;; One pending wake. A wake during a scheduler pass stays queued for the next sleep.
-  (LinkedBlockingQueue. 1))
-
-(defn wake-scheduler!
-  "Tell the scheduler to look at the store again now, for example after a change."
-  []
-  (.offer ^LinkedBlockingQueue scheduler-wakes true)
-  nil)
-
-(defn await-scheduler-wake!
-  "Sleep up to `ms` milliseconds or until the next [[wake-scheduler!]]. Throws
-   InterruptedException when the thread is interrupted."
-  [ms]
-  (.poll ^LinkedBlockingQueue scheduler-wakes (long ms) TimeUnit/MILLISECONDS)
-  nil)
+(defn changed!
+  "Tell the scheduler and other subscribers that stored automations or their due work changed.
+   The change is already stored, so a failed signal only goes to the log."
+  ([] (changed! nil))
+  ([id]
+   (try (bus/publish! "vis.automation.changed" (if id {"automation_id" id} {}))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::changed-signal-failed :data {:automation-id id :error (ex-message t)}})))
+   nil))
 
 (defn limit
   "One value of the contract `x-vis-limits`."
@@ -264,7 +257,7 @@
                             :definition definition
                             :created_at now
                             :updated_at now})
-    (wake-scheduler!)
+    (changed! id)
     (describe db id now)))
 
 (defn- touched-at
@@ -299,7 +292,7 @@
                              :enabled (get definition "enabled")
                              :definition definition
                              :updated_at (touched-at row now)))
-    (wake-scheduler!)
+    (changed! id)
     (describe db id now)))
 
 (defn- owned-definition
@@ -356,12 +349,12 @@
      (doseq [extension removed]
        (ps/db-automation-delete-owned! db extension root []))
      (when complete? (ps/db-automation-delete-other-owners! db root (mapv :ext/name extensions)))
-     (wake-scheduler!))))
+     (changed!))))
 
 (defn delete!
   [db id]
   (if (ps/db-automation-delete! db id)
-    (do (wake-scheduler!) {"id" id "is_deleted" true})
+    (do (changed! id) {"id" id "is_deleted" true})
     (not-found! "Automation" id)))
 
 (defn rotate-secret!

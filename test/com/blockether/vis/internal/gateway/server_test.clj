@@ -20,7 +20,7 @@
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.external-opener :as external-opener]
     [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
-    [com.blockether.vis.internal.gateway.bus :as bus]
+    [com.blockether.vis.internal.gateway.journal :as journal]
     [com.blockether.vis.internal.gateway.client :as client]
     [com.blockether.vis.internal.gateway.discovery :as discovery]
     [com.blockether.vis.internal.gateway.server :as server]
@@ -5904,8 +5904,8 @@
                                  (expect (= expected (get-in (wire/parse-json (:body after)) path))))))]
           (persistance/db-set-session-group! writer sid (:id group))
           (with-redefs [lp/db-info (constantly db)
-                        bus/live-turns (fn [] @live)
-                        bus/waiting-requests (fn [] @waiting)
+                        journal/live-turns (fn [] @live)
+                        journal/waiting-requests (fn [] @waiting)
                         config/agent-name (fn [_] @agent-name)
                         state/list-sessions-page (fn [channel opts]
                                                    (swap! builds inc)

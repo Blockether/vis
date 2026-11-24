@@ -15,7 +15,7 @@
             [com.blockether.vis.internal.session.goals :as goals]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.test-python-context :as tpc]
-            [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.diagnostics :as gateway-diagnostics]
             [com.blockether.vis.internal.paths :as paths]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]])
@@ -1246,12 +1246,12 @@
           @@#'introspection/block-clock]
 
       ;; The gateway wiring fills this slot in a running process.
-      (introspection/install-block-clock! #'bus/block-started-ms)
+      (introspection/install-block-clock! #'journal/block-started-ms)
       (try
         (with-redefs [introspection/STALE_RUNNING_TURN_MS
                       0
 
-                      bus/session-file
+                      journal/session-file
                       (fn [_]
                         journal)]
 

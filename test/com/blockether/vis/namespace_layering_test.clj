@@ -73,7 +73,7 @@
   '[;; Leaf primitives any layer may use.
     [base
      [util error import paths content format system-trust jfr activity config.toggles perf
-      native-libs sounds janitor]]
+      native-libs sounds janitor bus]]
     ;; The session store and the attachment blobs it persists.
     [persistance
      [persistance attachment.core attachment.storage attachment.image-convert attachment.compactor
@@ -170,9 +170,9 @@
   '#{com.blockether.vis.internal.council.core/install-runtime!
      com.blockether.vis.internal.council.core/install-waker!
      com.blockether.vis.internal.foundation.mcp.sampling/install-model!
-     com.blockether.vis.internal.gateway.bus/set-deliver-fn!
-     com.blockether.vis.internal.gateway.bus/set-relevant-sid-fn!
-     com.blockether.vis.internal.gateway.bus/set-relevant-sids-fn!
+     com.blockether.vis.internal.gateway.journal/set-deliver-fn!
+     com.blockether.vis.internal.gateway.journal/set-relevant-sid-fn!
+     com.blockether.vis.internal.gateway.journal/set-relevant-sids-fn!
      com.blockether.vis.internal.provider.service/set-router-rebuild-hook!
      com.blockether.vis.internal.python.env/install-extension-hooks!
      com.blockether.vis.internal.python.extensions/install-test-slash!

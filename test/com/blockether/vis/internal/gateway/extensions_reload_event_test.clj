@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.gateway.extensions-reload-event-test
-  (:require [com.blockether.vis.internal.gateway.bus :as bus]
+  (:require [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
@@ -20,7 +20,7 @@
 
         (with-redefs-fn {#'state/registry registry
                          #'state/fleet-sinks (atom {"watch" #(swap! frames conj %)})
-                         #'bus/publish! (fn [& _])}
+                         #'journal/publish! (fn [& _])}
           #(let [reload-id (python-extensions/announce-reload!)] (expect (string? reload-id))
              (expect (= [["extensions.reloaded" reload-id]]
                         (mapv (juxt (fn [frame]

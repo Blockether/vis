@@ -350,7 +350,7 @@
                  (fn []
                    (swap! queued-project-roots disj root)
                    (prepare-known-project! root))))))
-  (when (#{:moved :deleted} op) (automation/wake-scheduler!)))
+  (when (#{:moved :deleted} op) (automation/changed!)))
 
 (defn- prepare-startup-extensions!
   "Load the global catalog after HTTP starts so clients can report preparation without a
@@ -2442,6 +2442,7 @@
          (janitor/submit! {:id :gateway/session-scratch
                            :delay-ms 30000
                            :every-ms 3600000
+                           :on "vis.session.deleted"
                            :run (fn []
                                   (let [result (housekeeping/sweep-session-scratch! (lp/db-info)
                                                                                      (util/now-ms))]

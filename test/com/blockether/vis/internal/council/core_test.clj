@@ -1785,7 +1785,7 @@
                            (ns-resolve 'com.blockether.vis.internal.gateway.state 'fresh-entry)
                            (fn [_]
                              {:next-seq 0 :turns {} :turn-order []})
-                           (ns-resolve 'com.blockether.vis.internal.gateway.bus 'live-turns)
+                           (ns-resolve 'com.blockether.vis.internal.gateway.journal 'live-turns)
                            (constantly (if (= :foreign-runtime scenario) {b "external"} {}))
                            (ns-resolve 'com.blockether.vis.internal.gateway.state
                                        'launch-turn-worker!)

@@ -15,7 +15,7 @@
             [com.blockether.vis.internal.foundation.mcp.sampling :as sampling]
             [com.blockether.vis.internal.automation.core :as automation]
             [com.blockether.vis.internal.automation.runner :as automation-runner]
-            [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.journal :as journal]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.view :as gateway-view]
@@ -92,18 +92,18 @@
     (python-extensions/install-test-slash! #'test-runner/test-slash)
     ;; Events tailed from sibling processes reach this registry, and the tailer
     ;; drains only the journals of sessions this process tracks.
-    (bus/set-deliver-fn! #'state/ingest-mirrored-event!)
+    (journal/set-deliver-fn! #'state/ingest-mirrored-event!)
     ;; The hang diagnosis of `read_session` skips a turn whose block still runs.
-    (introspection/install-block-clock! #'bus/block-started-ms)
+    (introspection/install-block-clock! #'journal/block-started-ms)
     ;; A session row names the model that the session uses now. Without a model pick, that
     ;; is the default pair of the session's project.
     (introspection/install-default-route! #'state/session-default-model)
     ;; A sampling request of an MCP server gets its answer from the router of the loop.
     (sampling/install-model! #'router/llm-text!)
-    (bus/set-relevant-sid-fn! #'state/session-known?)
-    (bus/set-relevant-sids-fn! #'state/tracked-session-ids)
-    ;; A native image starts the tailer on its first publish instead; see `bus/publish!`.
-    (when-not (System/getProperty "org.graalvm.nativeimage.imagecode") (bus/start!))
+    (journal/set-relevant-sid-fn! #'state/session-known?)
+    (journal/set-relevant-sids-fn! #'state/tracked-session-ids)
+    ;; A native image starts the tailer on its first publish instead; see `journal/publish!`.
+    (when-not (System/getProperty "org.graalvm.nativeimage.imagecode") (journal/start!))
     true))
 
 (defn install! "Fill every slot once. Idempotent; returns nil." [] @installed nil)

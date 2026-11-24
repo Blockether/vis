@@ -10,6 +10,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.automation.core :as automation]
             [com.blockether.vis.internal.automation.webhook :as webhook]
+            [com.blockether.vis.internal.bus :as bus]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.util :as util]
@@ -18,7 +19,7 @@
            (java.nio.charset StandardCharsets)
            (java.time Instant)
            (java.util UUID)
-           (java.util.concurrent ExecutorService Executors)
+           (java.util.concurrent ExecutorService Executors LinkedBlockingQueue TimeUnit)
            (java.util.concurrent.atomic AtomicBoolean)))
 
 (def ^:private tick-ms
@@ -207,7 +208,7 @@
                                   (recur (into seen (map :id) batch)))
                               seen)))]
                ;; A failed callback has a new attempt time: the scheduler sleeps until it.
-               (when (seq sent) (automation/wake-scheduler!)))
+               (when (seq sent) (automation/changed!)))
              (catch Throwable t
                (tel/log! {:level :warn :id ::delivery-failed :data {:error (ex-message t)}}))
              (finally (.set ^AtomicBoolean delivery-running false)))))))
@@ -273,32 +274,49 @@
            (tel/log! {:level :warn :id ::keep-awake-failed :data {:error (ex-message e)}})
            nil))))
 
+(defn- publish-status!
+  "Publish the committed status of `run` without changing the run outcome. Answer `run`."
+  [{:keys [automation_id id status session_id] :as run}]
+  (when run
+    (try (bus/publish! (str "vis.automation.run." status)
+                       {"automation_id" automation_id
+                        "run_id" id
+                        "status" status
+                        "session_id" session_id})
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::run-status-signal-failed
+                      :data {:run-id id :status status :error (ex-message t)}}))))
+  run)
+
 (defn- claim!
   [db automation-id kind trigger-key {:keys [scheduled-at request status reason]}]
   (let [at (util/now-ms)]
-    (ps/db-automation-claim-run! db
-                                 (cond-> {:id (str (UUID/randomUUID))
-                                          :automation_id automation-id
-                                          :trigger_kind kind
-                                          :trigger_key trigger-key
-                                          :status (or status "queued")
-                                          :request request
-                                          :scheduled_at scheduled-at
-                                          :created_at at
-                                          :owner_pid (:owner_pid @owner)
-                                          :owner_started_at (:owner_started_at @owner)}
-                                   reason
-                                   (assoc :reason reason)
+    (publish-status!
+      (ps/db-automation-claim-run! db
+                                   (cond-> {:id (str (UUID/randomUUID))
+                                            :automation_id automation-id
+                                            :trigger_kind kind
+                                            :trigger_key trigger-key
+                                            :status (or status "queued")
+                                            :request request
+                                            :scheduled_at scheduled-at
+                                            :created_at at
+                                            :owner_pid (:owner_pid @owner)
+                                            :owner_started_at (:owner_started_at @owner)}
+                                     reason
+                                     (assoc :reason reason)
 
-                                   (= "skipped" status)
-                                   (assoc :finished_at at)))))
+                                     (= "skipped" status)
+                                     (assoc :finished_at at))))))
+
+(defn- set-status!
+  [db run-id statuses attrs]
+  (publish-status! (ps/db-automation-update-run! db run-id statuses attrs)))
 
 (defn- finish!
   [db run-id attrs]
-  (ps/db-automation-update-run! db
-                                run-id
-                                ["queued" "running"]
-                                (assoc attrs :finished_at (util/now-ms))))
+  (set-status! db run-id ["queued" "running"] (assoc attrs :finished_at (util/now-ms))))
 
 (defn- answer-text
   [result]
@@ -494,10 +512,7 @@
 
     (when (and run
                row
-               (ps/db-automation-update-run! db
-                                             run-id
-                                             ["queued"]
-                                             {:status "running" :started_at (util/now-ms)}))
+               (set-status! db run-id ["queued"] {:status "running" :started_at (util/now-ms)}))
       (let [definition
             (:definition row)
 
@@ -854,13 +869,10 @@
 
           :when (not (owner-alive? run))]
 
-    (when-let [updated (ps/db-automation-update-run! db
-                                                     (:id run)
-                                                     ["queued" "running"]
-                                                     {:status "unknown"
-                                                      :reason
-                                                      "The gateway stopped before the run finished."
-                                                      :finished_at (util/now-ms)})]
+    (when-let [updated (finish! db
+                                (:id run)
+                                {:status "unknown"
+                                 :reason "The gateway stopped before the run finished."})]
       (deliver! db (ps/db-automation-get db (:automation_id run)) updated))))
 
 (defn sleep-ms
@@ -907,10 +919,11 @@
 (defn stop!
   "Stop the scheduler. Running turns finish on their own threads."
   []
-  (when-let [{:keys [^AtomicBoolean running ^Thread thread]} @scheduler]
+  (when-let [{:keys [^AtomicBoolean running ^Thread thread subscription]}
+             (first (reset-vals! scheduler nil))]
     (.set running false)
-    (.interrupt thread)
-    (reset! scheduler nil))
+    (bus/unsubscribe! :vis subscription)
+    (.interrupt thread))
   nil)
 
 (defn start!
@@ -932,6 +945,10 @@
 
         started
         (util/now-ms)
+
+        ;; One pending wake. A wake during a pass stays queued for the next sleep.
+        wakes
+        (LinkedBlockingQueue. 1)
 
         thread
         (Thread.
@@ -955,11 +972,15 @@
                              tick-ms))]
 
                   ;; A change of an automation in this process ends the sleep early.
-                  (try (automation/await-scheduler-wake! wait) (catch InterruptedException _ nil))
+                  (try (.poll wakes (long wait) TimeUnit/MILLISECONDS)
+                       (catch InterruptedException _ nil))
                   (recur to to)))))
-          "vis-automations")]
+          "vis-automations")
+
+        subscription
+        (bus/subscribe! "vis.automation.changed" (fn [_] (.offer wakes true)))]
 
     (.setDaemon thread true)
+    (reset! scheduler {:running running :thread thread :subscription subscription})
     (.start thread)
-    (reset! scheduler {:running running :thread thread})
     stop!))

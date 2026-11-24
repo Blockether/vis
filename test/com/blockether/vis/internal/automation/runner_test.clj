@@ -1,8 +1,10 @@
 (ns com.blockether.vis.internal.automation.runner-test
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.automation.core :as automation]
             [com.blockether.vis.internal.automation.runner :as runner]
             [com.blockether.vis.internal.automation.webhook :as webhook]
+            [com.blockether.vis.internal.bus :as bus]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -13,7 +15,8 @@
            (java.net InetSocketAddress)
            (java.nio.charset StandardCharsets)
            (java.time Instant)
-           (java.util HexFormat)))
+           (java.util HexFormat)
+           (java.util.concurrent LinkedBlockingQueue TimeUnit)))
 
 (def ^:private terminal #{"completed" "failed" "cancelled" "skipped" "unknown"})
 
@@ -87,6 +90,38 @@
 
 (defdescribe
   run-test
+  (it "publishes each committed run status in order"
+      (with-runner
+        (answer "Done.")
+        (fn [db _]
+          (let [id (create! db {"target" {"mode" "session" "session_id" "s-old"}})
+                signals (atom [])
+                sub (bus/subscribe! "vis.automation.run.*" #(swap! signals conj %))]
+            (try
+              (let [run-id (get (runner/run-now! db id) "id")]
+                (expect (some? (settled db run-id)))
+                (expect (eventually #(= 3 (count @signals))))
+                (expect (= (mapv (fn [[status sid]]
+                                   {"topic" (str "vis.automation.run." status)
+                                    "data" {"automation_id" id
+                                            "run_id" run-id
+                                            "status" status
+                                            "session_id" sid}})
+                                 [["queued" nil] ["running" nil] ["completed" "s-old"]])
+                           (mapv #(select-keys % ["topic" "data"]) @signals)))
+                (expect (every? #(document/valid? "gateway"
+                                                 "bus_vis_signal"
+                                                 (select-keys % ["topic" "data"]))
+                                @signals)))
+              (finally (bus/unsubscribe! :vis sub)))))))
+  (it "finishes a run even if the bus cannot publish its status"
+      (with-runner
+        (answer "Done.")
+        (fn [db _]
+          (let [id (create! db {})]
+            (with-redefs [bus/publish! (fn [_ _] (throw (AssertionError. "The bus failed")))]
+              (let [run-id (get (runner/run-now! db id) "id")]
+                (expect (= "completed" (:status (settled db run-id))))))))))
   (it "runs a temporary session, deletes it and sends one alert"
       (with-runner (answer "The build is green.")
                    (fn [db calls]
@@ -305,6 +340,41 @@
 
 (defdescribe
   schedule-test
+  (it "publishes definition changes and wakes the scheduler through the bus"
+      (with-runner
+        (answer "unused")
+        (fn [db _]
+          (let [scans (LinkedBlockingQueue.)
+                signals (LinkedBlockingQueue.)
+                stamps ps/db-automation-stamps
+                caller (Thread/currentThread)
+                scan! #(.poll scans 5 TimeUnit/SECONDS)
+                signal! #(.poll signals 5 TimeUnit/SECONDS)
+                sub (bus/subscribe! "vis.automation.changed" #(.offer signals %))]
+            (try
+              (with-redefs [ps/db-shared-connection! (constantly db)
+                            ps/db-automation-stamps (fn [store]
+                                                      (let [rows (stamps store)]
+                                                        (when-not (identical? caller
+                                                                              (Thread/currentThread))
+                                                          (.offer scans true))
+                                                        rows))]
+                (let [stop! (runner/start! :memory)]
+                  (try
+                    (expect (true? (scan!)))
+                    (let [id (create! db {})]
+                      (expect (= {"automation_id" id} (get (signal!) "data")))
+                      (expect (true? (scan!)))
+                      (automation/update! db id {"enabled" false} (util/now-ms))
+                      (expect (= {"automation_id" id} (get (signal!) "data")))
+                      (expect (true? (scan!)))
+                      (automation/delete! db id)
+                      (expect (= {"automation_id" id} (get (signal!) "data")))
+                      (expect (true? (scan!))))
+                    (bus/publish! "vis.automation.changed" {})
+                    (expect (true? (scan!)))
+                    (finally (stop!)))))
+              (finally (bus/unsubscribe! :vis sub)))))))
   (it "starts due schedules without a feature toggle"
       ;; Regression: the scheduler must run without the old global permission.
       (with-runner (answer "Done.")

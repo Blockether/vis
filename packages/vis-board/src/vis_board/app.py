@@ -25,7 +25,7 @@ from vis_board.store import (
 )
 
 CHANGED = "board.changed"
-"""The `vis.events` topic of a saved board. The data names the project folder."""
+"""The `vis.bus` topic of a saved board. The data names the project folder."""
 
 LOG = logging.getLogger(__name__)
 ANY = "any"
@@ -327,7 +327,7 @@ class BoardApp:
         """Open the board, or connect to the board with the same key."""
         if watch:
             # Subscribe before the first read, so that no save falls between them.
-            self._subscription = vis.events.subscribe(CHANGED, self._changed)
+            self._subscription = vis.bus.subscribe(CHANGED, self._changed)
         with self.lock:
             version = self._stamp()
             self._boards = self._read()

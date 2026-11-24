@@ -9131,41 +9131,52 @@
         "scope"
       ]
     },
-    "extension_event_topic": {
+    "bus_topic": {
       "type": "string",
-      "description": "The topic of an extension event: words of a-z, 0-9, '_' and '-', joined with '.'. Each extension has its own topics.",
+      "description": "The topic of a signal: words of a-z, 0-9, '_' and '-', joined with '.'. Each extension has its own topics. The first word 'vis' is for the signals of Vis: only the gateway publishes them.",
       "minLength": 1,
       "maxLength": 200,
       "pattern": "^[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*$"
     },
-    "extension_event_pattern": {
+    "bus_pattern": {
       "type": "string",
-      "description": "The topics of one subscription: a topic in which '*' takes the place of one word. A last word '#' takes the place of zero or more words.",
+      "description": "The topics of one subscription: a topic in which '*' takes the place of one word. A last word '#' takes the place of zero or more words. Only a pattern whose first word is 'vis' gets the signals of Vis.",
       "minLength": 1,
       "maxLength": 200,
       "pattern": "^(#|(\\*|[a-z0-9][a-z0-9_-]*)(\\.(\\*|[a-z0-9][a-z0-9_-]*))*(\\.#)?)$"
     },
-    "extension_event_data_bytes": {
+    "bus_scope": {
+      "type": "string",
+      "description": "The subscribers that get a signal. 'global': each subscriber of the extension, in all sessions and in the global app. 'session': only the subscribers in the session of the publisher.",
+      "enum": [
+        "global",
+        "session"
+      ]
+    },
+    "bus_data_bytes": {
       "type": "integer",
-      "description": "The largest data of one extension event, as JSON text in UTF-8 bytes.",
+      "description": "The largest data of one signal, as JSON text in UTF-8 bytes.",
       "minimum": 0,
       "maximum": 65536
     },
-    "extension_event_backlog": {
+    "bus_backlog": {
       "type": "integer",
-      "description": "The events that can wait for one subscriber. When more wait, the subscriber does not get the newest event, and Vis logs a warning.",
+      "description": "The signals that can wait for one subscriber. When more wait, the subscriber does not get the newest signal, and Vis logs a warning.",
       "minimum": 1,
       "maximum": 1000
     },
-    "extension_event": {
+    "bus_signal": {
       "type": "object",
-      "description": "One event that a subscriber gets. Delivery is in the gateway process, in publish order for each subscriber.",
+      "description": "One signal that a subscriber gets. Delivery is in the gateway process, in publish order for each subscriber.",
       "properties": {
         "topic": {
-          "$ref": "#/$defs/extension_event_topic"
+          "$ref": "#/$defs/bus_topic"
         },
         "data": {
           "description": "The JSON data that the publisher gave."
+        },
+        "scope": {
+          "$ref": "#/$defs/bus_scope"
         },
         "published_at_ms": {
           "type": "integer",
@@ -9175,7 +9186,108 @@
       "required": [
         "topic",
         "data",
+        "scope",
         "published_at_ms"
+      ],
+      "additionalProperties": false
+    },
+    "bus_vis_signal": {
+      "description": "A signal of Vis: the topic and the data. Only the gateway publishes it, with the scope 'global'.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "const": "vis.automation.changed"
+            },
+            "data": {
+              "$ref": "#/$defs/bus_automation_changed"
+            }
+          },
+          "required": [
+            "topic",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "type": "string",
+              "pattern": "^vis\\.automation\\.run\\.[a-z]+$"
+            },
+            "data": {
+              "$ref": "#/$defs/bus_automation_run"
+            }
+          },
+          "required": [
+            "topic",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "const": "vis.session.deleted"
+            },
+            "data": {
+              "$ref": "#/$defs/bus_session_deleted"
+            }
+          },
+          "required": [
+            "topic",
+            "data"
+          ]
+        }
+      ]
+    },
+    "bus_automation_changed": {
+      "type": "object",
+      "description": "The data of 'vis.automation.changed': the stored automations or their due work changed. 'automation_id' names the automation when only one changed.",
+      "properties": {
+        "automation_id": {
+          "$ref": "automations.json#/$defs/automation_id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "bus_automation_run": {
+      "type": "object",
+      "description": "The data of 'vis.automation.run.<status>': one run of an automation got a new status. The last word of the topic is that status.",
+      "properties": {
+        "automation_id": {
+          "$ref": "automations.json#/$defs/automation_id"
+        },
+        "run_id": {
+          "$ref": "automations.json#/$defs/automation_id"
+        },
+        "status": {
+          "$ref": "automations.json#/$defs/run_status"
+        },
+        "session_id": {
+          "$ref": "automations.json#/$defs/run/properties/session_id"
+        }
+      },
+      "required": [
+        "automation_id",
+        "run_id",
+        "status",
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
+    "bus_session_deleted": {
+      "type": "object",
+      "description": "The data of 'vis.session.deleted': Vis deleted this session.",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "session_id"
       ],
       "additionalProperties": false
     },

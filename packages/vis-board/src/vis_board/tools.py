@@ -32,7 +32,7 @@ def list_issues(
 def _change(apply):
     store = _store()
     issue = store.change(apply)
-    vis.events.publish(CHANGED, {"project": str(store.workspace)})
+    vis.bus.publish(CHANGED, {"project": str(store.workspace)})
     return issue
 
 

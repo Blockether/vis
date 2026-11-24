@@ -7698,7 +7698,7 @@
         work-dir
         (or (not-empty (:work-dir session)) "No work dir")
 
-        ;; The gateway's own fleet fact (`state/soul` -> `bus/waiting-requests`),
+        ;; The gateway's own fleet fact (`state/soul` -> `journal/waiting-requests`),
         ;; never a local guess: a run parked on an unanswered human-input request
         ;; is normally parked in ANOTHER process, and this list is where its
         ;; operator goes looking for it.
