@@ -2779,7 +2779,7 @@ export const Select = forwardRef<
                   aria-disabled={row.disabled || undefined}
                   data-disabled={row.disabled ? '' : undefined}
                   onClick={(event) => commit(row, event.currentTarget)}
-                  className="flex min-h-11 cursor-default select-none items-center gap-2 border-b border-edge-strong px-2.5 py-1.5 outline-none last:border-b-0 aria-selected:bg-panel-2 data-[disabled]:pointer-events-none data-[disabled]:text-muted [&:not([data-disabled])]:hover:text-accent-ink focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent mouse:min-h-7"
+                  className="flex min-h-11 select-none items-center gap-2 border-b border-edge-strong px-2.5 py-1.5 outline-none last:border-b-0 aria-selected:bg-panel-2 data-[disabled]:pointer-events-none data-[disabled]:text-muted [&:not([data-disabled])]:hover:text-accent-ink focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent mouse:min-h-7"
                 >
                   <span className="min-w-0 flex-1 break-words">{row.label}</span>
                   <span aria-hidden="true" className="ml-auto flex size-3 shrink-0 items-center justify-center">
