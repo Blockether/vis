@@ -2240,6 +2240,9 @@ export function CloseButton({
  * With the ink on the whole cell, the rule was ink at 20% on amber and the dark cell
  * before ran into the amber with no line between them.
  */
+/** The band cell where a node of an app puts its own verb, such as the Create of a board. */
+export const BandSlotContext = createContext<Element | null>(null);
+
 export function BandButton({
   className = '',
   isFirst = false,

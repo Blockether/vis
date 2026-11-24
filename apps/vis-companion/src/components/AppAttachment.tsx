@@ -42,7 +42,7 @@ import { ReviewMemoryContext, ReviewPrefsContext, useReviewScroll, useVisitState
 import { LiveViewPanel, RunDialog, StatusLine } from './LiveView';
 import { AppLogButton, AppLogPanel } from './AppLog';
 import { AppIcon, ChevronIcon, FullScreenIcon } from './icons';
-import { BandButton, DialogFrame, DialogHeader, ExecutionAction, KeyCap, ListRow, Modal, PaneHeader, closeWith } from './ui';
+import { BandButton, BandSlotContext, DialogFrame, DialogHeader, ExecutionAction, KeyCap, ListRow, Modal, PaneHeader, closeWith } from './ui';
 
 /** The open apps of the session, with their surfaces, for the rows of the transcript. */
 export const SessionAppViewsContext = createContext<readonly LiveViewModel[]>([]);
@@ -578,6 +578,7 @@ export function AppSurface({
       <ActionStatus status={isReadOnly ? 'idle' : formStatus} isOnBand />
     </span>
   ) : undefined;
+  const [bandSlot, setBandSlot] = useState<HTMLElement | null>(null);
   const legend = useMemo(() => (view ? legendShortcuts(shortcuts, view.nodes) : []), [shortcuts, view]);
   const footer =
     view && legend.length > 0 ? (
@@ -602,6 +603,7 @@ export function AppSurface({
         }
       }}
     >
+      <BandSlotContext value={bandSlot}>
       <ReviewMemoryContext value={memoryKey}>
         <ReviewPrefsContext value={prefsKey}>
           {view ? (
@@ -630,11 +632,13 @@ export function AppSurface({
           )}
         </ReviewPrefsContext>
       </ReviewMemoryContext>
+      </BandSlotContext>
     </div>
   );
   const leave = closeLabel ?? `Close app ${title}`;
   const bandActions = (
     <>
+      <span ref={setBandSlot} className="contents" />
       <AppLogButton log={log} title={title} isOpen={appLog.isOpen} onToggle={appLog.toggle} />
       {onFullScreen && (
         <BandButton label={`Full screen ${title}`} onClick={onFullScreen}>

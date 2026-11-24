@@ -1,4 +1,5 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Bug, CalendarDays, Check, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Equal, Flag, GripVertical, Layers, Plus, Search, SlidersHorizontal, UserRound, Zap } from 'lucide-react';
 
 import {
@@ -9,7 +10,7 @@ import {
 } from '../lib/board';
 import type { LiveBoardNode } from '../lib/live-view';
 import { Markdown } from './ChatContent';
-import { Button, Checkbox, DialogFrame, Input, Modal, Select } from './ui';
+import { BandButton, BandSlotContext, Button, Checkbox, DialogFrame, Input, Modal, Select } from './ui';
 
 const KIND_MARK = {
   task: [CheckSquare, 'text-link'], story: [Layers, 'text-ok-ink'], bug: [Bug, 'text-err-ink'],
@@ -574,7 +575,7 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
   const [failure, setFailure] = useState('');
   const [overlay, setOverlay] = useState<BoardOverlay>(null);
   const [selection, setSelection] = useState<{ seq: number; id?: string }>();
-  const labelId = useId();
+  const bandSlot = useContext(BandSlotContext);
   const canEdit = node.is_editable && Boolean(onAction);
   const issues = optimistic?.seq === seq ? optimistic.issues : node.issues;
   const issueIds = new Set(issues.map((issue) => issue.id));
@@ -590,6 +591,11 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
   const toMove = canEdit && overlay?.type === 'move' ? issues.find((issue) => issue.id === overlay.id) : undefined;
   const activeFilters = boardFilterCount(filters);
   const closeOverlay = () => setOverlay(null);
+  const openCreate = () => setOverlay({ type: 'create' });
+  // In an app the board's verb stands in the app's band, which already names the board.
+  const create = !canEdit || node.columns.length === 0 ? null : bandSlot
+    ? createPortal(<BandButton isPrimary onClick={openCreate}><span className="inline-flex items-center gap-1.5"><Plus size={14} aria-hidden="true" /> Create</span></BandButton>, bandSlot)
+    : <Button type="button" className={`${ICON_CONTROL} ml-auto`} onClick={openCreate}><Plus size={16} aria-hidden="true" /> Create</Button>;
   const choose = (id?: string) => {
     setFailure('');
     setSelection({ seq, id });
@@ -627,19 +633,11 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
   const visibleTotals = new Map<string, number>();
   for (const issue of visible) visibleTotals.set(issue.column, (visibleTotals.get(issue.column) ?? 0) + 1);
 
-  return <section className="board min-w-0" aria-labelledby={labelId} data-dragging={drag ? true : undefined}
+  return <section className="board min-w-0" aria-label={node.label ?? 'Board'} data-dragging={drag ? true : undefined}
     onPointerDown={start} onPointerUpCapture={blockRelease} onClickCapture={(event) => {
       if (event.detail > 0 && blockClick()) { event.preventDefault(); event.stopPropagation(); }
     }}>
-    <header className="grid gap-3 border-b border-edge pb-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="mr-auto flex items-center gap-2">
-          <Layers size={18} className="text-accent-ink" aria-hidden="true" />
-          <h3 id={labelId} className="text-subhead font-semibold text-dialog-foreground">{node.label ?? 'Board'}</h3>
-          <span className="hidden whitespace-nowrap border border-edge px-1.5 font-mono text-meta text-dialog-hint sm:inline">{visible.length} {visible.length === 1 ? 'issue' : 'issues'}</span>
-        </div>
-        {canEdit && node.columns.length > 0 && <Button type="button" className={ICON_CONTROL} onClick={() => setOverlay({ type: 'create' })}><Plus size={16} aria-hidden="true" /> Create</Button>}
-      </div>
+    <header className="border-b border-edge pb-3">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <Input type="search" aria-label="Search issues" placeholder="Search issues" className={`${INPUT_CONTROL} min-w-28 flex-1 sm:max-w-64`}
           icon={<Search size={16} aria-hidden="true" />} value={filters.query} onChange={(event) => setFilters({ ...filters, query: event.target.value })} />
@@ -647,6 +645,7 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
           <SlidersHorizontal size={16} aria-hidden="true" /> Filters{activeFilters > 0 ? ` (${activeFilters})` : ''}
         </Button></div>
         <div className="hidden min-w-0 flex-wrap sm:flex"><FilterControls {...filterProps} /></div>
+        {create}
       </div>
     </header>
     {failure && !selected && overlay?.type !== 'create' && <BoardError text={failure} />}
