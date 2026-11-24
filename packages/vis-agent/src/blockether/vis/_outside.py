@@ -301,8 +301,8 @@ def bus_publish(topic, data_json, scope):
         if wanted in (None, scope) and _bus_matches(pattern, topic)
     ]
     for subscription_id in targets:
-        # As in the engine, a subscription that an earlier handler closed gets nothing,
-        # and each handler gets its own copy of the data.
+        # As in the engine, no delivery starts after `close()` returns, and each
+        # handler gets its own copy of the data.
         row = _SUBSCRIBERS.get(subscription_id)
         if row is None:
             continue

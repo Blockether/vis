@@ -1339,8 +1339,9 @@ The run statuses are `queued`, `running`, `completed`, `failed`, `cancelled`, `s
 - Vis keeps signals in memory and does not replay them. Each subscription gets signals in
   publish order. If 1000 signals are pending for a subscription, Vis drops the next signal for
   that subscription and logs a warning. Vis also logs handler errors and continues delivery.
-- `Subscription.close()` ends the subscription and returns `True` if it was open. A
-  `with` block or an extension reload also ends the subscription.
+- `Subscription.close()` ends the subscription and returns `True` if it was open. After
+  `close()` returns, no new delivery to the subscription starts. A delivery that started
+  before can still end. A `with` block or an extension reload also ends the subscription.
 - Outside Vis, `publish` calls matching handlers in the calling thread. Use this to test your
   handler without starting Vis. Outside Vis, the scope `session` raises `ValueError`, because no
   session exists.
