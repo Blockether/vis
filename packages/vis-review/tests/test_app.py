@@ -864,6 +864,17 @@ def test_a_finding_in_a_file_cut_from_the_patch_is_no_thread(
     assert "Too large to show: z.py" in notes(recorder)
 
 
+def test_push_to_branch_form_keeps_each_shortcut_on_its_button(tmp_path, recorder):
+    # User report: "Push to branch" failed with "/shortcuts/4 - the node that node_id
+    # names is not a button": the branch field took the id of the "branch" button.
+    root, journal, app = setup(tmp_path, recorder, is_session_scoped=True)
+    repository(root)("remote", "add", "origin", str(tmp_path / "remote.git"))
+    recorder.send("activate", "refresh")
+    assert wait_for(lambda: not controls(recorder)["git-push-branch"])
+    recorder.send("activate", "git-push-branch")
+    assert wait_for(lambda: "git-form" in recorder.ids())
+
+
 def test_git_commit_form_suggests_a_message_but_commits_the_persons_message(
     tmp_path, recorder
 ):
@@ -890,9 +901,9 @@ def test_git_commit_form_suggests_a_message_but_commits_the_persons_message(
         lambda: recorder.node("git-form")["children"][0]["value"] == "Proposed message"
     )
     assert "+a = 2" in requests[0]
-    assert recorder.submit("submit-git-commit", {"message": "The person's message"})[
-        "is_accepted"
-    ]
+    assert recorder.submit(
+        "submit-git-commit", {"git-message": "The person's message"}
+    )["is_accepted"]
     assert wait_for(lambda: recorder.node("notice")["tone"] == "ok")
     actual = subprocess.check_output(
         ["git", "log", "-1", "--format=%s"], cwd=root, text=True
@@ -923,7 +934,7 @@ def test_git_operation_does_not_hold_the_app_lock(tmp_path, recorder, monkeypatc
             {
                 "type": "submit",
                 "node_id": "submit-git-commit",
-                "values": {"message": "Example"},
+                "values": {"git-message": "Example"},
             },
         ),
     )

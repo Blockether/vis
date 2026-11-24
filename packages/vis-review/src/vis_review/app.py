@@ -841,8 +841,8 @@ class ReviewApp:
             ui.group(
                 "git-form",
                 (ui.multiline if field == "message" else ui.plaintext)(
-                    field,
-                    id=field,
+                    f"git-{field}",
+                    id=f"git-{field}",
                     label=label,
                     value=self._git_message,
                     is_required=True,
@@ -1002,7 +1002,7 @@ class ReviewApp:
         if kind == "submit" and isinstance(node, str):
             action = node.removeprefix("submit-")
             if action in _GIT_INPUTS and node != action:
-                value = (event.get("values") or {}).get(_GIT_INPUTS[action][0])
+                value = (event.get("values") or {}).get(f"git-{_GIT_INPUTS[action][0]}")
                 if isinstance(value, str):
                     self._run_git(action, value)
                 return

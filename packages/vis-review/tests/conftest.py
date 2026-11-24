@@ -22,6 +22,9 @@ class Recorder(vis.testing.LiveRecorder):
             public.update(json.loads(json.dumps(self._open_view())))
             public["seq"] = self._seq
             _contracts.validate("view", "live_view", public)
+            # The gateway refuses a view with a view fault, such as a shortcut
+            # whose node_id names a node that is not a button.
+            assert _contracts.live_view_faults(public, is_declaration=False).view == []
         return answer
 
     def send(self, kind, node_id="", **fields):
