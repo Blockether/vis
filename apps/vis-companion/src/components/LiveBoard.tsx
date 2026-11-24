@@ -594,7 +594,7 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
   const openCreate = () => setOverlay({ type: 'create' });
   // In an app the board's verb stands in the app's band, which already names the board.
   const create = !canEdit || node.columns.length === 0 ? null : bandSlot
-    ? createPortal(<BandButton isPrimary onClick={openCreate}><span className="inline-flex items-center gap-1.5"><Plus size={14} aria-hidden="true" /> Create</span></BandButton>, bandSlot)
+    ? createPortal(<BandButton label="Create issue" onClick={openCreate}><Plus className="size-4" aria-hidden="true" /></BandButton>, bandSlot)
     : <Button type="button" className={`${ICON_CONTROL} ml-auto`} onClick={openCreate}><Plus size={16} aria-hidden="true" /> Create</Button>;
   const choose = (id?: string) => {
     setFailure('');
