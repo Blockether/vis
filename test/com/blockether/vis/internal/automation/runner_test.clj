@@ -825,23 +825,35 @@
   stall-retry-test
   (it "runs a temporary run again once when its turn stalled before the model"
       (let [n (atom 0)]
-        (with-runner (fn [_ _]
-                       (if (= 1 (swap! n inc)) (stalled "turn_stalled") ((answer "Done.") nil nil)))
-                     (fn [db calls]
-                       (let [id (create! db {})
-                             first-run (settled db (get (runner/run-now! db id) "id"))
-                             retry (eventually
-                                     #(let [[_ r] (runs-of db id)] (when (terminal (:status r)) r)))
-                             original (ps/db-automation-run db (:id first-run))]
+        (with-runner
+          (fn [_ _] (if (= 1 (swap! n inc)) (stalled "turn_stalled") ((answer "Done.") nil nil)))
+          (fn [db calls]
+            (let [id (create! db {})
+                  signals (atom [])
+                  sub (bus/subscribe! "vis.automation.run.*"
+                                      #(when (= id (get-in % ["data" "automation_id"]))
+                                         (swap! signals conj %)))]
+              (try
+                (let [first-run (settled db (get (runner/run-now! db id) "id"))
+                      retry (eventually
+                              #(let [[_ r] (runs-of db id)] (when (terminal (:status r)) r)))
+                      original (ps/db-automation-run db (:id first-run))]
 
-                         (expect (= "failed" (:status original)))
-                         (expect (= (str "Retried as run " (:id retry)) (:reason original)))
-                         (expect (= "completed" (:status retry)))
-                         (expect (= (str (:trigger_key original) ":retry") (:trigger_key retry)))
-                         (expect (str/includes? (:reason retry) (:id original)))
-                         (expect (= 2 (count (calls-of calls :submit))))
-                         (expect (= 2 (count (calls-of calls :delete))))
-                         (expect (= 2 (count (runs-of db id)))))))))
+                  (expect (= "failed" (:status original)))
+                  (expect (= (str "Retried as run " (:id retry)) (:reason original)))
+                  (expect (= "completed" (:status retry)))
+                  (expect (= (str (:trigger_key original) ":retry") (:trigger_key retry)))
+                  (expect (str/includes? (:reason retry) (:id original)))
+                  (expect (= 2 (count (calls-of calls :submit))))
+                  (expect (= 2 (count (calls-of calls :delete))))
+                  (expect (= 2 (count (runs-of db id))))
+                  ;; A subscriber sees the failed run end before its retry starts.
+                  (expect (eventually #(= 6 (count @signals))))
+                  (expect (= (for [run [original retry]
+                                   status ["queued" "running" (:status run)]]
+                               [(:id run) status])
+                             (mapv #(mapv (get % "data") ["run_id" "status"]) @signals))))
+                (finally (bus/unsubscribe! :vis sub))))))))
   (it "never retries a retry, a stall after the model, a cancel or a kept session"
       (doseq [[result changes]
               [[(stalled "turn_stalled") {}] [(stalled "provider_stream_stalled") {}]

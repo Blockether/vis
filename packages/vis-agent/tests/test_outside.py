@@ -1114,3 +1114,44 @@ def test_a_nap_answers_a_surface_the_moment_it_touches_the_view(monkeypatch):
     assert len(recorder.said) == before + 1
     assert view.sleep(0.01) is False
     view.close()
+
+
+# -- The bus ------------------------------------------------------------------
+
+_BUS_PATTERNS = json.loads(
+    (_contracts._DATA / "fixtures" / "bus-patterns.json").read_text(encoding="utf-8")
+)["cases"]
+
+
+@pytest.mark.parametrize(
+    "case", _BUS_PATTERNS, ids=lambda case: f"{case['pattern']}->{case['topic']}"
+)
+def test_a_bus_pattern_gives_the_answer_of_the_engine(case):
+    # `bus-test/topic-pattern-test` runs the same cases in the engine.
+    assert _outside._bus_matches(case["pattern"], case["topic"]) is case["matches"]
+
+
+def test_a_bus_subscription_that_a_handler_closes_gets_no_more_of_the_signal():
+    got = []
+    later = None
+
+    def first(signal):
+        got.append("first")
+        later.close()
+
+    with vis.bus.subscribe("job.#", first):
+        later = vis.bus.subscribe("job.#", lambda signal: got.append("later"))
+        assert vis.bus.publish("job.done") == 2
+    assert got == ["first"]
+
+
+def test_each_bus_handler_gets_its_own_copy_of_the_data():
+    seen = []
+
+    def count(signal):
+        signal.data["n"] += 1
+        seen.append(signal.data["n"])
+
+    with vis.bus.subscribe("job.*", count), vis.bus.subscribe("job.*", count):
+        assert vis.bus.publish("job.done", {"n": 1}) == 2
+    assert seen == [2, 2]

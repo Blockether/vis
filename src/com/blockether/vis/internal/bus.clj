@@ -29,23 +29,26 @@
 
 (defn- words [s] (seq (str/split s #"\." -1)))
 
-(defn matches?
-  "True when `topic` is one of the topics of subscription pattern `pattern`. `*` takes
-   the place of one word, and a last word `#` takes the place of zero or more words."
-  [pattern topic]
-  (loop [ps (words pattern)
-         ts (words topic)]
-    (let [p (first ps)]
-      (cond (= "#" p) true
-            (nil? ps) (nil? ts)
-            (nil? ts) false
-            (or (= "*" p) (= p (first ts))) (recur (next ps) (next ts))
-            :else false))))
-
 (defn- vis-word?
   "True when the first word of topic or pattern `text` is `vis`."
   [text]
   (= "vis" (first (str/split text #"\." 2))))
+
+(defn matches?
+  "True when subscription pattern `pattern` gets the signals of `topic`. `*` takes the
+   place of one word, and a last word `#` takes the place of zero or more words. A
+   topic with the first word `vis` needs a pattern with the first word `vis`. The SDK
+   gives the same answers: see `vis-contract/fixtures/bus-patterns.json`."
+  [pattern topic]
+  (and (= (vis-word? pattern) (vis-word? topic))
+       (loop [ps (words pattern)
+              ts (words topic)]
+         (let [p (first ps)]
+           (cond (= "#" p) true
+                 (nil? ps) (nil? ts)
+                 (nil? ts) false
+                 (or (= "*" p) (= p (first ts))) (recur (next ps) (next ts))
+                 :else false)))))
 
 (defn- fail!
   [message data]
@@ -118,7 +121,6 @@
    from session `session`."
   [row {:keys [owner topic scope session]}]
   (and (or (= :vis owner) (= owner (:owner row)))
-       (= (vis-word? topic) (vis-word? (:pattern row)))
        (matches? (:pattern row) topic)
        (case scope
          "global" (not= "session" (:scope row))

@@ -1338,9 +1338,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
               extension/*tool-call-provider*)))
     (put! g
           "__vis_host_bound_session__"
-          (fn []
-            (some-> (or (:session-id extension/*current-environment*) (:session-id bound-session))
-                    str)))
+          (fn [] (call-session bound-session)))
     (put! g
           "__vis_host_state_get__"
           (fn [k]

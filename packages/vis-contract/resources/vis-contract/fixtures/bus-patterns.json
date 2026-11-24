@@ -1,0 +1,105 @@
+{
+  "description": "Subscription patterns of vis.bus. The engine (bus/matches?) and the SDK outside Vis (_outside._bus_matches) give each case its answer.",
+  "cases": [
+    {
+      "pattern": "board.changed",
+      "topic": "board.changed",
+      "matches": true
+    },
+    {
+      "pattern": "board.*",
+      "topic": "board.changed",
+      "matches": true
+    },
+    {
+      "pattern": "board.*",
+      "topic": "board",
+      "matches": false
+    },
+    {
+      "pattern": "board.*",
+      "topic": "board.issue.moved",
+      "matches": false
+    },
+    {
+      "pattern": "board.#",
+      "topic": "board",
+      "matches": true
+    },
+    {
+      "pattern": "board.#",
+      "topic": "board.issue.moved",
+      "matches": true
+    },
+    {
+      "pattern": "*.issue.#",
+      "topic": "board.issue.moved.done",
+      "matches": true
+    },
+    {
+      "pattern": "#",
+      "topic": "anything.at.all",
+      "matches": true
+    },
+    {
+      "pattern": "board",
+      "topic": "board.changed",
+      "matches": false
+    },
+    {
+      "pattern": "board.changed",
+      "topic": "board.change",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "topic": "board",
+      "matches": true
+    },
+    {
+      "pattern": "*.*",
+      "topic": "board",
+      "matches": false
+    },
+    {
+      "pattern": "#",
+      "topic": "vis.session.deleted",
+      "matches": false
+    },
+    {
+      "pattern": "*.session.deleted",
+      "topic": "vis.session.deleted",
+      "matches": false
+    },
+    {
+      "pattern": "vis.#",
+      "topic": "vis.session.deleted",
+      "matches": true
+    },
+    {
+      "pattern": "vis.automation.run.*",
+      "topic": "vis.automation.run.failed",
+      "matches": true
+    },
+    {
+      "pattern": "vis.#",
+      "topic": "vis",
+      "matches": true
+    },
+    {
+      "pattern": "vis.*",
+      "topic": "vis",
+      "matches": false
+    },
+    {
+      "pattern": "vis.#",
+      "topic": "board.changed",
+      "matches": false
+    },
+    {
+      "pattern": "visual.#",
+      "topic": "visual.changed",
+      "matches": true
+    }
+  ]
+}

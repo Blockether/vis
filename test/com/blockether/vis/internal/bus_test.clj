@@ -1,5 +1,7 @@
 (ns com.blockether.vis.internal.bus-test
-  (:require [com.blockether.vis.contract.document :as document]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.bus :as bus]
             [lazytest.core :refer [defdescribe expect it throws?]])
   (:import (java.util.concurrent CountDownLatch TimeUnit)))
@@ -28,19 +30,17 @@
   ([ext ctx sid scope pattern deliver]
    (bus/subscribe! {:owner ext :context ctx :session sid :scope scope} pattern deliver)))
 
+;; The SDK outside Vis runs the same cases in `test_outside.py`.
+(def ^:private pattern-cases
+  (delay (get (json/read-json (slurp (io/resource "vis-contract/fixtures/bus-patterns.json")))
+              "cases")))
+
 (defdescribe
   topic-pattern-test
-  (it "matches '*' to one word and a last '#' to zero or more words"
-      (expect (bus/matches? "board.changed" "board.changed"))
-      (expect (bus/matches? "board.*" "board.changed"))
-      (expect (not (bus/matches? "board.*" "board")))
-      (expect (not (bus/matches? "board.*" "board.issue.moved")))
-      (expect (bus/matches? "board.#" "board"))
-      (expect (bus/matches? "board.#" "board.issue.moved"))
-      (expect (bus/matches? "*.issue.#" "board.issue.moved.done"))
-      (expect (bus/matches? "#" "anything.at.all"))
-      (expect (not (bus/matches? "board" "board.changed")))
-      (expect (not (bus/matches? "board.changed" "board.change")))))
+  (it "gives each case of the shared fixture its answer"
+      (expect (seq @pattern-cases))
+      (doseq [{:strs [pattern topic matches]} @pattern-cases]
+        (expect (= matches (bus/matches? pattern topic)) (str pattern " -> " topic)))))
 
 (defdescribe
   bus-test

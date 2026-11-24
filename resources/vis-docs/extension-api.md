@@ -1342,7 +1342,8 @@ The run statuses are `queued`, `running`, `completed`, `failed`, `cancelled`, `s
 - `Subscription.close()` ends the subscription and returns `True` if it was open. A
   `with` block or an extension reload also ends the subscription.
 - Outside Vis, `publish` calls matching handlers in the calling thread. Use this to test your
-  handler without starting Vis.
+  handler without starting Vis. Outside Vis, the scope `session` raises `ValueError`, because no
+  session exists.
 
 ## Op hooks
 

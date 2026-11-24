@@ -294,20 +294,26 @@ def _bus_matches(pattern, topic):
 
 
 def bus_publish(topic, data_json, scope):
-    signal = {
-        "topic": topic,
-        "data": json.loads(data_json),
-        "scope": scope,
-        "published_at_ms": int(time.time() * 1000),
-    }
+    published_at_ms = int(time.time() * 1000)
     targets = [
-        listener
-        for pattern, listener, wanted in list(_SUBSCRIBERS.values())
+        subscription_id
+        for subscription_id, (pattern, _, wanted) in list(_SUBSCRIBERS.items())
         if wanted in (None, scope) and _bus_matches(pattern, topic)
     ]
-    for listener in targets:
+    for subscription_id in targets:
+        # As in the engine, a subscription that an earlier handler closed gets nothing,
+        # and each handler gets its own copy of the data.
+        row = _SUBSCRIBERS.get(subscription_id)
+        if row is None:
+            continue
+        signal = {
+            "topic": topic,
+            "data": json.loads(data_json),
+            "scope": scope,
+            "published_at_ms": published_at_ms,
+        }
         try:
-            listener(signal)
+            row[1](signal)
         except Exception as error:
             log("warn", f"A signal subscriber failed: {error}")
     return len(targets)
