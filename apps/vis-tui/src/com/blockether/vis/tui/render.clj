@@ -9498,6 +9498,7 @@
         (when-let [p (some-> (or assistant-prose streamed-prose)
                              str
                              str/trim
+                             (str/replace-first #"^:[ \t]*(?=\p{L})" "")
                              not-empty)]
           ;; Keep one neutral blank on either side; coalescing removes duplicates.
           (-> [(line-entry "")]

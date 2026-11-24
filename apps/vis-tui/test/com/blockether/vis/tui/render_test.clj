@@ -6781,6 +6781,12 @@ h = 8"
           (expect (empty? (copies (render* trace
                                            {:settings {:show-python-code false
                                                        :show-thinking false}}))))))
+    ;; User report: a progress note showed a colon before its first word.
+    (it "removes the initial colon from progress notes"
+        (doseq [key [:assistant-prose :content-stream]]
+          (let [text (text-of (render* [{key ":I'll check the time: 10:30."}] {}))]
+            (expect (str/includes? text "I'll check the time: 10:30."))
+            (expect (not (str/includes? text ":I'll"))))))
     (it "keeps visible output between reasoning groups in its original position"
         (doseq [[separator label]
                 [[{:forms [(first (grouped-activity-forms #{}))]} "ACTIVITY"]

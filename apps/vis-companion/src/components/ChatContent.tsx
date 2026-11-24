@@ -2797,7 +2797,7 @@ const NOTHING_ANSWERED: ReadonlySet<string> = new Set<string>();
 function traceProse(iteration: TranscriptIteration, answered: ReadonlySet<string>): string {
   if (iteration.presentation_content) return '';
   const prose = iteration.assistant_prose?.trim() ?? '';
-  return answered.has(prose) ? '' : prose;
+  return answered.has(prose) ? '' : prose.replace(/^:[ \t]*(?=\p{L})/u, '');
 }
 
 function traceEntry(
