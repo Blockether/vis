@@ -592,10 +592,14 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
   const activeFilters = boardFilterCount(filters);
   const closeOverlay = () => setOverlay(null);
   const openCreate = () => setOverlay({ type: 'create' });
-  // In an app the board's verb stands in the app's band, which already names the board.
-  const create = !canEdit || node.columns.length === 0 ? null : bandSlot
-    ? createPortal(<BandButton label="Create issue" onClick={openCreate}><Plus className="size-4" aria-hidden="true" /></BandButton>, bandSlot)
-    : <Button type="button" className={`${ICON_CONTROL} ml-auto`} onClick={openCreate}><Plus size={16} aria-hidden="true" /> Create</Button>;
+  const canCreate = canEdit && node.columns.length > 0;
+  const search = (className: string) => <Input type="search" aria-label="Search issues" placeholder="Search issues" className={className}
+    icon={<Search size={16} aria-hidden="true" />} value={filters.query} onChange={(event) => setFilters({ ...filters, query: event.target.value })} />;
+  // In an app the search and the verb stand in the app's band, which already names the board.
+  const band = bandSlot && createPortal(<>
+    <span className="flex w-40 min-w-24 shrink sm:w-56">{search('')}</span>
+    {canCreate && <BandButton label="Create issue" onClick={openCreate}><Plus className="size-4" aria-hidden="true" /></BandButton>}
+  </>, bandSlot);
   const choose = (id?: string) => {
     setFailure('');
     setSelection({ seq, id });
@@ -639,14 +643,14 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
     }}>
     <header className="border-b border-edge pb-3">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <Input type="search" aria-label="Search issues" placeholder="Search issues" className={`${INPUT_CONTROL} min-w-28 flex-1 sm:max-w-64`}
-          icon={<Search size={16} aria-hidden="true" />} value={filters.query} onChange={(event) => setFilters({ ...filters, query: event.target.value })} />
+        {!bandSlot && search(`${INPUT_CONTROL} min-w-28 flex-1 sm:max-w-64`)}
         <div className="sm:hidden"><Button type="button" variant="secondary" className={ICON_CONTROL} onClick={() => setOverlay({ type: 'filters' })}>
           <SlidersHorizontal size={16} aria-hidden="true" /> Filters{activeFilters > 0 ? ` (${activeFilters})` : ''}
         </Button></div>
         <div className="hidden min-w-0 flex-wrap sm:flex"><FilterControls {...filterProps} /></div>
-        {create}
+        {!bandSlot && canCreate && <Button type="button" className={`${ICON_CONTROL} ml-auto`} onClick={openCreate}><Plus size={16} aria-hidden="true" /> Create</Button>}
       </div>
+      {band}
     </header>
     {failure && !selected && overlay?.type !== 'create' && <BoardError text={failure} />}
     {node.columns.length === 0 ? <p className="py-6 text-ui text-dialog-hint">No columns yet</p> :
