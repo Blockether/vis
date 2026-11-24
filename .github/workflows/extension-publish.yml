@@ -55,6 +55,8 @@ jobs:
             : > "$RUNNER_TEMP/targets"
             cutoff=$(date -u -d '7 days ago' +%FT%TZ)
             while read -r repository folder prefix; do
+              # The catalog lists a newer release of this repository: older tags are superseded.
+              superseded=0
               if [ "$GITHUB_EVENT_NAME" = schedule ]; then
                 if ! tags=$(gh api --paginate --slurp "repos/$repository/releases?per_page=100" | jq -r \
                   --arg prefix "$prefix" --arg cutoff "$cutoff" '
@@ -95,6 +97,7 @@ jobs:
               while IFS= read -r tag; do
                 [ -n "$tag" ] || continue
                 if [ "$GITHUB_EVENT_NAME" = schedule ] && grep -Fxq -- "$tag" <<< "$listed"; then
+                  superseded=1
                   continue
                 fi
                 if ! revision=$(gh api "repos/$repository/commits/$tag" --jq .sha); then
@@ -102,8 +105,8 @@ jobs:
                   echo "::warning::Could not resolve $repository release $tag."
                   continue
                 fi
-                printf '%s %s %s %s\n' \
-                  "https://github.com/$repository" "$folder" "$tag" "$revision" >> "$RUNNER_TEMP/targets"
+                printf '%s %s %s %s %s\n' \
+                  "https://github.com/$repository" "$folder" "$tag" "$revision" "$superseded" >> "$RUNNER_TEMP/targets"
               done <<< "$tags"
             done <<'FIRST_PARTY'
           Blockether/vis-lang-interface - -
@@ -183,12 +186,17 @@ jobs:
         run: |
           set -euo pipefail
           failed=0
-          while read -r repository folder tag revision; do
+          while read -r repository folder tag revision superseded; do
             [ -n "$repository" ] || continue
             if [ "$folder" = "-" ]; then folder=""; fi
             if ! node moderate.mjs publish "$repository" "$folder" "$tag" "$revision" --remote --config .deployment.json; then
-              echo "::error::Could not publish $repository release $tag."
-              failed=1
+              if [ "${superseded:-0}" = 1 ]; then
+                # Its tag cannot change, and the catalog already lists a newer release.
+                echo "::warning::Could not publish superseded $repository release $tag."
+              else
+                echo "::error::Could not publish $repository release $tag."
+                failed=1
+              fi
             fi
           done <<< "$TARGETS"
           exit "$failed"
