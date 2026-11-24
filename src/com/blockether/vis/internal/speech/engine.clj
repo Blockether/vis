@@ -168,6 +168,7 @@
   [{:keys [audio-path on-progress]}]
   (transcode/with-wav
     (io/file (str audio-path))
+    asr/model-sample-rate
     (fn [^File wav]
       (sherpa/call-native
         #(let [{:keys [text words]}

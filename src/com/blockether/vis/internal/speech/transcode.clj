@@ -12,11 +12,13 @@
    a namespace, and a wrong decoder is silence that transcribes into confident
    words. `ffmpeg` is the one converter a machine reliably has, so a non-WAV
    recording goes through it
-   into a TEMP mono 16 kHz file that is deleted the moment the work is done."
+   into a TEMP mono file that is deleted the moment the work is done. A caller that
+   names a sample rate (Parakeet reads 16 kHz) also gets every other WAV converted to
+   that rate, so a 48 kHz recording is not held in memory at three times its size."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.paths :as paths])
-  (:import [java.io File]
+  (:import [java.io File RandomAccessFile]
            [java.nio.charset StandardCharsets]))
 
 (set! *warn-on-reflection* true)
@@ -33,6 +35,30 @@
            (and (= 12 (.read in head 0 12))
                 (= "RIFF" (String. head 0 4 StandardCharsets/US_ASCII))
                 (= "WAVE" (String. head 8 4 StandardCharsets/US_ASCII)))))))
+
+(defn- wav-format
+  "`{:format :channels :rate :bits}` from the fmt chunk of a WAV, or nil when it has none."
+  [^File file]
+  (with-open [raf (RandomAccessFile. file "r")]
+    (loop [pos 12]
+      (when (<= (+ pos 8) (.length raf))
+        (.seek raf pos)
+        (let [id (let [b (byte-array 4)]
+                   (.readFully raf b)
+                   (String. b StandardCharsets/US_ASCII))
+              size (bit-and 0xFFFFFFFF (Integer/reverseBytes (.readInt raf)))]
+
+          (if (and (= "fmt " id) (>= size 16))
+            (let [fmt (Short/toUnsignedInt (Short/reverseBytes (.readShort raf)))
+                  channels (Short/toUnsignedInt (Short/reverseBytes (.readShort raf)))
+                  rate (Integer/reverseBytes (.readInt raf))]
+
+              (.skipBytes raf 6)
+              {:format fmt
+               :channels channels
+               :rate rate
+               :bits (Short/toUnsignedInt (Short/reverseBytes (.readShort raf)))})
+            (recur (+ pos 8 size (rem size 2)))))))))
 
 (defn ffmpeg-path
   "The `ffmpeg` this process can execute, or nil. Resolved per call: a machine that
@@ -51,13 +77,18 @@
 
 (defn ->wav!
   "`file` as a readable 16-bit PCM WAV, converted only when it is not one already.
+   With `rate`, a WAV whose fmt chunk is not mono 16-bit PCM at `rate` is converted
+   too, when this machine has ffmpeg.
 
    Answers `{:file <File> :is-temp <bool>}`; the caller DELETES a temp file (see
    [[with-wav]], which is that contract written down). Throws `:speech/no-ffmpeg`
    when conversion is needed and impossible, `:speech/unreadable` when ffmpeg
    refused the container."
-  [^File file]
-  (if (wav? file)
+  [^File file & [rate]]
+  (if (and (wav? file)
+           (or (nil? rate)
+               (nil? (ffmpeg-path))
+               (contains? #{nil {:format 1 :channels 1 :rate rate :bits 16}} (wav-format file))))
     {:file file :is-temp false}
     (let [ffmpeg
           (ffmpeg-path)
@@ -69,8 +100,11 @@
         (.delete converted)
         (throw (ex-info (missing-ffmpeg-message file) {:type :speech/no-ffmpeg :path (str file)})))
       (try (let [^java.util.List command
-                 [ffmpeg "-v" "error" "-y" "-i" (str file) "-ac" "1" "-c:a" "pcm_s16le"
-                  (str converted)]
+                 (-> [ffmpeg "-v" "error" "-y" "-i" (str file) "-ac" "1"]
+                     (cond->
+                       rate
+                       (conj "-ar" (str rate)))
+                     (conj "-c:a" "pcm_s16le" (str converted)))
 
                  ^Process process
                  (.start (doto (ProcessBuilder. command) (.redirectErrorStream true)))
@@ -92,7 +126,8 @@
 
    The deletion is the whole point of the fn: a converted memo is a temp file per
    transcription, and a caller that forgets fills the temp directory with the
-   user's own speech."
-  [^File file f]
-  (let [{:keys [^File file is-temp]} (->wav! file)]
-    (try (f file) (finally (when is-temp (.delete file))))))
+   user's own speech. `rate` is the sample rate the reader needs ([[->wav!]])."
+  ([^File file f] (with-wav file nil f))
+  ([^File file rate f]
+   (let [{:keys [^File file is-temp]} (->wav! file rate)]
+     (try (f file) (finally (when is-temp (.delete file)))))))

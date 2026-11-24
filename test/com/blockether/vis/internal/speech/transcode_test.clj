@@ -7,42 +7,44 @@
   (:import [java.io File]))
 
 (defn- wav!
-  "A one-channel 16-bit PCM WAV of `seconds`, carrying a tone: a converter has to
-   move real samples, and ffmpeg refuses a file that is only a header."
-  ^File [^double seconds]
-  (let [rate
-        16000
+  "A one-channel 16-bit PCM WAV of `seconds` at `rate` (16 kHz by default), carrying a
+   tone: a converter has to move real samples, and ffmpeg refuses a file that is only
+   a header."
+  (^File [seconds] (wav! seconds 16000))
+  (^File [seconds rate]
+   (let [rate
+         (long rate)
 
-        frames
-        (long (* seconds (double rate)))
+         frames
+         (long (* (double seconds) (double rate)))
 
-        data-bytes
-        (* frames 2)
+         data-bytes
+         (* frames 2)
 
-        buffer
-        (doto (java.nio.ByteBuffer/allocate (+ 44 data-bytes))
-          (.order java.nio.ByteOrder/LITTLE_ENDIAN))
+         buffer
+         (doto (java.nio.ByteBuffer/allocate (+ 44 data-bytes))
+           (.order java.nio.ByteOrder/LITTLE_ENDIAN))
 
-        file
-        (doto (File/createTempFile "vis-transcode-test" ".wav") (.deleteOnExit))]
+         file
+         (doto (File/createTempFile "vis-transcode-test" ".wav") (.deleteOnExit))]
 
-    (.put buffer (.getBytes "RIFF" "US-ASCII"))
-    (.putInt buffer (+ 36 data-bytes))
-    (.put buffer (.getBytes "WAVEfmt " "US-ASCII"))
-    (.putInt buffer 16)
-    (.putShort buffer (short 1))
-    (.putShort buffer (short 1))
-    (.putInt buffer rate)
-    (.putInt buffer (* rate 2))
-    (.putShort buffer (short 2))
-    (.putShort buffer (short 16))
-    (.put buffer (.getBytes "data" "US-ASCII"))
-    (.putInt buffer data-bytes)
-    (dotimes [i frames]
-      (.putShort buffer (short (* 8000 (Math/sin (* 2 Math/PI 440 (/ (double i) rate)))))))
-    (with-open [out (java.io.FileOutputStream. file)]
-      (.write out (.array buffer)))
-    file))
+     (.put buffer (.getBytes "RIFF" "US-ASCII"))
+     (.putInt buffer (+ 36 data-bytes))
+     (.put buffer (.getBytes "WAVEfmt " "US-ASCII"))
+     (.putInt buffer 16)
+     (.putShort buffer (short 1))
+     (.putShort buffer (short 1))
+     (.putInt buffer rate)
+     (.putInt buffer (* rate 2))
+     (.putShort buffer (short 2))
+     (.putShort buffer (short 16))
+     (.put buffer (.getBytes "data" "US-ASCII"))
+     (.putInt buffer data-bytes)
+     (dotimes [i frames]
+       (.putShort buffer (short (* 8000 (Math/sin (* 2 Math/PI 440 (/ (double i) rate)))))))
+     (with-open [out (java.io.FileOutputStream. file)]
+       (.write out (.array buffer)))
+     file)))
 
 (defn- m4a!
   "The same tone as an AAC/MP4 memo - what an iPhone actually records - or nil on a
@@ -99,4 +101,12 @@
                                              :transcribed))]
 
             (expect (= :transcribed answer))
-            (expect (false? (.exists ^File @seen))))))))
+            (expect (false? (.exists ^File @seen)))))))
+  (it "converts a 48 kHz recording to the sample rate the engine reads"
+      (when (transcode/ffmpeg-path)
+        (doseq [source [(m4a! (wav! 0.5 48000)) (wav! 0.5 48000)]]
+          (expect (= 16000
+                     (transcode/with-wav source
+                                         16000
+                                         (fn [^File wav]
+                                           (:rate (#'transcode/wav-format wav))))))))))

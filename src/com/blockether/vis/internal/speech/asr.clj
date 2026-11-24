@@ -345,6 +345,11 @@
                   (recur next-pos pcm16? (or data? (= id "data"))))))))))
   audio-path)
 
+(def ^:const model-sample-rate
+  "The sample rate Parakeet features are computed at. A recording at another rate is
+   converted to it before it is read, so the whole clip is held in memory at this rate."
+  16000)
+
 (def ^:const min-audio-seconds
   "Minimum microphone audio length sent to Parakeet ASR.
    Very short clips either transcribe blank or trigger opaque ONNX Conv_quant
