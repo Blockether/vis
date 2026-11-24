@@ -28,6 +28,7 @@ import {
   FlaskConical,
   Music,
   BookOpen,
+  SquareKanban,
   AlignLeft,
   File,
   FileCode2,
@@ -716,6 +717,7 @@ const APP_MARKS: Record<AppIconName, LucideIcon> = {
   image: Image,
   book: BookOpen,
   lightning: Zap,
+  board: SquareKanban,
 };
 
 export function AppIcon({ name, className }: { name?: AppIconName; className?: string }) {

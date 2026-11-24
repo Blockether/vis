@@ -33,6 +33,7 @@ import {
   type LiveSceneMesh,
   type LiveSceneObject,
 } from './scene';
+import { BOARD_KINDS, BOARD_PRIORITIES, type BoardColumn, type BoardEpic, type BoardIssue, type BoardPerson } from './board';
 import { CANVAS_MAX_ZOOM } from './canvas';
 import {
   CANVAS_DEFAULT_FLOW,
@@ -97,6 +98,7 @@ export const LIVE_NODE_TYPES = [
   'thread',
   'scene',
   'canvas',
+  'board',
   'image',
 ] as const;
 
@@ -597,6 +599,17 @@ export interface LiveCanvasNode extends LiveNodeBase {
   threads: LiveThread[];
 }
 
+export interface LiveBoardNode extends LiveNodeBase {
+  type: 'board';
+  is_editable: boolean;
+  is_selectable: boolean;
+  selected_ids: string[];
+  columns: BoardColumn[];
+  people: BoardPerson[];
+  epics: BoardEpic[];
+  issues: BoardIssue[];
+}
+
 /** One picture as base64 data (`view.json` `picture`). */
 export interface LivePicture {
   media_type: LiveImageMedia;
@@ -679,6 +692,7 @@ export type LiveLeafNode =
   | LiveThreadNode
   | LiveSceneNode
   | LiveCanvasNode
+  | LiveBoardNode
   | LiveImageNode;
 
 /** A node either paints something, or arranges the nodes it holds. */
@@ -979,6 +993,50 @@ function listItemFromWire(raw: Record<string, unknown>): LiveListItem | null {
   const id = text(raw.id);
   if (id === '') return null;
   return { id, text: text(raw.text), tone: tone(raw.tone), detail: optionalText(raw.detail) };
+}
+
+function boardColor(raw: unknown): string | undefined {
+  return /^#[\da-f]{6}$/i.test(text(raw)) ? text(raw) : undefined;
+}
+
+function boardColumnFromWire(raw: Record<string, unknown>): BoardColumn | null {
+  const id = optionalText(raw.id);
+  const title = optionalText(raw.title);
+  if (!id || !title) return null;
+  return { id, title, tone: tone(raw.tone), limit: optionalNumber(raw.limit), is_done: raw.is_done === true };
+}
+
+function boardPersonFromWire(raw: Record<string, unknown>): BoardPerson | null {
+  const id = optionalText(raw.id);
+  const name = optionalText(raw.name);
+  return id && name ? { id, name, color: boardColor(raw.color) } : null;
+}
+
+function boardEpicFromWire(raw: Record<string, unknown>): BoardEpic | null {
+  const id = optionalText(raw.id);
+  const title = optionalText(raw.title);
+  return id && title ? { id, title, color: boardColor(raw.color) } : null;
+}
+
+function boardIssueFromWire(raw: Record<string, unknown>): BoardIssue | null {
+  const id = optionalText(raw.id);
+  const title = optionalText(raw.title);
+  const column = optionalText(raw.column);
+  if (!id || !title || !column) return null;
+  return {
+    id, title, column, key: optionalText(raw.key), rank: optionalNumber(raw.rank),
+    kind: BOARD_KINDS.find((kind) => kind === raw.kind),
+    priority: BOARD_PRIORITIES.find((priority) => priority === raw.priority),
+    assignee: optionalText(raw.assignee), epic: optionalText(raw.epic), points: optionalNumber(raw.points),
+    labels: lines(raw.labels).filter(Boolean), text: text(raw.text),
+    due: /^\d{4}-\d{2}-\d{2}$/.test(text(raw.due)) ? text(raw.due) : undefined,
+    is_flagged: raw.is_flagged === true, subtasks_done: optionalNumber(raw.subtasks_done),
+    subtasks_total: optionalNumber(raw.subtasks_total), updated_at: optionalNumber(raw.updated_at),
+  };
+}
+
+function boardSelection(raw: unknown, issues: BoardIssue[], isSelectable: boolean) {
+  return isSelectable ? selectedIds(raw, issues).slice(0, 1) : [];
 }
 
 function canvasEdgeFromWire(raw: Record<string, unknown>): LiveCanvasEdge | null {
@@ -1604,6 +1662,17 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         objects: mergeSceneObjects([], node.objects),
       };
     }
+    case 'board': {
+      const issues = upsert([], keyed(node.issues, boardIssueFromWire));
+      const isSelectable = node.is_selectable === true;
+      return {
+        ...base, type: 'board', is_editable: node.is_editable === true, is_selectable: isSelectable,
+        selected_ids: boardSelection(node.selected_ids, issues, isSelectable), issues,
+        columns: upsert([], keyed(node.columns, boardColumnFromWire)),
+        people: upsert([], keyed(node.people, boardPersonFromWire)),
+        epics: upsert([], keyed(node.epics, boardEpicFromWire)),
+      };
+    }
     case 'canvas': {
       const cards = upsert([], keyed(node.cards, canvasCardFromWire));
       const isSelectable = node.is_selectable === true;
@@ -1960,6 +2029,7 @@ function appendKey(
   | 'links'
   | 'objects'
   | 'cards'
+  | 'issues'
   | null {
   switch (node.type) {
     case 'log':
@@ -1984,6 +2054,8 @@ function appendKey(
       return 'objects';
     case 'canvas':
       return 'cards';
+    case 'board':
+      return 'issues';
     default:
       return null;
   }
@@ -2088,6 +2160,18 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
         label: 'label' in op ? optionalText(op.label) : node.label,
         ...sceneSettings(op, node),
       };
+    case 'board': {
+      const isSelectable = typeof op.is_selectable === 'boolean' ? op.is_selectable : node.is_selectable;
+      return {
+        ...node, label: 'label' in op ? optionalText(op.label) : node.label,
+        is_selectable: isSelectable,
+        is_editable: typeof op.is_editable === 'boolean' ? op.is_editable : node.is_editable,
+        selected_ids: boardSelection('selected_ids' in op ? op.selected_ids : node.selected_ids, node.issues, isSelectable),
+        columns: 'columns' in op ? upsert([], keyed(op.columns, boardColumnFromWire)) : node.columns,
+        people: 'people' in op ? upsert([], keyed(op.people, boardPersonFromWire)) : node.people,
+        epics: 'epics' in op ? upsert([], keyed(op.epics, boardEpicFromWire)) : node.epics,
+      };
+    }
     case 'canvas': {
       const isSelectable =
         typeof op.is_selectable === 'boolean' ? op.is_selectable : node.is_selectable;
@@ -2186,6 +2270,8 @@ function applyAppend(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
       };
     case 'canvas':
       return { ...node, cards: upsert(node.cards, keyed(op.cards, canvasCardFromWire)) };
+    case 'board':
+      return { ...node, issues: upsert(node.issues, keyed(op.issues, boardIssueFromWire)) };
     default:
       return node;
   }
@@ -2219,6 +2305,10 @@ function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
       return { ...node, threads: withoutIds(node.threads, op.item_ids) };
     case 'scene':
       return { ...node, objects: withoutIds(node.objects, op.item_ids) };
+    case 'board': {
+      const issues = withoutIds(node.issues, op.item_ids);
+      return { ...node, issues, selected_ids: boardSelection(node.selected_ids, issues, node.is_selectable) };
+    }
     case 'canvas': {
       // An id names an item or a thread, and a removed item takes its threads with it.
       const gone = new Set(lines(op.item_ids));
@@ -2262,6 +2352,8 @@ function applyClear(node: LiveLeafNode): LiveNode {
       return { ...node, objects: [] };
     case 'canvas':
       return { ...node, cards: [], threads: [], selected_ids: [] };
+    case 'board':
+      return { ...node, issues: [], selected_ids: [] };
     default:
       return node;
   }
@@ -2272,6 +2364,10 @@ function applyClear(node: LiveLeafNode): LiveNode {
  * row that comes back stays selected, and a row that is gone loses its selection.
  */
 function applyReplace(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
+  if (node.type === 'board') {
+    const issues = upsert([], keyed(op.issues, boardIssueFromWire));
+    return { ...node, issues, selected_ids: boardSelection(node.selected_ids, issues, node.is_selectable) };
+  }
   if (node.type !== 'table') return node;
   const tableRows = upsert([], keyed(op.rows, rowFromWire));
   return { ...node, rows: tableRows, selected_ids: selectedIds(node.selected_ids, tableRows) };

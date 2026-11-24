@@ -463,6 +463,15 @@ export function AppSurface({
     [act],
   );
 
+  const onBoardAction = useCallback(
+    async (action: Extract<ViewAction, { action: 'move' | 'edit' }>) => {
+      const result = await act(action);
+      setFormStatus(result.status === 'saved' ? 'idle' : result.status);
+      return result.status === 'saved';
+    },
+    [act],
+  );
+
   // One shortcut, pressed by its key or by its legend entry. A node shortcut
   // clicks the node itself, so a disabled or pending node ignores the key exactly
   // as it ignores a click. Owner actions wait in order: a game reads its moves in
@@ -605,6 +614,7 @@ export function AppSurface({
               headlineId={headline?.id}
               onActivate={isReadOnly ? undefined : onActivate}
               onSelect={isReadOnly ? undefined : onSelect}
+              onBoardAction={isReadOnly ? undefined : onBoardAction}
               onChange={isReadOnly ? undefined : onChange}
               onSubmit={isReadOnly ? undefined : onSubmit}
               load={

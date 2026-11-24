@@ -36,6 +36,8 @@ import {
 import { InlineMarkdown } from './ChatContent';
 import { HumanInputFieldRow } from './HumanInputPrompt';
 import { DiffNodeView, ThreadNodeView, type AppNodeActions } from './AppNodes';
+import type { BoardAction } from '../lib/board';
+import { LiveBoard } from './LiveBoard';
 import { LiveCanvas } from './LiveCanvas';
 import { LiveScene } from './LiveScene';
 import { ImageNodeView } from './AppImage';
@@ -1875,6 +1877,8 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
  * reading order is the declared order either way.
  */
 type NodePresentation = {
+  seq: number;
+  onBoardAction?: (action: BoardAction) => Promise<boolean> | boolean;
   isSettled: boolean;
   expanded: Record<string, boolean>;
   toggle: (id: string, value: boolean) => void;
@@ -2210,8 +2214,8 @@ function NodeCell({
         node.label &&
         node.type !== 'button' &&
         node.type !== 'card' &&
-        // A diff shows its name in its own toolbar.
-        node.type !== 'diff' && <NodeLabel>{node.label}</NodeLabel>
+        // These nodes show their names in their own toolbars.
+        node.type !== 'diff' && node.type !== 'board' && <NodeLabel>{node.label}</NodeLabel>
       )}
       {node.type === 'log' && !isOpen && <LogErrors node={node} label={label} />}
       {/* A log's output starts at the column of the view, not under its name: an
@@ -2343,6 +2347,9 @@ function NodeCell({
           )}
           {node.type === 'thread' && <ThreadNodeView node={node} actions={presentation.app} />}
           {node.type === 'scene' && <LiveScene node={node} />}
+          {node.type === 'board' && (
+            <LiveBoard node={node} seq={presentation.seq} onSelect={onSelect} onAction={presentation.onBoardAction} />
+          )}
           {node.type === 'canvas' &&
             (node.cards.length === 0 ? (
               <Empty>{EMPTY_LINE.canvas}</Empty>
@@ -2402,6 +2409,7 @@ export function LiveViewPanel({
   onActivate,
   onChange,
   onSubmit,
+  onBoardAction,
   isInterrupting = false,
   error,
   load,
@@ -2413,6 +2421,7 @@ export function LiveViewPanel({
   headlineId,
 }: {
   view: LiveViewModel;
+  onBoardAction?: NodePresentation['onBoardAction'];
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
   onInterrupt?: (note: string | null) => void;
   /** Live selection, or local snapshot browsing in a receipt; omit when unavailable. */
@@ -2515,6 +2524,8 @@ export function LiveViewPanel({
     ) as Record<string, HumanInputValue>;
   }, [typed, view.seq, view.nodes]);
   const presentation: NodePresentation = {
+    seq: view.seq,
+    onBoardAction: isSettled ? undefined : onBoardAction,
     isSettled,
     app,
     keys,
@@ -2772,6 +2783,7 @@ export function LiveViewPanel({
           onActivate={onActivate}
           onChange={onChange}
           onSubmit={onSubmit}
+          onBoardAction={onBoardAction}
           error={error}
           isInterrupting={isInterrupting}
           load={load}
@@ -3115,6 +3127,7 @@ export function LiveView({
           ? undefined
           : (note: string | null) => interrupt(view.id, note),
       onSelect: (nodeId: string, itemIds: string[]) => select(view.id, nodeId, itemIds),
+      onBoardAction: async (action: BoardAction) => (await send(view.id, action)).is_accepted,
       onActivate: (nodeId: string) => activate(view.id, nodeId),
       onChange: (nodeId: string, value: HumanInputValue) => change(view.id, nodeId, value),
       onSubmit: (nodeId: string, values: Record<string, HumanInputValue>) =>

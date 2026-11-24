@@ -134,6 +134,14 @@
         "a selected id names no row of the table",
         "selection"
       ],
+      "board_selection": [
+        "a selected id names no issue of the board",
+        "selection"
+      ],
+      "board_column": [
+        "an issue names a column that the board does not have",
+        "board"
+      ],
       "canvas_selection": [
         "a selected id names no card of the canvas",
         "selection"
@@ -151,7 +159,7 @@
         "thread_not_found"
       ],
       "not_selectable": [
-        "only a selectable table, card or canvas takes this property",
+        "only a selectable table, card, canvas or board takes this property",
         "selection"
       ],
       "mesh_shadow": [

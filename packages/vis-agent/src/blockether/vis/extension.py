@@ -5646,6 +5646,11 @@ class LiveEvent:
     A draft that a person changed in a thread of an app gives `thread_id`. The event
     has no text: read the draft from `state()` of the app. A canvas draft has an
     `item_id`. On Send, each canvas comment has its `item_id` in `comments`.
+    A board `move` gives `item_id`, the `column` and the `index` in that column:
+    the host has moved the issue. A board `edit` gives `values`, the fields that
+    the person set, and `item_id`, or no `item_id` for a new issue; `is_removed`
+    asks to delete the issue. The owner makes the change, for example with
+    `Board.apply(event)`.
     """
 
     type: str
@@ -5661,6 +5666,9 @@ class LiveEvent:
     item_ids: list[str] | None = None
     thread_id: str | None = None
     item_id: str | None = None
+    column: str | None = None
+    index: int | None = None
+    is_removed: bool | None = None
 
     @classmethod
     def _from_wire(cls, raw):
@@ -5678,6 +5686,9 @@ class LiveEvent:
             item_ids=None if raw.get("item_ids") is None else list(raw["item_ids"]),
             thread_id=raw.get("thread_id"),
             item_id=raw.get("item_id"),
+            column=raw.get("column"),
+            index=raw.get("index"),
+            is_removed=raw.get("is_removed"),
         )
 
 
@@ -6211,6 +6222,140 @@ class Canvas(_KeyedNode):
         return list(self._view._node_state(self.node_id).get("selected_ids") or [])
 
 
+class Board(_KeyedNode):
+    """Columns of issues that people drag from column to column.
+
+    A person moves an issue: the host moves it and sends a `move` event. A person
+    makes, changes or deletes an issue: the host sends an `edit` event, and the
+    owner changes the board. `apply(event)` does that change.
+    """
+
+    def set(
+        self,
+        *,
+        columns=None,
+        people=None,
+        epics=None,
+        is_editable=None,
+        is_selectable=None,
+        label=None,
+    ):
+        """Change the columns, people, epics or controls of the board."""
+        return self._op(
+            "set",
+            columns=None if columns is None else list(columns),
+            people=None if people is None else list(people),
+            epics=None if epics is None else list(epics),
+            is_editable=is_editable,
+            is_selectable=is_selectable,
+            label=label,
+        )
+
+    def put(self, *issues):
+        """Add issues, or replace each issue that has the same ID.
+
+        Build each issue with `vis.ui.board.issue`.
+        """
+        return self._op("append", issues=list(issues))
+
+    def issue(self, issue_id, title, column, **spec):
+        """Add or replace one issue. See `vis.ui.board.issue`."""
+        return self.put(_ui_board_issue(issue_id, title, column, **spec))
+
+    def replace(self, issues):
+        """Make `issues` all the issues of the board, in their order, in one step."""
+        if isinstance(issues, (str, dict)) or not hasattr(issues, "__iter__"):
+            raise TypeError("replace takes a list of vis.ui.board.issue(...) values")
+        return self._op("replace", issues=[dict(one) for one in issues])
+
+    def select(self, *issue_ids):
+        """Mark one issue as selected, or none. The board must be selectable."""
+        return self._op("set", selected_ids=[str(one) for one in issue_ids])
+
+    def move(self, issue_id, column, index):
+        """Put issue `issue_id` at place `index` of `column`, 0 at the top, as a person does."""
+        changed = _board_moved(self.issues, str(issue_id), str(column), int(index))
+        return self.put(*changed) if changed else None
+
+    def apply(self, event, *, key_prefix=None):
+        """Do the change of an `edit` event, and give the ID of the issue.
+
+        A new issue goes to the bottom of its column. With `key_prefix`, it gets
+        the next free key, for example `VIS-13`. A `move` event needs no change:
+        the host moved the issue. Other events give None.
+        """
+        if event.type == "move":
+            return event.item_id
+        if event.type != "edit":
+            return None
+        held = self.issues
+        if event.is_removed:
+            self.remove(event.item_id)
+            return event.item_id
+        import uuid
+
+        values = dict(event.values or {})
+        now = int(time.time() * 1000)
+        if event.item_id:
+            issue = dict(held.get(event.item_id) or {"id": event.item_id})
+        else:
+            column = values.get("column")
+            ranks = [one.get("rank", 0) for one in held.values() if one.get("column") == column]
+            issue = {"id": f"issue-{uuid.uuid4().hex[:12]}", "rank": max(ranks, default=-1) + 1}
+            if key_prefix:
+                issue["key"] = _board_next_key(held.values(), str(key_prefix))
+        for name, value in values.items():
+            if value is None:
+                issue.pop(name, None)
+            else:
+                issue[name] = value
+        issue["updated_at"] = now
+        self.put(issue)
+        return issue["id"]
+
+    @property
+    def issues(self):
+        """The issues of this board as the host holds them, by ID."""
+        held = self._view._node_state(self.node_id).get("issues") or []
+        return {one["id"]: one for one in held}
+
+    @property
+    def columns(self):
+        """The columns of this board, in their order."""
+        return list(self._view._node_state(self.node_id).get("columns") or [])
+
+    @property
+    def selected_ids(self):
+        """The ID of the selected issue, in a list, or an empty list."""
+        return list(self._view._node_state(self.node_id).get("selected_ids") or [])
+
+
+def _board_moved(issues, issue_id, column, index):
+    """The issues that change when `issue_id` goes to place `index` of `column`, as
+    the host moves it: each issue of that column gets its place as its rank."""
+    if issue_id not in issues:
+        raise ValueError(f"the board has no issue {issue_id!r}")
+    others = sorted(
+        (one for one in issues.values() if one.get("column") == column and one["id"] != issue_id),
+        key=lambda one: one.get("rank", 0),
+    )
+    at = min(max(index, 0), len(others))
+    order = others[:at] + [dict(issues[issue_id], column=column)] + others[at:]
+    ranked = [dict(one, rank=rank) for rank, one in enumerate(order)]
+    return [one for one in ranked if one != issues[one["id"]]]
+
+
+def _board_next_key(issues, prefix):
+    """The next free key with `prefix`, for example `VIS-13` after `VIS-12`."""
+    numbers = [
+        int(one["key"][len(prefix) + 1 :])
+        for one in issues
+        if str(one.get("key", "")).startswith(prefix + "-")
+        and one["key"][len(prefix) + 1 :].isdigit()
+    ]
+    return f"{prefix}-{max(numbers, default=0) + 1}"
+
+
 _LIVE_NODES = {
     "paragraph": TextNode,
     "heading": TextNode,
@@ -6235,6 +6380,7 @@ _LIVE_NODES = {
     "thread": ThreadNode,
     "scene": Scene,
     "canvas": Canvas,
+    "board": Board,
 }
 # The typed handle of each node type that is not an input. Each input type of the
 # view schema has an `Input` handle. A test compares this table with the schema.
@@ -8241,6 +8387,78 @@ class _LiveRecorder:
                 self._condition.notify_all()
         return answer
 
+    def _board_refusal(self, node_id, item_id, column=None):
+        """Why the board `node_id` refuses a move or an edit, as the host says it, or None."""
+        node = next(
+            (one for one in self._nodes(self._open_view().get("nodes")) if one.get("id") == node_id),
+            None,
+        )
+        if node is None:
+            return "unknown_node"
+        if node.get("type") != "board":
+            return "not_board"
+        if not node.get("is_editable"):
+            return "not_editable"
+        if item_id is not None and item_id not in {one["id"] for one in node.get("issues") or []}:
+            return "unknown_item"
+        if column is not None and column not in {one["id"] for one in node.get("columns") or []}:
+            return "unknown_column"
+        return None
+
+    def move(self, node_id, item_id, column, index):
+        """Simulate a person moving a board issue, as the host does.
+
+        An accepted move changes the ranks of the column and queues a `move` event.
+        """
+        import json
+
+        node_id, item_id, column = str(node_id), str(item_id), str(column)
+        if reason := self._board_refusal(node_id, item_id, column):
+            return {"is_accepted": False, "reason": reason}
+        issues = {one["id"]: one for one in self.node(node_id).get("issues") or []}
+        changed = _board_moved(issues, item_id, column, int(index))
+        if changed:
+            answer = json.loads(
+                self.host_live(
+                    json.dumps(
+                        {
+                            "op": "patch",
+                            "view_id": self.view_id,
+                            "patch": {
+                                "ops": [{"op": "append", "node_id": node_id, "issues": changed}]
+                            },
+                        }
+                    )
+                )
+            )
+            if answer.get("error"):
+                return answer
+        with self._condition:
+            self._event("move", node_id, item_id=item_id, column=column, index=int(index))
+            self._condition.notify_all()
+        return {"is_accepted": True}
+
+    def edit(self, node_id, values, item_id=None, is_removed=False):
+        """Simulate a person making, changing or deleting a board issue.
+
+        The host changes nothing: an accepted edit queues an `edit` event for the owner.
+        """
+        node_id = str(node_id)
+        item_id = None if item_id is None else str(item_id)
+        if reason := self._board_refusal(node_id, item_id):
+            return {"is_accepted": False, "reason": reason}
+        if item_id is None and (is_removed or "title" not in values or "column" not in values):
+            return {"is_accepted": False, "reason": "missing_values"}
+        payload: dict[str, Any] = {"values": dict(values)}
+        if item_id is not None:
+            payload["item_id"] = item_id
+        if is_removed:
+            payload["is_removed"] = True
+        with self._condition:
+            self._event("edit", node_id, **payload)
+            self._condition.notify_all()
+        return {"is_accepted": True}
+
     def close(self, reason="interrupted", **ending):
         """Simulate an external close and return its terminal result."""
         import json
@@ -9142,6 +9360,73 @@ def _ui_fit(items: Sequence[Any], node_type: str, field: str) -> tuple[list[Any]
     return kept[:limit], max(0, len(kept) - limit)
 
 
+def _ui_board(node_id, columns, issues=None, *, people=None, epics=None, **spec):
+    """A board: columns of issues that people move, open and change.
+
+    Build `columns` with `vis.ui.board.column`, `issues` with
+    `vis.ui.board.issue`, `people` with `vis.ui.board.person` and `epics` with
+    `vis.ui.board.epic`. `is_editable=True` lets people move, make, change and
+    delete issues. `is_selectable=True` lets a person select one issue.
+    """
+    from blockether.vis import _contracts
+
+    node = _live_node(
+        "board",
+        node_id,
+        dict(
+            spec,
+            columns=list(columns),
+            issues=list(issues or []),
+            people=None if people is None else list(people),
+            epics=None if epics is None else list(epics),
+        ),
+    )
+    if complaint := _contracts.live_node_fault(_contracts.deepcopy_json(node)):
+        raise ValueError(complaint)
+    return node
+
+
+def _ui_board_column(column_id, title, *, tone=None, limit=None, is_done=None):
+    """One column of a board. `limit` marks a column that holds too many issues.
+    `is_done=True` marks the issues in it as done."""
+    return _live_item(
+        column_id, {"title": str(title), "tone": tone, "limit": limit, "is_done": is_done}
+    )
+
+
+def _ui_board_person(person_id, name, *, color=None):
+    """One person that an issue can name as its `assignee`. `color` is #rrggbb."""
+    return _live_item(person_id, {"name": str(name), "color": color})
+
+
+def _ui_board_epic(epic_id, title, *, color=None):
+    """One epic that an issue can name as its `epic`. `color` is #rrggbb."""
+    return _live_item(epic_id, {"title": str(title), "color": color})
+
+
+def _ui_board_issue(issue_id, title, column, **spec):
+    """One issue in `column`.
+
+    Optional fields: `key` (for example VIS-12), `rank`, `kind` (task, story, bug,
+    epic or subtask), `priority` (highest to lowest), `assignee`, `epic`,
+    `points`, `labels`, `text` (Markdown), `due` (YYYY-MM-DD), `is_flagged`,
+    `subtasks_done`, `subtasks_total` and `updated_at`.
+    """
+    if spec.get("labels") is not None:
+        spec["labels"] = [str(one) for one in spec["labels"]]
+    return _live_item(issue_id, dict(spec, title=str(title), column=str(column)))
+
+
+class _BoardUI:
+    """Build a board and its columns, people, epics and issues."""
+
+    __call__ = staticmethod(_ui_board)
+    column = staticmethod(_ui_board_column)
+    person = staticmethod(_ui_board_person)
+    epic = staticmethod(_ui_board_epic)
+    issue = staticmethod(_ui_board_issue)
+
+
 class _CanvasUI:
     """Build a canvas and its items, arrows, and pictures."""
 
@@ -9219,6 +9504,7 @@ class _UI:
     scene_object = staticmethod(_ui_scene_object)
     scene_mesh = staticmethod(_ui_scene_mesh)
     canvas = _CanvasUI()
+    board = _BoardUI()
 
     # Bounds
     bound = staticmethod(_ui_bound)

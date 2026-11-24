@@ -52,6 +52,9 @@
     (:card :trow)
     (boolean (:is-selectable entry))
 
+    :board-issue
+    (boolean (or (:is-selectable entry) (:is-editable entry)))
+
     (:picture-open :disclosure)
     true
 
@@ -550,6 +553,9 @@
     (cond (#{:button :card} (:type node)) (do (activate! {:action :activate :node-id node-id})
                                               (when reveal! (reveal! view node))
                                               state)
+          (and item-id (= :board (:type node)) (:is-selectable node))
+          (do (select! {:action :select :node-id node-id
+                        :item-ids (if (= item-id (first (:selected-ids node))) [] [item-id])}) state)
           (and item-id (#{:table :canvas} (:type node)))
           (do (select! {:action :select :node-id node-id :item-ids [item-id]}) state)
           (lv/input-node {:view view} node-id) (do (edit! node) state)
@@ -835,6 +841,19 @@
     (update state :diff-side #(if (= :left %) :right :left))
     state))
 
+(defn- move-board-issue
+  [state ^KeyStroke key {:keys [view rows]} {:keys [move!]}]
+  (when (and (.isShiftDown key) (not (.isCtrlDown key)) (not (.isAltDown key)))
+    (when-let [direction (get {KeyType/ArrowLeft -1 KeyType/ArrowRight 1} (.getKeyType key))]
+      (let [entry (focused-entry (selected-row state rows) (:cell state))]
+        (when (= :board-issue (:kind entry))
+          (let [node (model/find-node view (:node-id entry))]
+            (cond (model/read-only? view) state
+                  (model/stale? view) (assoc state :notice (waiting-notice view))
+                  :else (do (when-let [action (lv/board-move-action node (:item-id entry) direction)]
+                              (move! action))
+                            state))))))))
+
 (defn- row-key
   [state kt key geom effects]
   (let [actions {KeyType/Escape (constantly {::dlg/done nil})
@@ -1055,13 +1074,14 @@
           (= \f ctrl-ch) (assoc state
                            :search {:text ""}
                            :notice "Find: ")
-          :else (if-let [s (shortcut-for view (shortcut-key key))]
-                  (press-shortcut state view s effects)
-                  (or (map-key state key geom effects)
-                       (when (or (= KeyType/F4 kt)
-                                 (and (= "m" (shortcut-key key)) (map-letter? state geom)))
-                         (toggle-map state geom))
-                       (surface-key state key geom effects))))))
+          :else (or (move-board-issue state key geom effects)
+                    (if-let [s (shortcut-for view (shortcut-key key))]
+                      (press-shortcut state view s effects)
+                      (or (map-key state key geom effects)
+                          (when (or (= KeyType/F4 kt)
+                                    (and (= "m" (shortcut-key key)) (map-letter? state geom)))
+                            (toggle-map state geom))
+                          (surface-key state key geom effects)))))))
 
 (defn- pasted-key? [key] (and (map? key) (:paste key)))
 
@@ -1110,9 +1130,11 @@
 
 (defn- canvas-focus
   [row]
-  (when (and (:item-id row)
-             (or (:thread-id row) (#{:canvas-select :canvas-comment} (:kind row))))
-    ((juxt :node-id :item-id :thread-id :kind) row)))
+  (when (:item-id row)
+    (cond (= :board-issue (get-in row [:entry :kind]))
+          [(:node-id row) (:item-id row) nil :board-issue]
+          (or (:thread-id row) (#{:canvas-select :canvas-comment} (:kind row)))
+          ((juxt :node-id :item-id :thread-id :kind) row))))
 
 (defn handle-key
   "The next surface state for `key`. `geom` holds `:rows`, `:view` and `:list-h`;
@@ -1629,6 +1651,10 @@
       :picture-open
       "open"
 
+      :board-issue
+      (let [entry (focused-entry row (:cell state))]
+        (when (:is-selectable entry) (if (seq (:item-ids entry)) "open issue" "close issue")))
+
       (if (:thread-id row) "reply" "press"))
 
     (when (editor-target view row) "comment")))
@@ -1849,7 +1875,12 @@
         [(hidden-key view "?" "?") "keys"]
 
         map-hint
-        (when (seq (:canvases geom)) [(if (map-letter? state geom) "F4/m" "F4") "map"])]
+        (when (seq (:canvases geom)) [(if (map-letter? state geom) "F4/m" "F4") "map"])
+
+        board-hint
+        (when (and (not (model/read-only? view))
+                   (:is-editable (focused-entry (selected-row state rows) (:cell state))))
+          ["S-←/→" "move issue"])]
 
     (cond (:editor state) (into [["C-Enter/C-s" "save"]]
                                 (if (string? (get-in state [:editor :target :draft]))
@@ -1860,11 +1891,12 @@
           (map-node state geom) (map-footer state geom)
           (and (:auto-keys? view) (vector? legend)) (-> legend
                                                         (cond->
-                                                          enter
-                                                          (conj enter))
+                                                          enter (conj enter)
+                                                          board-hint (conj board-hint))
                                                         (conj (or map-hint keys)))
           :else (cond-> [keys]
                   map-hint (conj map-hint)
+                  board-hint (conj board-hint)
                   enter
                   (conj enter)))))
 
@@ -1921,7 +1953,7 @@
             static? (not-any? #(or (#{:timeline :scene} (:type %))
                                   (and (= :spinner (:type %)) (:is-active %))) nodes)
             plan {:view view* :rows rows :stops stops :anchors anchors :items items
-                  :canvas? (boolean (seq anchors)) :canvases (cm/cards-in view*)
+                  :canvas? (boolean (some #(not= :board-issue (peek %)) (keys anchors))) :canvases (cm/cards-in view*)
                    :static? static? :legend (shortcut-legend view*)
                   :paint-version (Object.)}]
         (when static?
@@ -2548,6 +2580,8 @@
                 (run-action! box session-id view-id action noticed))
    :select! (fn [action]
               (run-action! box session-id view-id action noticed))
+   :move! (fn [action]
+             (run-action! box session-id view-id action noticed))
    :edit! (partial edit-effect! box session-id view-id screen modal!)
    :shortcut! (partial shortcut-effect! box session-id view-id)
    :reload! (fn []

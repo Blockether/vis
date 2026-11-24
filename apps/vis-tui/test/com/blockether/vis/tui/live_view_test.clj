@@ -2222,3 +2222,30 @@
                    (expect (every? #(<= (count %) 24) lines))
                    (expect (str/includes? (str/join " " lines) "[tag]*ERROR*"))
                    (expect (str/includes? (last lines) "end-marker")))))
+
+(defdescribe board-controls-test
+  (it "opens, moves, and closes an issue with the app keys"
+    (let [issue {:id "a" :title "Write the test" :column "work" :rank -3}
+          board {:id "work-board" :type :board :is-selectable true :is-editable true
+                 :columns [{:id "todo" :title "To do"} {:id "work" :title "Work"}]
+                 :issues [{:id "b" :title "Read the test" :column "work" :rank 4} issue]}
+          view (hi/live-view<-wire (wire/->wire {:id "v" :title "Work" :nodes [board]}))
+          calls (atom [])
+          effects {:select! #(swap! calls conj %) :move! #(swap! calls conj %)}
+          open-key (KeyStroke. KeyType/Enter)
+          left (KeyStroke. KeyType/ArrowLeft false false true)
+          right (KeyStroke. KeyType/ArrowRight false false true)
+          step (fn [v key]
+                 (let [start (surface/initial-state)
+                       geom (surface/measure start 80 24 v)]
+                   (surface/handle-key (surface/reconcile start geom) key geom effects)))
+          selected (assoc-in view [:nodes 0 :selected-ids] ["a"])]
+      (step view open-key)
+      (step selected right)
+      (step selected left)
+      (step selected open-key)
+      (step (assoc-in selected [:nodes 0 :is-editable] false) left)
+      (expect (= [{:action :select :node-id "work-board" :item-ids ["a"]}
+                  {:action :move :node-id "work-board" :item-id "a" :column "todo" :index 0}
+                  {:action :select :node-id "work-board" :item-ids []}]
+                 @calls)))))

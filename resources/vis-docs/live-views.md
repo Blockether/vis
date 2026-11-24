@@ -26,6 +26,8 @@ and a person can stop it at any time.
 - **Your program must show a moving 3D world, such as a game.** Draw a [scene](#draw-a-3d-scene).
 - **You need to show the steps of a plan, with notes and pictures.** Draw a
   [board on a canvas](#draw-a-board-on-a-canvas).
+- **People must plan work as issues in columns and move them.** Show a [board of
+  issues](#track-issues-on-a-board).
 - **The model must know what people do in an app or an HTML page.** Give it a
   [note](#tell-the-model-what-people-see).
 - **Your own program, not an extension, must own an app.** [Run it from your
@@ -340,6 +342,7 @@ returns a typed handle that has only the verbs of its node type:
 | `vis.ui.disclosure(id, label, *nodes, default_expanded=False)` | A column that collapses | Children update by their own IDs. |
 | `vis.ui.scene(id, width, height, objects=[vis.ui.scene_object(…)])` | A 3D world, which [each client draws](#draw-a-3d-scene) | `.put(object_id, **changes)`, `.mesh(mesh_id, vertices, faces)`, `.set(background=, fov=, is_wrapping=, tick_ms=)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.canvas(id, cards=[vis.ui.canvas.card(…)])` | A [board with items and arrows](#draw-a-board-on-a-canvas) | `.card(id, title, **keys)`, `.shape(…)`, `.note(…)`, `.frame(…)`, `.text(…)`, `.put(*cards)`, `.focus(id, zoom=)`, `.fit()`, `.select(*ids)`, `.set(…)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.board(id, columns, issues)` | Columns of [issues that people move and change](#track-issues-on-a-board) | `.issue(id, title, column, **keys)`, `.put(*issues)`, `.move(id, column, index)`, `.apply(event)`, `.replace(issues)`, `.select(id)`, `.set(…)`, `.remove(*ids)`, `.clear()` |
 
 `vis.ui.output(...)` builds a `log` node. The `output` name differs from `vis.log`, which writes
 a line to the engine log.
@@ -707,6 +710,52 @@ arrow ends at the item that holds it. An arrow from a missing item appears when 
 | `line` | Uses the same values as `border`. `none` orders the items without drawing an arrow. |
 | `start_mark`, `end_mark` | `none`, `arrow`, `triangle`, `circle`, `diamond`, or `bar`. The defaults are `none` at the start and `arrow` at the end. |
 | `is_active`, `animation` | Set `is_active=True` to animate the arrow. Choose `flow`, `dash`, `dot`, or `pulse`. The default is `flow`. |
+
+### Track issues on a board
+
+A board shows issues in columns. With `is_editable=True`, a person drags an issue to another
+column or place, and opens an issue to change it. On a phone, a person holds an issue, then drags
+it. A person can also make and delete issues.
+
+```python
+import blockether.vis.extension as vis
+
+ui = vis.ui
+board = ui.board(
+    "sprint",
+    [
+        ui.board.column("todo", "To do"),
+        ui.board.column("doing", "In progress", limit=3),
+        ui.board.column("done", "Done", is_done=True),
+    ],
+    [
+        ui.board.issue("i1", "Add the sign-in page", "todo", key="WEB-1", kind="story",
+                       priority="high", assignee="ada", points=3, labels=["web"]),
+        ui.board.issue("i2", "Fix the token refresh", "doing", key="WEB-2", kind="bug",
+                       is_flagged=True),
+    ],
+    people=[ui.board.person("ada", "Ada Lovelace", color="#7c3aed")],
+    is_editable=True,
+)
+
+
+def on_event(event):
+    # A move is already done. An edit asks you to make the change.
+    app["sprint"].apply(event, key_prefix="WEB")
+
+
+app = vis.attach(ui.app("Sprint", board), on_event=on_event)
+```
+
+The host moves an issue when a person drops it, and then sends a `move` event with `item_id`,
+`column`, and `index`. The host does not change an issue for an `edit` event. Your code makes the
+change, so that it can give the next key or save the issue. `Board.apply(event)` does both kinds.
+An `edit` event without `item_id` asks for a new issue, and `is_removed` asks to delete
+`item_id`.
+
+A column with `limit` shows a warning when it holds more issues. Each client sorts the issues of
+a column by `rank`, and then by their order in `issues`. An issue with no `rank` has rank 0. A
+move gives each issue of the target column its place as its new rank.
 
 ## Layout and text
 
@@ -1118,7 +1167,7 @@ shortcut or more, the terminal adds no key.
 An app gets its events in one of three ways:
 
 - `vis.attach(app_declaration, on_event=callback)` runs `callback(event)` for each change, submit,
-  activate, select, or shortcut, as `vis.live(..., on_event=...)` does. In an extension, each call
+  activate, select, shortcut, move, or edit, as `vis.live(..., on_event=...)` does. In an extension, each call
   runs with the session of the app bound, also after your tool returns.
 - `app.events(timeout=60)` returns the events that arrived since the last call.
 - `app.run(callback, *, timeout=None)` serves events and blocks. It returns when the app closes,

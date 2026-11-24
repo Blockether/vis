@@ -188,7 +188,7 @@
       (and (contains? given :detail) (str/blank? (:detail op)))
       (dissoc :detail)
 
-      (and (= :canvas (:type node)) (false? (:is-selectable op)))
+      (and (#{:canvas :board} (:type node)) (false? (:is-selectable op)))
       (dissoc :selected-ids))))
 
 (defn- apply-append
@@ -224,7 +224,7 @@
               (sort given)))))
 
 (defn- prune-selected
-  "Drop selected ids whose rows or cards no longer exist, without adding selection
+  "Drop selected ids whose items no longer exist, without adding selection
    metadata to a node that never declared the control."
   [node]
   (if (contains? node :selected-ids)
@@ -250,7 +250,7 @@
         (= :canvas (:type node))
         (app/remove-threads ids)
 
-        (#{:table :canvas} (:type node))
+        (#{:table :canvas :board} (:type node))
         prune-selected))))
 
 (defn- apply-clear
@@ -269,15 +269,14 @@
       (and (= :canvas (:type node)) (contains? node :threads))
       (assoc :threads [])
 
-      (#{:table :canvas} (:type node))
+      (#{:table :canvas :board} (:type node))
       prune-selected)))
 
 (defn- apply-replace
-  "A table whose rows are exactly the op's `:rows`, in their order. Selection is
-   pruned in the same step, so a row that comes back stays selected and a row that
-   is gone does not."
+  "Replace the items in order and drop selection for the items that are gone."
   [node op]
-  (prune-selected (assoc node :rows (upsert [] (:rows op)))))
+  (let [k (:key (spec/item-bounds (:type node)))]
+    (prune-selected (assoc node k (upsert [] (get op k))))))
 
 (defn- insert-after
   "`nodes` with `node` in the slot right after `idx` — where the eye expects it,
@@ -745,6 +744,28 @@
                                   (when (seq edges) (str " ← " (str/join ", " (map :from edges))))))
                            cards))))
 
+(defn- board-picture
+  [node row-limit]
+  (let [issues (:issues node)
+        shown (vec (take row-limit issues))]
+    (with-meta (prune-selected (assoc node :issues shown))
+      {:elided (- (count issues) (count shown))})))
+
+(defmethod node->markdown :board
+  [node {:keys [table-rows]}]
+  (let [{:keys [columns issues] :as shown} (board-picture node table-rows)
+        by-column (group-by :column issues)
+        hidden (:elided (meta shown))]
+    (marked-lines :board
+                  (concat [(data-line (dissoc shown :id :label :type))]
+                          (mapcat (fn [{:keys [id title]}]
+                                    (cons (str "**" title "**")
+                                          (map (fn [{:keys [key title]}]
+                                                 (str "- " (when key (str key " ")) title))
+                                               (sort-by #(or (:rank %) 0) (get by-column id)))))
+                                  columns)
+                          (when (pos? (long hidden)) [(str "_… " hidden " more issues_")])))))
+
 (defmethod node->markdown :scene
   [{:keys [width height objects] :as node} _]
   (marked-lines :scene
@@ -1080,6 +1101,9 @@
                  (with-meta (assoc node :objects shown)
                    {:elided (- (count objects) (count shown))}))
 
+               :board
+               (board-picture (dissoc node :is-selectable :is-editable :selected-ids) table-rows)
+
                :canvas
                (let [cards
                      (:cards node)
@@ -1249,7 +1273,7 @@
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
   (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image
-          :badge :list :chart :canvas}
+          :badge :list :chart :canvas :board}
         (vals spec/field-types)))
 
 (def ^:private presentation-marker
@@ -1433,6 +1457,12 @@
           :cards
           (fn [cards]
             (mapv #(cond-> % (:edges %) (update :edges toned)) (toned cards)))))
+
+(defmethod markdown->node :board
+  [_ {:keys [at lines]}]
+  (let [node (update (merge {:type :board :columns [] :issues []} (read-data at (second lines)))
+                     :columns toned)]
+    (with-meta node {:elided (counted-behind #"… ([0-9]+) more issues" (peek lines))})))
 
 (defmethod markdown->node :badge
   [_ {:keys [at lines]}]

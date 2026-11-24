@@ -80,6 +80,65 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "description": "Move one issue of a board to a column and a place in that column. The host moves the issue, then tells the owner with a `move` event.",
+          "properties": {
+            "action": {
+              "const": "move"
+            },
+            "node_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "item_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "column": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "index": {
+              "description": "The place in the column after the move: 0 is the top. A larger number puts the issue at the bottom.",
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "action",
+            "node_id",
+            "item_id",
+            "column",
+            "index"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Ask the owner of a board to make, change or delete an issue. Without `item_id`, the owner makes a new issue from `values`. The owner changes the board; the host changes nothing.",
+          "properties": {
+            "action": {
+              "const": "edit"
+            },
+            "node_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "item_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "values": {
+              "$ref": "#/$defs/board_issue_change"
+            },
+            "is_removed": {
+              "description": "True asks the owner to delete the issue `item_id`.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "action",
+            "node_id",
+            "values"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "properties": {
             "action": {
               "const": "interrupt"
@@ -2201,6 +2260,81 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "description": "A board of issues in columns, as a team plans its work. A person drags an issue to another column or place, opens an issue to read and change it, and makes new issues. A surface filters, searches and groups the issues for the person who looks at it; these choices do not change the board.",
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string",
+              "maxLength": 200
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string",
+              "maxLength": 200
+            },
+            "type": {
+              "const": "board"
+            },
+            "is_editable": {
+              "type": "boolean",
+              "description": "True when a person can move, make, change and delete issues. The owner gets each `move` and `edit` event."
+            },
+            "is_selectable": {
+              "type": "boolean",
+              "description": "True when a person can open an issue. The open issue is the selected issue."
+            },
+            "selected_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/non_blank_string",
+                "maxLength": 200
+              },
+              "uniqueItems": true,
+              "maxItems": 1
+            },
+            "columns": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/board_column"
+              },
+              "minItems": 0,
+              "maxItems": 12
+            },
+            "people": {
+              "description": "The people that an issue can name as its assignee.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/board_person"
+              },
+              "maxItems": 100
+            },
+            "epics": {
+              "description": "The large pieces of work that an issue can belong to.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/board_epic"
+              },
+              "maxItems": 100
+            },
+            "issues": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/board_issue"
+              },
+              "minItems": 0,
+              "maxItems": 1000
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "columns",
+            "issues"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "description": "A board of items with arrows between them, which a person can pan and zoom. An item is a card, a shape, a sticky note, a comment, a frame or a text. A surface puts the items in steps: an item goes one step after the last item that it comes from. `column` and `row` put an item in a fixed place.",
           "properties": {
             "id": {
@@ -3149,7 +3283,8 @@
         "music",
         "image",
         "book",
-        "lightning"
+        "lightning",
+        "board"
       ],
       "default": "app",
       "x-vis-terminal": {
@@ -3184,7 +3319,8 @@
         "music": "~M",
         "image": "[^]",
         "book": "|=",
-        "lightning": "/Z"
+        "lightning": "/Z",
+        "board": "|||"
       }
     },
     "app_scope": {
@@ -3434,6 +3570,7 @@
           "image": ["label"],
           "scene": ["background", "fov", "is_wrapping", "label", "tick_ms"],
           "canvas": ["flow", "focus", "is_locked", "is_selectable", "label", "pattern", "selected_ids", "zoom"],
+          "board": ["columns", "epics", "is_editable", "is_selectable", "label", "people", "selected_ids"],
           "thread": ["label"],
           "checkbox": ["label"],
           "datetime": ["label"],
@@ -3456,7 +3593,8 @@
           "table": ["rows", "groups"],
           "link": ["links"],
           "scene": ["objects", "meshes"],
-          "canvas": ["cards"]
+          "canvas": ["cards"],
+          "board": ["issues"]
         },
         "remove": {
           "stat": ["item_ids"],
@@ -3469,6 +3607,7 @@
           "link": ["item_ids"],
           "scene": ["item_ids"],
           "canvas": ["item_ids"],
+          "board": ["item_ids"],
           "diff": ["item_ids"]
         },
         "clear": {
@@ -3482,10 +3621,12 @@
           "table": [],
           "link": [],
           "scene": [],
-          "canvas": []
+          "canvas": [],
+          "board": []
         },
         "replace": {
-          "table": ["rows"]
+          "table": ["rows"],
+          "board": ["issues"]
         },
         "set-value": {
           "checkbox": ["value"],
@@ -3683,6 +3824,30 @@
             },
             "pattern": {
               "$ref": "#/$defs/canvas_pattern"
+            },
+            "is_editable": {
+              "type": "boolean"
+            },
+            "columns": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/board_column"
+              },
+              "maxItems": 12
+            },
+            "people": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/board_person"
+              },
+              "maxItems": 100
+            },
+            "epics": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/board_epic"
+              },
+              "maxItems": 100
             }
           },
           "required": [
@@ -3799,6 +3964,14 @@
               },
               "minItems": 0,
               "maxItems": 200
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/board_issue"
+              },
+              "minItems": 0,
+              "maxItems": 1000
             }
           },
           "required": [
@@ -3850,7 +4023,7 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "description": "Replace every row of a table at once. Selected ids whose rows are gone are dropped.",
+          "description": "Replace every row of a table, or every issue of a board, at once. Selected ids whose rows or issues are gone are dropped.",
           "properties": {
             "op": {
               "const": "replace"
@@ -3865,13 +4038,32 @@
               },
               "minItems": 0,
               "maxItems": 5000
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/board_issue"
+              },
+              "minItems": 0,
+              "maxItems": 1000
             }
           },
           "required": [
             "op",
-            "node_id",
-            "rows"
-          ]
+            "node_id"
+          ],
+          "if": {
+            "not": {
+              "required": [
+                "issues"
+              ]
+            }
+          },
+          "then": {
+            "required": [
+              "rows"
+            ]
+          }
         },
         {
           "type": "object",
@@ -6181,6 +6373,271 @@
         "plain"
       ],
       "default": "dots"
+    },
+    "board_color": {
+      "description": "A colour as #rrggbb.",
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+    },
+    "board_issue_kind": {
+      "description": "The kind of an issue. A surface shows a mark for each kind.",
+      "type": "string",
+      "enum": [
+        "task",
+        "story",
+        "bug",
+        "epic",
+        "subtask"
+      ],
+      "default": "task"
+    },
+    "board_priority": {
+      "description": "How soon an issue needs work, from highest to lowest.",
+      "type": "string",
+      "enum": [
+        "highest",
+        "high",
+        "medium",
+        "low",
+        "lowest"
+      ],
+      "default": "medium"
+    },
+    "board_column": {
+      "description": "One column of a board.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
+        },
+        "title": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 80
+        },
+        "tone": {
+          "$ref": "#/$defs/tone"
+        },
+        "limit": {
+          "description": "The most issues that the column should hold. A surface marks a column that holds more.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999
+        },
+        "is_done": {
+          "description": "True when an issue in this column is done.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ]
+    },
+    "board_person": {
+      "description": "One person that an issue can name.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
+        },
+        "name": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 120
+        },
+        "color": {
+          "$ref": "#/$defs/board_color"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ]
+    },
+    "board_epic": {
+      "description": "One large piece of work that issues belong to.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
+        },
+        "title": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
+        },
+        "color": {
+          "$ref": "#/$defs/board_color"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ]
+    },
+    "board_issue": {
+      "description": "One issue of a board. An append with the id of an issue replaces that whole issue. Surfaces sort the issues of a column by `rank`, then by their order in the board.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
+        },
+        "key": {
+          "description": "The short name that people use for the issue, for example VIS-12.",
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 32
+        },
+        "title": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 500
+        },
+        "column": {
+          "description": "The id of the column that holds the issue.",
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
+        },
+        "rank": {
+          "description": "The place of the issue in its column: a lower rank is higher in the column.",
+          "type": "number"
+        },
+        "kind": {
+          "$ref": "#/$defs/board_issue_kind"
+        },
+        "priority": {
+          "$ref": "#/$defs/board_priority"
+        },
+        "assignee": {
+          "description": "The id of the person who does the work. An id that `people` does not hold shows as the id.",
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
+        },
+        "epic": {
+          "description": "The id of the epic of the issue.",
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
+        },
+        "points": {
+          "description": "The size of the work.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 999
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string",
+            "maxLength": 40
+          },
+          "uniqueItems": true,
+          "maxItems": 10
+        },
+        "text": {
+          "description": "The description of the issue, as Markdown.",
+          "type": "string",
+          "maxLength": 20000
+        },
+        "due": {
+          "description": "The date when the work must be done, as YYYY-MM-DD.",
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "is_flagged": {
+          "description": "True when the issue is blocked or needs attention now.",
+          "type": "boolean"
+        },
+        "subtasks_done": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 999
+        },
+        "subtasks_total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 999
+        },
+        "updated_at": {
+          "description": "When the issue changed last, in milliseconds since 1970.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "column"
+      ]
+    },
+    "board_issue_change": {
+      "description": "The fields of an issue that a person sets. A field that is not given stays as it is. Null clears an optional field.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 500
+        },
+        "column": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "maxLength": 200
+        },
+        "kind": {
+          "$ref": "#/$defs/board_issue_kind"
+        },
+        "priority": {
+          "$ref": "#/$defs/board_priority"
+        },
+        "assignee": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "epic": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "points": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 999
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string",
+            "maxLength": 40
+          },
+          "uniqueItems": true,
+          "maxItems": 10
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "due": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "is_flagged": {
+          "type": "boolean"
+        }
+      }
     }
   },
   "oneOf": [

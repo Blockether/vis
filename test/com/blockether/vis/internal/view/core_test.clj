@@ -3495,6 +3495,76 @@
                                          {"op" "events" "view_id" view-id "after" 0 "timeout_ms" 0})
                                        "events"))))
                  (finally (hi/close-live! view-id)))))))
+  (it "moves a board issue to a place in a column and hands an edit to the owner"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-seam! sid
+                                (assoc-in (shortcut-app sid [])
+                                  ["view" "nodes"]
+                                  [{"id" "b"
+                                    "type" "board"
+                                    "is_editable" true
+                                    "columns" [{"id" "todo" "title" "To do"}
+                                               {"id" "done" "title" "Done" "is_done" true}]
+                                    "issues" [{"id" "i1" "title" "One" "column" "todo"}
+                                              {"id" "i2" "title" "Two" "column" "done" "rank" 0}
+                                              {"id" "i3" "title" "Three" "column" "done" "rank" 1}]}]))
+                     "view_id")
+
+                board
+                #(first (:nodes (hi/live-view view-id)))
+
+                done-ids
+                #(mapv :id (sort-by :rank (filter (fn [i] (= "done" (:column i))) (:issues (board)))))]
+
+            (try (expect (:is-accepted (hi/action! view-id
+                                                   {:action :move
+                                                    :node-id "b"
+                                                    :item-id "i1"
+                                                    :column "done"
+                                                    :index 1})))
+                 (expect (= ["i2" "i1" "i3"] (done-ids)))
+                 (expect (:is-accepted (hi/action! view-id
+                                                   {:action :move
+                                                    :node-id "b"
+                                                    :item-id "i1"
+                                                    :column "done"
+                                                    :index 1})))
+                 (expect (= ["i2" "i1" "i3"] (done-ids)) "the same move again keeps the order")
+                 (expect (= "unknown_column"
+                            (:reason (hi/action! view-id
+                                                 {:action :move
+                                                  :node-id "b"
+                                                  :item-id "i1"
+                                                  :column "gone"
+                                                  :index 0}))))
+                 (expect (:is-accepted (hi/action! view-id
+                                                   {:action :edit
+                                                    :node-id "b"
+                                                    :item-id "i2"
+                                                    :values {"priority" "high" "assignee" nil}})))
+                 (expect (nil? (:priority (second (:issues (board))))) "the owner applies an edit")
+                 (expect (throws? clojure.lang.ExceptionInfo
+                                  #(hi/action! view-id
+                                               {:action :edit
+                                                :node-id "b"
+                                                :values {"title" "New" "column" "gone"}})))
+                 (expect (= [{"type" "move" "node_id" "b" "item_id" "i1" "column" "done" "index" 1}
+                             {"type" "move" "node_id" "b" "item_id" "i1" "column" "done" "index" 1}
+                             {"type" "edit"
+                              "node_id" "b"
+                              "item_id" "i2"
+                              "values" {"priority" "high" "assignee" nil}}]
+                            (mapv #(select-keys % ["type" "node_id" "item_id" "column" "index" "values"])
+                                  (get (app-seam!
+                                         sid
+                                         {"op" "events" "view_id" view-id "after" 0 "timeout_ms" 0})
+                                       "events"))))
+                 (finally (hi/close-live! view-id)))))))
   ;; Live apps D2: the refusal names the count, the maximum and the remedy.
   (it "refuses 65 nodes with the count, the maximum 64 and a table remedy"
       (let [sid

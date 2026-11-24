@@ -266,6 +266,11 @@
    :max-threads (get-in live-nodes ["canvas" "properties" "threads" "maxItems"])
    :max-zoom (get-in live-nodes ["canvas" "properties" "zoom" "maximum"])})
 
+(def board-defaults
+  "Bounds of a board node."
+  {:max-issues (get-in live-nodes ["board" "properties" "issues" "maxItems"])
+   :max-columns (get-in live-nodes ["board" "properties" "columns" "maxItems"])})
+
 (def scene-meshes
   "Built-in mesh name to `{:vertices :faces}`. Every surface draws these arrays, so
    one shape looks the same on each screen."
@@ -340,7 +345,8 @@
    :list {:key :items :max (:max-items list-defaults)}
    :chart {:key :series :max (:max-series chart-defaults)}
    :scene {:key :objects :max (:max-objects scene-defaults)}
-   :canvas {:key :cards :max (:max-cards canvas-defaults)}})
+   :canvas {:key :cards :max (:max-cards canvas-defaults)}
+   :board {:key :issues :max (:max-issues board-defaults)}})
 
 ;; The live keys — closed in both directions, exactly like the form's
 
@@ -380,6 +386,14 @@
 (def live-canvas-card-keys "Every key one canvas card may carry." (schema-keys "canvas_card"))
 
 (def live-canvas-edge-keys "Every key one canvas edge may carry." (schema-keys "canvas_edge"))
+
+(def live-board-issue-keys "Every key one board issue may carry." (schema-keys "board_issue"))
+
+(def live-board-column-keys "Every key one board column may carry." (schema-keys "board_column"))
+
+(def live-board-person-keys "Every key one board person may carry." (schema-keys "board_person"))
+
+(def live-board-epic-keys "Every key one board epic may carry." (schema-keys "board_epic"))
 
 (def live-sorted-keys
   "Every key a `{:by …}` table order may carry."
@@ -1569,6 +1583,34 @@
                                     (line (str "/cards/" i "/edges") "canvas_edge_source")))
                                 items)
                   (canvas-picture-lines items "/cards" decl? decl?)))
+
+        "board"
+        (let [issues
+              (get node "issues")
+
+              columns
+              (set (map #(get % "id") (get node "columns")))
+
+              ids
+              (set (map #(get % "id") issues))]
+
+          (concat (some->> (repeated (map #(get % "id") (get node "columns")))
+                           (array-map "id")
+                           (line "/columns" "repeated_item_id")
+                           vector)
+                  (some->> (repeated (map #(get % "id") issues))
+                           (array-map "id")
+                           (line "/issues" "repeated_item_id")
+                           vector)
+                  (keep-indexed (fn [i issue]
+                                  (when-not (contains? columns (get issue "column"))
+                                    (line (str "/issues/" i "/column") "board_column")))
+                                issues)
+                  (when (contains? node "selected_ids")
+                    (cond (not (true? (get node "is_selectable"))) [(line "/selected_ids"
+                                                                          "not_selectable")]
+                          (not-every? ids (get node "selected_ids")) [(line "/selected_ids"
+                                                                            "board_selection")]))))
 
         "image"
         (for [[path raw]

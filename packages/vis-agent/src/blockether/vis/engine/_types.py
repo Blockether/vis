@@ -1852,6 +1852,7 @@ ViewAppIcon: TypeAlias = Literal[
     "image",
     "book",
     "lightning",
+    "board",
 ]
 
 

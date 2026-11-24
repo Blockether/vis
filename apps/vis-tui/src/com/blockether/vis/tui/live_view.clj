@@ -100,7 +100,8 @@
    :log "no output yet"
    :table "no rows yet"
    :link "no links"
-   :canvas "no cards yet"})
+   :canvas "no cards yet"
+   :board "no columns yet"})
 
 (def ^:private tone-glyph
   "One cell that says the tone WITHOUT colour, for a terminal that has none, a
@@ -2408,6 +2409,75 @@
                    {:kind :card :node-id id :segments segments :text (segment-line segments)})))
           (when (seq (flat-text text)) (md-lines text body-w)))))
 
+(def ^:private board-kind-mark
+  {:task "✓" :story "▤" :bug "◆" :epic "⚡" :subtask "↳"})
+
+(defn board-move-action
+  "Move an issue to the start of the adjacent column, if it exists."
+  [{:keys [id type is-editable columns issues]} item-id direction]
+  (when (and (= :board type) is-editable item-id)
+    (when-let [current (some #(when (= item-id (:id %)) (:column %)) issues)]
+      (when-let [at (first (keep-indexed #(when (= current (:id %2)) %1) columns))]
+        (when-let [target (:id (get columns (+ (long at) (long direction))))]
+          {:action :move :node-id id :item-id item-id :column target :index 0})))))
+
+(defn- board-row [kind node-id runs width]
+  (let [segments (runs-cut runs width)]
+    {:kind kind :node-id node-id :segments segments :text (segment-line segments)}))
+
+(defn- board-issue-rows
+  [node issue names width interactive?]
+  (let [{:keys [id title kind assignee points priority text is-flagged]} issue
+        open? (= id (first (:selected-ids node)))
+        selectable? (and interactive? (:is-selectable node))
+        key-text (:key issue)
+        title (flat-text title)
+        label (str (when key-text (str key-text " ")) title)
+        prefix (str (if open? "▾ " "  ")
+                    (get board-kind-mark (keyword kind) "·") " "
+                    (when key-text (str (flat-text key-text) " ")))
+        flag (when is-flagged "  ⚑")
+        meta (str/join " · " (keep identity [(when assignee (get names assignee assignee))
+                                             (when (some? points) (str points " pt"))
+                                             (some-> priority name)]))
+        meta (when-not (str/blank? meta) (str "  " (flat-text meta)))
+        ;; Keep the title readable when the details do not fit.
+        room (- (long width) (long (p/display-width prefix)) (long (p/display-width (or flag ""))))
+        meta (when (and meta (<= (+ (min 16 (long (p/display-width title)))
+                                    (long (p/display-width meta))) room)) meta)
+        title-w (- room (long (p/display-width (or meta ""))))
+        row (board-row :board-issue (:id node)
+                       (cond-> [{:text prefix :fg t/dialog-hint-key}
+                                {:text (p/ellipsize title (max 1 title-w))
+                                 :fg t/dialog-fg :styles (if open? [p/BOLD] [])}]
+                         meta (conj {:text meta :fg t/dialog-hint})
+                         flag (conj {:text flag :fg t/footer-warning-fg})) width)]
+    (into [(assoc row :item-id id :label label :is-selectable selectable?
+                      :is-editable (and interactive? (:is-editable node))
+                      :item-ids (if open? [] [id]))]
+          (map #(assoc % :kind :board-detail :node-id (:id node)))
+          (when open? (canvas-markdown-rows text (- (long width) 2) 2)))))
+
+(defmethod node-rows :board
+  [{:keys [id columns issues people] :as node} {:keys [text-w is-interactive]}]
+  (let [names (into {} (map (juxt :id :name)) people)
+        by-column (group-by :column issues)]
+    (if (seq columns)
+      (into []
+            (mapcat (fn [{column :id :keys [title tone limit]}]
+                      (let [items (sort-by #(or (:rank %) 0) (get by-column column))
+                            n (count items)
+                            over? (and limit (> n (long limit)))
+                            count-text (str "  " n (when limit (str "/" limit)))
+                            title-w (max 1 (- (long text-w) (long (p/display-width count-text))))
+                            head (board-row :board-column id
+                                            [{:text (str (p/ellipsize (flat-text title) title-w) count-text)
+                                              :fg (tone-fg (if over? :warn (keyword tone)))
+                                              :styles [p/BOLD]}] text-w)]
+                        (cons head (mapcat #(board-issue-rows node % names text-w is-interactive) items)))))
+            columns)
+      [{:kind :empty :node-id id :text (empty-text :board)}])))
+
 (defn- input-rows
   "An input node is a FIELD: the form's own renderer draws it, so a field in a
    view and the same field in a form read alike. Each row keeps the field row it
@@ -2746,6 +2816,12 @@
   [pane]
   (tree-seq #(seq (:children %)) :children {:children (get-in pane [:view :nodes])}))
 
+(defn selected-board-move
+  "The move for the open issue in a live pane, if its adjacent column exists."
+  [pane direction]
+  (when (and pane (not (or (minimized? pane) (settled? pane))))
+    (some #(board-move-action % (first (:selected-ids %)) direction) (view-nodes pane))))
+
 (defn input-node
   "The input node `node-id` of `pane`'s view, or nil when it is no input."
   [pane node-id]
@@ -2783,7 +2859,7 @@
                              :button
                              (when-not (:is-disabled entry) :live-activate)
 
-                             :trow
+                             (:trow :board-issue)
                              (when (:is-selectable entry) :live-select)
 
                              :card
@@ -2795,7 +2871,7 @@
                                :live-edit)
 
                              nil)
-                      control (assoc (select-keys entry [:node-id :item-id])
+                      control (assoc (select-keys entry [:node-id :item-id :item-ids])
                                 :id [(:node-id entry) (:item-id entry)]
                                 :label (or (:label entry) (:text entry))
                                 :kind kind
@@ -3195,6 +3271,8 @@
                             ["Esc" "back"]]
         (:is-viewer pane) (cond-> [["F3" "controls"]]
                              (seq (cm/cards-in (:view pane))) (conj ["F4" "map"])
+                             (or (selected-board-move pane -1) (selected-board-move pane 1))
+                             (conj ["S-←/→" "move issue"])
                              true (conj ["Esc" "close view"]))
         :else (let [open (remove settled? others)]
                 (if-let [note (stopping pane)]
@@ -3630,6 +3708,19 @@
                     :view-id view-id
                     :node-id (:node-id entry)
                     :enabled? true}))
+
+    :board-issue
+    (do (paint-segments! g left row inner-w (:segments entry))
+        (when (:is-selectable entry)
+          (.register interactions/hit-map
+                     {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                               :col (+ (long left) 2)
+                               :width (max 0 (- (long inner-w) 3))}
+                      :kind :live-select
+                      :view-id view-id
+                      :node-id (:node-id entry)
+                      :item-ids (:item-ids entry)
+                      :enabled? true})))
 
     :trow
     (do (paint-table-row! g left row inner-w entry)

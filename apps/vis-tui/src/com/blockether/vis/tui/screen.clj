@@ -1067,16 +1067,30 @@
    The engine publishes the resulting ordinary patch back to every attached surface;
    the TUI keeps no optimistic private selection that could race the extension's next
    GitHub poll."
-  [db {:keys [view-id node-id item-id]}]
+  [db {:keys [view-id node-id item-id item-ids]}]
   (when-let [pane (live-pane db view-id)]
     (let [session-id (get-in pane [:view :session-id])
-          action {:action :select :node-id node-id :item-ids [item-id]}]
+          action {:action :select :node-id node-id :item-ids (or item-ids [item-id])}]
 
       (future (try
                 (vis/gateway-view-action! session-id view-id action)
                 (catch Throwable t
                   (vis/notify! (str "Could not select that row: " (ex-message t)) :level :error)))))
     true))
+
+(defn- live-board-move-key!
+  [panes ^KeyStroke key]
+  (when (and key (.isShiftDown key) (not (.isCtrlDown key)) (not (.isAltDown key)))
+    (when-let [direction (get {KeyType/ArrowLeft -1 KeyType/ArrowRight 1} (.getKeyType key))]
+      (when-let [[pane action] (some #(when-let [action (lv/selected-board-move % direction)]
+                                      [% action]) panes)]
+        (future
+          (try (when-not (:is-accepted (vis/gateway-view-action! (get-in pane [:view :session-id])
+                                                                (lv/view-id pane) action))
+                 (vis/notify! "The issue move was refused." :level :error))
+               (catch Throwable _
+                 (vis/notify! "Could not confirm the issue move." :level :error))))
+        true))))
 
 (defn- activate-live-button!
   "Send one explicit operator press; the shared patch is the acknowledgement. A
@@ -3209,35 +3223,37 @@
           selected (lv/panel-selected shown selected)
           idx (long (or (first (keep-indexed #(when (= selected %2) %1) ids)) 0))
           select! #(state/dispatch [:live-panel-select (get ids (max 0 (min (dec (count ids)) %)))])
+          selected-panes (filter #(= selected (lv/view-id %)) shown)
           handled?
-          (case (some-> key
-                        .getKeyType
-                        .name)
-            "ArrowUp"
-            (do (select! (dec idx)) true)
+          (or (live-board-move-key! selected-panes key)
+              (case (some-> key
+                            .getKeyType
+                            .name)
+                "ArrowUp"
+                (do (select! (dec idx)) true)
 
-            "ArrowDown"
-            (do (select! (inc idx)) true)
+                "ArrowDown"
+                (do (select! (inc idx)) true)
 
-            "ArrowLeft"
-            (do (state/dispatch [:live-panel-fold selected true]) true)
+                "ArrowLeft"
+                (do (state/dispatch [:live-panel-fold selected true]) true)
 
-            "ArrowRight"
-            (do (state/dispatch [:live-panel-fold selected false]) true)
+                "ArrowRight"
+                (do (state/dispatch [:live-panel-fold selected false]) true)
 
-            "Tab"
-            (do (when (> (count tabs) 1)
-                  (let [at (long (or (first (keep-indexed #(when (= tab %2) %1) tabs)) 0))]
-                    (state/dispatch [:live-panel-tab (get tabs (mod (inc at) (count tabs)))])))
-                true)
+                "Tab"
+                (do (when (> (count tabs) 1)
+                      (let [at (long (or (first (keep-indexed #(when (= tab %2) %1) tabs)) 0))]
+                        (state/dispatch [:live-panel-tab (get tabs (mod (inc at) (count tabs)))])))
+                    true)
 
-            "Escape"
-            (do (state/dispatch [:live-panel-close]) true)
+                "Escape"
+                (do (state/dispatch [:live-panel-close]) true)
 
-            "Enter"
-            (do (live-controls! screen db (filter #(= selected (lv/view-id %)) shown)) true)
+                "Enter"
+                (do (live-controls! screen db selected-panes) true)
 
-            false)]
+                false))]
 
       (when handled? (state/dispatch [:bump-render-version]))
       handled?)))
@@ -11447,6 +11463,10 @@
         ;; the band, so the form owns the keyboard.
         (and (some? key) (lv/stopping (lv/interruptible (viewer-panes db))))
         (do (live-stop-key! db key) ::recur)
+        (and (:live-viewer-id db)
+             (not (overlay-locked? db))
+             (not @paste-buffer)
+             (live-board-move-key! (viewer-panes db) key)) ::recur
         (and (:live-viewer-id db)
              (instance? KeyStroke key)
              (= KeyType/Escape (.getKeyType ^KeyStroke key)))

@@ -370,7 +370,7 @@
         (str/includes?
           (refusal #(patched (view (assoc (table-node :insertion) :rows [(row "a" "A" "1")]))
                              {:op :set :node-id "t" :selected-ids ["a"]}))
-          "node t /selected_ids - only a selectable table, card or canvas takes this property (selection)")))))
+          "node t /selected_ids - only a selectable table, card, canvas or board takes this property (selection)")))))
 
 ;; Regression, issue #428: a table refreshed with clear and upsert lost the person's
 ;; selection, because clear prunes it before the new rows arrive.

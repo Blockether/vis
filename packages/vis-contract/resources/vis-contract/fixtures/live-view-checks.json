@@ -3291,7 +3291,7 @@
           "cv"
         ],
         "text": [
-          "node cv /selected_ids - only a selectable table, card or canvas takes this property (selection)"
+          "node cv /selected_ids - only a selectable table, card, canvas or board takes this property (selection)"
         ]
       }
     },

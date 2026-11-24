@@ -1,6 +1,7 @@
 /** The shared lifecycle envelope for every operator-facing View. */
 
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
+import type { BoardAction } from './board';
 import type { SseEvent } from './types';
 
 export const VIEW_KINDS = ['input', 'live'] as const;
@@ -89,7 +90,9 @@ export const VIEW_ACTIONS = [
   'change',
   'connect',
   'draft',
+  'edit',
   'interrupt',
+  'move',
   'select',
   'shortcut',
   'submit',
@@ -108,6 +111,7 @@ export interface ViewAnchor {
 }
 
 export type ViewAction =
+  | BoardAction
   | {
       action: 'submit';
       values: Record<string, unknown>;

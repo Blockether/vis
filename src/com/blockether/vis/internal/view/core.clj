@@ -782,7 +782,11 @@
    :objects view-spec/live-scene-object-keys
    :object-changes view-spec/live-scene-object-keys
    :meshes view-spec/live-scene-mesh-keys
-   :cards view-spec/live-canvas-card-keys})
+   :cards view-spec/live-canvas-card-keys
+   :board-columns view-spec/live-board-column-keys
+   :people view-spec/live-board-person-keys
+   :epics view-spec/live-board-epic-keys
+   :issues view-spec/live-board-issue-keys})
 
 (defn- live-term
   "The entry `value` names in a CLOSED wire table, in either spelling. A term
@@ -1042,7 +1046,44 @@
               (assoc :row (schema-fraction (:row item)))
 
               (some? (:edges item))
-              (assoc :edges (canvas-edges (:edges item)))))]
+              (assoc :edges (canvas-edges (:edges item))))
+
+            ;; One column, person or epic of a board. A board column is no table column,
+            ;; so it has its own kind.
+            :board-columns
+            (cond-> (assoc item
+                      :id id
+                      :title (schema-text (:title item)))
+              (some? (:tone item))
+              (assoc :tone tone))
+
+            :people
+            (assoc item
+              :id id
+              :name (schema-text (:name item)))
+
+            :epics
+            (assoc item
+              :id id
+              :title (schema-text (:title item)))
+
+            ;; One issue of a board. Its terms stay wire text: the schema checks them.
+            :issues
+            (cond-> (assoc item
+                      :id id
+                      :title (schema-text (:title item))
+                      :column (schema-text (:column item)))
+              (some? (:key item))
+              (update :key schema-text)
+
+              (some? (:assignee item))
+              (update :assignee schema-text)
+
+              (some? (:epic item))
+              (update :epic schema-text)
+
+              (some? (:labels item))
+              (update :labels text-items)))]
 
       (merge (apply dissoc item (live-item-keys kind)) (into {} (remove (comp nil? val)) built)))))
 
@@ -1486,6 +1527,21 @@
 
                  (some? (:selected-ids node))
                  (assoc :selected-ids (canvas-ids (:selected-ids node))))
+
+               :board
+               (cond-> (assoc base
+                         :columns (normalize-live-items :board-columns (:columns node))
+                         :people (items :people)
+                         :epics (items :epics)
+                         :issues (items :issues))
+                 (some? (:is-editable node))
+                 (assoc :is-editable (schema-bool (:is-editable node)))
+
+                 (some? (:is-selectable node))
+                 (assoc :is-selectable (schema-bool (:is-selectable node)))
+
+                 (some? (:selected-ids node))
+                 (assoc :selected-ids (text-items (:selected-ids node))))
 
                :diff
                (cond-> (assoc base :patch (:patch node))
@@ -1966,6 +2022,17 @@
              (normalize-live-items :meshes value))
    :cards (fn [_ value]
             (normalize-live-items :cards value))
+   ;; Only a board takes `:columns` in a patch: a table declares its columns once.
+   :columns (fn [_ value]
+              (normalize-live-items :board-columns value))
+   :people (fn [_ value]
+             (normalize-live-items :people value))
+   :epics (fn [_ value]
+            (normalize-live-items :epics value))
+   :issues (fn [_ value]
+             (normalize-live-items :issues value))
+   :is-editable (fn [_ value]
+                  (schema-bool value))
    :flow (fn [_ value]
            value)
    :pattern (fn [_ value]
@@ -4670,12 +4737,137 @@
          :node-id node-id
          :item-ids (mapv #(live-text fail! "each selected item id" %) item-ids)})
 
+      :move
+      (let [index (:index raw)]
+        (when-not (and (integer? index) (<= 0 (long index)))
+          (fail! "move index must be a whole number of 0 or more"))
+        {:action action
+         :node-id (live-text fail! "move node_id" (:node-id raw))
+         :item-id (live-text fail! "move item_id" (:item-id raw))
+         :column (live-text fail! "move column" (:column raw))
+         :index (long index)})
+
+      :edit
+      (let [values (:values raw)]
+        (when-not (map? values) (fail! "edit values must be an object"))
+        (cond-> {:action action
+                 :node-id (live-text fail! "edit node_id" (:node-id raw))
+                 :values (update-keys values #(wire/engine-key (name %)))}
+          (some? (:item-id raw))
+          (assoc :item-id (live-text fail! "edit item_id" (:item-id raw)))
+
+          (true? (:is-removed raw))
+          (assoc :is-removed true)))
+
       :interrupt
       (let [note (:note raw)]
         (when (coll? note) (fail! "interrupt note must be text"))
         (cond-> {:action action}
           (some? note)
           (assoc :note note))))))
+
+(defn- ranked-issues
+  "The issues of board column `column` in the order that surfaces paint: by rank,
+   where no rank counts as 0, then by their order in the board."
+  [issues column]
+  (sort-by #(or (:rank %) 0) (filter #(= column (:column %)) issues)))
+
+(defn- moved-issues
+  "The issues that change when issue `item-id` goes to place `index` of `column`:
+   each issue of that column with its new rank, 0 at the top. The same move again
+   changes nothing more."
+  [issues item-id column index]
+  (let [by-id
+        (zipmap (map :id issues) issues)
+
+        others
+        (vec (remove #(= item-id (:id %)) (ranked-issues issues column)))
+
+        at
+        (min (long index) (count others))
+
+        order
+        (into (conj (subvec others 0 at) (assoc (by-id item-id) :column column))
+              (subvec others at))]
+
+    (into []
+          (keep-indexed (fn [rank one]
+                          (let [ranked (assoc one :rank rank)]
+                            (when-not (= ranked (by-id (:id one))) ranked))))
+          order)))
+
+(defn- board-refusal
+  "Why board `node` cannot take action `normalized`, or nil when it can."
+  [node {:keys [action item-id column values is-removed]}]
+  (let [issue-ids (set (map :id (:issues node)))]
+    (cond (not= :board (:type node)) "not_board"
+          (not (:is-editable node)) "not_editable"
+          (and item-id (not (contains? issue-ids item-id))) "unknown_item"
+          (= :move action) (when-not (some #(= column (:id %)) (:columns node)) "unknown_column")
+          (and (nil? item-id) (or is-removed (nil? (:title values)) (nil? (:column values))))
+          "missing_values")))
+
+(defn- edited-issue
+  "Issue `issue` after change `values`: a null value clears its field."
+  [issue values]
+  (reduce-kv (fn [one k v]
+               (if (nil? v) (dissoc one k) (assoc one k v)))
+             issue
+             values))
+
+(defn- board-action!
+  "Apply `move`, or check `edit` and hand it to the owner, for board `node-id` of
+   open view `view-id`. A move lands as one durable patch; the owner hears both."
+  [entry view-id {:keys [action node-id item-id column index values is-removed] :as normalized}
+   base]
+  (let [cell (:view entry)]
+    (locking cell
+      (let [node (view-node (:nodes @cell) node-id)
+            reason (if node (board-refusal node normalized) "unknown_node")
+            issues (:issues node)]
+
+        (if reason
+          (assoc base
+            :is-accepted false
+            :reason reason
+            :node-id node-id)
+          (case action
+            :move
+            (let [changed (moved-issues issues item-id column index)]
+              (when (seq changed)
+                (patch-live! view-id [{:op :append :node-id node-id :issues changed}]))
+              (push-live-event!
+                entry
+                {:type :move :node-id node-id :item-id item-id :column column :index index})
+              (assoc base
+                :is-accepted true
+                :node-id node-id
+                :item-id item-id
+                :column column
+                :index index))
+
+            :edit
+            (let [candidate (if item-id
+                              (edited-issue (first (filter #(= item-id (:id %)) issues)) values)
+                              (edited-issue {:id (str (random-uuid))} values))
+                  board (assoc node
+                          :issues (conj (vec (remove #(= item-id (:id %)) issues)) candidate))]
+
+              (when-not is-removed
+                (when-let [fault (view-spec/live-node-fault (view-spec/wire-data board) true)]
+                  (invalid-view-action! view-id fault)))
+              (push-live-event! entry
+                                (cond-> {:type :edit :node-id node-id :values values}
+                                  item-id
+                                  (assoc :item-id item-id)
+
+                                  is-removed
+                                  (assoc :is-removed true)))
+              (cond-> (assoc base
+                        :is-accepted true
+                        :node-id node-id)
+                item-id
+                (assoc :item-id item-id)))))))))
 
 (def ^:private validate-wait-ms "How long a submit waits for the owner to judge its inputs." 5000)
 
@@ -4901,7 +5093,7 @@
       ;; Nobody hears a press until the owner of a restored app opens it again. A
       ;; declared app takes only `connect`.
       (and (app-stale? entry)
-           (or (#{:activate :select :change :shortcut} action)
+           (or (#{:activate :select :change :shortcut :move :edit} action)
                (and (:is-declared entry) (not= :connect action))))
       (cond-> (assoc base
                 :is-accepted false
@@ -4926,7 +5118,7 @@
               :interrupt
               (and (= :live kind) (not (:is-app entry)))
 
-              (:select :activate :change)
+              (:select :activate :change :move :edit)
               (= :live kind))]
 
         (when-not supported? (unsupported-view-action! view-id kind action))
@@ -5016,6 +5208,9 @@
               :is-accepted true
               :node-id node-id
               :item-ids selected))
+
+          (:move :edit)
+          (board-action! entry view-id normalized base)
 
           :interrupt
           (let [accepted? (some? (interrupt-live! view-id note))]

@@ -949,6 +949,83 @@
       ]
     },
     {
+      "id": "sprint",
+      "type": "board",
+      "label": "Sprint 14",
+      "is_editable": true,
+      "is_selectable": true,
+      "selected_ids": [],
+      "columns": [
+        {
+          "id": "todo",
+          "title": "To do"
+        },
+        {
+          "id": "doing",
+          "title": "In progress",
+          "tone": "running",
+          "limit": 3
+        },
+        {
+          "id": "done",
+          "title": "Done",
+          "tone": "ok",
+          "is_done": true
+        }
+      ],
+      "people": [
+        {
+          "id": "ada",
+          "name": "Ada Lovelace",
+          "color": "#7c3aed"
+        }
+      ],
+      "epics": [
+        {
+          "id": "auth",
+          "title": "Sign-in",
+          "color": "#2563eb"
+        }
+      ],
+      "issues": [
+        {
+          "id": "i1",
+          "key": "VIS-1",
+          "title": "Add the sign-in page",
+          "column": "todo",
+          "rank": 0,
+          "kind": "story",
+          "priority": "high",
+          "assignee": "ada",
+          "epic": "auth",
+          "points": 3,
+          "labels": [
+            "web"
+          ],
+          "due": "2026-01-31"
+        },
+        {
+          "id": "i2",
+          "key": "VIS-2",
+          "title": "Fix the token refresh",
+          "column": "doing",
+          "rank": 0,
+          "kind": "bug",
+          "priority": "highest",
+          "is_flagged": true,
+          "subtasks_done": 1,
+          "subtasks_total": 2
+        },
+        {
+          "id": "i3",
+          "key": "VIS-3",
+          "title": "Write the release notes",
+          "column": "done",
+          "rank": 0
+        }
+      ]
+    },
+    {
       "id": "general",
       "type": "thread",
       "label": "General discussion",

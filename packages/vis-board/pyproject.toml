@@ -1,0 +1,20 @@
+[project]
+name = "vis-board"
+version = "0.1.0"
+description = "Plan and track the issues of a workspace."
+keywords = ["board", "issues", "planning"]
+requires-python = ">=3.12"
+dependencies = ["vis-agent>=0.5.32"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.vis]
+category = "tools"
+source_paths = ["src"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "../vis-agent/src"]

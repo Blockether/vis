@@ -248,7 +248,7 @@
       (and (contains? given :detail) (str/blank? (:detail op)))
       (dissoc :detail)
 
-      (and (= :canvas (:type node)) (false? (:is-selectable op)))
+      (and (#{:canvas :board} (:type node)) (false? (:is-selectable op)))
       (dissoc :selected-ids))))
 
 (defn- apply-append
@@ -301,7 +301,7 @@
         (= :canvas (:type node))
         (app/remove-threads ids)
 
-        (#{:table :canvas} (:type node))
+        (#{:table :canvas :board} (:type node))
         prune-selected))))
 
 (defn- apply-clear
@@ -320,15 +320,16 @@
       (and (= :canvas (:type node)) (contains? node :threads))
       (assoc :threads [])
 
-      (#{:table :canvas} (:type node))
+      (#{:table :canvas :board} (:type node))
       prune-selected)))
 
 (defn- apply-replace
-  "A table whose rows are exactly the op's `:rows`, in their order. Selection is
-   pruned in the same step, so a row that comes back stays selected and a row that
-   is gone does not."
+  "A table whose rows are exactly the op's `:rows`, or a board whose issues are
+   exactly the op's `:issues`, in their order. Selection is pruned in the same step,
+   so an item that comes back stays selected and an item that is gone does not."
   [node op]
-  (prune-selected (assoc node :rows (upsert [] (:rows op)))))
+  (let [k (if (contains? op :issues) :issues :rows)]
+    (prune-selected (assoc node k (upsert [] (get op k))))))
 
 (defn- insert-after
   "`nodes` with `node` in the slot right after `idx` — where the eye expects it,
@@ -813,6 +814,18 @@
                                            [:flow :pattern :zoom :focus :is-locked :is-selectable
                                             :selected-ids :cards :threads]))]))
 
+(defmethod node->markdown :board
+  [{:keys [columns issues] :as node} _]
+  (let [held (frequencies (map :column issues))]
+    (marked-lines :board
+                  [(str "Board · " (count issues)
+                        " issues" (apply str
+                                    (map #(str " · " (:title %) " " (get held (:id %) 0)) columns)))
+                   (tagged-json "board"
+                                (select-keys node
+                                             [:is-editable :is-selectable :selected-ids :columns
+                                              :people :epics :issues]))])))
+
 (defmethod node->markdown :spinner
   [{:keys [text is-active]} _]
   (marked-lines :spinner [(str text (when is-active " (working)"))]))
@@ -1133,6 +1146,23 @@
                    (dissoc :is-selectable :selected-ids))
       {:elided (- (count cards) (count shown))})))
 
+(defn- budget-board
+  "A board node with the first `table-rows` issues, and no selection."
+  [node {:keys [table-rows]}]
+  (let [issues
+        (:issues node)
+
+        limit
+        (long table-rows)
+
+        shown
+        (if (> (count issues) limit) (subvec issues 0 limit) issues)]
+
+    (with-meta (-> node
+                   (assoc :issues shown)
+                   (dissoc :is-selectable :selected-ids))
+      {:elided (- (count issues) (count shown))})))
+
 (defn- budget-node
   "One node as the model is handed it under `budget`; `:elided` meta counts what it left."
   [node budget]
@@ -1151,6 +1181,9 @@
 
     :canvas
     (budget-canvas node budget)
+
+    :board
+    (budget-board node budget)
 
     node))
 
@@ -1373,7 +1406,7 @@
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
   (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image
-          :badge :list :chart :canvas}
+          :badge :list :chart :canvas :board}
         (vals spec/field-types)))
 
 (def ^:private presentation-marker
@@ -1561,6 +1594,13 @@
           :cards
           (fn [cards]
             (mapv #(cond-> % (:edges %) (update :edges toned)) (toned cards)))))
+
+(defmethod markdown->node :board
+  [_ {:keys [at lines]}]
+  (update (merge {:type :board :columns [] :people [] :epics [] :issues []}
+                 (tagged-value at "board" (nth lines 2 nil)))
+          :columns
+          toned))
 
 (defmethod markdown->node :spinner
   [_ {:keys [lines]}]

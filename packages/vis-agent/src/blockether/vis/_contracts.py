@@ -1726,9 +1726,9 @@ def _filled_items(key: str, items: Any) -> Any:
 
 
 def _pruned_selection(node: dict[str, Any]) -> None:
-    """A selection names only the rows of a table or the cards of a canvas that
-    still exist."""
-    if node.get("type") in ("table", "canvas") and "selected_ids" in node:
+    """A selection names only the rows of a table, the cards of a canvas or the
+    issues of a board that still exist."""
+    if node.get("type") in ("table", "canvas", "board") and "selected_ids" in node:
         held = node.get(live_collection(node["type"]) or "") or []
         kept = {one.get("id") for one in held}
         node["selected_ids"] = [one for one in node["selected_ids"] if one in kept]
@@ -1945,7 +1945,7 @@ def apply_live_node_op(
             node["threads"] = held
     elif name == "set":
         node.update({k: _filled_items(k, v) for k, v in given.items()})
-        if kind == "canvas" and given.get("is_selectable") is False:
+        if kind in ("canvas", "board") and given.get("is_selectable") is False:
             node.pop("selected_ids", None)
         # A blank detail CLEARS it, like a declaration that leaves the key out.
         if "detail" in given and not str(given["detail"]).strip():
@@ -2000,7 +2000,8 @@ def apply_live_node_op(
                 if one["id"] not in dropped and one["item_id"] not in dropped
             ]
     elif name == "replace":
-        node["rows"] = _upserted([], _filled_items("rows", given.get("rows")))
+        field = "issues" if "issues" in given else "rows"
+        node[field] = _upserted([], _filled_items(field, given.get(field)))
     if name in ("clear", "remove", "replace"):
         _pruned_selection(node)
     return node
