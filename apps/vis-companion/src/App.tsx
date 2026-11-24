@@ -1,6 +1,5 @@
 import {
   type ComponentProps,
-  type CSSProperties,
   memo,
   type ReactNode,
   useCallback,
@@ -144,14 +143,9 @@ import { isShellChromeVisible, isShellSplit, shellScreen, type ShellScreen } fro
 import { useZenMode } from './lib/transcript-display';
 import { useDeskRail } from './lib/fit-rows';
 import {
-  SIDEBAR_WIDTH,
-  SIDEBAR_WIDTH_KEY,
   sidebarRailClass,
-  sidebarRailStyle,
   useSidebar,
 } from './lib/sidebar';
-import { useChosenWidth } from './lib/chosen-width';
-import { ResizeEdge } from './components/ResizeEdge';
 import { EmptyPane } from './screens/EmptyPane';
 import { pushIntentFrom, resolvePushIntent, type PushIntent } from './lib/push-intent';
 
@@ -280,19 +274,17 @@ interface SessionListState {
   isVisible: boolean;
   canSplit: boolean;
   isSplit: boolean;
-  width: number | null;
 }
 
 interface SessionListBox {
   className: string;
-  style?: CSSProperties;
 }
 
 /** The box of the session list: the desk's rail, the phone's page, or parked out of view. */
-function sessionListBox({ screen, isVisible, canSplit, isSplit, width }: SessionListState): SessionListBox {
-  if (isVisible && isSplit) return { className: sidebarRailClass(true), style: sidebarRailStyle(true, width) };
+function sessionListBox({ screen, isVisible, canSplit, isSplit }: SessionListState): SessionListBox {
+  if (isVisible && isSplit) return { className: sidebarRailClass(true) };
   if (isVisible) return { className: PHONE_LIST_CLASS };
-  if (canSplit) return { className: sidebarRailClass(false), style: sidebarRailStyle(false, width) };
+  if (canSplit) return { className: sidebarRailClass(false) };
   return { className: screen === 'session' ? PHONE_LIST_CLASS : PARKED_LIST_CLASS };
 }
 /**
@@ -409,7 +401,6 @@ export function App({ launch = null }: AppProps = {}) {
   const [launchNotice, setLaunchNotice] = useState<string | null>(null);
   // Sharing must reveal the chooser even when the desktop sidebar was hidden.
   const [isSidebarShown, toggleSidebar] = useSidebar();
-  const [sidebarWidth, chooseSidebarWidth] = useChosenWidth(SIDEBAR_WIDTH_KEY, SIDEBAR_WIDTH);
   // Zen mode gives an open session the whole window.
   const isZen = useZenMode();
   // The share still owed a session. The SHELL holds it because the list is the
@@ -1586,7 +1577,6 @@ export function App({ launch = null }: AppProps = {}) {
     isVisible: sessionsVisible,
     canSplit,
     isSplit,
-    width: sidebarWidth,
   });
 
   return (
@@ -1627,25 +1617,15 @@ export function App({ launch = null }: AppProps = {}) {
             className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${canSplit ? 'flex' : ''} ${shellView === 'session' && !edgeBack.isSwiping ? 'overflow-hidden' : 'overflow-y-auto'}`}
           >
             {/* THE DESK'S SIDEBAR. On a phone the list is a screen the transcript replaces;
-                on a desk it uses 33% of the width with a 20rem minimum, so the list
+                on a desk it has one fixed width of 26rem, so the list
                 is up in BOTH shell states and the same mounted component simply changes
                 width — its scroll, scope and folds are the reader's frame either way. */}
             {sessionsMounted && (
               <div
                 ref={underSid ? undefined : edgeBack.under}
                 className={isParentStroke && !canSplit ? `${listBox.className} invisible` : listBox.className}
-                style={listBox.style}
                 aria-hidden={!sessionsVisible || undefined}
               >
-                {isSplit && sessionsVisible && (
-                  <ResizeEdge
-                    label="Resize the session list"
-                    side="end"
-                    bounds={SIDEBAR_WIDTH}
-                    width={sidebarWidth}
-                    onWidth={chooseSidebarWidth}
-                  />
-                )}
                 <SessionsList
                   conns={conns}
                   primary={primary}

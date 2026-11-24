@@ -2079,7 +2079,7 @@ export function SessionsScreen({
     onUnreachable?.(loadError);
   }, [loadError, onUnreachable]);
 
-  // THE DESK STANDS THIS LIST IN A SIDEBAR. `App` puts it in a 20rem column beside the
+  // THE DESK STANDS THIS LIST IN A SIDEBAR. `App` puts it in a fixed 26rem column beside the
   // transcript — the list is always there, the conversation fills the rest — so what
   // the phone paints is what the desk paints: the machine switch on top, the projects
   // under it, flush to the column's edges. The page inset, the second fleet index that

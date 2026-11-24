@@ -22,7 +22,7 @@ function Palette() {
     <CommandProvider registry={registry}>
       <Verbs />
       <div className="flex h-dvh">
-        <div className="h-full w-[33%] min-w-80 shrink-0 border-r border-dialog-edge bg-page" />
+        <div className="h-full w-[26rem] shrink-0 border-r border-dialog-edge bg-page" />
         <div data-session-surface className="relative min-w-0 flex-1 bg-ink" />
       </div>
       {isPressed && <CommandPalette registry={registry} mode="palette" onClose={() => {}} />}
@@ -41,7 +41,7 @@ function Band({ group, isBesideComposer = false }: { group: string | null; isBes
       <Verbs />
       {isBesideComposer ? (
         <div className="flex h-dvh bg-ink">
-          <div className="h-full w-[33%] min-w-80 shrink-0 border-r border-dialog-edge bg-page" />
+          <div className="h-full w-[26rem] shrink-0 border-r border-dialog-edge bg-page" />
           <div className="flex min-w-0 flex-1 flex-col justify-end p-4">
             <div data-chord-anchor className="h-12 border border-dialog-edge bg-input" />
           </div>

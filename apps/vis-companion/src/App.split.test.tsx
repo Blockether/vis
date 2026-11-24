@@ -99,11 +99,11 @@ describe('a desk keeps the list beside the conversation', () => {
     view.unmount();
   });
 
-  // User request: the session list could not change its width, unlike the side panel.
-  it('lets the person resize the sidebar, keeps the width, and puts it away by that width', async () => {
+  // User request: the sidebar has one width; the person cannot make it narrower or wider.
+  it('gives the sidebar one width that no drag or stored width changes', async () => {
     const restoreDensity = onADesk();
     window.location.hash = '';
-    localStorage.setItem('vis.sidebar.chosen-width', '400');
+    localStorage.setItem('vis.sidebar.chosen-width', '260');
     const view = renderApp({ machines: fleet() });
     restore = () => {
       view.restore();
@@ -111,17 +111,9 @@ describe('a desk keeps the list beside the conversation', () => {
       localStorage.removeItem('vis.sidebar.chosen-width');
     };
     await screen.findByText('Alpha one');
-    const edge = screen.getByRole('separator', { name: 'Resize the session list' });
-    const rail = edge.parentElement!;
-    expect(rail.style.width).toBe('400px');
-    fireEvent.keyDown(edge, { key: 'ArrowRight' });
-    expect(rail.style.width).toBe('416px');
-    expect(localStorage.getItem('vis.sidebar.chosen-width')).toBe('416');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Hide the session list' }));
-    expect(rail.style.marginLeft).toBe('-416px');
     expect(screen.queryByRole('separator', { name: 'Resize the session list' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Show the session list' }));
+    const rail = screen.getByRole('region', { name: 'Sessions' }).closest('main > div') as HTMLElement;
+    expect(rail.style.width).toBe('');
     view.unmount();
   });
 

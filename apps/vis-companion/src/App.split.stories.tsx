@@ -19,8 +19,7 @@ import { SessionsScreen } from './screens/SessionsScreen';
  */
 const meta = {
   title: 'App/Split view',
-  // The rail is a DESK shape: 1280x800, where a third of the shell is wider than
-  // the 20rem floor, so both halves of the mirror are exercised.
+  // The rail is a DESK shape: 1280x800, where the fixed 26rem rail stands beside the pane.
   globals: { viewport: { value: 'desktop', isRotated: false } },
   beforeEach: () => {
     const previous = globalThis.fetch;
