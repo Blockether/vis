@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
+import { expect, screen } from 'storybook/test';
 
-import { liveViewFromWire, type LiveView } from '../lib/live-view';
+import { liveViewFromWire } from '../lib/live-view';
 import { SessionEventsContext } from '../lib/session-events';
 import { StoryAppHost, TODO } from '../dev/story-apps';
 import { AppSurface } from './AppAttachment';
@@ -9,8 +10,7 @@ import { GlobalApps } from './GlobalApps';
 
 /**
  * GLOBAL APPS BELONG TO NO SESSION. Only an SDK program opens one. The shell
- * header shows one icon for each, C-x b O lists them, and a pick opens the app
- * over the whole shell.
+ * header shows one icon for each, and a tap opens the app over the whole shell.
  */
 const meta = {
   title: 'App/Global apps',
@@ -21,37 +21,22 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-function global(id: string, title: string, over: Record<string, unknown> = {}): LiveView {
-  const view = liveViewFromWire({
-    id,
-    title,
-    key: id,
-    scope: 'global',
-    placement: 'attachment',
-    seq: 1,
-    nodes: [{ id: 'break', type: 'divider' }],
-    ...over,
-  });
-  if (!view) throw new Error('story app must parse');
-  return view;
-}
+const PARSED = liveViewFromWire({ id: TODO.id, title: TODO.title, key: 'todo', scope: 'global', placement: 'attachment', seq: 1, nodes: [{ id: 'break', type: 'divider' }] });
+if (!PARSED) throw new Error('story app must parse');
+const LISTED = PARSED;
 
-const APPS = [
-  global('app-standup', 'Team standup'),
-  // The gateway restarted and the program has not adopted its app again.
-  global('app-builds', 'Build radiator', { is_stale: true }),
-  global('app-poll', 'Lunch poll', { is_closed: true }),
-];
-
-/** The list that C-x b O opens, with a live, a stale and a closed app. */
+/** A global app picked from its header icon, open over the whole shell. */
 export const Default: Story = {
   render: function Render() {
     const [host] = useState(() => new StoryAppHost(TODO, { key: 'todo', scope: 'global' }));
     return (
       <div className="relative h-dvh bg-ink">
-        <GlobalApps client={host.client} hub={host.hub} apps={APPS} isListOpen onListClose={() => undefined} openId={null} onOpen={() => undefined} onClose={() => undefined} />
+        <GlobalApps client={host.client} hub={host.hub} apps={[LISTED]} openId={TODO.id} onClose={() => undefined} />
       </div>
     );
+  },
+  play: async () => {
+    await expect((await screen.findAllByText(TODO.title)).length).toBeGreaterThan(0);
   },
 };
 

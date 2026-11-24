@@ -1570,8 +1570,8 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/apps" \
 
 ### Run a global app from a program
 
-A global app belongs to no session. People open it with the global apps button in the TUI and in
-the Companion app. Use it for a program that serves every session, for example a build monitor.
+A global app belongs to no session. People open it from its icon in the Companion header, or from
+the `C-x b o` apps list in the TUI. Use it for a program that serves every session, for example a build monitor.
 Only a program opens a global app, and the app needs a `key`.
 
 <div data-variant="python">

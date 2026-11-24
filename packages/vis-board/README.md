@@ -1,8 +1,8 @@
 # Board
 
 Board is a global app. It shows the issues of all your projects on one board.
-Open **Board** from the global apps button in the header, between Search and
-Settings. Select a project in the filters to show only its issues. Select an
+In the Companion app, open **Board** from its icon in the header, between Search
+and Settings. In the TUI, open it from the `C-x b o` apps list. Select a project in the filters to show only its issues. Select an
 issue to read it and change it. Move issues within a column or to a different
 column. Use the search and filter controls to show only the issues that you need.
 

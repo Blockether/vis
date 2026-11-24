@@ -3427,9 +3427,10 @@ class SessionApp:
 
 @dataclass(frozen=True, slots=True)
 class GlobalApp:
-    """An app of no session that the global apps button lists before it opens.
+    """An app of no session that the clients list before it opens.
 
-    The button shows the title and the icon at once. When the person opens the
+    The Companion header shows its icon, and the TUI lists it under `C-x b o`.
+    Both show the title and the icon at once. When the person opens the
     app, Vis calls `open` in the extension, outside each session. `open` then
     opens the real app with `vis.attach(vis.ui.app(..., scope="global",
     key=key))`, and that app takes the place of the listed one. Give the real app
@@ -9395,8 +9396,8 @@ def _ui_app(
     own settings. `settings_name` names these settings. Give one name to the apps
     that have different keys and are one app for the person: they then share one
     pair of settings. The default is the `key`.
-    `scope="global"` makes an app of no session, which people open from the
-    global apps button. An SDK program opens one with `client.attach_app(...)`,
+    `scope="global"` makes an app of no session, which people open from its
+    icon in the Companion header or from `C-x b o` in the TUI. An SDK program opens one with `client.attach_app(...)`,
     and an extension opens one from the `open` function of its `vis.GlobalApp`.
     It needs a `key`. `is_persistent=False` lets a
     global app end at a gateway restart; by default it comes back.

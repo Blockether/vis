@@ -64,8 +64,8 @@
        by-title))
 
 (defn global-apps
-  "The global app views of `global-apps` (`{view-id {:view v}}`) that the global apps
-   picker lists, by title. A live app is listed, and so is an app that its open
+  "The global app views of `global-apps` (`{view-id {:view v}}`) that the apps picker
+   lists after the session apps, by title. A live app is listed, and so is an app that its open
    connects. A closed, archived or stale app is not."
   [global-apps]
   (->> (vals global-apps)

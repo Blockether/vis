@@ -498,15 +498,10 @@ export function App({ launch = null }: AppProps = {}) {
   // The apps of the gateway that belong to no session. Only an SDK program opens one.
   const globalApps = useGlobalApps(client, subscriptions);
   const listedApps = useMemo(() => listedGlobalApps(globalApps), [globalApps]);
-  const [isGlobalAppsOpen, setGlobalAppsOpen] = useState(false);
-  const openGlobalApps = useCallback(() => setGlobalAppsOpen(true), []);
-  const closeGlobalApps = useCallback(() => setGlobalAppsOpen(false), []);
-  // The one global app open over the shell, picked from the header or the list.
+  // The one global app open over the shell, picked from its header icon.
   const [globalAppId, setGlobalAppId] = useState<string | null>(null);
   const openGlobalApp = useCallback((view: LiveView) => {
-    if (!canOpenApp(view)) return;
-    setGlobalAppsOpen(false);
-    setGlobalAppId(view.id);
+    if (canOpenApp(view)) setGlobalAppId(view.id);
   }, []);
   const closeGlobalApp = useCallback(() => setGlobalAppId(null), []);
   // The one hands-free voice of this device, wherever it was started.
@@ -1599,7 +1594,6 @@ export function App({ launch = null }: AppProps = {}) {
             'show-sessions': sessionsMounted && openSearch,
             'switch-project': canSplit && toggleSidebar,
             settings: openSettings,
-            'global-apps': listedApps.length > 0 && openGlobalApps,
           }}
         />
         <CommandSurface />
@@ -1750,10 +1744,7 @@ export function App({ launch = null }: AppProps = {}) {
               client={client}
               hub={subscriptions}
               apps={globalApps}
-              isListOpen={isGlobalAppsOpen}
-              onListClose={closeGlobalApps}
               openId={globalAppId}
-              onOpen={openGlobalApp}
               onClose={closeGlobalApp}
             />
           )}

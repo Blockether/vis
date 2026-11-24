@@ -117,7 +117,7 @@ SDK declarations and is stored as a tuple, not as a mutable registry.
 | `automations` | `()` | `vis.Automation` declarations for scheduled runs without a model (see [automations](#automations)) |
 | `keybindings` | `()` | `vis.Keybinding` declarations for terminal keys (see [key bindings](#key-bindings)) |
 | `session_app` | `None` | One `vis.SessionApp` that each session lists from its start (see [session apps](#session-apps)) |
-| `global_app` | `None` | One `vis.GlobalApp` that the global apps button lists before it opens (see [global apps](#global-apps)) |
+| `global_app` | `None` | One `vis.GlobalApp` that the clients list before it opens (see [global apps](#global-apps)) |
 | `op_hooks` | `()` | `vis.OpHook` guards or observers |
 | `network_filters` | `()` | `vis.NetworkFilter` policy for requests and responses (see [network filters](jail.md#project-network-filters)) |
 | `providers` | `()` | `vis.Provider` declarations |
@@ -1227,10 +1227,11 @@ A session app follows these rules:
 vis.GlobalApp(key, title, open, icon=None)
 ```
 
-A global app belongs to no session. The global apps button in the header lists it, between
-**Search** and **Settings**. Declare one global app in `vis.Extension(global_app=...)`. The
-button shows the title and the icon before the extension runs. When the person opens the app,
-Vis calls `open` in the extension, outside each session.
+A global app belongs to no session. The Companion app shows its icon in the header, between
+**Search** and **Settings**. The TUI lists it after the session apps under `C-x b o`. Declare one
+global app in `vis.Extension(global_app=...)`. The clients show the title and the icon before the
+extension runs. When the person opens the app, Vis calls `open` in the extension, outside each
+session.
 
 ```python
 import blockether.vis.extension as vis

@@ -601,8 +601,7 @@
    session (the screen marks it as `:has-recordings?`), `:has-panel` needs a panel view or an app in the side panel,
    `:has-group` needs a current session in a group, `:has-agents` needs a subagent (the
    screen marks it as `:has-agents?`), `:child-session` needs a subagent session,
-   `:has-apps` needs an app that the combined apps picker lists and `:has-global-apps`
-   needs a global app that the global apps picker lists.
+   and `:has-apps` needs an app that the apps picker lists: a session app or a global app.
    Resolving a chord does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
   (case show-when
@@ -639,9 +638,6 @@
 
     :has-apps
     (boolean (seq (app-surfaces/picker-views db)))
-
-    :has-global-apps
-    (boolean (seq (app-surfaces/global-apps (:global-apps db))))
 
     true))
 

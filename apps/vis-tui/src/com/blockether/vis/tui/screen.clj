@@ -6808,29 +6808,6 @@
 
           nil)))))
 
-(defn- pick-global-app!
-  [screen views]
-  (when-let [view (app-picker! screen "Global apps" views)]
-    (with-dialog-lock #(app-surface/show-app! screen
-                                              nil
-                                              (str (:id view))
-                                              {:open-picture! (partial open-app-picture!
-                                                                       screen)}))))
-
-(defn- open-global-apps!
-  "Pick a global app and open it over the terminal."
-  [screen]
-  (let [db
-        @state/app-db
-
-        views
-        (app-surfaces/global-apps (:global-apps db))]
-
-    ((get {:blocked (constantly nil)
-           :empty #(do (read-global-apps!) (vis/notify! "No global app is open." :level :info))
-           :ready #(pick-global-app! screen views)}
-          (app-surfaces/picker-state (:dialog-open? db) views false nil)))))
-
 (defn- toggle-agent-dock!
   "Show or hide the agent table under the dock summary line (C-x b a or a click on the line)."
   []
@@ -10880,9 +10857,6 @@
                     :session-apps
                     (open-session-apps! screen)
 
-                    :global-apps
-                    (open-global-apps! screen)
-
                     :automations
                     (open-automations! screen)
 
@@ -11136,12 +11110,9 @@
         :live-panel
         (do (open-live-panel!) ::recur)
 
-        ;; C-x b o / C-x b O — pick a session app or a global app and open it.
+        ;; C-x b o — pick a session app or a global app and open it.
         :session-apps
         (do (open-session-apps! screen) ::recur)
-
-        :global-apps
-        (do (open-global-apps! screen) ::recur)
 
         ;; C-x k — mark the whole queue for the running turn's
         ;; next step (the header's `→ Send now`).

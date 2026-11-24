@@ -101,7 +101,7 @@
                      {"type" "view.close" "kind" "live" "view_id" "g"})))
         (expect (nil? (app-surfaces/fleet-app-frame {"type" "session.status" "session_id" "s1"})))))
   ;; User report: the global apps list showed apps whose program was not connected.
-  (describe "the global apps picker"
+  (describe "the global apps in the apps picker"
             (it "lists only live apps whose program is connected"
                 (let [apps {"1" {:view (app "1" "Live" nil)}
                             "2" {:view (app "2" "Done" nil :is-closed true)}
@@ -109,14 +109,14 @@
                             "4" {:view (app "4" "Lost" nil :is-stale true)}}]
                   (expect (= ["1"] (mapv :id (app-surfaces/global-apps apps))))
                   (expect (false? (keymap/verb-available? {:global-apps (dissoc apps "1")}
-                                                          {:show-when :has-global-apps})))))
+                                                          {:show-when :has-apps})))))
             ;; User request 2026-11-23: an extension declares the global Board, and the
             ;; picker lists it before its first open connects it.
             (it "lists an app that its open connects"
                 (let [apps {"5" {:view (app "5" "Board" nil :is-stale true :is-reconnectable true)}}]
                   (expect (= ["5"] (mapv :id (app-surfaces/global-apps apps))))
                   (expect (true? (keymap/verb-available? {:global-apps apps}
-                                                         {:show-when :has-global-apps}))))))
+                                                         {:show-when :has-apps}))))))
   (describe
     "the held global apps"
     (it "follow the list read, mark a patch gap for a full read"
@@ -124,7 +124,7 @@
           {:session {:id "s1"} :tabs [] :live-views [] :app-views {} :render-version 0})
         (state/dispatch [:global-apps-loaded [(app "g1" "Clock" nil :seq 2) (app "g2" "Mail" nil)]])
         (expect (= #{"g1" "g2"} (set (keys (:global-apps @state/app-db)))))
-        (expect (true? (keymap/verb-available? @state/app-db {:show-when :has-global-apps})))
+        (expect (true? (keymap/verb-available? @state/app-db {:show-when :has-apps})))
         (state/dispatch [:global-app-patch {:view-id "g1" :seq 6 :ops []} 5])
         (expect (true? (get-in @state/app-db [:global-apps "g1" :is-gap])))
         (state/dispatch [:global-app-close "g2"])
@@ -138,7 +138,7 @@
         (state/dispatch [:global-app-behind "g1" 7])
         (expect (true? (get-in @state/app-db [:global-apps "g1" :is-gap])))
         (state/dispatch [:global-apps-loaded []])
-        (expect (false? (keymap/verb-available? @state/app-db {:show-when :has-global-apps}))))
+        (expect (false? (keymap/verb-available? @state/app-db {:show-when :has-apps}))))
     ;; Review of the app summaries: an app that changed and closed while the stream
     ;; was away stayed in the picker as a live app.
     (it "take the state of a newer summary and keep the body for a read"
