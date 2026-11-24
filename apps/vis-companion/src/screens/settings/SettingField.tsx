@@ -90,7 +90,7 @@ function ListHeader({
   children: ReactNode;
 }) {
   return (
-    <legend className="mb-1 flex w-full items-center justify-between gap-2 last:mb-0">
+    <legend className="flex w-full items-center justify-between gap-2">
       <span className="min-w-0">
         <Text variant="label" className="block truncate">
           {children}
@@ -180,6 +180,7 @@ function Entry({ index, count, name, detail, isAdded, children }: {
       <Disclosure
         isOpen={isOpen}
         aria-controls={isOpen ? bodyId : undefined}
+        density="comfortable"
         className="px-3"
         onClick={() => setOpen((open) => !open)}
       >
