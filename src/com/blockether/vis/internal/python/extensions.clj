@@ -75,7 +75,7 @@
   (:import [java.io File]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
-           [java.util.concurrent TimeUnit]
+           [java.util.concurrent ArrayBlockingQueue ThreadFactory ThreadPoolExecutor ThreadPoolExecutor$AbortPolicy TimeUnit]
            [java.util.concurrent.atomic AtomicLong]
            [java.util.concurrent.locks Condition ReentrantLock]))
 
@@ -2012,6 +2012,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                       {:type ::callable-refused :extension ext-name :reason reason})))
     target))
 
+(def ^:private ^:dynamic *op-hook-source-entry*
+  "The admitted registration of an async hook, even if the catalog replaced it."
+  nil)
+
 (defn- session-call-target
   "Resolve a registry callable to the invoking session's trusted extension
    worker, never its sandbox. Calls with no worker-backed session use the
@@ -2043,7 +2047,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                             {:type ::context-retired})))
           (not (and worker site)) [source-ctx source-f]
           :else
-          (if-let [entry (or (source-entry ext-name source-ctx)
+          (if-let [entry (or (when (and (= source-ctx (:context *op-hook-source-entry*))
+                                         (= ext-name (:ext-name *op-hook-source-entry*)))
+                                *op-hook-source-entry*)
+                              (source-entry ext-name source-ctx)
                              (replacement-entry ext-name effective-env))]
             (let [local (session-context! [worker ext-name]
                                           (:context entry)
@@ -2158,6 +2165,17 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    a host operation — the same string an `OpHook` registers with."
   [op-kw]
   (subs (str op-kw) 1))
+
+(defn- op-hook-coordinates
+  [env {:keys [turn iteration call-id started-at-ms ended-at-ms]}]
+  (let [session-id (or (:session-id env) (:session-id extension/*current-environment*))]
+    (cond-> {}
+      session-id (assoc "session_id" (str session-id))
+      turn (assoc "turn" turn)
+      iteration (assoc "iteration" iteration)
+      call-id (assoc "call_id" call-id)
+      started-at-ms (assoc "started_at" (/ (double started-at-ms) 1000.0))
+      ended-at-ms (assoc "ended_at" (/ (double ended-at-ms) 1000.0)))))
 
 (defn- op-hook-payload
   "STRINGS-ONLY `{'op' 'args' ['result']}` payload for a Python op hook.
@@ -2455,7 +2473,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
           (op-preview env op-kw args)
 
           payload
-          (cond-> (op-hook-payload op-kw args)
+          (cond-> (merge (op-hook-payload op-kw args)
+                          (op-hook-coordinates env extension/*op-hook-context*))
             preview
             (assoc "preview" (stringify-deep preview)))
 
@@ -2504,6 +2523,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                           {}
                           gate-ctx)
 
+               payload
+               (merge payload {"op" (op-name op-kw) "args" []}
+                      (op-hook-coordinates env extension/*op-hook-context*))
+
                res
                (call-py-ext ext-name env ctx pyfn [payload])]
 
@@ -2518,17 +2541,76 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                          "' extension's " (name op-kw)
                          " guard failed, and a boundary fails closed: " (ex-message t))}))))
 
-(defn- after-adapter
-  "Python `phase='after'` hook -> a host :after op hook. Observe-only:
-   the callable receives `{'op', 'args', 'result'}`; its return value is
-   ignored and the original result always flows on."
+(defonce ^:private op-hook-workers (atom {}))
+
+(defn- hook-worker
+  [ext-name on-stopped]
+  (let [factory (reify ThreadFactory
+                  (newThread [_ task]
+                    (doto (Thread. ^Runnable task (str "vis-op-hook-" ext-name))
+                      (.setDaemon true))))]
+    (proxy [ThreadPoolExecutor] [1 1 0 TimeUnit/MILLISECONDS
+                                 (ArrayBlockingQueue. 256) factory (ThreadPoolExecutor$AbortPolicy.)]
+      (terminated [] (on-stopped)))))
+
+(defn- enqueue-op-hook!
+  [ext-name ctx env op-kw args result pyfn after?]
+  (let [env (or (not-empty env) extension/*current-environment*)
+        coordinates (op-hook-coordinates env extension/*op-hook-context*)
+        call-env *call-env*
+        job (fn [source]
+              (try (binding [*op-hook-source-entry* source
+                             *call-env* call-env]
+                     (let [event (if after?
+                                   (op-hook-payload op-kw args (:result result))
+                                   (op-hook-payload op-kw args))]
+                       (call-py-ext ext-name env ctx pyfn [(merge event coordinates)])))
+                   (catch Throwable t
+                     (tel/log! {:level :warn
+                                :id ::op-hook-failed
+                                :data {:extension ext-name :op op-kw :async? true
+                                       :error (extension/callback-error t)}}))))
+        dropped? (locking op-hook-workers
+                   (when (and (contains? @live-contexts ctx)
+                              (not (context-retired? ctx)))
+                     (let [[worker burst source closed?]
+                           (or (get @op-hook-workers ctx)
+                               (when-let [source (source-entry ext-name ctx)]
+                                 (let [row [(hook-worker ext-name
+                                                         #(do (discard-context! ctx)
+                                                              (swap! op-hook-workers dissoc ctx)))
+                                            (volatile! false) source]]
+                                   (swap! op-hook-workers assoc ctx row)
+                                   row)))]
+                       (when (and worker (not closed?))
+                         (try (.execute ^ThreadPoolExecutor worker ^Runnable #(job source))
+                              (vreset! burst false)
+                              (catch java.util.concurrent.RejectedExecutionException _
+                                (when-not @burst (vreset! burst true))))))))]
+    (when dropped?
+      (tel/log! {:level :warn
+                 :id ::op-hook-dropped
+                 :data {:extension ext-name :op op-kw :async? true}}))))
+
+(defn- async-before-adapter
   [ext-name ctx pyfn]
+  (fn [env op-kw args]
+    (enqueue-op-hook! ext-name ctx env op-kw args nil pyfn false)
+    args))
+
+(defn- after-adapter
+  "Observe an operation result without changing it."
+  [ext-name ctx pyfn async?]
   (fn [env op-kw args result]
-    (try (call-py-ext ext-name env ctx pyfn [(op-hook-payload op-kw args (:result result))])
-         (catch Throwable t
-           (tel/log! {:level :warn
-                      :id ::op-hook-failed
-                      :data {:extension ext-name :op op-kw :error (extension/callback-error t)}})))
+    (if async?
+      (enqueue-op-hook! ext-name ctx env op-kw args result pyfn true)
+      (try (call-py-ext ext-name env ctx pyfn
+                       [(merge (op-hook-payload op-kw args (:result result))
+                               (op-hook-coordinates env extension/*op-hook-context*))])
+           (catch Throwable t
+             (tel/log! {:level :warn
+                        :id ::op-hook-failed
+                        :data {:extension ext-name :op op-kw :error (extension/callback-error t)}}))))
     result))
 
 (defn- network-filter-adapter
@@ -2619,26 +2701,20 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
 (defn- ->op-hook-entries
   [ext-name ctx spec]
-  (let [before?
-        (= "before" (str (get spec "phase")))
-
-        pyfn
-        (get spec "fn")]
-
-    ;; `:op` keys the INTERNAL op-hook registry (keyword-keyed, matched against
-    ;; canonical tool op keywords). The vocabulary is author-declared config,
-    ;; not model data — the one sanctioned mint in this file.
+  (let [before? (= "before" (get spec "phase"))
+        async? (true? (get spec "is_async"))
+        pyfn (get spec "fn")]
     (mapv (fn [op]
-            ;; A GATE op (`"fs_access"`) is a different shape, and the OP decides
-            ;; it: asked rather than wrapped, refusing rather than rewriting, and
-            ;; failing CLOSED. `phase` is not consulted — there is nothing to be
-            ;; before or after when the operation has not been allowed yet.
             (if-let [gate-kw (extension/gate-op op)]
-              {:op gate-kw :phase :gate :fn (gate-adapter ext-name ctx pyfn)}
-              {:op (keyword (str op))
-               :phase (if before? :around :after)
-               :fn
-               (if before? (guard-adapter ext-name ctx pyfn) (after-adapter ext-name ctx pyfn))}))
+              (do (when async?
+                    (throw (ex-info "An operation gate cannot run asynchronously" {:op op})))
+                  {:op gate-kw :phase :gate :fn (gate-adapter ext-name ctx pyfn)})
+              (cond (not before?)
+                    {:op (keyword op) :phase :after :fn (after-adapter ext-name ctx pyfn async?)}
+                    async?
+                    {:op (keyword op) :phase :before :fn (async-before-adapter ext-name ctx pyfn)}
+                    :else
+                    {:op (keyword op) :phase :around :fn (guard-adapter ext-name ctx pyfn)})))
           (get spec "ops"))))
 
 ;; ── Providers: DECODED against a declared shape, never walked ────────────────
@@ -3049,6 +3125,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
       (assoc :provider/on-selected-fn
         (on-selected-fn-adapter ext-name ctx (get spec "on_selected_fn"))))))
 
+(declare close-context!)
+
 (defn- registration->spec
   "`reg` is the dict handed to Python `vis.register_extension(...)` — STRING keys."
   [ctx reg]
@@ -3176,6 +3254,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
       (seq op-hooks)
       (assoc :ext/op-hooks op-hooks)
+
+      (some #(true? (get % "is_async")) (get reg "op_hooks"))
+      (assoc :ext/retire-op-hooks-fn #(close-context! ctx))
 
       (string? prompt)
       (assoc :ext/prompt-fn prompt)
@@ -4317,7 +4398,15 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   "Retire a registration after admitted calls drain. Session realizations remain
    owned by their sessions; another session's reload must not revoke them."
   [ctx]
-  (discard-context! ctx))
+  (when ctx
+    (let [worker (locking op-hook-workers
+                   (let [[worker :as row] (get @op-hook-workers ctx)]
+                     (swap! op-hook-workers assoc ctx (assoc (vec (or row [nil nil nil])) 3 true))
+                     worker))]
+      (if worker
+        (.shutdown ^ThreadPoolExecutor worker)
+        (try (discard-context! ctx)
+             (finally (swap! op-hook-workers dissoc ctx)))))))
 
 (defn ^:no-doc drives-owned-view?
   "True when an extension namespace of sandbox `worker` drives an open owned live

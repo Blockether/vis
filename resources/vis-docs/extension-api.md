@@ -1221,7 +1221,7 @@ A session app follows these rules:
 ## Op hooks
 
 ```python
-vis.OpHook(ops, fn, phase="before")
+vis.OpHook(ops, fn, phase="before", is_async=False)
 ```
 
 `ops` names operations such as `"patch"`, `"shell"`, or `"py3"`. A hook also works
@@ -1252,6 +1252,31 @@ failure tells the model to ask the user before a retry.
 With `phase="after"`, `fn` receives `{"op", "args", "result"}`, and Vis ignores its return
 value. An after hook cannot undo the effects of the operation. Vis logs an ordinary error of a
 tool hook and does not block the operation.
+
+The payload has these fields when Vis knows their values:
+
+| Key | Value |
+| --- | --- |
+| `session_id` | The session ID. |
+| `turn` | The turn number in the session, starting at 1. |
+| `iteration` | The iteration number in the turn, starting at 1. |
+| `call_id` | The ID of the block or tool invocation. Both phases get the same ID. |
+| `started_at` | The start time in seconds since the Unix epoch. |
+| `ended_at` | The end time in seconds since the Unix epoch. Only after hooks get this field. |
+
+### Observe without waiting
+
+Set `is_async=True` to put the hook on a background queue. An async before hook
+joins the queue before the operation runs. It can run after the operation starts.
+Vis ignores the return value, and an async before hook does not get a patch preview.
+You cannot use `is_async=True` with a gate such as `"fs_access"`.
+
+One worker per extension runs queued hooks in order. When 256 hooks are waiting,
+Vis drops the next hook and logs `op-hook-dropped`. A reload lets queued hooks finish.
+
+The hook runs in the calling session and shares its Python extension interpreter.
+A later Python extension callback in that session can wait for the interpreter.
+An async hook can see file writes that occur after the operation it observes.
 
 ### Repair a patch
 

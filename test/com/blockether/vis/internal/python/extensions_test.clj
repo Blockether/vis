@@ -4100,7 +4100,7 @@ vis.register_extension(vis.Extension(
 (defdescribe op-hook-diagnostics-test
   (it "names the exception in the problem log when a hook fails without a message"
       (let [hook
-            (#'pyx/after-adapter "broken-observer" nil nil)
+            (#'pyx/after-adapter "broken-observer" nil nil false)
 
             signal
             (tel/with-signal
@@ -4341,6 +4341,7 @@ vis.register_extension(vis.Extension(
                :db-info store
                :cwd (str ext-dir)
                :session-id (str "execution-hook-" (random-uuid))
+               :turn-state-atom (atom {:turn-position 3 :iteration 4})
                :extensions (atom [ext])
                :active-extensions (atom [])}
 
@@ -4365,7 +4366,16 @@ vis.register_extension(vis.Extension(
 
                  (expect (nil? (:error result)) (pr-str result))
                  (expect (= "observed\n" (:stdout result)))
-                 (expect (= {"op" "py3" "args" [{"code" code}]} (get state "before")))
+                 (let [before (get state "before")
+                        after (get state "after")]
+                    (expect (= {"op" "py3" "args" [{"code" code}]
+                                "session_id" (:session-id env) "turn" 3 "iteration" 4}
+                               (select-keys before ["op" "args" "session_id" "turn" "iteration"])))
+                    (expect (string? (get before "call_id")))
+                    (expect (= (get before "call_id") (get after "call_id")))
+                    (expect (= (get before "started_at") (get after "started_at")))
+                    (expect (not (contains? before "ended_at")))
+                    (expect (<= (get before "started_at") (get after "ended_at"))))
                  (expect (= "observed\n" (get-in state ["after" "result" "stdout"])))
                  (expect (= 1 (get state "completed"))))
                ;; A failed block can still have written files; the after hook must see it.
@@ -4399,6 +4409,67 @@ vis.register_extension(vis.Extension(
                  (expect (not (.exists blocked))))
                (expect (nil? (get-in (snapshot) ["after" "result"])))
                (finally (ep/dispose-python-context! ctx))))))))
+
+(def ^:private async-hook-py
+  "import time
+import blockether.vis.extension as vis
+
+
+def after(call):
+    code = call['args'][0]['code']
+    if code == 'first':
+        time.sleep(5)
+    with (vis.workspace_root() / 'async-calls.txt').open('a') as out:
+        out.write(f'{code} {vis.session.id} {call[\"session_id\"]} {call[\"turn\"]} {call[\"iteration\"]}\\n')
+    if code == 'first':
+        raise ValueError('async observer failed')
+    return vis.block('ignored')
+
+
+vis.register_extension(vis.Extension(name='async-hook', description='Observe blocks.',
+    op_hooks=[vis.OpHook(['py3'], after, phase='after', is_async=True)]))
+")
+
+(defdescribe async-op-hook-test
+  (it "returns before a slow hook and keeps the observer order and session"
+      (with-fresh-loaded
+        {"async_hook.py" async-hook-py}
+        (fn [_ {:keys [ext-dir store]}]
+          (let [ext (registered "async-hook")
+                ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                sid (str (random-uuid))
+                env {:python-context ctx :db-info store :workspace/root (str ext-dir) :session-id sid
+                     :turn-state-atom (atom {:turn-position 3 :iteration 4})
+                     :extensions (atom [ext]) :active-extensions (atom [])}
+                out (io/file ext-dir "async-calls.txt")
+                failure (promise)
+                invoke (fn [code]
+                         (extension/invoke-operation
+                           :py3 env (constantly (extension/success {:result code})) [{:code code}]))]
+            (try (loop-env/sync-active-extension-symbols! env [ext])
+                 (tel/add-handler! ::async-hook-test
+                                   (fn ([] nil)
+                                     ([signal]
+                                      (when (= ::pyx/op-hook-failed (:id signal))
+                                        (deliver failure (:data signal)))))
+                                   {:async nil})
+                 (let [t0 (System/nanoTime)]
+                   (expect (= "first" (:result (invoke "first"))))
+                   (expect (= "second" (:result (invoke "second"))))
+                   (expect (< (- (System/nanoTime) t0) 1000000000)))
+                 (extension/deregister-extension! "async-hook")
+                 ;; The previously captured session descriptor cannot enqueue after retirement.
+                 (expect (= "third" (:result (invoke "third"))))
+                 (loop [attempts 200]
+                   (when (and (pos? attempts)
+                              (not (and (.isFile out) (str/includes? (slurp out) "second"))))
+                     (Thread/sleep 50)
+                     (recur (dec attempts))))
+                 (expect (= [(str "first " sid " " sid " 3 4") (str "second " sid " " sid " 3 4")]
+                            (when (.isFile out) (str/split-lines (slurp out)))))
+                 (expect (true? (:async? (deref failure 1000 nil))))
+                 (finally (tel/remove-handler! ::async-hook-test)
+                          (ep/dispose-python-context! ctx))))))))
 
 (def ^:private env-hook-tool-py
   "import blockether.vis.extension as vis

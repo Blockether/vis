@@ -127,6 +127,8 @@ class ClientExtensions:
             ]
             if callable(extension.prompt):
                 unsupported.append("prompt")
+            if any(hook.is_async for hook in extension.op_hooks):
+                unsupported.append("async op_hooks")
             if any(hook.phase != "before" for hook in extension.op_hooks):
                 unsupported.append("op_hooks with phase 'after'")
             if unsupported:

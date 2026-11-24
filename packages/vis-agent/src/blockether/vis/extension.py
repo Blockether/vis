@@ -3414,6 +3414,7 @@ class OpHook:
     ops: Sequence[str]
     fn: Callable[..., Any]
     phase: Literal["before", "after"] = "before"
+    is_async: bool = False
 
     def __post_init__(self):
         if self.phase not in ("before", "after"):
@@ -3431,6 +3432,10 @@ class OpHook:
             raise ValueError(
                 "vis.OpHook: a gate cannot share a hook with ordinary operations"
             )
+        if not isinstance(self.is_async, bool):
+            raise ValueError("vis.OpHook is_async must be a bool")
+        if gates and self.is_async:
+            raise ValueError("vis.OpHook: a gate cannot run asynchronously")
         if gates and self.phase != "before":
             raise ValueError("vis.OpHook: a gate is asked before the operation runs")
         object.__setattr__(self, "ops", tuple(self.ops))
@@ -3441,6 +3446,7 @@ class OpHook:
             "ops": list(self.ops),
             "fn": self.fn,
             "phase": self.phase,
+            "is_async": self.is_async,
         }
 
 

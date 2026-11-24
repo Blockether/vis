@@ -711,6 +711,7 @@
                [:ext/activation-fn :ext/prompt-fn :ext/ctx-fn :ext/doctor-fn :ext/app-hook-fn])
        (optional-field? x :ext/hooks #(vector-of? hook? %))
        (optional-field? x :ext/op-hooks #(every? op-hook? %))
+       (optional-field? x :ext/retire-op-hooks-fn ifn?)
        (optional-field? x :ext/network-filters #(every? ifn? %))
        (optional-field? x :ext/env #(vector-of? env-entry? %))
        (optional-field? x :ext/grants #(vector-of? grant-entry? %))
@@ -1922,6 +1923,18 @@
 ;; applies wherever that op is called. Before/after hooks are best-effort;
 ;; :around hooks are control flow, so their return values and exceptions
 ;; propagate to the operation caller.
+(def ^:dynamic *op-hook-context*
+  "Operation identity and start time, shared by all phases of one call."
+  nil)
+
+(defn- op-context
+  [env call-id started-at-ms]
+  (let [{:keys [turn-position iteration]} (some-> (:turn-state-atom env) deref)]
+    {:call-id (or call-id (str (random-uuid)))
+     :started-at-ms started-at-ms
+     :turn turn-position
+     :iteration iteration}))
+
 (defonce ^:private op-hooks (atom {}))   ; op-keyword -> [{:phase :owner :fn}]
 
 (defn- op-text
@@ -2125,22 +2138,23 @@
   ([op-kw env args result hooks]
    (run-op-after-hooks op-kw env args result hooks nil))
   ([op-kw env args result hooks run-after?]
-   (reduce (fn [res {:keys [phase owner] hook-fn :fn :as hook}]
-             (if (and (= :after phase) (or (nil? run-after?) (run-after?)))
-               (try (let [r (hook-fn env (or (::matched hook) (:op hook) op-kw) args res)]
-                      (if (tool-result? r) r res))
-                    (catch Throwable e
-                      (log-hook! :warn
-                                 ::op-hook-threw
-                                 nil
-                                 op-kw
-                                 :after-op-hook
-                                 nil
-                                 (str (or owner "?") ": " (ex-message e)))
-                      res))
-               res))
-           result
-           hooks)))
+   (binding [*op-hook-context* (assoc *op-hook-context* :ended-at-ms (util/now-ms))]
+     (reduce (fn [res {:keys [phase owner] hook-fn :fn :as hook}]
+               (if (and (= :after phase) (or (nil? run-after?) (run-after?)))
+                 (try (let [r (hook-fn env (or (::matched hook) (:op hook) op-kw) args res)]
+                        (if (tool-result? r) r res))
+                      (catch Throwable e
+                        (log-hook! :warn
+                                   ::op-hook-threw
+                                   nil
+                                   op-kw
+                                   :after-op-hook
+                                   nil
+                                   (str (or owner "?") ": " (ex-message e)))
+                        res))
+                 res))
+             result
+             hooks))))
 
 (defn- run-op-around
   "MIDDLEWARE: wrap the actual op fn with every :around hook for `op-kw`. Each
@@ -2241,7 +2255,9 @@
         hooks
         (vec (environment-op-hooks op env))]
 
-    (run-op-after-hooks op env args (run-op-around op env f args hooks) hooks run-after?)))
+    (binding [*op-hook-context* (op-context env (when (= :py3 op) *activity-history-id*) (util/now-ms))]
+      (let [args (run-op-before-hooks op env args hooks)]
+        (run-op-after-hooks op env args (run-op-around op env f args hooks) hooks run-after?)))))
 
 (defn- folded-kwargs->positional
   "Re-expand folded kwargs for the DIRECT-python surface. When the agent calls a
@@ -2505,7 +2521,8 @@
   (rt/park-blocking-wall
     (fn []
       (if-not *tool-event-sink*
-        (invoke-symbol-wrapper* ext sym-entry args env)
+        (binding [*op-hook-context* (op-context env nil (util/now-ms))]
+          (invoke-symbol-wrapper* ext sym-entry args env))
         (let [ctx
               (or *tool-event-context* (activity-event/context))
 
@@ -2537,8 +2554,8 @@
                :workspace-root (workspace/workspace-root env)}]
 
           (record-tool-event! (activity-event/start-event ctx invocation details))
-          (binding [*tool-event-context*
-                    ctx
+          (binding [*op-hook-context* (op-context env (:invocation-id invocation) started-at-ms)
+                    *tool-event-context* ctx
 
                     *current-invocation-id*
                     (:invocation-id invocation)
@@ -3294,6 +3311,7 @@
     (toggles/unregister-owner! ns-sym)
     (theme/unregister-themes! (keys (:ext/theme ext)))
     (unregister-op-hooks-for-owner! (ext-op-hook-owner ext))
+     (when-let [retire! (:ext/retire-op-hooks-fn ext)] (retire!))
     (egress-proxy/unregister-network-filters-for-owner! (ext-op-hook-owner ext))
     (tel/log! {:level :info
                :id ::deregister-global

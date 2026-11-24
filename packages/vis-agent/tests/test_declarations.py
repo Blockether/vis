@@ -298,6 +298,11 @@ def test_gate_declarations_reject_invalid_execution_semantics(ops, phase):
         vis.OpHook(ops, lambda event: None, phase=phase)
 
 
+def test_async_hook_cannot_gate_file_access():
+    with pytest.raises(ValueError, match="gate.*asynchronous"):
+        vis.OpHook(["fs_access"], lambda event: None, is_async=True)
+
+
 @pytest.mark.parametrize("variables", [{}, ["A"], {"": "x"}, {"A=B": "x"}, {"A": 1}])
 def test_hook_variables_reject_what_no_process_can_receive(variables):
     with pytest.raises(ValueError):
