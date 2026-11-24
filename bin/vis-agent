@@ -1305,6 +1305,15 @@ update_native() {
     mv -f "$unpack/vis-agent" "$launcher_path"
     [[ ! -f "$unpack/install-vis-agent" ]] || mv -f "$unpack/install-vis-agent" "$bin_dir/install-vis-agent"
   fi
+  # macOS checks a new executable on its first run: about 2 s for the native
+  # runtime and 1 s for the TUI. Run each new binary once here, so the first
+  # gateway or TUI start after the update does not wait for that check.
+  "$native_dir/vis-agent-native" --version >/dev/null 2>&1 || \
+    warn "update: the new native runtime did not start with --version"
+  if (( want_tui )); then
+    "$native_dir/vis-tui" --version </dev/null >/dev/null 2>&1 || \
+      warn "update: the new terminal client did not start with --version"
+  fi
   rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive" "$web_unpack" "$web_archive" "$sums"
   trap - EXIT
   local installed_parts="launcher + native runtime + Python"
