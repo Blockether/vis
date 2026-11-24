@@ -93,11 +93,13 @@ import { appIconName } from './lib/view';
 import { CommandSurface } from './components/CommandSurface';
 import { CommandProvider, CommandRegistry, CommandScope, useCommands, type CommandHandlers } from './lib/commands';
 import { SessionActive } from './lib/session-active';
-import { AppIcon, AppsIcon, SearchIcon, SettingsIcon } from './components/icons';
+import { AppIcon, SearchIcon, SettingsIcon } from './components/icons';
 import { GlobalApps } from './components/GlobalApps';
 import { LiveVoiceDock } from './components/LiveVoiceDock';
 import { isLiveVoiceActive, isLiveVoiceOf, useLiveVoice } from './lib/live-voice-owner';
 import { listedGlobalApps, useGlobalApps } from './lib/global-apps';
+import { canOpenApp } from './lib/app-view';
+import type { LiveView } from './lib/live-view';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
@@ -499,6 +501,14 @@ export function App({ launch = null }: AppProps = {}) {
   const [isGlobalAppsOpen, setGlobalAppsOpen] = useState(false);
   const openGlobalApps = useCallback(() => setGlobalAppsOpen(true), []);
   const closeGlobalApps = useCallback(() => setGlobalAppsOpen(false), []);
+  // The one global app open over the shell, picked from the header or the list.
+  const [globalAppId, setGlobalAppId] = useState<string | null>(null);
+  const openGlobalApp = useCallback((view: LiveView) => {
+    if (!canOpenApp(view)) return;
+    setGlobalAppsOpen(false);
+    setGlobalAppId(view.id);
+  }, []);
+  const closeGlobalApp = useCallback(() => setGlobalAppId(null), []);
   // The one hands-free voice of this device, wherever it was started.
   const voice = useLiveVoice();
   const refresh = useCallback(async () => {
@@ -1599,11 +1609,7 @@ export function App({ launch = null }: AppProps = {}) {
               // There is nothing to search until a session list stands behind the dialog.
               onSearch={sessionsMounted ? openSearch : null}
               onAppSettings={openSettings}
-              globalApps={
-                listedApps.length > 0
-                  ? { count: listedApps.length, isOpen: isGlobalAppsOpen, onOpen: openGlobalApps }
-                  : undefined
-              }
+              globalApps={{ apps: listedApps, openId: globalAppId, onOpen: openGlobalApp }}
             />
           )}
           {isVoiceDocked && voice && (
@@ -1746,6 +1752,9 @@ export function App({ launch = null }: AppProps = {}) {
               apps={globalApps}
               isListOpen={isGlobalAppsOpen}
               onListClose={closeGlobalApps}
+              openId={globalAppId}
+              onOpen={openGlobalApp}
+              onClose={closeGlobalApp}
             />
           )}
           {scopedSettings && (
@@ -1776,8 +1785,8 @@ interface HeaderProps {
   /** Open the search dialog. `null` while there is no session list to search. */
   onSearch: (() => void) | null;
   onAppSettings: () => void;
-  /** The global apps button. Absent while no global app is listed. */
-  globalApps?: { count: number; isOpen: boolean; onOpen: () => void };
+  /** The listed global apps: one icon button each, which opens that app. */
+  globalApps?: { apps: readonly LiveView[]; openId: string | null; onOpen: (view: LiveView) => void };
 }
 
 export function Header({ onSearch, onAppSettings, globalApps }: HeaderProps) {
@@ -1893,19 +1902,22 @@ export function Header({ onSearch, onAppSettings, globalApps }: HeaderProps) {
               <SearchIcon className="size-4" />
             </IconButton>
           )}
-          {globalApps && (
+          {/* Each global app has its own icon here, so it opens with one tap. */}
+          {globalApps?.apps.map((view) => (
             <IconButton
+              key={view.id}
               type="button"
-              label={`Global apps (${globalApps.count})`}
-              title="Global apps (C-x b O)"
-              variant={globalApps.isOpen ? 'primary' : 'quiet'}
+              label={`Open ${view.title}`}
+              title={view.title}
+              variant={globalApps.openId === view.id ? 'primary' : 'quiet'}
               aria-haspopup="dialog"
-              aria-expanded={globalApps.isOpen}
-              onClick={globalApps.onOpen}
+              aria-expanded={globalApps.openId === view.id}
+              disabled={!canOpenApp(view)}
+              onClick={() => globalApps.onOpen(view)}
             >
-              <AppsIcon className="size-4" />
+              <AppIcon name={view.icon} className="size-4" />
             </IconButton>
-          )}
+          ))}
           <IconButton
             type="button"
             label="Open preferences"

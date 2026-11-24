@@ -9,7 +9,8 @@ import { GlobalApps } from './GlobalApps';
 
 /**
  * GLOBAL APPS BELONG TO NO SESSION. Only an SDK program opens one. The shell
- * header lists them, and a pick opens the app over the whole shell.
+ * header shows one icon for each, C-x b O lists them, and a pick opens the app
+ * over the whole shell.
  */
 const meta = {
   title: 'App/Global apps',
@@ -42,13 +43,13 @@ const APPS = [
   global('app-poll', 'Lunch poll', { is_closed: true }),
 ];
 
-/** The list that the header button opens, with a live, a stale and a closed app. */
+/** The list that C-x b O opens, with a live, a stale and a closed app. */
 export const Default: Story = {
   render: function Render() {
     const [host] = useState(() => new StoryAppHost(TODO, { key: 'todo', scope: 'global' }));
     return (
       <div className="relative h-dvh bg-ink">
-        <GlobalApps client={host.client} hub={host.hub} apps={APPS} isListOpen onListClose={() => undefined} />
+        <GlobalApps client={host.client} hub={host.hub} apps={APPS} isListOpen onListClose={() => undefined} openId={null} onOpen={() => undefined} onClose={() => undefined} />
       </div>
     );
   },
