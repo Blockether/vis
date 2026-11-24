@@ -644,7 +644,24 @@
                      (= 1 (count (distinct (map #(get-in % [:headers "webhook-id"]) @requests)))))
                    (expect (= 1 (count (distinct (map :body @requests)))))
                    (expect (empty? (ps/db-automation-due-deliveries db Long/MAX_VALUE 10))))))
-             (finally (stop))))))
+             (finally (stop)))))
+  (it "tells the scheduler about a failed callback, so its retry starts on time"
+      (let [{:keys [url stop]} (receiver 500)
+            wakes (atom [])
+            sub (bus/subscribe! "vis.automation.changed" #(swap! wakes conj (get % "data")))]
+        (try (with-runner
+               (answer "Green.")
+               (fn [db _]
+                 (let [id (create! db {"delivery" {"push" false "callback" {"url" url}}})]
+                   (settled db (get (runner/run-now! db id) "id"))
+                   (expect (eventually #(= 1
+                                           (:attempts (first (ps/db-automation-due-deliveries
+                                                               db
+                                                               Long/MAX_VALUE
+                                                               10))))))
+                   ;; In this test, only the delivery publishes a change without an id.
+                   (expect (eventually #(some #{{}} @wakes))))))
+             (finally (bus/unsubscribe! :vis sub) (stop))))))
 
 (defdescribe scheduler-sleep-test
              ;; Poll audit row 5 (0c273047d): the scheduler read the store every 5 s, also with no
