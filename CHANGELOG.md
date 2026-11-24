@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Python: an update removes the interpreter copies and the extension environments of the replaced interpreter build. Before, approximately 6 GiB stayed for each update (#511).
 - Gateway: the first turn of a new session no longer reports that its Python context is retired. When the project extensions became ready during the start of that turn, the turn checked the replaced environment and started a fresh one.
 - Companion: Back in a subagent session opens its parent session (#516).
+- Linux x64: images work again on Linux with a glibc older than 2.43, for example Ubuntu 22.04. Before, Vis could not load its image library there, so attached HEIC and AVIF pictures did not reach the model and the terminal app showed no images. Imaging is pinned at 0.1.17.
 - Companion: an answer box shows a gap between paragraphs. Stop speech shows only while speech plays. A diff file without lines, for example a binary file, has no fold chevron.
 
 ## [v0.5.31] - 2026-11-23
