@@ -2,7 +2,7 @@
 
 import blockether.vis.extension as vis
 
-from vis_board import tools
+from vis_board import start, tools
 from vis_board.app import BOARD
 
 
@@ -29,5 +29,6 @@ vis.register_extension(
             )
         ],
         global_app=vis.GlobalApp("board", "Board", open_board, icon="board"),
+        settings=start.SETTINGS,
     )
 )

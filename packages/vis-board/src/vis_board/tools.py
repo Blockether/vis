@@ -3,7 +3,13 @@
 import blockether.vis.extension as vis
 
 from vis_board.app import BOARD
+from vis_board.start import project_folder
 from vis_board.store import Store, edit, matching, move
+
+
+def _store():
+    """The board of the project. A linked worktree shares the board of its project."""
+    return Store(project_folder(vis.workspace_root()))
 
 
 def list_issues(
@@ -13,7 +19,7 @@ def list_issues(
     flagged: bool = False,
 ) -> list[dict]:
     """List issues. Search by title, key or label. Filter by person ID, epic ID or flag."""
-    data = Store(vis.workspace_root()).read()
+    data = _store().read()
     issues = matching(
         data["issues"], query=query, assignees=assignees, epic=epic, flagged=flagged
     )
@@ -24,8 +30,7 @@ def list_issues(
 
 
 def _change(apply):
-    workspace = vis.workspace_root()
-    issue = Store(workspace).change(apply)
+    issue = _store().change(apply)
     BOARD.refresh()
     return issue
 

@@ -276,7 +276,9 @@ class Sessions:
 
         Set `is_child=True` to create a child of the bound session. By default,
         the new session is independent. Without `root`, the session starts in the
-        root of the bound session. The other options are those of
+        root of the bound session. A callback of a global extension, such as a
+        global app, has no bound session: it must give `root`, and it can then
+        change only the sessions that it created. The other options are those of
         `EngineClient.create_session`. This call needs a Vis extension callback.
         """
         if is_child is not False:

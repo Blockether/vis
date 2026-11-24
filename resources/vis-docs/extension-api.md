@@ -1255,6 +1255,8 @@ A global app follows these rules:
 
 - `open` is a function at module level. Vis finds the function by its name.
 - `open` gets one dict with `key` and `view_id`. It has no session and no project folder.
+- A callback of the app can create a session with `vis.sessions.create(root=...)`. It must give
+  `root`, and it can change only the sessions that it created.
 - The real app needs `scope="global"` and a `key`. It replaces the listed app and keeps its
   `view_id`.
 - Give the real app `on_reload`. Vis then calls that function after a reload or a restart, when

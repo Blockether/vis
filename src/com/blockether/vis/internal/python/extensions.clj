@@ -1014,6 +1014,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
    A change also needs [[host-may-change?]]. A new session records this extension as
    origin, and it starts in the bound session's root when the frame gives no root.
+   A callback of a global extension has no bound session: it can create a session
+   with a `root` and change only the sessions that it created.
    Each change has the Activity of [[host-activities]]."
   [ext-name bound-session frame]
   (let
@@ -1023,13 +1025,17 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
      bound
      (or (:session-id env) (:session-id bound-session))
 
-     db
-     (or (:db-info env) (:db-info bound-session))
-
      method
      (some-> (get frame "method")
              str/lower-case
              keyword)
+
+     db
+     (or (:db-info env)
+         (:db-info bound-session)
+         ;; Without a bound session, a change checks the origin in the shared store.
+         (when (and (nil? bound) (not= :get method))
+           (persistance/db-shared-connection! (config/resolve-db-spec))))
 
      [route {:keys [sid]}]
      (gateway-contract/match-route (get frame "route"))
@@ -1073,8 +1079,14 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
           403
           "forbidden-session"
           "A thread that the extension created can send turns only in sessions that the extension created")
-        (and (not read?) (nil? bound))
-        (host-refusal 403 "session-not-bound" "A change through the host needs a bound Vis session")
+        (and (not read?)
+             (nil? bound)
+             (not sid)
+             (not (and create? (not (str/blank? (str (get-in frame ["body" "root"])))))))
+        (host-refusal
+          403
+          "session-not-bound"
+          "A change through the host needs a bound Vis session, or a new session with a root")
         (and (not read?) sid (not (and db (host-may-change? db ext-name bound sid))))
         (host-refusal
           403
@@ -1084,7 +1096,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                         (cond-> {}
                           create?
                           (assoc :vis.host/origin
-                            {"kind" "extension" "extension" ext-name "session_id" (str bound)}))))]
+                            (cond-> {"kind" "extension" "extension" ext-name}
+                              bound
+                              (assoc "session_id" (str bound)))))))]
 
     (if-let [[operation label show-start?] (get host-activities [method (:path route)])]
       (extension/observe-host-call ext-name operation label show-start? host-failure answer)

@@ -9200,7 +9200,7 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "description": "The program that created the session.",
+          "description": "The program that created the session. session_id is the session bound to the extension, absent for a global extension.",
           "properties": {
             "kind": {
               "const": "extension"
@@ -9216,8 +9216,7 @@
           },
           "required": [
             "kind",
-            "extension",
-            "session_id"
+            "extension"
           ]
         }
       ]

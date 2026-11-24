@@ -3290,7 +3290,7 @@ vis.register_extension(vis.Extension(
         (fn [frame & {:keys [bound guest?]}]
           (reset! served [])
           (binding [extension/*current-environment*
-                    (when bound {:session-id bound :db-info store})
+                    (if bound {:session-id bound :db-info store} {:db-info store})
 
                     python-host/*guest-thread?*
                     (boolean guest?)]
@@ -3329,10 +3329,7 @@ vis.register_extension(vis.Extension(
     (it "allows a change only to the bound session, its subagents and its own sessions"
         (let [previous @@#'pyx/host-exchange]
           (pyx/install-host-exchange! exchange)
-          (try (expect (= "session-not-bound"
-                          (refusal (request {"method" "POST"
-                                             "route" (str "/v1/sessions/" own "/turns")}))))
-               (doseq [[sid allowed?] [[own true] [child true] [created true]
+          (try (doseq [[sid allowed?] [[own true] [child true] [created true]
                                        [foreign-created false] [stranger false]]]
                  (let [reply (request {"method" "POST" "route" (str "/v1/sessions/" sid "/turns")}
                                       :bound
@@ -3348,6 +3345,31 @@ vis.register_extension(vis.Extension(
                             {:vis.host/origin
                              {"kind" "extension" "extension" "watch" "session_id" own}}]]
                           @served))
+               (finally (pyx/install-host-exchange! previous)))))
+    ;; User request 2026-11-24: the global Board starts an agent session for an issue.
+    ;; A global extension has no bound session.
+    (it "lets a global extension create a session with a root and change only its own sessions"
+        (let [previous
+              @@#'pyx/host-exchange
+
+              global-created
+              (str (db-test/store-session! store
+                                           {:channel :api
+                                            :origin {"kind" "extension" "extension" "watch"}}))]
+
+          (pyx/install-host-exchange! exchange)
+          (try (expect (= "session-not-bound"
+                          (refusal (request {"method" "POST" "route" "/v1/sessions"}))))
+               (request {"method" "POST" "route" "/v1/sessions" "body" {"root" "/work"}})
+               (expect (= [["POST" "/v1/sessions"
+                            {:vis.host/origin {"kind" "extension" "extension" "watch"}}]]
+                          @served))
+               (doseq [[sid allowed?] [[global-created true] [created true] [own false]
+                                       [stranger false]]]
+                 (expect (= (if allowed? 200 403)
+                            (:status (request {"method" "POST"
+                                               "route" (str "/v1/sessions/" sid "/turns")})))
+                         sid))
                (finally (pyx/install-host-exchange! previous)))))
     (it "limits a thread that the guest created to the contract's background access"
         (let [previous

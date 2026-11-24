@@ -399,11 +399,13 @@ class SessionGoal(TypedDict):
 
 
 class SessionOriginVariant2(TypedDict):
-    """The program that created the session."""
+    """The program that created the session. session_id is the session bound to the
+    extension, absent for a global extension.
+    """
 
     kind: Literal["extension"]
     extension: str
-    session_id: str
+    session_id: NotRequired[str]
 
 
 SessionOrigin: TypeAlias = None | SessionOriginVariant2

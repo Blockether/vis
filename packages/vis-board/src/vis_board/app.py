@@ -7,6 +7,7 @@ from pathlib import Path
 
 import blockether.vis.extension as vis
 
+from vis_board import start
 from vis_board.store import (
     DEFAULT_KIND,
     DEFAULT_PRIORITY,
@@ -462,9 +463,54 @@ class BoardApp:
             )
         )
 
+    def _column(self, issue_id):
+        """The column and the ID of issue `issue_id`, or None."""
+        for _, data in self._boards:
+            for one in data["issues"]:
+                if reference_matches(one, issue_id):
+                    return one["column"], one["id"]
+        return None
+
+    def _steps(self, before, item_id):
+        """The SDLC step of an issue that moved: `start`, `finish` or None."""
+        after = self._column(item_id)
+        if before is None or after is None or before[0] == after[0]:
+            return None
+        if after[0] == start.START_COLUMN:
+            return "start", after[1]
+        if after[0] == start.DONE_COLUMN:
+            return "finish", after[1]
+        return None
+
+    def _step(self, step, issue_id):
+        """Start or finish issue `issue_id` as the settings say. Log a failure."""
+        log = lambda text: self.view.log(text, "error").flush()  # noqa: E731
+        try:
+            with self.lock:
+                store = self._owner(issue_id)
+            plan = start.plan()
+            if step == "start":
+                self.view.log("Starting the work of the issue.").flush()
+                record = start.start(store, issue_id, plan, log=log)
+                where = record["workspace"] + (
+                    f" ({record['branch']})" if record.get("branch") else ""
+                )
+                self.view.log(f"Started in {where}.", "ok").flush()
+            else:
+                start.finish(store, issue_id, plan, log=log)
+            self.refresh()
+        except Exception:
+            self._log_failure("Start" if step == "start" else "Finish")
+
     def on_event(self, event):
         """Handle one action. Keep the app open if the event fails."""
+        step = None
         with self.lock:
+            before = (
+                self._column(event.item_id)
+                if event.node_id == "issues" and event.item_id
+                else None
+            )
             try:
                 if event.type == "change" and event.node_id in FILTERS:
                     self.filters[event.node_id] = (
@@ -478,9 +524,11 @@ class BoardApp:
                 elif event.node_id == "issues" and event.type == "edit":
                     self._edit(event)
                     self.refresh()
+                    step = self._steps(before, event.item_id)
                 elif event.node_id == "issues" and event.type == "move":
                     self._move(event)
                     self.refresh()
+                    step = self._steps(before, event.item_id)
             except Exception:
                 self._log_failure("Update board")
                 # The host applies a move before it tells the owner. Restore its view
@@ -490,6 +538,9 @@ class BoardApp:
                         self.refresh()
                     except Exception:
                         self._log_failure("Restore board")
+        # A Start can take a while: the board stays free for other events meanwhile.
+        if step:
+            self._step(*step)
 
 
 class GlobalBoard:

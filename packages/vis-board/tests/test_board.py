@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import blockether.vis.extension as vis
 import pytest
 
-from vis_board import store, tools
+from vis_board import start, store, tools
 from vis_board.app import BoardApp, GlobalBoard
 from vis_board.store import Store, edit
 
@@ -307,3 +307,154 @@ def test_app_shows_the_boards_of_all_projects(saved, tmp_path, monkeypatch):
         assert "Chosen" in [one["title"] for one in saved.read()["issues"]]
     finally:
         board.stop()
+
+
+def _repo(folder):
+    folder.mkdir(exist_ok=True)
+    for args in (
+        ["init", "-q", "-b", "main"],
+        [
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@e",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+    ):
+        start.git(folder, *args)
+    return folder
+
+
+class _Sessions:
+    """Record the agent sessions that Start makes and the requests that it sends."""
+
+    def __init__(self):
+        self.made, self.sent = [], []
+
+    def create(self, **options):
+        self.made.append(options)
+        return self.get(f"s{len(self.made)}")
+
+    def get(self, session_id):
+        sent = self.sent
+
+        class Session:
+            id = session_id
+
+            def send(self, request):
+                sent.append((session_id, request))
+
+        return Session()
+
+
+def test_start_makes_a_worktree_and_an_agent_session_once(saved):
+    _repo(saved.workspace)
+    issue = saved.change(
+        lambda data: edit(data, {"title": "Fix the login", "text": "Use OAuth."})
+    )
+    sessions = _Sessions()
+    record = start.start(saved, issue["id"], start.Plan(), sessions=sessions)
+    folder = saved.workspace.parent / "ab-12-Project-abpr-1"
+    assert (
+        record["workspace"] == str(folder)
+        and record["branch"] == "board/abpr-1-fix-the-login"
+    )
+    assert start.git(folder, "rev-parse", "--abbrev-ref", "HEAD") == record["branch"]
+    assert sessions.made == [
+        {
+            "root": str(folder),
+            "title": "ABPR-1 Fix the login",
+            "idempotency_key": f"vis-board-{issue['id']}-worktree",
+        }
+    ]
+    assert "Use OAuth." in sessions.sent[0][1]
+    data = saved.read()
+    assert data["issues"][0]["assignee"] == "vis-agent"
+    assert [one["id"] for one in data["people"]].count("vis-agent") == 1
+    # A second Start reuses the worktree and the session.
+    again = start.start(saved, issue["id"], start.Plan(), sessions=sessions)
+    assert again == record and len(sessions.made) == 1
+    assert sessions.sent[1][1].startswith("The issue is back in Implementing.")
+    # A session in the worktree uses the board of the project.
+    assert start.project_folder(folder) == saved.workspace
+
+
+def test_start_for_a_person_on_a_branch_makes_no_session(saved):
+    _repo(saved.workspace)
+    issue = saved.change(
+        lambda data: edit(data, {"title": "Tidy", "assignee": "owner"})
+    )
+    sessions = _Sessions()
+    plan = start.Plan(workspace="branch", assignee="person")
+    record = start.start(saved, issue["id"], plan, sessions=sessions)
+    assert record["workspace"] == str(saved.workspace)
+    assert (
+        start.git(saved.workspace, "rev-parse", "--abbrev-ref", "HEAD")
+        == "board/abpr-1-tidy"
+    )
+    assert not sessions.made and saved.read()["issues"][0]["assignee"] == "owner"
+    folder = start.start(
+        saved, issue["id"], start.Plan(workspace="folder", assignee="person")
+    )
+    assert folder["branch"] is None and folder["mode"] == "folder"
+
+
+def test_sync_makes_an_external_issue_and_done_closes_it_once(saved, monkeypatch):
+    issue = saved.change(lambda data: edit(data, {"title": "Ship"}))
+    made, closed, logged = [], [], []
+    monkeypatch.setitem(
+        start.MAKERS,
+        "github",
+        lambda plan, project, one: (
+            made.append(one["id"]) or {"kind": "github", "id": "u", "url": "u"}
+        ),
+    )
+    monkeypatch.setitem(
+        start.CLOSERS,
+        "github",
+        lambda plan, project, external: closed.append(external["id"]),
+    )
+    plan = start.Plan(workspace="folder", assignee="person", sync="github")
+    start.start(saved, issue["id"], plan)
+    start.start(saved, issue["id"], plan)
+    assert made == [issue["id"]]
+    start.finish(saved, issue["id"], plan)
+    start.finish(saved, issue["id"], plan)
+    assert closed == ["u"]
+    # A failed sync is logged, and the Start goes on.
+    other = saved.change(lambda data: edit(data, {"title": "Other"}))
+    record = start.start(
+        saved,
+        other["id"],
+        start.Plan(workspace="folder", assignee="person", sync="linear"),
+        log=logged.append,
+    )
+    assert "external" not in record and "Linear sync needs" in logged[0]
+
+
+def test_moving_an_issue_to_implementing_starts_it(saved, app, monkeypatch):
+    board, rec = app
+    steps = []
+    monkeypatch.setattr(start, "plan", lambda: start.Plan(assignee="person"))
+    monkeypatch.setattr(
+        start,
+        "start",
+        lambda store, issue_id, plan, log: (
+            steps.append(("start", issue_id)) or {"workspace": "/w"}
+        ),
+    )
+    monkeypatch.setattr(
+        start,
+        "finish",
+        lambda store, issue_id, plan, log: steps.append(("finish", issue_id)),
+    )
+    rec.edit("issues", {"title": "Build", "column": "ready"})
+    issue = rec.node("issues")["issues"][0]
+    rec.move("issues", issue["id"], "implementing", 0)
+    rec.move("issues", issue["id"], "implementing", 0)
+    rec.edit("issues", {"column": "done"}, issue["id"])
+    assert steps == [("start", issue["id"]), ("finish", issue["id"])]
