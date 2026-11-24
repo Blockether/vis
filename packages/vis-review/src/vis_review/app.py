@@ -143,7 +143,7 @@ _AGAINST = {"HEAD": "uncommitted changes", "base": "changes against the base bra
 MOST_NODES = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
 # The table of the changed pictures, and the rows that it holds at most.
 IMAGE_TABLE = "image-files"
-MOST_IMAGE_ROWS = ui.bound("table", "rows")
+MOST_IMAGE_ROWS = ui.limit.bound("table", "rows")
 # Changed binary files that the app knows as a picture or not, newest first.
 MOST_KNOWN_FILES = 4 * MOST_IMAGE_ROWS
 # Decoded picture bytes that the app shows together, old and new: the view bound.
@@ -595,7 +595,7 @@ class ReviewApp:
     def _shortcuts(self) -> list[dict]:
         """One key for each button. A shortcut has no label, so it shows the button's own text."""
         return [
-            ui.shortcut(KEYS[button], node_id=button)
+            ui.app.shortcut(KEYS[button], node_id=button)
             for button in BUTTONS
             if button not in ("session", "merged") or self.is_session_scoped
         ]
@@ -1458,7 +1458,7 @@ def _threads(findings, paths, dates) -> tuple[list[dict], int]:
         if finding.line >= 1 and finding.path in paths
     ]
     on_lines.sort(key=lambda pair: _LEVEL_RANK.get(pair[1].level, 2))
-    kept, left = vis.ui.fit(on_lines, "diff", "threads")
+    kept, left = vis.ui.limit.fit(on_lines, "diff", "threads")
     threads = []
     for n, finding in kept:
         threads.append(

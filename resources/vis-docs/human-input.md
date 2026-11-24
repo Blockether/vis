@@ -162,8 +162,8 @@ form = vis.ui.column(
 answer = vis.ask("Deploy", [form], submit_label="Deploy")
 ```
 
-The builders are `plaintext`, `password`, `multiline`, `select`, `multiselect`, `checkbox`,
-`slider`, `datetime`, `otp`, `option`, `row`, `column`, `group`, `heading`, and `paragraph`.
+The builders are `plaintext`, `password`, `multiline`, `select`, `select.many`, `select.option`,
+`checkbox`, `slider`, `datetime`, `otp`, `row`, `column`, `group`, `heading`, and `paragraph`.
 `slider` builds the `range` field. The keyword arguments are the keys of [Fields](#fields).
 
 A form takes the same [components](components.md) as a live view, such as a `status`, a `table`, or

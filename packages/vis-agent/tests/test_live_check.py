@@ -107,8 +107,8 @@ def test_the_recorder_refuses_a_patch_that_breaks_a_node(monkeypatch):
     ("count", "kept", "left"), [(0, 0, 0), (200, 200, 0), (201, 200, 1)]
 )
 def test_fit_keeps_the_schema_bound_and_counts_the_rest(count, kept, left):
-    assert vis.ui.bound("diff", "threads") == 200
-    items, rest = vis.ui.fit(range(count), "diff", "threads")
+    assert vis.ui.limit.bound("diff", "threads") == 200
+    items, rest = vis.ui.limit.fit(range(count), "diff", "threads")
     assert (len(items), rest) == (kept, left)
     assert items == list(range(kept))
 
@@ -118,7 +118,7 @@ def test_fit_keeps_the_schema_bound_and_counts_the_rest(count, kept, left):
 )
 def test_bound_names_an_unknown_type_or_field(node_type, field):
     with pytest.raises(ValueError):
-        vis.ui.bound(node_type, field)
+        vis.ui.limit.bound(node_type, field)
 
 
 def test_bounds_give_each_limit_of_a_node_type():

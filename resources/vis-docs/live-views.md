@@ -1136,13 +1136,13 @@ app = vis.attach(vis.ui.app(
     vis.ui.button("rerun", label="Run again"),
     key="triage",
     shortcuts=[
-        vis.ui.shortcut("r", node_id="rerun", label="Run again"),
-        vis.ui.shortcut("n", "next-failure", label="Next failure"),
+        vis.ui.app.shortcut("r", node_id="rerun", label="Run again"),
+        vis.ui.app.shortcut("n", "next-failure", label="Next failure"),
     ],
 ))
 ```
 
-- `vis.ui.shortcut(key, action=None, *, node_id=None, label=None)` declares one shortcut. Give
+- `vis.ui.app.shortcut(key, action=None, *, node_id=None, label=None)` declares one shortcut. Give
   exactly one of `action` and `node_id`.
 - With `node_id`, the key presses that button or selectable card, as a click does. Your code gets
   an `activate` event for that node.
@@ -1369,13 +1369,13 @@ with that best score.
 Vis checks each view against the schema of its node types. A field has a limit, so a `diff` node
 holds at most 200 threads. Read a limit from the schema, not from this page:
 
-- `vis.ui.bound(node_type, field)` returns the largest number of items or characters of a field, so
-  `vis.ui.bound("diff", "threads")` returns 200. An unknown type or field raises `ValueError`.
-- `vis.ui.fit(items, node_type, field)` returns `(kept, left)`, which are the items that fit and
+- `vis.ui.limit.bound(node_type, field)` returns the largest number of items or characters of a field, so
+  `vis.ui.limit.bound("diff", "threads")` returns 200. An unknown type or field raises `ValueError`.
+- `vis.ui.limit.fit(items, node_type, field)` returns `(kept, left)`, which are the items that fit and
   the number of items that stay out. Tell the person about the items that stay out.
 
 ```python
-threads, left = vis.ui.fit(all_threads, "diff", "threads")
+threads, left = vis.ui.limit.fit(all_threads, "diff", "threads")
 label = f"{left} more not shown" if left else None
 ```
 

@@ -222,7 +222,7 @@ live view, the input keeps its `value`.
 | `vis.ui.password(name)` | `password` | A `vis-secret:` handle |
 | `vis.ui.otp(name)` | `otp` | A `vis-secret:` handle for a code of digits |
 | `vis.ui.select(name, options)` | `select` | One option value |
-| `vis.ui.multiselect(name, options)` | `multiselect` | A list of option values |
+| `vis.ui.select.many(name, options)` | `multiselect` | A list of option values |
 | `vis.ui.checkbox(name)` | `checkbox` | `True` or `False` |
 | `vis.ui.slider(name, min=0, max=100, step=1)` | `range` | A number |
 | `vis.ui.datetime(name, mode="datetime")` | `datetime` | Text for a date, a time, or both |
@@ -258,7 +258,7 @@ more options as a list that opens on a press. It shows other sets of options as 
 
 ### Multiselect
 
-`vis.ui.multiselect(name, options)` takes any number of options. The value is a list in the
+`vis.ui.select.many(name, options)` takes any number of options. The value is a list in the
 declared order.
 
 ### Checkbox

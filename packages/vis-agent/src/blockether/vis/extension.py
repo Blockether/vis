@@ -7542,7 +7542,7 @@ class LiveAttachment(LiveView):
         raise KeyError(f"node {node_id!r} has no thread {thread_id!r}")
 
     def set_shortcuts(self, shortcuts):
-        """Replace the shortcuts of this app with `vis.ui.shortcut(...)` values.
+        """Replace the shortcuts of this app with `vis.ui.app.shortcut(...)` values.
 
         An empty list removes every shortcut. Answers the new `seq`.
         """
@@ -9136,7 +9136,7 @@ def _ui_app(
 
     The nodes are the same components as in `vis.live`, plus `diff` and `thread`.
     `key` makes the app adoptable: its owner can open the same key again later.
-    `shortcuts` is a list of `vis.ui.shortcut(...)` values, at most 32.
+    `shortcuts` is a list of `vis.ui.app.shortcut(...)` values, at most 32.
     `icon` selects an app icon, such as `review`, `chart`, `music` or `terminal`.
     `surfaces` sets where the app shows by default, for example
     `{"inline": False, "session": "chat"}`. `inline` shows it in the chat turn
@@ -9235,11 +9235,11 @@ def _ui_shortcut(key, action=None, *, node_id=None, label=None):
         re.fullmatch(rules["pattern"], key) or key in rules["names"]
     ):
         raise ValueError(
-            "vis.ui.shortcut key must be one printable ASCII character from ! to ~ "
+            "vis.ui.app.shortcut key must be one printable ASCII character from ! to ~ "
             f"or one of {', '.join(rules['names'])}, got {key!r}"
         )
     if (action is None) == (node_id is None):
-        raise ValueError("vis.ui.shortcut requires exactly one of action and node_id")
+        raise ValueError("vis.ui.app.shortcut requires exactly one of action and node_id")
     shortcut = {"key": key}
     for name, value in (("action", action), ("node_id", node_id), ("label", label)):
         if value is None:
@@ -9251,7 +9251,7 @@ def _ui_shortcut(key, action=None, *, node_id=None, label=None):
             or (limit is not None and len(value) > limit)
         ):
             bound = f" of at most {limit} characters" if limit else ""
-            raise ValueError(f"vis.ui.shortcut {name} must be nonblank text{bound}")
+            raise ValueError(f"vis.ui.app.shortcut {name} must be nonblank text{bound}")
         shortcut[name] = value
     return shortcut
 
@@ -9304,13 +9304,13 @@ def _agent_note_text(text):
 
 
 def _shortcut_list(shortcuts):
-    """Check a list of `vis.ui.shortcut(...)` values before the host sees it."""
+    """Check a list of `vis.ui.app.shortcut(...)` values before the host sees it."""
     from blockether.vis import _contracts
 
     if isinstance(shortcuts, (str, Mapping)) or not isinstance(
         shortcuts, (list, tuple)
     ):
-        raise TypeError("shortcuts must be a list of vis.ui.shortcut(...) values")
+        raise TypeError("shortcuts must be a list of vis.ui.app.shortcut(...) values")
     limit = _contracts.definition("view", "live_view")["properties"]["shortcuts"].get(
         "maxItems"
     )
@@ -9319,7 +9319,7 @@ def _shortcut_list(shortcuts):
     checked, keys = [], set()
     for shortcut in shortcuts:
         if not isinstance(shortcut, Mapping):
-            raise TypeError("each shortcut must be a vis.ui.shortcut(...) value")
+            raise TypeError("each shortcut must be a vis.ui.app.shortcut(...) value")
         unknown = set(shortcut) - {"key", "action", "node_id", "label"}
         if unknown:
             raise ValueError(f"a shortcut has no field {sorted(unknown)[0]!r}")
@@ -9340,7 +9340,7 @@ def _ui_bound(node_type: str, field: str) -> int:
     """The most items (`maxItems`) or characters (`maxLength`) that Vis takes in `field`.
 
     The value comes from the view schema, so it changes with Vis. For example
-    `vis.ui.bound("diff", "threads")` is 200. Raises ValueError for a node type or
+    `vis.ui.limit.bound("diff", "threads")` is 200. Raises ValueError for a node type or
     a field that has no bound.
     """
     from blockether.vis import _contracts
@@ -9352,7 +9352,7 @@ def _ui_bound(node_type: str, field: str) -> int:
 
 
 def _ui_fit(items: Sequence[Any], node_type: str, field: str) -> tuple[list[Any], int]:
-    """`(kept, left)`: the first `vis.ui.bound(node_type, field)` items, and how many stay out.
+    """`(kept, left)`: the first `vis.ui.limit.bound(node_type, field)` items, and how many stay out.
 
     Tell the person what stays out, for example in a label: `f"{left} more not shown"`.
     """
@@ -9418,11 +9418,26 @@ def _ui_board_issue(issue_id, title, column, **spec):
     return _live_item(issue_id, dict(spec, title=str(title), column=str(column)))
 
 
+class _AppUI:
+    """Build an app and the single-key shortcuts that it takes."""
+
+    __call__ = staticmethod(_ui_app)
+    shortcut = staticmethod(_ui_shortcut)
+
+
 class _SelectUI:
-    """Build a select and the options that a select or a multiselect takes."""
+    """Build a select of one option, a select of many options, and their options."""
 
     __call__ = staticmethod(_ui_select)
+    many = staticmethod(_ui_multiselect)
     option = staticmethod(_ui_option)
+
+
+class _LimitUI:
+    """Read the limits of node fields from the view schema."""
+
+    bound = staticmethod(_ui_bound)
+    fit = staticmethod(_ui_fit)
 
 
 class _TableUI:
@@ -9484,7 +9499,6 @@ class _UI:
     password = staticmethod(_ui_password)
     multiline = staticmethod(_ui_multiline)
     select = _SelectUI()
-    multiselect = staticmethod(_ui_multiselect)
     checkbox = staticmethod(_ui_checkbox)
     slider = staticmethod(_ui_slider)
     datetime = staticmethod(_ui_datetime)
@@ -9521,8 +9535,7 @@ class _UI:
     table = _TableUI()
 
     # Apps
-    app = staticmethod(_ui_app)
-    shortcut = staticmethod(_ui_shortcut)
+    app = _AppUI()
     diff = staticmethod(_ui_diff)
     image = staticmethod(_ui_image)
     picture = _PictureUI()
@@ -9531,9 +9544,8 @@ class _UI:
     canvas = _CanvasUI()
     board = _BoardUI()
 
-    # Bounds
-    bound = staticmethod(_ui_bound)
-    fit = staticmethod(_ui_fit)
+    # Limits
+    limit = _LimitUI()
 
 
 ui = _UI()

@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Python SDK: each `vis.ui` builder has one domain path. Use `vis.ui.table.column`, `vis.ui.table.row`, `vis.ui.table.group`, `vis.ui.scene.object`, `vis.ui.scene.mesh`, `vis.ui.picture.type`, and `vis.ui.select.option`. The old flat names are removed. An extension that uses an old name fails until you change the call.
+- Python SDK: each `vis.ui` builder has one domain path. Use `vis.ui.table.column`, `vis.ui.table.row`, `vis.ui.table.group`, `vis.ui.scene.object`, `vis.ui.scene.mesh`, `vis.ui.picture.type`, `vis.ui.select.option`, `vis.ui.select.many`, `vis.ui.app.shortcut`, `vis.ui.limit.bound`, and `vis.ui.limit.fit`. The old flat names are removed. An extension that uses an old name fails until you change the call.
+- Review app: the package now needs `vis-agent>=0.5.33`, the first SDK with these paths.
 
 ## [v0.5.32] - 2026-11-24
 

@@ -9212,7 +9212,7 @@ def forms_report():
         ),
         vis.ui.plaintext('who', label='Deployer'),
         vis.ui.multiline('note'),
-        vis.ui.multiselect('regions', ['eu', 'us']),
+        vis.ui.select.many('regions', ['eu', 'us']),
         vis.ui.otp('code', min_length=6, max_length=6),
         vis.ui.checkbox('ack', is_required=True),
         vis.ui.password('token'),)

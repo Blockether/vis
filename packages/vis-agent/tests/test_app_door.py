@@ -46,7 +46,7 @@ def app(**options):
         "Review",
         vis.ui.button("go", label="Go"),
         key="review",
-        shortcuts=[vis.ui.shortcut("r", "refresh", label="Refresh")],
+        shortcuts=[vis.ui.app.shortcut("r", "refresh", label="Refresh")],
         **options,
     )
 
@@ -62,18 +62,18 @@ def wait_for(predicate, seconds=5.0):
 
 def test_shortcut_builder_follows_the_contract():
     for key in ("r", "A", "?", "Enter", "ArrowUp"):
-        validate("view", "shortcut", vis.ui.shortcut(key, "next"))
-    pressed = vis.ui.shortcut("Space", node_id="go", label="Press Go")
+        validate("view", "shortcut", vis.ui.app.shortcut(key, "next"))
+    pressed = vis.ui.app.shortcut("Space", node_id="go", label="Press Go")
     assert pressed == {"key": "Space", "node_id": "go", "label": "Press Go"}
     validate("view", "shortcut", pressed)
     with pytest.raises(ValueError, match="ArrowUp"):
-        vis.ui.shortcut("Escape", "close")
+        vis.ui.app.shortcut("Escape", "close")
     with pytest.raises(ValueError, match="exactly one"):
-        vis.ui.shortcut("r")
+        vis.ui.app.shortcut("r")
     with pytest.raises(ValueError, match="exactly one"):
-        vis.ui.shortcut("r", "next", node_id="go")
+        vis.ui.app.shortcut("r", "next", node_id="go")
     with pytest.raises(ValueError, match="at most 40"):
-        vis.ui.shortcut("r", "next", label="x" * 41)
+        vis.ui.app.shortcut("r", "next", label="x" * 41)
     with pytest.raises(TypeError, match="list"):
         vis.ui.app("Review", vis.ui.button("go", label="Go"), shortcuts="r")
 
@@ -87,7 +87,7 @@ def test_session_attach_opens_the_app_over_the_sdk_route():
     assert body["envelope"]["view"]["shortcuts"] == [
         {"key": "r", "action": "refresh", "label": "Refresh"}
     ]
-    handle.set_shortcuts([vis.ui.shortcut("n", "next")])
+    handle.set_shortcuts([vis.ui.app.shortcut("n", "next")])
     assert gateway.engine._view["shortcuts"] == [{"key": "n", "action": "next"}]
     handle.set_shortcuts([])
     assert "shortcuts" not in gateway.engine._view
@@ -570,7 +570,7 @@ def test_the_door_opens_a_keyed_app_again_after_a_restart(monkeypatch, caplog):
     assert wait_for(lambda: len(seen) == 2)
     assert [e.type for e in seen] == ["activate", "activate"]
     assert "not reachable" in caplog.text
-    handle.set_shortcuts([vis.ui.shortcut("n", "next")])
+    handle.set_shortcuts([vis.ui.app.shortcut("n", "next")])
     assert gateway.engine._view["shortcuts"] == [{"key": "n", "action": "next"}]
     handle.close()
 
@@ -674,11 +674,11 @@ def test_the_door_opens_an_app_again_with_its_current_validators(monkeypatch):
 
 def test_shortcut_lists_fail_early_in_the_sdk(monkeypatch):
     # Live apps D7: the SDK refuses a bad shortcut list before the host does.
-    r = vis.ui.shortcut("r", "refresh")
+    r = vis.ui.app.shortcut("r", "refresh")
     with pytest.raises(ValueError, match="given twice"):
         vis.ui.app("A", vis.ui.button("go", label="Go"), shortcuts=[r, r])
-    many = [vis.ui.shortcut(chr(ord("a") + i % 26) * 1, "x") for i in range(26)]
-    many += [vis.ui.shortcut(k, "x") for k in "0123456"]
+    many = [vis.ui.app.shortcut(chr(ord("a") + i % 26) * 1, "x") for i in range(26)]
+    many += [vis.ui.app.shortcut(k, "x") for k in "0123456"]
     with pytest.raises(ValueError, match="at most 32"):
         vis.ui.app("A", vis.ui.button("go", label="Go"), shortcuts=many)
     for bad, message in (
