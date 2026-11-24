@@ -7,10 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.33] - 2026-11-24
+
+### Added
+
+- Board app: a new session app that shows the issues of a workspace in columns. Drag an issue to a different column or to a different place in its column, also with touch on a phone. Make an issue in a column, and change or delete it in the issue panel. Search, filter by assignee, epic, label, priority or type, and group the board by assignee, epic or priority. The agent gets tools to list, make, change, move and delete issues. Each open board shows the changes of other sessions. Install the `vis-board` package.
+- Python SDK: `vis.ui.board` shows a board in a live view. Its `move` and `edit` actions go to the owner of the view. The Companion and the terminal app show the board.
+- Python SDK: `vis.OpHook(..., is_async=True)` runs a hook on a queue, so that the operation does not wait for it. Each op hook payload now has `session_id`, `turn`, `iteration`, `call_id`, `started_at` and, after the operation, `ended_at`.
+- Review app: each snapshot keeps its turn, iteration and call. Snapshots are grouped by turn and iteration, with restore. A Git menu commits your own paths, pushes, pulls with rebase, rebases or merges on the base branch and opens a pull request. It never force-pushes and never skips hooks.
+
 ### Changed
 
 - Python SDK: each `vis.ui` builder has one domain path. Use `vis.ui.table.column`, `vis.ui.table.row`, `vis.ui.table.group`, `vis.ui.scene.object`, `vis.ui.scene.mesh`, `vis.ui.picture.type`, `vis.ui.select.option`, `vis.ui.select.many`, `vis.ui.app.shortcut`, `vis.ui.limit.bound`, and `vis.ui.limit.fit`. The old flat names are removed. An extension that uses an old name fails until you change the call.
-- Review app: the package now needs `vis-agent>=0.5.33`, the first SDK with these paths.
+- Review app and Board app: the packages need `vis-agent>=0.5.33`, the first SDK with these paths.
+- Launcher: `vis-agent update` runs each new binary one time, so that the macOS check of a new executable occurs during the update. Before, the first gateway start after an update waited about 2 seconds for it.
+
+### Fixed
+
+- Review app: the first block after a gateway restart no longer stops after 300 seconds. The review hook replays only new checkpoints and compares large files in smaller parts.
+- Companion: on a phone, a back swipe from a subagent shows its leader session under it (#517).
+- Companion: the desktop reads the token of the local gateway again after a 401. Before, it stayed at "Reconnecting" after a gateway restart with `--pair`. Clients with different tokens no longer share a capabilities read.
 
 ## [v0.5.32] - 2026-11-24
 
