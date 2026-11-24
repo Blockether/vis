@@ -3626,7 +3626,7 @@
           "cv"
         ],
         "text": [
-          "node cv /cards/0/icon - the value is not one of app, review, code, terminal, files, search, git, branch, checklist, chart, dashboard, activity, calendar, clock, mail, chat, users, globe, database, cloud, server, shield, lock, key, settings, tools, rocket, flask, music, image, book, lightning (enum)"
+          "node cv /cards/0/icon - the value is not one of app, review, code, terminal, files, search, git, branch, checklist, chart, dashboard, activity, calendar, clock, mail, chat, users, globe, database, cloud, server, shield, lock, key, settings, tools, rocket, flask, music, image, book, lightning, board (enum)"
         ]
       }
     },
