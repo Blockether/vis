@@ -48,7 +48,7 @@
         (expect (str/includes? (str/join "\n" (map :text rows)) "# <button> is literal text"))
         (expect (lv/animating? [pane]))
         (expect (= #{"refresh" "target" "token" "notes" "region" "tags" "notify" "risk" "due" "pin"
-                     "apply" "plan-small" "details" "table" "canvas"}
+                     "apply" "plan-small" "details" "table" "canvas" "sprint"}
                    (set (map :node-id (lv/controls [pane])))))
         (expect (not (lv/animating? [(lv/settled pane {:reason :completed})])))
         (expect (not (lv/animating? [(lv/minimized pane)])))
