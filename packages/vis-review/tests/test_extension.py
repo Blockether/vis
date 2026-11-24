@@ -43,10 +43,18 @@ def door(tmp_path, monkeypatch):
         def __init__(self, session_id, journal):
             self.session_id = session_id
             self.journal = journal
+            self.view = None
 
         def open(self):
             opened.append(self.session_id)
+            self.view = object()
             module.RECORDER.keep(self.session_id, self)
+
+        def is_behind(self):
+            return False
+
+        def refresh(self):
+            pass
 
     monkeypatch.setattr(module, "_app", App)
     monkeypatch.setattr(module, "opened", opened, raising=False)
@@ -68,6 +76,28 @@ def step(door, monkeypatch, session_id, record, rel=None):
 
 LEADER = {"agent": {"role": "leader", "session_id": "L", "leader_id": "L"}}
 SUBAGENT = {"agent": {"role": "subagent", "session_id": "S", "leader_id": "L"}}
+
+
+def test_an_open_cut_short_opens_again_at_the_next_step(door, monkeypatch):
+    # Session f183fc01: the 300 s limit cut the first open short, and the app
+    # stayed without a view: later blocks never opened Review again.
+    made = door._app
+
+    class CutOnce(made):
+        cut = []
+
+        def open(self):
+            if not self.cut:
+                self.cut.append(self.session_id)
+                door.RECORDER.keep(self.session_id, self)
+                raise KeyboardInterrupt
+            super().open()
+
+    monkeypatch.setattr(door, "_app", CutOnce)
+    with pytest.raises(KeyboardInterrupt):
+        step(door, monkeypatch, "L", LEADER)
+    step(door, monkeypatch, "L", LEADER)
+    assert door.opened == ["L"]
 
 
 def test_a_subagent_records_for_its_leader_and_opens_no_app(door, monkeypatch):

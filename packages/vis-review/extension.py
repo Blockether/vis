@@ -69,7 +69,9 @@ def _record(kind, label_of, wrote_of=None):
     RECORDER.record(key, root, kind, label_of(str(root)), wrote)
     # The first step of a leader opens the app, so a person sees it at once.
     journal = RECORDER.journal(key, root)
-    if key == session_id and RECORDER.app(session_id, journal.root) is None:
+    # An open that an interrupt cut short leaves an app without a view: open it again.
+    app = RECORDER.app(session_id, journal.root) if key == session_id else None
+    if key == session_id and (app is None or app.view is None):
         _app(session_id, journal).open()
 
 

@@ -27,7 +27,8 @@ import re
 import tempfile
 import threading
 import time
-from collections import OrderedDict
+from bisect import bisect_left
+from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,6 +57,10 @@ _BINARY_PROBE = 8000
 MOST_CACHED_DIFFS = 256
 # Lines of both sides above which git computes the diff; difflib is quadratic there.
 GIT_DIFF_LINES = 2000
+# Lines of one side times lines of the other up to which difflib matches a region.
+MOST_DIFFLIB_CELLS = 4_000_000
+# Nested regions after which no more anchors are looked for.
+MOST_DIFF_DEPTH = 64
 
 
 @dataclass(frozen=True)
@@ -164,6 +169,8 @@ class Journal:
         self._members: dict[
             Path, tuple[tuple, list[tuple[float, float, str, str | None]]]
         ] = {}
+        # The own replay: team stamp, entries seen, state, spans, time of the last entry.
+        self._own: tuple | None = None
         self.entries: list[Entry] = []
         self.state: dict[str, str] = {}
         self._load()
@@ -241,35 +248,43 @@ class Journal:
             raise ValueError(f"kind must be one of {KINDS}, not {kind!r}")
         with self._lock:
             since, head = self._scanned_at, self._head
-            delta = self._scan()
-            self._scanned_at = self._clock()
-            self._head = self._head_now()
-            if not self.entries:
-                return self._append("baseline", label or "Baseline", delta)
+            try:
+                return self._checkpoint(kind, label, wrote, since, head)
+            except BaseException:
+                # The scan settled the file stamps before the checkpoint was written.
+                # Forget them: the next checkpoint reads every file and loses no change.
+                self._tree = None
+                self._scanned_at, self._head = since, head
+                raise
+
+    def _checkpoint(self, kind, label, wrote, since, head) -> Entry | None:
+        delta = self._scan()
+        self._scanned_at = self._clock()
+        self._head = self._head_now()
+        if not self.entries:
+            return self._append("baseline", label or "Baseline", delta)
+        if not delta:
+            return None
+        ours = self._of_team(delta, since, wrote if kind in STEP_KINDS else None)
+        if ours:
+            team = self._append(
+                "team",
+                "Changes of subagents",
+                {rel: delta.pop(rel) for rel in ours},
+            )
             if not delta:
-                return None
-            ours = self._of_team(delta, since, wrote if kind in STEP_KINDS else None)
-            if ours:
-                team = self._append(
-                    "team",
-                    "Changes of subagents",
-                    {rel: delta.pop(rel) for rel in ours},
+                return team
+        if kind in STEP_KINDS:
+            theirs = self._of_others(delta, since, head, wrote)
+            if theirs:
+                other = self._append(
+                    "outside",
+                    "Changes of others during a step",
+                    {rel: delta.pop(rel) for rel in theirs},
                 )
                 if not delta:
-                    return team
-            if kind in STEP_KINDS:
-                theirs = self._of_others(delta, since, head, wrote)
-                if theirs:
-                    other = self._append(
-                        "outside",
-                        "Changes of others during a step",
-                        {rel: delta.pop(rel) for rel in theirs},
-                    )
-                    if not delta:
-                        return other
-            return self._append(
-                kind, label, delta, since if kind in STEP_KINDS else None
-            )
+                    return other
+        return self._append(kind, label, delta, since if kind in STEP_KINDS else None)
 
     def _head_now(self) -> str | None:
         """The commit of HEAD. The reflog gives it without a git process."""
@@ -664,11 +679,38 @@ class Journal:
         A change of others that a subagent step made is an own change too: a
         subagent records its step only when the step ends. See `_team_step`.
         """
-        team = self._team_changes()
-        state: dict[str, str] = {}
-        spans: dict[str, tuple[str | None, str | None]] = {}
-        since = None
-        for entry in self.entries:
+        with self._lock:
+            stamp = self.team_stamp()
+            if self._own is None or self._own[0] != stamp:
+                self._own = (stamp, 0, {}, {}, None)
+            _stamp, done, state, spans, since = self._own
+            try:
+                since = self._replay(self.entries[done:], state, spans, since)
+            except BaseException:
+                # A replay cut short leaves `state` and `spans` half done.
+                self._own = None
+                raise
+            self._own = (stamp, len(self.entries), state, spans, since)
+            return {
+                rel: spans[rel]
+                for rel in sorted(spans)
+                if spans[rel][0] != spans[rel][1]
+            }
+
+    def _replay(
+        self,
+        entries: list[Entry],
+        state: dict[str, str],
+        spans: dict[str, tuple[str | None, str | None]],
+        since: float | None,
+    ) -> float | None:
+        """Fold `entries` into the own spans, in place; answer the time of the last one.
+
+        A replay goes on from the last entry it saw, so a repaint replays only new
+        checkpoints. A change of a subagent journal starts it again: see `team_stamp`.
+        """
+        team = self._team_changes() if entries else {}
+        for entry in entries:
             for rel, sha in entry.files.items():
                 old = state.get(rel)
                 step = (
@@ -689,9 +731,7 @@ class Journal:
                 else:
                     state[rel] = sha
             since = entry.at
-        return {
-            rel: spans[rel] for rel in sorted(spans) if spans[rel][0] != spans[rel][1]
-        }
+        return since
 
     def own_open(self, ref: str, context: int = 3) -> list[FileDiff] | None:
         """The own changes that git commit `ref` does not have; None where git cannot tell.
@@ -1220,13 +1260,77 @@ def _git_hunks(old: str, new: str, context: int) -> str | None:
 
 
 def _hunks(old: list[str], new: list[str]) -> list[tuple[int, int, tuple[str, ...]]]:
-    """`(start, end, new lines)` of each block of `old` that `new` changes."""
-    matcher = difflib.SequenceMatcher(None, old, new, autojunk=False)
-    return [
-        (i1, i2, tuple(new[j1:j2]))
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes()
-        if tag != "equal"
+    """`(start, end, new lines)` of each block of `old` that `new` changes.
+
+    Difflib matches a small region. It is quadratic, so lines that each side of a
+    larger region holds once split it first, as in a patience diff. A large region
+    without such a line stays one changed block.
+    """
+    pairs: list[tuple[int, int]] = []
+    _match(old, 0, len(old), new, 0, len(new), pairs, 0)
+    hunks = []
+    i = j = 0
+    for k, m in [*pairs, (len(old), len(new))]:
+        if k > i or m > j:
+            hunks.append((i, k, tuple(new[j:m])))
+        i, j = k + 1, m + 1
+    return hunks
+
+
+def _match(old, lo, hi, new, blo, bhi, pairs, depth) -> None:
+    """Append the equal line pairs of `old[lo:hi]` and `new[blo:bhi]` to `pairs`, in order."""
+    while lo < hi and blo < bhi and old[lo] == new[blo]:
+        pairs.append((lo, blo))
+        lo, blo = lo + 1, blo + 1
+    tail = []
+    while lo < hi and blo < bhi and old[hi - 1] == new[bhi - 1]:
+        hi, bhi = hi - 1, bhi - 1
+        tail.append((hi, bhi))
+    if lo < hi and blo < bhi:
+        if (hi - lo) * (bhi - blo) <= MOST_DIFFLIB_CELLS:
+            matcher = difflib.SequenceMatcher(
+                None, old[lo:hi], new[blo:bhi], autojunk=False
+            )
+            for a, b, size in matcher.get_matching_blocks():
+                pairs.extend((lo + a + n, blo + b + n) for n in range(size))
+        elif depth < MOST_DIFF_DEPTH:
+            anchors = _anchors(old, lo, hi, new, blo, bhi)
+            for i, j in anchors:
+                _match(old, lo, i, new, blo, j, pairs, depth + 1)
+                pairs.append((i, j))
+                lo, blo = i + 1, j + 1
+            if anchors:
+                _match(old, lo, hi, new, blo, bhi, pairs, depth + 1)
+    pairs.extend(reversed(tail))
+
+
+def _anchors(old, lo, hi, new, blo, bhi) -> list[tuple[int, int]]:
+    """The longest run of line pairs, in order on both sides, of lines each region holds once."""
+    in_old, in_new = Counter(old[lo:hi]), Counter(new[blo:bhi])
+    at = {old[i]: i for i in range(lo, hi) if in_old[old[i]] == 1}
+    unique = [
+        (at[line], j)
+        for j, line in enumerate(new[blo:bhi], blo)
+        if in_new[line] == 1 and line in at
     ]
+    # Patience sorting: the longest increasing run of old positions, by new position.
+    tops: list[int] = []
+    ends: list[int] = []
+    before: list[int | None] = []
+    for n, (i, _j) in enumerate(unique):
+        k = bisect_left(tops, i)
+        before.append(ends[k - 1] if k else None)
+        if k == len(tops):
+            tops.append(i)
+            ends.append(n)
+        else:
+            tops[k], ends[k] = i, n
+    run = []
+    n = ends[-1] if ends else None
+    while n is not None:
+        run.append(unique[n])
+        n = before[n]
+    return run[::-1]
 
 
 def _merge(base: list[str], *sides: list[tuple]) -> list[str] | None:

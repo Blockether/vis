@@ -435,6 +435,113 @@ def test_git_and_difflib_give_the_same_patch(monkeypatch, status, old, new):
     assert journal_module.unified("f.py", status, old, new, 3) == slow
 
 
+def test_an_interrupted_checkpoint_loses_no_change(tmp_path, monkeypatch):
+    # Session f183fc01: the 300 s limit interrupted the Review hook, and the
+    # changes of that step never reached the journal.
+    j = journal(tmp_path)
+    write(j, "a.py", "v1\n")
+    j.checkpoint()
+    write(j, "a.py", "v2\n")
+    real = Journal._append
+
+    def interrupted(self, *args, **kwargs):
+        monkeypatch.setattr(Journal, "_append", real)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Journal, "_append", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        j.checkpoint("block")
+    entry = j.checkpoint("block")
+    assert entry is not None and entry.files == {"a.py": store.digest(b"v2\n")}
+
+
+def test_a_repaint_replays_only_the_new_checkpoints(tmp_path, monkeypatch):
+    # Session f183fc01: each repaint merged all 3,372 changes of others again,
+    # 35 s after every block.
+    monkeypatch.setattr(journal_module, "MOST_CACHED_DIFFS", 0)
+    j = journal(tmp_path)
+    write(j, "shared.py", _lines_with())
+    j.checkpoint()
+    write(j, "shared.py", _lines_with(l2="mine 2"))
+    j.checkpoint("block", "own edit")
+    write(j, "shared.py", _lines_with(l2="mine 2", l15="theirs 15"))
+    j.checkpoint("outside", "Changes between blocks")
+    first = j.own_paths()
+    merges = []
+    real = Journal._merged
+    monkeypatch.setattr(
+        Journal, "_merged", lambda self, *a: merges.append(a) or real(self, *a)
+    )
+    write(j, "b.py", "b\n")
+    j.checkpoint("block", "edit b")
+    assert j.own_paths() == sorted([*first, "b.py"])
+    assert merges == []
+
+
+def _applied(old, hunks):
+    out, at = [], 0
+    for start, end, lines in hunks:
+        out += old[at:start] + list(lines)
+        at = end
+    return out + old[at:]
+
+
+def test_hunks_of_a_large_file_give_difflib_only_small_regions(monkeypatch):
+    # Session f183fc01: difflib matched whole 15,000-line files, about 1.5 s each.
+    # The first block after a gateway restart replayed 2,428 merges, and the
+    # Review hook held the block for 300 s.
+    old = [f"line {n}\n" if n % 3 else "\n" for n in range(15_000)]
+    new = list(old)
+    for n in range(10, 15_000, 500):
+        new[n] = f"edited {n}\n"
+    new.insert(7_000, "added\n")
+    sizes = []
+    real = journal_module.difflib.SequenceMatcher
+
+    def counted(junk, a, b, **kwargs):
+        sizes.append(len(a) * len(b))
+        return real(junk, a, b, **kwargs)
+
+    monkeypatch.setattr(journal_module.difflib, "SequenceMatcher", counted)
+    assert _applied(old, journal_module._hunks(old, new)) == new
+    assert max(sizes, default=0) <= journal_module.MOST_DIFFLIB_CELLS
+
+
+@pytest.mark.parametrize("seed", range(200))
+def test_hunks_rebuild_the_new_lines(seed):
+    import random
+
+    rnd = random.Random(seed)
+    old = [rnd.choice("abcde\n") for _ in range(rnd.randint(0, 60))]
+    new = [rnd.choice("abcdef\n") for _ in range(rnd.randint(0, 60))]
+    hunks = journal_module._hunks(old, new)
+    assert _applied(old, hunks) == new
+    assert all(a[1] <= b[0] for a, b in zip(hunks, hunks[1:]))
+
+
+def test_a_large_region_without_unique_lines_stays_one_hunk(monkeypatch):
+    monkeypatch.setattr(journal_module, "MOST_DIFFLIB_CELLS", 10)
+    old, new = ["x\n", "y\n"] * 4, ["y\n", "x\n"] * 4
+    assert journal_module._hunks(old, new) == [(0, 8, tuple(new))]
+
+
+def test_an_edit_of_another_session_merges_into_a_small_file():
+    # Session f183fc01: anchors split each file first and saw a conflict that
+    # difflib does not see, so the own view showed the lines of another session.
+    base = ["a\n", "g\n", "c\n", "i\n"]
+    ours = ["a\n", "p\n", "b\n", "g\n", "c\n", "i\n"]
+    theirs = ["c\n", "a\n", "a\n", "i\n"]
+    hunks = journal_module._hunks
+    assert journal_module._merge(base, hunks(base, ours), hunks(base, theirs)) == [
+        "c\n",
+        "a\n",
+        "p\n",
+        "b\n",
+        "a\n",
+        "i\n",
+    ]
+
+
 def test_a_repaint_reuses_the_diff_of_the_same_contents(tmp_path, monkeypatch):
     # Goal dcc7197a: each paint diffed every file again, so each click waited.
     j = journal(tmp_path)

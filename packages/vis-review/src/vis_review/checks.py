@@ -45,7 +45,6 @@ _DEBUG = {
     (".clj", ".cljs", ".cljc", ".bb"): re.compile(r"\(prn\s"),
 }
 _TODO = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b")
-_TRAILING = re.compile(r"[ \t]+$")
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
@@ -152,7 +151,7 @@ def _line_findings(path, suffix, line, text, debug):
     todo = _TODO.search(text)
     if todo:
         yield Finding("todo", "info", path, line, f"A {todo.group(1)} note is added.")
-    if suffix not in (".md", ".markdown") and _TRAILING.search(text):
+    if suffix not in (".md", ".markdown") and text.endswith((" ", "\t")):
         yield Finding(
             "trailing-whitespace",
             "warning",

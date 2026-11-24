@@ -344,11 +344,14 @@ class ReviewApp:
         diffs = self._scope_diffs()
         return [d for d in diffs if self.path is None or d.path == self.path]
 
-    def all_findings(self, diffs: list[FileDiff]) -> list[checks.Finding]:
-        """Diff checks of `diffs`, then the findings that the last runs gave."""
-        shown = {d.path for d in diffs}
-        found = checks.diff_checks(diffs, self.journal.store.get)
-        return found + [f for f in self.findings if not f.path or f.path in shown]
+    def all_findings(
+        self, diffs: list[FileDiff], *, cut: set[str] | None = None
+    ) -> list[checks.Finding]:
+        """Diff checks except on cut files, then the findings of the last runs."""
+        paths = {d.path for d in diffs}
+        visible = diffs if not cut else [d for d in diffs if d.path not in cut]
+        found = checks.diff_checks(visible, self.journal.store.get)
+        return found + [f for f in self.findings if not f.path or f.path in paths]
 
     def render(self) -> list[dict]:
         """Every node of the app for the current state: the diff first."""
@@ -359,10 +362,11 @@ class ReviewApp:
             # An undo or a new range can take the chosen file out of the list.
             self.path = None
         diffs = [d for d in diffs_all if self.path is None or d.path == self.path]
-        findings = self.all_findings(diffs)
         end = self.end or self.journal.last
         patch, cut = _patch_of(diffs)
-        shown = {d.path for d in diffs if d.patch and d.path not in cut}
+        cut_paths = set(cut)
+        findings = self.all_findings(diffs, cut=cut_paths)
+        shown = {d.path for d in diffs if d.patch and d.path not in cut_paths}
         newest = self.journal.entries[-1].at if self.journal.entries else 0
         now = int(newest * 1000) or 1
         self._found_at = {f: self._found_at.get(f, now) for f in findings}

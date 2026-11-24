@@ -847,15 +847,15 @@ def test_a_finding_in_a_file_cut_from_the_patch_is_no_thread(
     # A thread on a file that the patch leaves out points at a line that no one can see.
     import vis_review.app as review_app
 
-    monkeypatch.setattr(review_app, "MOST_PATCH_CHARS", 60)
+    monkeypatch.setattr(review_app, "MOST_PATCH_CHARS", 120)
     root, journal, app = setup(tmp_path, recorder)
-    edit(root, "a.py", "a = 2\n")
-    edit(root, "z.py", "z = 1  \n")
+    edit(root, "a.py", "a = 2  \n")
+    edit(root, "z.py", "# TODO " + "z" * 120 + "\n")
     journal.checkpoint("block")
     app.refresh()
     diff = recorder.node("diff")
-    assert not diff.get("threads")
-    assert any("z.py:1" in text for text in notes(recorder))
+    assert [t["anchor"]["path"] for t in diff["threads"]] == ["a.py"]
+    assert not any("z.py:1" in text for text in notes(recorder))
     # User report 2026-11-15: the names of the cut files were the heading of the diff.
     assert not diff.get("label")
-    assert "Too large to show: a.py, z.py" in notes(recorder)
+    assert "Too large to show: z.py" in notes(recorder)
