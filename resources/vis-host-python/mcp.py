@@ -256,7 +256,7 @@ def __vis_install_mcp__():
         "or one dict. The answer is {server, tool, content, is_error}, and the text "
         'of a content block is at content[i]["text"]. A tool with an output schema '
         "also gives `structured_content`."
-        "\n\n`apropos(pattern)` finds the tools and the prompts of each server by "
+        "\n\n`apropos(pattern)` finds the tools, the prompts and the skills of each server by "
         "name and by description. `doc(<python_name>.<tool>)` prints the description "
         "and the input schema of one tool, and `doc(<python_name>)` prints the tools "
         "and the prompts of the server. `inspect.signature(<python_name>.<tool>)` "
@@ -274,6 +274,9 @@ def __vis_install_mcp__():
         "its text when the prompt needs no argument. "
         "`await <python_name>.prompts.<name>(**arguments)` gets its messages, and "
         "`await <python_name>.prompts()` lists the prompts."
+        '\n\nSkills: `doc("<python_name>.skills.<name>")` loads one skill: its verified '
+        "`SKILL.md` and the list of its other files. "
+        '`doc("<python_name>.skills.<name>/<path>")` loads one of those files.'
         "\n\nResources are attachments. `list_attachments()` also lists the resources "
         'of the connected servers, each with `source` "mcp". `get_attachment`, '
         "`read_attachment` and `show_attachment` take the `id` of such a row, or the "

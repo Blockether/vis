@@ -442,6 +442,14 @@
                                     :id ::list-prelist-failed
                                     :data {:server server :method method}
                                     :error e}))))
+              ;; Skills too: `apropos` reads their rows from the kept list.
+              _ (when (mcp/skills? conn)
+                  (try (mcp/list-all conn "skills/list")
+                       (catch Throwable e
+                         (tel/log! {:level :warn
+                                    :id ::list-prelist-failed
+                                    :data {:server server :method "skills/list"}
+                                    :error e}))))
               [accepted stale] (locking pool
                                  (let [winner (get @pool k)]
                                    (cond (not (accept?)) [nil [conn]]
@@ -1495,6 +1503,43 @@
                                          arguments))))
                    (when (seq (str body)) (str "\n\n" body)))}))))
 
+(defn- skill-name
+  "The name of the skill entry `skill`: the `name` of its frontmatter."
+  [skill]
+  (not-empty (str/trim (str (get-in skill ["frontmatter" "name"])))))
+
+(defn- skill-files
+  "The files of the skill entry `skill` other than its `SKILL.md`, each with the
+   path in the skill directory: `[[path size] ...]`. Empty for `dynamic`."
+  [skill]
+  (let [root (str/replace (str (get skill "uri")) #"/SKILL\.md$" "")]
+    (keep (fn [file]
+            (let [uri (str (get file "uri"))]
+              (when (and (not= uri (get skill "uri")) (str/starts-with? uri (str root "/")))
+                [(subs uri (inc (count root))) (get file "size")])))
+          (when (sequential? (get skill "resources")) (get skill "resources")))))
+
+(defn- skill-entry
+  "The skill entry `skill` of `server` as a `doc-corpus` entry, or nil for a skill
+   with no name. `body` is its verified `SKILL.md`, when the caller has it: then
+   the entry also lists the other files of the skill. `taken` is the names that
+   the sandbox has."
+  ([taken server skill] (skill-entry taken server skill nil))
+  ([taken server skill body]
+   (when-let [nm (skill-name skill)]
+     (let [id (handle taken server "skills" nm)
+           call (str "doc(" (pr-str id) ")")
+           description (not-empty (str/trim (str (get-in skill ["frontmatter" "description"]))))
+           files (skill-files skill)]
+       {:name id
+        :kind "skill"
+        :call call
+        :text (str (described call (str "MCP skill `" nm "` on server `" server "`.") description)
+                   (when (seq (str body)) (str "\n\n" body))
+                   (when (and (seq (str body)) (seq files))
+                     (str "\n\nFiles, each at `doc(\"" id "/<path>\")`:\n"
+                          (str/join "\n" (map (fn [[path size]] (str "- `" path "` (" size " bytes)")) files)))))}))))
+
 (defn- server-status
   "The status word of `server` as `session-id` sees it, with its `conn` or nil:
    `connected`, `killed`, `needs_auth`, `unhealthy` or `disconnected`."
@@ -1518,10 +1563,10 @@
                   rows)))
 
 (defn- server-entry
-  "`server` as a `doc-corpus` entry: its `status`, and the names of the `tools`
-   and `prompts` that the caller has. `resources?` says that it gives resources.
-   `taken` is the names that the sandbox has."
-  [taken server status tools prompts resources?]
+  "`server` as a `doc-corpus` entry: its `status`, and the names of the `tools`,
+   `prompts` and `skills` that the caller has. `resources?` says that it gives
+   resources. `taken` is the names that the sandbox has."
+  [taken server status tools prompts skills resources?]
   (let [mine (python-name server taken)]
     {:name (handle taken server)
      :kind "module"
@@ -1539,6 +1584,12 @@
                 (when (seq tools) (str "\n\nTools:\n" (named-rows tools)))
                 (when (seq prompts)
                   (str "\n\nPrompts, each at `" mine ".prompts.<name>`:\n" (named-rows prompts)))
+                (when (seq skills)
+                  (str "\n\nSkills, each at `doc(\"" mine ".skills.<name>\")`:\n"
+                       (named-rows (map (fn [s]
+                                          {"name" (skill-name s)
+                                           "description" (get-in s ["frontmatter" "description"])})
+                                        skills))))
                 (when resources?
                   "\n\nResources: `list_attachments()` lists them, with `source` \"mcp\"."))}))
 
@@ -1594,16 +1645,21 @@
                             deref)
 
                     prompts
-                    (cached-list conn "prompts/list")]
+                    (cached-list conn "prompts/list")
+
+                    skills
+                    (cached-list conn "skills/list")]
 
                 (concat [(server-entry taken
                                        server
                                        (server-status sid server spec conn)
                                        tools
                                        prompts
+                                       skills
                                        (contains? (:server-capabilities conn) "resources"))]
                         (keep #(tool-entry taken server %) tools)
-                        (keep #(prompt-entry taken server %) prompts)))))
+                        (keep #(prompt-entry taken server %) prompts)
+                        (keep #(skill-entry taken server %) skills)))))
           servers)))
 
 (doc-corpus/register-source! :mcp-tools #'doc-corpus-entries)
@@ -1870,11 +1926,15 @@
 (defn- handle-parts
   "`[name rest bare?]` of the handle `target`: a bare name with what follows its
    first `.`, or one of the older forms, `mcp.<server>` with what follows its next
-   `.` and `<server>/<tool>`. Nil for any other text."
+   `.` and `<server>/<tool>`. A skill file, `<server>.skills.<name>/<path>`, is a
+   bare name. Nil for any other text."
   [target]
   (let [target (str/trim (str target))]
     (or (when-let [[_ server rest] (re-matches #"mcp\.([^.\s]+)(?:\.(.+))?" target)]
           [server rest false])
+        ;; A skill file has a `/` in its path, but it is no `<server>/<tool>`.
+        (when-let [[_ server rest] (re-matches #"([a-z][a-z0-9_]*)\.(skills\.[^/\s]+/.+)" target)]
+          [server rest true])
         (when-let [[_ server tool] (re-matches #"([^/\s]+)/(.+)" target)]
           [server tool false])
         (when-let [[_ server rest] (re-matches #"([a-z][a-z0-9_]*)(?:\.(.+))?" target)]
@@ -1903,6 +1963,7 @@
                                        (server-status sid server spec (conn-of sid server))
                                        nil
                                        nil
+                                       nil
                                        false)
                    note
                    (update :text str "\n\n" note)))]
@@ -1919,21 +1980,50 @@
                       capabilities (:server-capabilities conn)
                       prompts (when (contains? capabilities "prompts")
                                 (mcp/list-all conn "prompts/list"))
+                      skills (when (mcp/skills? conn) (mcp/list-all conn "skills/list"))
                       page (fn [note]
                              (cond-> (server-entry taken
                                                    server
                                                    "connected"
                                                    tools
                                                    prompts
+                                                   skills
                                                    (contains? capabilities "resources"))
                                note
                                (update :text #(str note "\n\n" %))))
                       found (fn [rows nm]
                               (when-let [named (match-name (map #(get % "name") rows) nm)]
                                 (first (filter #(= named (get % "name")) rows))))
-                      prompt-name (second (re-matches #"prompts\.(.+)" (str rest)))]
+                      prompt-name (second (re-matches #"prompts\.(.+)" (str rest)))
+                      [_ skill-typed path] (re-matches #"skills\.([^/]+)(?:/(.+))?" (str rest))
+                      skill (when-let [named (match-name (keep skill-name skills) skill-typed)]
+                              (first (filter #(= named (skill-name %)) skills)))
+                      ;; A skill file that fails its checks gives the server page
+                      ;; with the cause, never the content.
+                      verified (fn [entry]
+                                 (try (entry)
+                                      (catch clojure.lang.ExceptionInfo e
+                                        (if (= :mcp/skill-verification (:type (ex-data e)))
+                                          (page (ex-message e))
+                                          (throw e)))))]
 
-                  (cond (or (nil? rest) (= "prompts" rest)) (page nil)
+                  (cond (or (nil? rest) (= "prompts" rest) (= "skills" rest)) (page nil)
+                        (and skill-typed (nil? skill))
+                        (page (str "MCP server `" server "` has no skill `" skill-typed "`."))
+                        path
+                        (verified
+                          #(let [uri (str (str/replace (str (get skill "uri")) #"/SKILL\.md$" "") "/" path)
+                                 {:keys [text size mime-type]} (mcp/read-skill-file conn skill uri)]
+                             {:name (str (handle taken server "skills" (skill-name skill)) "/" path)
+                              :kind "doc"
+                              :text (or text
+                                        (str "Binary file, " size " bytes"
+                                             (when mime-type (str ", " mime-type)) "."))}))
+                        skill
+                        (verified #(skill-entry taken
+                                                server
+                                                skill
+                                                (:text (mcp/read-skill-file conn skill (get skill "uri")))))
                         prompt-name
                         (if-let [prompt (found prompts prompt-name)]
                           (prompt-entry taken server prompt (prompt-body conn prompt))
@@ -2326,14 +2416,14 @@
   (str "Each MCP server is a name of the sandbox: the `python_name` of its row in"
        " `session[\"env\"][\"mcp\"][\"servers\"]`. Call a tool with"
        " `await <python_name>.<tool>(**arguments)`; the result text is `content[i][\"text\"]`."
-       " `apropos(pattern)` finds the tools and the prompts, and `doc(<python_name>.<tool>)`"
+       " `apropos(pattern)` finds the tools, the prompts and the skills, and `doc(<python_name>.<tool>)`"
        " prints the input schema of one tool."))
 
 (def vis-extension
   (extension/extension
     {:ext/name "foundation-mcp"
      :ext/description
-     "MCP client. One pool in the gateway connects each enabled MCP server (`mcp.servers` in config.yml), stdio or Streamable HTTP. It checks their health and reconnects them on `/reload`. In the sandbox each server is a name, its lower-case snake name: `await linear.save_issue(...)` calls a tool. `apropos` finds the tools and the prompts, `doc` prints a server, a tool or a prompt, and `list_attachments()` lists the resources. It supports remote OAuth 2.1 sign-in with PKCE. It is active when servers are configured."
+     "MCP client. One pool in the gateway connects each enabled MCP server (`mcp.servers` in config.yml), stdio or Streamable HTTP. It checks their health and reconnects them on `/reload`. In the sandbox each server is a name, its lower-case snake name: `await linear.save_issue(...)` calls a tool. `apropos` finds the tools, the prompts and the skills, `doc` prints a server, a tool, a prompt or a skill, and `list_attachments()` lists the resources. It supports remote OAuth 2.1 sign-in with PKCE. It is active when servers are configured."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

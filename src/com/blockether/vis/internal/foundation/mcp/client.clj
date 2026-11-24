@@ -53,7 +53,8 @@
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.util :as util]
-            [taoensso.telemere :as tel])
+            [taoensso.telemere :as tel]
+            [yamlstar.core :as yamlstar])
   (:import (charred JSONReader$ObjReader)
            (java.io BufferedReader)
            (java.net URI)
@@ -1582,7 +1583,8 @@
   "The list requests that `list-all` keeps, each with the key of its rows and the
    notification of the server that drops the kept list."
   {"prompts/list" ["prompts" "notifications/prompts/list_changed"]
-   "resources/list" ["resources" "notifications/resources/list_changed"]})
+   "resources/list" ["resources" "notifications/resources/list_changed"]
+   "skills/list" ["skills" nil]})
 
 (defn- connect-as
   "Connect to MCP server `name` on `transport` and find its era. With `probe?`,
@@ -1823,7 +1825,8 @@
   1000)
 
 (defn list-all
-  "Every row of the list request `method`, `prompts/list` or `resources/list`,
+  "Every row of the list request `method`, `prompts/list`, `resources/list` or
+   `skills/list`,
    from the pages of the server: at most `list-row-limit` rows. Cached on the conn
    after the first call; the `list_changed` notification of that list drops it.
    `opts` are those of `request`."
@@ -1866,6 +1869,85 @@
 
            (when cache (swap! cache assoc method rows))
            rows)))))
+
+(def skills-extension
+  "The extension that lets a server give skills."
+  "io.modelcontextprotocol/skills")
+
+(defn skills?
+  "Whether the server of `conn` gives skills: it declares the skills extension."
+  [conn]
+  (contains? (get (:server-capabilities conn) "extensions") skills-extension))
+
+(defn- content-bytes
+  "The raw bytes of one content of `resources/read`: its text in UTF-8, or its
+   Base64 blob decoded."
+  ^bytes [content]
+  (if-let [blob (get content "blob")]
+    (.decode (java.util.Base64/getDecoder) (str blob))
+    (.getBytes (str (get content "text")) "UTF-8")))
+
+(defn- sha256-digest
+  "The digest of `bs` as a skill entry writes it: `sha256:` and 64 hex digits."
+  [^bytes bs]
+  (str "sha256:"
+       (format "%064x"
+               (BigInteger. 1 (.digest (java.security.MessageDigest/getInstance "SHA-256") bs)))))
+
+(defn- frontmatter
+  "The YAML frontmatter of the `SKILL.md` text as a map, or nil."
+  [text]
+  (when-let [[_ yaml] (re-find #"(?s)\A---\r?\n(.*?)\r?\n---(?:\r?\n|\z)" (str text))]
+    (let [m (yamlstar/load yaml)] (when (map? m) m))))
+
+(defn- unverified
+  "The failure of a skill file that is not what its skill entry says."
+  [skill uri why]
+  (ex-info (str "The skill file " uri " failed verification: " why ". Vis did not use it.")
+           {:type :mcp/skill-verification :skill (get skill "uri") :uri uri}))
+
+(defn- verified-file
+  "The file `uri` of the skill entry `skill`, read with `resources/read` and
+   verified against the entry. See `read-skill-file`."
+  [conn skill uri]
+  (let [manifest (get skill "resources")
+        entry (when (sequential? manifest) (first (filter #(= uri (get % "uri")) manifest)))
+        root (str/replace (str (get skill "uri")) #"/SKILL\.md$" "")]
+    (when-not (if (sequential? manifest)
+                entry
+                (or (= uri (get skill "uri")) (str/starts-with? uri (str root "/"))))
+      (throw (unverified skill uri "the skill does not list it")))
+    (let [contents (get (request conn "resources/read" {"uri" uri}) "contents")
+          content (or (first (filter #(= uri (get % "uri")) contents)) (first contents))
+          bs (content-bytes content)
+          text (when (contains? content "text") (str (get content "text")))]
+      (when entry
+        (when-not (= (get entry "size") (alength bs))
+          (throw (unverified skill uri (str "it has " (alength bs) " bytes, not " (get entry "size")))))
+        (when-not (= (str/lower-case (str (get entry "digest"))) (sha256-digest bs))
+          (throw (unverified skill uri "its SHA-256 digest is not the one of the entry"))))
+      (when (and (= uri (get skill "uri")) (not= (frontmatter text) (get skill "frontmatter")))
+        (throw (unverified skill uri "its frontmatter is not the one of the entry")))
+      {:uri uri :mime-type (get content "mimeType") :text text :size (alength bs)})))
+
+(defn read-skill-file
+  "The file `uri` of the skill entry `skill` that `skills/list` gave on `conn`:
+   `{:uri :mime-type :text :size}`, with `:text` nil for a binary file. It reads
+   only a file that the entry lists, and checks its size and its SHA-256 digest;
+   the `SKILL.md` must also have the frontmatter of the entry. A skill with
+   `dynamic` resources has no digests: only a file in the skill directory is read.
+   When a check fails, the entry can be old: `skills/get` gives the current entry,
+   the kept `skills/list` is dropped and the file is read again one time. A second
+   failure throws `:mcp/skill-verification`, and the content is never used."
+  [conn skill uri]
+  (try (verified-file conn skill uri)
+       (catch clojure.lang.ExceptionInfo e
+         (if (= :mcp/skill-verification (:type (ex-data e)))
+           (let [fresh (get (request conn "skills/get" {"uri" (get skill "uri")}) "skill")]
+             (some-> (:lists conn)
+                     (swap! dissoc "skills/list"))
+             (verified-file conn (or fresh skill) uri))
+           (throw e)))))
 
 (defn alive? [conn] (boolean (try ((:alive-fn conn)) (catch Throwable _ false))))
 

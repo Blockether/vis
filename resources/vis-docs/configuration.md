@@ -946,10 +946,10 @@ call waits until the task completes, fails, or is cancelled. A question of the t
 as in other tool calls. When you stop the turn, Vis tells the server to cancel the task. The server
 can still complete the work.
 
-### Tools, resources, and prompts
+### Tools, resources, prompts, and skills
 
-A server can have tools, resources, and prompts. The agent can list and read all of them. Ask in
-plain words, for example: "Read the resource `file:///logs/app.log` of the server `files`."
+A server can have tools, resources, prompts, and skills. The agent can list and read all of them.
+Ask in plain words, for example: "Read the resource `file:///logs/app.log` of the server `files`."
 
 - The agent calls a tool by the name of the server and the name of the tool.
 - The agent reads a prompt as a help page. A prompt with no arguments comes with its text.
@@ -958,6 +958,12 @@ plain words, for example: "Read the resource `file:///logs/app.log` of the serve
 
 The agent can read the help page of a tool before the server is connected, and Vis then connects the
 server.
+
+A server of revision `2026-07-28` can also give skills. The agent finds a skill by its name and
+description, as it finds a tool, and reads it as a help page. Vis reads the `SKILL.md` and the
+other files of a skill only when the agent opens them. Vis does not use a file that the skill does
+not list, or a file whose size or digest is not the listed one. A skill of a server never replaces
+a skill of your project, because its name starts with the name of the server.
 
 ### Sign in to a server
 

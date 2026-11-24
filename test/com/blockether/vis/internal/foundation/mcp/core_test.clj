@@ -1311,6 +1311,87 @@
                       (expect (some #{"alpha.resolve_library_id"}
                                     (map :name (#'mcp/doc-corpus-entries))))))))
 
+(defn- sha256
+  "The digest of `text` in UTF-8 as a skill entry writes it."
+  [^String text]
+  (str "sha256:"
+       (format "%064x"
+               (BigInteger. 1
+                            (.digest (java.security.MessageDigest/getInstance "SHA-256")
+                                     (.getBytes text "UTF-8"))))))
+
+(def ^:private skill-md
+  "---\nname: pdf-processing\ndescription: Extract PDF documents.\n---\n\n# PDF processing\n\nUse `templates/invoice.md`.\n")
+
+(defn- with-skills
+  "Run `(f)` with the server `alpha`, which gives the skill `pdf-processing`.
+   `served` maps a file URI to the text that the server gives now; the entry has
+   the digests of `listed`. `sent` gets each request as `[method params]`."
+  [sent served f]
+  (let [listed {"skill://pdf-processing/SKILL.md" skill-md
+                "skill://pdf-processing/templates/invoice.md" "# Invoice\n"}
+        skill {"uri" "skill://pdf-processing/SKILL.md"
+               "frontmatter" {"name" "pdf-processing" "description" "Extract PDF documents."}
+               "resources" (mapv (fn [[uri text]]
+                                   {"uri" uri "digest" (sha256 text) "size" (count (.getBytes ^String text "UTF-8"))})
+                                 listed)}]
+    (with-alpha
+      {#'client/connect (fn [_ spec]
+                          {:transport :stdio
+                           :tools (atom [])
+                           :lists (atom {})
+                           :spec spec
+                           :server-capabilities {"resources" {}
+                                                 "extensions" {"io.modelcontextprotocol/skills" {}}}})
+       #'client/list-tools (constantly [])
+       #'client/request (fn [_conn method params & _]
+                          (swap! sent conj [method params])
+                          (case method
+                            "skills/list" {"skills" [skill]}
+                            "skills/get" {"skill" skill}
+                            "resources/read" {"contents" [{"uri" (get params "uri")
+                                                           "text" (get (merge listed @served)
+                                                                       (get params "uri"))}]}))}
+      (fn [_call!] (f)))))
+
+(defdescribe
+  mcp-skill-test
+  (it "lists a skill for apropos without a read, and doc loads it and its files"
+      (let [sent (atom [])]
+        (with-skills sent
+                     (atom {})
+                     (fn []
+                       (let [row (some #(when (= "skill" (:kind %)) %) (#'mcp/doc-corpus-entries))]
+                         (expect (= "alpha.skills.pdf_processing" (:name row)))
+                         (expect (str/includes? (:text row) "Extract PDF documents."))
+                         (expect (not-any? #(= "resources/read" (first %)) @sent)))
+                       (let [page (:text (doc-corpus/resolve-entry "alpha.skills.pdf_processing"))]
+                         (expect (str/includes? page "# PDF processing"))
+                         (expect (str/includes? page "- `templates/invoice.md` (10 bytes)")))
+                       (expect (= "# Invoice\n"
+                                  (:text (doc-corpus/resolve-entry
+                                           "alpha.skills.pdf_processing/templates/invoice.md"))))))))
+  (it "never shows a file that changed after the listing, and asks for the entry again"
+      (let [sent (atom [])]
+        (with-skills sent
+                     (atom {"skill://pdf-processing/templates/invoice.md" "# Changed\n"})
+                     (fn []
+                       (let [page (:text (doc-corpus/resolve-entry
+                                           "alpha.skills.pdf_processing/templates/invoice.md"))]
+                         (expect (str/includes? page "failed verification"))
+                         (expect (not (str/includes? page "# Changed"))))
+                       (expect (= 1 (count (filter #(= "skills/get" (first %)) @sent))))))))
+  (it "reads no file that the skill does not list"
+      (let [sent (atom [])]
+        (with-skills sent
+                     (atom {})
+                     (fn []
+                       (expect (str/includes? (:text (doc-corpus/resolve-entry
+                                                       "alpha.skills.pdf_processing/secret.md"))
+                                              "does not list it"))
+                       (expect (not-any? #(= ["resources/read" {"uri" "skill://pdf-processing/secret.md"}] %)
+                                         @sent)))))))
+
 (defdescribe
   mcp-identifier-name-test
   (it "calls the tool and gets the prompt that an identifier names"
