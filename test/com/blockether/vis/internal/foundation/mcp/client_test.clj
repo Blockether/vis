@@ -993,7 +993,9 @@
 
           (expect (= "done" (get-in (call (constantly model-answer)) ["content" 0 "text"])))
           (let [[asked answered] (mapv :message (requests-of requests "tools/call"))]
-            (expect (= {"roots" {"listChanged" true} "sampling" {}}
+            (expect (= {"roots" {"listChanged" true}
+                        "sampling" {}
+                        "extensions" {"io.modelcontextprotocol/tasks" {}}}
                        (get-in asked
                                ["params" "_meta" "io.modelcontextprotocol/clientCapabilities"])))
             (expect (= {"where" {"roots" roots} "what" model-answer}
@@ -1106,6 +1108,90 @@
              (mcp/call-tool conn "grow" {})
              (expect (= ["echo" "grown"] (names)))
              (finally (mcp/close conn))))))
+
+(defn- task-routes
+  "The routes of a stateless server whose `tools/call` gives the task `t-1`. Each
+   `tasks/get` gives the next state of `states`, and the last state after that."
+  [states]
+  (let [polls
+        (atom -1)
+
+        task
+        (fn [state]
+          (merge {"taskId" "t-1"
+                  "createdAt" "2026-11-24T00:00:00Z"
+                  "lastUpdatedAt" "2026-11-24T00:00:00Z"
+                  "ttlMs" nil
+                  "pollIntervalMs" 100}
+                 state))
+
+        reply
+        (fn [result]
+          (fn [request exchange]
+            (send! exchange 200 "application/json" (rpc-result (:message request) result))))]
+
+    (assoc (stateless-routes [{"name" "echo"}]
+                             {"tools" {} "extensions" {"io.modelcontextprotocol/tasks" {}}}
+                             (reply (task {"resultType" "task" "status" "working"})))
+      "tasks/get" (fn [request exchange]
+                    (let [state (nth states (min (swap! polls inc) (dec (count states))))]
+                      ((reply (task (assoc state "resultType" "complete"))) request exchange)))
+      "tasks/update" (reply {"resultType" "complete"})
+      "tasks/cancel" (reply {"resultType" "complete"}))))
+
+(defn- eventually
+  "True when `(ready?)` is true within 3 s."
+  [ready?]
+  (loop [left 60]
+    (cond (ready?) true
+          (zero? left) false
+          :else (do (Thread/sleep 50) (recur (dec left))))))
+
+(defdescribe
+  mcp-task-test
+  (it "follows a task to its result and answers each input request once"
+      (let [who {"method" "elicitation/create"
+                 "params" {"message" "Who?"
+                           "requestedSchema" {"type" "object"
+                                              "properties" {"name" {"type" "string"
+                                                                    "default" "Ada"}}}}}]
+        (with-http-conn
+          (task-routes [{"status" "working"} {"status" "input_required" "inputRequests" {"who" who}}
+                        {"status" "input_required" "inputRequests" {"who" who}}
+                        {"status" "completed"
+                         "result" {"content" [{"type" "text" "text" "done"}]}}])
+          {:elicitation? true}
+          (fn [conn requests]
+            (expect (= "done"
+                       (get-in (mcp/call-tool conn
+                                              "echo" {}
+                                              3000 {:on-elicitation (constantly {"action" "accept"
+                                                                                 "content" {}})})
+                               ["content" 0 "text"])))
+            (expect (= [{"who" {"action" "accept" "content" {"name" "Ada"}}}]
+                       (mapv #(get-in % [:message "params" "inputResponses"])
+                             (requests-of requests "tasks/update"))))
+            (expect (every? #(= "t-1" (get-in % [:message "params" "taskId"]))
+                            (requests-of requests "tasks/get")))))))
+  (it "fails as the task fails"
+      (with-http-conn (task-routes [{"status" "failed" "error" {"code" -32000 "message" "boom"}}])
+                      {}
+                      (fn [conn _]
+                        (expect (= [:mcp/rpc-error -32000]
+                                   (try (mcp/call-tool conn "echo" {})
+                                        (catch clojure.lang.ExceptionInfo e
+                                          ((juxt :type :code) (ex-data e)))))))))
+  (it "cancels the task on the server when the call is interrupted"
+      (with-http-conn (task-routes [{"status" "working"}])
+                      {}
+                      (fn [conn requests]
+                        (let [call (future (mcp/call-tool conn "echo" {}))]
+                          (expect (eventually #(seq (requests-of requests "tasks/get"))))
+                          (future-cancel call)
+                          (expect (eventually #(seq (requests-of requests "tasks/cancel"))))
+                          (expect (= "t-1"
+                                     (get-in (first (requests-of requests "tasks/cancel"))
+                                             [:message "params" "taskId"]))))))))
 
 (defn- era-routes
   "The routes of a server that is of an older revision, with a session, until the

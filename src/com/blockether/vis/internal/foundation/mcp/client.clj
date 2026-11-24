@@ -175,11 +175,17 @@
     (:sampling? spec)
     (assoc "sampling" {})))
 
+(def ^:private tasks-extension
+  "The extension that lets a stateless server answer a request with a task."
+  "io.modelcontextprotocol/tasks")
+
 (defn- request-meta
-  "The `_meta` fields that each request in the stateless protocol `version` has."
+  "The `_meta` fields that each request in the stateless protocol `version` has.
+   The client follows each task to its end, so it declares the tasks extension."
   [version spec]
   {"io.modelcontextprotocol/protocolVersion" version
-   "io.modelcontextprotocol/clientCapabilities" (client-capabilities spec)
+   "io.modelcontextprotocol/clientCapabilities" (assoc (client-capabilities spec)
+                                                  "extensions" {tasks-extension {}})
    "io.modelcontextprotocol/clientInfo" client-info})
 
 (defn- header-value
@@ -427,12 +433,114 @@
       (contains? result "requestState")
       (assoc "requestState" (get result "requestState")))))
 
+(def ^:private task-poll-ms
+  "The wait between two `tasks/get` requests: the default, and the bounds of a
+   `pollIntervalMs` that the server names."
+  {:default 1000 :lowest 100 :highest 60000})
+
+(defn- task-poll-wait
+  "How long to wait before the next `tasks/get` of `task`."
+  [task]
+  (let [{:keys [default lowest highest]}
+        task-poll-ms
+
+        asked
+        (get task "pollIntervalMs")]
+
+    (if (number? asked)
+      (-> (long asked)
+          (max (long lowest))
+          (min (long highest)))
+      default)))
+
+(defn- cancel-task!
+  "Ask server `name` to cancel the task `id`, on another thread: the caller has an
+   interrupt, and the server need not stop. A failure is only logged."
+  [name request meta id]
+  (future (try (request "tasks/cancel" {"taskId" id "_meta" meta} default-timeout-ms nil)
+               (catch Throwable t
+                 (tel/log!
+                   {:level :warn :id ::task-cancel-failed :data {:server name :task id} :error t}
+                   "MCP task cancel failed")))))
+
+(defn- await-task
+  "The result of the request `method` that server `name` answered with the task
+   `task`. Polls `tasks/get` at the interval of the server until the task ends.
+   Each new input request of an `input_required` task gets one answer from the
+   `opts` of the call, through `tasks/update`. An interrupt cancels the task."
+  [name spec request meta method task timeout-ms opts]
+  (let [id
+        (get task "taskId")
+
+        send
+        (fn [m params]
+          (request m
+                   (assoc params
+                     "taskId" id
+                     "_meta" meta)
+                   timeout-ms
+                   opts))
+
+        fail
+        (fn [why]
+          (ex-info (str "MCP " name " " method " " why)
+                   {:type :mcp/protocol :server name :method method}))]
+
+    (when-not (string? id) (throw (fail "gave a task with no taskId")))
+    (try
+      (loop [task
+             task
+
+             answered
+             #{}]
+
+        (case (get task "status")
+          "completed"
+          (let [result (get task "result")]
+            (if (map? result) result (throw (fail "completed a task with no result"))))
+
+          "failed"
+          (throw (rpc-error->ex name method (get task "error")))
+
+          "cancelled"
+          (throw (ex-info (str "MCP " name
+                               " " method
+                               " was cancelled" (some->> (get task "statusMessage")
+                                                         (str ": ")))
+                          {:type :mcp/task-cancelled :server name :method method :task id}))
+
+          "input_required"
+          (let [requests
+                (get task "inputRequests")
+
+                fresh
+                (when (map? requests) (apply dissoc requests answered))]
+
+            (if (seq fresh)
+              (do (send "tasks/update"
+                        {"inputResponses" (reduce-kv (fn [responses k input]
+                                                       (assoc responses
+                                                         k (input-response name spec input opts)))
+                                                     {}
+                                                     fresh)})
+                  (recur (send "tasks/get" {}) (into answered (keys fresh))))
+              (do (Thread/sleep (long (task-poll-wait task)))
+                  (recur (send "tasks/get" {}) answered))))
+
+          "working"
+          (do (Thread/sleep (long (task-poll-wait task))) (recur (send "tasks/get" {}) answered))
+
+          (throw (fail (str "gave a task with the unknown status " (get task "status"))))))
+      (catch Throwable t
+        (when (cancellation/preserve-interrupt! t) (cancel-task! name request meta id))
+        (throw t)))))
+
 (defn- modern-request-fn
   "The request fn of a connection in a stateless revision, over the request fn
    `request` of its transport. Each request gets `meta` in its `_meta`. A result of
    the type `input_required` gets its input from the answers of the call: `:ask`,
    `:sample` and `:roots`. Then the request goes again, as a new request, with
-   the answers and the state."
+   the answers and the state. A result of the type `task` ends as its task ends."
   [name spec request meta]
   (fn modern ([method params timeout-ms] (modern method params timeout-ms nil))
     ([method params timeout-ms opts] (let [params (update (or params {}) "_meta" merge meta)]
@@ -446,6 +554,14 @@
 
                                            (cond
                                              (= "complete" result-type) result
+                                             (= "task" result-type) (await-task name
+                                                                                spec
+                                                                                request
+                                                                                meta
+                                                                                method
+                                                                                result
+                                                                                timeout-ms
+                                                                                opts)
                                              (not (and (= "input_required" result-type)
                                                        (contains? #{"tools/call" "prompts/get"
                                                                     "resources/read"}

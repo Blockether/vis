@@ -938,6 +938,14 @@ to refuse it. An allowed request costs tokens, and Vis sends only its text to a 
 The MCP specification deprecates roots and sampling from revision `2026-07-28`. Both still work
 with present servers.
 
+### Long tool calls
+
+A server of revision `2026-07-28` can answer a slow tool call with a task. Vis then asks the server
+for the state of the task at the interval that the server gives, from 100 ms to 60 seconds. The tool
+call waits until the task completes, fails, or is cancelled. A question of the task shows as a form,
+as in other tool calls. When you stop the turn, Vis tells the server to cancel the task. The server
+can still complete the work.
+
 ### Tools, resources, and prompts
 
 A server can have tools, resources, and prompts. The agent can list and read all of them. Ask in
