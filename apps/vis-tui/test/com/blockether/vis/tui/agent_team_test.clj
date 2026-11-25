@@ -999,7 +999,7 @@
           ;; User report 2026-11-15: the leader has no title, so its line takes the title cell too.
           (expect (re-find #"^│ LEADER +│ Shipped the fix" leader))
           (expect (not (str/includes? leader "**")))
-          (expect (re-find #"DONE +│ +3m 20s \(waited 1m 00s\)" leader))
+          (expect (re-find #"DONE +│ +3m 20s +│$" leader))
           (expect (< (.indexOf ^java.util.List text leader)
                      (.indexOf ^java.util.List text
                                (first (filter #(str/includes? % "Read docs") text)))))
@@ -1017,7 +1017,8 @@
         (try (let [leader {:start (- now-ms 90000)
                            :steps [{:assistant-prose "Waiting for the _parser_ fix"
                                     :forms [{:code "council.run([a])" :duration-ms 20000}
-                                            {:code "council.wait()"
+                                            {:code "await other_task"
+                                             :activity {:rows [{:operation "council.wait" :state "running"}]}
                                              :started-at-ms (- now-ms 10000)}]}]}
                    text (team/dock-text "leader" "turn-1" 120 now-ms leader)
                    row (nth text 4)]
@@ -1025,7 +1026,7 @@
                (expect (str/includes? row "LEADER"))
                (expect (re-find #"LEADER +│ Waiting for the parser fix" row)
                        "The live leader line takes the title cell too")
-               (expect (re-find #"1m 30s \(waited 30s\) │ RUNNING" row))
+               (expect (re-find #"1m 30s \(waited 10s\) │ RUNNING" row))
                (expect (str/starts-with? (nth text 5) "├") "A rule stands under the leader row")
                (expect (str/includes? (nth text 6) "Map the gateway rou"))
                (expect (= "s1" (team/dock-agent-id "leader" "turn-1" 1))

@@ -5,6 +5,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.session.agents :as agents]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.session.model :as smodel]
@@ -30,9 +31,8 @@
 (h/use-mem-store! {"subagents" true})
 
 (def ^:private fast-waits
-  "Short team waits for a describe. In production the signal tick and the answer grace are 5 s
-   each, and a test that reaches one of them waits that long."
-  (around-each [f] (with-redefs-fn {#'agents/signal-tick-ms 200 #'agents/answer-grace-ms 300} f)))
+  "Use a short signal tick in the question tests."
+  (around-each [f] (with-redefs-fn {#'agents/signal-tick-ms 200} f)))
 
 (defdescribe
   schema-owned-agent-bounds-test
@@ -414,11 +414,14 @@
 
 (defn- outcome [f] (try (:result (f)) (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))
 
+(defn- snapshot [env child]
+  (wire/->wire (agents/task-record env (agents/info (:db-info env) child))))
+
 (defn- asking-record
   "Poll the record of `child` until it asks, for at most 5 s."
   [env child]
   (loop [n 0]
-    (let [r (first (:result (agents/wait-agents env [child] {:timeout_secs 1})))]
+    (let [r (snapshot env child)]
       (if (or (= "asking" (get r "status")) (> n 50)) r (do (Thread/sleep 100) (recur (inc n)))))))
 
 ;; Issue #388: a child had 64 iterations, no warning and a hard stop without a handoff. A
@@ -774,7 +777,7 @@
                                                    (if (= child (str sid)) @turns []))]
             (agents/finish! db child "completed")
             (expect (= "Old answer"
-                       (get (first (:result (agents/wait-agents env [child] {:timeout_secs 1})))
+                       (get (snapshot env child)
                             "answer")))
             ;; The wake of a ping from the parent queues the child, as state/council-wake! does.
             (expect (fn? (agents/queue-turn! db child)))
@@ -782,11 +785,11 @@
                     "The stale-answer guard is stored with the child, so a restart keeps it")
             ;; The gateway stores the status before the turn, so the old turn is still the last.
             (agents/finish! db child "completed")
-            (expect (nil? (get (first (:result (agents/wait-agents env [child] {:timeout_secs 1})))
+            (expect (nil? (get (snapshot env child)
                                "answer")))
             (swap! turns conj {:id "new" :content [{"type" "prose" "markdown" "New answer"}]})
             (expect (= "New answer"
-                       (get (first (:result (agents/wait-agents env [child] {:timeout_secs 1})))
+                       (get (snapshot env child)
                             "answer"))))))))
   ;; council.resume is gone: a ping is the one follow-up verb, so it refuses a task that cannot start.
   (it
@@ -1232,12 +1235,48 @@
 
                   (expect (= 4 (count (filter #(str/includes? % hint) delegated))))))
               (expect (= "cancelled"
-                         (get (first (gateway/agents-operation! leader :cancel {:session_id sid}))
-                              "status")))
+                         (:status (#'gateway/cancel-child! env {:session_id sid}))))
               (expect (not (agents/claim-iteration! {:db-info db :session-id sid})))
               (expect (= "cancelled" (:status (agents/info db sid))))
               (expect (= "Subagent stopped: it is cancelled."
-                         (agents/stop-reason {:db-info db :session-id sid}))))))))))
+                         (agents/stop-reason {:db-info db :session-id sid})))
+              (let [child-ids #(mapv :session_id (ps/db-agent-list db leader))
+                    before (child-ids)
+                    launched @launches
+                    run! #(#'gateway/agent-run env %)]
+                ;; The second request fails during reservation, after the first child was forked.
+                (expect (= :invalid-request
+                           (try (run! ["Must roll back"
+                                       {:task "Unknown model" :provider "p" :model "unknown"}])
+                                nil
+                                (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+                (expect (= before (child-ids)))
+                (expect (= launched @launches))
+                ;; The fixture has three active children. Leave one slot open for the batch.
+                (with-redefs [agents/max-active-children 4]
+                  (let [[one two] (run! ["First new task" "Second new task"])
+                        first-id (:child-session-id one)
+                        second-id (:child-session-id two)
+                        states #(mapv (fn [id] (:status (agents/info db id))) [first-id second-id])]
+                    (expect (= ["queued" "waiting"] (states)))
+                    (expect (= first-id (peek @launches)))
+                    (agents/finish! db first-id "completed")
+                    (agents/settle-task! env (agents/info db first-id))
+                    (#'gateway/settle-dependents! db leader)
+                    (expect (= ["completed" "queued"] (states)))
+                    (expect (= second-id (peek @launches)))
+                    (let [[follow] (run! [{:task "Follow up" :child first-id}])
+                          old (task/status leader (:id one))]
+                      (expect (= first-id (:child-session-id follow)))
+                      (expect (not= (:id one) (:id follow)))
+                      (expect (= ["completed" "waiting"]
+                                 [(get-in old [:record :status]) (first (states))])))
+                    (agents/finish! db second-id "completed")
+                    (#'gateway/settle-dependents! db leader)
+                    (expect (= ["queued" "completed"] (states)))
+                    (expect (= first-id (peek @launches)))
+                    (expect (= "completed"
+                               (get-in (task/status leader (:id one)) [:record :status])))))))))))))
 
 (defdescribe
   handoff-test
@@ -1523,7 +1562,7 @@
              (constantly false)
              (constantly false)
              (+ now 60000)
-             (agents/info db cut)))]
+             (agents/reconcile-child! db (agents/info db cut))))]
 
       (expect (= "failed" (:status r)))
       (expect (nil? (:answer r)))
@@ -1557,7 +1596,7 @@
                (constantly false)
                (constantly false)
                later
-               (agents/info db sid))))]
+               (agents/reconcile-child! db (agents/info db sid)))))]
 
       (let [done
             (child! db leader {})
@@ -1608,14 +1647,14 @@
                             (constantly false)
                             (constantly false)
                             later
-                            (agents/info db real))
+                            (agents/reconcile-child! db (agents/info db real)))
                            [:error :code]))
                 "A new child has no turn of its own")))))
 
 (defdescribe
   stopping-a-parent-arms-its-backstop-before-stopping-children-test
   (it
-    "stopping a parent arms its backstop before stopping children"
+    "stopping a parent arms its backstop and leaves an unawaited child running"
     (let [db
           (h/store)
 
@@ -1651,17 +1690,10 @@
                          (swap! armed conj sid))}
         (fn []
           (expect (= {:status "cancelling"} (gateway/cancel-turn! leader "parent-turn")))
-          (expect (= [leader child] @armed))
-          (expect (cancellation/cancelled? token))
-          (expect (cancellation/cancelled? child-token))
-          (expect (= "cancelled" (:status (agents/info db child))))
-          (expect (not (#'gateway/agent-leader-active? leader))
-                  "A stopped leader cannot continue its cancelled children")
-          (swap! registry assoc-in
-            [leader :turns "next-turn"]
-            {:status "running" :cancel-token (cancellation/cancellation-token)})
-          (expect (#'gateway/agent-leader-active? leader)
-                  "The next leader turn can continue them"))))))
+          (expect (= [leader] @armed))
+           (expect (cancellation/cancelled? token))
+           (expect (not (cancellation/cancelled? child-token)))
+           (expect (= "queued" (:status (agents/info db child)))))))))
 
 (defdescribe
   inactive-and-incomplete-delegations-do-not-allocate-children-test
@@ -1773,188 +1805,59 @@
                                                (swap! seen conj [operation (:live? env)])
                                                [])}
           (fn []
-            (doseq [operation [:extend :deny :wait :timeline]]
+            (doseq [operation [:extend :deny :timeline]]
               (gateway/agents-operation! "parent" operation {}))
-            (expect (= [[:extend true] [:deny true] [:wait nil] [:timeline nil]] @seen)))))))
+            (expect (= [[:extend true] [:deny true] [:timeline nil]] @seen)))))))
 
 ;; Regression for #405: a cancel of a finished child must keep its outcome.
 (defdescribe cancel-of-a-finished-child-test
-             (it "answers a finished child unchanged and cancels nothing"
-                 (let [db
-                       (h/store)
+  (it "does not accept a cancel after settlement"
+      (let [db (h/store)
+            leader (str (h/store-session! db {:channel :api}))
+            env {:db-info db :session-id leader}]
+        (doseq [status ["completed" "failed" "cancelled"]]
+          (let [child (child! db leader {})
+                id (:id (agents/register-task! env (agents/info db child)
+                                              (fn [_] (expect false "No interrupt")) nil))]
+            (agents/finish! db child status)
+            (agents/settle-task! env (agents/info db child))
+            (expect (= {:accepted false} (gateway/task-operation! leader id true)))
+            (expect (= status (get-in (task/status leader id) [:record :status]))))))))
 
-                       leader
-                       (str (h/store-session! db {:channel :api}))
+(defdescribe child-id-arguments-take-task-ids-test
+  (it "names a child by a1, A1 or its session id in Council controls"
+      (let [db (h/store)
+            leader (str (h/store-session! db {:channel :api}))
+            child (child! db leader {})
+            env {:db-info db :session-id leader}]
+        (doseq [ref ["a1" "A1" child]]
+          (expect (= child (get (agents/operation! env :timeline {:session_id ref}) "session_id"))))
+        (expect (nil? (#'agents/check-after! env [{:task "Next" :after ["A1"]}])))
+        (expect (= :invalid-request
+                   (outcome #(agents/operation! env :extend {:session_id "A9" :iterations 1})))))))
 
-                       env
-                       {:db-info db :session-id leader}]
-
-                   (doseq [status ["completed" "failed" "cancelled"]]
-                     (let [child (child! db leader {})]
-                       (agents/finish! db child status)
-                       (with-redefs [lp/db-info (constantly db)]
-                         (expect (= {:session_id child :status status :cancelled []}
-                                    (#'gateway/agent-cancel env {:session_id child}))
-                                 status))
-                       (expect (= status (:status (agents/info db child))) status))))))
-
-;; Child id arguments: a task id names a child in any letter case, as the session id does.
-(defdescribe
-  child-id-arguments-take-task-ids-test
-  {:context [fast-waits]}
-  (it
-    "names a child by a1, A1 or its session id in wait and cancel"
-    (let [db
-          (h/store)
-
-          leader
-          (str (h/store-session! db {:channel :api}))
-
-          first-child
-          (child! db leader {})
-
-          second-child
-          (child! db leader {})
-
-          env
-          {:db-info db :session-id leader}
-
-          waited
-          (fn [ref]
-            (let [record (first (:result (agents/wait-agents env [ref] {:timeout_secs 1})))]
-              [(get record "session_id") (get record "status")]))]
-
-      (agents/finish! db first-child "completed")
-      (agents/finish! db second-child "completed")
-      (expect (= [[first-child "completed"] [first-child "completed"] [first-child "completed"]
-                  [second-child "completed"]]
-                 (mapv waited ["a1" "A1" first-child "A2"])))
-      (expect (nil? (#'agents/check-after! env [{:task "Next" :after ["A1"]}])))
-      (expect (= first-child
-                 (get (agents/operation! env :timeline {:session_id "A1"}) "session_id")))
-      (with-redefs [lp/db-info (constantly db)]
-        (expect (= [second-child "completed"]
-                   (let [record (first (:result (agents/cancel-agent env "A2")))]
-                     [(get record "session_id") (get record "status")])))
-        (expect (= "No subagent has task id A9. council.wait() shows the ids."
-                   (try (agents/cancel-agent env "A9")
-                        nil
-                        (catch clojure.lang.ExceptionInfo e (ex-message e)))))))))
-
-;; Regression for #405: a human hold of a child's queue ends the wait with status held.
+;; Regression for #405: a held queue is visible without ending the attempt.
 (defdescribe wait-reports-a-held-child-test
-             (it "reports held for a queued child whose queue a human holds"
-                 (let [db
-                       (h/store)
+  (it "reports held for a queued child whose queue a human holds"
+      (let [db (h/store)
+            leader (str (h/store-session! db {:channel :api}))
+            child (child! db leader {:status "queued"})
+            env {:db-info db :session-id leader}
+            id (:id (agents/register-task! env (agents/info db child) (fn [_]) nil))]
+        (with-redefs [lp/db-info (constantly db)]
+          (try (#'gateway/put-session! child {:next-seq 0 :queue-paused true
+                                             :turns {"t1" {:status "queued"}}})
+               (let [status (task/status leader id)]
+                 (expect (= "held" (get-in status [:record :status])))
+                 (expect (= :running (get-in status [:task :state]))))
+               (finally (#'gateway/drop-session! child)))))))
 
-                       leader
-                       (str (h/store-session! db {:channel :api}))
-
-                       child
-                       (child! db leader {:status "queued"})]
-
-                   (with-redefs [lp/db-info (constantly db)]
-                     (try (#'gateway/put-session!
-                           child
-                           {:next-seq 0 :queue-paused true :turns {"t1" {:status "queued"}}})
-                          (let [record (first (:result (agents/wait-agents {:db-info db
-                                                                            :session-id leader}
-                                                                           [child]
-                                                                           {:timeout_secs 5})))]
-                            (expect (= "held" (get record "status")) (pr-str record)))
-                          (finally (#'gateway/drop-session! child)))))))
-
-;; Council orchestration study: a blocking wait idled on finished work and returned only status
-;; and iteration counts. A wait now returns at the first event with a progress digest.
-(defdescribe
-  event-wait-test
-  {:context [fast-waits]}
-  (let [now
-        #(java.util.Date.)
-
-        team
-        (fn []
-          (let [db
-                (h/store)
-
-                leader
-                (str (h/store-session! db {:channel :api}))]
-
-            {:db db
-             :leader leader
-             :env {:db-info db :session-id leader}
-             :done (child! db leader {:status "running" :iteration_budget 10})
-             :busy (child! db leader {:status "running" :iteration_budget 10})}))
-
-        answer
-        (fn [done]
-          (fn [_ sid]
-            (if (= done (str sid))
-              [{:id "t" :content [{"type" "prose" "markdown" "Done answer"}]}]
-              [])))
-
-        by-id
-        (fn [records]
-          (into {} (map (juxt #(get % "session_id") identity)) records))]
-
-    (it
-      "returns when the first child ends and shows only new progress notes"
-      (let [{:keys [db env done busy]}
-            (team)
-
-            live
-            (atom #{done busy})
-
-            turn
-            (str (random-uuid))]
-
-        (with-fake-runtime
-          db
-          live
-          (fn [_]
-            (with-redefs [ps/db-list-session-turns
-                          (answer done)
-
-                          ps/db-list-session-turns-meta
-                          (fn [_ sid]
-                            (if (= busy (str sid)) [{:id turn :position 0 :created-at (now)}] []))
-
-                          ps/db-list-session-turn-iterations
-                          (fn [_ id]
-                            (if (= turn (str id))
-                              [{:position 0 :assistant-prose "Reading the parser" :created-at (now)}
-                               {:position 1
-                                :assistant-prose "The bug is in tokenize"
-                                :created-at (now)}]
-                              []))]
-
-              (let [started
-                    (System/currentTimeMillis)
-
-                    ender
-                    (future (Thread/sleep 300)
-                            (agents/finish! db done "completed")
-                            (swap! live disj done))
-
-                    records
-                    (by-id (:result (agents/wait-agents env [done busy] {:timeout_secs 30})))
-
-                    elapsed
-                    (- (System/currentTimeMillis) started)]
-
-                @ender
-                (expect (< elapsed 15000) (str "The wait ended at the first child: " elapsed " ms"))
-                (expect (= ["completed" "Done answer"]
-                           [(get-in records [done "status"]) (get-in records [done "answer"])]))
-                (expect (= "running" (get-in records [busy "status"])))
-                (expect (= ["Reading the parser" "The bug is in tokenize"]
-                           (get-in records [busy "notes"])))
-                (expect (integer? (get-in records [busy "step_secs"])))
-                (expect (integer? (get-in records [busy "elapsed_secs"])))
-                (expect (nil? (get (first (:result
-                                            (agents/wait-agents env [busy] {:timeout_secs 1})))
-                                   "notes"))
-                        "A second check-in shows only new notes")))))))
+(defdescribe event-wait-test
+  (let [now #(java.util.Date.)
+        team (fn [] (let [db (h/store)
+                          leader (str (h/store-session! db {:channel :api}))]
+                      {:db db :env {:db-info db :session-id leader}
+                       :busy (child! db leader {:status "running" :iteration_budget 10})}))]
     ;; Issue #494: a tool of a child waits for the person at a form in the leader session.
     ;; The leader must not read that wait as a slow step and cancel the child.
     (it
@@ -1987,126 +1890,56 @@
                           (fn [_ id]
                             (if (= turn (str id)) [{:position 0 :finished-at long-ago}] []))]
 
-              (let [alerts #(get (first (:result (agents/wait-agents env [busy] {:timeout_secs 1})))
+              (let [alerts #(get (snapshot env busy)
                                  "alerts")]
                 (expect (= ["awaits_person"] (alerts)))
                 (reset! forms 0)
                 (expect (= ["slow_step"] (alerts))
                         "After the answer, a slow step is slow again")))))))
-    (it
-      "returns when a running child publishes a Council message"
-      (let [{:keys [db env busy]}
-            (team)
+    (it "shows Council messages in repeated reads of the same live snapshot"
+        (let [{:keys [env busy]} (team)
+              turn (str (random-uuid))]
+          (with-redefs [ps/db-list-session-turns-meta (fn [_ _] [{:id turn :position 0 :created-at (now)}])
+                        ps/db-list-session-turn-iterations (fn [_ _] [{:position 0 :created-at (now)
+                                                                        :council-publications [{:entry_id 7}]}])
+                        ps/db-council-get (fn [_ _] {:entry_id 7 :content "tokenize drops tabs"})]
+            (dotimes [_ 2]
+              (let [record (snapshot env busy)]
+                (expect (= [{"entry_id" 7 "content" "tokenize drops tabs"}]
+                           (get record "messages")))
+                ;; Release run 41120931788: the SDK refused this record.
+                (expect (document/valid-json? "agents" "record" record)))))))))
 
-            live
-            (atom #{busy})
-
-            turn
-            (str (random-uuid))
-
-            steps
-            (atom [{:position 0 :assistant-prose "Reading the parser" :created-at (now)}])]
-
-        (with-fake-runtime
-          db
-          live
+(defdescribe waits-park-on-team-signals-test
+  (it "releases only the active wait without ending the child attempt"
+      (let [db (h/store)
+            leader (str (h/store-session! db {:channel :api}))
+            env {:db-info db :session-id leader}
+            child (child! db leader {:status "running"})
+            id (:id (agents/register-task! env (agents/info db child) (fn [_]) nil))
+            wait {:block "b" :token "wait"}]
+        (expect (= :running (:state (task/await! leader id wait))))
+        (task/detach-awaits! leader :council)
+        (expect (= :detached (:state (task/await! leader id wait))))
+        (expect (= :running (:state (task/await! leader id (assoc wait :token "again")))))))
+  (it "detaches an await that starts after the child asks"
+      (let [db (h/store)
+            leader (str (h/store-session! db {:channel :api}))
+            env {:db-info db :session-id leader}
+            child (child! db leader {:status "running"})
+            id (:id (agents/register-task! env (agents/info db child) (fn [_]) nil))]
+        (with-fake-runtime db (atom #{leader})
           (fn [_]
-            (with-redefs [ps/db-list-session-turns-meta
-                          (fn [_ sid]
-                            (if (= busy (str sid)) [{:id turn :position 0 :created-at (now)}] []))
-
-                          ps/db-list-session-turn-iterations
-                          (fn [_ id]
-                            (if (= turn (str id)) @steps []))
-
-                          ps/db-turn-published-after
-                          (fn [_ id position]
-                            (boolean (some #(and (seq (:council-publications %))
-                                                 (> (long (:position %)) (long position)))
-                                           (when (= turn (str id)) @steps))))
-
-                          ps/db-council-get
-                          (fn [_ id]
-                            (when (= 7 id) {:entry_id 7 :content "tokenize drops tabs"}))]
-
-              (let [publisher
-                    (future (Thread/sleep 300)
-                            (swap! steps conj
-                              {:position 1 :council-publications [{:entry_id 7}] :created-at (now)})
-                            (agents/claim-iteration! {:db-info db :session-id busy}))
-
-                    started
-                    (System/currentTimeMillis)
-
-                    record
-                    (first (:result (agents/wait-agents env [busy] {:timeout_secs 30})))]
-
-                @publisher
-                (expect (< (- (System/currentTimeMillis) started) 15000))
-                (expect (= [{"entry_id" 7 "content" "tokenize drops tabs"}] (get record "messages"))
-                        (pr-str record))
-                ;; Release run 41120931788: the SDK refused this record, as messages had no kind.
-                (expect (document/valid-json? "agents" "record" record) (pr-str record))))))))
-    (it "does not end the wait for a child that ended before it"
-        (let [{:keys [db env done busy]}
-              (team)
-
-              live
-              (atom #{done busy})]
-
-          (with-fake-runtime
-            db
-            live
-            (fn [_]
-              (with-redefs [ps/db-list-session-turns (answer done)]
-                (agents/finish! db done "completed")
-                (swap! live disj done)
-                (let [started (System/currentTimeMillis)
-                      records (by-id (:result
-                                       (agents/wait-agents env [done busy] {:timeout_secs 2})))]
-
-                  (expect (>= (- (System/currentTimeMillis) started) 1500))
-                  (expect (= "running" (get-in records [busy "status"])))
-                  (expect (nil? (get-in records [busy "notes"])))))))))))
-
-;; Council wait cost study (round 2 audit): a waiting leader built every team row each second, 47
-;; statements with 3 running children, and a question or a full team polled each second. A wait
-;; now reads the store rows of its team and parks on the signal of a team change or a reply.
-(defdescribe
-  waits-park-on-team-signals-test
-  (it "an idle wait builds no team row and wakes at the signal of a change"
-      (let [db
-            (h/store)
-
-            leader
-            (str (h/store-session! db {:channel :api}))
-
-            child
-            (child! db leader {:status "running"})
-
-            reads
-            (atom 0)]
-
-        (with-fake-runtime
-          db
-          (atom #{child})
-          (fn [_]
-            (with-redefs [ps/db-agent-list (let [f ps/db-agent-list]
-                                             (fn [& args]
-                                               (swap! reads inc)
-                                               (apply f args)))]
-              (let [started (System/currentTimeMillis)
-                    waited (future (outcome #(agents/wait-agents {:db-info db :session-id leader}
-                                                                 [child]
-                                                                 {:timeout_secs 20})))]
-
-                (Thread/sleep 2500)
-                (expect (= 1 @reads) "An idle wait reads its team once for each tick of 5 s")
-                (ps/db-agent-update! db child {:status "failed"})
-                (agents/signal! [:team leader])
-                (let [records (deref waited 2000 ::timeout)]
-                  (expect (= "failed" (get (first records) "status")) (pr-str records))
-                  (expect (< (- (System/currentTimeMillis) started) 4500)))))))))
+            (let [asked (future (agents/ask {:db-info db :session-id child}
+                                            "Which parser?" {:timeout_secs 10}))]
+              (try (expect (= "asking" (get (asking-record env child) "status")))
+                   (expect (= :detached (:state (task/await! leader id {:block "b" :token "wait"}))))
+                   (expect (= ["Which parser?"]
+                              (mapv #(get-in % [:reason :question])
+                                    (task/take-detach-notices! leader "b"))))
+                   (expect (= :running (:state (task/state leader id))))
+                   (finally (agents/finish! db child "cancelled")
+                            (deref asked 2000 nil))))))))
   (it "a question gets its reply at the signal of the reply"
       (let [db
             (h/store)
@@ -2135,37 +1968,7 @@
                   {:session-id leader}
                   {:content "Use the new parser." :reply_to entry-id})
                 (agents/council-inserted! {:thread_id entry-id :reply_to entry-id})
-                (expect (= "Use the new parser." (deref asked 2000 ::timeout)))))))))
-  (it "a task over the active limit starts at the signal of a free slot"
-      (let [db
-            (h/store)
-
-            leader
-            (str (h/store-session! db {:channel :api}))
-
-            ended
-            (child! db leader {:status "failed"})
-
-            spawns
-            (atom 0)]
-
-        (with-fake-runtime
-          db
-          (atom #{})
-          (fn [_]
-            (with-redefs [agents/runtime-op! (fn [_ op _]
-                                               (when (= :spawn op)
-                                                 (if (= 1 (swap! spawns inc))
-                                                   (agents/fail! :agent-limit "The team is full")
-                                                   {:session_id ended})))]
-              (let [ran (future (outcome #(agents/run {:db-info db :session-id leader}
-                                                      ["Check evidence"]
-                                                      {:timeout_secs 20})))]
-                (Thread/sleep 500)
-                (agents/signal! [:team leader])
-                (let [records (deref ran 3000 ::timeout)]
-                  (expect (= "failed" (get (first records) "status")) (pr-str records))
-                  (expect (= 2 @spawns))))))))))
+                (expect (= "Use the new parser." (deref asked 2000 ::timeout))))))))))
 
 ;; council.run promises that more than 16 tasks start as earlier ones finish. The gateway refused
 ;; the next spawn with budget-exceeded, which a run does not retry, so the whole run failed.
@@ -2261,7 +2064,7 @@
             (with-redefs [agents/runtime-op! (fn [_ _ _]
                                                (swap! spawned inc)
                                                {:session_id "child"})]
-              (try (agents/run {:db-info db :session-id leader} tasks)
+              (try (agents/prepare-run! {:db-info db :session-id leader} tasks)
                    nil
                    (catch clojure.lang.ExceptionInfo e e)))]
 
@@ -2272,8 +2075,8 @@
         (expect (str/includes? (ex-message error) "No subagent started."))
         (expect (not (str/includes? (ex-message error) "anyOf")))))
   (it "names an unknown task key and the missing task"
-      (let [error (try (agents/run {:db-info (h/store) :session-id "leader"}
-                                   [{"question" "Count files"}])
+      (let [error (try (let [db (h/store)] (agents/prepare-run! {:db-info db :session-id (h/store-session! db {:channel :api})}
+                                   [{"question" "Count files"}]))
                        nil
                        (catch clojure.lang.ExceptionInfo e e))]
         (expect (str/includes? (ex-message error) "tasks[0]: additional property \"question\""))
@@ -2818,9 +2621,6 @@
           old
           (child! db leader {:status "completed"})
 
-          spawns
-          (atom [])
-
           env
           {:db-info db :session-id leader}]
 
@@ -2828,18 +2628,14 @@
         db
         (atom #{})
         (fn [_]
-          (with-redefs [agents/runtime-op!
-                        (fn [_ op opts]
-                          (when (= :spawn op) (swap! spawns conj (:after opts)) {:session_id old}))]
-            (doseq [tasks [[{:task "A" :after ["a2"]}] [{:task "A"} {:task "B" :after ["a4"]}]
-                           [{:task "A" :after ["a9"]}]]]
-              (expect (= :invalid-request (outcome #(agents/run env tasks {:timeout_secs 1})))
-                      (pr-str tasks)))
-            (expect (empty? @spawns) "A refused call starts no child")
-            (outcome #(agents/run env
-                                  [{:task "A" :after ["a1"]} {:task "B" :after ["a2" old]}]
-                                  {:timeout_secs 1}))
-            (expect (= [["a1"] ["a2" old]] @spawns))))))))
+           (doseq [tasks [[{:task "A" :after ["a2"]}] [{:task "A"} {:task "B" :after ["a4"]}]
+                          [{:task "A" :after ["a9"]}]]]
+             (expect (= :invalid-request (outcome #(agents/prepare-run! env tasks))) (pr-str tasks)))
+           (expect (= [old] (mapv (comp str :session_id) (ps/db-agent-list db leader))))
+           (expect (= [["a1"] ["a2" old]]
+                      (mapv :after (agents/prepare-run!
+                                     env [{:task "A" :after ["a1"]}
+                                          {:task "B" :after ["a2" old]}])))))))))
 
 ;; Session 18979591: a leader read elapsed_secs of a completed child and got KeyError. A reply
 ;; with files and no ping was refused, and an implementer got new edits while its verifiers ran.
@@ -2870,7 +2666,7 @@
              (constantly false)
              (constantly false)
              (+ (System/currentTimeMillis) 60000)
-             (agents/info db done)))
+             (agents/reconcile-child! db (agents/info db done))))
 
           wire
           (walk/stringify-keys r)]
@@ -3022,10 +2818,7 @@
           (child! db leader {:iteration_budget 1000})
 
           env
-          {:db-info db :session-id leader}
-
-          spawns
-          (atom [])]
+          {:db-info db :session-id leader}]
 
       (with-fake-runtime
         db
@@ -3036,12 +2829,8 @@
             (= 730 (get (first (outcome #(agents/extend-agent env child 200))) "iteration_budget")))
           (expect (= 1000 (:iteration_budget (agents/info db big)))
                   "The store keeps a large budget")
-          (with-redefs [agents/runtime-op! (fn [_ op opts]
-                                             (when (= :spawn op)
-                                               (swap! spawns conj (:iteration_budget opts))
-                                               {:session_id big}))]
-            (outcome #(agents/run env [{:task "Large" :iteration_budget 1000}] {:timeout_secs 1}))
-            (expect (= [1000] @spawns)))
+           (expect (= [1000]
+                      (mapv :iteration_budget (agents/prepare-run! env [{:task "Large" :iteration_budget 1000}]))))
           (expect (map? (outcome #(agents/ask-budget {:db-info db :session-id big}
                                                      5000
                                                      "Large"
@@ -3138,10 +2927,7 @@
                        (refusal :route {:session_id child :provider "p" :model "small"}))
                     "A queued child keeps its model")
             (expect (= {"provider" "p" "model" "large"}
-                       (select-keys (first (gateway/agents-operation! leader
-                                                                      :wait
-                                                                      {:session_ids [child]
-                                                                       :timeout_secs 1}))
+                        (select-keys (snapshot env child)
                                     ["provider" "model"]))
                     "The wait record names the model of the child")
             (expect (= :model-not-allowed

@@ -54,7 +54,7 @@ const ACTIVITY_VERBS: Record<string, readonly [running: string, settled: string,
     delete: ['Deleting', 'Deleted', 'Delete failed'],
   };
 
-// The Council calls that start or collect subagents.
+// Historical and current team operations must not expose child records here.
 const TEAM_CALLS: ReadonlySet<string> = new Set(['council.run', 'council.wait', 'council.resume']);
 
 function formatActivityDuration(value?: number): string | null {

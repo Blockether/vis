@@ -51,6 +51,7 @@
     [com.blockether.vis.internal.provider.limits :as provider-limits]
     [com.blockether.vis.internal.provider.service :as providers]
     [com.blockether.vis.internal.python.env :as python-env]
+    [com.blockether.vis.internal.task :as task]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
    [com.blockether.vis.internal.python.readiness :as readiness]
     [com.blockether.vis.internal.sandbox.jail :as process-jail]
@@ -4262,11 +4263,15 @@
            :ping (if cancelled? [] (vec (distinct [(:parent_id child) (:leader_id child)])))
            :idempotency_key (str "agent-result:" tid)})))))
 
+(defonce ^:private agent-lock
+  ;; Serialize attempt registration, admission and terminal snapshots.
+  (Object.))
+
 (declare settle-dependents!)
 
 (defn- settle-after-end!
   "Start, block or re-arm the tasks with after among the siblings of child `sid`, which changed
-   its status. A failure only logs: the next wait settles them again."
+   its status. A failure only logs; the next admission checks the same queue."
   [db sid]
   (try (when-let [parent (:parent_id (agents/info db sid))]
          (settle-dependents! db parent))
@@ -4305,7 +4310,6 @@
   [sid tid patch]
   ;; Before the turn leaves the registry: a wake that sees the session idle sees the hold too.
   (note-rate-limit! sid patch)
-  (agents/finish! (lp/db-info) sid (:status patch))
   ;; A subagent's background shells and REPLs end with its turn. Nothing else stops them, and a
   ;; leftover can hold a shared lock for hours. Before the result: the leader sees them gone.
   (when (agents/info (lp/db-info) sid)
@@ -4314,6 +4318,14 @@
            (tel/log! {:level :warn
                       :id ::agent-resources-stop-failed
                       :data {:session-id sid :error-class (.getName (class t))}}))))
+  (when-let [child (agents/info (lp/db-info) sid)]
+    (locking agent-lock
+      (binding [agents/*finishing-content* (or (:content patch) [])]
+        (let [db (lp/db-info)]
+          (agents/finish! db sid (:status patch))
+          (archive-terminal-turn! sid tid patch)
+          (agents/settle-task! {:db-info db :router (loop-router/get-router)}
+                               (or (agents/info db sid) child))))))
   ;; Before the result: the leader that it wakes sees the tasks that start now.
   (settle-after-end! (lp/db-info) sid)
   (try (report-agent-outcome! (lp/db-info) sid tid patch)
@@ -4321,7 +4333,8 @@
          (tel/log! {:level :warn
                     :id ::agent-outcome-failed
                     :data {:session-id sid :error-class (.getName (class e))}})))
-  (archive-terminal-turn! sid tid patch))
+  (when-not (agents/info (lp/db-info) sid)
+    (archive-terminal-turn! sid tid patch)))
 
 (defn- turn-terminal-payload
   "Payload for a TERMINAL turn event (`turn.completed` / `turn.failed` /
@@ -6949,7 +6962,10 @@
    (if-let [hold-ms (rate-limit-hold-ms db sid)]
      (hold-wake! db sid entry hold-ms)
      ;; A ping from its parent to a finished subagent is its follow-up task.
-     (let [restore! (or (agents/queue-turn! db sid)
+     (let [restore! (or (locking agent-lock
+                           (when-let [child (agents/info db sid)]
+                             (agents/settle-task! {:db-info db :router (loop-router/get-router)} child))
+                           (agents/queue-turn! db sid))
                         (throw (ex-info "Subagent cannot take a follow-up turn"
                                         {:error :invalid-recipient})))
            entries (cons entry others)
@@ -7737,38 +7753,10 @@
                                                       (:cancel-token turn)
                                                       CANCEL_TERMINAL_GRACE_MS
                                                       cancel-waiting-turn!)
-                     (let [db (lp/db-info)
-                           owner (agents/info db sid)
-                           ;; Only a leader has children.
-                           children (when-not owner (persistance/db-agent-list db (str sid)))]
-
-                       ;; Persist the stop before signalling workers so no new iteration can start.
-                       (when owner (persistance/db-agent-update! db sid {:status "cancelled"}))
-                       (some-> (:cancel-token turn)
-                               (cancellation/cancel! source))
-                       (doseq [child children
-                               ;; A stop also ends the tasks that wait for others.
-                               :when (contains? #{"waiting" "queued" "running" "blocked"}
-                                                (:status child))]
-
-                         (let [child-id (:session_id child)]
-                           (persistance/db-agent-update! db child-id {:status "cancelled"})
-                           (doseq [[child-tid child-turn] (:turns (session-entry child-id))]
-                             (case (:status child-turn)
-                               "queued"
-                               (delete-queued-turn! child-id child-tid)
-
-                               "running"
-                               (cancel-turn! child-id child-tid :parent-cancel)
-
-                               nil))))
-                       ;; A child without a turn sends no turn event.
-                       (broadcast-team! sid
-                                        (keep #(when (contains? #{"waiting" "queued" "running"
-                                                                  "blocked"}
-                                                                (:status %))
-                                                 (:session_id %))
-                                              children)))
+                     (let [db (lp/db-info)]
+                       (when (agents/info db sid)
+                         (persistance/db-agent-update! db sid {:status "cancelled"}))
+                       (some-> (:cancel-token turn) (cancellation/cancel! source)))
                      {:status "cancelling"})))))
 
 (defn cancel-session-turns!
@@ -8565,7 +8553,7 @@
       :session_id sid
       :effective "next_request")))
 
-(defn- agent-cancel
+(defn- cancel-child!
   [env opts]
   (let [db
         (:db-info env)
@@ -8581,7 +8569,7 @@
         [sid]]
 
     ;; A finished child keeps its outcome: there is nothing left to cancel (#405).
-    (if (and (contains? #{"completed" "failed" "cancelled"} (:status child))
+    (if (and (contains? #{"completed" "failed" "cancelled" "blocked" "budget_limited"} (:status child))
              (not-any? #(contains? #{"queued" "running"} (:status %))
                        (vals (:turns (session-entry sid)))))
       {:session_id sid :status (:status child) :cancelled []}
@@ -8595,6 +8583,7 @@
             (cancel-session-turns! id :agent-cancel))
           ;; A child without a turn sends no turn event.
           (broadcast-team! (:leader_id child) ids)
+          (agents/settle-task! env (agents/info db sid))
           ;; The tasks after a cancelled task are blocked.
           (settle-after-end! db sid)
           {:session_id sid :status "cancelled" :cancelled ids}))))
@@ -8645,10 +8634,6 @@
     (when denied (agents/fail! :invalid-request (str "files.write cannot grant it. " denied)))
     (not-empty files)))
 
-(defonce ^:private agent-lock
-  ;; Serializes spawns and grants, so two concurrent grants cannot lose a rule.
-  (Object.))
-
 (defn- grant-conflicts
   "The write rules of `added` that a read_only or deny rule of the child grant `current` covers,
    each with that rule. read_only and deny win over write, so a grant cannot open them (#414)."
@@ -8660,6 +8645,14 @@
                              (get current k)))
                      [:deny :read_only]))
              (:write added))))
+
+(defn- apply-agent-files!
+  [env child files]
+  (let [id (:session_id child)]
+    (persistance/db-agent-update! (:db-info env) id {:files files})
+    (broadcast-team! (:leader_id child) [id])
+    ;; Keep the grant within the parent's live policy.
+    (process-jail/grant-jail! id (:process-jail (security-policy/restrict (:security-policy env) files)))))
 
 (defn- agent-grant
   "Add the rules of `opts` to the file grant of a child of the calling parent. With `:replace`,
@@ -8710,7 +8703,7 @@
                                ": deny wins over read_only, and read_only wins over write. To "
                                "give the subagent other files for a new task, ping it with "
                                "council.publish(task, ping=[session_id], files={...}): those "
-                               "files replace its grant.")))
+                               "files apply to that attempt only.")))
 
           ;; Without write rules, a child already writes where its parent writes (#414). A write
           ;; grant would narrow that access, so it adds nothing.
@@ -8730,12 +8723,7 @@
                                      (dissoc :write)))))]
 
       (when (not= merged current)
-        (persistance/db-agent-update! db child-id {:files merged})
-        (broadcast-team! (:leader_id child) [child-id])
-        ;; Narrow the parent's live policy, so the grant stays a subset of the parent's access.
-        (process-jail/grant-jail! child-id
-                                  (:process-jail (security-policy/restrict (:security-policy env)
-                                                                           merged))))
+        (apply-agent-files! env child merged))
       (cond-> (agents/info db child-id)
         (seq unchanged)
         (assoc :unchanged unchanged)))))
@@ -8780,40 +8768,52 @@
        (catch Exception e (persistance/db-agent-update! db child-id {:status "failed"}) (throw e))))
 
 (defn- settle-dependents!
-  "Start each waiting child of parent `parent-id` whose after tasks all completed, and block or
-   re-arm the others. Only this function changes the waiting and blocked statuses after a spawn.
-   It runs after each end of a child and in each wait. A repeated call changes nothing."
+  "Block failed dependencies and admit ready children in task order up to the active cap."
   [db parent-id]
   (let [parent-id (str parent-id)]
     (locking agent-lock
-      (loop [round 0]
-        (let [children (filterv #(= parent-id (str (:parent_id %)))
-                         (persistance/db-agent-list db (agents/leader-id db parent-id)))
-              changes (agents/dependency-changes children)]
-
-          ;; A failed delivery changes the statuses again, so the next round blocks its dependents.
-          (when (and (seq changes) (<= round (count children)))
-            (doseq [[child status] changes
-                    :let [child-id (str (:session_id child))]]
-
-              (if (= "queued" status)
-                ;; The task starts now: its start time gives a new turn its startup grace.
-                (do (persistance/db-agent-update! db
-                                                  child-id
-                                                  {:status "queued" :resumed_at (util/now-ms)})
-                    (try (deliver-task! db
-                                        parent-id
-                                        child-id
-                                        {:activation-id (str "agent-release:" child-id)
-                                         :self-wake? true})
-                         (catch Exception e
-                           (tel/log! {:level :warn
-                                      :id ::agent-release-failed
-                                      :data {:session-id child-id
-                                             :error-class (.getName (class e))}}))))
-                (persistance/db-agent-update! db child-id {:status status})))
-            (broadcast-team! parent-id (mapv #(str (:session_id (first %))) changes))
-            (recur (inc round))))))))
+      (let [children #(filterv (fn [row] (= parent-id (str (:parent_id row))))
+                        (persistance/db-agent-list db (agents/leader-id db parent-id)))
+            env {:db-info db :router (loop-router/get-router)}]
+        (loop [changed []]
+          (let [rows (children)
+                by-id (into {} (map (juxt :id identity)) rows)
+                room? (< (count (filter #(contains? #{"queued" "running"} (:status %)) rows))
+                         (long agents/max-active-children))
+                [child next-status]
+                (some (fn [row]
+                        (when (contains? #{"waiting" "blocked"} (:status row))
+                          (let [attempt (task/resource-task parent-id [:subagent (str (:session_id row))])
+                                status (cond
+                                          (task/admission parent-id (:id attempt)) "queued"
+                                          ;; A gateway restart lost the in-memory follow-up. Never
+                                          ;; deliver the original task in place of that attempt.
+                                          (and (= "waiting" (:status row)) (:resumed_at row)) "failed"
+                                          :else (agents/dependency-status (map by-id (:after row))))]
+                            (when (and (not (:cancel-reason attempt))
+                                       (or (= "waiting" (:status row)) (nil? attempt))
+                                       (not= status (:status row))
+                                       (or (not= "queued" status) room?))
+                              [row status]))))
+                      (sort-by #(agents/task-ordinal (:id %)) rows))]
+            (if child
+              (let [id (str (:session_id child))
+                    attempt (task/resource-task parent-id [:subagent id])]
+                (persistance/db-agent-update! db id (cond-> {:status next-status}
+                                                     (= "queued" next-status)
+                                                     (assoc :resumed_at (util/now-ms))))
+                (when (= "queued" next-status)
+                  (try (if-let [admit (task/admission parent-id (:id attempt))]
+                         (admit)
+                         (deliver-task! db parent-id id {:activation-id (str "agent-release:" id)
+                                                         :self-wake? true}))
+                       (catch Exception ex
+                         (persistance/db-agent-update! db id {:status "failed"})
+                         (tel/log! {:level :warn :id ::agent-release-failed :error ex
+                                    :data {:session-id id}}))))
+                (agents/settle-task! env (agents/info db id))
+                (recur (conj changed id)))
+              (when (seq changed) (broadcast-team! parent-id changed)))))))))
 
 (defn settle-waiting-children!
   "Settle the waiting and blocked children of every parent. A stopped gateway can leave a task
@@ -8853,7 +8853,9 @@
           key
           (if-let [k (:key opts)]
             (str "key:" (or (:agent-caller env) "sdk") ":" k)
-            (str through ":" fingerprint))
+            (if-let [batch (:agent-batch env)]
+              (str through ":" batch)
+              (str through ":" fingerprint)))
 
           previous
           (some #(when (and (= sid (:parent_id %)) (= key (:spawn_key %))) %) children)
@@ -8874,7 +8876,9 @@
 
           ;; A task with after starts only when they complete; the active cap counts it then.
           status
-          (if (seq deps) (agents/dependency-status deps) "queued")]
+          (cond (:defer-agent-admission env) "waiting"
+                (seq deps) (agents/dependency-status deps)
+                :else "queued")]
 
       (if previous
         (if (= fingerprint (:spawn_fingerprint previous))
@@ -8970,6 +8974,7 @@
                              :spawn_fingerprint fingerprint
                              :checkpoint checkpoint}}))]
 
+            (when-let [reserve! (:reserve-agent! env)] (reserve! child-id))
             (when-let [project-id (:project-id (persistance/db-get-session db sid))]
               (persistance/db-set-session-project! db child-id project-id))
             (when-let [group-id (:group-id (persistance/db-get-session db sid))]
@@ -8983,7 +8988,7 @@
                              child-id
                              {:activation-id (get-in (ctx-loop/read-turn-state env)
                                                      [:council :activation-id])}))
-            (broadcast-team! sid [child-id])
+            (when-not (:reserve-agent! env) (broadcast-team! sid [child-id]))
             (agent-view db (agents/info db child-id))))))))
 
 (defn- agent-live?
@@ -9019,7 +9024,8 @@
     (council/publish! db
                       #(council/runtime db)
                       {:session-id (str (:session-id env))
-                       :source "sdk"
+                       :source (if (:admitting-agent env) "host" "sdk")
+                       :self-wake? (boolean (:admitting-agent env))
                        :activation-id (get-in (ctx-loop/read-turn-state env)
                                               [:council :activation-id])}
                       opts)))
@@ -9035,11 +9041,95 @@
                                      cancellation/cancelled?))))
                  (vals (:turns (session-entry (str sid)))))))
 
+(defn- register-agent-attempt!
+  [env child admit]
+  (let [owner (str (:session-id env))
+        sid (str (:session_id child))
+        resource [:subagent sid]
+        registered (volatile! nil)
+        descriptor (agents/register-task!
+                     env child
+                     (fn [_]
+                       (locking agent-lock
+                         (let [current (task/resource-task owner resource)]
+                           (when (and (or (nil? current)
+                                           (and (= (:id @registered) (:id current))
+                                                (= :running (:state current))))
+                                       (agents/info (:db-info env) sid))
+                              (cancel-child! env {:session_id sid})))))
+                     admit)]
+    (vreset! registered descriptor)
+    descriptor))
+
+(defn- agent-run
+  [env tasks]
+  (locking agent-lock
+    (let [db (:db-info env)
+          owner (str (:session-id env))
+          specs (agents/prepare-run! env tasks)
+          batch (task/call-id)
+          workspace (resolve-workspace db owner)
+          rollbacks (volatile! [])
+          reserve! (fn [sid]
+                     (vswap! rollbacks conj #(do (persistance/db-delete-session-tree! db sid)
+                                                 (drop-session! sid))))]
+      ;; Check every grant before the first child is forked or resumed.
+      (doseq [spec specs :when (contains? spec :files)]
+        (when (and (:child spec) (not (:security-policy env)))
+          (agents/fail! :inactive-session "A file grant needs the parent's live session"))
+        (agent-files env workspace (:files spec)))
+      (let [handles
+            (try
+              (mapv
+                (fn [n {:keys [child] :as spec}]
+                  (if child
+                    (let [row (agents/info db child)
+                          _ (agents/settle-task! env row)
+                          restore! (or (agents/queue-turn! db child)
+                                       (agents/fail! :invalid-recipient "The child cannot start another task"))
+                          _ (vswap! rollbacks conj restore!)
+                          _ (persistance/db-agent-update! db child {:status "waiting"})
+                          handle (register-agent-attempt!
+                                   env row
+                                   (fn []
+                                     (let [current (:files (agents/info db child))
+                                           files (if (contains? spec :files)
+                                                   (agent-files env workspace (:files spec))
+                                                   (get (meta row) :spawn-files (:files row)))
+                                           grant! #(apply-agent-files! env row %)]
+                                       (try
+                                         (when (not= files current) (grant! files))
+                                         (let [entry (agent-publish (assoc env :admitting-agent true) {:title "Delegated follow-up"
+                                                                          :content (:task spec)
+                                                                          :ping [child] :reply_required true})]
+                                           (when (= "unavailable" (get-in entry [:replies 0 :state]))
+                                             (agents/fail! :invalid-recipient "The child could not start")))
+                                         (catch Throwable t
+                                           (when (not= files current)
+                                             (try (grant! current)
+                                                  (catch Throwable rollback (.addSuppressed t rollback))))
+                                           (throw t))))))]
+                      (vswap! rollbacks conj #(task/discard! owner (:id handle)))
+                      handle)
+                    (let [row (agent-spawn (assoc env :defer-agent-admission true :reserve-agent! reserve!
+                                                   :agent-batch (str batch ":" n)) spec)
+                          handle (register-agent-attempt! env row nil)]
+                      (vswap! rollbacks conj #(task/discard! owner (:id handle)))
+                      handle)))
+                (range) specs)
+              (catch Throwable t
+                (doseq [rollback (rseq @rollbacks)]
+                  (try (rollback) (catch Throwable failure (.addSuppressed t failure))))
+                (throw t)))]
+        (settle-dependents! db owner)
+        (broadcast-team! owner (mapv :child-session-id handles))
+        handles))))
+
 (def agent-runtime
   "The session-agent operations `agents/install-runtime!` receives at startup."
   {:spawn #'agent-spawn
+   :run #'agent-run
    :settle-dependents #'settle-dependents!
-   :cancel #'agent-cancel
    :route #'agent-route
    :grant #'agent-grant
    :live? #'agent-live?
@@ -9072,6 +9162,16 @@
         :session-id sid)
       operation
       opts)))
+
+(defn task-operation!
+  "Read or cancel a Task owned by this session."
+  [sid id cancel?]
+  (when-not (task/state sid id)
+    (agents/fail! :task-not-found "No Task has that id in this session"))
+  (if cancel?
+    {:accepted (task/cancel! sid id :agent)}
+    (or (task/status sid id)
+        (agents/fail! :task-not-found "No Task has that id in this session"))))
 
 (defn fork-session!
   "Fork `sid` into a NEW INDEPENDENT session holding a deep copy of every turn

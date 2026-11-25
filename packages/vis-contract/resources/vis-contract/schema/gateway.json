@@ -894,18 +894,6 @@
           "response_schema": "agent_records"
         }
       },
-      "path": "/v1/sessions/:sid/agents/cancel"
-    },
-    {
-      "audience": "sdk",
-      "operations": {
-        "post": {
-          "request": "json",
-          "response": "json",
-          "extension": "background",
-          "response_schema": "agent_records"
-        }
-      },
       "path": "/v1/sessions/:sid/agents/deny"
     },
     {
@@ -951,7 +939,7 @@
           "request": "json",
           "response": "json",
           "extension": "callback",
-          "response_schema": "agent_records"
+          "response_schema": "subagent_tasks"
         }
       },
       "path": "/v1/sessions/:sid/agents/run"
@@ -959,14 +947,26 @@
     {
       "audience": "sdk",
       "operations": {
-        "post": {
-          "request": "json",
+        "get": {
+          "request": "none",
           "response": "json",
           "extension": "background",
-          "response_schema": "agent_records"
+          "response_schema": "task_status"
         }
       },
-      "path": "/v1/sessions/:sid/agents/wait"
+      "path": "/v1/sessions/:sid/tasks/:task-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json",
+          "extension": "background",
+          "response_schema": "task_cancel"
+        }
+      },
+      "path": "/v1/sessions/:sid/tasks/:task-id/cancel"
     },
     {
       "audience": "sdk",
@@ -7624,6 +7624,15 @@
     "agent_timeline": {
       "$ref": "agents.json#/$defs/timeline"
     },
+      "subagent_tasks": {
+        "$ref": "agents.json#/$defs/subagent_tasks"
+      },
+      "task_status": {
+        "$ref": "task.json#/$defs/status"
+      },
+      "task_cancel": {
+        "$ref": "task.json#/$defs/cancel"
+      },
     "agent_records": {
       "$ref": "agents.json#/$defs/records"
     },

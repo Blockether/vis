@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.python.env :as py-env]
             [com.blockether.vis.internal.session.agents :as agents]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.sandbox.jail :as pj]
             [com.blockether.vis.internal.sandbox.scoped-policy :as scoped-policy]
             [com.blockether.vis.internal.session.model :as smodel]
@@ -558,93 +559,70 @@
         (expect (= ["small" "large" "large" "small"] @calls))
         (finally (loop-env/dispose-environment! env))))))
 
-(defdescribe
-  registered-python-agent-bindings-reach-host-test
-  (it
-    "registered python agent bindings reach host"
-    (let [env
-          (loop-env/create-environment (router) {:db :memory})
-
-          calls
-          (atom [])
-
-          requests
-          (atom 0)]
-
-      (try
-        (with-redefs
-          [agents/runtime-op!
-           (fn [host op opts]
-             (swap! calls conj [(:session-id host) op opts])
-             {:session_id (str "child-" (count @calls))})
-
-           agents/wait-records
-           (fn [host ids timeout]
-             (swap! calls conj [(:session-id host) :wait {:ids (vec ids) :timeout timeout}])
-             [{:session_id "child-1" :status "completed" :answer "Done"}])
-
-           svar/ask-code!
-           (fn [_ _]
-             (if (= 1 (swap! requests inc))
-               (code-response
-                 "assert 'agents' not in globals()\nassert callable(council.members)\nr = council.run(['Verify only the boundary', {'task': 'Check docs', 'iteration_budget': 2}], timeout_secs=5)\nassert r[0]['answer'] == 'Done', r\nassert council.wait(['child-1'])[0]['status'] == 'completed'\nassert council.wait(timeout_secs=3)[0]['status'] == 'completed'\nassert council.cancel('child-1')[0]['session_id'] == 'child-1'\nls('.')")
-               {:stop-reason :end :content "Bindings invoked"}))]
-
-          (turn/run-turn! env "Exercise registered Python methods" {}))
-        (expect (= [:spawn :spawn :wait :wait :wait :cancel :wait] (mapv second @calls)))
-        (expect (= [{:task "Verify only the boundary"} {:task "Check docs" :iteration_budget 2}
-                    {:ids ["child-1" "child-2"] :timeout 5} {:ids ["child-1"] :timeout 240}
-                    {:ids [] :timeout 3} {:session_id "child-1"} {:ids ["child-1"] :timeout 5}]
-                   (mapv #(nth % 2) @calls)))
-        (expect (every? #(= (:session-id env) (first %)) @calls))
-        ;; The agent table shows the team, so Activity keeps no team call; `ls` is the control.
-        (let [db
-              (:db-info env)
-
-              tid
-              (:id (first (ps/db-list-session-turns db (:session-id env))))
-
-              rows
-              (mapcat #(get-in % [:activity :rows])
-                      (mapcat :forms (ps/db-list-session-turn-iterations db tid)))]
-
-          (expect (= ["ls"]
-                     (mapv :operation
-                           (remove (comp seq :children)
-                             (mapcat #(tree-seq (comp seq :children) :children %) rows))))))
-        (finally (loop-env/dispose-environment! env))))))
+(defdescribe registered-python-agent-bindings-reach-host-test
+  (it "returns typed Task handles and keeps unread terminal records discoverable"
+      (let [env (loop-env/create-environment (router) {:db :memory})
+            owner (:session-id env)
+            calls (atom [])
+            requests (atom 0)]
+        (try
+          (with-redefs-fn
+            {#'agents/start-tasks
+             (fn [host tasks]
+               (swap! calls conj [(:session-id host) tasks])
+               (mapv (fn [n]
+                       (let [child-id (str "a" n)
+                             record {:id child-id :session_id (str "child-" n)
+                                     :status "completed" :answer "Done"}
+                             {:keys [row complete!]} (task/start-manual!
+                                                       owner {:kind :subagent :name child-id
+                                                              :guest-data {:child-id child-id
+                                                                           :child-session-id (:session_id record)}}
+                                                       (fn [_]))]
+                         (complete! (constantly {:state :done :record record
+                                                 :value {"__vis_object__" "SubagentRecord"
+                                                         "__vis_attrs__" record}}))
+                         (task/guest-task owner (:id row))))
+                     [1 2]))
+             #'svar/ask-code!
+             (fn [_ _]
+               (case (swap! requests inc)
+                 1 (code-response (str "import asyncio\nassert 'agents' not in globals()\n"
+                                       "a, b = await council.run(['First', {'task': 'Second'}])\n"
+                                       "print(a.id, b.session_id, isinstance(a, asyncio.Task))"))
+                 2 (code-response (str "assert a in asyncio.all_tasks()\n"
+                                       "assert a.record().answer == 'Done'\n"
+                                       "assert a.wait(0).status == 'completed'\n"
+                                       "print((await a).answer, a in asyncio.all_tasks(), b in asyncio.all_tasks())"))
+                 {:stop-reason :end :content "Bindings invoked"}))}
+            #(turn/run-turn! env "Exercise registered Python methods" {}))
+          (expect (= [[owner ["First" {"task" "Second"}]]] @calls))
+          (let [db (:db-info env)
+                tid (:id (first (ps/db-list-session-turns db owner)))
+                forms (pr-str (mapcat :forms (ps/db-list-session-turn-iterations db tid)))]
+            (expect (str/includes? forms "a1 child-2 True"))
+            (expect (str/includes? forms "Done False True")))
+          (finally (loop-env/dispose-environment! env))))))
 
 ;; Regression: a turn with a CLI `--model` gave its subagents the router default model.
 (defdescribe turn-route-reaches-agent-operations-test
-             (it "a per-turn model reaches agent operations without a session pick"
-                 (let [env
-                       (loop-env/create-environment (router) {:db :memory})
-
-                       routes
-                       (atom [])
-
-                       requests
-                       (atom 0)]
-
-                   (try
-                     (with-redefs [agents/runtime-op!
-                                   (fn [host _ _]
-                                     (swap! routes conj (:route (ctx-loop/read-turn-state host)))
-                                     {:session_id "child-1"})
-
-                                   agents/wait-records
-                                   (fn [_ _ _]
-                                     [{:session_id "child-1" :status "completed" :answer "Done"}])
-
-                                   svar/ask-code!
-                                   (fn [_ _]
-                                     (if (= 1 (swap! requests inc))
-                                       (code-response "council.run(['Check docs'], timeout_secs=5)")
-                                       {:stop-reason :end :content "Spawned"}))]
-
-                       (turn/turn! env [(svar/user "Spawn on the turn model")] {:model "large"}))
-                     (expect (= [{:provider "fixture" :model "large"}] @routes))
-                     (finally (loop-env/dispose-environment! env))))))
+  (it "a per-turn model reaches agent operations without a session pick"
+      (let [env (loop-env/create-environment (router) {:db :memory})
+            routes (atom [])
+            requests (atom 0)]
+        (try
+          (with-redefs-fn {#'agents/start-tasks
+                           (fn [host _]
+                             (swap! routes conj (:route (ctx-loop/read-turn-state host)))
+                             [])
+                           #'svar/ask-code!
+                           (fn [_ _]
+                             (if (= 1 (swap! requests inc))
+                               (code-response "await council.run(['Check docs'])")
+                               {:stop-reason :end :content "Spawned"}))}
+            #(turn/turn! env [(svar/user "Spawn on the turn model")] {:model "large"}))
+          (expect (= [{:provider "fixture" :model "large"}] @routes))
+          (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
   child-allowlist-survives-router-rehydration-and-retries-test

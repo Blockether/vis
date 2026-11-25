@@ -16,11 +16,11 @@
 (def ^:private parent-code
   "E3 spawns one child twice with the same input; E7 spawns from a thread of the extension."
   (str "first = await e2e.spawn('child-' + 'e3', repeat=2)\n"
-       "second = await e2e.spawn('child-' + 'e12')\n" "records = await e2e.wait()\n"
+       "second = await e2e.run_child('child-' + 'e12', first['ids'][0])\n"
        "refused = await e2e.thread_spawn('child-' + 'e7')\n"
-       "print('E3', len(set(first['ids'])), len(first['children']))\n"
-       "print('E12', len(second['children']), sorted(r['status'] for r in records))\n"
-       "print('E7', refused['refused'], refused['code'], len(refused['children']))\n"))
+       "print('E3', len(set(first['ids'])), first['child_count'])\n"
+       "print('E12', second['child_count'], second['statuses'])\n"
+       "print('E7', refused['refused'], refused['code'], refused['child_count'])\n"))
 
 (def ^:private child-code
   "A child answers each Council request of its parent before its turn can end."
@@ -205,11 +205,11 @@
   (set (map #(get % "id") (get (request-json! :get "/v1/sessions" {}) "sessions"))))
 
 (defn- children
-  "The subagent ids of `sid`. A wait without ids answers the records of all children."
+  "Session ids of the managed children of `sid`."
   [sid]
-  (set (keep
-         #(get % "session_id")
-         (request-json! :post (str "/v1/sessions/" sid "/agents/wait") {:body {:timeout_secs 1}}))))
+  (into #{}
+        (comp (mapcat #(get % "agents")) (map #(get % "session_id")))
+        (get (request-json! :get (str "/v1/sessions/" sid "/transcript") {}) "turns")))
 
 (defn- install-fixtures!
   [^File dir]

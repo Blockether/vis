@@ -158,7 +158,7 @@
    environment retired so later work gets one fresh process."
   [python-context exec-future environment & {:keys [await-unwind?]}]
   (let [pending-replies
-        (env/pending-guest-replies python-context)
+        (env/pending-guest-replies python-context (not await-unwind?))
 
         landed?
         (try (interrupt-guest! python-context await-unwind?)

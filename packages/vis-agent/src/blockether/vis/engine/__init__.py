@@ -5,7 +5,7 @@ For installation, workflows and lifecycle choices, use the
 """
 
 from ._agent import Agent, StructuredOutputError, final_answer
-from ._agents import Subagent, SubagentRecord
+from ._agents import Subagent, SubagentRecord, SubagentTask
 from ._client import (
     Attachment,
     EngineClient,
@@ -48,6 +48,7 @@ __all__ = [
     "Attachment",
     "Subagent",
     "SubagentRecord",
+    "SubagentTask",
     "Council",
     "CouncilEntry",
     "CouncilMember",

@@ -329,10 +329,6 @@ function leaderNote(iterations: readonly TranscriptIteration[], isEnded: boolean
   return undefined;
 }
 
-// A leader step that waits for its agents. `council.run` and `council.wait` return only when an
-// agent ends, asks or writes, so the time of such a block is the time that the leader waited.
-const WAITS_FOR_AGENTS = /\bcouncil\s*\.\s*(?:run|wait)\s*\(/;
-
 // The start of each form of a step. A live form carries its own start. A stored form does not:
 // the forms of a step ran one after another and ended when the step was written, at its `created_at`.
 function formStarts(iteration: TranscriptIteration): (number | undefined)[] {
@@ -349,9 +345,8 @@ function formStarts(iteration: TranscriptIteration): (number | undefined)[] {
 }
 
 /**
- * The leader lane of a turn from its steps. A step that runs or waits for agents is a wait from
- * its start for its duration; a running step of a live turn waits to now. A step that the client
- * did not load counts as work. The note is the newest line of the leader. Undefined without a start.
+ * The leader lane of a turn. A recorded wait starts in its form and lasts for its recorded
+ * duration, or to now if it is still active. A form without wait evidence counts as work.
  */
 export function leaderLane(
   start: number | null | undefined,
@@ -366,10 +361,12 @@ export function leaderLane(
     const starts = formStarts(iteration);
     (iteration.forms ?? []).forEach((form, index) => {
       const at = starts[index];
-      // A live form gives its `code`; a stored form gives its `src`.
-      if (at === undefined || !WAITS_FOR_AGENTS.test(form.code ?? form.src ?? '')) return;
-      if (typeof form.duration_ms === 'number') waits.push({ start: at, end: at + form.duration_ms });
-      else if (end == null) waits.push({ start: at });
+      if (at === undefined) return;
+      for (const row of form.activity?.rows ?? []) {
+        if (row.operation !== 'council.wait') continue;
+        if (typeof row.duration_ms === 'number') waits.push({ start: at, end: at + row.duration_ms });
+        else if (end == null && row.state === 'running') waits.push({ start: at });
+      }
     });
   }
   return { start, end: end ?? undefined, waits: waits.sort((a, b) => a.start - b.start), note: leaderNote(iterations, end != null) };
@@ -503,7 +500,8 @@ function leaderTimes(leader: LeaderLane, now: number): { waited: number; total: 
 
 // The time of a leader, then the part of it that it waited for its agents.
 const leaderWaited = ({ waited }: { waited: number }) => `(waited ${formatAgentTime(waited)})`;
-const leaderTime = (times: { waited: number; total: number }) => `${formatAgentTime(times.total)} ${leaderWaited(times)}`;
+const leaderTime = (times: { waited: number; total: number }) =>
+  `${formatAgentTime(times.total)}${times.waited > 0 ? ` ${leaderWaited(times)}` : ''}`;
 
 // The bar ink of each status word.
 const BAR_INK: Record<string, string> = {
@@ -774,7 +772,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
               </span>
               <span className={`whitespace-nowrap text-right text-dialog-hint tabular-nums ${TIME_RULES}`}>
                 {formatAgentTime(times.total)}
-                <span className="max-sm:hidden"> {leaderWaited(times)}</span>
+                {times.waited > 0 && <span className="max-sm:hidden"> {leaderWaited(times)}</span>}
               </span>
               <StatusWord status={leaderStatus(leader)} />
             </li>
@@ -815,7 +813,7 @@ function TeamChart({ rows, now, onSelect, leader }: TableProps) {
           <li className={LEGEND_ROW} data-hover-note-frame>
             <span className={`font-bold ${CELL_RULE} ${LEADER_INK}`}>{LEADER_KEY}</span>
             <span className={`font-bold uppercase ${CELL_RULE} ${LEGEND_LAST} ${LEADER_INK}`}>{LEADER_ROLE}</span>
-            <span className="whitespace-nowrap text-dialog-hint sm:hidden">{leaderWaited(times)}</span>
+            {times.waited > 0 && <span className="whitespace-nowrap text-dialog-hint sm:hidden">{leaderWaited(times)}</span>}
             <HoverNote className={`${LEGEND_NOTE} sm:col-span-2`} note={leader.note}>
               <span className="line-clamp-1 [overflow-wrap:anywhere] text-dialog-hint">{leader.note ?? ''}</span>
             </HoverNote>

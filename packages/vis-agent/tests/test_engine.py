@@ -695,7 +695,9 @@ def test_real_council_disabled(tmp_path, monkeypatch, transport, engines):
             session.send("Verify the default").wait(timeout=30)["status"] == "completed"
         )
         team = session.council()
-        assert team.wait(timeout_secs=1) == ()
+        with pytest.raises(GatewayError) as refused:
+            team.run(["Work"])
+        assert refused.value.status == 409
         with pytest.raises(GatewayError) as disabled:
             team.members()
         assert disabled.value.status == 409
@@ -1312,8 +1314,10 @@ def test_real_council_managed_child_wakes_once(tmp_path, monkeypatch, transport)
         before_reply=before_reply,
         tool_code=(
             "if session['agent']['role'] == 'leader':\n"
-            "    if not council.wait(timeout_secs=1):\n"
-            "        print(council.run({'task': 'Report fixture evidence', 'iteration_budget': 8}))\n"
+            "    if '_fixture_child' not in globals():\n"
+            "        [_fixture_child] = await council.run([{'task': 'Report fixture evidence', 'iteration_budget': 8}])\n"
+            "        _fixture_result = await _fixture_child\n"
+            "        print('Fixture child: ' + _fixture_result['session_id'])\n"
             "else:\n"
             "    for pending in session['council']['pending_replies']:\n"
             "        print(await council.publish('Fixture evidence', reply_to=pending['entry_id']))\n"
@@ -1325,10 +1329,16 @@ def test_real_council_managed_child_wakes_once(tmp_path, monkeypatch, transport)
         )
         turn = parent.send("Delegate a bounded task")
         assert turn.wait(timeout=30)["status"] == "completed"
-        team = parent.council()
-        records = team.wait(timeout_secs=30)
-        assert len(records) == 1
-        child = client.session(records[0].session_id)
+        trace = client.routes.get_session_turn_trace(parent.id, turn.id)
+        children = [
+            line.removeprefix("Fixture child: ")
+            for row in trace["iterations"]
+            for form in row.get("forms", ())
+            for line in form.get("stdout", "").splitlines()
+            if line.startswith("Fixture child: ")
+        ]
+        assert len(children) == 1
+        child = client.session(children[0])
         settled_turns(child, 1)
         hold.set()
         active = parent.send("Collect another child report")

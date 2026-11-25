@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from blockether.vis._contracts import validate
 
-from ._agents import Subagent, SubagentRecord
+from ._agents import Subagent, SubagentRecord, SubagentTask
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,7 +180,8 @@ class Council:
                 if that entry is an unanswered request. It never falls back to older
                 requests.
             files: File rules for the follow-up task of the one pinged idle child
-                session. They replace the file grant of that child.
+                session. They apply to that attempt only; omit them to use the
+                child's original spawn grant.
 
         Returns:
             `CouncilEntry` with its entry/thread IDs and per-recipient `replies`.
@@ -280,49 +281,68 @@ class Council:
             ),
         )
 
-    def _records(self, suffix, body, definition, timeout_secs=None):
+    def _records(self, suffix, body, definition):
         validate("agents", definition, body)
-        kwargs = {}
-        if timeout_secs is not None:
-            # The gateway waits up to timeout_secs; the HTTP read waits a little longer.
-            kwargs["timeout"] = timeout_secs + 30
         return SubagentRecord.many(
-            self._session._call("POST", "/agents" + suffix, body=body, **kwargs)
+            self._session._call("POST", "/agents" + suffix, body=body)
         )
 
-    def run(
-        self, tasks: list[str | dict[str, Any]], *, timeout_secs: int = 240
-    ) -> tuple[SubagentRecord, ...]:
-        """Spawn one subagent for each task, wait for all of them and return their records.
+    def _child_reference(self, child):
+        if isinstance(child, SubagentTask):
+            if child._session != self._session:
+                raise ValueError("the SubagentTask belongs to another session")
+            return child.session_id
+        return child
 
-        A task is a string, or a dict with ``task`` and optional ``title``, ``role``, ``model``,
-        ``provider``, ``iteration_budget`` and ``files``. The wait ends when every child answers, asks
-        or stops, or after ``timeout_secs`` (at most 1800). A running child stays running.
+    def run(self, tasks: list[str | dict[str, Any]]) -> list[SubagentTask]:
+        """Start each task and return its handle in input order without waiting.
+
+        Give a task as text or a dict with `task` and optional `title`, `role`,
+        `model`, `provider`, `iteration_budget`, `files` and `after`. Use `after`
+        for dependencies. To start a follow-up, give `task` and `child`, with
+        optional `files` for that attempt only; without `files` the child has
+        its original spawn grant. Both take child IDs, child
+        session IDs or handles from this session. An await that starts while
+        the child has an open question returns at once.
         """
-        body = {"tasks": tasks, "timeout_secs": timeout_secs}
-        return self._records("/run", body, "run", timeout_secs)
+        from ._client import ProtocolError
 
-    def wait(
-        self, session_ids: list[str] | None = None, *, timeout_secs: int = 240
-    ) -> tuple[SubagentRecord, ...]:
-        """Wait for owned subagents, or for all active ones, and return their records.
+        def normalize(task):
+            if not isinstance(task, dict):
+                return task
+            task = task.copy()
+            if "child" in task:
+                task["child"] = self._child_reference(task["child"])
+            if isinstance(task.get("after"), list):
+                task["after"] = [
+                    self._child_reference(child) for child in task["after"]
+                ]
+            return task
 
-        The wait ends when each child answers, asks or stops, or after ``timeout_secs``
-        (at most 1800). A session that is not your subagent has status ``unknown``.
-        """
-        body: dict[str, Any] = {"timeout_secs": timeout_secs}
-        if session_ids is not None:
-            body["session_ids"] = session_ids
-        return self._records("/wait", body, "wait", timeout_secs)
-
-    def cancel(self, session_id: str) -> SubagentRecord:
-        """Cancel an owned child and its descendants, including queued work."""
-        return self._records("/cancel", {"session_id": session_id}, "cancel")[0]
+        body = {
+            "tasks": [normalize(task) for task in tasks]
+            if isinstance(tasks, list)
+            else tasks
+        }
+        validate("agents", "run", body)
+        descriptors = validate(
+            "agents",
+            "subagent_tasks",
+            self._session._call("POST", "/agents/run", body=body),
+        )
+        if len(descriptors) != len(tasks) or len(
+            {row["task_id"] for row in descriptors}
+        ) != len(tasks):
+            raise ProtocolError("Council.run did not return one Task for each input")
+        children = [SubagentTask(self._session, row) for row in descriptors]
+        for child in children:
+            child._start()
+        return children
 
     def extend(self, session_id: str, iterations: int) -> SubagentRecord:
         """Give a subagent more model iterations; the budget has no upper limit.
 
-        Use it to answer a budget request, or before ``resume`` of a budget-limited child.
+        Use it to answer a budget request, or before a follow-up of a budget-limited child.
         """
         body = {"session_id": session_id, "iterations": iterations}
         return self._records("/extend", body, "extend")[0]
@@ -342,7 +362,7 @@ class Council:
 
         A grant gives at most your own access. A write rule that the child can already
         write changes nothing. A write rule under a ``read_only`` or ``deny`` rule of the
-        child fails: use ``resume`` with ``files`` for a new scope. The record has a
+        child fails: use `run` with `child` and `files` for a new scope. The record has a
         ``warning`` for unchanged write rules and for an active sibling that can write
         the same files.
         """

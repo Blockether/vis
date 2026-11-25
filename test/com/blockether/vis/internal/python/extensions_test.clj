@@ -3388,7 +3388,7 @@ vis.register_extension(vis.Extension(
 
           (pyx/install-host-exchange! exchange)
           (try (doseq [[method sid path] [["GET" own "/turns"] ["POST" own "/council/wake"]
-                                          ["POST" own "/agents/wait"] ["POST" created "/turns"]]]
+                                          ["GET" own "/tasks/t1"] ["POST" created "/turns"]]]
                  (expect (= 200 (:status (guest method sid path))) path))
                ;; A spawn or a Council publication needs an active callback.
                (doseq [path ["/agents" "/council/entries"]]
@@ -3441,10 +3441,11 @@ vis.register_extension(vis.Extension(
     (with-fresh-loaded
       {"session_boundary.py"
        "import blockether.vis.extension as vis
-from blockether.vis.engine import GatewayError
+from blockether.vis.engine import GatewayError, SubagentTask
 
 def _calls():
     council = vis.council
+    child = SubagentTask(council._session, {'task_id': 't1', 'id': 'a1', 'session_id': 'C'})
     return [
         ('sessions.create', lambda: vis.sessions.create()),
         ('sessions.list', lambda: vis.sessions.list()),
@@ -3459,8 +3460,8 @@ def _calls():
         ('council.wake', lambda: council.wake('Done')),
         ('council.spawn', lambda: council.spawn('Check')),
         ('council.run', lambda: council.run(['Check'])),
-        ('council.wait', lambda: council.wait()),
-        ('council.cancel', lambda: council.cancel('C')),
+        ('child.record', child.record),
+        ('child.cancel', child.cancel),
         ('council.deny', lambda: council.deny('C', 'No')),
         ('council.answer', lambda: council.answer('C', 'Yes')),
         ('council.extend', lambda: council.extend('C', 4)),
@@ -3490,9 +3491,9 @@ async def call_async():
 
 def wait_large():
     \"\"\"Wait for a large team through the host door.\"\"\"
-    records = vis.council.wait()
-    return {'count': len(records), 'last': records[-1].session_id,
-            'answer': len(records[-1].answer)}
+    child = SubagentTask(vis.council._session, {'task_id': 't1', 'id': 'a1', 'session_id': 'C'})
+    record = child.record()
+    return {'child': record.session_id, 'answer': len(record.answer)}
 
 vis.register_extension(vis.Extension(
     name='session-boundary', alias='boundary', description='Session API boundary fixture.',
@@ -3549,8 +3550,8 @@ vis.register_extension(vis.Extension(
                      "council.wake" ["POST" "/council/wake"]
                      "council.spawn" ["POST" "/agents"]
                      "council.run" ["POST" "/agents/run"]
-                     "council.wait" ["POST" "/agents/wait"]
-                     "council.cancel" ["POST" "/agents/cancel"]
+                     "child.record" ["GET" "/tasks/t1"]
+                     "child.cancel" ["POST" "/tasks/t1/cancel"]
                      "council.deny" ["POST" "/agents/deny"]
                      "council.answer" ["POST" "/agents/answer"]
                      "council.extend" ["POST" "/agents/extend"]
@@ -3569,18 +3570,18 @@ vis.register_extension(vis.Extension(
                    (expect (= (zipmap (keys expected) (repeat "fixture")) (:result outcome))
                            (pr-str callback outcome))
                    (expect (every? (set @frames) (vals expected)) (pr-str callback @frames))))
-               ;; #405: a large response crosses the door whole: 1000 records of 4000 characters.
-               (pyx/install-host-exchange!
-                 (fn [frame extra]
-                   (if (= (str "/v1/sessions/" sid "/agents/wait") (get frame "route"))
-                     (envelope 200
-                               (vec (for [i (range 1000)]
-                                      {"session_id" (str "child-" i)
-                                       "status" "completed"
-                                       "answer" (apply str (repeat 4000 "x"))})))
-                     (exchange frame extra))))
-               (expect (= {"count" 1000 "last" "child-999" "answer" 4000}
-                          (:result (binding [extension/*current-environment* {:session-id sid
+               ;; #405: a large terminal record crosses the door whole.
+                (pyx/install-host-exchange!
+                  (fn [frame extra]
+                    (if (= (str "/v1/sessions/" sid "/tasks/t1") (get frame "route"))
+                      (envelope 200 {"task" {"id" "t1" "session_id" sid "state" "done"
+                                             "kind" "subagent" "name" "Check" "origin" {}
+                                             "started_at" 1 "view_ids" [] "detached" false}
+                                     "record" {"session_id" "C" "id" "a1" "status" "completed"
+                                               "answer" (apply str (repeat 4000000 "x"))}})
+                      (exchange frame extra))))
+                (expect (= {"child" "C" "answer" 4000000}
+                           (:result (binding [extension/*current-environment* {:session-id sid
                                                                               :db-info store}]
                                      ((symbol-fn ext 'wait_large))))))
                (finally (pyx/install-host-exchange! previous))))))))
@@ -6940,15 +6941,16 @@ vis.register_extension(vis.Extension(
               ;; Python sees the UNWRAPPED, deep-stringified `:result` only.
               (expect (= ["echo hi" "run"] (:result (run))))))))))
   (it
-    "returns a Future that reads the final result of a jailed command"
+    "hands an extension the SAME live handle the sandbox gets, not a raw dict"
+    ;; Regression: the SDK exposes the process Task as a Future.
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    r = sh.result(5)\n    return [r['id'], sh.logs(offset=0)['stage'], r['stage'], r['exit'], sh.done(), sh.cancel()]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
+       "import blockether.vis.extension as vis\nfrom concurrent.futures import Future\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    r = sh.result(5)\n    return [isinstance(sh, Future), r['id'], sh.logs(offset=0)['stage'], r['stage'], r['exit'], sh.done(), sh.cancel()]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
       (fn [_ _]
         (let [run (symbol-fn (registered "jail") 'run)
               env {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
           (binding [extension/*current-environment* env]
-            (expect (= ["h" "logs" "run" 0 true false] (:result (run)))))))))
+            (expect (= [true "h" "logs" "run" 0 true false] (:result (run)))))))))
   (it
     "raises a failing host tool envelope instead of handing Python the envelope"
     (with-loaded

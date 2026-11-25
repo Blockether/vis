@@ -253,12 +253,16 @@ wait for the next eligible invocation of the requester, also after its run ends.
 An explicit ping, or a reply that answers a request, resumes an idle session of the group. A
 managed team of subagents keeps its own rules:
 
-- A subagent with no iterations left stays idle, and Council refuses a ping to it.
-- A stop of the turn of the leader stops its subagents. A subagent session has no stop of its
-  own. A later turn of the leader continues a subagent with a ping.
-- Council refuses a ping to a stopped subagent while its leader runs no turn.
-- A ping from its parent gives an idle subagent a follow-up task. `council.wait` then returns
-  the answer. `files` in `council.publish` replaces the file grant of that subagent for the task.
+- When you stop the leader's turn, Vis cancels only the child Tasks that the leader is waiting
+  for. The other child Tasks continue.
+- A child with no iterations left stays idle. The leader must give it more iterations before
+  starting a follow-up.
+- A stopped child can take a follow-up only during an active turn of its leader.
+- A follow-up starts a new Task in the same child session. The leader can give the new Task
+  different file access. That access applies to the new Task only. Without it, the child gets
+  its original spawn grant. An await that starts while the child has an open question returns at
+  once. An explicit ping to an idle child can also give it work, but returns
+  a message receipt, not a Task.
 
 ### Automatic replies
 

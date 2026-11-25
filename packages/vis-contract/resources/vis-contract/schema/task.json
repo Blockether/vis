@@ -65,6 +65,50 @@
     }
   },
   "$defs": {
+    "status": {
+      "type": "object",
+      "required": [
+        "task"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "$ref": "#"
+        },
+        "record": {
+          "$ref": "agents.json#/$defs/record"
+        },
+        "value": {}
+      },
+      "if": {
+        "properties": {
+          "task": {
+            "properties": {
+              "kind": {
+                  "const": "subagent"
+                }
+              }
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "record"
+          ]
+        }
+      },
+      "cancel": {
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          }
+        }
+      },
     "kind": {
       "enum": [
         "tool",

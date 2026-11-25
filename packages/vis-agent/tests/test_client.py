@@ -1076,6 +1076,8 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
     }
     record = {"session_id": "child", "status": "completed", "answer": "Done"}
 
+    from test_agents import task_status
+
     def council_response(method, path, _body):
         route = path.split("?")[0]
         if route.endswith("/council"):
@@ -1085,6 +1087,12 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
                 "session_id": "child",
                 "items": [{"at": 1, "kind": "finished", "status": "completed"}],
             }
+        if route.endswith("/agents/run"):
+            return 200, [{"id": "a1", "session_id": "child", "task_id": "t1"}]
+        if route.endswith("/tasks/t1/cancel"):
+            return 200, {"accepted": False}
+        if route.endswith("/tasks/t1"):
+            return 200, task_status("t1", "running", record, owner="example")
         if "/agents" in route:
             if route.endswith("/agents") or route.endswith("/route"):
                 return 200, child
@@ -1104,9 +1112,9 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         council.publish("Entry")
         council.wake("Finished")
         council.spawn("Check the contract")
-        council.run(["Check the contract"], timeout_secs=1)
-        council.wait(["child"], timeout_secs=1)
-        council.cancel("child")
+        (task,) = council.run(["Check the contract"])
+        assert not task.cancel()
+        assert task.record().session_id == "child"
         council.publish(
             "Check again",
             ping=["child"],
@@ -1118,16 +1126,18 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         council.grant("child", {"read_only": ["/tmp/x"]})
         council.route("small", provider="fixture")
         assert council.timeline("child")["items"][0]["kind"] == "finished"
+        council._session.client.close()
         seen.update(
             (
                 method,
                 path.split("?")[0]
                 .replace("/example/", "/:sid/")
                 .replace("/entries/1", "/entries/:entry-id")
-                .replace("/agents/child/timeline", "/agents/:child-id/timeline"),
+                .replace("/agents/child/timeline", "/agents/:child-id/timeline")
+                .replace("/tasks/t1", "/tasks/:task-id"),
             )
             for method, path, _, _ in calls
-            if "/council" in path or "/agents" in path
+            if "/council" in path or "/agents" in path or "/tasks" in path
         )
     assert seen == expected
     follow_up = [call for call in calls if call[1].endswith("/council/entries")][-1]

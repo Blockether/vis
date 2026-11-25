@@ -6195,6 +6195,9 @@
                   <-json
                   (update-keys keyword))
 
+          active-files
+          (not-empty (dissoc files :spawn_files))
+
           ordinal
           (:ordinal row)
 
@@ -6240,8 +6243,11 @@
         (busy-since row)
         (assoc :busy_since (busy-since row))
 
-        files
-        (assoc :files files)
+        active-files
+        (assoc :files active-files)
+
+        (contains? files :spawn_files)
+        (with-meta {:spawn-files (some-> (:spawn_files files) (update-keys keyword))})
 
         ordinal
         (assoc :id (str "a" ordinal))
@@ -6434,6 +6440,9 @@
         clock?
         (some #(contains? changes %) [:status :resumed_at :started_at :finished_at :runs :turn_ids])
 
+        file-change? (contains? changes :files)
+        files (:files changes)
+
         changes
         (cond-> (select-keys changes
                              [:status :resumed_turns :resumed_at :result :outcome :started_at
@@ -6447,11 +6456,6 @@
              [:case [:and [:= :finished_at nil] [:<> :started_at nil]]
               [:max [:inline 0] [:- [:inline (long end)] :started_at]] :else [:inline 0]]])
 
-          (contains? changes :files)
-          (assoc :files
-            (some-> (:files changes)
-                    ->json))
-
           (contains? changes :runs)
           (assoc :runs
             (some-> (not-empty (:runs changes))
@@ -6462,11 +6466,21 @@
             (some-> (not-empty (:turn_ids changes))
                     ->json)))]
 
-    (when (seq changes)
+    (when (or (seq changes) file-change?)
       (sqlite-write-tx!
         db
         (fn [tx-info]
-          (execute! tx-info {:update :session_agent :set changes :where [:= :session_id (str sid)]})
+          (let [where [:= :session_id (str sid)]
+                changes (if file-change?
+                          (let [old (-> (query-one! tx-info {:select [:files]
+                                                            :from :session_agent :where where})
+                                        :files <-json)
+                                ;; Old rows have only the active grant. Keep it as the default
+                                ;; before the first change, including a nil grant.
+                                spawn-files (get old "spawn_files" old)]
+                            (assoc changes :files (->json (assoc files :spawn_files spawn-files))))
+                          changes)]
+            (execute! tx-info {:update :session_agent :set changes :where where}))
           (when clock?
             (some->> (query-one! tx-info
                                  {:select [:leader_id]

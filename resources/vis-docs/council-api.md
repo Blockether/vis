@@ -10,8 +10,8 @@ requests, select **HTTP** at the top of the page.
 
 - **Your program must ask a working session a question.** [Publish a message](#publish-a-message)
   in its group, then [read the replies](#read-threads-and-replies).
-- **Your program must start work in a session that is idle.** [Wake a session](#wake-a-session)
-  with a message.
+- **Your program must leave a message for a session.** [Wake the session](#wake-a-session)
+  to notify its next run.
 - **You must know which sessions can answer now.** [List active sessions](#list-active-sessions).
 
 To learn how Council works in chat, read [Council](council.md).
@@ -257,6 +257,9 @@ A wake notifies the session, also when no run is active.
 An active session receives the message as a notification. An idle independent session does not
 start a turn. The message waits in the group until the session runs again. Held queues stay held.
 The same `idempotency_key` returns the original entry and sends no second notification.
+
+A message receipt does not give your program a Task handle or a child's final answer. Managed
+child work follows the [subagent rules](council.md#choose-who-to-notify).
 
 ## Handle errors
 

@@ -494,25 +494,17 @@
 
 (defdescribe
   managed-agent-presentation-test
-  (it "shows a bounded answer preview without the full answer body"
-      (let [answer
-            (apply str (repeat 160 "😀"))
-
-            record
-            {:session_id "internal-child" :status "completed" :answer answer :iterations_used 2}
-
-            projection
-            (result-fixture [[:council.run "" [record] nil]])
-
-            view
-            (get-in projection ["rows" 0 "presentation"])]
-
+  (it "keeps child answers out of new and historical team presentations"
+      (let [record {:session_id "internal-child" :status "completed"
+                    :answer "Private child answer" :iterations_used 2}
+            projection (result-fixture [[:council.run "" [record] nil]
+                                        [:council.wait "" [record] nil]])
+            [launch wait] (map #(get % "presentation") (get projection "rows"))]
         (expect (contract/valid-projection? projection))
-        (expect (str/starts-with? answer
-                                  (str/replace (get-in view ["sections" 0 "headline"]) #"…$" "")))
-        (expect (= [] (get-in view ["sections" 0 "content"])))
-        (expect (= "Completed · 2 iterations" (get-in view ["sections" 0 "summary"])))
-        (expect (not (re-find #"internal-" (pr-str view))))))
+        (expect (= "1 subagent" (get launch "summary")))
+        (expect (empty? (get launch "sections")))
+        (expect (= "Completed · 2 iterations" (get-in wait ["sections" 0 "summary"])))
+        (expect (not (re-find #"Private child answer|internal-child" (pr-str [launch wait]))))))
   (it "shows meaningful empty and populated status counts"
       (doseq [[value expected]
               [[[] "No subagents"]
@@ -523,14 +515,14 @@
     "keeps all agent result views valid and shows open questions"
     (let [projection
           (result-fixture
-            [[:council.run "" [{:session_id "child" :status "asking" :question "Which file?"}] nil]
+            [[:council.wait "" [{:session_id "child" :status "asking" :question "Which file?"}] nil]
              [:council.wait "" [{:session_id "child" :status "failed"}] nil]
              [:council.cancel "" [{:session_id "child" :status "cancelled"}] nil]
              [:council.ask "" "Use the parser file." nil] [:council.ask "" nil nil]
              [:council.extend ""
               [{:session_id "child" :status "completed" :iteration_budget 20 :iterations_used 10}]
               nil]
-             [:council.run ""
+             [:council.resume ""
               [{:session_id "child"
                 :status "asking"
                 :question "Budget request"

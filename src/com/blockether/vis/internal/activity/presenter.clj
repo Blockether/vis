@@ -528,7 +528,7 @@
    "council.get" ["Read Council message" "Read Council message" false]
    "council.threads" ["List threads" "Listed threads" false]
    "council.members" ["List members" "Listed members" false]
-   "council.run" ["Run subagents" "Ran subagents" true]
+   "council.run" ["Start subagents" "Started subagents" false]
    "council.wait" ["Wait for subagents" "Waited for subagents" true]
    "council.cancel" ["Cancel subagent" "Cancelled subagent" false]
    "council.resume" ["Resume subagent" "Resumed subagent" true]
@@ -622,12 +622,9 @@
    "content" (council-body value "content")})
 
 (defn- council-record
-  "One line for each agent. Its full answer stays in the agent's own session."
+  "One line for each agent. Its answer stays in the agent's own session."
   [value]
-  {"headline" (session-preview (or (not-empty (field value "question"))
-                                   (not-empty (field value "answer"))
-                                   "Subagent")
-                               96)
+  {"headline" (session-preview (or (not-empty (field value "question")) "Subagent") 96)
    "summary" (str/join " · "
                        (remove str/blank?
                          [(label (field value "status"))
@@ -706,7 +703,12 @@
       ("council.cancel" "council.extend" "council.deny" "council.grant")
       {"headline" headline "summary" (council-control op (first value)) "content" []}
 
-      ("council.run" "council.wait" "council.resume")
+      "council.run"
+      {"headline" headline
+       "summary" (if (seq value) (counted-label (count value) "subagent") "No subagents")
+       "content" []}
+
+      ("council.wait" "council.resume")
       {"headline" headline
        "summary" (if (seq value)
                    (str/join " · "

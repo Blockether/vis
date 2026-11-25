@@ -6938,7 +6938,7 @@
   (mapv #(update % :col + (long offset)) (get-in entry [:meta :links])))
 
 (def ^:private agent-wait-operations
-  "Council operations whose sections hold one record for each subagent, with its answer."
+  "Current and historical team operations whose child records stay out of the transcript."
   #{"council.run" "council.wait" "council.resume"})
 
 (defn- presentation-sections

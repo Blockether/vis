@@ -121,7 +121,6 @@
    [:post "/v1/sessions/:sid/agents/deny"] "needs a running engine turn with subagents"
    [:post "/v1/sessions/:sid/agents/extend"] "needs a running engine turn with subagents"
    [:post "/v1/sessions/:sid/agents/grant"] "needs a running engine turn with subagents"
-   [:post "/v1/sessions/:sid/agents/run"] "needs a running engine turn with subagents"
    [:post "/v1/sessions/:sid/cancel-current"] "needs a running engine turn in the registry"
    [:post "/v1/sessions/:sid/client-calls/:call_id/activity"]
    "needs a registered client extension with a pending engine call"

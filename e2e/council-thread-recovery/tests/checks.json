@@ -24,7 +24,7 @@
   "forbid_tools": [
     "patch",
     "shell",
-    "council.publish_spawn"
+    "council.run"
   ],
   "max_form_output_chars": 6000,
   "max_total_output_chars": 12000,

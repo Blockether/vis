@@ -1722,11 +1722,14 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
 (defonce ^:private block-calls (atom {}))
 
 (defn pending-guest-replies
-  "Snapshot replies for the block being stopped; background work is not part of its unwind."
-  [session]
+  "Snapshot the actual guest calls that Stop must unwind, not detached work."
+  [session stop-awaited?]
   (when-let [k (worker-of session)]
     (when-let [call (get @block-calls session)]
-      (pyext/pending-call-replies k call))))
+      (let [sid (python-host/task-session session)
+            tasks (when stop-awaited? (into #{} (map #(vector sid %)) (task/awaited-ids sid call)))]
+        (into (vec (pyext/pending-call-replies k call))
+              (when (seq tasks) (pyext/pending-task-replies k tasks)))))))
 
 (defn- with-block-call [session origin f]
   (let [call (task/call-id)

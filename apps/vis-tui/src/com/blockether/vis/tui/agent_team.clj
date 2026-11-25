@@ -531,10 +531,14 @@
 
 (defn- time-sample [row] (if (leader? row) leader-time-sample ""))
 
-(def ^:private waits-for-agents
-  "A leader step that waits for its agents: `council.run` and `council.wait` return only when an
-   agent ends, asks or writes. The same rule as the Companion leader lane."
-  #"\bcouncil\s*\.\s*(?:run|wait)\s*\(")
+(defn- agent-wait-forms
+  "Waits with an operation recorded by the host, not guesses from Python source."
+  [steps]
+  (for [form (mapcat :forms steps)
+        row (get-in form [:activity :rows])
+        :when (and (= "council.wait" (:operation row))
+                   (or (number? (:duration-ms row)) (= "running" (:state row))))]
+    (assoc (select-keys form [:started-at-ms]) :duration-ms (:duration-ms row))))
 
 (defn- first-line [text] (some #(when-not (str/blank? %) %) (str/split-lines (str text))))
 
@@ -550,15 +554,14 @@
 (defn leader-row
   "The first row of a team table: the leader turn `leader`, `{:start :end :failed? :steps
    :answer}` in epoch ms. `:end` is nil while the turn runs. `:steps` are trace entries, and a
-   form that calls `council.run(` or `council.wait(` is time that the leader waited. Nil without
-   a start. The row opens nothing."
+   wait needs a recorded host operation. Nil without a start. The row opens nothing."
   [{:keys [start end failed? steps answer]}]
   (when (number? start)
     (let [ended?
           (number? end)
 
           forms
-          (filter #(re-find waits-for-agents (str (:code %))) (mapcat :forms steps))
+          (agent-wait-forms steps)
 
           word
           (cond (not ended?) "RUNNING"
@@ -625,7 +628,8 @@
         waited
         (reduce + (long waited-ms) (map #(max 0 (- (long now-ms) (long %))) wait-starts))]
 
-    (str (duration-text total) " (waited " (duration-text (min total waited)) ")")))
+    (str (duration-text total)
+         (when (pos? waited) (str " (waited " (duration-text (min total waited)) ")")))))
 
 (defn row-time
   "The time of a row. The store keeps the time of the tasks that ended (`worked_ms`) and the

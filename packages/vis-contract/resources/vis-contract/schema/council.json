@@ -69,7 +69,7 @@
           "$ref": "#/$defs/entry_id"
         },
         "files": {
-          "$comment": "Replace the file grant of the one pinged idle subagent for its follow-up task.",
+          "$comment": "File grant of the one pinged idle subagent for this follow-up attempt only. Omit it to use the original spawn grant of the child.",
           "$ref": "agents.json#/$defs/files"
         }
       },

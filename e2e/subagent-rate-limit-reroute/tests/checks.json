@@ -28,5 +28,6 @@
   "forbid_tools": [
     "patch"
   ],
+  "want_council_attempts": "reroute",
   "want_requested_route": true
 }

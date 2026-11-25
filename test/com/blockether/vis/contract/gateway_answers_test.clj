@@ -58,9 +58,8 @@
     "POST /v1/providers/:provider-id/auth/poll" "POST /v1/providers/:provider-id/auth/start"
     "POST /v1/providers/:provider-id/logout" "POST /v1/providers/:provider-id/reset-credits/consume"
     "POST /v1/sessions" "POST /v1/sessions/:sid/agents" "POST /v1/sessions/:sid/agents/answer"
-    "POST /v1/sessions/:sid/agents/cancel" "POST /v1/sessions/:sid/agents/deny"
+    "POST /v1/sessions/:sid/agents/deny" "POST /v1/sessions/:sid/agents/route"
     "POST /v1/sessions/:sid/agents/extend" "POST /v1/sessions/:sid/agents/grant"
-    "POST /v1/sessions/:sid/agents/route" "POST /v1/sessions/:sid/agents/run"
     "POST /v1/sessions/:sid/apps" "POST /v1/sessions/:sid/attachments"
     "POST /v1/sessions/:sid/cancel-current" "POST /v1/sessions/:sid/client-calls/:call_id/activity"
     "POST /v1/sessions/:sid/client-calls/:call_id/result" "POST /v1/sessions/:sid/council/entries"
@@ -110,3 +109,12 @@
                    (expect (= answers-without-fixture (set (remove recorded json-operations)))
                            (pr-str (set/difference (set (remove recorded json-operations))
                                                    answers-without-fixture))))))
+
+(defdescribe shared-subagent-task-answer-test
+  (it "validates the same Task descriptor, status and cancel answer as the SDK"
+      (let [attempt (json/read-str (slurp (io/resource "vis-contract/fixtures/agents-task.json")))
+            status (get attempt "status")]
+        (expect (document/valid-json? "agents" "subagent_task" (get attempt "descriptor")))
+        (expect (document/valid-json? "task" "status" status))
+        (expect (not (document/valid-json? "task" "status" (dissoc status "record"))))
+        (expect (document/valid-json? "task" "cancel" (get attempt "cancel"))))))

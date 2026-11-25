@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.provider.auth-health :as auth-health]
+            [com.blockether.vis.internal.python.host :as host]
             [com.blockether.vis.internal.provider.service :as provider-service]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.sandbox.policy :as policy]
@@ -395,17 +396,22 @@
               (:session-id env)
               "\")."))))
 
+(def ^:dynamic *finishing-content* nil)
+
 (defn- final-answer
   "The prose answer of the last turn of child `row`, or nil. After a follow-up ping, only a turn
    of the follow-up task counts: `resumed_turns` in the row is the turn count before it."
   [db row]
-  (let [turns (ps/db-list-session-turns db (:session_id row))]
-    (when (> (count turns) (long (or (:resumed_turns row) 0)))
-      (some->> (:content (last turns))
-               (filterv #(contains? #{"prose" "speech"} (get % "type")))
-               content/text-projection
-               str/trim
-               not-empty))))
+  (let [blocks (if (some? *finishing-content*)
+                 *finishing-content*
+                 (let [turns (ps/db-list-session-turns db (:session_id row))]
+                   (when (> (count turns) (long (or (:resumed_turns row) 0)))
+                     (:content (last turns)))))]
+    (some->> blocks
+             (filterv #(contains? #{"prose" "speech"} (get % "type")))
+             content/text-projection
+             str/trim
+             not-empty)))
 
 (defn- answer-line
   "The first nonblank line of `text` without a Markdown list or heading mark, at most 200
@@ -597,7 +603,7 @@
            :message
            "The child turn stopped before its end. Resume the child or run the task again."})))
 
-(defn- settle!
+(defn reconcile-child!
   "Store the end of open child `row` that has no live turn, and return the stored row. A finished
    last turn gives its status. A missing or unfinished turn fails the child."
   [db row]
@@ -730,7 +736,7 @@
   (let [id (resolve-child db actor-id ref)]
     (when (task-ordinal id)
       (fail! :invalid-request
-             (str "No subagent has task id " ref ". council.wait() shows the ids.")))
+             (str "No subagent has task id " ref ". Use the id from a child handle.")))
     id))
 
 (defn- dependency-failure
@@ -845,10 +851,6 @@
 
 (def ^:private signal-tick-ms "The longest park of a wait without a signal." 5000)
 
-(def ^:private answer-grace-ms
-  "How long a wait keeps an ended child open for its answer or for the end of the team."
-  5000)
-
 (defn- signal-gen [k] (get @team-gens k 0))
 
 (defn signal!
@@ -899,23 +901,12 @@
         (keys (get-in schema ["$defs" "record" "properties"]))))
 
 (defn- record
-  "One wait record. A queued or running child without a live turn after 30 s settles from its
-   last turn: see [[settle!]]. A queued
-   child whose queue a human holds is held. A child that a 429 stopped gets error and the working
-   routes of `router` in alternatives. A child that ended without an answer gets its last notes.
-   The record has each key of [[blank-record]]; a key without a value is nil."
-  [db router live? held? now row]
+  "Read a child record. A held queue or an open question is a live status.
+   A rate limit failure includes available routes. A child that ended without an answer
+   includes its last notes. Every key in [[blank-record]] is present."
+  [db router _live? held? now row]
   (let [sid
         (str (:session_id row))
-
-        row
-        (if (and (contains? #{"queued" "running"} (:status row))
-                 (> (- (long now)
-                       (max (long (or (:created_at row) now)) (long (or (:resumed_at row) 0))))
-                    30000)
-                 (not (live? sid)))
-          (settle! db row)
-          row)
 
         status
         (:status row)
@@ -992,8 +983,6 @@
 ;; The position of the last step that a wait showed, by child turn id. A wait shows only newer
 ;; notes and messages. The marks stay in memory: after a restart, a wait shows the latest steps
 ;; again.
-(defonce ^:private shown (atom {}))
-
 (defn- epoch-ms
   [t]
   (cond (instance? java.util.Date t) (.getTime ^java.util.Date t)
@@ -1046,32 +1035,19 @@
     (some-> (ps/db-latest-turn-prose db (:id turn))
             (clip 300))))
 
-(defn- fresh-steps
-  "The steps of `turn` after the last step that a wait showed."
-  [turn steps]
-  (let [mark (long (get @shown (str (:id turn)) -1))]
-    (filterv #(> (long (or (:position %) -1)) mark) steps)))
-
-(defn- published?
-  "Whether running child `row` published a Council message that no wait showed yet. Reads no
-   iteration payload."
-  [db row now]
-  (boolean (when-let [turn (current-turn db row now)]
-             (ps/db-turn-published-after db (:id turn) (get @shown (str (:id turn)) -1)))))
-
 (defn- digest
-  "The progress of running child `row` since the last wait: its `activity`, its new progress
+  "The recent progress of running child `row`: its `activity`, its new progress
    `notes` and Council `messages`, `step_secs` in its current step, `elapsed_secs` in its task
    and `alerts`. The alerts are slow_step after 300 s in one step, errors for three failed steps
    of the last five, budget at 80% of the iteration budget, and awaits_person while a form of the
    child (`:pending-input` of `row`) waits for the answer of the person. A step that waits for
-   the person is not slow. Marks the steps as shown."
+   the person is not slow."
   [db row now]
   (let [[turn steps]
         (current-steps db row now)
 
         fresh
-        (fresh-steps turn steps)
+        (take-last 5 steps)
 
         last-at
         (or (some-> (peek steps)
@@ -1124,8 +1100,6 @@
           awaits-person?
           (conj "awaits_person"))]
 
-    (when-let [p (:position (peek steps))]
-      (swap! shown assoc (str (:id turn)) p))
     (cond-> {:step_secs step-secs
              :elapsed_secs (quot (max 0 (- (long now) (long (started-at row now)))) 1000)}
       (:activity row)
@@ -1140,185 +1114,48 @@
       (seq alerts)
       (assoc :alerts alerts))))
 
-(defn- wait-records
-  "Wait until every child ends, one child asks or is held, or the timeout ends. A completed
-   child gets 5 s to store its answer. The wait also ends when a child that was open at its start
-   ends or publishes a Council message. Then the record of each running child also has its
-   [[digest]]. The wait reads the store rows of the team after each signal of a team change, and
-   at least every 5 s; it builds no team row."
-  [env ids timeout-secs]
-  (let [live?
-        (runtime-fn :live?)
+(defn task-record
+  "Read a child snapshot without changing its state or consuming progress."
+  [env row]
+  (let [db (:db-info env)
+        sid (str (:session_id row))
+        now (util/now-ms)
+        rec (shown-record env (record db (:router env) (runtime-fn :live?) (held-fn) now row))]
+    (if (contains? #{"running" "asking"} (:status rec))
+      (merge rec (digest db (assoc row
+                              :activity ((or (:activity @runtime) (constantly nil)) sid)
+                              :pending-input ((or (:pending-input @runtime) (constantly 0)) sid))
+                         now))
+      rec)))
 
-        activity
-        (or (get @runtime :activity) (constantly nil))
+(defn settle-task!
+  "Save the terminal record before another attempt can change this child's stored state."
+  [env row]
+  (when (terminal-statuses (:status row))
+    (let [record (task-record env row)]
+      (task/complete-resource!
+        (:parent_id row) [:subagent (str (:session_id row))]
+        (fn [] {:state (if (= "cancelled" (:status row)) :cancelled :done)
+                :record record :value {"__vis_object__" "SubagentRecord"
+                                       "__vis_attrs__" (wire/->wire record)}})))))
 
-        ;; Only the gateway shows forms to the person; another runtime has none.
-        pending-input
-        (or (get @runtime :pending-input) (constantly 0))
-
-        held?
-        (held-fn)
-
-        db
-        (:db-info env)
-
-        me
-        (str (:session-id env))
-
-        self
-        (info db me)
-
-        team
-        [:team (str (or (:leader_id self) me))]
-
-        ids
-        (when (seq ids) (set (map #(resolve-child db me (str %)) ids)))
-
-        ;; The gateway starts and blocks the tasks with after. A wait catches a missed change.
-        settle-dependents!
-        (or (get @runtime :settle-dependents) (constantly nil))
-
-        pick
-        (fn []
-          (let [rows
-                (cond->> (ps/db-agent-list db (second team))
-                  self
-                  (filter #(= (:team_id self) (:team_id %))))
-
-                rows
-                (if ids
-                  (filter #(contains? ids (str (:session_id %))) rows)
-                  (filter #(= me (str (:parent_id %))) rows))
-
-                seen
-                (set (map #(str (:session_id %)) rows))]
-
-            (concat rows
-                    (for [i
-                          (sort ids)
-
-                          :when (not (seen i))]
-
-                      {:session_id i :status "unknown"}))))
-
-        ;; A completed child gets 5 s to store its answer.
-        done-at
-        (volatile! nil)
-
-        ;; An event wait keeps the children that were open at the first poll, when each
-        ;; of them ended, the step count of each running child and the rows of the last poll.
-        open-ids
-        (volatile! nil)
-
-        ended
-        (volatile! {})
-
-        steps
-        (volatile! {})
-
-        last-rows
-        (volatile! [])
-
-        event?
-        (fn [now rows recs]
-          (when (nil? @open-ids)
-            (vreset! open-ids
-                     (set (keep #(when-not (terminal-statuses (:status %)) (:session_id %)) recs))))
-          (doseq [{sid :session_id status :status}
-                  recs
-
-                  :when (and (contains? @open-ids sid)
-                             (terminal-statuses status)
-                             (not (contains? @ended sid)))]
-
-            (vswap! ended assoc sid now))
-          (or (some (fn [rec]
-                      (when-let [t (get @ended (:session_id rec))]
-                        (or (not= "completed" (:status rec))
-                            (:answer rec)
-                            (> (long now) (+ (long t) (long answer-grace-ms))))))
-                    recs)
-              (some (fn [row]
-                      (let [sid
-                            (str (:session_id row))
-
-                            n
-                            (:iterations_used row)]
-
-                        (when (and (= "running" (:status row)) (not= n (get @steps sid ::none)))
-                          (vswap! steps assoc sid n)
-                          (published? db row now))))
-                    rows)))
-
-        deadline
-        (util/deadline-ms timeout-secs)
-
-        step
-        (fn []
-          (let [now
-                (util/now-ms)
-
-                _
-                (settle-dependents! db (or (:parent_id self) me))
-
-                rows
-                (vec (pick))
-
-                recs
-                (mapv #(shown-record env (record db (:router env) live? held? now %)) rows)
-
-                done?
-                (every? #(or (terminal-statuses (:status %)) (= "unknown" (:status %))) recs)
-
-                answered?
-                (every? #(or (not= "completed" (:status %)) (:answer %)) recs)]
-
-            (vreset! last-rows rows)
-            (when (and done? (nil? @done-at)) (vreset! done-at now))
-            (if (or (some #(contains? #{"asking" "held"} (:status %)) recs)
-                    (and done? (or answered? (> now (+ (long @done-at) (long answer-grace-ms)))))
-                    (event? now rows recs))
-              (reduced recs)
-              recs)))
-
-        recs
-        (loop []
-
-          (let [gens
-                (signal-gens [team])
-
-                v
-                (step)]
-
-            (cond (reduced? v) @v
-                  (>= (util/now-ms) deadline) v
-                  :else
-                  ;; The answer grace needs a finer tick than a signal gives.
-                  (do (park! [team]
-                             gens
-                             (if (or @done-at (seq @ended))
-                               (min 1000 (long answer-grace-ms))
-                               signal-tick-ms)
-                             deadline)
-                      (recur)))))
-
-        now
-        (util/now-ms)
-
-        rows
-        (into {} (map (juxt #(str (:session_id %)) identity)) @last-rows)]
-
-    (mapv #(if (= "running" (:status %))
-             (let [row (get rows (:session_id %))]
-               (merge %
-                      (digest db
-                              (assoc row
-                                :activity (activity (:session_id %))
-                                :pending-input (pending-input (:session_id %)))
-                              now)))
-             %)
-          recs)))
+(defn register-task!
+  "Register this attempt before admitting its child turn."
+  [env row cancel! admit]
+  (let [owner (str (:session-id env))
+        sid (str (:session_id row))
+        resource [:subagent sid]
+        detach-reason #(when-let [{:keys [question]} (get @questions sid)]
+                         (merge {:session-id sid :question question} (select-keys row [:id :title])))
+        {:keys [row]} (task/start-manual!
+                        owner {:kind :subagent :name (str "council " (:id row))
+                               :origin (or (:task-origin env) host/*task-origin*)
+                               :resource resource :external-settlement? true :admit admit
+                               :detach-reason detach-reason
+                               :guest-data {:child-id (:id row) :child-session-id sid}
+                               :snapshot (fn [_] (task-record env (info (:db-info env) sid)))}
+                        cancel!)]
+    (task/guest-task owner (:id row))))
 
 (defn timeline
   "The steps of child `child-id` of session `sid`, oldest first: the start of each child turn, its
@@ -1457,143 +1294,73 @@
                   (when (seq earlier) (str " (" (str/join ", " earlier) ")"))
                   " or an existing child.")))))
 
-(defn- run-records
-  "Spawn a subagent for each task, wait for all of them and answer their records."
-  [env tasks opts]
-  (let [opts
-        (walk/keywordize-keys opts)
+(declare follow-up-refusal)
 
-        specs
-        (mapv task-spec (if (or (string? tasks) (map? tasks)) [tasks] tasks))
+(defn prepare-run!
+  "Validate the batch before the runtime reserves any children."
+  [env tasks]
+  (let [db (:db-info env)
+        owner (str (:session-id env))
+        specs (mapv task-spec (if (or (string? tasks) (map? tasks)) [tasks] tasks))]
+    (require-enabled! db owner)
+    (when (info db owner)
+      (fail! :not-allowed "A subagent cannot start subagents. Ask your parent to delegate."))
+    (check-arguments! :run (wire/->wire {:tasks specs}))
+    (check-after! env specs)
+    (let [specs (mapv (fn [spec]
+                       (if-let [ref (:child spec)]
+                         (let [sid (resolve-child! db owner ref)
+                               row (info db sid)]
+                           (when-not (and row (= owner (str (:parent_id row))))
+                             (fail! :not-owner "This session does not own that subagent"))
+                           (when (or (contains? #{"queued" "running" "waiting"} (:status row))
+                                     ((runtime-fn :live?) sid))
+                             (fail! :invalid-request "The subagent already has an active task"))
+                           (when-let [[error message] (follow-up-refusal db owner sid)]
+                             (fail! error message))
+                           (assoc spec :child sid))
+                         (checked env :spawn spec)))
+                  specs)
+          children (keep :child specs)]
+      (when-not (= (count children) (count (distinct children)))
+        (fail! :invalid-request "A batch can start only one follow-up for each child"))
+      specs)))
 
-        _
-        (when (empty? specs) (fail! :invalid-request "tasks must not be empty"))
-
-        ;; Check every task before the first spawn, so a bad task starts no child.
-        _
-        (check-arguments! :run (wire/->wire {:tasks specs}))
-
-        _
-        (run! #(check-route! env %) specs)
-
-        _
-        (check-after! env specs)
-
-        deadline
-        (util/deadline-ms (wait-timeout opts 240))
-
-        ;; A full team admits the next child when an earlier one ends. The end of a child signals
-        ;; the team, so the retry parks on that signal.
-        team
-        [:team (str (or (:leader_id (info (:db-info env) (:session-id env))) (:session-id env)))]
-
-        spawn
-        (fn [spec]
-          (loop []
-
-            (let [gens
-                  (signal-gens [team])
-
-                  r
-                  (try (str (:session_id (runtime-op! env :spawn spec)))
-                       (catch clojure.lang.ExceptionInfo e
-                         (if (= :agent-limit (:error (ex-data e))) e (throw e))))]
-
-              (cond (string? r) r
-                    (>= (util/now-ms) deadline) (throw r)
-                    :else (do (park! [team] gens signal-tick-ms deadline) (recur))))))
-
-        ids
-        (mapv spawn specs)]
-
-    (wait-records env ids (max 1 (util/seconds-left deadline)))))
+(defn- start-tasks [env tasks]
+  ((runtime-fn :run) env tasks))
 
 (defn run
-  "Run each task in its own subagent and wait for all of them. A task is a string or a dict with
-   task and optional title, role, model, provider, iteration_budget, files and after.
-   iteration_budget defaults to 120 and has no upper limit. Give a large task more at the start.
+  "Start a task for each input and return its handle. Write `[child] = await council.run([...])`.
+   A task is a string or a dict with `task` and optional `title`, `role`, `model`, `provider`,
+   `iteration_budget`, `files`, `after` and `child`. The iteration budget defaults to 120. Only a leader
+   can start subagents. Children share the checkout but do not see your tool calls or output.
 
-   Each task gets an id: a1, a2 and onward, in the order that you start tasks. The ids continue
-   across calls: after a3, the first task of the next call is a4. Every child id argument takes
-   the id or the session_id: council.wait, council.cancel, council.extend and a council.publish
-   ping.
+   `await child` gives its final record. If a Council question releases the await, it returns
+   the handle instead. Answer the question and await the same handle again. `child.record()`
+   gives the current snapshot. `child.wait(seconds)` gives a snapshot without cancelling on
+   timeout. Use `child.cancel()` to request cancellation of this attempt. Awaiting a cancelled
+   attempt raises `asyncio.CancelledError`.
 
-   after is a list of earlier tasks of the same call, or existing children, by id or session_id.
-   The task waits, and starts by itself when all of them complete. If one of them fails, is
-   cancelled or ends budget_limited, the task is blocked and never starts. Ping that task with a
-   fix: when it completes, the blocked task starts. For example:
-   council.run([{\"task\": \"Fix the bug\", \"role\": \"implement\"},
-                {\"task\": \"Verify the fix\", \"role\": \"verify\", \"after\": [\"a1\"]}])
+   `child.id` is the child ID (a1, a2, ...), `child.session_id` is the child session ID, and
+   `child.task_id` identifies the attempt. In `after`, use a handle or a child ID or session ID.
+   Each dependency must be an existing child or an earlier task in the batch. A failed
+   dependency blocks the task. The active limit delays admission, not the return of its handle.
 
-   title is a short label for people: one line of 1 to 60 characters, such as \"Fix login test\".
-   Without it, people see the child number, such as #2.
-
-   model and provider go together. Without them, the child runs on session[\"routing\"][\"subagents\"]
-   [\"model\"], else on your model. A child keeps its model until its task ends, and its fallback
-   model comes first when its model fails. When session[\"routing\"][\"subagents\"][\"only\"] is
-   True, a task can name only that model or the fallback model. Records show the model of each child.
-
-   role is research, implement or verify. It is a label for people and sets no tool, file or model
-   limit. Choose it by the result that you need: facts, changed files, or a pass or fail with
-   findings.
-
-   files is a file grant: {\"write\": [...], \"read_only\": [...], \"deny\": [...]}. Give only the
-   lists that you need. An empty list adds no rules. Each rule is a path or a glob, relative to
-   your workspace root, ~ or absolute, and also covers files that do not exist yet.
-
-   With write, the child can change only the files that its rules match. deny wins over read_only,
-   and read_only wins over write. Without files, the child writes where you write. With the jail
-   off, only host file tools follow all rules: Python follows only write, and shell follows none.
-
-   A child gets the system prompt, your requests, notes and answers, and its task. It does not get
-   your tool calls or their output. Children share the checkout. Only a leader starts subagents.
-
-   Records have session_id, id, status, answer and question, and after for a task with after.
-   waiting means that a task in after did not end yet. blocked has error with code
-   dependency_failed. More than 16 tasks start as earlier ones finish. timeout_secs defaults to 240 (max 1800). If a status is still running, call
-   council.wait. A failed record can have error with its code and message.
-
-   Every record has the same keys for each status. A key without a value is None.
-
-   The call also returns when the first child ends, asks or publishes a message. A running
-   child's record then has values in activity, notes, messages, step_secs, elapsed_secs and alerts.
-   The alert awaits_person means that a tool of the child waits for the person to answer a form
-   in your session: tell the person, and do not cancel the child for a slow step.
-
-   asking with budget_request needs council.extend or council.deny. asking with files_request
-   needs council.grant or council.deny. budget_limited needs council.extend before a follow-up ping,
-   and it stays budget_limited until that ping."
-  ([env tasks] (run env tasks {}))
-  ([env tasks opts] (result :council.run (run-records env tasks opts))))
-
-(defn- wait-records-for
-  "Wait for the subagents `ids`, or for all children, and answer their records."
-  [env ids opts]
-  (let [opts
-        (walk/keywordize-keys opts)
-
-        ids
-        (if (string? ids) [ids] ids)]
-
-    (wait-records env ids (wait-timeout opts 240))))
-
-(defn wait-agents
-  "Wait again for subagents by ids such as a1 or session_ids (default: all your children). Same records and timeout as council.run."
-  ([env] (wait-agents env nil {}))
-  ([env ids-or-opts]
-   (if (map? ids-or-opts) (wait-agents env nil ids-or-opts) (wait-agents env ids-or-opts {})))
-  ([env ids opts] (result :council.wait (wait-records-for env ids opts))))
-
-(defn- cancel-records
-  "Cancel a subagent and answer its record."
-  [env session-id]
-  (runtime-op! env :cancel {:session_id session-id})
-  (wait-records env [session-id] 5))
-
-(defn cancel-agent
-  "Cancel a subagent, including its queued work. Returns its record."
-  [env session-id]
-  (result :council.cancel (cancel-records env session-id)))
+   Set model and provider together. Use `files` to set the file grant: `write`, `read_only` and
+   `deny` are lists of paths or globs. The same child can take a new task with
+   `await council.run([{\"child\": child, \"task\": \"Fix X\", \"files\": {...}}])`; the new attempt has
+   a separate handle. Its `files` apply to that attempt only; without `files` it uses the child's
+   original grant. An await that starts while the child has an open question returns at once.
+   A budget-limited child needs
+   `council.extend` before a follow-up."
+  [env tasks]
+  (let [started (start-tasks env tasks)]
+    (extension/success
+      {:result {"__vis_subagent_tasks__" (wire/->wire started)}
+       :metadata {:activity/resources
+                  (vec (mapcat (fn [{:keys [id child-session-id]}]
+                                 [{:type "task" :id (str id)} {:type "subagent" :id (str child-session-id)}])
+                               started))}})))
 
 (defn- parent-reply!
   "Publish `question` to the parent of the calling child and wait for the reply text. The wait
@@ -1949,7 +1716,7 @@
 
 (defn queue-turn!
   "Queue subagent `sid` for a follow-up turn. A Council ping from its parent uses it, so
-   council.wait reports only the answer of the new turn. A follow-up can pass the active cap; only
+   a new attempt does not change the record of the previous one. An ordinary ping can pass the active cap; only
    a new spawn counts against it. Answers a function that undoes the change, or nil when the child
    has no iterations left, or is cancelled while its leader runs no turn. A child that already runs
    stays as is."
@@ -1970,7 +1737,7 @@
 (defn task-request
   "The turn request of a Council wake from the parent of managed child `sid`, or nil for another
    author. The entry is the child's task, so the request gives its text as an instruction. It asks
-   for the whole result as the final answer, because council.wait returns that answer."
+   for the whole result as the final answer, because the parent reads that answer."
   [db sid entry]
   (let [parent
         (:parent_id (info db sid))
@@ -2127,28 +1894,19 @@
 (defn operation!
   "Run one managed-subagent operation for the calling session and answer its plain result.
    Gateway routes and extensions call this entry point; model tools call the same functions.
-   `operation` is :spawn, :route, :run, :wait, :cancel, :extend, :deny, :answer,
+   `operation` is :spawn, :route, :run, :extend, :deny, :answer,
    :grant or :timeline. Records answer in their wire form."
   [env operation opts]
-  (let [opts
-        (walk/keywordize-keys (or opts {}))
-
-        timeout
-        (select-keys opts [:timeout_secs])]
-
-    (when (contains? #{:run :wait} operation) (check-arguments! operation (wire/->wire opts)))
+  (let [opts (walk/keywordize-keys (or opts {}))]
+    (when (= :run operation) (check-arguments! operation (wire/->wire opts)))
     (if (contains? #{:spawn :route} operation)
       (runtime-op! env operation opts)
       (wire/->wire
         (case operation
           :run
-          (run-records env (:tasks opts) timeout)
-
-          :wait
-          (wait-records-for env (:session_ids opts) timeout)
-
-          :cancel
-          (cancel-records env (:session_id opts))
+          (mapv (fn [{:keys [id child-id child-session-id]}]
+                  {:task_id id :id child-id :session_id child-session-id})
+                (start-tasks env (:tasks opts)))
 
           :extend
           (extend-records env (:session_id opts) (:iterations opts))
@@ -2177,7 +1935,7 @@
                                  :inject-env? true
                                  :active-fn (fn [env]
                                               (enabled? (:db-info env) (:session-id env)))
-                                 :tag (if (= sym 'council.wait) :observation :mutation)
+                                 :tag :mutation
                                  :activity (presenter/for-tool (keyword (str sym)))
                                  :call call
                                  :description (:doc (meta v))
@@ -2190,9 +1948,7 @@
     (let
       [records
        "A list of records. Every record has the same keys for each status: `session_id`, `id`, `status`, `after`, `answer`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget`, `iterations_used`, `provider`, `model`, `activity`, `notes`, `messages`, `step_secs`, `elapsed_secs`, `alerts`, `warning`, `error` and `alternatives`. A key without a value is None. `activity`, `messages`, `step_secs`, `elapsed_secs` and `alerts` have values only for a running child."]
-      [[#'run 'council.run {:pos ["tasks"] :rest :always} ["timeout_secs"] records]
-       [#'wait-agents 'council.wait {:opt-pos ["session_ids"] :rest :always} ["timeout_secs"]
-        records] [#'cancel-agent 'council.cancel {:pos ["session_id"]} [] records]
+      [[#'run 'council.run {:pos ["tasks"]} [] "An ordered list of SubagentTask handles."]
        [#'extend-agent 'council.extend {:pos ["session_id" "iterations"]} [] records]
        [#'deny-agent 'council.deny {:pos ["session_id" "reason"]} [] records]
        [#'grant-files 'council.grant {:pos ["session_id" "files"]} [] records]
@@ -2303,17 +2059,17 @@
 
 (def ^:private lead-guide
   "The leader rules for subagents: an independent verifier and its checks."
-  "- Start one verifier early with role verify. Give it the request and its acceptance criteria, not your design. When your work is ready, run its checks and fix each failure. Then ping it to check the final files.
-- Each task gets an id: a1, a2 and onward. Use the id or the session_id wherever a child id goes.
-- To order tasks, give a later task after=[ids]. It starts by itself when they complete. If one does not complete, it is blocked: ping that task with a fix.
-- When a verifier fails, ping the task in its after with the failures. When that task completes, ping the verifier to check again.
+  "- Start one verifier early with role verify. Give it the request and its acceptance criteria, not your design. When your work is ready, run its checks and fix each failure. Then start a follow-up for it to check the final files.
+- Use `child.id` or `child.session_id` to refer to the child. Use `child.task_id` to identify the attempt.
+- To order tasks, set `after=[child]` or give child IDs. If a dependency fails, start a follow-up to fix it before you retry the blocked work.
+- When a verifier fails, start a follow-up for its implementer with the failures. When the fix is ready, start a follow-up for the verifier.
 - Before your final answer, run every failing case that a child reported.
-- Do not send new edits to an implementer while a verifier or auditor of its work runs. Collect all findings, send them in one round, then start or ping the verifiers on the final files.
+- Do not send new edits to an implementer while a verifier or auditor of its work runs. Collect all findings, send them in one round, then start or give a follow-up to the verifiers on the final files.
 ")
 
 (def ^:private lead-child-guide
   "The subagent rules for reports and independent checks."
-  "- As a subagent, do only your task. Before your final answer, call council.result(text) with one line of at most 200 characters; as a verifier, add outcome=\"passed\" or \"failed\". End with the complete result and its evidence: command, input and output. For a decision, call council.ask(question). For more budget or files, call council.ask_budget(iterations, reason) or council.ask_files({\"write\": [path]}, reason). You cannot start subagents.
+  "- As a subagent, do only your task. Before your final answer, call council.result(text) with one line of at most 200 characters; as a verifier, add outcome=\"passed\" or \"failed\". Give the complete result and its evidence in your final answer. The parent reads that answer from the Task. For a decision, call council.ask(question). For more budget or files, call council.ask_budget(iterations, reason) or council.ask_files({\"write\": [path]}, reason). You cannot start subagents.
 - As a verifier, check the request, not your parent's summary. Write checks only in your scratch directory.")
 
 (defn prompt
@@ -2323,14 +2079,15 @@
       "## Subagents (Council)
 - Use subagents only when the user asks or the work has two or more large independent parts. When in doubt, do the work yourself.
 - Do the critical-path step and shared work yourself. Give one coupled design one owner: never split modules that share an invariant, a protocol or a data format. Treat the modules of one program as one coupled design.
-- Start children with council.run([task, ...]), usually two to four in total. Each task names its goal, known facts, files, done condition, role and a short title of at most 60 characters. files={\"write\": [...]} enforces the split; `doc(\"council.run\")` gives the rules.
+- Start children with `children = await council.run([...])`, usually two to four in total. Each task names its goal, known facts, files, done condition, role and a short title of at most 60 characters. files={\"write\": [...]} enforces the split; `doc(\"council.run\")` gives the rules.
 "
       role-guide
       "- A child sees your requests and notes, not your tool output. For an independent review, give the child the code, not your conclusion.
-- council.run and council.wait return at the first event or at the timeout. For running, call council.wait(session_ids=[...]) again. For asking, reply with council.publish(text, reply_to=question_entry_id). Answer budget_request with council.extend or council.deny, and files_request with council.grant or council.deny.
-- A failed record names its cause in error. For rate_limited, run the task again on a route from alternatives. For budget_limited, the answer is the handoff: call council.extend, then ping the child.
+- Await a child for its final record. To wait for one of several children, use `await asyncio.wait(children, return_when=asyncio.FIRST_COMPLETED)`. Only the tasks in `done` finished. Use `child.record()` for a snapshot.
+- A Council question can release an await without ending the Task. If `await child` returns the handle, read the question and reply once with `await council.publish(text, reply_to=question_entry_id)`. Then await the same child again. For `budget_request`, use `council.extend` or `council.deny`. For `files_request`, use `council.grant` or `council.deny`.
+- Read `error` in a failed record. For `rate_limited`, start the work on a route from `alternatives`. For `budget_limited`, read the handoff, call `council.extend`, and start a follow-up.
 - While children run, do your own work. Do not do their work again. When a child ends, check its files and tests at once.
-- For a follow-up task, ping the child: council.publish(task, ping=[session_id]). Add files={...} for other files. Then call council.wait(session_ids=[session_id]).
+- For a follow-up, use `[next_child] = await council.run([{\"child\": child, \"task\": task}])`. Its `files` apply to that attempt only; without `files` the child has its original grant. Await `next_child` for the new answer. An await returns at once while the child has an open question. Use `child.cancel()` to request cancellation of only that attempt.
 "
       lead-guide
       lead-child-guide)))

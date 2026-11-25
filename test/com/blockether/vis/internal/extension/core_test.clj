@@ -1265,10 +1265,9 @@
         (doseq [[sym expected] {'read-session "(target=None)"
                                 'get-session "(target=None)"
                                 'list-sessions "(search=None)"
-                                'council.wait "(session_ids=None, *, timeout_secs=..., **kwargs)"
-                                'council.cancel "(session_id)"}]
+                                'council.run "(tasks)"}]
           (expect (= expected (get sigs sym)) (str sym)))
-        (expect (not-any? #(contains? sigs %) '[_shell-wait _shell-stop]))
+        (expect (not-any? #(contains? sigs %) '[_shell-wait _shell-stop council.wait council.cancel]))
         (expect (str/includes? (get sigs '_shell-logs) "offset=..."))
         (expect (str/includes? (get sigs '_shell-type) "is_enter=..."))))
   ;; THE INVARIANT: prose can describe a verb, but only its parameter list says

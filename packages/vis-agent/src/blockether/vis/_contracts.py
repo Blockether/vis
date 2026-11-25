@@ -881,8 +881,10 @@ def _explain_lines(
 
 def form_kind_error(kind: Any, path: str) -> str | None:
     """The schema fault when `kind` is not allowed in an Ask form."""
-    lines = _explain_lines("view", "form_component/properties/type", kind, prefix=path)
-    return lines[0] if lines else None
+    excluded = definition("view", "form_component")["properties"]["type"]["not"]["enum"]
+    if kind not in excluded:
+        return None
+    return named_line(path, "form_component")
 
 
 @cache

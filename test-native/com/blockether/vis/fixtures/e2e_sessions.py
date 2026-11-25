@@ -27,9 +27,9 @@ def _session_ids():
     return {row.get("id") or row.get("session_id") for row in vis.sessions.list()}
 
 
-def _children():
-    """Session ids of this session's subagents. A wait without ids covers all of them."""
-    return [r.session_id for r in vis.council.wait(timeout_secs=1)]
+def _child_count():
+    """Read the number of children reported for the bound session."""
+    return vis.sessions.get(vis.session.id).read()["team"]["total"]
 
 
 def _render(*, result, error, **_):
@@ -56,23 +56,22 @@ class Sessions:
             vis.council.spawn(task, key=key, iteration_budget=iterations).session_id
             for _ in range(repeat)
         ]
-        return {"ids": ids, "children": _children()}
+        return {"ids": ids, "child_count": _child_count()}
 
-    @vis.method(activity=_activity("Wait for children"))
-    def wait(self, ids: list[str] | None = None, timeout: int = 240) -> list:
-        """Wait until no child runs, then return their records.
-
-        A Council wait also ends at each child event, so wait again until the deadline.
-        """
-        deadline = time.monotonic() + timeout
+    @vis.method(tag="mutation", activity=_activity("Run a child"))
+    def run_child(self, task: str, first: str) -> dict:
+        """Read a keyed child and wait for a separate Task."""
+        (child,) = vis.council.run([task])
+        record = child.result(timeout=240)
+        deadline = time.monotonic() + 30
         while True:
-            left = max(1, int(deadline - time.monotonic()))
-            records = [_record(r) for r in vis.council.wait(ids, timeout_secs=left)]
-            if (
-                all(r["status"] != "running" for r in records)
-                or time.monotonic() >= deadline
-            ):
-                return records
+            status = vis.sessions.get(first).read()["agent"]["status"]
+            if status == "completed" or time.monotonic() >= deadline:
+                return {
+                    "child_count": _child_count(),
+                    "statuses": sorted([status, record.status]),
+                }
+            time.sleep(0.1)
 
     @vis.method(tag="mutation", activity=_activity("Extend a child", slow=False))
     def extend(self, session_id: str, iterations: int) -> dict:
@@ -82,17 +81,13 @@ class Sessions:
     @vis.method(tag="mutation", activity=_activity("Resume a child"))
     def resume(self, session_id: str, task: str) -> dict:
         """Give a finished child a follow-up task and wait for it."""
-        return _record(vis.council.resume(session_id, task))
+        (child,) = vis.council.run([{"child": session_id, "task": task}])
+        return _record(child.result(timeout=240))
 
     @vis.method(tag="mutation", activity=_activity("Deny a request", slow=False))
     def deny(self, session_id: str, reason: str) -> dict:
         """Refuse the open request of a child."""
         return _record(vis.council.deny(session_id, reason))
-
-    @vis.method(tag="mutation", activity=_activity("Cancel a child", slow=False))
-    def cancel(self, session_id: str) -> dict:
-        """Cancel a child."""
-        return _record(vis.council.cancel(session_id))
 
     @vis.method(activity=_activity("Spawn from a thread", slow=False))
     def thread_spawn(self, task: str) -> dict:
@@ -105,7 +100,7 @@ class Sessions:
         thread = threading.Thread(target=work)
         thread.start()
         thread.join(60)
-        out["children"] = _children()
+        out["child_count"] = _child_count()
         return out
 
     @vis.method(tag="mutation", activity=_activity("Run a session"))

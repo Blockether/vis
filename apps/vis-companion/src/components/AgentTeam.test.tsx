@@ -28,6 +28,15 @@ import {
 } from './AgentTeam';
 
 const T0 = new Date(2026, 4, 3, 14, 3, 7).getTime();
+
+function waitActivity(operation: string, duration_ms?: number): NonNullable<import('../lib/types').TranscriptForm['activity']> {
+  return {
+    state: duration_ms === undefined ? 'running' : 'succeeded',
+    counts: { running: duration_ms === undefined ? 1 : 0, succeeded: duration_ms === undefined ? 0 : 1, failed: 0, cancelled: 0 },
+    rows: [{ id: 'wait', sequence: 0, operation, presenter: 'generic', signal: 'generic',
+      summary: '', state: duration_ms === undefined ? 'running' : 'succeeded', duration_ms, resources: [], evidence: [] }],
+  };
+}
 const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: 'leader', team_id: 'turn-1',
   task: 'Verify the contract', status: 'running', iteration_budget: 4, iterations_used: 2,
   provider: 'p', model: 'small', routing_locked: true, usage: { cost_usd: 0.0123 }, created_at: T0 };
@@ -144,14 +153,12 @@ describe('agent rows', () => {
     ]);
   });
 
-  // The leader lane shows where the leader waited for its agents: in the blocks that call council.run or council.wait.
-  it('reads the waits of a leader from its council.run and council.wait blocks', () => {
-    const form = (code: string, started_at_ms?: number, duration_ms?: number) => ({ code, started_at_ms, duration_ms });
+  it('counts recorded waits, not launches or Python source', () => {
     const steps = [{ forms: [
-      form('print(grep({"query": ["x"]}))', T0 + 1_000, 500),
-      form('r = await council.run([task])', T0 + 2_000, 3_000),
-      form('council.wait(session_ids=ids)', T0 + 9_000),
-      form('await council.wait()'),
+      { code: '[child] = await council.run([task])', started_at_ms: T0 + 1_000, duration_ms: 500 },
+      { code: 'await other', started_at_ms: T0 + 2_000, activity: waitActivity('council.wait', 3_000) },
+      { code: 'await council.wait()', started_at_ms: T0 + 9_000, activity: waitActivity('council.wait') },
+      { code: 'await council.wait()', started_at_ms: T0 + 10_000, duration_ms: 250 },
     ] }];
     expect(leaderLane(T0, undefined, steps)).toEqual({
       start: T0, end: undefined, waits: [{ start: T0 + 2_000, end: T0 + 5_000 }, { start: T0 + 9_000 }], note: undefined,
@@ -426,7 +433,7 @@ describe('leader row', () => {
   }));
   const turn = (status: string) => ({
     turn_id: 'turn-1', status, created_at: T0 - 10_000, duration_ms: 30_000,
-    iterations: [{ forms: [{ code: 'council.run([task])', started_at_ms: T0, duration_ms: 12_000 }], answer: '**Both** reviews pass.' }],
+    iterations: [{ forms: [{ code: 'council.wait([child])', started_at_ms: T0, duration_ms: 12_000, activity: waitActivity('council.wait', 12_000) }], answer: '**Both** reviews pass.' }],
   }) as unknown as TranscriptTurn;
   const team = [
     { ...child, title: 'Companion review', role: 'verify', status: 'completed' as const, finished_at: T0 + 9_000 },
@@ -455,17 +462,16 @@ describe('leader row', () => {
       iterations: [
         { created_at: 1794213407814, duration_ms: 3239, forms: [{ duration_ms: 3239, src: 'w = await memo.wake()\nr = await council.run([\n    {"task": "Reply"},\n])' }] },
         { created_at: 1794213410289, duration_ms: 36, assistant_prose: "Both are still running. I'll wait for them to finish.",
-          forms: [{ duration_ms: 36, src: 'res = await council.wait(session_ids=ids)' }] },
+          forms: [{ duration_ms: 36, src: 'res = await council.wait(session_ids=ids)', activity: waitActivity('council.wait', 36) }] },
         { created_at: 1794213412601, duration_ms: 0, code: '' },
       ],
     } as unknown as TranscriptTurn;
     const leader = storedLeaderLane(stored);
     expect(leader?.waits).toEqual([
-      { start: 1794213407814 - 3239, end: 1794213407814 },
       { start: 1794213410289 - 36, end: 1794213410289 },
     ]);
     renderOpen(<TurnAgents {...props} agents={team} leader={leader} />);
-    expect(tableRows()[0]).toBe('leaderBoth subagents finished, and each replied with the text it was given:12s (waited 3s)done');
+    expect(tableRows()[0]).toBe('leaderBoth subagents finished, and each replied with the text it was given:12s (waited 0s)done');
   });
 
   it('marks the leader of a stored turn that ended in an error or a stop as failed', () => {
@@ -506,7 +512,7 @@ describe('leader row', () => {
       agents={[child, { ...child, session_id: 'old', team_id: 'turn-0' }]} />);
     fireEvent.click(screen.getByRole('button', { expanded: false }));
     expect(tableRows()).toEqual([
-      'leaderI wait for the reviews.15s (waited 0s)running',
+      'leaderI wait for the reviews.15srunning',
       expect.stringMatching(/^agent#1/),
       expect.stringMatching(/^agent#1/),
     ]);

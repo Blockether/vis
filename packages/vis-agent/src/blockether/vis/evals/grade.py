@@ -64,6 +64,7 @@ CHECK_KEYS = frozenset(
         "want_cache_metrics",
         "want_cache_read",
         "want_context_budget",
+        "want_council_attempts",
         "want_council_recovery",
         "want_fold_first",
         "want_folded_prefix",
@@ -384,6 +385,93 @@ def council_recovery_evidence(form_outputs, activities, expected):
     if failures:
         return failures, set(), []
     return [], {failed["id"]}, [message]
+
+
+def council_attempt_failures(form_outputs, activities, mode, work, answer):
+    """Check two Council launches against the printed terminal records."""
+    launches = [
+        call
+        for row in activities
+        if row.get("operation") == "council.run"
+        for call in row.get("children") or [row]
+    ]
+    if len(launches) != 2 or any(row.get("state") != "succeeded" for row in launches):
+        return ["Council trial requires exactly two successful launches"]
+    prefix = "child-attempt "
+    try:
+        records = [
+            exact_json(line.removeprefix(prefix))
+            for event in form_outputs
+            for line in event["stdout"].splitlines()
+            if line.startswith(prefix)
+        ]
+    except ValueError:
+        return ["invalid Council attempt JSON"]
+    if len(records) != 2 or any(not isinstance(record, dict) for record in records):
+        return ["Council trial requires two terminal attempt records"]
+    first, second = records
+    for record in records:
+        for key, pattern in (
+            ("task_id", r"t[1-9]\d*"),
+            ("id", r"a[1-9]\d*"),
+            ("session_id", r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"),
+        ):
+            if not isinstance(record.get(key), str) or not re.fullmatch(
+                pattern, record[key]
+            ):
+                return [f"missing or invalid Council attempt {key}"]
+    for launch, record in zip(launches, records, strict=True):
+        refs = {(ref["type"], ref["id"]) for ref in launch.get("resources", ())}
+        if {(kind, ref) for kind, ref in refs if kind in {"task", "subagent"}} != {
+            ("task", record["task_id"]),
+            ("subagent", record["session_id"]),
+        }:
+            return ["Council attempt IDs do not match a single child launch"]
+    if first["task_id"] == second["task_id"]:
+        return ["Council trial reused the same Task"]
+    if second.get("status") != "completed" or second.get("answer") != "written":
+        return ["second Council attempt did not complete the write"]
+    child_keys = ("id", "session_id")
+    if mode == "followup":
+        if any(first[key] != second[key] for key in child_keys):
+            return ["follow-up Task did not use the same child"]
+        if first.get("status") != "completed" or first.get("answer") != "scope-ok-7431":
+            return ["first Council attempt did not complete the read"]
+        if _workspace_text(work, "audit.txt").splitlines() != [
+            "scope-ok-7431",
+            "subagent",
+        ]:
+            return ["follow-up did not write the two requested lines"]
+    elif mode == "reroute":
+        if any(first[key] == second[key] for key in child_keys):
+            return ["replacement Task did not use a new child"]
+        error = first.get("error")
+        if (
+            first.get("status") != "failed"
+            or (first.get("provider"), first.get("model")) != ("busy", "busy-1")
+            or not isinstance(error, dict)
+            or error.get("code") != "rate_limited"
+        ):
+            return ["first Council attempt did not end with the busy route rate limit"]
+        provider, model = second.get("provider"), second.get("model")
+        if (
+            not all(isinstance(value, str) and value for value in (provider, model))
+            or provider == "busy"
+            or not isinstance(first.get("alternatives"), list)
+            or {"provider": provider, "model": model} not in first["alternatives"]
+        ):
+            return ["replacement did not complete on an offered route"]
+        if _workspace_text(work, "reroute.txt").splitlines() != [
+            "reroute-ok",
+            "subagent",
+            provider,
+        ]:
+            return ["replacement file does not name its completed provider"]
+        if f"{provider}/{model}" not in answer:
+            return ["final answer does not name the completed route"]
+    else:
+        return ["unknown Council attempt check"]
+    return []
 
 
 def structured_failures(sc, work, answer, activities):
@@ -1335,6 +1423,11 @@ def grade_trial(
         checks.fail("activities")
     if sc.get("want_council_recovery"):
         checks.check("council_recovery", recovery_failures)
+    if mode := sc.get("want_council_attempts"):
+        checks.check(
+            "council_attempts",
+            council_attempt_failures(form_outputs, activity_rows, mode, work, answer),
+        )
     if sc.get("want") or sc.get("wantnot"):
         checks.use("files")
     for name, subs in (sc.get("want") or {}).items():

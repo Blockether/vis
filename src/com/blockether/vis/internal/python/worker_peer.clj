@@ -87,6 +87,7 @@
         {:id (get message "id")
          :op (get message "op")
          :call (get message "call")
+         :task (:task (meta message))
          :session (get message "session")
          :tool (get message "tool")
          :started-ms (util/now-ms)

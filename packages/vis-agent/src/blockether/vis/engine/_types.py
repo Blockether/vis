@@ -945,6 +945,64 @@ class AgentsRoute(TypedDict):
     effective: Literal["next_request"]
 
 
+class AgentsSubagentTask(TypedDict):
+    task_id: str
+    id: str
+    session_id: str
+
+
+AgentsSubagentTasks: TypeAlias = list[AgentsSubagentTask]
+
+
+SubagentTasks: TypeAlias = AgentsSubagentTasks
+
+
+TaskKind: TypeAlias = Literal["tool", "shell", "mcp", "subagent"]
+
+
+TaskState: TypeAlias = Literal["running", "done", "failed", "cancelled"]
+
+
+class TaskOrigin(TypedDict):
+    turn: NotRequired[int | None]
+    iteration: NotRequired[int | None]
+    block: NotRequired[str]
+
+
+class TaskStatusTask(TypedDict):
+    id: str
+    session_id: str
+    kind: TaskKind
+    name: str
+    state: TaskState
+    origin: TaskOrigin
+    started_at: int
+    ended_at: NotRequired[int]
+    cancel_reason: NotRequired[
+        Literal[
+            "agent",
+            "person",
+            "turn",
+            "reload",
+            "session_close",
+            "worker_death",
+        ]
+    ]
+    error: NotRequired[str]
+    view_ids: list[str]
+    detached: bool
+
+
+class TaskStatus(TypedDict):
+    task: TaskStatusTask
+    record: NotRequired[AgentsRecord]
+    value: NotRequired[JSONValue]
+
+
+class TaskCancel(TypedDict):
+    accepted: bool
+
+
 class AgentsTimelineItemsItem(TypedDict):
     at: int
     kind: Literal["started", "continued", "note", "message", "finished"]
@@ -3208,6 +3266,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/sessions/:sid/slashes": "SessionSlashes",
     "GET /v1/sessions/:sid/speech/jobs/:job-id": "VoiceJob",
     "GET /v1/sessions/:sid/suggest": "SessionSuggestions",
+    "GET /v1/sessions/:sid/tasks/:task-id": "TaskStatus",
     "GET /v1/sessions/:sid/trajectory.json": "SessionAtif",
     "GET /v1/sessions/:sid/transcript": "TranscriptRecord",
     "GET /v1/sessions/:sid/turns": "TurnList",
@@ -3290,13 +3349,11 @@ RESPONSE_TYPES: dict[str, str] = {
     "POST /v1/sessions": "SessionCreated",
     "POST /v1/sessions/:sid/agents": "AgentSpawned",
     "POST /v1/sessions/:sid/agents/answer": "AgentRecords",
-    "POST /v1/sessions/:sid/agents/cancel": "AgentRecords",
     "POST /v1/sessions/:sid/agents/deny": "AgentRecords",
     "POST /v1/sessions/:sid/agents/extend": "AgentRecords",
     "POST /v1/sessions/:sid/agents/grant": "AgentRecords",
     "POST /v1/sessions/:sid/agents/route": "AgentsRoute",
-    "POST /v1/sessions/:sid/agents/run": "AgentRecords",
-    "POST /v1/sessions/:sid/agents/wait": "AgentRecords",
+    "POST /v1/sessions/:sid/agents/run": "SubagentTasks",
     "POST /v1/sessions/:sid/apps": "AppDoorAnswer",
     "POST /v1/sessions/:sid/attachments": "Upload",
     "POST /v1/sessions/:sid/cancel-current": "TurnCancel",
@@ -3314,6 +3371,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "POST /v1/sessions/:sid/resume-queue": "TurnQueueStep",
     "POST /v1/sessions/:sid/run": "SessionBlock",
     "POST /v1/sessions/:sid/speech": "VoiceJob",
+    "POST /v1/sessions/:sid/tasks/:task-id/cancel": "TaskCancel",
     "POST /v1/sessions/:sid/turns": "TurnRecord",
     "POST /v1/sessions/:sid/turns/:tid/cancel": "TurnCancel",
     "POST /v1/sessions/:sid/views/:view-id/actions": "ViewOutcome",

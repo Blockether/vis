@@ -20,7 +20,5 @@
     "patch",
     "council.grant"
   ],
-  "want_activity_sequence": [
-    "council.run"
-  ]
+  "want_council_attempts": "followup"
 }

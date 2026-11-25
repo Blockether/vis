@@ -1093,12 +1093,9 @@ ASK_CASES = json.loads((_contracts._DATA / "fixtures" / "view.json").read_text()
 
 @pytest.mark.parametrize("case", ASK_CASES["form_refusals"], ids=lambda f: f["name"])
 def test_ask_rejects_live_view_controls_with_the_contract_diagnostic(case):
-    request = dict(ASK_CASES["input"], nodes=case["nodes"], channel_ids=["app"])
-    request.pop("created_at")
-    (diagnostic,) = _contracts._explain_lines("view", "request", request)
     with pytest.raises(ValueError, match="does not take") as exc:
-        vis.ask(request["title"], request["nodes"])
-    assert str(exc.value).endswith(diagnostic)
+        vis.ask(ASK_CASES["input"]["title"], case["nodes"])
+    assert str(exc.value).endswith(case["error"])
 
 
 def test_a_panel_view_pushes_events_to_its_open_callback(monkeypatch):

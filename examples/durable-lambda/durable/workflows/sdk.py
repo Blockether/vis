@@ -609,30 +609,28 @@ class Context:
         # A backtick in a task must not end the code block of the request.
         listed = json.dumps(given).replace("`", "\\u0060")
         block = (
-            "import json\n\n\n"
-            "async def settle(records):\n"
-            '    """Wait until each subagent ends or one of them asks. Print the records."""\n'
-            '    while any(record["status"] in ("queued", "running") for record in records) and not any(record["status"] in ("asking", "held") for record in records):\n'
-            '        records = await council.wait(session_ids=[record["session_id"] for record in records])\n'
-            f"    print({DELEGATED!r} + json.dumps([{{key: record.get(key) for key in {SHOWN!r}}} for record in records]))\n"
-            "    return records\n\n\n"
-            f"records = await settle(await council.run(json.loads({listed!r})))"
+            "import asyncio\nimport json\n\n\n"
+            "async def collect(children):\n"
+            "    _, pending = await asyncio.wait(children)\n"
+            "    records = []\n"
+            "    for child in children:\n"
+            "        record = child.record() if child in pending or child.cancelled() else child.result()\n"
+            f"        records.append({{**{{key: record.get(key) for key in {SHOWN!r}}}, 'id': child.id}})\n"
+            f"    print({DELEGATED!r} + json.dumps(records))\n\n\n"
+            f"children = await council.run(json.loads({listed!r}))\n"
+            "await collect(children)"
         )
-        again = 'records = await settle(await council.wait(session_ids=[record["session_id"] for record in records]))'
-        how = (
-            "Do not do the work of a task yourself. Run exactly this Python block one time, without a change:\n\n"
+        request = (
+            "Give each task to its own subagent. Do not do its work yourself. "
+            "Run this Python block one time, without a change:\n\n"
             f"```python\n{block}\n```\n\n"
-            f"When the printed line shows a subagent with the status asking, answer it from its task. Then run `{again}`. Do that until no subagent asks. "
-            "Then answer with one short line."
+            "If a child asks, answer its pending Council reply. Then run `await collect(children)` "
+            "again with the same handles. Do not call `council.run` again. "
+            "When all children end, answer with one short line."
         )
-        request = f"Give each task of this Python block to its own subagent. {how}"
-        for _ in range(CORRECTIONS + 1):
-            records = self._delegated(self._request(request, timeout, llm, provider).turn_id)
-            if records is not None:
-                break
-            request = f"That turn started no subagent: its tool output has no line that starts with {DELEGATED!r}. {how}"
-        else:
-            raise ActivityError("the session started no subagent")
+        records = self._delegated(self._request(request, timeout, llm, provider).turn_id)
+        if records is None:
+            raise ActivityError("the turn did not print the subagent records")
         if len(records) != len(given):
             raise ActivityError(f"the session started {len(records)} subagents for {len(given)} tasks")
         for record in records:
@@ -641,9 +639,9 @@ class Context:
         return [record["answer"] or "" for record in records]
 
     def _delegated(self, turn_id: str) -> list[Subagent] | None:
-        """Return the records of the subagents that the tool output of a turn shows, in the order of their tasks. None: the turn started no subagent."""
-        lines = printed(self.session.client.get_session_turn_trace(self.session.id, turn_id))
-        if lines is None:  # without the trace, a second request can start each subagent again
+        """Return the records of the subagents that the tool output of a turn shows, in the order of their tasks. None if the turn did not print records."""
+        lines = printed(self.session.client.routes.get_session_turn_trace(self.session.id, turn_id))
+        if lines is None:
             raise ActivityError("the gateway gave no trace of the turn")
         shown = [line for line in lines if line.startswith(DELEGATED)]
         if not shown:
@@ -657,8 +655,7 @@ class Context:
         records = [subagent(item) for item in items if item is not None]
         if len(records) != len(items):
             raise ActivityError("the tool output of the session does not have the complete answers of the subagents")
-        # The session gives each subagent the next id: a1, a2 and onward.
-        return sorted(records, key=lambda record: int("".join(filter(str.isdigit, record["id"])) or 0))
+        return records
 
     def document(self, name: str, request: str, *, timeout: float = TURN_S, llm: str | None = None, provider: str | None = None) -> Document:
         """Let the session write a document and attach it.

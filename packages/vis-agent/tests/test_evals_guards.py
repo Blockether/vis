@@ -1457,6 +1457,77 @@ class EvaluationIntegrationEdgeTest(unittest.TestCase):
         self.assertTrue(failures)
 
 
+class CouncilAttemptsTest(unittest.TestCase):
+    def test_followup_requires_same_child_and_new_task(self):
+        first = self.attempt(1, answer="scope-ok-7431")
+        follow = {**first, "task_id": "t2", "answer": "written"}
+        self.assertEqual([], self.failures(first, follow, mode="followup"))
+        self.assertTrue(self.failures(first, self.attempt(2), mode="followup"))
+        self.assertTrue(
+            self.failures(first, {**follow, "task_id": "t1"}, mode="followup")
+        )
+        self.assertTrue(
+            self.failures(first, follow, mode="followup", extra_launch=True)
+        )
+        self.assertTrue(
+            self.failures(
+                first, follow, mode="followup", receipt_records=[first, first]
+            )
+        )
+
+    def test_reroute_requires_an_offered_route_and_a_completed_record(self):
+        first = self.attempt(
+            1,
+            provider="busy",
+            model="busy-1",
+            status="failed",
+            error={"code": "rate_limited"},
+            alternatives=[{"provider": "fallback", "model": "ready"}],
+        )
+        replacement = self.attempt(2, provider="fallback", model="ready")
+        self.assertEqual([], self.failures(first, replacement, mode="reroute"))
+        self.assertTrue(
+            self.failures(first, {**replacement, "model": "other"}, mode="reroute")
+        )
+        self.assertTrue(
+            self.failures(first, {**replacement, "status": "running"}, mode="reroute")
+        )
+
+    def attempt(self, index, **fields):
+        return {
+            "task_id": f"t{index}",
+            "id": f"a{index}",
+            "session_id": f"00000000-0000-4000-8000-00000000000{index}",
+            "status": "completed",
+            "answer": "written",
+            **fields,
+        }
+
+    def failures(self, *records, mode, extra_launch=False, receipt_records=None):
+        rows = [
+            {
+                "operation": "council.run",
+                "state": "succeeded",
+                "resources": [
+                    {"type": "task", "id": row["task_id"]},
+                    {"type": "subagent", "id": row["session_id"]},
+                ],
+            }
+            for row in receipt_records or records
+        ]
+        if extra_launch:
+            rows.append(rows[0])
+        outputs = [
+            {"stdout": "\n".join("child-attempt " + json.dumps(r) for r in records)}
+        ]
+        with tempfile.TemporaryDirectory() as work:
+            Path(work, "audit.txt").write_text("scope-ok-7431\nsubagent\n")
+            Path(work, "reroute.txt").write_text("reroute-ok\nsubagent\nfallback\n")
+            return grade.council_attempt_failures(
+                outputs, rows, mode, work, "reroute-done fallback/ready"
+            )
+
+
 class CouncilRecoveryTest(unittest.TestCase):
     def test_seeded_handoff_matches_exact_evidence(self):
         scenario = load_scenarios(["council-thread-recovery"])[0]

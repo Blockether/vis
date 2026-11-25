@@ -131,9 +131,10 @@
         entry (#'shell/bg-entry session id)
         opts {"id" id "token" (:generation entry) "seconds" seconds}
         _ (when-not entry (throw (ex-info "shell: unknown id" {:id id})))
-        limit (shell/shell-snapshot env (assoc opts "budget" true))
+        {limit "seconds" cpu-start "cpu_ms"} (shell/shell-snapshot env (assoc opts "budget" true "sample_cpu" true))
         outcome (task/await! session (get-in entry [:task :id]) {:timeout-ms (* 1000 limit)})
-        result (or (:value outcome) (shell/shell-snapshot env (assoc opts "elapsed_ms" (* 1000 limit))))]
+        result (or (:value outcome) (shell/shell-snapshot env (assoc opts "elapsed_ms" (* 1000 limit)
+                                                                        "cpu_start_ms" cpu-start)))]
     {:result (cond-> (assoc result "stage" "wait" "timed_out" (= :running (:state outcome)))
                offset (merge (select-keys (:result (shell-logs* env id {:offset offset}))
                                            ["out" "offset" "next_offset" "is_eof"])))}))
@@ -1501,7 +1502,10 @@
               (try (shell* env {"command" command "id" id "timeout_secs" 1})
                  ;; The marker says that the work ended, so the wait sees only the sleep.
                  (when worked (poll #(.isFile worked) true? 100))
-                 (with-redefs-fn {#'shell/quiet-note-ms 500}
+                 (with-redefs-fn (cond-> {#'shell/quiet-note-ms 500}
+                                   worked
+                                   ;; Linux ps reports lifetime CPU percent. Simulate it on macOS too.
+                                   (assoc #'shell/process-usage (constantly {"cpu_ms" 500 "cpu_percent" 25.0})))
                    (fn []
                      (let [r (wait* env id 2)]
                        (expect (true? (get r "timed_out")))

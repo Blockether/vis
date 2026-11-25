@@ -111,7 +111,7 @@
 (defn leader-cancel-notice
   "The notice that settles a subagent turn that its leader stopped, or nil when the cancel
    `source` is not the leader. Clients show it instead of a user cancel notice: no person
-   stopped that session. `:agent-cancel` is a `council.cancel` and `:parent-cancel` is the
+   stopped that session. `:agent-cancel` is a subagent Task cancel and `:parent-cancel` is the
    stop of the leader turn."
   [id source]
   (case source

@@ -39,7 +39,7 @@ export const Dock: Story = {
 /** A finished team. A row opens the session of its agent. */
 export const Finished: Story = {};
 
-// The leader worked, waited in council.run, worked again and waits in council.wait now.
+// The leader has one completed wait and one active wait.
 const LEAD_NOW = Date.now();
 const LEADER = {
   start: LEAD_NOW - 150_000,

@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.session.agents :as agents]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.persistance.core :as ps]
@@ -72,7 +73,7 @@
    directory of this test. `f` gets `{:db :leader :children :events}`. `events` collects each
    `session.team_updated` as `[sid event]`. With `watched?`, a client stream watches the leader.
    `task` is the task of each child. Steps are not rate limited."
-  [{:keys [statuses watched? task]} f]
+  [{:keys [statuses watched? task files]} f]
   (let [db
         (h/store)
 
@@ -91,6 +92,7 @@
                                                        :leader_id leader
                                                        :team_id (str turn)
                                                        :task (or task "Check evidence")
+                                                        :files files
                                                        :status status
                                                        :iteration_budget 4
                                                        :spawn_key (str (random-uuid))
@@ -198,10 +200,10 @@
   (it "canonical agent routes and validation"
       (doseq [[path methods]
               [["/v1/sessions/:sid/agents" [:post]] ["/v1/sessions/:sid/agents/answer" [:post]]
-               ["/v1/sessions/:sid/agents/cancel" [:post]] ["/v1/sessions/:sid/agents/deny" [:post]]
+               ["/v1/sessions/:sid/tasks/:task-id/cancel" [:post]] ["/v1/sessions/:sid/agents/deny" [:post]]
                ["/v1/sessions/:sid/agents/extend" [:post]]
                ["/v1/sessions/:sid/agents/grant" [:post]] ["/v1/sessions/:sid/agents/route" [:post]]
-               ["/v1/sessions/:sid/agents/run" [:post]] ["/v1/sessions/:sid/agents/wait" [:post]]
+               ["/v1/sessions/:sid/agents/run" [:post]] ["/v1/sessions/:sid/tasks/:task-id" [:get]]
                ["/v1/sessions/:sid/agents/:child-id/timeline" [:get]]]
 
               method
@@ -255,10 +257,8 @@
       (with-redefs [lp/db-info (constantly db)]
         (doseq [[operation body] [["run" "{}"] ["run" "{\"tasks\":[]}"]
                                   ["run" "{\"tasks\":[\"Work\"],\"timeout_secs\":0}"]
-                                  ["wait" "{\"session_ids\":\"x\"}"]
-                                  ["wait" "{\"timeout_secs\":1801}"]
                                   ["extend" "{\"session_id\":\"x\"}"] ["deny" "{}"]
-                                  ["grant" "{\"session_id\":\"x\"}"] ["wait" "not json"]]]
+                                  ["grant" "{\"session_id\":\"x\"}"]]]
           (expect (= 400 (:status (post operation body))) (pr-str [operation body])))
         (doseq [[operation body] [["extend" {:session_id other :iterations 5}]
                                   ["deny" {:session_id other :reason "No"}]
@@ -267,13 +267,9 @@
             (expect (= 409 (:status response)) operation)
             (expect (= "not-owner" (get-in (json/read-json (:body response)) ["error" "type"]))
                     operation)))
-        (expect (= [] (json/read-json (:body (post "wait" "{\"timeout_secs\":1}")))))
-        (expect (= [{"session_id" "nobody" "status" "unknown"}]
-                   (mapv #(select-keys % ["session_id" "status"])
-                         (json/read-json
-                           (:body (post
-                                    "wait"
-                                    "{\"session_ids\":[\"nobody\"],\"timeout_secs\":1}"))))))))))
+        (let [path (str "/v1/sessions/" leader "/tasks/t7")]
+          (expect (= 404 (:status (request :get path nil))))
+          (expect (= 404 (:status (request :post (str path "/cancel") nil)))))))))
 
 (defdescribe
   routing-is-local-and-respects-human-locks-through-http-test
@@ -683,7 +679,7 @@
                (expect (= [{"session_id" b "status" "running" "question" "May I?"}] (rows opened)))
                (expect (= [{"session_id" b "status" "running"}] (rows closed))
                        "A closed question leaves the row"))
-             (let [[event] (push! 1 #(state/agents-operation! leader :cancel {:session_id a}))]
+             (let [[event] (push! 1 #(#'state/cancel-child! {:db-info db} {:session_id a}))]
                (expect (= [{"session_id" a "status" "cancelled"}] (rows event)))
                (expect (= {"active" 2 "total" 3} (get event "team"))))
              (swap! registry update
@@ -694,24 +690,18 @@
                               :status "running"
                               :cancel-token (cancellation/cancellation-token)}}
                 :current-turn "lt"})
-             ;; The two cancels can reach the push thread apart, so a client may get one event or
-             ;; two. It merges the rows by session id, and so does this check (CI run 41449961621).
-             (reset! events [])
-             (state/cancel-turn! leader "lt")
-             (let [merged (fn []
-                            (into {}
-                                  (for [[_ event] @events
-                                        row (concat (get event "agents") (get event "changes"))
-                                        :when (contains? row "status")]
-
-                                    [(get row "session_id") (get row "status")])))]
-               (loop [left 300]
-                 (when (and (not= {b "cancelled" c "cancelled"} (select-keys (merged) [b c]))
-                            (pos? left))
-                   (Thread/sleep 10)
-                   (recur (dec left))))
-               (expect (= {b "cancelled" c "cancelled"} (select-keys (merged) [b c]))
-                       "The leader stop pushes each child that it cancelled")
+              (reset! events [])
+              (let [env {:db-info db :session-id leader}
+                    waiting (:id (#'state/register-agent-attempt! env (agents/info db b) nil))
+                    background (:id (#'state/register-agent-attempt! env (agents/info db c) nil))]
+                (task/await! leader waiting {:block "b" :token "await"})
+                (state/cancel-turn! leader "lt")
+                ;; The interpreter cancels the waits for the stopped block as it unwinds.
+                (doseq [id (task/awaited-ids leader "b")]
+                  (task/cancel! leader id :turn :interrupt))
+                (await-count events 1)
+                (expect (= "cancelled" (get-in (task/status leader waiting) [:record :status])))
+                (expect (= :running (get-in (task/status leader background) [:task :state]))))
                (doseq [[sid event] @events]
                  (expect (= leader sid))
                  (expect (document/valid-json?
@@ -720,7 +710,7 @@
                            (select-keys event ["team" "agents" "changes" "child_id"])))
                  (expect (= (= 1 (count (event-ids event))) (contains? event "child_id"))
                          "Only an event of one child names it"))
-               (expect (= {"active" 0 "total" 3} (get (second (peek @events)) "team"))))
+                (expect (= {"active" 1 "total" 3} (get (second (peek @events)) "team")))
              (finally (state/remove-event-tap! ::spy) (reset! registry saved)))))))
 
 ;; With the client polls gone, these child changes reached no client: a model or routing-lock
@@ -1111,7 +1101,7 @@
 (defdescribe
   task-dependencies-test
   (it
-    "starts a waiting task once when its after tasks complete, and blocks and re-arms it"
+    "starts a ready dependent once and does not restart a blocked Task"
     (let [db
           (h/store)
 
@@ -1156,11 +1146,11 @@
           settle!
           #(#'state/settle-dependents! db leader)
 
-          post
-          (fn [operation body]
-            (json/read-json (:body (request :post
-                                            (str "/v1/sessions/" leader "/agents/" operation)
-                                            (json/write-json-str body)))))]
+          read-task
+          (fn [id] (request :get (str "/v1/sessions/" leader "/tasks/" id) nil))
+
+          env {:db-info db :session-id leader}
+          id (:id (#'state/register-agent-attempt! env (agents/info db a3) nil))]
 
       (with-redefs-fn {#'lp/db-info (constantly db)
                        #'state/broadcast-team! (fn [& _])
@@ -1180,21 +1170,20 @@
           (ps/db-agent-update! db a2 {:status "failed"})
           (settle!)
           (expect (= "blocked" (status a3)))
-          (let [[record] (post "wait" {:session_ids ["a3"] :timeout_secs 1})]
+          (let [record (get (json/read-json (:body (read-task id))) "record")]
             (expect (= [a3 "a3" "blocked" ["a2"] "dependency_failed"]
-                       (mapv #(get-in record %)
-                             [["session_id"] ["id"] ["status"] ["after"] ["error" "code"]]))))
-          (expect (= [{"session_id" "a9" "status" "unknown"}]
-                     (mapv #(select-keys % ["session_id" "status"])
-                           (post "wait" {:session_ids ["a9"] :timeout_secs 1}))))
-          ;; A follow-up of the failed task re-arms the blocked task.
+                       (conj (mapv #(get record %) ["session_id" "id" "status" "after"])
+                             (get-in record ["error" "code"])))))
+          (expect (= 404 (:status (read-task "t999"))))
+          ;; A terminal Task is not admitted again when its dependency takes a follow-up.
           (ps/db-agent-update! db a2 {:status "queued"})
           (settle!)
-          (expect (= "waiting" (status a3)))
+          (expect (= "blocked" (status a3)))
           (ps/db-agent-update! db a2 {:status "completed"})
           (settle!)
-          (expect (= [a2 a3] @delivered))
-          (expect (= "queued" (status a3))))))))
+          (expect (= [a2] @delivered))
+          (expect (= "blocked" (status a3)))
+          (expect (= "blocked" (get-in (json/read-json (:body (read-task id))) ["record" "status"]))))))))
 
 (defdescribe
   task-id-control-test
@@ -1225,20 +1214,92 @@
                                                      :checkpoint [{:role :user
                                                                    :content "Context"}]}}))
 
-              cancel
-              (request :post
-                       (str "/v1/sessions/" leader "/agents/cancel")
-                       (json/write-json-str {:session_id "a1"}))]
-
-          (expect (= 200 (:status cancel)) (pr-str cancel))
-          (expect (= [[a1 "a1"]]
-                     (mapv #(mapv % ["session_id" "id"]) (json/read-json (:body cancel)))))
+              env {:db-info db :session-id leader}
+              id (:id (#'state/register-agent-attempt! env (agents/info db a1) nil))
+              path (str "/v1/sessions/" leader "/tasks/" id)
+              foreign (str "/v1/sessions/" a1 "/tasks/" id)]
+          (expect (= 404 (:status (request :get foreign nil))))
+          (expect (= 404 (:status (request :post (str foreign "/cancel") nil))))
+          (let [cancel (request :post (str path "/cancel") nil)]
+            (expect (= 200 (:status cancel)))
+            (expect (= {"accepted" true} (json/read-json (:body cancel)))))
+          (task/await! leader id {:timeout-ms 5000})
+          (let [status (json/read-json (:body (request :get path nil)))]
+            (expect (document/valid-json? "task" "status" status))
+            (expect (= [id leader "cancelled" a1]
+                       [(get-in status ["task" "id"]) (get-in status ["task" "session_id"])
+                        (get-in status ["task" "state"]) (get-in status ["record" "session_id"])])))
+          (loop [n 50]
+            (when (and (pos? n) (not= "blocked" (:status (agents/info db a2))))
+              (Thread/sleep 20)
+              (recur (dec n))))
           (expect (= ["cancelled" "blocked"] (mapv #(:status (agents/info db %)) [a1 a2])))
-          (expect (= 400
-                     (:status (request :post
-                                       (str "/v1/sessions/" leader "/agents/cancel")
-                                       (json/write-json-str {:session_id "a7"}))))
-                  "An unknown task id names no child"))))))
+          (expect (= {"accepted" false}
+                     (json/read-json (:body (request :post (str path "/cancel") nil)))))))))
+  (it "stops the child when the owning worker loses its Task registry"
+      (with-team {:statuses ["running" "waiting"]}
+        (fn [{:keys [db leader children]}]
+          (let [[active waiting] children
+                env {:db-info db :session-id leader}
+                id (:id (#'state/register-agent-attempt! env (agents/info db active) nil))]
+            (expect (= [[:worker_death id]]
+                       (mapv (juxt :cancel-reason :id) (task/sweep! leader :worker_death))))
+            (loop [n 50]
+              (when (and (pos? n) (not= "cancelled" (:status (agents/info db active))))
+                (Thread/sleep 20)
+                (recur (dec n))))
+            (expect (nil? (task/status leader id)))
+            (expect (= "cancelled" (:status (agents/info db active))))
+            (expect (not= "cancelled" (:status (agents/info db waiting)))))))))
+
+(defdescribe follow-up-file-grant-test
+  (it "runs each follow-up in its own scope or the original spawn scope"
+      (let [spawn-files {:read_only ["/tmp/stage3-spawn.txt"]}
+            follow-up-files {:write ["/tmp/stage3-audit.txt"]}
+            granted-files (assoc follow-up-files :read_only ["/tmp/stage3-extra.txt"])]
+        (with-team {:statuses ["completed"] :files spawn-files}
+          (fn [{:keys [db leader children]}]
+            (let [[child] children
+                  env {:db-info db :session-id leader :security-policy {}}
+                  observed (atom [])
+                  reject? (atom false)
+                  run! (fn [spec]
+                         (let [response (request :post (str "/v1/sessions/" leader "/agents/run")
+                                                 (json/write-json-str
+                                                   {:tasks [(assoc spec :child child)]}))
+                               body (json/read-json (:body response))]
+                           (expect (= 200 (:status response)) (pr-str body))
+                           (get-in body [0 "task_id"])))]
+              (with-redefs [state/live-env (constantly env)
+                            state/agent-files (fn [_ _ files] files)
+                            state/agent-publish (fn [_ _]
+                                                   (swap! observed conj (:files (agents/info db child)))
+                                                   {:replies [{:state (if @reject? "unavailable" "delivered")}]})
+                            jail/grant-jail! (fn [& _])
+                            policy/restrict (fn [& _] {})]
+                (expect (= spawn-files (:files (agents/info db child))))
+                (let [b (run! {:task "Audit" :files follow-up-files})]
+                  (expect (string? b))
+                  (#'state/agent-grant env {:session_id child :files (select-keys granted-files [:read_only])})
+                  (ps/db-agent-update! db child {:status "completed"})
+                  (reset! reject? true)
+                  (let [rejected (run! {:task "Cannot publish"})]
+                    (expect (= :done (:state (task/await! leader rejected {}))))
+                    (expect (= granted-files (:files (agents/info db child)))))
+                  (reset! reject? false)
+                  (let [c (run! {:task "Use spawn scope"})]
+                    (expect (and (string? c) (not= b c)))
+                    (expect (= [follow-up-files spawn-files spawn-files] @observed))
+                    (expect (= spawn-files (:files (agents/info db child)))))))))))))
+
+(defdescribe orphaned-follow-up-test
+  (it "does not replay the original task after the gateway lost the queued follow-up"
+      (with-team {:statuses ["waiting"]}
+        (fn [{:keys [db leader children]}]
+          (let [[child] children]
+            (ps/db-agent-update! db child {:resumed_at (System/currentTimeMillis)})
+            (#'state/settle-dependents! db leader)
+            (expect (= "failed" (:status (agents/info db child)))))))))
 
 ;; User request 2026-11-07: a person stops subagents only through the leader. The stop of the
 ;; leader turn stops its children; a subagent session itself has no stop.

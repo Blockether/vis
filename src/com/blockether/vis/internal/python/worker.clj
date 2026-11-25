@@ -1183,11 +1183,10 @@
     (when (= "close" op) (swap! sessions disj session))
     (try
       (child/request! peer
-                      (cond-> {"op" op "session" session}
-                        code
-                        (assoc "code" code)
-                         call
-                        (assoc "call" call)))
+                      (with-meta (cond-> {"op" op "session" session}
+                                   code (assoc "code" code)
+                                   call (assoc "call" call))
+                        {:task task/*task*}))
       (catch Throwable error (when newly-assigned? (swap! sessions disj session)) (throw error)))))
 
 (defn install-runtime!
@@ -1227,13 +1226,24 @@
           vals
           vec))
 
+(defn- matching-replies [peer matches?]
+  (into [] (keep (fn [[id active]]
+                   (when (matches? active) (get @(:pending peer) id))))
+        (get-in @(:rpc-state peer) [:outbound :active])))
+
 (defn pending-call-replies
   "The replies still owed by one invocation; never include background work."
   [k call]
   (when-let [peer (:peer (get @workers k))]
-    (into [] (keep (fn [[id active]]
-                     (when (= call (:call active)) (get @(:pending peer) id))))
-          (get-in @(:rpc-state peer) [:outbound :active]))))
+    (matching-replies peer #(= call (:call %)))))
+
+(defn pending-task-replies
+  "The trusted extension replies still owed by the selected Tasks of this worker."
+  [k tasks]
+  (into [] (mapcat (fn [[key {:keys [peer]}]]
+                     (when (and (instance? TrustedExtensionWorker key) (= k (:session key)))
+                       (matching-replies peer #(contains? tasks (:task %))))))
+        @workers))
 
 (defn- interrupt-request!
   "Interrupt the current worker for `session` without starting a replacement.

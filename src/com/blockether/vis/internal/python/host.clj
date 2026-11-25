@@ -264,6 +264,7 @@
             (if-let [result (when owned? (task/await! sid arg opts))]
               (task-reply result)
               {"state" "missing"}))
+          "_task_snapshot" (when owned? (:record (task/status sid arg)))
           "_task_ack" (when owned? (task/acknowledge! sid arg))
           "_task_cancel" (boolean (and owned? (task/cancel! sid arg :agent :cancel x)))
           "_task_state" (if-let [row (when owned? (task/state sid arg))] (name (:state row)) "missing")
@@ -273,7 +274,7 @@
 
 (def ^:private task-ops
   #{"_task_start" "_task_await" "_task_ack" "_task_cancel" "_task_state" "_task_cancelling"
-    "_task_uncancel" "_task_rename" "_task_list"})
+    "_task_uncancel" "_task_rename" "_task_list" "_task_snapshot"})
 
 (defn- dispatch-call
   [caller call tool payload]

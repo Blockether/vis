@@ -63,8 +63,8 @@ def test_gateway_routes_and_lease_policy_are_shared():
     assert len(routes) == 183
     assert len(operations) == 222
     assert Counter(operation["request"] for operation in operations) == {
-        "none": 134,
-        "json": 82,
+        "none": 136,
+        "json": 80,
         "binary": 6,
     }
     assert by_path["/v1/decisions/models"]["operations"]["get"] == {
@@ -340,8 +340,9 @@ class _Renderer:
         document, _, pointer = ref.partition("#")
         document = document or self.document
         node = self.documents[document] if document else self.gateway
-        for part in pointer.strip("/").split("/"):
-            node = node[part]
+        if pointer:
+            for part in pointer.removeprefix("/").split("/"):
+                node = node[part]
         return node
 
     def type_of(self, node, hint):
@@ -350,6 +351,8 @@ class _Renderer:
         if "$ref" in node:
             ref = node["$ref"]
             document, _, pointer = ref.partition("#")
+            if ref == "#":
+                return self.type_of(self.target(ref), hint)
             if pointer.startswith("/$defs/") and "/" not in pointer[7:]:
                 return self.named(pointer[7:], document or self.document)
             return self.foreign(self.target(ref))

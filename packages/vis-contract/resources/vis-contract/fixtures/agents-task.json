@@ -1,0 +1,34 @@
+{
+  "descriptor": {
+    "task_id": "t7",
+    "id": "a1",
+    "session_id": "child-session"
+  },
+  "status": {
+    "task": {
+      "id": "t7",
+      "session_id": "owner-session",
+      "kind": "subagent",
+      "name": "t7 council a1",
+      "state": "done",
+      "origin": {
+        "turn": 1,
+        "iteration": 2,
+        "block": "block-3"
+      },
+      "started_at": 1700000000000,
+      "ended_at": 1700000001000,
+      "view_ids": [],
+      "detached": false
+    },
+    "record": {
+      "session_id": "child-session",
+      "id": "a1",
+      "status": "completed",
+      "answer": "Done"
+    }
+  },
+  "cancel": {
+    "accepted": false
+  }
+}

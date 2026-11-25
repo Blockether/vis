@@ -26,6 +26,7 @@
   [session]
   (->> (get-in @sessions [(str session) :entries])
        vals
+       (remove :acknowledged?)
        (sort-by :number)
        (mapv public-row)))
 
@@ -70,14 +71,15 @@
 
 (defn- settlement
   [entry produce]
-  (when-let [interrupted (:interrupt-complete entry)] @interrupted)
+  (when-not (:external-settlement? entry)
+    (when-let [interrupted (:interrupt-complete entry)] @interrupted))
   (let [outcome (try (produce)
                      (catch Throwable e
                        {:state :failed :error (or (ex-message e) (str e))}))]
     (if (or (:interrupt-complete entry)
             (and (:cancel-on-request? entry) (get-in entry [:row :cancel-reason])))
       (do (doseq [rollback (:handoff-rollbacks entry)] (rollback))
-          {:state :cancelled})
+          (assoc (select-keys outcome [:record]) :state :cancelled))
       outcome)))
 
 (defn- settle!
@@ -108,7 +110,7 @@
                                            (:cancelling %) (assoc :cancelling (:cancelling %))
                                            (and (= :cancelled state) (:cancel-message %))
                                            (assoc :message (:cancel-message %))))
-                        (dissoc :interrupt :interrupt-complete :waiters)
+                        (dissoc :interrupt :interrupt-complete :waiters :snapshot :admit :detach-reason)
                         (update :row merge (cond-> {:state state :view-ids []
                                                    :ended-at (System/currentTimeMillis)}
                                              error (assoc :error error)))))
@@ -145,9 +147,9 @@
                                        :ticket ticket :guest? guest? :guest-data guest-data}
                                       extra)))
         (when (and parent-path (:manual? extra) (get-in @sessions (conj parent-path :cancel-on-request?)))
-          (let [interrupt (:interrupt extra)]
-            (swap! sessions update-in (conj parent-path :handoff-rollbacks) (fnil conj [])
-                   (fn [] (when (cancel! sid id :agent) (interrupt :cancel))))))
+          (swap! sessions update-in (conj parent-path :handoff-rollbacks) (fnil conj [])
+                 #(when (cancel! sid id :agent)
+                    (when-not (:external-settlement? extra) ((:interrupt extra) :cancel)))))
         [row ticket]))))
 
 (defn guest-task
@@ -167,8 +169,53 @@
   "Register work whose owner will call `complete!` with an outcome function once
    it ends. Its interrupt is installed before the row becomes visible."
   [session opts interrupt]
-  (let [[{:keys [id] :as row} ticket] (register! session opts {:manual? true :interrupt interrupt})]
+  (let [extra (merge (select-keys opts [:resource :snapshot :external-settlement? :admit :detach-reason])
+                     {:manual? true :interrupt interrupt})
+        [{:keys [id] :as row} ticket] (register! session opts extra)]
     {:row row :complete! (partial settle! session id ticket)}))
+
+(defn resource-task
+  "The newest Task row for a resource owned by this session, if any."
+  [session resource]
+  (->> (get-in @sessions [(str session) :entries])
+       vals
+       (filter #(= resource (:resource %)))
+       (sort-by :number >)
+       first
+       public-row))
+
+(defn discard!
+  "Remove a reservation that failed before admission."
+  [session id]
+  (locking sessions
+    (swap! sessions update-in [(str session) :entries] dissoc id))
+  nil)
+
+(defn admission
+  "The launch callback of a pending resource Task."
+  [session id]
+  (get-in @sessions (conj (key-for session id) :admit)))
+
+(defn complete-resource!
+  "Settle the current running Task for this resource once."
+  [session resource produce]
+  (when-let [id (:id (resource-task session resource))]
+    (when-let [ticket (get-in @sessions (conj (key-for session id) :ticket))]
+      (settle! session id ticket produce))))
+
+(defn status
+  "Read a Task without acknowledging its result. A live snapshot runs outside the lock."
+  [session id]
+  (let [path (key-for session id)
+        {:keys [row snapshot ticket]} (get-in @sessions path)]
+    (when row
+      (let [record (when snapshot (snapshot id))
+            entry (get-in @sessions path)]
+        (when (identical? ticket (:ticket entry))
+          (let [{:keys [value] :as outcome} (:outcome entry)]
+            (cond-> {:task (:row entry)}
+              (or (:record outcome) record) (assoc :record (or (:record outcome) record))
+              (and (contains? outcome :value) (not= :subagent (:kind row))) (assoc :value value))))))))
 
 (defn start!
   "Start `run` once. It returns `{:state :done|:failed|:cancelled, ...}`."
@@ -268,9 +315,19 @@
                            (swap! sessions update-in (conj path :waiters) dissoc token))
                        (when (and (= :running (get-in entry [:row :state]))
                                   (not (contains? (:waiters entry) token)))
-                         (swap! sessions assoc-in (conj path :waiters token)
-                                {:block block :observation? observation? :release (when hold (hold))}))))
-                   (:signal entry)))]
+                         (if-let [reason (when (and (:detachable? entry) (:detach-reason entry))
+                                           ((:detach-reason entry)))]
+                           (swap! sessions update (first path)
+                                  (fn [owner]
+                                    (-> owner
+                                        (update-in [:detach-notices block] (fnil conj [])
+                                                   {:task (:row entry) :reason reason})
+                                        (assoc-in [:entries id :row :detached] true)
+                                        (assoc-in [:entries id :waiters token] {:block block :detached? true}))))
+                           (swap! sessions assoc-in (conj path :waiters token)
+                                  {:block block :observation? observation? :release (when hold (hold))})))))
+                   (when-not (get-in @sessions (into path [:waiters token :detached?]))
+                     (:signal entry))))]
     (if leave?
       {:state :released}
       (do (when (and signal (pos? (long (or timeout-ms 0))))
@@ -285,7 +342,9 @@
   (let [path (key-for session id)]
     (locking sessions
       (when (get-in @sessions (conj path :outcome))
-        (swap! sessions update-in (pop path) dissoc id)))
+        (if (= :subagent (get-in @sessions (conj path :row :kind)))
+          (swap! sessions assoc-in (conj path :acknowledged?) true)
+          (swap! sessions update-in (pop path) dissoc id))))
     nil))
 
 (defn- mark-detached

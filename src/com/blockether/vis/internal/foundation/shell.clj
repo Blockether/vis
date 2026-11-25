@@ -2630,7 +2630,13 @@
     (when-not (and entry token)
       (throw (ex-info "This shell handle has no process generation." {:id id})))
     (authorize-origin! env id entry token)
-    (cond (get opts "budget") (clamp-timeout-secs (get opts "seconds") "seconds")
+    (cond (get opts "budget")
+          (let [seconds (clamp-timeout-secs (get opts "seconds") "seconds")]
+            (if (get opts "sample_cpu")
+              {"seconds" seconds
+               "cpu_ms" (when (and (live-entry? entry) (>= (* 1000 seconds) (long quiet-note-ms)))
+                          (get (process-usage (:pid (:proc entry))) "cpu_ms"))}
+              seconds))
           (get opts "probe") (when (and (:stdin-tty? entry) (live-entry? entry))
                               (terminal-reader (:pid (:proc entry))))
           :else (let [result (result-window "wait" id entry)
@@ -2639,7 +2645,11 @@
                   (cond-> (assoc result "timeout_secs" seconds)
                     (and (live-entry? entry) (>= elapsed (long quiet-note-ms))
                          (str/blank? (get result "out"))
-                         (some-> (get result "cpu_percent") double (< 1.0)))
+                         (if-let [cpu-end (when (number? (get opts "cpu_start_ms"))
+                                            (get result "cpu_ms"))]
+                           (let [used (- cpu-end (get opts "cpu_start_ms"))]
+                             (and (not (neg? used)) (< (* 100 used) elapsed)))
+                           (some-> (get result "cpu_percent") double (< 1.0))))
                     (assoc "note" (str "No output and almost no CPU for " (quot elapsed 1000)
                                        " s. Check the log with sh.logs(-20).")))))))
 

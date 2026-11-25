@@ -1,9 +1,17 @@
 """Managed teams use the real session-bound SDK transport and canonical schema."""
 
 import json
+import threading
+from concurrent.futures import CancelledError, TimeoutError, as_completed, wait
 
 import pytest
-from blockether.vis.engine import Council, GatewayClient, Subagent, SubagentRecord
+from blockether.vis.engine import (
+    Council,
+    GatewayClient,
+    Subagent,
+    SubagentRecord,
+    SubagentTask,
+)
 from test_client import compatible, endpoint
 
 CHILD = {
@@ -43,13 +51,13 @@ def test_council_is_the_only_public_team_api():
     # The subscription.ready frame carries the team; the gateway has no team read.
     assert not hasattr(Council, "subagents")
     assert not hasattr(Council, "resume")
+    assert not hasattr(Council, "wait")
+    assert not hasattr(Council, "cancel")
     assert all(
         callable(getattr(Council, operation))
         for operation in (
             "spawn",
             "run",
-            "wait",
-            "cancel",
             "extend",
             "deny",
             "grant",
@@ -83,7 +91,6 @@ def test_managed_team_transport():
         assert child.parent_id == "leader" and child.role == "verify"
         assert child.pending_input and child.usage == {"cost_usd": 0.02}
         team.route("small", provider="p", session_id=child.session_id)
-        assert team.cancel(child.session_id).status == "cancelled"
         requests = [
             (method, path, json.loads(body) if body else None)
             for method, path, _, body in calls
@@ -109,11 +116,27 @@ def test_managed_team_transport():
                 "/v1/sessions/leader/agents/route",
                 {"model": "small", "provider": "p", "session_id": "child"},
             ),
-            ("POST", "/v1/sessions/leader/agents/cancel", {"session_id": "child"}),
         ]
 
 
-def test_child_controls_answer_records_and_wait_longer_than_the_gateway():
+def task_status(task_id, state, record, *, owner="leader"):
+    return {
+        "task": {
+            "id": task_id,
+            "session_id": owner,
+            "kind": "subagent",
+            "name": "Check the contract",
+            "state": state,
+            "origin": {},
+            "started_at": 1,
+            "view_ids": [],
+            "detached": False,
+        },
+        "record": record,
+    }
+
+
+def test_child_controls_answer_records_without_settling_the_task():
     asking = {
         "session_id": "child",
         "status": "asking",
@@ -123,57 +146,254 @@ def test_child_controls_answer_records_and_wait_longer_than_the_gateway():
         "iteration_budget": 4,
         "iterations_used": 2,
     }
+    answered = threading.Event()
+    callback = threading.Event()
+    completed = {"session_id": "child", "status": "completed", "answer": "Checked"}
 
     def respond(method, path, body):
         if result := council_compatible(method, path, body):
             return result
+        if path.endswith("/run"):
+            if json.loads(body)["tasks"][0] == "Check":
+                return 200, [{"id": "a1", "session_id": "child", "task_id": "t1"}]
+            return 200, [
+                {"id": "a1", "session_id": "child", "task_id": "t2"},
+                {"id": "a2", "session_id": "second", "task_id": "t3"},
+            ]
+        if path.endswith("/tasks/t1"):
+            if not answered.is_set():
+                return 200, task_status("t1", "running", asking)
+            return 200, task_status("t1", "done", completed)
+        if path.endswith("/tasks/t2"):
+            return 200, task_status("t2", "done", {**completed, "answer": "Follow-up"})
+        if path.endswith("/tasks/t3"):
+            return 200, task_status(
+                "t3", "done", {"session_id": "second", "status": "blocked"}
+            )
+        if path.endswith("/answer"):
+            answered.set()
         return 200, [asking]
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
-        session = client.session("leader")
-        timeouts = []
-        request = client._request
-
-        def spy(*args, **kwargs):
-            timeouts.append(kwargs.get("timeout"))
-            return request(*args, **kwargs)
-
-        client._request = spy
-        team = session.council()
-        timeouts.clear()
-        records = team.run(["Check", {"task": "Docs", "files": {"write": ["docs/**"]}}])
-        assert records == (SubagentRecord.from_wire(asking),)
-        assert records[0].files_request["reason"] == "Docs"
-        assert team.wait(["child"], timeout_secs=5)[0].status == "asking"
-        assert team.wait()[0].question_entry_id == 7
+        team = client.session("leader").council()
+        (task,) = team.run(["Check"])
+        assert isinstance(task, SubagentTask)
+        assert (task.id, task.session_id, task.task_id) == ("a1", "child", "t1")
+        assert task.record().files_request["reason"] == "Docs"
+        assert task.record().question_entry_id == 7
+        assert task.running() and not task.done()
+        with pytest.raises(TimeoutError):
+            task.result(timeout=0.02)
+        assert wait([task], timeout=0).not_done == {task}
+        task.add_done_callback(lambda _: callback.set())
         assert isinstance(team.extend("child", 5), SubagentRecord)
         assert team.deny("child", "Not now").status == "asking"
-        assert team.answer("child", "Use docs/").session_id == "child"
         assert team.grant("child", {"write": ["docs/**"]}).iterations_used == 2
-        assert timeouts == [270, 35, 270, None, None, None, None]
-        requests = [
-            (path.removeprefix("/v1/sessions/leader/agents"), json.loads(body))
+        assert team.answer("child", "Use docs/").session_id == "child"
+        assert list(as_completed([task], timeout=3)) == [task]
+        assert callback.wait(3)
+        assert task.exception() is None and task.result().answer == "Checked"
+        assert not task.cancel()
+        followup, dependent = team.run(
+            [
+                {"task": "Continue", "child": task, "files": {"write": ["docs/**"]}},
+                {"task": "Verify", "after": [task, "a3"]},
+            ]
+        )
+        assert (followup.id, followup.session_id, followup.task_id) == (
+            task.id,
+            task.session_id,
+            "t2",
+        )
+        assert followup.result(3).answer == "Follow-up"
+        assert dependent.result(3).status == "blocked"
+        assert task.result().answer == task.record().answer == "Checked"
+        with pytest.raises(ValueError, match="another session"):
+            client.session("unowned").council().run(
+                [{"task": "Continue", "child": task}]
+            )
+        launches = [
+            json.loads(body)
             for method, path, _, body in calls
-            if "/agents" in path
+            if path.endswith("/agents/run")
         ]
-        assert requests == [
-            (
-                "/run",
-                {
-                    "tasks": [
-                        "Check",
-                        {"task": "Docs", "files": {"write": ["docs/**"]}},
-                    ],
-                    "timeout_secs": 240,
-                },
-            ),
-            ("/wait", {"session_ids": ["child"], "timeout_secs": 5}),
-            ("/wait", {"timeout_secs": 240}),
-            ("/extend", {"session_id": "child", "iterations": 5}),
-            ("/deny", {"session_id": "child", "reason": "Not now"}),
-            ("/answer", {"session_id": "child", "text": "Use docs/"}),
-            ("/grant", {"session_id": "child", "files": {"write": ["docs/**"]}}),
+        assert launches == [
+            {"tasks": ["Check"]},
+            {
+                "tasks": [
+                    {
+                        "task": "Continue",
+                        "child": "child",
+                        "files": {"write": ["docs/**"]},
+                    },
+                    {"task": "Verify", "after": ["child", "a3"]},
+                ]
+            },
         ]
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_cancel_observes_host_settlement_and_sends_one_mutation(accepted):
+    cancelled = threading.Event()
+    settled = threading.Event()
+
+    def respond(method, path, body):
+        if result := council_compatible(method, path, body):
+            return result
+        if path.endswith("/run"):
+            return 200, [{"id": "a1", "session_id": "child", "task_id": "t1"}]
+        if path.endswith("/cancel"):
+            cancelled.set()
+            return 200, {"accepted": accepted}
+        state = ("cancelled" if accepted else "done") if settled.is_set() else "running"
+        return 200, task_status(
+            "t1",
+            state,
+            {
+                "session_id": "child",
+                "status": {
+                    "cancelled": "cancelled",
+                    "done": "failed",
+                    "running": "running",
+                }[state],
+            },
+        )
+
+    with endpoint(respond) as (url, calls), GatewayClient(url) as client:
+        (task,) = client.session("leader").council().run(["Check"])
+        assert task.cancel() is accepted
+        assert cancelled.is_set() and not task.done()
+        settled.set()
+        assert wait([task], timeout=3).done == {task}
+        if accepted:
+            assert task.cancelled()
+            with pytest.raises(CancelledError):
+                task.result()
+            assert task.record().status == "cancelled"
+        else:
+            assert task.result().status == "failed"
+        assert [
+            (verb, path) for verb, path, _, _ in calls if path.endswith("/cancel")
+        ] == [
+            ("POST", "/v1/sessions/leader/tasks/t1/cancel"),
+        ]
+
+
+def test_extension_task_polls_on_the_background_host_door():
+    from base64 import b64encode
+
+    from blockether.vis.engine._host import HostLayer
+
+    caller = threading.get_ident()
+    polled = threading.Event()
+    cancelled = threading.Event()
+
+    def exchange(message):
+        frame = json.loads(message)
+        route = frame["route"]
+        if route.endswith("/council"):
+            value = {"default_group_id": "G", "activation_id": "active"}
+        elif route.endswith("/agents/run"):
+            assert caller == threading.get_ident()
+            value = [{"task_id": "t1", "id": "a1", "session_id": "child"}]
+        elif route.endswith("/tasks/t1/cancel"):
+            assert frame["method"] == "POST"
+            cancelled.set()
+            value = {"accepted": True}
+        else:
+            assert route.endswith("/tasks/t1") and frame["method"] == "GET"
+            assert caller != threading.get_ident()
+            state = "cancelled" if cancelled.is_set() else "running"
+            value = task_status("t1", state, {"session_id": "child", "status": state})
+            polled.set()
+        return json.dumps(
+            {
+                "status": 200,
+                "headers": {},
+                "content": b64encode(json.dumps(value).encode()).decode(),
+            }
+        )
+
+    with HostLayer(exchange) as client:
+        (task,) = client.session("leader").council().run(["Check"])
+        assert polled.wait(3) and not task.done()
+        assert task.cancel()
+        with pytest.raises(CancelledError):
+            task.result(3)
+
+
+def test_task_observer_shares_framed_stdio_with_the_caller(tmp_path):
+    import sys
+    from textwrap import dedent
+
+    from blockether.vis._contracts import definition
+    from blockether.vis.engine import StdioEngineClient
+
+    hello = {
+        "protocol": definition("gateway", "handshake")["properties"]["protocol"][
+            "const"
+        ]
+    }
+    status = {
+        state: task_status("t1", state, {"session_id": "child", "status": state})
+        for state in ("running", "cancelled")
+    }
+    code = dedent(f"""
+        import base64, json, sys
+        print(json.dumps({hello!r}), flush=True)
+        state = "running"
+        for line in sys.stdin:
+            frame = json.loads(line)
+            route = frame["route"]
+            if route.endswith("/council"):
+                data = {{"default_group_id": "G", "activation_id": "active"}}
+            elif route.endswith("/agents/run"):
+                data = [{{"task_id": "t1", "id": "a1", "session_id": "child"}}]
+            elif route.endswith("/tasks/t1/cancel"):
+                assert frame["method"] == "POST"
+                state = "cancelled"
+                data = {{"accepted": True}}
+            else:
+                assert route.endswith("/tasks/t1") and frame["method"] == "GET"
+                data = {status!r}[state]
+            content = base64.b64encode(json.dumps(data).encode()).decode()
+            print(json.dumps({{"status": 200, "headers": {{}}, "content": content}}), flush=True)
+        """)
+    with StdioEngineClient(
+        executable=[sys.executable, "-c", code], root=tmp_path
+    ) as client:
+        (task,) = client.session("leader").council().run(["Check"])
+        assert task.record().status == "running"
+        assert task.cancel()
+        with pytest.raises(CancelledError):
+            task.result(3)
+        assert task.record().status == "cancelled"
+
+
+def test_foreign_task_status_is_not_accepted_as_a_child_result():
+    from blockether.vis.engine import ProtocolError
+
+    def respond(method, path, body):
+        if result := council_compatible(method, path, body):
+            return result
+        if path.endswith("/run"):
+            return 200, [{"id": "a1", "session_id": "child", "task_id": "t1"}]
+        return 200, task_status(
+            "t1",
+            "done",
+            {
+                "session_id": "child",
+                "status": "completed",
+                "answer": "Foreign",
+            },
+            owner="other",
+        )
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        (task,) = client.session("leader").council().run(["Check"])
+        assert isinstance(task.exception(3), ProtocolError)
+        with pytest.raises(ProtocolError):
+            task.result()
 
 
 @pytest.mark.parametrize(
@@ -227,7 +447,6 @@ def test_unavailable_council_binding_does_not_block_team_controls(code):
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         team = client.session("leader").council()
-        team.cancel("child")
         team.route("small", provider="p")
         team.spawn("Check the contract")
         for communicate in (
@@ -318,15 +537,12 @@ def test_team_and_child_fields_are_frozen():
 @pytest.mark.parametrize(
     "operation,kwargs",
     [
-        ("cancel", {"session_id": ""}),
         ("route", {"model": "", "provider": "p"}),
         ("route", {"model": "small", "provider": ""}),
         ("route", {"model": "small", "provider": "p", "session_id": ""}),
         ("run", {"tasks": []}),
-        ("run", {"tasks": ["x"], "timeout_secs": 0}),
         ("run", {"tasks": [{"task": "x", "key": "k"}]}),
-        ("wait", {"session_ids": ["a", "a"]}),
-        ("wait", {"timeout_secs": 1801}),
+        ("run", {"tasks": [{"task": "x", "child": "a1", "after": ["a2"]}]}),
         ("extend", {"session_id": "child", "iterations": 0}),
         ("deny", {"session_id": "child", "reason": ""}),
         ("spawn", {"task": "x", "provider": "p"}),
@@ -356,7 +572,7 @@ def test_team_operations_validate_before_http(operation, kwargs):
             {"task": "Check the contract", "key": "retry"},
             "idempotency-conflict",
         ),
-        ("cancel", {"session_id": "unowned"}, "not-owned"),
+        ("run", {"tasks": [{"task": "Continue", "child": "unowned"}]}, "not-owned"),
         ("route", {"provider": "p", "model": "small"}, "routing-locked"),
     ],
 )
