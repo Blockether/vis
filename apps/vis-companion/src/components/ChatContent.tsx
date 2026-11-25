@@ -2923,6 +2923,11 @@ type TraceSegmentProps = {
   strayViews: LiveViewModel[];
   /** Open apps of the session. A step lists each app that it owns. */
   appViews: LiveViewModel[];
+  /**
+   * A finished step of the running turn: it is its own paint skip box. A finished turn
+   * is one box as a whole, so its steps are not.
+   */
+  settled: boolean;
 };
 
 /**
@@ -3300,8 +3305,12 @@ const TraceSegment = memo(function TraceSegment({
   liveViews,
   strayViews,
   appViews,
+  settled,
 }: TraceSegmentProps) {
   const [open, setOpen] = useState(false);
+  // The running turn is never skipped, so without this each resize lays out and paints
+  // every step of a long turn. Only the newest step still moves.
+  const paintSkip = useMeasuredPaintSkip(!settled);
   // Summarized, a run's consecutive Python forms share one source and Activity; otherwise
   // every form keeps its own.
   const chunks = useMemo(() => {
@@ -3416,7 +3425,8 @@ const TraceSegment = memo(function TraceSegment({
 
   return (
     <section
-      className={`relative min-w-0 ${enters ? transcriptEnterClass : ''}`}
+      ref={paintSkip}
+      className={`relative flow-root min-w-0 ${enters ? transcriptEnterClass : ''}`}
       data-transcript-part
     >
       {segment.head.userInput.length > 0 && (
@@ -3713,6 +3723,7 @@ export const IterationTrace = memo(function IterationTrace({
             liveViews={liveViews}
             strayViews={index === shown.length - 1 ? strayViews : NO_LIVE_VIEWS}
             appViews={appViews}
+            settled={live && index < shown.length - 1}
           />
         ))}
       </div>
