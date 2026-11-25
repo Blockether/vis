@@ -5587,34 +5587,67 @@ export class GatewayClient {
   ): Promise<TranscriptTurn[]> {
     const key = this.snapshotKey('transcript', sid);
     const page = await this.fetchTranscriptPage(sid, { limit }, undefined, urgent);
-    const cached = this.cachedTranscript(sid);
-    const held = transcriptWindows.get(key);
-    const heldOffset = cached?.length ? (held?.offset ?? 0) : page.offset;
-    // We hold rows [heldOffset, heldOffset + cached.length). A newest page that
-    // starts BEYOND that runs past a GAP: the session grew by more than one page
-    // since we last looked (app backgrounded while the TUI kept working), and
-    // concatenating would paint turn 123 straight into turn 223 — a hole no
-    // "load earlier" can reach, because it only ever walks back from turn 123.
-    // Drop the stale rows and restart the window at this page instead.
-    const adjoins = !cached?.length || page.offset <= heldOffset + cached.length;
-    // Both sides are contiguous slices with a known offset, so split the page at
-    // our oldest row instead of trusting "unseen id ⇒ newer": a page that reaches
-    // FURTHER BACK than we hold (a deleted turn, a smaller earlier limit) would
-    // otherwise append ancient turns to the BOTTOM of the transcript.
-    const before = adjoins ? Math.max(0, Math.min(page.turns.length, heldOffset - page.offset)) : 0;
-    const turns = adjoins
-      ? this.mergeTurns(
-          this.mergeTurns(cached, page.turns.slice(before), 'tail'),
-          page.turns.slice(0, before),
-          'head',
-        )
-      : page.turns;
+    const compose = () => {
+      const cached = this.cachedTranscript(sid);
+      const held = transcriptWindows.get(key);
+      const heldOffset = cached?.length ? (held?.offset ?? 0) : page.offset;
+      // We hold rows [heldOffset, heldOffset + cached.length). A newest page that
+      // starts BEYOND that runs past a GAP: the session grew by more than one page
+      // since we last looked (app backgrounded while the TUI kept working), and
+      // concatenating would paint turn 123 straight into turn 223 — a hole no
+      // "load earlier" can reach, because it only ever walks back from turn 123.
+      // Drop the stale rows and restart the window at this page instead.
+      const adjoins = !cached?.length || page.offset <= heldOffset + cached.length;
+      // Both sides are contiguous slices with a known offset, so split the page at
+      // our oldest row instead of trusting "unseen id ⇒ newer": a page that reaches
+      // FURTHER BACK than we hold (a deleted turn, a smaller earlier limit) would
+      // otherwise append ancient turns to the BOTTOM of the transcript.
+      const before = adjoins
+        ? Math.max(0, Math.min(page.turns.length, heldOffset - page.offset))
+        : 0;
+      return {
+        turns: adjoins
+          ? this.mergeTurns(
+              this.mergeTurns(cached, page.turns.slice(before), 'tail'),
+              page.turns.slice(0, before),
+              'head',
+            )
+          : page.turns,
+        windowOffset: adjoins ? Math.min(heldOffset, page.offset) : page.offset,
+      };
+    };
+    let { turns, windowOffset } = compose();
+    // A 'running' row we hold from BEFORE this page is a placeholder that no newest
+    // page covers again: the byte cap can answer with ONE large newest turn (an
+    // inlined screenshot is ~250 KB). Kept, it told the screen that turn never
+    // ended, so the finished answer painted as an empty row below everything.
+    // Read each such row by its own index; one row always comes back.
+    const stale = [...turns.entries()].filter(
+      ([at, row]) => row.status === 'running' && windowOffset + at < page.offset,
+    );
+    if (stale.length) {
+      const repaired = await Promise.all(
+        stale.map(([at, row]) =>
+          this.fetchTranscriptPage(sid, { offset: windowOffset + at, limit: 1 }, undefined, urgent)
+            // Indexes move when a turn is deleted: take only the row we asked about.
+            .then((older) => older.turns.filter((turn) => turn.turn_id === row.turn_id))
+            // The newest page is still an answer; the next read tries the row again.
+            .catch(() => []),
+        ),
+      );
+      // Another read can write the cache during these requests: compose again from
+      // it, so this write does not put back rows that read replaced.
+      ({ turns, windowOffset } = compose());
+      const held = new Set(turns.map((turn) => turn.turn_id));
+      turns = this.mergeTurns(
+        turns,
+        repaired.flat().filter((turn) => held.has(turn.turn_id)),
+        'tail',
+      );
+    }
     writeSnapshot(key, turns);
     // The window starts at the OLDEST row we hold, which may predate this page.
-    transcriptWindows.set(key, {
-      offset: adjoins ? Math.min(heldOffset, page.offset) : page.offset,
-      total: page.total,
-    });
+    transcriptWindows.set(key, { offset: windowOffset, total: page.total });
     // Stamp with the freshest meta row we hold, so a caller that already knows
     // the session did not move can skip the next fetch entirely — but ONLY when
     // that row is describing THIS body. The row is a SEPARATE observation of the

@@ -30,6 +30,26 @@ describe('bounded reads during session switches', () => {
     expect(fetched).toHaveBeenCalledOnce();
   });
 
+  // Regression, phone diagnostics: a turn ran while the app was away, and the next turn
+  // carried a screenshot. The byte cap answered every newest page with that one turn, so
+  // the held 'running' row of the turn before it was never read again.
+  it('reads again a running row that the newest page no longer covers', async () => {
+    const page = (turns: unknown[], offset: number) =>
+      new Response(JSON.stringify({ turns, total: 6, offset, has_more: offset > 0 }));
+    const fetched = vi.fn()
+      .mockResolvedValueOnce(page([{ turn_id: 't5', status: 'running' }], 4))
+      .mockResolvedValueOnce(page([{ turn_id: 't6', status: 'done' }], 5))
+      .mockResolvedValueOnce(page([{ turn_id: 't5', status: 'done' }], 4));
+    vi.stubGlobal('fetch', fetched);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    await client.transcript('s1');
+    const rows = await client.transcript('s1');
+    const reread = new URL(String(fetched.mock.calls[2][0])).searchParams;
+    expect([reread.get('offset'), reread.get('limit')]).toEqual(['4', '1']);
+    expect(rows.map((turn) => [turn.turn_id, turn.status])).toEqual([['t5', 'done'], ['t6', 'done']]);
+  });
+
   it('retries a failed shared read rather than retaining its rejection', async () => {
     const fetched = vi.fn().mockResolvedValueOnce(new Response('', { status: 403 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ turns: [], total: 0, offset: 0 })));
