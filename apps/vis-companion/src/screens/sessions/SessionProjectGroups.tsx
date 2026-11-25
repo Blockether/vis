@@ -41,6 +41,7 @@ import type { SettingsTarget } from '../../lib/types';
 import {
   ArchiveIcon,
   ChevronIcon,
+  CopyIcon,
   DotsIcon,
   NewSessionIcon,
   PaletteIcon,
@@ -2623,6 +2624,16 @@ export const ProjectGroup = memo(function ProjectGroup({
                       />
                     </>
                   )}
+                  <MenuItem
+                    title="Copy path"
+                    icon={<CopyIcon className="size-3.5" />}
+                    onSelect={() =>
+                      void navigator.clipboard.writeText(root).then(
+                        () => setMenu(null),
+                        () => setFailure('Could not copy the project path.'),
+                      )
+                    }
+                  />
                   <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'project', target_id: root, label: project }); }} />
                   {projectActions && (
                     <MenuItem
@@ -2632,6 +2643,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                       onSelect={() => goTo({ kind: 'drop-project' })}
                     />
                   )}
+                  {failure && <MenuNote>{failure}</MenuNote>}
                 </>
               );
             if (step.kind === 'drop-project')
