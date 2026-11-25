@@ -64,7 +64,7 @@ import { ArtifactLinkContext } from '../lib/artifact-links';
 import { disclosureAnchor, isDisclosureMoving } from '../lib/clamp-motion';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
 import { BrandLogo } from '../components/BrandLogo';
-import { Banner, ComposerButton, IconButton, LoadMore, Spinner } from '../components/ui';
+import { Banner, ComposerButton, IconButton, LoadMore, Spinner, TextButton } from '../components/ui';
 import { MicIcon, SendIcon, StopIcon, ZenIcon } from '../components/icons';
 import { ZenPictures } from '../components/ZenPictures';
 import { setZenMode, useZenMode } from '../lib/transcript-display';
@@ -241,7 +241,7 @@ import { visibleAnsweredTurnCount } from '../lib/unread';
 import { App } from '@capacitor/app';
 
 import { OpenPathContext } from '../lib/open-path';
-import { projectPath } from '../lib/fleet';
+import { projectPath, sessionIsArchived } from '../lib/fleet';
 import { workspaceRelativePath } from '../lib/path';
 import { WorkspaceRootsContext } from '../lib/workspace-roots';
 import { randomUuid } from '../lib/uuid';
@@ -926,6 +926,15 @@ function reasoningChoices(
   };
 }
 
+/** Whether the gateway refused a turn because the session, or its group, is archived. */
+function isArchivedRefusal(cause: unknown): boolean {
+  return (
+    cause instanceof GatewayError &&
+    cause.status === 409 &&
+    (cause.body as { error?: { type?: string } } | null)?.error?.type === 'session-archived'
+  );
+}
+
 export function SessionScreen({
   client,
   subscriptions,
@@ -972,6 +981,9 @@ export function SessionScreen({
   // Zen mode keeps only the transcript and the composer, in a golden ratio column.
   const zen = useZenMode();
   const [session, setSession] = useState<Session | null>(() => client.cachedSession(sid));
+  // An archived session is read-only: the gateway takes no new turn in it.
+  const isArchived = session !== null && sessionIsArchived(session);
+  const [isUnarchiving, setUnarchiving] = useState(false);
   const [turns, setTurns] = useState<TranscriptTurn[]>(() => openingTranscript ?? []);
   // Whether the turns on screen were confirmed against the gateway during THIS
   // visit. Cached rows paint the first frame, but a cached 'running' row is a
@@ -4392,6 +4404,25 @@ export function SessionScreen({
     });
   }
 
+  // The composer shows an archive refusal next to the restored text. The banner is at the
+  // top of the transcript, out of sight in a long session.
+  function showSendRefusal(cause: unknown) {
+    if (isArchivedRefusal(cause)) setComposerNotice((cause as Error).message);
+    else setError((cause as Error).message);
+  }
+
+  // Unarchive is the way back to work: the gateway answers the row it stamped.
+  async function unarchive() {
+    setUnarchiving(true);
+    try {
+      setSession(await client.setSessionArchived(sid, false));
+    } catch (cause) {
+      setComposerNotice((cause as Error).message);
+    } finally {
+      setUnarchiving(false);
+    }
+  }
+
   async function send() {
     // iOS may commit an autocorrection into the native textarea before React has
     // delivered the matching change event. Read the control at the press boundary
@@ -4415,7 +4446,7 @@ export function SessionScreen({
       thread_id,
       ...(authoredRequest.includes(reference) ? { reference } : {}),
     }));
-    if ((!request && !comments.length) || voicePhase !== 'idle') return;
+    if ((!request && !comments.length) || voicePhase !== 'idle' || isArchived) return;
 
     const [command = '', ...argParts] = authoredRequest.split(/\s+/);
     const args = argParts.join(' ');
@@ -4536,7 +4567,7 @@ export function SessionScreen({
       } catch (cause) {
         restoreComposerImages(authoredRequest, pendingAttachments, true);
         setPastes((current) => new Map([...pendingPastes, ...current]));
-        setError((cause as Error).message);
+        showSendRefusal(cause);
         requestAnimationFrame(() => composerRef.current?.focus());
       }
       return;
@@ -4644,7 +4675,7 @@ export function SessionScreen({
       setRunningTurn(null);
       restoreComposerImages(authoredRequest, pendingAttachments, true);
       setPastes((current) => new Map([...pendingPastes, ...current]));
-      setError((cause as Error).message);
+      showSendRefusal(cause);
       requestAnimationFrame(() => composerRef.current?.focus());
     } finally {
       submitsInFlightRef.current -= 1;
@@ -6464,7 +6495,14 @@ export function SessionScreen({
                   commands={payloadCommands}
                 />
 
-                {(composerNotice ||
+                {isArchived ? (
+                  <div className="absolute bottom-full left-0 mb-3 flex max-w-full items-center gap-1.5 whitespace-pre-line border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+                    {composerNotice ?? 'Archived · unarchive it to keep working'}
+                    <TextButton isCaption disabled={isUnarchiving} onClick={() => void unarchive()}>
+                      Unarchive
+                    </TextButton>
+                  </div>
+                ) : (composerNotice ||
                   voiceStarting ||
                   voicePhase !== 'idle' ||
                   voiceModel?.status === 'downloading' ||
@@ -6530,7 +6568,7 @@ export function SessionScreen({
                     spellCheck={false}
                     autoCorrect="off"
                     autoCapitalize="none"
-                    disabled={voicePhase === 'recording'}
+                    disabled={voicePhase === 'recording' || isArchived}
                     placeholder={
                       voicePhase === 'recording'
                         ? 'Listening…'
@@ -6784,7 +6822,7 @@ export function SessionScreen({
                     // Native keyboard edits can precede React's change event. An
                     // empty React snapshot must not block the press that reads the
                     // live textarea; send() already rejects genuinely empty input.
-                    disabled={voicePhase !== 'idle'}
+                    disabled={voicePhase !== 'idle' || isArchived}
                     label={running ? 'Queue message' : 'Send message'}
                     title={running ? 'Queue behind the running turn' : 'Send'}
                   >
