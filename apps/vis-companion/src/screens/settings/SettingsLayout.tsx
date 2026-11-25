@@ -1,4 +1,4 @@
-import { Children, createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Children, createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import { SettingsHeader, Text } from '../../components/ui';
 
@@ -207,6 +207,24 @@ export function SettingsPanel({
             label: `${isOwnOpen ? 'Hide' : 'Show'} ${title}`,
           }
         : undefined);
+  // A PRESS THAT OPENS A BAND SHOWS ITS BODY. The body opens below the header, so a
+  // band at the end of a column opened out of view: reported over Diagnostics as a
+  // band that did not open. Only a press scrolls; a search that opens every band does not.
+  const sectionRef = useRef<HTMLElement>(null);
+  const isRevealDue = useRef(false);
+  const isFoldOpen = fold?.isOpen ?? false;
+  useEffect(() => {
+    if (!isFoldOpen || !isRevealDue.current) return;
+    isRevealDue.current = false;
+    sectionRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [isFoldOpen]);
+  const pressFold = fold && {
+    ...fold,
+    onToggle: () => {
+      isRevealDue.current = !fold.isOpen;
+      fold.onToggle();
+    },
+  };
   // The band's own verb opens the band, so the form or result it adds is seen.
   // Opening twice changes nothing, so a click that follows a press is harmless.
   const openBand = () => {
@@ -246,7 +264,7 @@ export function SettingsPanel({
     // The dialog is the only box; a group is separated from the next by the one
     // rule its container divides on, exactly as a project is separated from the
     // next in the sessions list.
-    <section className="min-w-0 bg-panel">
+    <section ref={sectionRef} className="min-w-0 bg-panel">
       {/* A HEADER LINE IS NOT A COMPETITION FOR ONE ROW. The status used to be
           `shrink-0` beside the name, so it took its whole intrinsic width first
           and the name lived on what was left: measured on a 390px iPhone,
@@ -273,7 +291,7 @@ export function SettingsPanel({
               </span>
             )
           }
-          disclosure={fold}
+          disclosure={pressFold}
         >
           {titleBlock}
         </SettingsHeader>

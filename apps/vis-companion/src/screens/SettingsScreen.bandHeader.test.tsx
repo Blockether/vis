@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { IconButton } from '../components/ui';
@@ -93,5 +94,47 @@ describe('every settings band with a body folds', () => {
     expect(screen.getByText('Parakeet')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Hide Speech engines' }));
     expect(screen.queryByText('Parakeet')).toBeNull();
+  });
+
+  // Reported: pressing Diagnostics did not open it. It opened below the end of the
+  // column, out of view, so the press looked like it did nothing.
+  it('scrolls a band that a press opens into view, and only that band', () => {
+    const scroll = Element.prototype.scrollIntoView;
+    const revealed: Array<[string | null | undefined, unknown]> = [];
+    Element.prototype.scrollIntoView = function record(this: Element, options?: unknown) {
+      revealed.push([this.querySelector('[role=heading]')?.textContent, options]);
+    };
+    try {
+      function Diagnostics() {
+        const [isOpen, setOpen] = useState(false);
+        return (
+          <SettingsPanel
+            title="Diagnostics"
+            disclosure={{ isOpen, onToggle: () => setOpen((open) => !open), label: 'Show diagnostics' }}
+          >
+            <p>App version</p>
+          </SettingsPanel>
+        );
+      }
+      render(
+        <>
+          <SettingsBandsOpen.Provider value>
+            <SettingsPanel title="Planning">
+              <p>Plan mode</p>
+            </SettingsPanel>
+          </SettingsBandsOpen.Provider>
+          <Diagnostics />
+        </>,
+      );
+      expect(revealed).toEqual([]);
+      fireEvent.click(screen.getByRole('button', { name: 'Show diagnostics' }));
+      expect(screen.getByText('App version')).toBeVisible();
+      expect(revealed).toEqual([['Diagnostics', { block: 'nearest' }]]);
+      // Folding it again moves nothing.
+      fireEvent.click(screen.getByRole('button', { name: 'Show diagnostics' }));
+      expect(revealed).toHaveLength(1);
+    } finally {
+      Element.prototype.scrollIntoView = scroll;
+    }
   });
 });
