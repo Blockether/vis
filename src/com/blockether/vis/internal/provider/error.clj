@@ -506,7 +506,30 @@
          (when provider-id (str " " provider-id))
          " or fix its API key, then retry.")))
 
-(defn- rate-limit-next-step [] "NEXT STEP: wait and retry, or switch provider/model.")
+(defn- wait-text
+  "Time from `now-ms` to `resets-at-ms`, like `2h 5m` or `40s`, or nil when it is not ahead."
+  [resets-at-ms now-ms]
+  (when (and resets-at-ms (> (long resets-at-ms) (long now-ms)))
+    (let [secs (quot (+ (- (long resets-at-ms) (long now-ms)) 999) 1000)
+          days (quot secs 86400)
+          hours (quot (rem secs 86400) 3600)
+          minutes (quot (rem secs 3600) 60)
+          seconds (rem secs 60)]
+      (cond (pos? days) (str days "d " hours "h")
+            (pos? hours) (str hours "h " minutes "m")
+            (pos? minutes) (str minutes "m" (when (pos? seconds) (str " " seconds "s")))
+            :else (str seconds "s")))))
+
+(defn- reset-wait
+  "Time until the cooldown that the provider declared for `err` ends, or nil."
+  [err]
+  (wait-text (:resets-at-ms (svar-classification err)) (System/currentTimeMillis)))
+
+(defn- rate-limit-next-step
+  [wait]
+  (if wait
+    (str "NEXT STEP: wait " wait " and retry, or switch provider/model.")
+    "NEXT STEP: wait and retry, or switch provider/model."))
 
 (defn- transport-next-step
   []
@@ -1045,10 +1068,13 @@
               :else (auth-provider-next-step data)))
 
       :quota-exhausted
-      "NEXT STEP: check the provider plan, usage limits, and available credits, then retry."
+      (if-let [wait (reset-wait err)]
+        (str "NEXT STEP: the provider says this quota resets in " wait
+             ". Retry after that, or switch provider/model.")
+        "NEXT STEP: check the provider plan, usage limits, and available credits, then retry.")
 
       :rate-limit
-      (rate-limit-next-step)
+      (rate-limit-next-step (reset-wait err))
 
       :upstream-timeout
       (case (if (= :connect-timeout (:category (svar-classification err)))

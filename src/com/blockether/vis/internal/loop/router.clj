@@ -1019,8 +1019,9 @@
 (defn hydrate-request-model-metadata
   "Resolve missing or invalid model limits from the selected provider before preflight.
    Discovery uses the current credential and Svar's account-scoped cache. Explicit
-   configuration wins; only this request's router snapshot changes. A failed or
-   incomplete catalog leaves Svar's metadata diagnostic intact, never a guessed limit."
+   configuration wins; only this request's router snapshot changes. An incomplete
+   catalog leaves Svar's metadata diagnostic intact, never a guessed limit. A failed
+   catalog request raises its own provider error, so the user sees the real cause."
   [environment routing]
   (let [router
         (:router environment)
@@ -1043,7 +1044,8 @@
             live
             (svar/models! router
                           (assoc (select-keys provider [:api-key :base-url :api-style :llm-headers])
-                            :provider-id provider-id))
+                            :provider-id provider-id
+                            :strict? true))
 
             by-name
             (live-models-by-name live)

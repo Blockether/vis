@@ -491,6 +491,32 @@
                                                                        :retryable? false})]
                      (expect (= :invalid-request (perr/provider-error-kind err)))))))
 
+;; Google sends its quota reset delay in the error body, not in `Retry-After`.
+;; The card must tell the user when the quota comes back.
+(defn- google-429
+  [reason retry-delay]
+  {:message "Exceptional status code: 429"
+   :data {:status 429
+          :body (str "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\","
+                     "\"message\":\"You have exhausted your capacity on this model.\","
+                     "\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.ErrorInfo\","
+                     "\"reason\":\"" reason "\"},"
+                     "{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\","
+                     "\"retryDelay\":\"" retry-delay "\"}]}}")}})
+
+(defdescribe google-quota-reset-presentation-test
+             (it "tells when an exhausted quota resets"
+                 (let [err (google-429 "QUOTA_EXHAUSTED" "7530s")]
+                   (expect (= :quota-exhausted (perr/provider-error-kind err)))
+                   (expect (= (str "NEXT STEP: the provider says this quota resets in 2h 5m. "
+                                   "Retry after that, or switch provider/model.")
+                              (perr/provider-error-next-step err)))))
+             (it "tells how long to wait after a short throttle"
+                 (let [err (google-429 "RATE_LIMIT_EXCEEDED" "40s")]
+                   (expect (= :rate-limit (perr/provider-error-kind err)))
+                   (expect (= "NEXT STEP: wait 40s and retry, or switch provider/model."
+                              (perr/provider-error-next-step err))))))
+
 ;; Regression, reported session b30f87ac-f20e-4d7f-9fd2-416788d10527:
 ;; an Anthropic 400 was titled "Provider unavailable" even though the body named
 ;; the invalid service-tier value precisely.

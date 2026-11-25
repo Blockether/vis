@@ -2,8 +2,8 @@
   "Google Antigravity provider: Gemini and Claude through Google Cloud Code
    Assist, signed in with the Antigravity Google OAuth client.
 
-   Vis owns sign-in only. svar owns the wire (`:api-style :cloud-code`): the
-   Cloud Code envelope, the managed project and the model list.
+   Vis owns sign-in and quota reports. Svar owns the Cloud Code wire, the
+   managed project, and the model list.
 
    Credentials live in `~/.vis/antigravity-auth.json`. Google does not rotate
    the refresh token, so a refresh keeps the stored one."
@@ -18,8 +18,12 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.oauth :as oauth])
-  (:import [java.net URLDecoder URLEncoder]
+  (:import [java.io IOException]
+           [java.net URLDecoder URLEncoder]
            [java.nio.charset StandardCharsets]
+           [java.nio.file Files]
+           [java.time Instant]
+           [java.time.format DateTimeParseException]
            [java.util Base64]))
 
 (def ^:private PROVIDER_ID :antigravity)
@@ -184,8 +188,11 @@
 
 (defn- delete-auth-file!
   []
-  (let [f (io/file (auth-file))]
-    (when (.exists f) (.delete f))))
+  (try (Files/deleteIfExists (.toPath (io/file (auth-file))))
+       (catch IOException e
+         (throw (ex-info "Could not delete the Antigravity sign-in file."
+                         {:type :vis/antigravity-logout-failed}
+                         e)))))
 
 (defn- refresh-access-token!
   [refresh-token]
@@ -242,6 +249,82 @@
   "Refresh after the server rejected `rejected-token`; returns the token map."
   ([] (force-refresh-token! nil))
   ([rejected-token] (@file-refresher rejected-token)))
+
+;; Quota reports
+
+(defn- quota-pool
+  [id]
+  (cond (str/starts-with? id "gemini-") ["gemini" "Gemini"]
+        (str/starts-with? id "claude-") ["claude" "Claude"]
+        (str/starts-with? id "gpt-oss-") ["gpt-oss" "GPT-OSS"]
+        :else [id id]))
+
+(defn- quota-sample
+  [{:keys [id] :as model}]
+  (let [fraction (get-in model ["quotaInfo" "remainingFraction"])
+        reset (get-in model ["quotaInfo" "resetTime"])]
+    (when (and (string? id) (not (str/blank? id))
+               (not (true? (get model "disabled")))
+               (not (str/ends-with? id "-disabled"))
+               (not (str/starts-with? id "tab_"))
+               (number? fraction) (<= 0.0 (double fraction) 1.0))
+      {:pool (quota-pool id)
+       :remaining (* 100.0 (double fraction))
+       :resets-at-ms (when (string? reset)
+                       (try (.toEpochMilli (Instant/parse reset))
+                            (catch DateTimeParseException _ nil)))})))
+
+(defn- pool-row
+  [[[id label] samples]]
+  ;; If the readings differ, show the lowest balance with its own reset time.
+  (let [{:keys [remaining resets-at-ms]}
+        (first (sort-by (juxt :remaining #(or (:resets-at-ms %) Long/MAX_VALUE)) samples))]
+    (cond-> {:id (str "antigravity-" id)
+             :label (str label " quota (%)")
+             :scope :account
+             :kind :rate
+             :precision :exact
+             :source :provider-api
+             :is-unlimited false
+             :limit 100.0
+             :remaining remaining
+             :used (- 100.0 (double remaining))}
+      resets-at-ms
+      (assoc :window {:kind :rolling :resets-at-ms resets-at-ms})
+
+      (zero? (double remaining))
+      (assoc :note (str label " quota is exhausted.")))))
+
+(defn- fetch-limits-report
+  []
+  (try (let [{:keys [token api-url]} (get-antigravity-token!)
+             ;; Svar preserves quotaInfo on model entries. Its model cache lasts 60s.
+             models (svar/models! nil {:base-url api-url
+                                       :api-key token
+                                       :provider-id PROVIDER_ID
+                                       :api-style :cloud-code
+                                       :strict? true})
+             rows (->> models (keep quota-sample) (group-by :pool) (map pool-row)
+                       (sort-by :id) vec)]
+         (if (seq rows)
+           {:status :ok :dynamic {:limits rows}}
+           {:status :unsupported
+            :dynamic {:limits [] :note "Antigravity did not report any model quota."}}))
+       (catch Exception e
+         (let [status (:status (ex-data e))]
+           (if (or (= :vis/antigravity-not-authenticated (:type (ex-data e)))
+                   (oauth/reauthentication-error? e)
+                   (contains? #{401 403} status))
+             {:status :unauthenticated
+              :dynamic {:limits []
+                        :note "Run `vis-agent providers auth antigravity` to sign in."}}
+             {:status :error
+              :dynamic {:limits []}
+              :error {:type :vis/antigravity-limits-error
+                      :message (if status
+                                 (str "Antigravity quota check failed: HTTP " status ".")
+                                 "Could not check Antigravity quota.")
+                      :data (cond-> {} status (assoc :status status))}})))))
 
 ;; Authorization flow
 
@@ -378,5 +461,6 @@
                         :provider/auth-start-fn #'auth-start
                         :provider/auth-complete-fn #'auth-complete
                         :provider/auth-prompt-fn #'auth-instruction-lines
+                        :provider/limits-fn #'fetch-limits-report
                         :provider/get-token-fn #'get-antigravity-token!
                         :provider/refresh-token-fn #'force-refresh-token!}]})))

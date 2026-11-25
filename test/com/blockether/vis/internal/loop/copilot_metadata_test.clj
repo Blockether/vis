@@ -173,6 +173,22 @@
                                           (perr/provider-error-explanation error)))
                          (expect (nil? (:max-input-tokens (ex-data error))))))))))
 
+;; A failed catalog request is not a missing limit: the card must name the real cause.
+(defdescribe copilot-catalog-request-failure
+             (it "raises the provider error instead of a metadata diagnostic"
+                 (llm/clear-models-cache!)
+                 (with-redefs-fn {#'llm/http-get! (fn [& _]
+                                                    (throw (ex-info "Exceptional status code: 503"
+                                                                    {:status 503})))}
+                   (fn []
+                     (let [error (try (router/hydrate-request-model-metadata
+                                        (environment {:name "claude-sonnet-future"})
+                                        {})
+                                      nil
+                                      (catch clojure.lang.ExceptionInfo e e))]
+                       (expect (= 503 (:status (ex-data error))))
+                       (expect (not= :model-metadata (perr/provider-error-kind error))))))))
+
 (defdescribe
   copilot-config-capabilities
   (it
