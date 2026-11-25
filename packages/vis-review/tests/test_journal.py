@@ -806,6 +806,19 @@ def test_a_delayed_after_hook_does_not_take_the_next_blocks_files(tmp_path):
     assert snapshots[1].files["gone.py"] is None
 
 
+def test_a_step_that_deletes_an_own_file_without_naming_it_owns_the_deletion(tmp_path):
+    j = journal(tmp_path)
+    _write_at(j, "keep.py", "old\n", 1)
+    j.checkpoint()
+    _write_at(j, "song.mp3", "new\n", 11)
+    j.checkpoint("block", "add", lambda rel: True, started_at=10, ended_at=12)
+    # A shell command such as `rm -rf out` names no file of the block.
+    os.unlink(os.path.join(j.root, "song.mp3"))
+    j.checkpoint("block", "rm", lambda rel: False, started_at=20, ended_at=22)
+    assert j.own_diff() == []
+    assert j.snapshots()[-1].kind == "block"
+
+
 def test_first_block_uses_git_to_keep_a_tracked_preimage(tmp_path):
     top = repo(tmp_path)
     j = Journal(top / "sub", "first", tmp_path / "base", files=walked)

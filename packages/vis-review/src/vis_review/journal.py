@@ -328,13 +328,18 @@ class Journal:
         self._head = self._head_now()
         between = set()
         if timed:
+            # A deletion has no time. The step keeps a deletion that its code names,
+            # and one of a file that the session changed before: a shell command
+            # such as `rm -rf out` names no file.
+            gone = [rel for rel in delta if not stamps[rel]]
+            own = self._own_changes() if gone and self.entries else {}
             between = {
                 rel
                 for rel in delta
                 if (
                     stamps[rel][0] < start * 1_000_000_000
                     if stamps[rel]
-                    else not (wrote and wrote(rel))
+                    else not (wrote and wrote(rel)) and rel not in own
                 )
             }
         baseline_entry = None
