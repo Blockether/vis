@@ -508,7 +508,7 @@
              (finally (#'python-runtime/delete-tree! project))))))
 
 (defdescribe pruned-private-project-test
-  (it "removes SDK-only dependencies from a managed environment and checks the same set"
+  (it "removes the SDK and its evaluation tree from a managed environment and keeps SDK runtime packages"
       (let [project (temp-dir "vis-pruned-project")
             python (io/file project "python3")
             calls (atom [])]
@@ -533,7 +533,8 @@
                    (spit (io/file env "pyvenv.cfg") (str "home = " (.getPath project) "\n"))
                    (spit (io/file env ".vis-prepared.edn")
                          (pr-str {:inputs (#'python-runtime/prepared-inputs project site)
-                                  :packages (.getCanonicalPath site)}))
+                                  :packages (.getCanonicalPath site)
+                                  :managed-selection? true}))
                    (with-redefs-fn {#'python-runtime/project-packages (constantly (.getCanonicalFile site))
                                     #'python-runtime/run-uv! (fn [_ args]
                                                               (swap! calls conj args)
@@ -541,14 +542,16 @@
                                                                 "workspace" (.getCanonicalPath project)
                                                                 "export" (do (spit (second (drop-while #(not= "--output-file" %) args))
                                                                                     (str "direct==1\ncommon==2\n"
+                                                                                         (when-not (some #{"vis-agent"} args)
+                                                                                           "vis-agent==1\njsonschema==4\n")
                                                                                          (when-not (some #{"--prune"} args)
-                                                                                           "vis-agent==1\nsdk-only==3\n")))
+                                                                                           "harbor==3\n")))
                                                                              "")
                                                                 "sync" (when (and (some #{"--check"} args) (= 1 (count (syncs))))
                                                                          (throw (ex-info "environment needs sync" {})))))}
                      (fn []
                        (expect (= (.getCanonicalFile site) (python-runtime/ensure-project! project)))
-                       (expect (= [#{"vis-agent" "sdk-only"} #{"vis-agent" "sdk-only"}]
+                       (expect (= [#{"vis-agent" "harbor"} #{"vis-agent" "harbor"}]
                                   (mapv selection (syncs))))
                        (reset! calls [])
                        (python-runtime/ensure-project! project)
