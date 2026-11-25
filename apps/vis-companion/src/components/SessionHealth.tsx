@@ -100,7 +100,7 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthData }) {
         </span>
       </div>
 
-      <div className="mt-4 space-y-2 border-t border-dialog-edge pt-1">
+      <div className="mt-4 border-t border-dialog-edge py-2.5">
         {estimatedInput !== undefined ? (
           <>
             <Disclosure
