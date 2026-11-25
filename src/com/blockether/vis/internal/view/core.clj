@@ -1949,6 +1949,9 @@
           (seq shortcuts)
           (assoc :shortcuts shortcuts)
 
+          (seq (:header view))
+          (assoc :header (mapv str (:header view)))
+
           (some? surfaces)
           (assoc :surfaces surfaces)
 
@@ -3376,7 +3379,7 @@
 (def ^:private declared-presentation
   "The keys of an app declaration that an adopting owner sets again, also to nothing.
    The nodes stay: they hold the threads and drafts of people, and the owner patches them."
-  [:title :description :shortcuts :icon])
+  [:title :description :shortcuts :header :icon])
 
 (defn- declared-view
   "Open app `view` with the presentation and the settings name that `record` declares."
@@ -3388,7 +3391,7 @@
 
 (defn- adopt-app!
   "Give the open app to its current owner. Keep its nodes and take the title,
-   description, shortcuts, icon and settings name that the owner declares, so a
+   description, shortcuts, header, icon and settings name that the owner declares, so a
    reload of the owner shows them at once."
   [record]
   (when-let [entry (adoptable-app record)]

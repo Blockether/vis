@@ -228,7 +228,7 @@ describe('AppSurface', () => {
     const disconnected = liveViewFromWire({ ...wire(3, 'Kept'), is_stale: true });
     const { client } = fakeClient(disconnected ? [disconnected] : [], async () => ({}));
     open(client, null);
-    expect(await screen.findByText('Disconnected')).toBeInTheDocument();
+    expect(await screen.findByRole('img', { name: 'Disconnected' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
   });
@@ -239,7 +239,7 @@ describe('AppSurface', () => {
     const closed = liveViewFromWire({ ...wire(3), is_closed: true });
     const { client } = fakeClient(closed ? [closed] : [], async () => ({}));
     open(client, null);
-    expect(await screen.findAllByText('Closed')).toHaveLength(1);
+    expect(await screen.findAllByRole('img', { name: 'Closed' })).toHaveLength(1);
     expect(screen.queryByText('Done')).toBeNull();
   });
 });
@@ -530,7 +530,8 @@ describe('AppAttachmentRow full screen', () => {
       </SessionEventsContext.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Open app counter' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Full screen Counter' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'More for Counter' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -628,7 +629,7 @@ describe('a disconnected app', () => {
       fireEvent.click(button);
       await screen.findByRole('toolbar', { name: 'App keys' });
       expect(viewAction.mock.calls.map((call) => call[2])).toEqual([{ action: 'connect' }]);
-      expect(screen.queryByText('Disconnected')).toBeNull();
+      expect(screen.queryByRole('img', { name: 'Disconnected' })).toBeNull();
       expect(screen.queryByText('Connecting')).toBeNull();
     });
 
@@ -638,7 +639,7 @@ describe('a disconnected app', () => {
       });
       render(row(client, [away()], 'away-refused'));
       fireEvent.click(screen.getByRole('button', { name: 'Open app counter' }));
-      expect(await screen.findByText('Disconnected')).toBeInTheDocument();
+      expect(await screen.findByRole('img', { name: 'Disconnected' })).toBeInTheDocument();
       expect(viewAction).toHaveBeenCalledTimes(1);
       expect(screen.queryByRole('toolbar', { name: 'App keys' })).toBeNull();
     });
@@ -700,9 +701,9 @@ describe('AppSurface focus, names and owner loss', () => {
     open(client, hub);
     await screen.findByRole('toolbar', { name: 'App keys' });
     fireEvent.keyDown(document.body, { key: 'ArrowUp' });
-    expect(await screen.findByText('Disconnected')).toBeInTheDocument();
+    expect(await screen.findByRole('img', { name: 'Disconnected' })).toBeInTheDocument();
     // The state word says it once; the refusal adds no second word and no key works.
-    expect(screen.getAllByText('Disconnected')).toHaveLength(1);
+    expect(screen.getAllByRole('img', { name: 'Disconnected' })).toHaveLength(1);
     expect(screen.queryByRole('toolbar', { name: 'App keys' })).toBeNull();
     expect(nodeButton('next')).toHaveProperty('disabled', true);
     fireEvent.keyDown(document.body, { key: 'ArrowUp' });
@@ -717,7 +718,7 @@ describe('AppSurface focus, names and owner loss', () => {
         view: { ...wizardWire(), seq: 3 },
       } as SseEvent),
     );
-    await waitFor(() => expect(screen.queryByText('Disconnected')).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('img', { name: 'Disconnected' })).toBeNull());
     expect(nodeButton('next')).toHaveProperty('disabled', false);
     // Its one key is on the Next button, so no legend shows, but the key works again.
     expect(screen.queryByRole('toolbar', { name: 'App keys' })).toBeNull();
@@ -733,10 +734,10 @@ describe('AppSurface focus, names and owner loss', () => {
     act(() =>
       emit({ type: VIEW_OPEN_EVENT, kind: 'live', view_id: 'app-1', view: { ...wizardWire(), seq: 3, is_stale: true } } as SseEvent),
     );
-    expect(await screen.findByText('Disconnected')).toBeInTheDocument();
+    expect(await screen.findByRole('img', { name: 'Disconnected' })).toBeInTheDocument();
     expect(screen.queryByRole('toolbar', { name: 'App keys' })).toBeNull();
     act(() => emit({ type: VIEW_OPEN_EVENT, kind: 'live', view_id: 'app-1', view: { ...wizardWire(), seq: 4 } } as SseEvent));
-    await waitFor(() => expect(screen.queryByText('Disconnected')).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('img', { name: 'Disconnected' })).toBeNull());
   });
 });
 
@@ -883,9 +884,9 @@ describe('a global app', () => {
     await waitFor(() => expect(globalAppAction).toHaveBeenCalledWith('app-1', { action: 'activate', node_id: 'inc' }));
     const emit = (event: SseEvent) => act(() => fleet.forEach((listener) => listener(event)));
     emit({ type: VIEW_CLOSE_EVENT, view_id: 'app-1', session_id: 's1', result: {} });
-    expect(screen.queryByText('Closed')).toBeNull();
+    expect(screen.queryByRole('img', { name: 'Closed' })).toBeNull();
     emit({ type: VIEW_CLOSE_EVENT, view_id: 'app-1', result: {} });
-    expect(await screen.findByText('Closed')).toBeInTheDocument();
+    expect(await screen.findByRole('img', { name: 'Closed' })).toBeInTheDocument();
   });
 });
 
@@ -906,29 +907,31 @@ describe('AppSurface log', () => {
     render(
       <AppSurface client={client} sid="s1" viewId="app-1" fallbackTitle="code-review" isInline onClose={onClose} />,
     );
-    fireEvent.click(await screen.findByRole('button', { name: 'Log of Code review, 1 error' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'More for Code review, 1 log error' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Show log/ }));
     const panel = screen.getByRole('region', { name: 'Log of Code review' });
     fireEvent.keyDown(panel, { key: 'Escape' });
     expect(screen.queryByRole('region', { name: 'Log of Code review' })).toBeNull();
     expect(onClose).not.toHaveBeenCalled();
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Log of Code review, 1 error' }), { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('button', { name: 'More for Code review, 1 log error' }), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   // Audit report (round 2): Escape inside the log hid the focused control and left the
   // focus on the page body, so the next key no longer belonged to this app.
-  it('gives the focus back to the Log control when Escape closes the log from inside it', async () => {
+  it('gives the focus back to the band menu when Escape closes the log from inside it', async () => {
     const view = logged([
       { seq: 1, at: 1, level: 'error', source: 'host', message: 'Callback failed', detail: 'Traceback' },
     ]);
     const { client } = fakeClient([view as LiveView], async () => ({}));
     render(<AppSurface client={client} sid="s1" viewId="app-1" fallbackTitle="code-review" isInline onClose={vi.fn()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Log of Code review, 1 error' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'More for Code review, 1 log error' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Show log/ }));
     const inside = within(screen.getByRole('region', { name: 'Log of Code review' })).getAllByRole('button')[0]!;
     inside.focus();
     fireEvent.keyDown(inside, { key: 'Escape' });
     expect(screen.queryByRole('region', { name: 'Log of Code review' })).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Log of Code review, 1 error' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'More for Code review, 1 log error' }));
   });
 });
 
@@ -998,13 +1001,18 @@ it('keeps the session app available while its returning list read waits', async 
   expect(screen.getByRole('button', { name: 'Open app Code review' })).toBeInTheDocument();
 });
 
-// User report: the state of the review stood below a long diff, where nobody saw it.
-it('shows the first status of an app in the header of its pane, and in the body elsewhere', async () => {
+// User decision: the header holds what the app declares, and the state is a dot.
+it('shows the header nodes that an app declares in its header, and the other nodes in the body', async () => {
   const raw = wire(3);
   const withState = () => {
     const parsed = liveViewFromWire({
       ...raw,
-      nodes: [...raw.nodes, { id: 'notice', type: 'status', text: 'AI review in progress', tone: 'running' }],
+      header: ['notice'],
+      nodes: [
+        { id: 'notice', type: 'status', text: 'AI review in progress', tone: 'running' },
+        ...raw.nodes,
+        { id: 'other', type: 'status', text: 'Two files left', tone: 'idle' },
+      ],
     });
     if (!parsed) throw new Error('fixture must parse');
     return parsed;
@@ -1027,8 +1035,10 @@ it('shows the first status of an app in the header of its pane, and in the body 
   expect(screen.getAllByText('AI review in progress')).toHaveLength(1);
   expect(state.closest('header')).not.toBeNull();
   expect(state.closest('[data-app-surface]')).toBeNull();
+  expect(screen.getByText('Two files left').closest('[data-app-surface]')).not.toBeNull();
+  expect(screen.getByRole('img', { name: 'Connected' })).toBeInTheDocument();
   pane.unmount();
   open(fakeClient([withState()], async () => ({})).client, null);
-  const inBody = await screen.findByText('AI review in progress');
-  expect(inBody.closest('[data-app-surface]')).not.toBeNull();
+  const inBand = await screen.findByText('AI review in progress');
+  expect(inBand.closest('[data-app-surface]')).toBeNull();
 });

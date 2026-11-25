@@ -3566,6 +3566,23 @@
           },
           "maxItems": 32
         },
+        "header": {
+          "description": "The ids of the top nodes that an app shows in its header, in this order. `x-vis-header-kinds` lists the node types that it takes. The body does not show them. The header always has the back and close controls. Only an app takes a header.",
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "uniqueItems": true,
+          "maxItems": 8,
+          "x-vis-header-kinds": [
+            "button",
+            "group",
+            "status",
+            "badge",
+            "plaintext",
+            "select"
+          ]
+        },
         "agent_note": {
           "description": "The app state that the model reads with the next user message. Only an app takes a note.",
           "type": "string",
@@ -4740,7 +4757,7 @@
         "wrap",
         "toolbar"
       ],
-      "description": "How a group arranges its children. A `toolbar` puts compact children on one line that wraps: a text or choice input shows its label only as its accessible name, and a checkbox keeps its label next to the box. A surface shows the first toolbar at the top level of an app in the band of the app. The other toolbars stay in their places. A group of two or more buttons that each have `is_selected` in a toolbar is a switch: its choices stand side by side as one control, without the group label."
+      "description": "How a group arranges its children. A `toolbar` puts compact children on one line that wraps: a text or choice input shows its label only as its accessible name, and a checkbox keeps its label next to the box. An app puts a toolbar in its header through the `header` of its live view. The other toolbars stay in their places. A group of two or more buttons that each have `is_selected` in a toolbar is a switch: its choices stand side by side as one control, without the group label."
     },
     "spinner_variant": {
       "oneOf": [

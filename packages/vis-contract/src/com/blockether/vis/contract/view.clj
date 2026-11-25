@@ -1881,6 +1881,31 @@
                                                                     "shortcut_not_pressable"))))
                                 shortcuts)))))))
 
+(def header-kinds
+  "The node types that an app header holds, in schema order."
+  (get-in (definition "live_view") ["properties" "header" "x-vis-header-kinds"]))
+
+(defn- header-lines
+  "The view faults of the header of wire view `view` with filled `nodes`: only an app
+   takes a header, and each id names a top node of a header kind. The schema holds
+   the shape of the list."
+  [view nodes]
+  (let [header (get view "header")]
+    (when (sequential? header)
+      (if (not= "attachment" (get view "placement"))
+        [(document/named-line "/header" "header_needs_app")]
+        (let [by-id (into {} (comp (filter map?) (map (juxt #(get % "id") identity))) nodes)]
+          (keep-indexed (fn [i id]
+                          (let [node (get by-id id)]
+                            (cond (not (string? id)) nil
+                                  (nil? node) (document/named-line (str "/header/" i)
+                                                                   "header_target")
+                                  (not (some #{(get node "type")} header-kinds))
+                                  (document/named-line (str "/header/" i)
+                                                       "header_kind"
+                                                       {"kinds" (str/join ", " header-kinds)}))))
+                        header))))))
+
 (defn- view-with-nodes
   "Wire view `view` with one channel list and its nodes filled, as the checks read it."
   [view]
@@ -1895,7 +1920,7 @@
 (defn live-view-lines
   "The sorted view fault lines of live wire view `view`, which refuse the whole view:
    not a map, a view key that the schema refuses, a top node that is no map or has no
-   id, a shortcut rule, two nodes with one id, too many nodes or too many picture
+   id, a shortcut or header rule, two nodes with one id, too many nodes or too many picture
    bytes. A host checks a patched view with it, after each op had its node check."
   [view decl?]
   (if-not (map? view)
@@ -1923,7 +1948,7 @@
                                           stamped)))
 
           shortcuts
-          (shortcut-lines view nodes)
+          (concat (shortcut-lines view nodes) (header-lines view nodes))
 
           ;; A shortcut rule names the problem of its path; the oneOf line says less.
           covered

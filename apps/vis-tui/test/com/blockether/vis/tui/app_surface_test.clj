@@ -1115,7 +1115,7 @@
                        {:id "clear" :type :button :label "Clear" :action :activate}]}]})
 
 (def ^:private composed-app
-  {:id "composed" :title "Work" :seq 1 :placement :attachment
+  {:id "composed" :title "Work" :seq 1 :placement :attachment :header ["tools"]
    :nodes [{:id "content" :type :paragraph :text "App body"}
            {:id "tools" :type :group :direction :toolbar
             :children [{:id "search" :type :plaintext :label "Find an issue"
@@ -1509,6 +1509,25 @@
                    (take 2 (:shortcuts v))))
         (expect (not-any? #(= "Area" %) texts))
         (expect (some #(= ["work" "temp"] (mapv :node-id (get-in % [:entry :cells]))) rows))))
+  (it "shows the app header first, in its order"
+      (let [v {:id "v"
+               :nodes [{:id "notes" :type :plaintext :text "Body"}
+                       {:id "live" :type :status :label "Live"}
+                       {:id "go" :type :button :label "Go"}]
+               :header ["go" "live"]}]
+        (expect (= ["go" "live" "notes"]
+                   (distinct (keep :node-id (surface/surface-rows v 80 #{})))))))
+  ;; User request: the state shows as one dot, green or red, as in a chat app.
+  (it "shows the connection as a green or red dot in the title, without a word"
+      (let [v {:id "v" :title "T" :nodes [{:id "go" :type :button :label "Go"}]}
+            rgb (fn [^com.googlecode.lanterna.TextColor c] [(.getRed c) (.getGreen c) (.getBlue c)])
+            dots (fn [v]
+                   (let [cells (:cells (app-frame v (surface/initial-state) 80 24))]
+                     {:text (apply str (map :ch (apply concat cells)))
+                      :fg (keep #(when (= "●" (str (:ch %))) (:fg %)) (apply concat cells))}))]
+        (expect (= [(rgb t/status-ok)] (:fg (dots v))))
+        (expect (= [(rgb t/status-bad)] (:fg (dots (assoc v :is-stale true)))))
+        (expect (not (str/includes? (:text (dots (assoc v :is-stale true))) "Disconnected")))))
   (it "uses the current button label and leaves disabled keys out of the legend"
       (let [v (assoc game :shortcuts [{:key "g" :node-id "go"} {:key "o" :node-id "off"}])]
         (expect (= [["g" "Go"]] (surface/shortcut-legend v)))

@@ -140,7 +140,7 @@ export const Closed: Story = {
   render: () => <OpenApp app={COUNTER} over={{ is_closed: true }} />,
   play: async ({ canvasElement }) => {
     const canvas = await body(canvasElement);
-    await expect(await within(canvasElement).findByText('Closed')).toBeVisible();
+    await expect(await within(canvasElement).findByRole('img', { name: 'Closed' })).toBeVisible();
     await expect(canvas.queryByRole('toolbar', { name: 'App keys' })).toBeNull();
     await expect(canvas.getByRole('button', { name: 'Plus one' })).toBeDisabled();
     await userEvent.keyboard('+');

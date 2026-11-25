@@ -242,6 +242,18 @@
         "the node that node_id names is not a button or a selectable card",
         "shortcut"
       ],
+      "header_needs_app": [
+        "only an app (placement attachment) takes a header",
+        "header"
+      ],
+      "header_target": [
+        "the id names no top node of the view",
+        "header"
+      ],
+      "header_kind": [
+        "a header holds only these node types: {kinds}",
+        "header"
+      ],
       "table_rows": [
         "the table has {count} rows, its max_rows is {limit}",
         "max_rows"

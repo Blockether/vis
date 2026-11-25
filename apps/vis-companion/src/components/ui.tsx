@@ -2254,7 +2254,7 @@ export function CloseButton({
  * With the ink on the whole cell, the rule was ink at 20% on amber and the dark cell
  * before ran into the amber with no line between them.
  */
-/** The band cell where an app shows its first top-level toolbar (`toolbar` in view.json). */
+/** The band cell where an app shows its header nodes (`header` in view.json). */
 export const BandSlotContext = createContext<Element | null>(null);
 
 export function BandButton({

@@ -62,7 +62,7 @@ def _words(values):
 
 
 def tools_node():
-    """The search and the verb of the app band."""
+    """The search and the verb of the app header."""
     return vis.ui.toolbar(
         "tools",
         vis.ui.plaintext(
@@ -336,13 +336,13 @@ class BoardApp:
             self._choices = (_choices(data), tuple(self.folders()))
             declaration = vis.ui.app(
                 "Board",
-                tools_node(),
                 filters_node(data, self.filters, self.folders()),
                 board_node(data, shown(data, self.filters)),
                 create_node(
                     data, folders=self.folders(), project=self.filters["project"]
                 ),
                 description="Plan and track the work of all projects.",
+                header=[tools_node()],
                 key="board",
                 icon="board",
                 scope="global",

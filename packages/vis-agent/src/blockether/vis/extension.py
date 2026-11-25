@@ -8941,9 +8941,10 @@ def _ui_toolbar(*fields):
     """Put compact ``fields`` on one line that wraps, such as a search and filters.
 
     An input in a toolbar shows its label only as its accessible name, so give it a
-    ``placeholder``. The first toolbar at the top level of an app stands in the app band.
-    A group of two or more buttons that each have ``is_selected`` is a switch there:
-    its choices stand side by side as one control, without the group label.
+    ``placeholder``. To show a toolbar in the app header, give it to the ``header``
+    of ``vis.ui.app``. In a toolbar, a group of two or more buttons that each have
+    ``is_selected`` is a switch: its choices stand side by side as one control,
+    without the group label.
     """
     return _group("toolbar", fields)
 
@@ -9590,6 +9591,7 @@ def _ui_app(
     description=None,
     key=None,
     shortcuts=None,
+    header=None,
     icon=None,
     surfaces=None,
     settings_name=None,
@@ -9602,6 +9604,10 @@ def _ui_app(
     The nodes are the same components as in `vis.live`, plus `diff` and `thread`.
     `key` makes the app adoptable: its owner can open the same key again later.
     `shortcuts` is a list of `vis.ui.app.shortcut(...)` values, at most 32.
+    `header` is a list of at most 8 nodes with ids that the app header shows, in
+    order, next to the back and close controls: buttons, choice rows, menus,
+    search inputs, selects, statuses and badges. The body does not show them. A
+    patch changes them by id, like the other nodes.
     `icon` selects an app icon, such as `review`, `chart`, `music` or `terminal`.
     `surfaces` sets where the app shows by default, for example
     `{"inline": False, "session": "chat"}`. `inline` shows it in the chat turn
@@ -9618,6 +9624,12 @@ def _ui_app(
     """
     request = {str(k): v for k, v in options.items()}
     request.update(placement="attachment", title=str(title), nodes=list(nodes))
+    if header is not None:
+        header = list(header)
+        if not all(isinstance(node, dict) and node.get("id") for node in header):
+            raise ValueError("each vis.ui.app header node needs an id")
+        request["nodes"] = header + request["nodes"]
+        request["header"] = [str(node["id"]) for node in header]
     if description is not None:
         request["description"] = str(description)
     if key is not None:

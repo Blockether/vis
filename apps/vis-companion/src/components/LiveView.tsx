@@ -2277,7 +2277,7 @@ function NodeCell({
   statusAction?: ReactNode;
   /** The node is a direct child of a `wrap` group: it stands on a line with its siblings. */
   inWrap?: boolean;
-  /** The node is a direct child of a `toolbar` group. */
+  /** The node is a direct child of a `toolbar` group, or an app header node. */
   inToolbar?: boolean;
 }) {
   const contentId = useId();
@@ -2540,7 +2540,6 @@ export function LiveViewPanel({
   inDialog = false,
   app,
   errors,
-  headlineId,
 }: {
   view: LiveViewModel;
   onBoardAction?: NodePresentation['onBoardAction'];
@@ -2576,22 +2575,18 @@ export function LiveViewPanel({
   app?: AppNodeActions;
   /** The host's refusal of each input value, by node id. */
   errors?: Readonly<Record<string, string>>;
-  /**
-   * The status node that the frame of the view shows in its header. The panel leaves
-   * its sentence out and shows only its detail, so the state stands in one place.
-   */
-  headlineId?: string;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
   // was stopped and not merely that it was. `null` is "not armed" — an empty
   // string is an armed stop nobody has typed into yet.
   const phase = `${view.id}:${isSettled}`;
-  // A top-level toolbar of an app stands in the app band, when the frame has one.
+  // The header nodes that an app declares stand in its band, when the frame has one.
   const band = useContext(BandSlotContext);
-  const bandToolbar = view.nodes.find(
-    (node) => node.type === 'group' && node.direction === 'toolbar' && !node.is_dialog,
-  )?.id;
+  const headerNodes = band
+    ? (view.header ?? []).flatMap((id) => view.nodes.filter((node) => node.id === id))
+    : [];
+  const inBand = new Set(headerNodes.map((node) => node.id));
   const [disclosures, setDisclosures] = useState<{
     phase: string;
     values: Record<string, boolean>;
@@ -2871,27 +2866,7 @@ export function LiveViewPanel({
         {!embedded && (
           <ul className={`space-y-6 ${inDialog ? 'pt-2 pb-4' : 'py-4'}`}>
             {view.nodes.map((node, index) => {
-              const inHeader = node.type === 'status' && node.id === headlineId;
-              const detail = inHeader ? node.detail : undefined;
-              if (inHeader && !detail) return null;
-              if (band && node.id === bandToolbar) {
-                return createPortal(
-                  <span
-                    key={node.id}
-                    // A switch keeps its words; the status beside the name gives up width first.
-                    className={`flex items-center px-2 ${
-                      node.type === 'group' &&
-                      node.children.every((child) => child.type === 'group' && isChoiceStrip(child))
-                        ? 'shrink-0'
-                        : 'min-w-0 shrink'
-                    }`}
-                  >
-                    <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
-                  </span>,
-                  band,
-                  node.id,
-                );
-              }
+              if (inBand.has(node.id)) return null;
               return (
                 <li
                   key={node.id}
@@ -2901,24 +2876,37 @@ export function LiveViewPanel({
                       : ''
                   }`}
                 >
-                  {detail ? (
-                    <p className="min-w-0 font-mono text-body text-dialog-hint [overflow-wrap:anywhere]">
-                      <InlineMarkdown>{detail}</InlineMarkdown>
-                    </p>
-                  ) : (
-                    <NodeCell
-                      node={node}
-                      load={load}
-                      onSelect={onSelect}
-                      presentation={presentation}
-                      statusAction={index === 0 ? stopInHeadline : undefined}
-                    />
-                  )}
+                  <NodeCell
+                    node={node}
+                    load={load}
+                    onSelect={onSelect}
+                    presentation={presentation}
+                    statusAction={index === 0 ? stopInHeadline : undefined}
+                  />
                 </li>
               );
             })}
           </ul>
         )}
+        {band &&
+          headerNodes.length > 0 &&
+          createPortal(
+            headerNodes.map((node) => (
+              <span
+                key={node.id}
+                data-app-header={node.id}
+                // A switch keeps its words; the other header nodes give up width first.
+                className={`flex items-center px-2 ${
+                  node.type === 'group' && isChoiceStrip(node)
+                    ? 'shrink-0'
+                    : 'min-w-0 shrink'
+                }`}
+              >
+                <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} inToolbar />
+              </span>
+            )),
+            band,
+          )}
       </section>
       {embedded && opened && (
         <OpenedRun

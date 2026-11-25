@@ -185,6 +185,15 @@ def test_app_scope_declaration_is_checked_as_the_engine_checks_it():
         vis.ui.app("Board", vis.ui.thread("t"), scope="global")
 
 
+def test_app_header_nodes_lead_the_nodes_and_name_the_header():
+    new = vis.ui.button("new", label="New issue")
+    app = vis.ui.app("Board", vis.ui.thread("t"), header=[new])
+    assert app["header"] == ["new"]
+    assert app["nodes"][0] == new
+    with pytest.raises(ValueError, match="needs an id"):
+        vis.ui.app("Board", vis.ui.thread("t"), header=[{"type": "button"}])
+
+
 def test_attach_opens_one_app_and_answers_its_handle(host):
     app = vis.attach(
         vis.ui.app("Review", vis.ui.diff("change", PATCH), vis.ui.thread("general"))

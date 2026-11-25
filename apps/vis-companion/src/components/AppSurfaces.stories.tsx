@@ -96,7 +96,7 @@ function Chat({ children }: { children?: ReactNode }) {
   );
 }
 
-/** The app in the chat turn that opened it, with its Full screen control. */
+/** The app in the chat turn that opened it, with Full screen in its band menu. */
 export const Inline: Story = {
   render: () => (
     <WithHost over={{ surfaces: { inline: true, session: 'sidebar' } }}>
@@ -150,7 +150,8 @@ export const FullScreen: Story = {
     const canvas = within(canvasElement);
     const page = within(canvasElement.ownerDocument.body);
     await userEvent.click(canvas.getByRole('button', { name: 'Open app todo-list' }));
-    await userEvent.click(await canvas.findByRole('button', { name: `Full screen ${TODO.title}` }));
+    await userEvent.click(await canvas.findByRole('button', { name: `More for ${TODO.title}` }));
+    await userEvent.click(await page.findByRole('button', { name: 'Full screen' }));
     await page.findByRole('dialog');
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(page.queryByRole('dialog')).toBeNull());

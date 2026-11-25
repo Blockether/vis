@@ -795,6 +795,8 @@ export interface LiveView {
   is_stale?: boolean;
   /** The keys an app binds, in the order the owner declared them. */
   shortcuts?: LiveShortcut[];
+  /** The ids of the top nodes that the app header shows, in order. The body does not show them. */
+  header?: string[];
   /** Where an app shows, after the person's settings. Absent: the schema defaults. */
   surfaces?: AppSurfaces;
   /** The id prefix of this app's own settings. */
@@ -1879,6 +1881,7 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     ...(view.is_stale === true ? { is_disconnected: true } : {}),
     ...(view.is_reconnectable === true ? { is_reconnectable: true } : {}),
     ...(Array.isArray(view.shortcuts) ? { shortcuts: liveShortcutsFromWire(view.shortcuts) } : {}),
+    ...(Array.isArray(view.header) ? { header: view.header.filter((id): id is string => typeof id === 'string') } : {}),
     ...(view.surfaces === undefined ? {} : { surfaces: appSurfacesFromWire(view.surfaces) }),
     ...(view.icon === undefined ? {} : { icon: appIconName(view.icon) }),
     ...(typeof view.settings_key === 'string' ? { settings_key: view.settings_key } : {}),

@@ -328,10 +328,11 @@
                          (filter some?)
                          (interpose [{:kind :section-gap :text ""}])
                          cat)
-                   ;; The first top-level toolbar stands at the top, as in the app band.
+                   ;; The app header stands at the top, in its order.
                    (let [nodes (:nodes view)
-                         band (first (filter #(and (lv/toolbar? %) (not (:is-dialog %))) nodes))]
-                     (if band (cons band (remove #(identical? band %) nodes)) nodes)))
+                         header (:header view)]
+                     (concat (keep (into {} (map (juxt :id identity)) nodes) header)
+                             (remove (comp (set header) :id) nodes))))
        (seq receipts)
        (into (cons {:kind :receipts-head :text "Send receipts"} receipts))))))
 
@@ -2008,16 +2009,23 @@
 
 (def ^:private editor-h "Rows of the editor field." 5)
 
+(def ^:private state-dot "The connection mark at the end of the title." "●")
+
 (defn- title
-  "The app's name, then its ONE lifecycle word when it is not live (#430). The state
-   counter is the gateway's, not the human's; Save reports its own state in the status line."
+  "The app's name, then its connection as one dot, as a chat app shows presence (#430).
+   The state counter is the gateway's, not the human's; Save reports its own state in
+   the status line."
   [view]
-  (str (app/icon-mark view)
-       "  "
-       (or (not-empty (str (:title view))) "App")
-       (when-let [word
-                  (if (model/away? view) "Connecting" (get model/status-label (model/status view)))]
-         (str "  ·  " word))))
+  (str (app/icon-mark view) "  " (or (not-empty (str (:title view))) "App") "  " state-dot))
+
+(defn- paint-state-dot!
+  "Paint the title dot green while the app is live, red when it is closed, archived or
+   waits for its owner. `painted` is the title text that starts at column `x` of `row`;
+   an ellipsized title has no dot."
+  [g view x row painted bg]
+  (when (str/ends-with? painted state-dot)
+    (p/set-colors! g (if (= :live (model/status view)) t/status-ok t/status-bad) bg)
+    (p/put-str! g (+ (long x) (p/display-width painted) -1) row state-dot)))
 
 (def ^:private app-region
   "The dialog region of the app surface: the whole terminal width without an anchor.
@@ -2246,7 +2254,7 @@
 (defn- paint-pane-chrome!
   "Paint the side pane like the project sidebar: a box, the title on its own row
    and rules under the title and over the footer. The pane key chord hides it."
-  [g {:keys [left top right bottom inner-w]} title chip]
+  [g {:keys [left top right bottom inner-w]} title chip & [view]]
   (let [left
         (long left)
 
@@ -2270,15 +2278,10 @@
       (p/put-str! g left row (str "├" (p/horiz-line (- width 2)) "┤")))
     (when (> height 3)
       (p/set-colors! g t/header-fg t/dialog-bg)
-      (p/styled g
-                [p/BOLD]
-                (p/put-str!
-                  g
-                  (+ left 2)
-                  (inc top)
-                  (p/ellipsize
-                    title
-                    (max 0 (if chip (- (long (:col chip)) left 4) (- (long inner-w) 2)))))))))
+      (let [painted (p/ellipsize title
+                                 (max 0 (if chip (- (long (:col chip)) left 4) (- (long inner-w) 2))))]
+        (p/styled g [p/BOLD] (p/put-str! g (+ left 2) (inc top) painted))
+        (when view (paint-state-dot! g view (+ left 2) (inc top) painted t/dialog-bg))))))
 
 (defn- paint-log-hit!
   [{:keys [row col width]}]
@@ -2302,13 +2305,15 @@
 (defn- paint-frame-chrome!
   [g {:keys [bounds view pane? cols rows-count content-w log-chip]}]
   (if pane?
-    (paint-pane-chrome! g bounds (title view) log-chip)
-    (in-app-region #(dlg/draw-dialog-chrome! g
-                                             cols
-                                             rows-count
-                                             (title view)
-                                             content-w
-                                             (app-content-h rows-count)))))
+    (paint-pane-chrome! g bounds (title view) log-chip view)
+    (let [{:keys [top title-x title-text]}
+          (in-app-region #(dlg/draw-dialog-chrome! g
+                                                   cols
+                                                   rows-count
+                                                   (title view)
+                                                   content-w
+                                                   (app-content-h rows-count)))]
+      (paint-state-dot! g view title-x (inc (long top)) title-text t/dialog-title-bg))))
 
 (defn- paint-chrome! [g geom] (paint-frame-chrome! g geom) (paint-log-chip! g geom))
 

@@ -68,12 +68,13 @@ function Pane({ children }: { children: ReactNode }) {
   );
 }
 
-/** A log with an error from the host: the badge counts it, and the panel opens on a press. */
+/** A log with an error from the host: the band menu counts it, and its Log row opens the panel. */
 export const WithErrors: Story = {
   render: () => <Turn over={{ log: LOG }} />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(await canvas.findByRole('button', { name: /^Log of .*, 1 error$/ }));
+    await userEvent.click(await canvas.findByRole('button', { name: /^More for .*, 1 log error$/ }));
+    await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('button', { name: /^Show log/ }));
     const panel = canvas.getByRole('region', { name: /^Log of / });
     await userEvent.click(within(panel).getByRole('button', { name: /^Show detail of/ }));
     await expect(within(panel).getByLabelText(/^Detail of/)).toBeVisible();
@@ -82,7 +83,7 @@ export const WithErrors: Story = {
   },
 };
 
-/** An app with an empty log: the band shows no Log control. */
+/** An app with an empty log: the band menu shows no Log row. */
 export const Empty: Story = {
   render: () => <Turn over={{ log: [] }} />,
 };

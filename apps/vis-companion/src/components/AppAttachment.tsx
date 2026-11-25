@@ -10,7 +10,6 @@ import { useAppLog } from '../hooks/useAppLog';
 import { runAppAction, SendKeys, type AppActionResult, type AppActionStatus } from '../lib/app-actions';
 import {
   appFallbackTitle,
-  appHeadline,
   appStateWord,
   canOpenApp,
   draftAction,
@@ -39,9 +38,9 @@ import type { IterationAttachment, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
 import { ActionStatus, type AppNodeActions } from './AppNodes';
 import { ReviewMemoryContext, ReviewPrefsContext, useReviewScroll, useVisitState } from '../lib/review-memory';
-import { LiveViewPanel, RunDialog, StatusLine } from './LiveView';
-import { AppLogButton, AppLogPanel } from './AppLog';
-import { AppIcon, ChevronIcon, FullScreenIcon } from './icons';
+import { LiveViewPanel, RunDialog } from './LiveView';
+import { AppBandMenu, AppLogPanel } from './AppLog';
+import { AppIcon, ChevronIcon } from './icons';
 import { BandButton, BandSlotContext, DialogFrame, DialogHeader, ExecutionAction, KeyCap, ListRow, Modal, PaneHeader, closeWith } from './ui';
 
 /** The open apps of the session, with their surfaces, for the rows of the transcript. */
@@ -337,6 +336,28 @@ function KeyLegend({
 const BAND_ICON = 'ml-3 size-4 shrink-0 self-center sm:ml-4';
 
 /**
+ * The icon of an app with its connection as one dot, as a chat app shows presence:
+ * green while the app is live, red when it is closed, archived or away. `state` is
+ * the state word, empty for a live app; no dot before the app is read.
+ */
+function AppMark({ icon, state, className }: { icon?: LiveViewModel['icon']; state?: string; className: string }) {
+  return (
+    <span className={`relative grid place-items-center ${className}`}>
+      <AppIcon name={icon} className="size-full" />
+      {state !== undefined && (
+        <span
+          role="img"
+          aria-label={state || 'Connected'}
+          title={state || 'Connected'}
+          data-app-dot={state ? 'off' : 'on'}
+          className={`absolute -bottom-0.5 -right-0.5 size-[7px] rounded-full ring-2 ring-panel ${state ? 'bg-err-ink' : 'bg-ok-ink'}`}
+        />
+      )}
+    </span>
+  );
+}
+
+/**
  * The opened app: its title in a band and its nodes in the shared renderer.
  * In the transcript it opens in place of its row (`isInline`); the Artifacts
  * sheet opens it in the session dialog.
@@ -568,13 +589,11 @@ export function AppSurface({
       : sid === null
         ? globalAppStateWord(view)
         : appStateWord(view);
-  // A pane shows the state of the app beside its name, and the app keeps its height.
-  const headline = isPane && view ? appHeadline(view.nodes) : undefined;
+  // The dot on the icon gives the state; the band names only an action result.
+  const dotState = view ? state : undefined;
   const subtitle = view ? (
     <span className="flex min-w-0 items-center gap-2">
-      {state && <span>{state}</span>}
-      {headline && <StatusLine node={headline} />}
-      {/* A read-only app says why in its state word; an old refusal adds nothing. */}
+      {/* A read-only app says why in its dot; an old refusal adds nothing. */}
       <ActionStatus status={isReadOnly ? 'idle' : formStatus} isOnBand />
     </span>
   ) : undefined;
@@ -613,7 +632,6 @@ export function AppSurface({
               isSettled={view.is_closed === true}
               app={actions}
               errors={fieldErrors}
-              headlineId={headline?.id}
               onActivate={isReadOnly ? undefined : onActivate}
               onSelect={isReadOnly ? undefined : onSelect}
               onBoardAction={isReadOnly ? undefined : onBoardAction}
@@ -639,12 +657,13 @@ export function AppSurface({
   const bandActions = (
     <>
       <span ref={setBandSlot} className="contents" />
-      <AppLogButton log={log} title={title} isOpen={appLog.isOpen} onToggle={appLog.toggle} />
-      {onFullScreen && (
-        <BandButton label={`Full screen ${title}`} onClick={onFullScreen}>
-          <FullScreenIcon className="size-3.5" />
-        </BandButton>
-      )}
+      <AppBandMenu
+        log={log}
+        title={title}
+        isLogOpen={appLog.isOpen}
+        onToggleLog={appLog.toggle}
+        onFullScreen={onFullScreen}
+      />
     </>
   );
   const logPanel = appLog.isOpen && log ? <AppLogPanel log={log} title={title} isPane={!isFramed} /> : null;
@@ -672,7 +691,7 @@ export function AppSurface({
           <PaneHeader
             title={title}
             subtitle={subtitle}
-            leading={<>{backButton}<AppIcon name={view?.icon} className="mx-1 size-4 shrink-0" /></>}
+            leading={<>{backButton}<AppMark icon={view?.icon} state={dotState} className="mx-1 size-4 shrink-0" /></>}
             actions={bandActions}
             {...closeWith(backLabel ? undefined : onClose, leave)}
           />
@@ -681,7 +700,7 @@ export function AppSurface({
             title={title}
             isTitleTruncated
             subtitle={subtitle}
-            leading={<>{backButton}<AppIcon name={view?.icon} className={BAND_ICON} /></>}
+            leading={<>{backButton}<AppMark icon={view?.icon} state={dotState} className={BAND_ICON} /></>}
             actions={bandActions}
             {...closeWith(backLabel ? undefined : onClose, leave)}
           />
@@ -707,7 +726,7 @@ export function AppSurface({
   return (
     <RunDialog
       title={title}
-      leading={<AppIcon name={view?.icon} className={BAND_ICON} />}
+      leading={<AppMark icon={view?.icon} state={dotState} className={BAND_ICON} />}
       subtitle={subtitle}
       footer={footer}
       closeLabel={closeLabel}

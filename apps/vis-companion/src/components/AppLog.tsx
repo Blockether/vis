@@ -1,6 +1,6 @@
 /**
- * The debug log of an app, in the chrome of every app surface. The Log control
- * shows only when the log has entries, and it counts the errors. Its panel lists
+ * The debug log of an app, in the chrome of every app surface. The Log row of the
+ * band menu shows only when the log has entries, and the menu counts the errors. Its panel lists
  * the entries oldest first, filters them by level and copies them.
  */
 
@@ -16,7 +16,9 @@ import {
   type AppLogFilter,
 } from '../lib/app-log';
 import type { LiveLogEntry, LiveLogLevel } from '../lib/live-view';
-import { ChevronIcon, LogIcon } from './icons';
+import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
+import { ChevronIcon, FullScreenIcon, LogIcon, MoreIcon } from './icons';
+import { Menu, MenuItem, MENU_WIDTH } from './Menu';
 import { BandButton, Chip, CopyChip } from './ui';
 
 /** The ink of each level: errors and warnings stand out, debug steps back. */
@@ -35,42 +37,75 @@ const FILTER_WORDS: Record<AppLogFilter, string> = {
   debug: 'Debug',
 };
 
-/** The Log control of an app band. Nothing for an empty log. */
-export function AppLogButton({
+/**
+ * The ⋯ control of an app band: Log and Full screen, in a menu. Nothing when the
+ * app has neither. The control counts the errors of the log.
+ */
+export function AppBandMenu({
   log,
   title,
-  isOpen,
-  onToggle,
+  isLogOpen,
+  onToggleLog,
+  onFullScreen,
 }: {
   log: readonly LiveLogEntry[] | undefined;
   title: string;
-  isOpen: boolean;
-  onToggle: () => void;
+  isLogOpen: boolean;
+  onToggleLog: () => void;
+  onFullScreen?: () => void;
 }) {
-  if (!log || log.length === 0) return null;
+  const [menu, setMenu] = useState<MenuPosition | null>(null);
+  const hasLog = log !== undefined && log.length > 0;
+  if (!hasLog && !onFullScreen) return null;
   const errors = logErrorCount(log);
-  const name = `Log of ${title}${errors > 0 ? `, ${errors} ${errors === 1 ? 'error' : 'errors'}` : ''}`;
+  const name = `More for ${title}${errors > 0 ? `, ${errors} log ${errors === 1 ? 'error' : 'errors'}` : ''}`;
+  const pick = (act: () => void) => {
+    setMenu(null);
+    act();
+  };
   return (
-    <BandButton
-      label={name}
-      aria-pressed={isOpen}
-      onClick={onToggle}
-      className={isOpen ? 'text-accent-ink' : ''}
-      data-app-log-button
-    >
-      <span className="relative grid place-items-center">
-        <LogIcon className="size-3.5" />
-        {errors > 0 && (
-          <span
-            aria-hidden
-            data-log-errors
-            className="absolute -right-3 -top-2.5 grid h-4 min-w-4 place-items-center border border-err-edge bg-err-surface px-0.5 font-mono text-meta font-bold leading-none tabular-nums text-err-ink"
-          >
-            {errors > 99 ? '99+' : errors}
-          </span>
-        )}
-      </span>
-    </BandButton>
+    <>
+      <BandButton
+        label={name}
+        aria-haspopup="dialog"
+        aria-expanded={menu !== null}
+        onClick={(event) => setMenu(menuPosition(event.currentTarget.getBoundingClientRect(), MENU_WIDTH))}
+        className={isLogOpen ? 'text-accent-ink' : ''}
+        data-app-log-button
+      >
+        <span className="relative grid place-items-center">
+          <MoreIcon className="size-3.5" />
+          {errors > 0 && (
+            <span
+              aria-hidden
+              data-log-errors
+              className="absolute -right-3 -top-2.5 grid h-4 min-w-4 place-items-center border border-err-edge bg-err-surface px-0.5 font-mono text-meta font-bold leading-none tabular-nums text-err-ink"
+            >
+              {errors > 99 ? '99+' : errors}
+            </span>
+          )}
+        </span>
+      </BandButton>
+      {menu && (
+        <Menu label={`${title} actions`} at={menu} onDismiss={() => setMenu(null)}>
+          {hasLog && (
+            <MenuItem
+              title={isLogOpen ? 'Hide log' : 'Show log'}
+              badge={errors > 0 ? `${errors} ${errors === 1 ? 'error' : 'errors'}` : undefined}
+              icon={<LogIcon className="size-3.5" />}
+              onSelect={() => pick(onToggleLog)}
+            />
+          )}
+          {onFullScreen && (
+            <MenuItem
+              title="Full screen"
+              icon={<FullScreenIcon className="size-3.5" />}
+              onSelect={() => pick(onFullScreen)}
+            />
+          )}
+        </Menu>
+      )}
+    </>
   );
 }
 

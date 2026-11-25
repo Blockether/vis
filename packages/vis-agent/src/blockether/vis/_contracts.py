@@ -1732,6 +1732,39 @@ def _shortcut_lines(view: dict[str, Any], nodes: Any) -> list[str]:
     return lines
 
 
+def _header_lines(view: dict[str, Any], nodes: Any) -> list[str]:
+    """The view faults of the header: only an app takes a header, and each id names
+    a top node of a header kind. The schema holds the shape of the list."""
+    header = view.get("header")
+    if not isinstance(header, list):
+        return []
+    if view.get("placement") != "attachment":
+        return [named_line("/header", "header_needs_app")]
+    by_id = {
+        node.get("id"): node
+        for node in (nodes if isinstance(nodes, list) else [])
+        if isinstance(node, dict)
+    }
+    lines = []
+    for i, node_id in enumerate(header):
+        if not isinstance(node_id, str):
+            continue
+        node = by_id.get(node_id)
+        if node is None:
+            lines.append(named_line(f"/header/{i}", "header_target"))
+        else:
+            kinds = definition("view", "live_view")["properties"]["header"][
+                "x-vis-header-kinds"
+            ]
+            if node.get("type") not in kinds:
+                lines.append(
+                    named_line(
+                        f"/header/{i}", "header_kind", {"kinds": ", ".join(kinds)}
+                    )
+                )
+    return lines
+
+
 def live_op_target_lines(node_type: Any, node_id: Any, op: dict[str, Any]) -> list[str]:
     """The sorted fault lines of wire op `op` on a node of wire type `node_type`, from
     `x-vis-patch-targets`: the op does not apply to that type, or a key of the op that
@@ -2278,7 +2311,7 @@ def live_view_faults(view: Any, *, is_declaration: bool = True) -> ViewFaults:
             for key, rule in sorted(properties.items())
             if rule.get("readOnly") and key in view
         ]
-    shortcuts = _shortcut_lines(view, nodes)
+    shortcuts = _shortcut_lines(view, nodes) + _header_lines(view, nodes)
     # A shortcut rule names the problem of its path; the oneOf line says less.
     covered = {line.split(" - ", 1)[0] for line in shortcuts}
     lines = [

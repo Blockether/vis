@@ -1035,10 +1035,18 @@ The icon names are:
 - `users`, `globe`, `database`, `cloud`, `server`, `shield`, `lock`, `key`.
 - `settings`, `tools`, `rocket`, `flask`, `music`, `image`, `book`, `lightning`.
 
+The header of an app shows its icon, its title, and one dot. The dot is green while the app is
+connected. It is red when the app is closed, archived, or waits for its owner. To put controls in
+the header, give them to `header`, such as `header=[vis.ui.toolbar("tools", search, create)]`. The
+header takes at most 8 nodes, and each node needs an id. A header node is a button, a group, a
+status, a badge, a text input, or a select. The terminal app shows the header nodes at the top of
+the app.
+
 An app uses these builders and calls:
 
-- `vis.ui.app(title, *nodes, description=None, key=None, icon=None)` declares an app. Its nodes are
-  the [components](components.md) of a live view, plus `vis.ui.diff` and `vis.ui.thread`.
+- `vis.ui.app(title, *nodes, header=None, description=None, key=None, icon=None)` declares an app.
+  Its nodes are the [components](components.md) of a live view, plus `vis.ui.diff` and
+  `vis.ui.thread`.
 - `vis.ui.diff(node_id, patch)` shows a unified diff, and people comment on one line of it.
   `old_revision` and `new_revision` name the compared versions.
 - `children=[...]` gives the diff a toolbar of actions. A `vis.ui.group` of buttons is one menu,

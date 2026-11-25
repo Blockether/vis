@@ -2452,6 +2452,123 @@
       }
     },
     {
+      "name": "an app header names top inputs, buttons and statuses",
+      "view": {
+        "title": "T",
+        "placement": "attachment",
+        "key": "k",
+        "nodes": [
+          {
+            "id": "q",
+            "type": "plaintext",
+            "label": "Search"
+          },
+          {
+            "id": "new",
+            "type": "button",
+            "label": "New"
+          },
+          {
+            "id": "s",
+            "type": "status",
+            "text": "Ready"
+          }
+        ],
+        "header": [
+          "q",
+          "new",
+          "s"
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
+    },
+    {
+      "name": "only an app takes a header",
+      "view": {
+        "title": "T",
+        "nodes": [
+          {
+            "id": "new",
+            "type": "button",
+            "label": "New"
+          }
+        ],
+        "header": [
+          "new"
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/header - only an app (placement attachment) takes a header (header)"
+        ]
+      }
+    },
+    {
+      "name": "a header id that names no top node is a view fault",
+      "view": {
+        "title": "T",
+        "placement": "attachment",
+        "key": "k",
+        "nodes": [
+          {
+            "id": "row",
+            "type": "group",
+            "children": [
+              {
+                "id": "new",
+                "type": "button",
+                "label": "New"
+              }
+            ]
+          }
+        ],
+        "header": [
+          "new",
+          "gone"
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/header/0 - the id names no top node of the view (header)",
+          "/header/1 - the id names no top node of the view (header)"
+        ]
+      }
+    },
+    {
+      "name": "a header holds only the header kinds of the schema",
+      "view": {
+        "title": "T",
+        "placement": "attachment",
+        "key": "k",
+        "nodes": [
+          {
+            "id": "t",
+            "type": "heading",
+            "text": "Hi",
+            "level": 1
+          }
+        ],
+        "header": [
+          "t"
+        ]
+      },
+      "expect": {
+        "class": "view",
+        "cards": [],
+        "text": [
+          "/header/0 - a header holds only these node types: button, group, status, badge, plaintext, select (header)"
+        ]
+      }
+    },
+    {
       "name": "a shortcut to a node that a person cannot press shows only that rule, also with an action",
       "view": {
         "title": "T",

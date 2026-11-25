@@ -1211,13 +1211,15 @@
       (p/draw-separator! g box-left box-right (inc title-row))
       ;; Bottom separator - above hint bar
       (let [bot-sep (- box-bottom 2)]
-        (when (> bot-sep (+ box-top 3)) (p/draw-separator! g box-left box-right bot-sep))))
-    {:left box-left
-     :top box-top
-     :right box-right
-     :bottom box-bottom
-     :inner-w inner-w
-     :inner-h (- box-h 2)}))
+        (when (> bot-sep (+ box-top 3)) (p/draw-separator! g box-left box-right bot-sep)))
+      {:left box-left
+       :top box-top
+       :right box-right
+       :bottom box-bottom
+       :inner-w inner-w
+       :inner-h (- box-h 2)
+       :title-x tx
+       :title-text title-text})))
 
 (defn draw-dialog-chrome!
   "Draw dialog background, shadow, border, and title.
@@ -1231,7 +1233,8 @@
    - `(g cols rows title content-w content-h opts)` - explicit, with
      `:extra-rows`: rows a terminal box can grow down into the bottom inset.
 
-   Returns {:left :top :right :bottom :inner-w :inner-h}."
+   Returns {:left :top :right :bottom :inner-w :inner-h :title-x :title-text}: the
+   title text that it painted starts at column `:title-x` of the title row."
   ([g cols rows title content-h]
    (draw-dialog-chrome! g
                         cols
