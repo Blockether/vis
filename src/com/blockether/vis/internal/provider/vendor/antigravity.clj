@@ -18,10 +18,8 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.oauth :as oauth])
-  (:import [java.io IOException]
-           [java.net URLDecoder URLEncoder]
+  (:import [java.net URLDecoder URLEncoder]
            [java.nio.charset StandardCharsets]
-           [java.nio.file Files]
            [java.time Instant]
            [java.time.format DateTimeParseException]
            [java.util Base64]))
@@ -188,11 +186,7 @@
 
 (defn- delete-auth-file!
   []
-  (try (Files/deleteIfExists (.toPath (io/file (auth-file))))
-       (catch IOException e
-         (throw (ex-info "Could not delete the Antigravity sign-in file."
-                         {:type :vis/antigravity-logout-failed}
-                         e)))))
+  (paths/delete-private! (auth-file)))
 
 (defn- refresh-access-token!
   [refresh-token]

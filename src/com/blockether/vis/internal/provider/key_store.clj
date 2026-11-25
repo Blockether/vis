@@ -108,8 +108,7 @@
 
     (if (seq next-state)
       (save-auth! book next-state)
-      (let [f (io/file (auth-file book))]
-        (when (.exists f) (.delete f))))
+      (paths/delete-private! (auth-file book)))
     next-state))
 
 (defn- env-key

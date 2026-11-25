@@ -546,3 +546,24 @@
              (expect (python-state-below-home?))
              (finally
                (if old (System/setProperty "vis.home" old) (System/clearProperty "vis.home")))))))
+
+;; A sign-out used to report success while the credential file stayed on disk.
+(defdescribe delete-private-test
+             (it "fails when the file stays and accepts an absent file"
+                 (let [dir (.toFile (Files/createTempDirectory "delete-private"
+                                                               (make-array FileAttribute 0)))
+                       locked (io/file dir "auth.json")]
+                   (try (paths/spit-private! locked "secret")
+                        (.setWritable dir false)
+                        (expect (= :vis/private-file-delete-failed
+                                   (try (paths/delete-private! locked)
+                                        nil
+                                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                        (expect (.exists locked))
+                        (.setWritable dir true)
+                        (paths/delete-private! locked)
+                        (expect (not (.exists locked)))
+                        (expect (nil? (paths/delete-private! locked)))
+                        (finally (.setWritable dir true)
+                                 (Files/deleteIfExists (.toPath locked))
+                                 (Files/deleteIfExists (.toPath dir)))))))

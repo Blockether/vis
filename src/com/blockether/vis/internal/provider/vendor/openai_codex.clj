@@ -233,8 +233,7 @@
 
 (defn- delete-auth-file!
   []
-  (let [f (io/file (auth-file))]
-    (when (.exists f) (.delete f))))
+  (paths/delete-private! (auth-file)))
 
 (defn detect-credentials
   "Detect persisted OpenAI Codex credentials. Returns a status-friendly

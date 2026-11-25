@@ -191,8 +191,7 @@
 (defn- delete-auth-file!
   "Remove persisted auth state."
   []
-  (let [f (io/file (auth-file))]
-    (when (.exists f) (.delete f))))
+  (paths/delete-private! (auth-file)))
 
 ;; Token detection - env vars, keychain, persisted file
 

@@ -370,6 +370,18 @@
                       (tel/log!
                         {:level :warn :id ::temp-file-left :data {:path (str tmp)} :error e})))))))
 
+(defn delete-private!
+  "Delete the secret file at `path`, the counterpart of [[spit-private!]]. An absent
+   file is not an error. Throws when the file stays, so a sign-out never reports
+   success while the credential is still on disk."
+  [path]
+  (try (Files/deleteIfExists (.toPath (File. (str path))))
+       nil
+       (catch IOException e
+         (throw (ex-info (str "Could not delete " path ".")
+                         {:type :vis/private-file-delete-failed :path (str path)}
+                         e)))))
+
 (defn process-id
   "This JVM's OS process id. Read fresh so native-image never bakes the builder's
    pid into the installed binary."

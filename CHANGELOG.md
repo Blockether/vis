@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Provider: Google Antigravity (`antigravity`) signs in with a Google account and sends requests to the Cloud Code endpoint. Vis offers the models of the account, such as Gemini 4 Hydrogen, Gemini 3.8 Flash, Claude Opus 4.6 Thinking and GPT-OSS 120B, and takes their limits from the live model list. The provider limits show the remaining quota of each model pool (Gemini, Claude and GPT-OSS) and when an exhausted pool resets. Svar is pinned at 0.7.248.
+- Provider: Google Antigravity (`antigravity`) signs in with a Google account and sends requests to the Cloud Code endpoint. Vis offers the models of the account, such as Gemini 4 Hydrogen, Gemini 3.8 Flash, Claude Opus 4.6 Thinking and GPT-OSS 120B, and takes their limits from the live model list. The provider limits show the remaining quota of each model pool (Gemini, Claude and GPT-OSS) and when an exhausted pool resets. Svar is pinned at 0.7.249.
 
 ### Fixed
 
@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Provider: when a provider says that a quota is exhausted or rate-limited and gives the time until the reset, the error card tells the user how long to wait. Svar now reads this time from a Google error body. A Google per-minute throttle is no longer shown as an exhausted account.
 - Provider: when Vis cannot load the live model list, the error card shows the real cause. Before, it showed **Model limits unavailable**.
 - Provider: a provider error no longer keeps the sent request with its bearer token in the error data.
-- Provider: `vis-agent providers logout antigravity` fails when it cannot delete the sign-in file. Before, it reported success.
+- Provider: `vis-agent providers logout` fails when it cannot delete the sign-in file of Antigravity, Anthropic, GitHub Copilot, OpenAI Codex, or a provider with an API key. Before, it reported success while the credential stayed on disk.
+- Provider: a used-up ChatGPT Codex plan window is shown as an exhausted quota with its reset time. Before, Vis retried it as a short throttle. A used-up Claude subscription window also shows its reset time, and Vis does not retry inside it.
 
 ## [v0.5.34] - 2026-11-24
 
