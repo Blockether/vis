@@ -1339,6 +1339,34 @@
      :inner-w (- box-w 2)
      :inner-h (- box-h 2)}))
 
+(defn draw-section-rule!
+  "Draw the top or bottom row of a section frame."
+  [g left row inner-w top? title]
+  (let [w (max 0 (- (long inner-w) 3))
+        label (if (and top? (seq title)) (str " " (p/ellipsize title (max 0 (- w 5))) " ") "")]
+    (p/set-colors! g t/dialog-hint t/dialog-bg)
+    (p/fill-rect! g (inc (long left)) row inner-w 1)
+    (when (>= w 2)
+      (p/put-str! g (+ (long left) 2) row
+                  (str (if top? "╭" "╰") label
+                       (apply str (repeat (max 0 (- w 2 (long (p/display-width label)))) "─"))
+                       (if top? "╮" "╯"))))
+    nil))
+
+(defn draw-section-body!
+  "Paint a section body row, including its two rails, and return the child cursor."
+  [g left row inner-w paint-child]
+  (let [w (long inner-w)
+        x (long left)]
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
+    (p/fill-rect! g (inc x) row w 1)
+    (when (>= w 8)
+      (let [cursor (paint-child (+ x 3) (- w 5))]
+        (p/set-colors! g t/dialog-hint t/dialog-bg)
+        (p/put-str! g (+ x 2) row "│")
+        (p/put-str! g (- (+ x w) 2) row "│")
+        cursor))))
+
 (defn run-modal!
   "Shared modal driver — the ONE event loop every ported dialog reuses instead
    of hand-rolling its own `loop/recur`. `component` is a map of PURE fns (they
@@ -10144,10 +10172,10 @@
 (defn live-input-value!
   "Ask the human for a new value of one view input `node`. Returns `{:value v}`, or nil
    when the human cancels or types a number outside the field's domain."
-  [screen {:keys [type label options value is-secret mode]}]
+  [screen {:keys [type label options value default is-secret mode is-multiple]}]
   (let [option-label (fn [o]
                        (or (:label o) (str (:value o))))]
-    (case type
+    (case (if (= :toggle type) (if is-multiple :multiselect :select) type)
       :checkbox
       {:value (not (boolean value))}
 
@@ -10165,7 +10193,7 @@
                    screen
                    label
                    (mapv option-label options)
-                   (into #{} (keep #(when (some #{(:value %)} value) (option-label %))) options))]
+                   (into #{} (keep #(when (some #{(:value %)} (or value default)) (option-label %))) options))]
         {:value (into [] (keep #(when (some #{(option-label %)} picked) (:value %))) options)})
 
       :range

@@ -17,6 +17,116 @@
     "timeout_ms": 30000,
     "created_at": 1
   },
+  "form_refusals": [
+    {
+      "name": "an Ask form does not take a menu",
+      "error": "/nodes/0/type - a form takes no dialog or menu (form_component)",
+      "nodes": [
+        {
+          "id": "menu",
+          "type": "menu",
+          "label": "Tools",
+          "children": [
+            {
+              "id": "run",
+              "type": "button",
+              "label": "Run",
+              "action": "activate",
+              "variant": "secondary",
+              "clicks": 0,
+              "is_disabled": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a nested Ask layout does not take a menu",
+      "error": "/nodes/0/children/0/children/0/type - a form takes no dialog or menu (form_component)",
+      "nodes": [
+        {
+          "id": "box",
+          "type": "section",
+          "children": [
+            {
+              "id": "row",
+              "type": "flex",
+              "direction": "row",
+              "children": [
+                {
+                  "id": "menu",
+                  "type": "menu",
+                  "label": "Tools",
+                  "children": [
+                    {
+                      "id": "run",
+                      "type": "button",
+                      "label": "Run",
+                      "action": "activate",
+                      "variant": "secondary",
+                      "clicks": 0,
+                      "is_disabled": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "an Ask form does not take a dialog",
+      "error": "/nodes/0/type - a form takes no dialog or menu (form_component)",
+      "nodes": [
+        {
+          "id": "dialog",
+          "type": "dialog",
+          "label": "Confirm",
+          "is_open": false,
+          "children": [
+            {
+              "id": "note",
+              "type": "paragraph",
+              "text": "Review the changes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a nested Ask layout does not take a dialog",
+      "error": "/nodes/0/children/0/children/0/type - a form takes no dialog or menu (form_component)",
+      "nodes": [
+        {
+          "id": "box",
+          "type": "section",
+          "children": [
+            {
+              "id": "row",
+              "type": "flex",
+              "direction": "row",
+              "children": [
+                {
+                  "id": "dialog",
+                  "type": "dialog",
+                  "label": "Confirm",
+                  "is_open": false,
+                  "children": [
+                    {
+                      "id": "note",
+                      "type": "paragraph",
+                      "text": "Review the changes."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
   "live": {
     "id": "live-one",
     "title": "Build",

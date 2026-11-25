@@ -629,8 +629,8 @@ def test_a_validated_input_added_by_patch_declares_its_validator(monkeypatch):
     assert recorder.submit("send", {})["is_accepted"] is True
 
 
-def test_a_dropped_group_drops_the_validators_of_its_inputs(monkeypatch):
-    # Live apps D4b: a group takes its validated inputs with it. An input that
+def test_a_dropped_container_drops_the_validators_of_its_inputs(monkeypatch):
+    # Live apps D4b: a container takes its validated inputs with it. An input that
     # comes back with the same id is not judged by the old validator.
     recorder = vis._LiveRecorder(object())
     monkeypatch.setattr(vis._host, "live", recorder.live)
@@ -641,10 +641,10 @@ def test_a_dropped_group_drops_the_validators_of_its_inputs(monkeypatch):
         on_event=lambda event: None,
     )
     handle.add(
-        vis.ui.column(
+        vis.ui.flex(
             "net",
             vis.ui.plaintext("port", label="Port", validate=digits),
-            vis.ui.column(
+            vis.ui.flex(
                 "deep", vis.ui.plaintext("host", label="Host", validate=digits)
             ),
         )

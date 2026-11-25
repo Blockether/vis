@@ -661,18 +661,24 @@
      :min "2026-01-01"
      :max "2026-12-31"
      :default "2026-03-14"}
-    {:type "group"
-     :direction "row"
+    {:id "server"
+     :type "section"
      :label "Server"
      :description "Where the pool dials out"
      :children [{:name "host" :label "Host" :is-required true}
-                {:type "group"
+                {:id "server-fields"
+                 :type "flex"
                  :direction "column"
                  :children [{:name "port"
                              :label "Port"
                              :validate (fn [value]
                                          (when-not (re-matches #"\d+" value) "digits only"))}
-                            {:name "tls" :type "checkbox" :label "TLS"}]}]}]})
+                            {:name "tls" :type "checkbox" :label "TLS"}]}]}
+    {:id "more" :type "collapsible" :label "More options"
+     :children [{:id "options" :type "grid" :min-width "xs"
+                 :children [{:name "regions" :type "toggle" :label "Regions"
+                             :is-multiple true :default ["eu"]
+                             :options [{:value "eu" :label "Europe"} {:value "us" :label "US"}]}]}]}]})
 
 (defn- fixture-file
   "`apps/vis-companion/src/lib/human-input.fixture.json`, found from the working
@@ -706,7 +712,7 @@
         ;; spec and left out of the fixture would otherwise ship an app that paints
         ;; a hole in a dialog which has already stopped somebody's run.
         ;; and holds one node of every kind the engine can send
-        (expect (= (into #{hi-spec/group-type :heading :paragraph} (vals hi-spec/field-types))
+        (expect (= (into #{:flex :grid :section :collapsible :heading :paragraph} (vals hi-spec/field-types))
                    (node-types (:nodes view)))))))
 
 (defdescribe the-companion-urls-route-to-the-shared-view-action-handler-test
@@ -1400,8 +1406,9 @@
     ;; the app's guess — and the sentence carries the inline marks a human
     ;; string may hold.
     {:id "reading"
-     :type "group"
+     :type "flex"
      :direction "row"
+     :is-wrapping true
      :children
      [{:id "hosts"
        :type "table"
@@ -1473,7 +1480,7 @@
 
           ;; every display, data and action component, and every layout group
           (expect (every? covered
-                          (conj (set (keys hi-spec/live-node-types)) hi-spec/group-type-name)))
+                          (set (keys hi-spec/live-node-types))))
           ;; and an input inside a live view
           (expect (some (set (keys hi-spec/field-types)) covered)))))))
 
@@ -1631,8 +1638,7 @@
                                               :patch app-patch
                                               :children
                                               [{:id "scope"
-                                                :type "group"
-                                                :direction "column"
+                                                :type "menu"
                                                 :label "This session"
                                                 :children
                                                 [{:id "all" :type "button" :label "All changes"}]}
@@ -2327,7 +2333,7 @@
           (let [box
                 (fn [text]
                   {"id" "box"
-                   "type" "group"
+                   "type" "flex"
                    "children" [{"id" "note" "type" "paragraph" "text" text}]})
 
                 _

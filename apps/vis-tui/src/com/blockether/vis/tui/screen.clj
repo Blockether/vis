@@ -1019,6 +1019,23 @@
          (merge (select-keys search [:offset :is-following :total :visible])
                 {:anchor (:anchor search) :log-search search}))])))
 
+(defn- active-live-dialog-pane
+  [db]
+  (when-not (or (:human-input db) (:help-open? db) (:tasks-open? db))
+    (let [viewer (live-pane db (:live-viewer-id db))]
+      (some #(when (and % (not (lv/settled? %)) (lv/open-dialog (:view %) (:dialog-state %))) %)
+            (cons viewer (rseq (vec (:live-views db))))))))
+
+(defn- live-dialog-overlay
+  [db]
+  (when-let [pane (active-live-dialog-pane db)]
+    (let [st (or (:dialog-state pane) (app-surface/initial-state))
+          view (cond-> (:view pane) (:is-gap pane) (assoc :is-gap true))
+          cols (long (or (get-in db [:layout :cols]) 80))
+          rows (long (or (get-in db [:layout :rows]) 24))
+          geom (app-surface/measure-dialog-overlay st cols rows view)]
+      (when geom {:pane pane :geom geom :state (app-surface/reconcile st geom)}))))
+
 (defn- live-band-pane
   "The explicitly opened transient under terminal row `my`, or nil over the transcript.
    A human-input form takes the band and its wheel input back."
@@ -1099,7 +1116,7 @@
   [db {:keys [view-id node-id]}]
   (when-let [pane (live-pane db view-id)]
     (let [action (if (lv/submit-button? pane node-id)
-                   {:action :submit :node-id node-id :values (lv/input-values pane)}
+                   {:action :submit :node-id node-id :values (lv/input-values pane node-id)}
                    {:action :activate :node-id node-id})]
       (future
         (try (let [outcome
@@ -3103,6 +3120,26 @@
                    :error)))))))
   true)
 
+(defn- live-dialog-key!
+  [screen db key]
+  (when (instance? KeyStroke key)
+    (when-let [{:keys [pane state geom]} (live-dialog-overlay db)]
+      (let [view-id (lv/view-id pane)
+            session-id (get-in pane [:view :session-id])
+            send! (fn [action]
+                    (future (try (when-not (:is-accepted (vis/gateway-view-action! session-id view-id action))
+                                   (vis/notify! "That action was refused or the run has finished." :level :error))
+                                 (catch Throwable _
+                                   (vis/notify! "The action could not be confirmed." :level :error)))))
+            effects {:activate! send! :select! send! :change! send! :move! send!
+                     :send! (fn [action _] (send! action))
+                     :edit! (fn [node] (edit-live-input! screen db {:view-id view-id :node-id (:id node)}))
+                     :reload! (constantly nil) :paste identity}
+            next (app-surface/handle-key state key geom effects)]
+        (state/dispatch [:live-dialog-state view-id next])
+        (state/dispatch [:bump-render-version :full-frame])
+        true))))
+
 (defn- transcript-map!
   [screen db]
   (let [pane (or (first (filter #(seq (cm/cards-in (:view %))) (viewer-panes db)))
@@ -3129,6 +3166,29 @@
             :inspect! (constantly nil) :copy! input/clipboard-copy! :edit! (constantly nil)}))
       true)))
 
+(defn- choose-live-menu!
+  [screen db {:keys [view-id node-id] :as hit}]
+  (when-let [pane (live-pane db view-id)]
+    (when-not (lv/settled? pane)
+      (when-let [root (app-model/find-node (:view pane) node-id)]
+        (loop [node root]
+          (let [items (into [] (keep (fn [{:keys [type label is-selected is-disabled] :as child}]
+                                       (case type
+                                         :divider {:label "────────" :section? true}
+                                         (:button :menu)
+                                         (when-not is-disabled
+                                           (assoc child :label (str (when is-selected "✓ ") label
+                                                                    (when (= :menu type) " ▸")))))))
+                            (:children node))]
+            (when-let [picked (and (seq items)
+                                   (with-dialog-lock #(dlg/list-dialog! screen (:label node) items
+                                                                        {:height :content :enter-label "choose"})))]
+              (if (= :menu (:type picked))
+                (recur (app-model/find-node (:view pane) (:id picked)))
+                (when (= :button (:type picked))
+                  (activate-live-button! db (assoc hit :node-id (:id picked)))))))))))
+  true)
+
 (defn- live-controls!
   "F3 controls belong to the explicitly opened viewer, never a hidden receipt. The
    side panel passes its selected view as `panes`."
@@ -3140,8 +3200,9 @@
                                                             items
                                                             {:enter-label "activate"
                                                              :height :content}))]
-       (if (= :live-edit (:kind choice))
-         (edit-live-input! screen @state/app-db choice)
+       (case (:kind choice)
+         :live-edit (edit-live-input! screen @state/app-db choice)
+         :live-menu (choose-live-menu! screen @state/app-db choice)
          (activate-live-region! @state/app-db choice))))))
 
 (defn- open-live-panel!
@@ -4142,7 +4203,7 @@
    interactive surface, but the chrome underneath stays painted so the
    input is visible behind the overlay."
   [db]
-  (boolean (or (:help-open? db) (:tasks-open? db) (:human-input db))))
+  (boolean (or (:help-open? db) (:tasks-open? db) (:human-input db) (active-live-dialog-pane db))))
 
 (defn- project-sidebar-locked?
   "Modal cards own the screen; a human-input band only hides an overlapping rail."
@@ -4964,6 +5025,10 @@
       ;; the commit so `interactions/hit-map` holds this frame's fresh toggle regions and
       ;; each letter badge lands on the chevron the user sees. No-op when off.
       (render/draw-detail-labels! g (:detail-labels-active? db) (:detail-labels db))
+      (when-let [{:keys [state geom]} (live-dialog-overlay (assoc db :layout {:cols cols :rows rows}))]
+        (binding [interactions/hit-map (interactions/create-hit-map)]
+          (app-surface/paint-dialog-overlay! g state geom))
+        (frame/set-cursor! screen nil))
       (when-not *skip-frame-refresh?*
         (let [refresh-start-ns (System/nanoTime)]
           (frame/refresh! screen)
@@ -10003,6 +10068,9 @@
             :app-log
             (open-pane-log! screen)
 
+            :live-menu
+            (choose-live-menu! screen db hit)
+
             :live-edit
             (edit-live-input! screen db hit)
 
@@ -10197,8 +10265,11 @@
           :app-log
           (open-pane-log! screen)
 
-          :live-edit
-          (edit-live-input! screen db hit)
+            :live-menu
+            (choose-live-menu! screen db hit)
+
+            :live-edit
+            (edit-live-input! screen db hit)
 
           :artifact
           (open-artifact-hit! screen (:session-id hit) (:artifact hit))
@@ -11427,6 +11498,7 @@
       (when-not @paste-buffer (begin-input-timing! input-timing key db))
       (cond
         (:shutdown? db) nil
+         (live-dialog-key! screen db key) ::recur
         (and (not @paste-buffer)
              (project-sidebar-key-allowed? db (or (:screen-cols (:layout db)) cols) physical-key)
              (sidebar-key! physical-key))

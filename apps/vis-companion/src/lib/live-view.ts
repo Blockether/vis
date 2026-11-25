@@ -10,7 +10,6 @@ import viewSchema from '../../../../packages/vis-contract/resources/vis-contract
 import type { ActivityProjection, ActivityRow } from './activity';
 import {
   VIEW_CLOSE_EVENT,
-  VIEW_GROUP_DIRECTIONS,
   VIEW_OPEN_EVENT,
   VIEW_PATCH_EVENT,
   VIEW_SHORTCUT_LABEL_MAX,
@@ -20,11 +19,12 @@ import {
   appIconName,
   viewButtonVariant,
   viewCommandIcon,
-  viewGroupDirection,
+  isViewContainerType,
+  viewFlexLayout,
+  viewGridLayout,
   viewKind,
-  viewMaxColumns,
 } from './view';
-import type { AppIconName, ViewAnchor, ViewButtonVariant, ViewCommandIcon } from './view';
+import type { AppIconName, ViewAnchor, ViewButtonVariant, ViewCommandIcon, ViewFlexLayout, ViewGridLayout } from './view';
 import { axisLabel, axisMarks } from './time-axis';
 import { appSurfacesFromWire, type AppSurfaces } from './app-surfaces';
 import {
@@ -108,15 +108,6 @@ export const LIVE_NODE_TYPES = [
 /** The inputs a live view can hold: the form's own input types. */
 export const LIVE_INPUT_TYPES = HUMAN_INPUT_FIELD_TYPES;
 
-/**
- * The one node that paints NOTHING of its own: it ARRANGES the nodes it holds,
- * and it is the FORM's group verbatim (`view.spec/group-type-name`), so
- * a run lays a view out with the same words it lays a question out with.
- */
-export const LIVE_GROUP_TYPE = 'group';
-
-/** How a group stands what it holds (`view.spec/group-directions`). CLOSED. */
-export const LIVE_GROUP_DIRECTIONS = VIEW_GROUP_DIRECTIONS;
 /** How a surface COLOURS one line, row, step or stat (`live-tones`). CLOSED. */
 export const LIVE_TONES = ['idle', 'running', 'ok', 'warn', 'error'] as const;
 
@@ -215,7 +206,6 @@ export type LivePlacement = (typeof LIVE_PLACEMENTS)[number];
 export type LiveLinkTarget = (typeof LIVE_LINK_TARGETS)[number];
 export type LiveAlign = (typeof LIVE_ALIGNS)[number];
 export type LiveSortDir = (typeof LIVE_SORT_DIRS)[number];
-export type LiveGroupDirection = (typeof LIVE_GROUP_DIRECTIONS)[number];
 export type LiveSubmissionStatus = (typeof LIVE_SUBMISSION_STATUSES)[number];
 export type LiveImageMedia = (typeof LIVE_IMAGE_MEDIA)[number];
 export type LiveLogLevel = (typeof LIVE_LOG_LEVELS)[number];
@@ -225,6 +215,7 @@ export type LiveOrder = (typeof LIVE_ORDERS)[number] | { by: string; dir?: LiveS
 
 interface LiveNodeBase {
   id: string;
+  is_growing?: boolean;
   /** Absent on a bare status line: the sentence is its own label. */
   label?: string;
 }
@@ -421,16 +412,16 @@ export interface LiveSpinnerNode extends LiveNodeBase {
 export interface LiveButtonNode extends LiveNodeBase {
   type: 'button';
   label: string;
-  /** `activate` sends one click; `submit` sends the inputs of the nearest group. */
+  /** `activate` sends one click; `submit` sends the inputs of the nearest container. */
   action: 'activate' | 'submit';
-  /** The rank of the action. Only one primary action stands in a group. */
+  /** The rank of the action. Only one primary action stands in a container. */
   variant: ViewButtonVariant;
   is_disabled: boolean;
   /** The key of an app of the same owner that a press shows. */
   reveals?: string;
-  /** A picture for the label, in a diff toolbar. The label stays the accessible name. */
+  /** A picture for the label. The label stays the accessible name. */
   icon?: ViewCommandIcon;
-  /** The choice that holds now, in a toolbar menu; absent when the button is no choice. */
+  /** The current choice in a menu, or the pressed state outside a menu. */
   is_selected?: boolean;
   clicks: number;
 }
@@ -459,24 +450,26 @@ export interface LiveInputNode extends LiveNodeBase {
   is_set?: boolean;
 }
 
-/**
- * Nodes side by side (`row`), one under the other (`column`), in equal columns
- * that wrap (`grid`, capped by `max_columns`) or at their own width (`wrap`). The run
- * declares an arrangement ONCE and no op carries it, so a layout never
- * rearranges itself under a reader; a narrow screen stacks a row anyway.
- */
-export interface LiveGroupNode extends LiveNodeBase {
-  type: 'group';
-  direction: LiveGroupDirection;
-  max_columns?: number;
+interface LiveBranch extends LiveNodeBase {
   children: LiveNode[];
-  is_collapsible?: boolean;
-  default_expanded?: boolean;
-  /** A picture for the menu trigger, in a diff toolbar. The label stays the accessible name. */
+}
+
+export type LiveContainerNode = LiveBranch & (
+  | ({ type: 'flex' } & ViewFlexLayout)
+  | ({ type: 'grid' } & ViewGridLayout)
+  | { type: 'section'; description?: string; icon?: ViewCommandIcon }
+  | { type: 'collapsible'; label: string; description?: string; icon?: ViewCommandIcon; default_expanded?: boolean }
+  | { type: 'dialog'; label: string; description?: string; is_open: boolean }
+);
+
+export interface LiveMenuNode extends LiveBranch {
+  type: 'menu';
+  label: string;
   icon?: ViewCommandIcon;
-  /** The group shows over the view, with its label as the title, while `is_open`. */
-  is_dialog?: boolean;
-  is_open?: boolean;
+}
+
+export function isLiveContainer(node: LiveNode): node is LiveContainerNode {
+  return isViewContainerType(node.type);
 }
 
 /** Who wrote a message. The host sets it; a client never sends it. */
@@ -518,7 +511,7 @@ export interface LiveDiffNode extends LiveNodeBase {
   new_revision?: string;
   threads: LiveThread[];
   previews?: LiveDiffPreview[];
-  /** The toolbar: each button is one action, each group of buttons is one menu. */
+  /** The toolbar: buttons, menus and toggles. */
   children?: LiveNode[];
 }
 
@@ -693,8 +686,7 @@ export interface LiveSubmission {
 }
 
 /** A static thematic break spanning its allocated content width. */
-export interface LiveDividerNode {
-  id: string;
+export interface LiveDividerNode extends LiveNodeBase {
   type: 'divider';
   label?: never;
 }
@@ -729,7 +721,7 @@ export type LiveLeafNode =
   | LiveMediaNode;
 
 /** A node either paints something, or arranges the nodes it holds. */
-export type LiveNode = LiveLeafNode | LiveGroupNode;
+export type LiveNode = LiveLeafNode | LiveContainerNode | LiveMenuNode;
 
 /** Trusted engine identity of the operation that opened a live view. */
 export interface LiveViewOwner {
@@ -1515,29 +1507,23 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
   const type = text(node.type);
   if (id === '') return null;
   // What every node carries whatever it paints: its address and its heading.
-  const base = { id, label: optionalText(node.label) };
-  // A group is a layout, not content: an empty one is a hole rather than an
-  // arrangement, so it never reaches the screen (`:live-view/children`).
-  if (type === LIVE_GROUP_TYPE) {
-    const children = liveNodesFromWire(node.children);
+  const label = optionalText(node.label);
+  const base = { id, label, ...(node.is_growing === true ? { is_growing: true } : {}) };
+  if (isViewContainerType(type) || type === 'menu') {
+    const nested = liveNodesFromWire(node.children);
+    const children = type === 'menu' ? nested.filter(isMenuItem) : nested;
     if (children.length === 0) return null;
-    const direction = viewGroupDirection(node.direction);
-    const maxColumns = direction === 'grid' ? viewMaxColumns(node.max_columns) : undefined;
-    return {
-      ...base,
-      type: 'group',
-      direction,
-      ...(maxColumns === undefined ? {} : { max_columns: maxColumns }),
-      children,
-      ...(node.is_collapsible === undefined
-        ? {}
-        : { is_collapsible: node.is_collapsible === true }),
-      ...(node.default_expanded === undefined
-        ? {}
-        : { default_expanded: node.default_expanded === true }),
-      ...viewCommandIcon(node.icon),
-      ...(node.is_dialog === true ? { is_dialog: true, is_open: node.is_open === true } : {}),
-    };
+    const branch = { ...base, children };
+    const description = optionalText(node.description);
+    switch (type) {
+      case 'flex': return { ...branch, type, ...viewFlexLayout(node) };
+      case 'grid': return { ...branch, type, ...viewGridLayout(node) };
+      case 'section': return { ...branch, type, description, ...viewCommandIcon(node.icon) };
+      case 'collapsible':
+        return label ? { ...branch, type, label, description, ...viewCommandIcon(node.icon), default_expanded: node.default_expanded === true } : null;
+      case 'dialog': return label ? { ...branch, type, label, description, is_open: node.is_open === true } : null;
+      case 'menu': return label ? { ...branch, type, label, ...viewCommandIcon(node.icon) } : null;
+    }
   }
   if ((LIVE_INPUT_TYPES as readonly string[]).includes(type)) {
     const field = humanInputFieldFromWire(node);
@@ -1554,7 +1540,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
   if (!(LIVE_NODE_TYPES as readonly string[]).includes(type)) return null;
   switch (type as LiveNodeType) {
     case 'divider':
-      return { id, type: 'divider' };
+      return { id, type: 'divider', ...(base.is_growing ? { is_growing: true } : {}) };
     case 'paragraph':
       return { ...base, type: 'paragraph', text: text(node.text) };
     case 'heading':
@@ -1792,14 +1778,15 @@ function sceneSettings(raw: Record<string, unknown>, held: SceneSettings): Scene
   };
 }
 
-/** A toolbar command: a button, or a menu of commands. A menu inside a menu is a submenu. */
-function isDiffCommand(node: LiveNode): boolean {
-  return node.type === 'button' || (node.type === 'group' && node.children.every(isDiffCommand));
+function isMenuItem(node: LiveNode): boolean {
+  return node.type === 'button' || node.type === 'menu' || node.type === 'divider';
 }
 
-/** The toolbar of a diff: buttons and menus, the rest dropped (`view.json` `diff`). */
+/** Read the commands in the diff toolbar. */
 function diffToolbarFromWire(raw: unknown): { children?: LiveNode[] } {
-  const children = liveNodesFromWire(raw).filter(isDiffCommand);
+  const children = liveNodesFromWire(raw).filter(
+    (node) => node.type === 'button' || node.type === 'menu' || node.type === 'toggle',
+  );
   return children.length > 0 ? { children } : {};
 }
 
@@ -1820,19 +1807,15 @@ function reveals(raw: unknown): { reveals?: string } {
   return key ? { reveals: key } : {};
 }
 
-/** The nodes that `node` holds: the children of a group, or the toolbar of a diff. */
+/** The children of a container, menu, or diff toolbar. */
 export function nestedLiveNodes(node: LiveNode): LiveNode[] {
-  if (node.type === 'group') return node.children;
-  if (node.type === 'diff') return node.children ?? [];
-  return [];
+  return 'children' in node ? node.children ?? [] : [];
 }
 
-/** `node` holding `children` in place of its nested nodes. */
 function withNestedNodes(node: LiveNode, children: LiveNode[]): LiveNode {
-  return node.type === 'group' || node.type === 'diff' ? { ...node, children } : node;
+  return 'children' in node ? { ...node, children } : node;
 }
 
-/** The nodes of a view or of a group, unpaintable ones dropped. */
 function liveNodesFromWire(raw: unknown): LiveNode[] {
   return (Array.isArray(raw) ? raw : [])
     .map(liveNodeFromWire)
@@ -2142,13 +2125,17 @@ function appendKey(
   }
 }
 
-/** `set` on a group: the label, and whether a dialog shows (`live/apply-set`). */
-function setGroup(node: LiveGroupNode, op: Record<string, unknown>): LiveNode {
-  return {
-    ...node,
-    label: 'label' in op ? optionalText(op.label) : node.label,
-    ...(node.is_dialog && typeof op.is_open === 'boolean' ? { is_open: op.is_open } : {}),
-  };
+function setBranch(node: LiveContainerNode | LiveMenuNode, op: Record<string, unknown>): LiveNode {
+  if (node.type === 'flex' || node.type === 'grid') return node;
+  const label = 'label' in op ? optionalText(op.label) : node.label;
+  if (node.type === 'menu') return { ...node, label: label ?? node.label };
+  const description = 'description' in op ? optionalText(op.description) : node.description;
+  if (node.type === 'section') return { ...node, label, description };
+  const heading = label ?? node.label;
+  if (node.type === 'dialog') {
+    return { ...node, label: heading, description, is_open: typeof op.is_open === 'boolean' ? op.is_open : node.is_open };
+  }
+  return { ...node, label: heading, description };
 }
 
 /** `set` MERGES the keys it carries onto the node (`live/apply-set`). */
@@ -2287,6 +2274,7 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
           ...node,
           ...('value' in op ? { value: op.value } : {}),
           ...('is_set' in op ? { is_set: op.is_set === true } : {}),
+          ...(node.type === 'toggle' && typeof op.label === 'string' ? { label: op.label, field: { ...node.field, label: op.label } } : {}),
         };
       }
       return 'label' in op ? { ...node, label: optionalText(op.label) } : node;
@@ -2524,7 +2512,7 @@ function insertAfter(nodes: LiveNode[], after: string, node: LiveNode): LiveNode
   return null;
 }
 
-/** Dropping a group takes the nodes it arranges with it (`live/apply-remove-node`). */
+/** Dropping a container also removes its children (`live/apply-remove-node`). */
 function dropNode(nodes: LiveNode[], id: string): LiveNode[] {
   const kept = nodes.filter((node) => node.id !== id);
   if (kept.length !== nodes.length) return kept;
@@ -2550,12 +2538,14 @@ export function isLiveSecretInput(node: LiveInputNode): boolean {
 /** True when `value` fits the domain of `node` (`spec/value-in-domain?`). */
 function inLiveInputDomain(node: LiveInputNode, value: unknown): boolean {
   const options = (node.field.options ?? []).map((option) => option.value);
-  switch (node.type) {
+  const type = node.type === 'toggle' && node.field.is_multiple ? 'multiselect' : node.type;
+  switch (type) {
     case 'checkbox':
       return typeof value === 'boolean';
     case 'range':
       return typeof value === 'number' && Number.isFinite(value);
     case 'select':
+    case 'toggle':
       return typeof value === 'string' && (options.length === 0 || options.includes(value));
     case 'multiselect':
       return (
@@ -2625,10 +2615,7 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
     return kept === view.nodes ? view : { ...view, nodes: kept };
   }
   const nodes = mapNode(view.nodes, nodeId, (node) => {
-    // Layout is declared and no op carries it, so a frame naming a row leaves the
-    // arrangement where it stands. Only `set` reaches a group: its label, and the
-    // `is_open` of a dialog.
-    if (node.type === 'group') return name === 'set' ? setGroup(node, op) : node;
+    if (isLiveContainer(node) || node.type === 'menu') return name === 'set' ? setBranch(node, op) : node;
     switch (name) {
       case 'set':
         return applySet(node, op);
@@ -2819,10 +2806,10 @@ export function isLiveInputNode(node: LiveNode): node is LiveInputNode {
   return (LIVE_INPUT_TYPES as readonly string[]).includes(node.type);
 }
 
-/** Every input of `nodes` in reading order, groups included. */
+/** Every input of `nodes` in reading order. */
 export function liveInputNodes(nodes: readonly LiveNode[]): LiveInputNode[] {
   return nodes.flatMap((node) =>
-    node.type === 'group' ? liveInputNodes(node.children) : isLiveInputNode(node) ? [node] : [],
+    isLiveInputNode(node) ? [node] : liveInputNodes(nestedLiveNodes(node)),
   );
 }
 
@@ -2947,7 +2934,7 @@ function migrateCanvasIds(view: LiveView): LiveView {
   const trimId = (id: string) =>
     id.replace(/^[\x09-\x0d\x1c-\x20\u1680\u2000-\u2006\u2008-\u200a\u2028\u2029\u205f\u3000]+|[\x09-\x0d\x1c-\x20\u1680\u2000-\u2006\u2008-\u200a\u2028\u2029\u205f\u3000]+$/gu, '');
   const migrate = (node: LiveNode): LiveNode => {
-    if (node.type === 'group') return { ...node, children: node.children.map(migrate) };
+    if (isLiveContainer(node)) return { ...node, children: node.children.map(migrate) };
     if (node.type !== 'canvas' || node.cards.length === 0 || node.threads.length === 0) return node;
     const cards = new Set(node.cards.map(({ id }) => trimId(id)));
     const held = new Set([...cards, ...node.threads.map(({ id }) => trimId(id))]);

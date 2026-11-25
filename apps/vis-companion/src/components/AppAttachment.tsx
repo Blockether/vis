@@ -654,8 +654,9 @@ export function AppSurface({
     </div>
   );
   const leave = closeLabel ?? `Close app ${title}`;
+  const wrapsHeader = Boolean(view?.header?.length);
   const bandActions = (
-    <>
+    <div className={wrapsHeader ? 'app-header-actions' : 'contents'}>
       <span ref={setBandSlot} className="contents" />
       <AppBandMenu
         log={log}
@@ -664,7 +665,7 @@ export function AppSurface({
         onToggleLog={appLog.toggle}
         onFullScreen={onFullScreen}
       />
-    </>
+    </div>
   );
   const logPanel = appLog.isOpen && log ? <AppLogPanel log={log} title={title} isPane={!isFramed} /> : null;
   const backButton = backLabel ? (
@@ -679,7 +680,7 @@ export function AppSurface({
       <section
         aria-label={title}
         data-app-frame={viewId}
-        className={`flex min-w-0 flex-col bg-panel ${isPane ? 'min-h-0 flex-1' : 'border border-dialog-edge'}`}
+        className={`app-header-container flex min-w-0 flex-col bg-panel ${isPane ? 'min-h-0 flex-1' : 'border border-dialog-edge'}`}
         onKeyDown={(event) => {
           if (event.key === 'Escape' && !event.defaultPrevented) {
             event.preventDefault();
@@ -693,15 +694,17 @@ export function AppSurface({
             subtitle={subtitle}
             leading={<>{backButton}<AppMark icon={view?.icon} state={dotState} className="mx-1 size-4 shrink-0" /></>}
             actions={bandActions}
+            wrapActions={wrapsHeader}
             {...closeWith(backLabel ? undefined : onClose, leave)}
           />
         ) : (
           <DialogHeader
             title={title}
-            isTitleTruncated
+            isTitleTruncated={!wrapsHeader}
             subtitle={subtitle}
             leading={<>{backButton}<AppMark icon={view?.icon} state={dotState} className={BAND_ICON} /></>}
             actions={bandActions}
+            wrapActions={wrapsHeader}
             {...closeWith(backLabel ? undefined : onClose, leave)}
           />
         )}
@@ -732,6 +735,7 @@ export function AppSurface({
       closeLabel={closeLabel}
       within={sid === null ? 'app' : 'session'}
       actions={bandActions}
+      wrapActions={wrapsHeader}
       onClose={onClose}
     >
       {logPanel}

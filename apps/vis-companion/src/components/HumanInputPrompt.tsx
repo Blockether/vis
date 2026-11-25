@@ -12,7 +12,12 @@ import {
   Modal,
   Select,
   ViewHeading,
-  ViewLayout,
+  ToggleGroup,
+  ViewCollapsible,
+  ViewFlex,
+  viewFlexChildClass,
+  ViewGrid,
+  ViewSection,
   ViewParagraph,
 } from './ui';
 import { COMMAND_ICONS } from './icons';
@@ -22,7 +27,7 @@ import { Markdown } from './ChatContent';
 import { hasSystemPasteMenu, hideSystemPasteMenu, moveSystemPasteMenu, showSystemPasteMenu } from '../lib/paste-menu';
 import { GatewayError, type GatewayClient } from '../lib/gateway';
 import type { SseEvent } from '../lib/types';
-import type { ViewAction } from '../lib/view';
+import { isViewContainerType, type ViewAction } from '../lib/view';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   applyInputViewEvent,
@@ -381,7 +386,7 @@ export function HumanInputSheet({
               )}
             </div>
           )}
-          <ViewLayout>
+          <ViewFlex>
             {/* A decoration has no name; position is its stable identity. */}
             {request.nodes.map((field, at) => (
               <HumanInputFieldRow
@@ -394,7 +399,7 @@ export function HumanInputSheet({
                 onSubmit={onSubmit}
               />
             ))}
-          </ViewLayout>
+          </ViewFlex>
         </div>
       </DialogFrame>
     </Modal>
@@ -454,13 +459,13 @@ function FieldShell({
   controlId?: string;
   /** The control already shows the label beside its own mark. */
   labelInControl?: boolean;
-  /** The field stands in a toolbar: the label and the description are only for a screen reader. */
+  /** The field is in a compact slot: the label and the description are only for a screen reader. */
   isInline?: boolean;
   children: React.ReactNode;
 }) {
   const labelClass = isInline ? 'sr-only' : 'block font-mono text-ui font-bold text-white [overflow-wrap:anywhere]';
   return (
-    <div className="min-w-0 space-y-1">
+    <div className={`min-w-0 ${isInline ? '' : 'space-y-1'}`}>
       {!labelInControl &&
         (controlId ? (
           <label className={labelClass} htmlFor={controlId}>
@@ -515,7 +520,7 @@ export function HumanInputFieldRow({
    */
   isCompact?: boolean;
   /**
-   * The field stands in a toolbar (`toolbar` in view.json): every choice folds into one
+   * The field is in the app header or a diff: every choice folds into one
    * line, and only a checkbox shows its label.
    */
   isInline?: boolean;
@@ -527,6 +532,7 @@ export function HumanInputFieldRow({
   const chosen = Array.isArray(value) ? value : [];
   const options = field.options ?? [];
   const controlId = useId();
+  const [expanded, setExpanded] = useState(field.default_expanded === true);
   const describedBy =
     [field.description ? `${controlId}-description` : '', error ? `${controlId}-error` : '']
       .filter(Boolean)
@@ -547,39 +553,53 @@ export function HumanInputFieldRow({
     );
   }
 
-  // Keep form semantics outside the shared layout: groups label their fields,
-  // but neither the group nor a decoration contributes an answer value.
-  if (field.type === 'group') {
+  if (isViewContainerType(field.type)) {
+    const children = (field.children ?? []).map((child, index) => (
+      <div key={`${index}:${child.id}`} className={field.type === 'flex' ? viewFlexChildClass(field.direction, child.type, child.is_growing) : 'min-w-0'}>
+        <HumanInputFieldRow
+          isCompact={isCompact}
+          field={child}
+          values={values}
+          errors={errors}
+          disabled={disabled}
+          onChange={onChange}
+          onSubmit={onSubmit}
+        />
+      </div>
+    ));
+    const Icon = field.icon && COMMAND_ICONS[field.icon];
+    const icon = Icon && <Icon className="size-4 shrink-0" />;
+    switch (field.type) {
+      case 'flex':
+        return <ViewFlex direction={field.direction} is_wrapping={field.is_wrapping} gap={field.gap} align={field.align} justify={field.justify}>{children}</ViewFlex>;
+      case 'grid':
+        return <ViewGrid columns={field.columns} min_width={field.min_width} gap={field.gap}>{children}</ViewGrid>;
+      case 'section':
+        return <ViewSection label={field.label} description={field.description} icon={icon}><ViewFlex>{children}</ViewFlex></ViewSection>;
+      case 'collapsible':
+        return <ViewCollapsible label={field.label} description={field.description} icon={icon} isOpen={expanded} onToggle={() => setExpanded(!expanded)}><ViewFlex>{children}</ViewFlex></ViewCollapsible>;
+    }
+  }
+
+  if (field.type === 'toggle') {
     return (
-      <fieldset className="m-0 min-w-0 space-y-1 border-0 p-0">
-        {field.label && (
-          <legend className="mb-1 block font-mono text-body font-bold text-white [overflow-wrap:anywhere]">
-            {field.label}
-          </legend>
-        )}
-        {field.description && (
-          <p className="font-mono text-ui text-dialog-hint">{field.description}</p>
-        )}
-        <ViewLayout
-          direction={field.direction}
-          maxColumns={field.max_columns}
-          data-group-id={field.id}
-          data-direction={field.direction ?? 'column'}
-        >
-          {(field.children ?? []).map((child, at) => (
-            <HumanInputFieldRow
-              key={`${at}:${child.id}`}
-              isCompact={isCompact}
-              field={child}
-              values={values}
-              errors={errors}
-              disabled={disabled}
-              onChange={onChange}
-              onSubmit={onSubmit}
-            />
-          ))}
-        </ViewLayout>
-      </fieldset>
+      <FieldShell field={field} controlId={controlId} isInline={isInline} error={error}>
+        <ToggleGroup
+          id={controlId}
+          aria-label={field.label}
+          aria-describedby={describedBy}
+          aria-invalid={error ? true : undefined}
+          aria-required={!field.is_multiple && field.is_required ? true : undefined}
+          options={options.map((option) => {
+            const Icon = option.icon && COMMAND_ICONS[option.icon];
+            return { ...option, icon: Icon ? <Icon className="size-4 shrink-0" /> : undefined };
+          })}
+          value={typeof value === 'string' || Array.isArray(value) ? value : undefined}
+          isMultiple={field.is_multiple}
+          disabled={disabled}
+          onToggle={(option) => onChange(field.id, field.is_multiple ? toggleHumanInputOption(field, values, option) : option)}
+        />
+      </FieldShell>
     );
   }
 
@@ -611,7 +631,7 @@ export function HumanInputFieldRow({
   if (field.type === 'select' || field.type === 'multiselect') {
     const isMulti = field.type === 'multiselect';
     const picked = typeof value === 'string' ? value : '';
-    // In a toolbar every choice is one line that opens a list; the label names it.
+    // In a compact slot every choice is one line that opens a list; the label names it.
     if (isInline) {
       const empty = field.placeholder ?? field.label;
       return (
@@ -817,7 +837,6 @@ export function HumanInputFieldRow({
       <Input
         id={controlId}
         type={field.type === 'password' ? 'password' : 'text'}
-        {...(isInline ? { className: 'w-48 sm:w-56' } : {})}
         {...(Icon ? { icon: <Icon className="size-4" /> } : {})}
         disabled={disabled}
         value={text}

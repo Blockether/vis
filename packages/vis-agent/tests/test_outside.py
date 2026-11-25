@@ -730,6 +730,25 @@ def test_the_extensions_own_validators_run_out_here_too(monkeypatch):
     )
 
 
+def test_an_outside_form_returns_multiple_toggle_choices(monkeypatch):
+    monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
+    form = [
+        vis.ui.section(
+            "scope",
+            vis.ui.toggle(
+                "targets",
+                ["dev", "test", "prod"],
+                label="Targets",
+                is_multiple=True,
+            ),
+        )
+    ]
+    vis.outside.answer_with({"targets": ["dev", "test"]})
+    assert vis.ask("Deploy", form).values == {"targets": ["dev", "test"]}
+    vis.outside.answer_with({"targets": ["missing"]})
+    assert not vis.ask("Deploy", form)
+
+
 def test_a_datetime_answer_must_have_the_form_of_its_mode(monkeypatch):
     monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
     form = [vis.ui.datetime("at", "time", min="09:00", max="17:30")]
@@ -802,7 +821,7 @@ def _painted(nodes):
     # hands the model a picture.
     flat = {}
     for node in nodes:
-        if node["type"] == "group":
+        if _contracts.is_layout(node["type"]):
             flat.update(_painted(node["children"]))
         else:
             flat[node["id"]] = node
@@ -819,7 +838,7 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
             vis.ui.status("now", "Starting", tone="running"),
             # Layout is the FORM's own row, not a second vocabulary — and out
             # here, where nothing paints, it still travels with the view.
-            vis.ui.row(
+            vis.ui.flex(
                 "reading",
                 vis.ui.table(
                     "jobs",
@@ -834,6 +853,7 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
                     "why",
                     stats=[{"id": "queued", "label": "Queued", "value_text": "1"}],
                 ),
+                direction="row",
             ),
             vis.ui.output("tail", label="Output"),
         ],
@@ -858,7 +878,7 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
         # A row is a node of its own in the state the host holds, and the ops
         # above reached the table and the counter INSIDE it by id alone.
         arranged = state["nodes"][1]
-        assert arranged["type"] == "group"
+        assert arranged["type"] == "flex"
         assert arranged["direction"] == "row"
         assert [child["id"] for child in arranged["children"]] == ["jobs", "why"]
 

@@ -60,7 +60,7 @@
     },
     {
       "id": "spinners",
-      "type": "group",
+      "type": "flex",
       "direction": "row",
       "children": [
         {
@@ -95,7 +95,7 @@
     },
     {
       "id": "actions",
-      "type": "group",
+      "type": "flex",
       "direction": "row",
       "children": [
         {
@@ -235,8 +235,7 @@
     },
     {
       "id": "plans",
-      "type": "group",
-      "direction": "row",
+      "type": "section",
       "label": "Plans",
       "children": [
         {
@@ -260,10 +259,8 @@
     },
     {
       "id": "details",
-      "type": "group",
-      "direction": "column",
+      "type": "collapsible",
       "label": "Details",
-      "is_collapsible": true,
       "default_expanded": false,
       "children": [
         {
@@ -1070,6 +1067,78 @@
         "media_type": "audio/wav",
         "data": "UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQgAAACAgICAgICAgA=="
       }
+    },
+    {
+      "id": "layout-grid",
+      "type": "grid",
+      "columns": 2,
+      "min_width": "xs",
+      "gap": "sm",
+      "children": [
+        {
+          "id": "layout-section",
+          "type": "section",
+          "label": "Options",
+          "children": [
+            {
+              "id": "layout-toggle",
+              "type": "toggle",
+              "name": "layout-toggle",
+              "label": "Options",
+              "is_required": false,
+              "is_multiple": true,
+              "options": [
+                {
+                  "value": "a",
+                  "label": "A"
+                },
+                {
+                  "value": "b",
+                  "label": "B"
+                }
+              ],
+              "value": [
+                "a"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "layout-menu",
+      "type": "menu",
+      "label": "More",
+      "icon": "more",
+      "children": [
+        {
+          "id": "menu-apply",
+          "type": "button",
+          "label": "Apply",
+          "clicks": 0,
+          "action": "activate",
+          "variant": "secondary",
+          "is_disabled": false
+        }
+      ]
+    },
+    {
+      "id": "layout-dialog",
+      "type": "dialog",
+      "label": "Confirm",
+      "is_open": false,
+      "children": [
+        {
+          "id": "layout-dialog-note",
+          "type": "paragraph",
+          "text": "Review the changes."
+        }
+      ]
+    },
+    {
+      "id": "layout-card",
+      "type": "card",
+      "title": "Details"
     }
   ],
   "title": "Live view components",

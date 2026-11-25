@@ -242,7 +242,7 @@ describe('DiffNodeView', () => {
   });
 
   // The review app moved its scope and file pickers into the diff toolbar: a menu
-  // item must press the button it names, never the group that holds it.
+  // item must press the button it names, never the menu that holds it.
   it('presses the button that a toolbar menu item names', async () => {
     const onActivate = vi.fn(async () => {});
     const button = (id: string, label: string) => ({
@@ -259,9 +259,8 @@ describe('DiffNodeView', () => {
       children: [
         {
           id: 'scope',
-          type: 'group',
+          type: 'menu',
           label: 'This session',
-          direction: 'row',
           children: [button('session', 'This session'), button('checkpoint-2', 'Checkpoint #2')],
         },
         button('refresh', 'Refresh'),
@@ -271,7 +270,7 @@ describe('DiffNodeView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'This session' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Checkpoint #2' }));
     await waitFor(() => expect(onActivate).toHaveBeenCalledWith('checkpoint-2'));
-    expect(screen.queryByRole('dialog', { name: 'This session' })).toBeNull();
+    expect(screen.queryByRole('menu', { name: 'This session' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(onActivate).toHaveBeenLastCalledWith('refresh'));
     expect(onActivate).toHaveBeenCalledTimes(2);
@@ -297,17 +296,15 @@ describe('DiffNodeView', () => {
       children: [
         {
           id: 'scope',
-          type: 'group',
+          type: 'menu',
           label: 'Uncommitted',
-          direction: 'column',
           children: [
             button('all', 'All changes', { is_selected: false }),
             button('uncommitted', 'Uncommitted', { is_selected: true }),
             {
               id: 'checkpoints',
-              type: 'group',
+              type: 'menu',
               label: 'Checkpoint',
-              direction: 'column',
               children: [button('checkpoint-2', '#2 edit', { is_selected: false })],
             },
           ],
@@ -325,40 +322,6 @@ describe('DiffNodeView', () => {
     expect(screen.queryByRole('menuitemradio')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh diff' }));
     await waitFor(() => expect(onActivate).toHaveBeenLastCalledWith('refresh'));
-  });
-
-  // A row of choices is a switch: each choice shows, so the person sees the one that
-  // holds without opening a menu.
-  it('shows a row group of choices as a switch, not a menu', async () => {
-    const onActivate = vi.fn(async () => {});
-    const choice = (id: string, label: string, is_selected: boolean) => ({
-      id,
-      type: 'button' as const,
-      label,
-      action: 'activate' as const,
-      variant: 'secondary' as const,
-      is_disabled: false,
-      is_selected,
-      clicks: 0,
-    });
-    const node: LiveDiffNode = {
-      ...DIFF,
-      children: [
-        {
-          id: 'area',
-          type: 'group',
-          label: 'Area',
-          direction: 'row',
-          children: [choice('workspace', 'Workspace', true), choice('temp', 'Temporary', false)],
-        },
-      ],
-    };
-    render(<DiffNodeView node={node} commands={{ onActivate, isSettled: false }} />);
-    expect(screen.getByRole('button', { name: 'Workspace' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'Temporary' })).toHaveAttribute('aria-pressed', 'false');
-    fireEvent.click(screen.getByRole('button', { name: 'Temporary' }));
-    await waitFor(() => expect(onActivate).toHaveBeenCalledWith('temp'));
-    expect(screen.queryByRole('menu')).toBeNull();
   });
 
   it('is read only without app actions and when the app is closed', () => {

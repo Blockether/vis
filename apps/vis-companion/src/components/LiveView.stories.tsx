@@ -9,7 +9,9 @@ import {
   STORY_LIVE_PRIMITIVES,
 } from '../dev/story-data';
 import { LiveViewPanel } from './LiveView';
-import type { LiveView } from '../lib/live-view';
+import { liveViewFromWire, type LiveView } from '../lib/live-view';
+import { useState } from 'react';
+import { BandSlotContext } from './ui';
 
 /**
  * A RUN, WATCHED WHILE IT IS BEING WRITTEN.
@@ -93,12 +95,12 @@ export const AllPrimitives: Story = {
  * the thing to look at, at a phone width and at a desk width.
  */
 export const Dashboard: Story = {
-  args: { view: STORY_LIVE_DASHBOARD, onActivate: fn(), onInterrupt: undefined },
+  args: { view: STORY_LIVE_DASHBOARD, onChange: fn(), onInterrupt: undefined },
   play: async ({ canvas, args }) => {
-    const tabs = canvas.getByRole('group', { name: 'Views' });
-    await expect(within(tabs).getByRole('button', { name: 'History' })).toHaveAttribute('aria-pressed', 'true');
-    await userEvent.click(within(tabs).getByRole('button', { name: 'Run' }));
-    await expect(args.onActivate).toHaveBeenCalledWith('tab-run');
+    const tabs = canvas.getByRole('radiogroup', { name: 'Workflow view' });
+    await expect(within(tabs).getByRole('radio', { name: 'History' })).toBeChecked();
+    await userEvent.click(within(tabs).getByRole('radio', { name: 'Run' }));
+    await waitFor(() => expect(args.onChange).toHaveBeenCalledWith('tabs', 'run'));
   },
 };
 
@@ -184,12 +186,12 @@ export const Dividers: Story = {
         { id: 'results-break', type: 'divider' },
         {
           id: 'results',
-          type: 'group',
+          type: 'flex',
           direction: 'row',
           children: [
             {
               id: 'checks',
-              type: 'group',
+              type: 'flex',
               direction: 'column',
               children: [
                 { id: 'checks-title', type: 'heading', text: 'Checks', level: 3 },
@@ -202,9 +204,7 @@ export const Dividers: Story = {
         },
         {
           id: 'details',
-          type: 'group',
-          direction: 'column',
-          is_collapsible: true,
+          type: 'collapsible',
           label: 'Build details',
           children: [
             { id: 'details-before', type: 'paragraph', text: 'Compiled successfully.' },
@@ -252,8 +252,10 @@ export const TeamTimeline: Story = {
       nodes: [
         {
           id: 'head',
-          type: 'group',
-          direction: 'wrap',
+          type: 'flex',
+          direction: 'row',
+          is_wrapping: true,
+          align: 'center',
           children: [
             { id: 'team', type: 'paragraph', text: '**TEAM**' },
             { id: 'after-team', type: 'divider' },
@@ -347,4 +349,103 @@ const groupedJobs: LiveView = {
 /** Open a group: no column moves. Check it in a real browser; jsdom has no layout. */
 export const GroupedColumns: Story = {
   args: { view: groupedJobs },
+};
+
+const layoutText = (id: string, text: string) => ({ id, type: 'paragraph', text });
+const layoutToggle = {
+  id: 'mode', name: 'mode', type: 'toggle', label: 'Mode', is_required: true, value: 'active',
+  options: [{ value: 'active', label: 'Active' }, { value: 'all', label: 'All' }],
+};
+const layoutMenu = {
+  id: 'actions', type: 'menu', label: 'Actions', icon: 'more',
+  children: [
+    { id: 'refresh', type: 'button', label: 'Refresh', is_selected: true },
+    { id: 'menu-rule', type: 'divider' },
+    { id: 'menu-more', type: 'menu', label: 'More options', children: [
+      { id: 'export', type: 'button', label: 'Export' },
+      { id: 'archive', type: 'button', label: 'Archive', is_disabled: true },
+    ] },
+  ],
+};
+const layoutFlex = {
+  id: 'edit-row', type: 'flex', direction: 'row', is_wrapping: true, gap: 'sm', align: 'end', justify: 'between',
+  children: [
+    { id: 'filter', type: 'plaintext', label: 'Item filter', placeholder: 'Filter items', is_growing: true },
+    { id: 'apply', type: 'button', label: 'Apply' },
+    layoutMenu,
+  ],
+};
+const layoutSection = {
+  id: 'settings', type: 'section', label: 'Item settings', description: 'Choose which items to show.', icon: 'filter',
+  children: [layoutFlex],
+};
+const layoutGrid = {
+  id: 'tiles', type: 'grid', columns: 3, min_width: 'xs', gap: 'md',
+  children: ['Alpha', 'Beta', 'Gamma', 'Delta'].map((label, i) => ({
+    id: `tile-${i}`, type: 'section', label, children: [layoutText(`text-${i}`, 'An item in the grid.')],
+  })),
+};
+const layoutDisclosure = {
+  id: 'details', type: 'collapsible', label: 'Details', description: 'Show setup information.',
+  children: [layoutText('about', 'This layout adapts to the width of its view.')],
+};
+const layoutDialog = (is_open: boolean) => ({
+  id: 'settings-dialog', type: 'dialog', label: 'Add an item', is_open,
+  description: 'Enter a name for the item.',
+  children: [{ id: 'item', type: 'plaintext', label: 'Item name' }],
+});
+
+function LayoutDemo({ nodes, composed = false, initiallyOpen = false }: {
+  nodes: Record<string, unknown>[]; composed?: boolean; initiallyOpen?: boolean;
+}) {
+  const [slot, setSlot] = useState<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(initiallyOpen);
+  const [lastAction, setLastAction] = useState('');
+  const header = composed ? [layoutToggle, { id: 'add', type: 'button', icon: 'plus', label: 'Add item' }] : [];
+  const view = liveViewFromWire({
+    id: 'layouts', title: 'Layout components', seq: 0,
+    nodes: [...header, ...nodes, ...(composed || initiallyOpen ? [layoutDialog(open)] : [])],
+    header: header.map((node) => node.id),
+  })!;
+  return (
+    <BandSlotContext.Provider value={slot}>
+      {composed && <div ref={setSlot} className="flex min-w-0 flex-wrap items-center gap-2 border-b border-edge-strong py-2" />}
+      <LiveViewPanel
+        view={view}
+        onActivate={(id) => {
+          if (id === 'add') setOpen(true);
+          else if (id === 'settings-dialog') setOpen(false);
+          else setLastAction(id);
+        }}
+        onChange={() => {}}
+      />
+      {lastAction && <p role="status">Last action: {lastAction}</p>}
+    </BandSlotContext.Provider>
+  );
+}
+
+export const Flex: Story = { render: () => <LayoutDemo nodes={[layoutFlex]} /> };
+export const Grid: Story = { render: () => <LayoutDemo nodes={[layoutGrid]} /> };
+export const Section: Story = { render: () => <LayoutDemo nodes={[layoutSection]} /> };
+export const Collapsible: Story = { render: () => <LayoutDemo nodes={[layoutDisclosure]} /> };
+export const Dialog: Story = { render: () => <LayoutDemo nodes={[]} initiallyOpen /> };
+export const Menu: Story = { render: () => <LayoutDemo nodes={[layoutMenu]} /> };
+export const Toggle: Story = {
+  render: () => <LayoutDemo nodes={[{ ...layoutToggle, options: [
+    { value: 'active', label: 'Active', icon: 'list' },
+    { value: 'all', label: 'All', icon: 'grid' },
+  ] }]} />,
+  play: async ({ canvas }) => {
+    const active = canvas.getByRole('radio', { name: 'Active' });
+    const all = canvas.getByRole('radio', { name: 'All' });
+    active.focus();
+    await userEvent.keyboard('{ArrowRight}');
+    await expect(all).toHaveFocus();
+    await expect(active).toBeChecked();
+    await userEvent.keyboard('{Enter}');
+    await expect(all).toBeChecked();
+  },
+};
+export const ComposedLayout: Story = {
+  render: () => <LayoutDemo nodes={[layoutSection, layoutGrid, layoutDisclosure]} composed />,
 };

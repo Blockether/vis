@@ -315,6 +315,28 @@
 
 (defn view-id "The id every patch and the close name." [pane] (get-in pane [:view :id]))
 
+(defn dialog-nodes
+  "Dialog nodes in source order. A dialog owns the subtree below it."
+  [nodes]
+  (mapcat (fn [node]
+            (if (= :dialog (:type node)) [node] (dialog-nodes (:children node))))
+          nodes))
+
+(defn open-dialog
+  "The first owner-open dialog that the person did not dismiss."
+  [view state]
+  (when-not (app-model/read-only? view)
+    (first (filter #(and (:is-open %) (not (contains? (:closed-dialogs state) (:id %))))
+                   (dialog-nodes (:nodes view))))))
+
+(defn retain-dialog-dismissals
+  "A local dismissal ends when the owner closes or removes the dialog."
+  [view state]
+  (if (seq (:closed-dialogs state))
+    (let [open-ids (into #{} (comp (filter :is-open) (map :id)) (dialog-nodes (:nodes view)))]
+      (update state :closed-dialogs #(into #{} (filter open-ids) %)))
+    state))
+
 (defn patched
   "The pane one patch leaves behind. The view is advanced by the ENGINE's own
    `live/apply-patch`, never by a second interpreter here: the terminal and the
@@ -615,7 +637,7 @@
   (let [node (first (filter #(= node-id (:id %))
                             (mapcat #(tree-seq :children :children %)
                                     (get-in pane [:view :nodes]))))]
-    (if (or (= :log (:type node)) (:is-collapsible node))
+    (if (#{:log :collapsible} (:type node))
       (let [initial (and (not (settled? pane)) (true? (:default-expanded node)))
             is-open (get (:disclosures pane) node-id initial)]
 
@@ -1077,7 +1099,8 @@
                            (remove #(= :picture-open (:kind %))
                                    (node-rows node {:text-w text-w}))))
                     (let [{:keys [gutter body]} (app-model/row-parts row)]
-                      [{:kind :app-row
+                       [{:kind (if (= :thread-head kind) :thread-head :app-row)
+                         :thread-id (:thread-id row)
                         :node-id node-id
                         :tone (app-model/row-tone row)
                         :text (p/ellipsize (str gutter body) (max 1 (long text-w)))}]))))
@@ -1090,7 +1113,9 @@
 
 (defmethod node-rows :thread
   [node {:keys [text-w]}]
-  (app-entries (app-model/thread-rows node text-w {:node-id (:id node)}) text-w))
+  (into [{:kind :thread-node :node-id (:id node) :thread-id (:id node)
+          :text (or (:label node) "Discussion")}]
+        (app-entries (app-model/thread-rows node text-w {:node-id (:id node) :thread-id (:id node)}) text-w)))
 
 (defmethod node-rows :spinner
   [{:keys [id text variant is-active]} {:keys [is-interactive]}]
@@ -1101,13 +1126,18 @@
     :is-active (and is-interactive is-active)}])
 
 (defmethod node-rows :button
-  [{:keys [id label is-disabled is-selected variant]} {:keys [is-interactive]}]
+  [{:keys [id label icon is-disabled is-selected variant]} {:keys [is-interactive compact?]}]
   [{:kind :button
     :node-id id
-    ;; The mark says the choice without colour, as the legend of an app does.
-    :text (str "[ " (when is-selected "• ") (flat-text label) " ]")
+    :text (str "[ " (when is-selected "• ")
+               (if (and compact? icon) (hi/control-icon icon) (flat-text label)) " ]")
     :variant (or variant :secondary)
     :is-disabled (or is-disabled (not is-interactive))}])
+
+(defmethod node-rows :menu
+  [{:keys [id label icon]} {:keys [is-interactive]}]
+  [{:kind :menu :node-id id :text (str "[ " (if icon (hi/control-icon icon) (flat-text label)) " ▾ ]")
+    :is-disabled (not is-interactive)}])
 
 (defmethod node-rows :status
   [{:keys [id text detail tone]} {:keys [text-w]}]
@@ -2543,17 +2573,24 @@
   "An input node is a FIELD: the form's own renderer draws it, so a field in a
    view and the same field in a form read alike. Each row keeps the field row it
    came from for that painter, and its text for the plan."
-  [{:keys [id label] :as node} {:keys [text-w is-interactive toolbar?]}]
+  [{:keys [id label type] :as node} {:keys [text-w is-interactive compact? toggle-focus]}]
   (mapv (fn [row]
           (cond-> {:kind :field
                    :node-id id
                    :field row
+                   :segmented? (= :toggle type)
                    :text (str (:text row))
                    :is-disabled (not is-interactive)}
-            toolbar? (assoc :label label :is-compact true)))
-        (if toolbar?
-          [(hi/toolbar-field-row node text-w)]
-          (hi/view-field-rows node text-w))))
+            compact? (assoc :label label :is-compact true)))
+         (cond
+           (and compact? (= :toggle type)) [(hi/toggle-row node (:value node (:default node)) toggle-focus text-w)]
+           compact? [(hi/compact-field-row node text-w)]
+           (= :toggle type) (mapv (fn [row]
+                                    (if (= :toggle (:kind row))
+                                      (hi/toggle-row node (:value node (:default node)) toggle-focus text-w)
+                                      row))
+                                  (hi/view-field-rows node text-w))
+           :else (hi/view-field-rows node text-w))))
 
 (def ^:private input-node-types
   "The node types a view edits: every field type a form knows."
@@ -2692,169 +2729,81 @@
       (p/display-width (str (:text row))))))
 
 (defn- row-text-width
-  "The natural width of a plan row, including indentation and its search control."
+  "The natural width of a plan row, including its frame and indentation."
   ^long [text-w row]
-  (+ (long (or (:indent row) 0))
-     (long (row-content-width text-w row))
-     (if (:search-label row) 15 0)))
+  (let [indent (long (or (:indent row) 0))
+        width (max 1 (- (long text-w) indent))]
+    (+ indent
+       (cond
+         (:section-child row)
+         (+ 5 (row-text-width (max 1 (- width 5)) (:section-child row)))
 
-(defn- wrap-sections
-  "A `wrap` group's rows: every child keeps its natural width and the children
-   pack left to right, a new line of cells where the next one does not fit.
+         (= :section-rule (:kind row))
+         (+ 5 (long (p/display-width (str (:text row)))))
 
-   `sections` are the children planned at the full `text-w`. A line that holds
-   ONE child paints that full-width plan; a line of several plans each child
-   again at its own width through `replan` (`(fn [idx w] rows)`) and carries the
-   widths as `:cell-widths` for the painter. Lines stack like sections do."
-  [text-w sections replan compact?]
-  (let [widths (mapv (fn [rows]
-                       (columns/natural-width text-w (map #(row-text-width text-w %) rows)))
-                     sections)]
-    (let [lines (mapv (fn [line]
-                        (if (= 1 (count line))
-                          (nth sections (first line))
-                          (let [ws (mapv widths line)]
-                            (mapv #(assoc % :cell-widths ws)
-                                  (split-rows (mapv replan line ws))))))
-                      (columns/wrap-lines text-w widths))]
-      (if compact? (into [] cat lines) (stacked-rows lines)))))
+         :else
+         (+ (long (row-content-width width row)) (if (:search-label row) 15 0))))))
 
-(defn toolbar?
-  "True for a toolbar layout group."
-  [node]
-  (and (= :group (:type node)) (= :toolbar (:direction node))))
+(defn- section-rows
+  [id label rows]
+  (into [{:kind :section-rule :edge :top :node-id id :text label}]
+        (concat (map #(assoc (select-keys % [:node-id :item-id :canvas-line])
+                             :kind :section-body :section-child %) rows)
+                [{:kind :section-rule :edge :bottom :node-id id}])))
 
-(defn choice-strip?
-  "True when group `node` holds only choice buttons: a strip of tabs, or the switch of a toolbar."
-  [node]
-  (let [children (:children node)]
-    (and (= :group (:type node))
-         (< 1 (count children))
-         (every? #(and (= :button (:type %)) (some? (:is-selected %))) children))))
+(defn- preferred-width
+  [w rows]
+  (columns/natural-width w (map #(row-text-width w %) rows)))
 
 (defn- node-section
-  "One node's rows, `text-w` columns wide: its label, then what the node paints.
-
-   A layout group places its children by its direction. Ask applies the same
-   rules, including inside nested groups:
-
-   - `:row` stands them side by side when [[columns/row-fits?]] allows it.
-   - `:grid` cuts them into rows of [[columns/grid-span]] equal columns, one row
-     of air between, the last row padded so its columns stay aligned.
-   - `:wrap` packs them at their natural width through [[wrap-sections]].
-   - Everything else, and a row or grid too narrow to split, stacks them in
-     source order.
-
-   [[columns/cell-width]] supplies the text budget for each equal column.
-
-   Disclosed children gain two columns; wrapping and hit targets use that same inset.
-   The row of air between two sections belongs to whoever stacks them, never to
-   the node, so two nodes standing side by side start on the same line."
+  "One node's rows. A layout gives each child the width it will paint in."
   [node ctx fresh text-w]
-  (let [disclosure?
-        (or (= :log (:type node)) (:is-collapsible node))
-
-        indent
-        (if disclosure? (min 2 (max 0 (dec (long text-w)))) 0)
-
-        body-w
-        (max 1 (- (long text-w) indent))
-
-        node-ctx
-        (ctx node body-w)
-
-        is-open
-        (or (not disclosure?) (:is-open node-ctx))
-
-        toolbar
-        (toolbar? node)
-
-        ;; A switch in a toolbar packs its choices at their own width, like the app band.
-        switch?
-        (and (:toolbar? node-ctx) (choice-strip? node))
-
-        ;; A switch and a toolbar of switches name themselves for a screen reader only.
-        unnamed?
-        (or switch? (and toolbar (seq (:children node)) (every? choice-strip? (:children node))))
-
-        children
-        (cond->> (not-empty (remove :is-dialog (:children node)))
-          (or toolbar (= :wrap (:direction node)))
-          (mapv #(cond-> % (= :divider (:type %)) (assoc :is-upright true))))
-
-        child-ctx
-        (if toolbar (fn [child w] (assoc (ctx child w) :toolbar? true)) ctx)
-
-        n
-        (count children)
-
-        span
-        (if (and children (= :grid (:direction node)))
-          (columns/grid-span body-w n (:max-columns node))
-          0)
-
-        layout
-        (cond (nil? children) :leaf
-              (and (not switch?) (= :row (:direction node)) (columns/row-fits? body-w n)) :row
-              (< 1 span) :grid
-              (and (or toolbar switch? (= :wrap (:direction node))) (< 1 n)) :wrap
-              :else :stack)
-
-        cell-w
-        (case layout
-          :row
-          (columns/cell-width body-w n)
-
-          :grid
-          (columns/cell-width body-w span)
-
-          body-w)
-
-        parts
-        (when (and is-open children) (mapv #(node-section % child-ctx fresh cell-w) children))
-
-        body
-        (cond (not is-open) []
-              (and (= :group (:type node)) (nil? children)) []
-              (= :leaf layout) (node-rows node node-ctx)
-              (= :row layout) (split-rows parts)
-              (= :grid layout) (stacked-rows (mapv split-rows (columns/grid-chunks parts span)))
-              (= :wrap layout) (wrap-sections body-w
-                                              parts
-                                              (fn [idx w]
-                                                (node-section (nth children idx) child-ctx fresh w))
-                                               toolbar)
-              :else (stacked-rows parts))
-
-        label
-        (if disclosure?
-          (str (if is-open "▾ " "▸ ")
-               (or (:label node) "Output")
-               (when (= :log (:type node))
-                 (str " · " (long (or (:total-lines node) (count (:lines node)))) " lines")))
-          ;; A button names itself, and the field renderer draws a field's label.
-          (when-not (or unnamed? (= :button (:type node)) (contains? input-node-types (:type node)))
-            (flat-text (:label node))))]
-
+  (let [{:keys [type id label description icon children]} node
+        disclosure? (#{:log :collapsible} type)
+        section? (= :section type)
+        indent (cond section? 3 disclosure? 2 :else 0)
+        body-w (max 1 (- (long text-w) (long indent) (if section? 2 0)))
+        node-ctx (ctx node body-w)
+        open? (or (not disclosure?) (:is-open node-ctx))
+        container? (#{:flex :grid :section :collapsible} type)
+        children (cond->> (remove #(= :dialog (:type %)) children)
+                   (and (= :flex type) (= :row (keyword (:direction node))))
+                   (map #(cond-> % (= :divider (:type %)) (assoc :is-upright true))))
+        body (cond (not open?) []
+                   container? (columns/layout node body-w children
+                                                #(node-section %1 ctx fresh %2)
+                                                preferred-width split-rows {:kind :blank})
+                   :else (node-rows node node-ctx))
+        title (cond-> (flat-text label)
+                icon (->> (str (hi/control-icon icon) " ")))
+        title (cond disclosure? (str (if open? "▾ " "▸ ")
+                                     (or title "Output")
+                                     (when (= :log type)
+                                       (str " · " (long (or (:total-lines node) (count (:lines node)))) " lines")))
+                    (or section? (:compact? node-ctx) (#{:button :menu :thread} type) (contains? input-node-types type)) nil
+                    :else title)
+        description (when (or section? (= :collapsible type))
+                      (mapv (fn [runs] {:kind :prose :runs runs :text (segment-line runs)})
+                            (md-lines description body-w)))
+        rows (into (vec description) body)
+        rows (if section?
+               (section-rows id (str (when icon (str (hi/control-icon icon) " ")) (flat-text label)) rows)
+               (if (pos? indent) (mapv #(update % :indent (fnil + 0) indent) rows) rows))]
     (with-meta (cond-> []
-                 (seq label)
+                 (seq title)
                  (conj (cond-> {:kind (if disclosure? :disclosure :node)
-                                :node-id (:id node)
-                                :text label
-                                :is-fresh (contains? (:nodes fresh) (:id node))}
-                         (and is-open (= :log (:type node)))
-                         (assoc :search-label (str "Search " (or (:label node) "Output")))))
-
-                 :always
-                 (into (if (pos? indent) (map #(update % :indent (fnil + 0) indent) body) body)))
-      {:widths (reduce merge {} (map (comp :widths meta) (or parts [body])))})))
+                                :node-id id :text title
+                                :is-fresh (contains? (:nodes fresh) id)}
+                         (and open? (= :log type))
+                         (assoc :search-label (str "Search " (or label "Output")))))
+                 :always (into rows))
+      (cond-> {:widths (reduce merge {} (map (comp :widths meta) (or (:parts (meta body)) [body])))}
+         section? (assoc :stretch-row {:kind :section-body :section-child {:kind :blank}})))))
 
 (defn layout-plan
   "The pane's whole paint plan, `text-w` columns wide: one entry per painted row,
    nodes in DECLARATION order, each under its own label with a row of air above
-   it. A node the run wrapped in a `row` group stands BESIDE its siblings wherever
-   the band is wide enough for all of them; a `grid` or `wrap` group lays its
-   nodes out as [[node-section]] describes. Carries `{:widths …}` as metadata —
+   it. Each layout plans its children inside its own width. Carries `{:widths …}` as metadata —
    what the tables measured this pass, on its way back into the pane through
    [[painted]].
 
@@ -2868,6 +2817,8 @@
          ctx
          (fn [node w]
            {:text-w w
+            :compact? (contains? (set (:compact-ids pane)) (:id node))
+            :toggle-focus (get (:toggle-focus pane) (:id node))
             :widths widths
             :fresh (get-in fresh [:items (:id node)] #{})
             :is-expanded (or (= :log (:type node)) (contains? (set expanded) (:id node)))
@@ -2885,7 +2836,7 @@
                (md-lines (:description view) text-w))
 
          sections
-         (into [] (comp (remove :is-dialog)
+         (into [] (comp (remove #(= :dialog (:type %)))
                         (map #(node-section % ctx fresh (long text-w)))) (:nodes view))]
 
      (with-meta (stacked-rows (cond-> []
@@ -2929,14 +2880,25 @@
   (boolean (some #(and (= node-id (:id %)) (= :button (:type %)) (= :submit (keyword (:action %))))
                  (view-nodes pane))))
 
+(defn- submit-scope
+  "The nearest container of the submit button, or the whole view."
+  [nodes node-id]
+  (some (fn [node]
+          (cond (= node-id (:id node)) nodes
+                (hi-spec/layout-container? (:type node)) (submit-scope (:children node) node-id)))
+        nodes))
+
 (defn input-values
-  "The value of every input that holds one, keyed by node id: what a submit button
-   sends. A secret never comes back to a surface, so a set secret is left out."
-  [pane]
-  (into {}
-        (keep (fn [{:keys [id type value]}]
-                (when (and (contains? input-node-types type) (some? value)) [id value])))
-        (view-nodes pane)))
+  "The current input values of a view, or of the submit button's nearest layout."
+  ([pane] (input-values pane nil))
+  ([pane node-id]
+   (let [view (get-in pane [:view :nodes])
+         nodes (or (when node-id (submit-scope view node-id)) view)]
+     (into {}
+            (keep (fn [{:keys [id type value default]}]
+                    (let [value (if (and (= :toggle type) (nil? value)) default value)]
+                      (when (and (contains? input-node-types type) (some? value)) [id value]))))
+           (tree-seq :children :children {:children nodes})))))
 
 (defn controls
   "Keyboard-accessible controls for the visible pane, in reading order."
@@ -2956,6 +2918,9 @@
 
                              :button
                              (when-not (:is-disabled entry) :live-activate)
+
+                             :menu
+                             (when-not (:is-disabled entry) :live-menu)
 
                              (:trow :board-issue)
                              (when (:is-selectable entry) :live-select)
@@ -2986,7 +2951,9 @@
                             :item-id :search
                             :label (:search-label entry)
                             :kind :live-log-search))))))
-            (tree-seq #(seq (:cells %)) :cells {:cells (plan pane 80)})))))
+            (tree-seq #(or (:section-child %) (seq (:cells %)))
+                       #(if-let [child (:section-child %)] [child] (:cells %))
+                       {:cells (plan pane 80)})))))
 
 (def log-search-page-size "Maximum matching lines read from the retained log in one request." 200)
 
@@ -3108,8 +3075,8 @@
                            (:canvas-motion-visible? pane)
                            (some canvas-motion-row?
                                  (layout-plan (assoc-in pane [:view :nodes] [node]) 80 nil))))
-                    (and (= :group (:type node))
-                         (or (not (:is-collapsible node))
+                    (and (#{:flex :grid :section :collapsible} (:type node))
+                         (or (not= :collapsible (:type node))
                              (get (:disclosures pane) (:id node) (:default-expanded node)))
                          (some active? (:children node)))))]
         (boolean (some active? (get-in pane [:view :nodes])))))))
@@ -3127,8 +3094,8 @@
     (when-not (or (settled? pane) (minimized? pane))
       (letfn [(running? [node]
                 (or (and (= :timeline (:type node)) (some #(nil? (:end %)) (:lanes node)))
-                    (and (= :group (:type node))
-                         (or (not (:is-collapsible node))
+                    (and (#{:flex :grid :section :collapsible} (:type node))
+                         (or (not= :collapsible (:type node))
                              (get (:disclosures pane) (:id node) (:default-expanded node)))
                          (some running? (:children node)))))]
         (boolean (some running? (get-in pane [:view :nodes])))))))
@@ -3589,7 +3556,13 @@
    rows, so a view and a form painted in the same band line up. A disclosure's
    `:indent` shifts both its content and controls without changing row identities."
   [g left row inner-w view-id entry]
-  (case (if (:indent entry) :indented (:kind entry))
+  (case (cond (:indent entry) :indented (:section-child entry) :section-child :else (:kind entry))
+    :section-rule
+    (dialogs/draw-section-rule! g left row inner-w (= :top (:edge entry)) (:text entry))
+
+    :section-child
+    (dialogs/draw-section-body! g left row inner-w #(paint-entry! g %1 row %2 view-id (:section-child entry)))
+
     :indented
     (let [indent (min (long (:indent entry)) (max 0 (long inner-w)))]
       (fill! g left row inner-w t/dialog-fg)
@@ -3599,6 +3572,9 @@
                     (- (long inner-w) indent)
                     view-id
                     (dissoc entry :indent)))
+
+    :row-overflow
+    (paint-plain! g left row inner-w t/dialog-hint "…")
 
     :blank
     (fill! g left row inner-w t/dialog-fg)
@@ -3674,6 +3650,15 @@
     ;; The rank of the components' action buttons: a primary action is FILLED and
     ;; bold, so a monochrome terminal still shows it. A destructive one takes the
     ;; error ink, and a disabled one is dim and loses its weight.
+    :menu
+    (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
+        (when-not (:is-disabled entry)
+          (.register interactions/hit-map
+                     {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                               :col (+ (long left) 2)
+                               :width (max 0 (min (long (p/display-width (:text entry))) (- (long inner-w) 3)))}
+                      :kind :live-menu :view-id view-id :node-id (:node-id entry) :enabled? true})))
+
     :button
     (do (cond (:is-disabled entry) (paint-plain! g left row inner-w t/dialog-hint (:text entry))
               (= :primary (:variant entry))
@@ -3743,7 +3728,7 @@
     :code
     (paint-plain! g left row inner-w t/dialog-fg (:text entry))
 
-    :app-row
+    (:app-row :thread-node :thread-head)
     (paint-plain! g left row inner-w (tone-fg (:tone entry)) (:text entry))
 
     :status
@@ -3892,9 +3877,7 @@
           (:cells entry)
 
           places
-          (if-let [ws (:cell-widths entry)]
-            (columns/width-slots inner-w ws)
-            (columns/slots inner-w (count cells)))]
+          (columns/row-slots inner-w entry)]
 
       (fill! g left row inner-w t/dialog-fg)
       (reduce (fn [pos [[x width] cell]]

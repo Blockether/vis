@@ -12,7 +12,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ConfirmRow, HoverNote, Input, ViewHeading, ViewLayout, ViewParagraph } from './ui';
+import { ConfirmRow, HoverNote, Input, ToggleGroup, ViewParagraph } from './ui';
 import { ProjectStatusCounts } from './SessionNavigator';
 
 // Regression, user report (project status values ran together and only LIVE was
@@ -91,27 +91,28 @@ describe('ConfirmRow', () => {
 
 });
 
+it('moves single-toggle focus without selecting until Space or Enter', async () => {
+  const user = userEvent.setup();
+  const onToggle = vi.fn();
+  render(<><ToggleGroup aria-label="Layout" options={[{ value: 'list', label: 'List' }, { value: 'grid', label: 'Grid' }]} value="list" onToggle={onToggle} /><button>Next field</button></>);
+  const list = screen.getByRole('radio', { name: 'List' });
+  const grid = screen.getByRole('radio', { name: 'Grid' });
+  await user.tab();
+  expect(list).toHaveFocus();
+  await user.keyboard('{ArrowRight}');
+  expect(grid).toHaveFocus();
+  expect(list).toBeChecked();
+  expect(onToggle).not.toHaveBeenCalled();
+  await user.tab();
+  expect(screen.getByRole('button', { name: 'Next field' })).toHaveFocus();
+  await user.tab({ shift: true });
+  expect(grid).toHaveFocus();
+  await user.keyboard(' {ArrowLeft}{Enter}');
+  expect(onToggle.mock.calls).toEqual([['grid'], ['list']]);
+});
+
 describe('the second vocabulary: chips, rows, disclosures', () => {
   describe('view presentation', () => {
-    it('keeps nested direction, child order and an empty layout without controls', () => {
-      const { container } = render(
-        <ViewLayout direction="row">
-          <ViewHeading>Connection</ViewHeading>
-          <ViewLayout>
-            <ViewParagraph>Host before port</ViewParagraph>
-            <ViewLayout direction="row" />
-          </ViewLayout>
-        </ViewLayout>,
-      );
-
-      expect(container.querySelectorAll('[data-view-layout="row"]')).toHaveLength(2);
-      expect(container.querySelectorAll('[data-view-layout="column"]')).toHaveLength(1);
-      expect(container.innerHTML.indexOf('Connection')).toBeLessThan(
-        container.innerHTML.indexOf('Host before port'),
-      );
-      expect(container.querySelector('button, input, [tabindex]')).toBeNull();
-    });
-
     it('renders paragraph text literally and rich text as given', () => {
       const { container } = render(
         <>

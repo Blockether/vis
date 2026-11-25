@@ -333,9 +333,8 @@ const command = (id: string, label: string, variant: 'primary' | 'secondary' | '
 const REVIEW_TOOLBAR: LiveDiffNode['children'] = [
   {
     id: 'scope',
-    type: 'group',
+    type: 'menu',
     label: 'This session',
-    direction: 'row',
     children: [
       command('session', 'This session'),
       command('all', 'All changes'),
@@ -346,16 +345,14 @@ const REVIEW_TOOLBAR: LiveDiffNode['children'] = [
   },
   {
     id: 'file',
-    type: 'group',
+    type: 'menu',
     label: 'All files',
-    direction: 'row',
     children: [command('file-all', 'All files'), command('file:src/app.ts', 'src/app.ts')],
   },
   {
     id: 'actions',
-    type: 'group',
+    type: 'menu',
     label: 'Actions',
-    direction: 'row',
     children: [
       command('refresh', 'Refresh'),
       command('checks', 'Run checks', 'primary'),

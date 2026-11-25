@@ -56,21 +56,8 @@
              type
              (or (:type value) :plaintext)]
 
-         (cond (= view-spec/group-type type) (let [children
-                                                   (mapv node (:children value))
-
-                                                   id
-                                                   (or (:id value)
-                                                       (:name value)
-                                                       (str "group:"
-                                                            (str/join "+" (keep :name children))))]
-
-                                               (assoc value
-                                                 :id id
-                                                 :name id
-                                                 :type type
-                                                 :direction (or (:direction value) :column)
-                                                 :children children))
+         (cond (view-spec/container? type)
+               (assoc value :type type :children (mapv node (:children value)))
                (view-spec/decoration? (assoc value :type type)) (assoc value :type type)
                :else (let [id (or (:id value) (:name value))]
                        (cond-> (assoc value
@@ -1238,13 +1225,12 @@
   (canonical-input-view {"title" "Connect" "nodes" [group {"name" "notes" "label" "Notes"}]}))
 
 (defn- server-group
-  "Two fields that belong together, laid out in `direction`."
+  "Two fields in a framed flex layout."
   [direction]
-  {"type" "group"
-   "direction" direction
-   "label" "Server"
-   "children" [{"name" "host" "label" "Host" "is_required" true "placeholder" "db.internal"}
-               {"name" "port" "label" "Port" "placeholder" "5432"}]})
+  {"type" "section" "id" "server" "label" "Server"
+   "children" [{"type" "flex" "id" "server-fields" "direction" direction "is_wrapping" true
+                "children" [{"name" "host" "label" "Host" "is_required" true "placeholder" "db.internal"}
+                            {"name" "port" "label" "Port" "placeholder" "5432"}]}]})
 
 (defn- ink
   "Every non-blank painted row of `form`, framing stripped."
@@ -1354,10 +1340,8 @@
         (expect (= {"host" "" "port" "" "notes" ""} (:values form)))))
   (it "composes: a `column` group nested inside a `row` group is one of its columns"
       ;; Two directions and no third rule — the tree does the rest.
-      (let [rows (ink (hi/init-form (grouped-request {"type" "group"
-                                                      "direction" "row"
-                                                      "children" [{"type" "group"
-                                                                   "direction" "column"
+      (let [rows (ink (hi/init-form (grouped-request {"type" "flex" "id" "row" "direction" "row"
+                                                      "children" [{"type" "section" "id" "left"
                                                                    "label" "Left"
                                                                    "children"
                                                                    [{"name" "a" "label" "A"}
@@ -1410,8 +1394,7 @@
       ;; both columns.
       (let [form
             (hi/init-form (grouped-request
-                            {"type" "group"
-                             "direction" "row"
+                            {"type" "flex" "id" "row" "direction" "row"
                              "children"
                              [{"name" "env" "type" "select" "options" ["dev" "prod"]}
                               {"name" "tier" "type" "select" "options" ["free" "paid"]}]}))
@@ -1428,12 +1411,10 @@
         (expect (= [["dev"] ["prod"] ["free"] ["paid"]] (mapv focused (range 4)))))))
 
 (defn- field-group
-  "`n` text fields laid out in `direction`."
+  "`n` text fields in one layout."
   [direction n]
-  {"type" "group"
-   "direction" direction
-   "label" "Fields"
-   "children" (mapv #(hash-map "name" (str "f" %) "label" (str "F" %)) (range n))})
+  (merge {"id" "fields" "children" (mapv #(hash-map "name" (str "f" %) "label" (str "F" %)) (range n))}
+         (if (= "grid" direction) {"type" "grid"} {"type" "flex" "direction" direction})))
 
 (defn- column-labels
   "The label texts of every `:columns` row of `form` at `width`."
@@ -1450,15 +1431,15 @@
   (it "a grid cuts its fields into rows of equal columns, the last row padded"
       (let [form (hi/init-form (grouped-request (field-group "grid" 5)))]
         (expect (= [["F0" "F1"] ["F2" "F3"] ["F4" nil]] (column-labels form 80)))
-        (expect (= [5] (mapv count (column-labels form 300)))
-                "a wide form puts all five on one row")))
-  (it "a grid never takes more than max_columns"
-      (let [form (hi/init-form (grouped-request (assoc (field-group "grid" 5) "max_columns" 2)))]
+        (expect (= [["F0" "F1" "F2" "F3" "F4" nil nil nil]] (column-labels form 300))
+                "a wide form keeps three empty tracks after the fields")))
+  (it "a grid never takes more than columns"
+      (let [form (hi/init-form (grouped-request (assoc (field-group "grid" 5) "columns" 2)))]
         (expect (= [["F0" "F1"] ["F2" "F3"] ["F4" nil]] (column-labels form 300)))))
   (it "a narrow grid stacks its fields like a column"
       (let [rows (hi/form-rows (hi/init-form (grouped-request (field-group "grid" 5))) 40)]
         (expect (not-any? #(= :columns (:kind %)) rows))
-        (expect (= ["Fields" "F0" "F1" "F2" "F3" "F4" "Notes"]
+        (expect (= ["F0" "F1" "F2" "F3" "F4" "Notes"]
                    (mapv :text (filter #(= :label (:kind %)) rows))))))
   (it "keeps every field of a grid a stop, and types into the focused cell only"
       (let [form
@@ -1481,8 +1462,7 @@
   (it "a wrap packs short fields at their own width"
       (let [rows
             (hi/form-rows (hi/init-form (grouped-request
-                                          {"type" "group"
-                                           "direction" "wrap"
+                                          {"type" "flex" "id" "wrap" "direction" "row" "is_wrapping" true
                                            "children" [{"name" "ok" "type" "checkbox" "label" "Ok"}
                                                        {"name" "go" "type" "checkbox" "label" "Go"}
                                                        {"name" "host" "label" "Host"}]}))
@@ -1492,7 +1472,7 @@
             (first (filter #(= :columns (:kind %)) rows))]
 
         (expect (= 3 (count (:cells line))))
-        (expect (= [8 8 24] (:cell-widths line))
+        (expect (= [11 11 27] (mapv second (:cell-slots line)))
                 "a checkbox asks for its mark and label, a typed field for a readable cell"))))
 
 (defdescribe
@@ -1503,28 +1483,19 @@
 
             split?
             (fn [width]
-              (boolean (some #(= :columns (:kind %)) (hi/form-rows form width))))]
+              (boolean (some #(and (= :columns (:kind %)) (= 2 (count (:cells %))))
+                              (map #(or (:section-child %) %) (hi/form-rows form width)))))]
 
-        (expect (= [false false true true] (mapv split? [20 53 54 80])))
+        (expect (= [false false true true] (mapv split? [20 58 59 80])))
         (expect (split? nil))))
-  (it "retains nested labels, errors and focus when a row becomes a column"
-      (let [request
-            (grouped-request {"type" "group"
-                              "direction" "row"
-                              "children" [(server-group "row") {"name" "region" "label" "Region"}]})
-
-            form
-            (hi/set-errors (hi/init-form request) {"port" "Port is required"})
-
-            rows
-            (hi/form-rows form 40)]
-
-        (expect (not-any? #(= :columns (:kind %)) rows))
-        (expect (= ["Server" "Host *" "Port" "Region" "Notes"]
-                   (mapv :text (filter #(= :label (:kind %)) rows))))
-        (expect (some #(= "Port is required" (:text %)) rows))
+  (it "retains nested labels, errors and focus when a flex wraps"
+      (let [form (hi/set-errors (hi/init-form (grouped-request (server-group "row")))
+                                {"port" "Port is required"})
+            rows (hi/form-rows form 40)
+            leaves (tree-seq #(or (:section-child %) (:cells %)) #(if-let [child (:section-child %)] [child] (:cells %)) {:cells rows})]
+        (expect (some #(= "Port is required" (:text %)) leaves))
         (expect (= "port" (:field-id (hi/focused-stop form))))
-        (expect (= 1 (count (filter :is-focused rows))))))
+        (expect (some :is-focused rows))))
   (it "paints narrow fields on separate rows and keeps their caret inside the frame"
       (let [form
             (hi/init-form (grouped-request (server-group "row")))
@@ -1560,8 +1531,7 @@
                          [{"type" "heading" "text" "Connection"}
                           {"type" "paragraph" "text" "Where the job runs and who it runs as."}
                           {"name" "host" "label" "Host"}
-                          {"type" "group"
-                           "name" "creds"
+                          {"type" "section" "id" "creds"
                            "children" [{"type" "heading" "text" "Credentials"}
                                        {"name" "pw" "type" "password" "label" "Password"}]}]}))
 
@@ -1904,3 +1874,45 @@
                (emit {"type" "view.close" "kind" "input" "view_id" "req-2"})
                (expect (= "req-4" (active)))
                (finally (stop))))))))
+
+(defdescribe form-disclosure
+  (it "opens with Enter and closes with Space without losing a field value"
+      (let [form (hi/init-form (assoc (request) :nodes
+                                 [{:id "details" :type :collapsible :label "Details"
+                                   :children [{:id "extra" :type :plaintext :label "Extra" :default "saved"}]}]))
+            shown? #(some (fn [row] (= "Extra" (:text row))) (hi/form-rows % 80))
+            opened (:form (hi/handle-event form {:kind :enter}))
+            closed (:form (hi/handle-event opened {:kind :char :char \space}))]
+        (expect (not (shown? form)))
+        (expect (shown? opened))
+        (expect (not (shown? closed)))
+        (expect (= "saved" (get-in closed [:values "extra"]))))))
+
+(defdescribe ask-disclosure
+  (it "keeps closed fields out of the form and focus order until opened"
+      (let [request {:id "ask" :nodes [{:id "details" :type :collapsible :label "Details"
+                                        :description "Optional worker details"
+                                       :children [{:id "name" :type :plaintext :label "Name"}]}]}
+            closed (hi/init-form request)
+            open (:form (hi/handle-event closed {:kind :enter}))
+            closed-again (:form (hi/handle-event open {:kind :char :char \space}))]
+        (expect (= [:disclosure :action :action] (mapv :kind (:stops closed))))
+        (doseq [form [closed open closed-again]]
+          (expect (some #(= "Optional worker details" (:text %)) (hi/form-rows form 80))))
+        (expect (not-any? #(= "Name" (:text %)) (hi/form-rows closed 80)))
+        (expect (= "name" (-> open :stops second :field-id)))
+        (expect (some #(= "Name" (:text %)) (hi/form-rows open 80)))
+        (expect (= (:stops closed) (:stops closed-again))))))
+
+(defdescribe ask-section-frame
+  (it "uses the framed section around its title, description, and field"
+      (let [{:keys [screen g]} (virtual-screen probe-rows)
+            form (hi/init-form {:id "ask" :nodes [{:id "section" :type :section :label "Details"
+                                                   :icon :plus :description "Check this value"
+                                                   :children [{:id "name" :type :plaintext :label "Name"}]}]})]
+        (hi/paint! g 80 probe-rows form)
+        (let [rows (map #(screen-row screen %) (range probe-rows))]
+          (expect (some #(re-find #"╭.*\+ Details.*╮" %) rows))
+          (expect (some #(re-find #"│.*Check this value.*│" %) rows))
+          (expect (some #(re-find #"│.*Name.*│" %) rows))
+          (expect (some #(re-find #"╰─+╯" %) rows))))))

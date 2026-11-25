@@ -20,10 +20,8 @@
    {:id "source" :type "code" :text "  <button>\n" :language "html"}
    {:id "wait" :type "spinner" :text "Loading" :variant :dots}
    {:id "details"
-    :type "group"
+    :type "collapsible"
     :label "Details"
-    :direction "column"
-    :is-collapsible true
     :children [{:id "refresh" :type "button" :label "Refresh"}
                {:id "disabled" :type "button" :label "Unavailable" :is-disabled true}
                {:id "a" :type "log" :lines ["retained"]}
@@ -100,7 +98,7 @@
         (expect (= (spec/picture-byte-count data) (:bytes picture)))
         (expect (not (contains? picture :data)))
         (expect (not (str/includes? (materializer/->markdown view) data))))
-      (let [types (set (map :type (remove #(= :group (:type %)) (nodes view))))]
+      (let [types (set (map :type (nodes view)))]
         (expect (every? types (vals spec/live-node-types)))
         (expect (some types (vals spec/field-types))))
       (expect (= #{1 2 3 4 5 6} (set (map :level (filter #(= :heading (:type %)) (nodes view))))))
@@ -186,9 +184,8 @@
   dialog-test
   (it "closes an open dialog when the person closes it, and refuses a closed one"
       (watching [{:id "new-issue"
-                  :type "group"
+                  :type "dialog"
                   :label "New issue"
-                  :is-dialog true
                   :children [{:id "title" :type "plaintext" :label "Title"}]}]
                 (fn [view]
                   (let [id (:id view)]
@@ -200,6 +197,20 @@
                     (expect (true? (:is-accepted
                                      (engine/action! id {:action :activate :node-id "new-issue"}))))
                     (expect (false? (:is-open (node (engine/live-view id) "new-issue")))))))))
+
+(defdescribe
+  toggle-change-test
+  (it "stores a toggle change as a single value or a list"
+      (watching [{:id "one" :type "toggle" :options [{:value "a" :label "A"}
+                                                      {:value "b" :label "B"}]}
+                 {:id "many" :type "toggle" :is-multiple true
+                  :options [{:value "a" :label "A"} {:value "b" :label "B"}]}]
+                (fn [view]
+                  (let [id (:id view)]
+                    (doseq [[node-id value] [["one" "b"] ["many" ["a" "b"]]]]
+                      (expect (:is-accepted (engine/action! id {:action :change :node-id node-id
+                                                               :value value})))
+                      (expect (= value (:value (node (engine/live-view id) node-id))))))))))
 
 (defdescribe
   nested-history-test
@@ -223,10 +234,8 @@
               id
               [{:op :add-node
                 :node-spec {:id "late"
-                            :type "group"
+                            :type "collapsible"
                             :label "Added section"
-                            :direction "column"
-                            :is-collapsible true
                             :children [{:id "late-log" :type "log" :lines lines :window-lines 2}]}}
                {:op :append :node-id "late-log" :lines ["next"]}])
             (expect (= ["line 39" "next"] (:lines (node (engine/live-view id) "late-log"))))
@@ -254,8 +263,8 @@
                 (:result (last (sink/read-range file 0 100)))]
 
             (expect (nil? (spec/live-result-error (update receipt :reason keyword))))
-            (expect (not-any? #(= :group (:type %)) (get-in model [:view :nodes])))
-            (expect (= "group" (:type (node (:view receipt) "details"))))
+            (expect (not-any? #(spec/container? (:type %)) (get-in model [:view :nodes])))
+            (expect (= "collapsible" (:type (node (:view receipt) "details"))))
             (expect (= 201 (count (:lines (node (:view receipt) "a")))))
             (expect (seq (:elided model)))
             (expect (nil? (:elided receipt))))))))
@@ -273,10 +282,8 @@
                 {:title "Initial history"
                  :session-id (:session-id view)
                  :nodes [{:id "section"
-                          :type "group"
+                          :type "collapsible"
                           :label "Section"
-                          :direction "column"
-                          :is-collapsible true
                           :children [{:id "nested" :type "log" :lines lines :window-lines 2}]}]}
 
                 opened
@@ -485,7 +492,7 @@
               (engine/normalize-live-view
                 {:title "Build sections"
                  :nodes [{:id "sections"
-                          :type "group"
+                          :type "flex"
                           :direction "column"
                           :children [{:id "before" :type "paragraph" :text "Build finished"} divider
                                      {:id "after" :type "paragraph" :text "Review results"}]}]}))

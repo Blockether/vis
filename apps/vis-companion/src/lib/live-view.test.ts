@@ -8,6 +8,7 @@ import viewSchema from '../../../../packages/vis-contract/resources/vis-contract
 import {
   appSummary,
   applyLivePatch,
+  isLiveContainer,
   applyLiveViewEvent,
   isLiveViewEvent,
   liveFraction,
@@ -116,7 +117,7 @@ function patched(view: LiveView, seq: number, ops: unknown[], firstSeq = seq): L
 
 /** Every node the view PAINTS, rows flattened — the engine's own `live/leaf-nodes`. */
 function leaves(nodes: LiveNode[]): LiveNode[] {
-  return nodes.flatMap((node) => (node.type === 'group' ? leaves(node.children) : [node]));
+  return nodes.flatMap((node) => (isLiveContainer(node) ? leaves(node.children) : [node]));
 }
 
 function nodeOfType<K extends LiveNode['type']>(
@@ -142,7 +143,7 @@ describe('a live view read off the wire', () => {
       'stat',
       'steps',
       'log',
-      'group',
+      'flex',
       'link',
     ]);
     expect(nodeOfType(view, 'hosts', 'table').rows.map((row) => row.id)).toEqual(['db-1', 'db-2']);
@@ -173,21 +174,21 @@ describe('a live view read off the wire', () => {
       nodes: [
         {
           id: 'board',
-          type: 'group',
-          direction: 'grid',
-          max_columns: 3,
+          type: 'grid',
+          columns: 3,
+          min_width: 'xs',
           children: [{ id: 'a', type: 'paragraph', text: 'A' }],
         },
         {
           id: 'actions',
-          type: 'group',
-          direction: 'wrap',
-          max_columns: 3,
+          type: 'flex',
+          direction: 'row',
+          is_wrapping: true,
           children: [{ id: 'go', type: 'button', title: 'Go' }],
         },
         {
           id: 'unknown',
-          type: 'group',
+          type: 'flex',
           direction: 'diagonal',
           children: [{ id: 'b', type: 'paragraph', text: 'B' }],
         },
@@ -195,15 +196,14 @@ describe('a live view read off the wire', () => {
     });
     if (!view) throw new Error('the layout view must be paintable');
     const [board, actions, unknown] = view.nodes;
-    expect(board).toMatchObject({ direction: 'grid', max_columns: 3 });
-    expect(actions).toMatchObject({ direction: 'wrap' });
-    expect(actions).not.toHaveProperty('max_columns');
+    expect(board).toMatchObject({ type: 'grid', columns: 3, min_width: 'xs' });
+    expect(actions).toMatchObject({ direction: 'row', is_wrapping: true });
     expect(unknown).toMatchObject({ direction: 'column' });
   });
 
   it('reads the row that stands two nodes side by side', () => {
     const view = opened();
-    const row = nodeOfType(view, 'reading', 'group');
+    const row = nodeOfType(view, 'reading', 'flex');
     expect(row.direction).toBe('row');
     expect(row.children.map((node) => node.id)).toEqual(['hosts', 'why']);
     expect(ids(view)).not.toContain('hosts');
@@ -450,7 +450,7 @@ describe('a patch frame', () => {
         node_spec: { id: 'note', type: 'status', text: 'db-2 only' },
       },
     ]);
-    expect(nodeOfType(grown, 'reading', 'group').children.map((node) => node.id)).toEqual([
+    expect(nodeOfType(grown, 'reading', 'flex').children.map((node) => node.id)).toEqual([
       'hosts',
       'note',
       'why',
@@ -985,7 +985,7 @@ describe('set-value', () => {
         },
         {
           id: 'box',
-          type: 'group',
+          type: 'flex',
           direction: 'column',
           children: [
             {
@@ -1012,7 +1012,7 @@ describe('set-value', () => {
     applyLivePatch(view, { type: VIEW_PATCH_EVENT, kind: 'live', view_id: view.id, first_seq: seq, patch: { seq, ops } });
   const input = (view: LiveView, id: string): LiveInputNode => {
     const all = (nodes: LiveNode[]): LiveNode[] =>
-      nodes.flatMap((node) => (node.type === 'group' ? all(node.children) : [node]));
+      nodes.flatMap((node) => (isLiveContainer(node) ? all(node.children) : [node]));
     const found = all(view.nodes).find((node) => node.id === id);
     if (!found || !('field' in found)) throw new Error(`no input ${id}`);
     return found;

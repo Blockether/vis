@@ -1358,7 +1358,7 @@
                                       text (apply str (map glyph row))]
 
                                   ;; Section rules have right padding; outer dialog rails do not.
-                                  (when (re-matches #"\s*(?:│\s*)?─+\s+(?:│\s*)?" text)
+                                  (when (re-matches #"\s*(?:│\s*)?─+\s+(?:│\s*){0,2}" text)
                                     (filter #(= "─" (glyph %)) row))))
                               grid)]
 

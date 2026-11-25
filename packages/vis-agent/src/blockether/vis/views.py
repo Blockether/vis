@@ -97,6 +97,7 @@ class LiveView(_ViewRecord):
     is_persistent: bool | None = None
     log: tuple[Mapping[str, Any], ...] | None = None
     settings_name: str | None = None
+    header: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)

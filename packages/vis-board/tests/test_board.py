@@ -222,6 +222,9 @@ def test_app_filters_the_board_with_its_own_inputs(saved, app):
     rec.change("query", "ship")
     assert titles() == ["Ship it"]
     rec.change("query", None)
+    rec.change("priority", "high")
+    assert titles() == ["Ship it"]
+    rec.change("priority", "any")
     rec.change("label", "qa")
     assert titles() == ["Write tests"]
     rec.change("label", "any")

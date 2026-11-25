@@ -8,6 +8,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.tui.agent-team :as agent-team]
+            [com.blockether.vis.tui.app-surface :as app-surface]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.artifact-inspector :as artifact-inspector]
             [com.blockether.vis.tui.capture :as cap]
@@ -16,6 +17,7 @@
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.file-picker :as picker]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.live-view :as lv]
             [com.blockether.vis.tui.live-view-test :as live-fixture]
             [com.blockether.vis.tui.notifications :as notifications]
             [com.blockether.vis.tui.interactions :as interactions]
@@ -5164,3 +5166,34 @@ therapy line 2"
           (expect (every? #(str/blank? (subs % 0 23))
                           (:rows (frame 120 {:zen-mode true :zen-left-image (str binary)} :full))))
           (expect (nil? (row-of (:rows (frame 120 {:zen-left-image (str art)} :full)) "o.o")))))))
+
+(defdescribe standalone-live-dialog
+  (it "paints a live dialog and keeps focus and dismissal local to it"
+      (let [node {:type :dialog :id "modal" :label "Details" :is-open true
+                  :children [{:type :button :id "first" :label "First"}
+                             {:type :button :id "second" :label "Second"}]}
+            view {:id "live" :seq 1 :placement :inline
+                  :nodes [{:type :button :id "background" :label "Background"} node]}
+            db {:live-views [(lv/opened view)] :layout {:cols 80 :rows 28}}
+            {:keys [state geom]} (#'screen/live-dialog-overlay db)
+            shot (cap/capture! {:cols 80 :rows 28
+                                :paint! (fn [{:keys [g]}] (app-surface/paint-dialog-overlay! g state geom))})
+            text (str/join "\n" (map #(apply str (map :ch %)) (last (:frames shot))))
+            actions (atom [])
+            press (fn [st k] (app-surface/handle-key st (KeyStroke. k) geom
+                                                    {:activate! #(swap! actions conj %)}))
+            tabbed (press state KeyType/Tab)
+            closed (press tabbed KeyType/Escape)
+            pane (assoc (first (:live-views db)) :dialog-state closed)
+            later (assoc-in pane [:view :seq] 2)
+            owner-closed (#'state/retain-live-dialog-state (assoc-in later [:view :nodes 1 :is-open] false))
+            owner-reopened (assoc-in owner-closed [:view :nodes 1 :is-open] true)]
+        (expect (nil? (:error shot)))
+        (doseq [label ["Details" "First" "Second"]]
+          (expect (str/includes? text label)))
+        (expect (not (str/includes? text "Background")))
+        (expect (= "second" (:node-id (nth (:rows geom) (:selected tabbed)))))
+        (expect (= [{:action :activate :node-id "modal"}] @actions))
+        (expect (nil? (#'screen/live-dialog-overlay (assoc db :live-views [later]))))
+        (expect (= "modal" (get-in (#'screen/live-dialog-overlay (assoc db :live-views [owner-reopened]))
+                                   [:geom :dialog-id]))))))

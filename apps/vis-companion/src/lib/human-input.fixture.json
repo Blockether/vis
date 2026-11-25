@@ -117,9 +117,8 @@
       "default": "2026-03-14"
     },
     {
-      "id": "group-4",
-      "type": "group",
-      "direction": "row",
+      "id": "server",
+      "type": "section",
       "children": [
         {
           "id": "host",
@@ -129,8 +128,8 @@
           "is_required": true
         },
         {
-          "id": "group-3",
-          "type": "group",
+          "id": "server-fields",
+          "type": "flex",
           "direction": "column",
           "children": [
             {
@@ -153,6 +152,30 @@
       ],
       "label": "Server",
       "description": "Where the pool dials out"
+    },
+    {
+      "id": "more",
+      "type": "collapsible",
+      "label": "More options",
+      "children": [
+        {
+          "id": "options",
+          "type": "grid",
+          "min_width": "xs",
+          "children": [
+            {
+              "id": "regions",
+              "name": "regions",
+              "type": "toggle",
+              "label": "Regions",
+              "is_required": false,
+              "is_multiple": true,
+              "default": ["eu"],
+              "options": [{ "value": "eu", "label": "Europe" }, { "value": "us", "label": "US" }]
+            }
+          ]
+        }
+      ]
     }
   ],
   "cancel_label": "Cancel",

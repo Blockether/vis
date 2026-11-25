@@ -83,7 +83,7 @@
       (if (= :app/invalid (:type (ex-data e))) (invalid-patch! (:reason (ex-data e))) (throw e)))))
 
 (defn- node-tree
-  "Every node of the view depth first, the children of a layout group included.
+  "Every node of the view depth first, including all children.
    Ids are unique across the whole tree, so this is what an ADDRESS is looked up
    in."
   [nodes]
@@ -93,7 +93,7 @@
         nodes))
 
 (defn- leaf-nodes
-  "Every node that PAINTS something, depth first. A layout group holds no state of
+  "Every node that PAINTS something, depth first. A layout container holds no state of
    its own — it says where the nodes inside it stand — so the model and the
    document read the same content whether a status was stood beside a table or
    under it."
@@ -110,7 +110,7 @@
 
 (defn- node-ids
   "Every node id in the view, in paint order — what a refusal lists when an op
-   named an address that is not there. Groups are in it: `add-node :after` and
+   named an address that is not there. Containers are in it: `add-node :after` and
    `remove-node` speak to a row by id too."
   [view]
   (mapv :id (node-tree (:nodes view))))
@@ -126,7 +126,7 @@
 
 (defn- node-path
   "The path from the view down to `node-id` — `[:nodes 2 :children 0]` for a node
-   arranged inside a layout group — or nil. Ids are addresses and unique across
+   inside a container — or nil. Ids are addresses and unique across
    the tree, so a node standing in a row is patched exactly like one at the top."
   [view node-id]
   (when-let [found (path-in (:nodes view) node-id)]
@@ -342,9 +342,9 @@
   [nodes idx]
   (into (into [] (subvec nodes 0 (long idx))) (subvec nodes (inc (long idx)))))
 
-(defn- checked-group
-  "`view` once the layout group that holds the node at `path` passes the node check
-   of every host. A node at the top has no group."
+(defn- checked-parent
+  "`view` once the container that holds the node at `path` passes the node check
+   of every host. A node at the top has no parent."
   [view path]
   (when (< 2 (count path)) (checked-node (get-in view (pop (pop path)))))
   view)
@@ -353,7 +353,7 @@
   "The view with one more node — the shape changing while it runs, because a
    scan that discovers a seventh device should not have to have declared it.
    `:after` names the node the newcomer stands next to WHEREVER that node is, so
-   a node added after one inside a layout group joins that group; a group added
+   a node added after one a container joins that container; a container added
    this way lands with everything inside it. The view check of [[apply-patch]]
    refuses a repeated id and too many nodes."
   [view {:keys [node-spec after]}]
@@ -365,18 +365,18 @@
                             (:id node)
                             [(document/named-line "/after" "missing_after" {"after" after})]))))]
       (-> (update-in view (pop path) insert-after (peek path) node)
-          (checked-group path))
+          (checked-parent path))
       (update view :nodes conj node))))
 
 (defn- apply-remove-node
-  "The view without that node, its items with it — and a layout group without the
+  "The view without that node, its items with it — and a container without the
    nodes it arranged, because dropping the row drops what stood in it. Dropping a
    node that is not there is a NO-OP — teardown is idempotent, while a WRITE to a
    node that is gone is a lost patch and refuses."
   [view {:keys [node-id]}]
   (if-let [path (node-path view node-id)]
     (-> (update-in view (pop path) drop-at (peek path))
-        (checked-group path))
+        (checked-parent path))
     view))
 
 (defn- apply-set-value
@@ -908,7 +908,8 @@
 
 (def ^:private input-domain-keys
   "The keys that bound the value of an input, as the wire spells them."
-  {:options "options"
+  {:is-multiple "is_multiple"
+   :options "options"
    :min "min"
    :max "max"
    :step "step"
@@ -925,7 +926,7 @@
                                [wire-key
                                 (case k
                                   :options
-                                  (mapv #(select-keys % [:value :label]) (k node))
+                                  (mapv #(select-keys % [:value :label :icon]) (k node))
 
                                   :mode
                                   (name (k node))
@@ -1750,7 +1751,8 @@
                      (case k
                        :options
                        (mapv (fn [option]
-                               {:value (get option "value") :label (get option "label")})
+                               (cond-> {:value (get option "value") :label (get option "label")}
+                                  (contains? option "icon") (assoc :icon (get option "icon"))))
                              (get domain wire-key))
 
                        :mode
@@ -1761,11 +1763,11 @@
 
 (defn- markdown-input-value
   "The value that `text` paints for an input of `type`, or nil when it shows none."
-  [type text]
+  [{:keys [type] :as node} text]
   (cond (str/blank? text) nil
         (contains? spec/secret-types type) nil
         (= :checkbox type) (= "yes" text)
-        (= :multiselect type) (str/split text #", ")
+        (spec/multiple-choice? node) (str/split text #", ")
         (= :range type) (or (parse-long text) (parse-double text))
         :else text))
 
@@ -1778,7 +1780,7 @@
           [_ label value] (or (re-matches #"(?s)(.*?): (.*)" (str/join "\n" body))
                               (re-matches #"(?s)(.*?):()" (str/join "\n" body))
                               (invalid-markdown! at "an input needs a label and a value"))
-          value (markdown-input-value input-type value)]
+          value (markdown-input-value (assoc domain :type input-type) value)]
 
       (cond-> (merge {:type input-type
                       :label label

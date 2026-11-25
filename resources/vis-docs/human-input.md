@@ -94,6 +94,7 @@ above the input. The optional `description` shows under the label.
 | `multiline` | string | |
 | `select` | one option value | Exclusive: exactly one option, never none. |
 | `multiselect` | list of option values, in declared order | Inclusive: any number. Empty is legal unless required. |
+| `toggle` | one option value, or a list with `is_multiple=True` | [Joined options](components.md#toggle) that stay visible. |
 | `checkbox` | `true` or `false` | A required checkbox must be ticked. |
 | `range` | number | `min` (0), `max` (100), `step` (1). Out-of-range values are refused. |
 | `datetime` | string | `mode` is `date` (`YYYY-MM-DD`), `time` (`HH:MM`) or `datetime` (`YYYY-MM-DDTHH:MM`, the default). `min` and `max` take the same form. |
@@ -109,65 +110,36 @@ HTTP request.
 
 ## Layout
 
-Forms and [live views](live-views.md#layout-and-text) share the layouts `row`, `column`, `grid`, and
-`wrap`. A `group` arranges its `children` in one of them, `column` by default. Groups can nest.
-
-| Direction | Arrangement | On a narrow screen |
-| --- | --- | --- |
-| `row` | Children side by side in equal columns. | The children stack. Companion stacks them one by one, and the TUI stacks the whole row. |
-| `column` | Children one under the other. | No change. |
-| `grid` | Children in equal columns that continue on new rows, in their order. `max_columns` (1 to 12) limits the columns. | Fewer columns, then a stack on the narrowest screens. |
-| `wrap` | Children side by side at their own width. | A child that does not fit starts a new line. |
-
-A group in a form can have a `label` and a plain-text `description`. A `heading` shows plain text. A
-`paragraph` shows Markdown, including emphasis, inline code, and lists, as does the `description` of
-the request. A form does not get the collapse and interaction behavior of a live view.
+Use [Flex](components.md#flex) for fields that belong on the same line. Use
+[Grid](components.md#grid) for fields that need equal columns. Use [Section](components.md#section)
+to add a title and frame around related fields. The same [layouts](components.md#layout) work in
+live views.
 
 ```python
-vis.ask("Where should the pool connect?", [
-    {"type": "heading", "text": "Server"},
-    {"type": "group", "direction": "row", "children": [
-        {"name": "host", "label": "Host", "is_required": True},
-        {"name": "port", "label": "Port"},
-    ]},
-    {"type": "paragraph", "text": "TLS is required outside the office network."},
-    {"name": "tls", "label": "Require TLS", "type": "checkbox"},
-])
-```
-
-`answer.values` is a flat map keyed by field name, with any layout. These rules apply:
-
-- Names must be unique.
-- A group rejects the value keys `default`, `options`, and `validate`.
-- A field rejects the layout keys `children` and `direction`.
-- A heading or a paragraph has no input, cannot receive focus, and does not appear in the answer.
-
-## Builders
-
-Each node type has a builder that validates its arguments:
-
-```python
-form = vis.ui.column(
-    vis.ui.heading("Target"),
+form = vis.ui.section(
     vis.ui.paragraph("Staging does not send on-call alerts."),
-    vis.ui.row(
+    vis.ui.flex(
         vis.ui.select("env", [vis.ui.select.option("staging", "Staging"), vis.ui.select.option("prod")],
-                   is_required=True),
+                      label="Environment", is_required=True),
         vis.ui.slider("canary", label="Canary %", min=0, max=100, step=5, default=10),
+        direction="row", is_wrapping=True, gap="sm",
     ),
     vis.ui.checkbox("ack", label="I read the runbook", is_required=True),
     vis.ui.password("token", label="Deploy token", is_required=True),
+    label="Target",
 )
 
 answer = vis.ask("Deploy", [form], submit_label="Deploy")
 ```
 
-The builders are `plaintext`, `password`, `multiline`, `select`, `select.many`, `select.option`,
-`checkbox`, `slider`, `datetime`, `otp`, `row`, `column`, `group`, `heading`, and `paragraph`.
-`slider` builds the `range` field. The keyword arguments are the keys of [Fields](#fields).
+The layout does not change `answer.values`. It is a flat map keyed by field name. Names must
+be unique. Layout nodes do not take input keys such as `default`, `options`, or `validate`.
+Fields do not take layout keys such as `children` or `direction`. Headings and paragraphs
+cannot receive focus and do not appear in the answer.
 
-A form takes the same [components](components.md) as a live view, such as a `status`, a `table`, or
-a `card` above the inputs. A form needs no `button`.
+A form has its own submit button. It can show other [components](components.md), such as a
+status, table, or card, above the inputs. `vis.ask` refuses a `dialog` or `menu` at any depth.
+Use a [live view](live-views.md) for those components.
 
 ## Validation
 

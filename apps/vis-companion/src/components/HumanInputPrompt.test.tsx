@@ -279,7 +279,7 @@ describe('the engine’s whole node vocabulary', () => {
   const html = document.body.innerHTML;
   cleanup();
 
-  /** Every node of the tree, groups and their children alike. */
+  /** Every node of the tree, containers and their children alike. */
   function nodes(fields: readonly HumanInputField[]): HumanInputField[] {
     return fields.flatMap((field) => [field, ...nodes(field.children ?? [])]);
   }
@@ -294,11 +294,11 @@ describe('the engine’s whole node vocabulary', () => {
     expect(html).toContain('<h3');
     expect(html).toContain('Target');
     expect(html).toContain('Staging pages nobody.');
-    // A decoration has no name and a group holds no answer, so the values map
+    // A decoration has no name and a container holds no answer, so the values map
     // is exactly the answerable leaves.
     expect(Object.keys(initialHumanInputValues(request)).sort()).toEqual(
       nodes(request.nodes)
-        .filter((field) => field.type !== 'group' && !humanInputIsDecoration(field))
+        .filter((field) => !field.children && !humanInputIsDecoration(field))
         .map((field) => field.id)
         .sort(),
     );

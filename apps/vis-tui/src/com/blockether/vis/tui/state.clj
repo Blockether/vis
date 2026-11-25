@@ -4393,6 +4393,17 @@
                         (update-tab db target #(mount-app-view % view))
                         :else (update-tab db target #(mount-live-pane % view))))))
 
+(defn- retain-live-dialog-state
+  [{:keys [view dialog-state] :as pane}]
+  (if dialog-state
+    (let [state (lv/retain-dialog-dismissals view dialog-state)]
+      (if (= (:dialog-id state) (:id (lv/open-dialog view state)))
+        (assoc pane :dialog-state state)
+        (if (seq (:closed-dialogs state))
+          (assoc pane :dialog-state (select-keys state [:closed-dialogs]))
+          (dissoc pane :dialog-state))))
+    pane))
+
 (defn- patch-live-pane
   [pane patch first-seq]
   (let [behind (fn []
@@ -4411,7 +4422,13 @@
         :next
         (if (:is-gap pane)
           (behind)
-          (try (lv/patched pane patch) (catch clojure.lang.ExceptionInfo _ (behind))))))))
+          (try (retain-live-dialog-state (lv/patched pane patch))
+                (catch clojure.lang.ExceptionInfo _ (behind))))))))
+
+(reg-event-db :live-dialog-state
+              (fn [db [_ view-id dialog-state]]
+                (update-live-pane db view-id
+                                  #(retain-live-dialog-state (assoc % :dialog-state dialog-state)))))
 
 (reg-event-db :live-view-patch
               (fn [db [_ patch first-seq]]
@@ -4428,9 +4445,10 @@
                                             (< (long (:seq view))
                                                (long (get-in pane [:view :seq] 0))))
                                       pane
-                                      (cond-> (assoc pane :view view)
-                                        (>= (long (:seq view)) (long (or (:behind-seq pane) 0)))
-                                        (dissoc :is-gap :behind-seq)))))))
+                                      (retain-live-dialog-state
+                                         (cond-> (assoc pane :view view)
+                                           (>= (long (:seq view)) (long (or (:behind-seq pane) 0)))
+                                           (dissoc :is-gap :behind-seq))))))))
 
 (reg-event-db :app-view-behind
               ;; An elided `view.patch`: the gateway left out a large patch of an app.

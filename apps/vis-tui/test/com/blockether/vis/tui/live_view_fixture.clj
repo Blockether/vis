@@ -51,7 +51,7 @@
           opts
           {:id id :type :table :columns (vec columns)})))
 
-(defn row [id & nodes] {:id id :type :group :direction :row :children (vec nodes)})
+(defn row [id & nodes] {:id id :type :flex :direction :row :children (vec nodes)})
 
 (defn view [opts & nodes] (assoc opts :nodes (vec nodes)))
 

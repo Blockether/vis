@@ -589,7 +589,7 @@ class ReviewApp:
             return None
         more = len(parts) - MOST_NOTES
         texts = parts[:MOST_NOTES] + ([f"{more} more not shown"] if more > 0 else [])
-        return ui.group(
+        return ui.section(
             "notes",
             *(
                 ui.paragraph(f"note-{n}", text[:MOST_NOTE_CHARS])
@@ -619,8 +619,7 @@ class ReviewApp:
     def _toolbar(self, paths: list[str], has_diffs: bool) -> list[dict]:
         """The diff toolbar of a T3 Code review: the scope menu, refresh and one more menu.
 
-        A nested group is a submenu. The choice that holds now is selected, like a T3 Code
-        radio item; a control is off only when it cannot do anything now.
+        A nested menu holds checkpoint and file choices. The current choice has a mark.
         """
         has_change = self.selected is not None and self.selected > 1
         own = self._is_own_range() and self.against is None
@@ -653,7 +652,7 @@ class ReviewApp:
                 "branch", "Against base branch", is_selected=self.against == "base"
             ),
             *(
-                [ui.group(*checkpoints, id="checkpoints", label="Checkpoint")]
+                [ui.menu("checkpoints", "Checkpoints", *checkpoints)]
                 if checkpoints
                 else []
             ),
@@ -687,18 +686,19 @@ class ReviewApp:
             ),
             *(
                 [
-                    ui.group(
+                    ui.menu(
+                        "file",
+                        self.path or "All files",
                         ui.button(
                             "file-all", "All files", is_selected=self.path is None
                         ),
                         *files,
-                        id="file",
-                        label=self.path or "All files",
                     )
                 ]
                 if files
                 else []
             ),
+            ui.divider("history-actions"),
             ui.button(
                 "undo-file",
                 "Undo file",
@@ -719,10 +719,10 @@ class ReviewApp:
             ),
         ]
         return [
-            ui.group(*scope, id="scope", label=self._scope_label()),
+            ui.menu("scope", self._scope_label(), *scope),
             ui.button("refresh", "Refresh", icon="refresh"),
             self._git_toolbar(),
-            ui.group(*more, id="actions", label="More actions", icon="more"),
+            ui.menu("actions", "More actions", *more, icon="more"),
         ]
 
     def _checkpoint_buttons(self) -> list[dict]:
@@ -755,11 +755,11 @@ class ReviewApp:
         point = self.journal.merge_point()
         return [
             *(
-                ui.group(
-                    *nodes,
-                    id=f"snapshots-{turn}-{iteration}",
-                    label=f"Turn {turn}"
+                ui.menu(
+                    f"snapshots-{turn}-{iteration}",
+                    f"Turn {turn}"
                     + (f" · Iteration {iteration}" if iteration is not None else ""),
+                    *nodes,
                 )
                 for (turn, iteration), nodes in groups.items()
             ),
@@ -830,13 +830,13 @@ class ReviewApp:
                 label += f" ↑{state.ahead} ↓{state.behind}"
             if state.operation:
                 label += f" · {state.operation}"
-        return ui.group(
+        return ui.menu(
+            "git-actions",
+            f"Git · {label}"[:300],
             *(
                 ui.button(node, text, is_disabled=node not in available)
                 for node, text in _GIT_LABELS.items()
             ),
-            id="git-actions",
-            label=f"Git · {label}"[:300],
         )
 
     def _git_nodes(self) -> list[dict]:
@@ -844,34 +844,42 @@ class ReviewApp:
             return []
         field, label = _GIT_INPUTS[self._git_form]
         return [
-            ui.group(
+            ui.section(
                 "git-form",
-                (ui.multiline if field == "message" else ui.plaintext)(
-                    f"git-{field}",
-                    id=f"git-{field}",
-                    label=label,
-                    value=self._git_message,
-                    is_required=True,
+                ui.flex(
+                    "git-fields",
+                    (ui.multiline if field == "message" else ui.plaintext)(
+                        f"git-{field}",
+                        id=f"git-{field}",
+                        label=label,
+                        value=self._git_message,
+                        is_required=True,
+                        is_growing=True,
+                    ),
+                    *(
+                        [
+                            ui.button(
+                                "git-suggest",
+                                "Suggest message",
+                                is_disabled=bool(self._busy),
+                            )
+                        ]
+                        if field == "message" and self._ask is not None
+                        else []
+                    ),
+                    ui.button(
+                        f"submit-{self._git_form}",
+                        _GIT_LABELS[self._git_form],
+                        action="submit",
+                        variant="primary",
+                        is_disabled=bool(self._busy),
+                    ),
+                    ui.button("git-cancel", "Cancel"),
+                    direction="row",
+                    is_wrapping=True,
+                    align="end",
+                    gap="sm",
                 ),
-                *(
-                    [
-                        ui.button(
-                            "git-suggest",
-                            "Suggest message",
-                            is_disabled=bool(self._busy),
-                        )
-                    ]
-                    if field == "message" and self._ask is not None
-                    else []
-                ),
-                ui.button(
-                    f"submit-{self._git_form}",
-                    _GIT_LABELS[self._git_form],
-                    action="submit",
-                    variant="primary",
-                    is_disabled=bool(self._busy),
-                ),
-                ui.button("git-cancel", "Cancel"),
                 label=_GIT_LABELS[self._git_form],
             )
         ]

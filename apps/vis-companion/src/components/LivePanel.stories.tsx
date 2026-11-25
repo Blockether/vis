@@ -26,7 +26,7 @@ const JOBS = wired({
     { id: 's', type: 'status', text: 'Two jobs wait for a lane', tone: 'running' },
     {
       id: 'lanes',
-      type: 'group',
+      type: 'flex',
       direction: 'row',
       children: [
         { id: 'fast', type: 'card', title: 'Fast lane', text: 'Runs first', meta: '2 jobs', tone: 'ok', is_selectable: true },
@@ -89,6 +89,6 @@ export const Dashboard: Story = {
     views: [{ ...STORY_LIVE_DASHBOARD, placement: 'panel' as const }],
   },
   play: async ({ canvas }) => {
-    await expect(canvas.getByRole('button', { name: 'History' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(canvas.getByRole('radio', { name: 'History' })).toHaveAttribute('aria-checked', 'true');
   },
 };

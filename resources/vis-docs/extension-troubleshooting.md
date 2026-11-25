@@ -121,8 +121,8 @@ unavailable UI, and a successful response.
 | Symptom | What to do |
 | --- | --- |
 | A status still shows its previous detail | Pass `detail=""` to `.set(...)` to clear it. If you omit `detail`, the old detail stays. |
-| A layout builder raises `ValueError` for missing children | Declare at least one child in a row, column, or disclosure. Add the group when its first child is available. |
-| A new node appears beside a group and not inside it | Use the id of a child in `view.add(node, after=...)`. `after` names a sibling, not a destination container. |
+| A layout builder raises `ValueError` for missing children | Add the container when its first child is available. |
+| A new node appears beside a container and not inside it | Use the id of a child in `view.add(node, after=...)`. `after` names a sibling, not a destination container. |
 
 For examples, read [status updates](live-views.md#nodes) and [dynamic
 layouts](live-views.md#layout-and-text).

@@ -816,13 +816,12 @@ export const STORY_LIVE_DASHBOARD: LiveView = (() => {
     nodes: [
       {
         id: 'tabs',
-        type: 'group',
-        direction: 'wrap',
-        children: [
-          { id: 'tab-run', type: 'button', label: 'Run', is_selected: false },
-          { id: 'tab-history', type: 'button', label: 'History', is_selected: true },
-          { id: 'tab-files', type: 'button', label: 'Files', is_selected: false },
-        ],
+        type: 'toggle',
+        name: 'tabs',
+        label: 'Workflow view',
+        is_required: true,
+        value: 'history',
+        options: [{ value: 'run', label: 'Run' }, { value: 'history', label: 'History' }, { value: 'files', label: 'Files' }],
       },
       {
         id: 'state',
@@ -894,8 +893,7 @@ export const STORY_LIVE_DASHBOARD: LiveView = (() => {
       },
       {
         id: 'plans',
-        type: 'group',
-        direction: 'row',
+        type: 'section',
         label: 'Plans',
         children: [
           { id: 'small', type: 'card', title: 'Small', text: 'Two hosts, one region', meta: '2 vCPU', tone: 'ok', is_selectable: true },
@@ -905,8 +903,9 @@ export const STORY_LIVE_DASHBOARD: LiveView = (() => {
       },
       {
         id: 'actions',
-        type: 'group',
-        direction: 'wrap',
+        type: 'flex',
+        direction: 'row',
+        is_wrapping: true,
         children: [
           { id: 'start', type: 'button', label: 'Run workflow', variant: 'primary' },
           { id: 'refresh', type: 'button', label: 'Refresh' },
@@ -1032,8 +1031,7 @@ export const STORY_LIVE_CATALOG: LiveView = (() => {
       },
       {
         id: 'when',
-        type: 'group',
-        direction: 'grid',
+        type: 'section',
         label: 'Next release',
         children: [
           { id: 'day', type: 'datetime', mode: 'date', label: 'Day', min: '2026-01-01', max: '2026-12-31', value: '2026-03-14' },
@@ -1106,15 +1104,8 @@ export const STORY_LIVE_FORM: LiveView = (() => {
       },
       { id: 'token', type: 'password', label: 'Access token', value: 'not-a-real-token' },
       { id: 'notify', type: 'checkbox', label: 'Tell me when the run ends', value: true },
-      {
-        id: 'actions',
-        type: 'group',
-        direction: 'wrap',
-        children: [
-          { id: 'run', type: 'button', label: 'Run', action: 'submit', variant: 'primary' },
-          { id: 'reset', type: 'button', label: 'Reset' },
-        ],
-      },
+      { id: 'run', type: 'button', label: 'Run', action: 'submit', variant: 'primary' },
+      { id: 'reset', type: 'button', label: 'Reset' },
     ],
   });
   if (!view) throw new Error('the form story must be paintable');

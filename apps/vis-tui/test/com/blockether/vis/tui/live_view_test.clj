@@ -1433,12 +1433,11 @@
                       (or (zero? slack) (>= slack gaps))))
                   (butlast texts))
           "a ragged line is a justification refused, because stretching it would open a river")))
-  (it "a band too narrow to split stacks them instead"
-      (let [kinds (set (map :kind (lv/plan (reading-pane) 40)))]
-        (expect (not (contains? kinds :columns))
-                "under the narrowest useful column there is nothing to split")
+  (it "a narrow row keeps both children visible"
+      (let [rows (lv/plan (reading-pane) 40)
+            kinds (into #{} (map :kind) (mapcat :cells rows))]
         (expect (contains? kinds :thead))
-        (expect (contains? kinds :status) "both nodes are still there, one under the other"))))
+        (expect (contains? kinds :status)))))
 
 ;;; ── A finished view: one line, and the door back ─────────────────────────────
 
@@ -1460,14 +1459,14 @@
   (.current interactions/hit-map))
 
 (defn- layout-pane
-  "One group of `children` laid out in `direction`, optionally capped at `max-columns`."
+  "One layout for `children`, optionally with a limit on grid columns."
   ([direction children] (layout-pane direction nil children))
-  ([direction max-columns children]
-   (lv/opened (mounted
-                {}
-                (cond-> {:id "layout" :type :group :direction direction :children (vec children)}
-                  max-columns
-                  (assoc :max-columns max-columns))))))
+  ([direction maximum children]
+   (lv/opened (mounted {}
+                        (merge {:id "layout" :children (vec children)}
+                               (if (= :grid direction)
+                                 (cond-> {:type :grid} maximum (assoc :columns maximum))
+                                 {:type :flex :direction :row :is-wrapping (= :wrap direction)}))))))
 
 (defn- cards
   [n]
@@ -1495,24 +1494,17 @@
                     ["│ body" "│ body"] ["│ Card 4" nil] ["│ body" nil]]
                    lines)
                 "two 37-column cells fit 80 columns, and the fifth card keeps the first column")))
-  (it "a wide grid takes more columns, never more than max-columns"
+  (it "a wide grid takes more columns, with a limit on columns"
       (expect (= 5 (count (first (split-lines-of (layout-pane :grid (cards 5)) 200)))))
       (expect (= [2 2 2 2 2 2] (mapv count (split-lines-of (layout-pane :grid 2 (cards 5)) 200)))))
   (it "a grid too narrow for two readable columns stacks its children"
       (let [plan (lv/plan (layout-pane :grid (cards 5)) 40)]
         (expect (not-any? #(= :columns (:kind %)) plan))
         (expect (= 10 (count (filter #(= :card (:kind %)) plan))))))
-  (it "a wrap packs children at their own width and wraps the rest"
-      (let [plan
-            (lv/plan (layout-pane :wrap (buttons 6)) 60)
-
-            line
-            (first (filter #(= :columns (:kind %)) plan))]
-
-        (expect (= ["[ Go 0 ]" "[ Go 1 ]" "[ Go 2 ]" "[ Go 3 ]" "[ Go 4 ]"]
-                   (mapv :text (:cells line))))
-        (expect (= [8 8 8 8 8] (:cell-widths line)) "each cell asks for the width of its own text")
-        (expect (= "[ Go 5 ]" (:text (last plan))) "a line with one child paints it alone")))
+  (it "a wrapping flex packs children at their own width and moves the rest down"
+      (let [rows (split-lines-of (layout-pane :wrap (buttons 6)) 60)]
+        (expect (< 1 (count rows)))
+        (expect (= (mapv #(str "[ Go " % " ]") (range 6)) (into [] cat rows)))))
   ;; User report 2026-11-14: a row of choice buttons (tabs) did not show the choice.
   (it "a button that holds the choice shows its mark"
       (let [tabs [{:id "run" :type :button :label "Run" :is-selected true}
@@ -1776,16 +1768,39 @@
                    (expect (= 1 (count (:live-views @state/app-db)))))))
       (expect (try (lv/recorded-pane "" "s1") false (catch clojure.lang.ExceptionInfo _ true)))))
 
+(defdescribe closed-collapsible-description
+  (it "keeps the trigger description above hidden content"
+      (let [pane (lv/opened (mounted {:title "Checks"}
+                             {:id "details" :type :collapsible :label "Pool state"
+                              :description "Current worker state"
+                              :children [(fixture/status "worker" "Worker ready")]}))
+            capture (paint-frames [pane] 80 24)
+            text (cap/frame-text (last (:frames capture)))]
+        (expect (str/includes? text "Current worker state"))
+        (expect (not (str/includes? text "Worker ready"))))))
+
+(defdescribe sparse-grid-tracks
+  (it "keeps a lone framed card in the first of three tracks"
+      (let [pane (lv/opened (mounted {:title "Checks"}
+                             {:id "cards" :type :grid :columns 3 :min-width :xs
+                              :children [{:id "card" :type :section :label "First card"
+                                          :children [(fixture/status "worker" "Worker ready")]}]}))
+            capture (paint-frames [pane] 120 24)
+            text (cap/frame-text (last (:frames capture)))
+            rows (str/split-lines text)
+            pane-width (count (some #(re-find #"┌─+┐" %) rows))
+            card-width (count (some #(re-find #"╭[^╮]*First card[^╮]*╮" %) rows))]
+        (expect (< (/ pane-width 4) card-width (/ pane-width 2))))))
+
 (defn disclosure-review-pane
   "A nested log and its sibling, through the production live-view materializer."
   ([] (disclosure-review-pane false))
   ([recorded?]
    (let [view (mounted {:title "Worker checks" :description "Latest observed state"}
                        {:id "pool"
-                        :type :group
+                        :type :collapsible
                         :direction :column
                         :label "Pool state"
-                        :is-collapsible true
                         :default-expanded true
                         :children [(fixture/log "tail"
                                                 {:label "Observed workers"
@@ -1896,33 +1911,15 @@
                                     "Observed workers")))))))
 
 (defdescribe disclosed-column-width-test
-             (it "disclosed column width"
-                 ;; #219: reserve the disclosure inset before deciding whether columns still fit.
-                 (let [pane
-                       (update-in (reading-pane)
-                                  [:view :nodes 0]
-                                  assoc
-                                  :label "Grouped checks"
-                                  :is-collapsible true
-                                  :default-expanded true)
-
-                       narrow
-                       (lv/plan pane 54)
-
-                       wide
-                       (lv/plan pane 56)]
-
-                   (expect (not-any? #(= :columns (:kind %)) narrow))
-                   (expect (some #(= :columns (:kind %)) wide))
-                   (expect (= (:widths (meta (lv/plan (reading-pane) 54))) (:widths (meta wide))))
-                   (expect (every? #(= 2 (:indent %)) (filter #(= :columns (:kind %)) wide)))
-                   (doseq [cols [40 80 120]]
-                     (let [capture (paint-frames [pane] cols 40)
-                           text (cap/frame-text (last (:frames capture)))]
-
-                       (expect (nil? (:error capture)))
-                       (expect (str/includes? text "Jobs"))
-                       (expect (str/includes? text "Reading")))))))
+  (it "reserves the disclosure inset before planning child columns"
+      (let [pane (update-in (reading-pane) [:view :nodes 0]
+                            (fn [row] {:id "checks" :type :collapsible :label "Checks"
+                                       :default-expanded true :children [row]}))
+            split (first (filter #(= :columns (:kind %)) (lv/plan pane 80)))
+            plain (first (filter #(= :columns (:kind %)) (lv/plan (reading-pane) 80)))]
+        (expect (= 2 (:indent split)))
+        (expect (< (reduce + (map second (:cell-slots split)))
+                   (reduce + (map second (:cell-slots plain))))))))
 
 (defn link-grid-review-pane
   "Build results for the production link-grid review, live or retained (#221)."
@@ -2068,10 +2065,9 @@
                        {:id "build" :type :paragraph :text "Build finished"}
                        {:id "results-break" :type :divider}
                        {:id "review"
-                        :type :group
+                        :type :collapsible
                         :direction :column
                         :label "Verification"
-                        :is-collapsible true
                         :default-expanded true
                         :children [{:id "checks" :type :paragraph :text "All checks passed"}
                                    {:id "review-break" :type :divider}
@@ -2125,13 +2121,9 @@
             wide
             (lv/plan pane 80)]
 
-        (expect (= [:trule :blank :trule] (mapv :kind narrow)))
-        (expect (= [28 28] (mapv #(count (:text %)) (filter :text narrow))))
-        (expect (= 1 (count wide)))
-        (expect (= :columns (:kind (first wide))))
-        (expect (= ["left" "right"] (mapv :node-id (:cells (first wide)))))
-        (expect (= (repeat 2 (columns/cell-width 80 2))
-                   (mapv #(count (:text %)) (:cells (first wide))))))))
+        (doseq [line [(first narrow) (first wide)]]
+          (expect (= ["left" "right"] (mapv :node-id (:cells line))))
+          (expect (= ["│" "│"] (mapv :text (:cells line))))))))
 
 (defn- type-search
   [search text]
@@ -2249,3 +2241,21 @@
                   {:action :move :node-id "work-board" :item-id "a" :column "todo" :index 0}
                   {:action :select :node-id "work-board" :item-ids []}]
                  @calls)))))
+
+(defdescribe flex-space-test
+  (it "moves the second control to the far edge and gives free width to a growing child"
+      (let [children [{:id "a" :type :button :label "One"}
+                      {:id "b" :type :button :label "Two"}]
+            plan (fn [props children]
+                   (-> (mounted {} (merge {:id "row" :type :flex :direction :row :children children} props))
+                       (lv/opened)
+                       (lv/plan 80)
+                       (last)
+                       :cell-slots))
+            start (plan {:justify :start} children)
+            between (plan {:justify :between} children)
+            growing (plan {:justify :between} (assoc-in children [0 :is-growing] true))]
+        (expect (< (first (second start)) (first (second between))))
+        (expect (= 83 (reduce + (second between))))
+        (expect (> (second (first growing)) (second (first between))))
+        (expect (= (second between) (second growing))))))

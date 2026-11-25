@@ -246,7 +246,7 @@
     (let [v
           (view {:id "state" :type :status :text "queued" :tone :idle}
                 {:id "reading"
-                 :type :group
+                 :type :flex
                  :direction :row
                  :children [(log-node) (table-node :insertion)]})
 
@@ -548,7 +548,7 @@
       (let [v
             (view {:id "state" :type :status :text "queued" :tone :idle}
                   {:id "reading"
-                   :type :group
+                   :type :flex
                    :direction :row
                    :children [(log-node) (table-node :insertion)]})
 

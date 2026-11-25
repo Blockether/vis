@@ -61,15 +61,31 @@ def _words(values):
     return [_option(value, value[:1].upper() + value[1:]) for value in values]
 
 
-def tools_node():
-    """The search and the verb of the app header."""
-    return vis.ui.toolbar(
-        "tools",
+def header_nodes(filters):
+    """The search, filters and primary action of the app header."""
+    return [
         vis.ui.plaintext(
-            "query", label="Search issues", placeholder="Search issues", icon="search"
+            "query",
+            label="Search issues",
+            placeholder="Search issues",
+            icon="search",
+            value=filters["query"],
+            is_growing=True,
+        ),
+        vis.ui.select(
+            "priority",
+            [_option(ANY, "All priorities")] + _words(PRIORITIES),
+            label="Priority",
+            value=filters["priority"],
+        ),
+        vis.ui.select(
+            "kind",
+            [_option(ANY, "All types")] + _words(KINDS),
+            label="Type",
+            value=filters["kind"],
         ),
         vis.ui.button("create", "Create issue", icon="plus", variant="primary"),
-    )
+    ]
 
 
 def _labels(data):
@@ -104,7 +120,7 @@ def _project_options(folders):
 def filters_node(data, filters, folders=()):
     """The filters of the board, with the values that the person chose."""
     people, epics, labels = _choices(data)
-    return vis.ui.toolbar(
+    return vis.ui.grid(
         "filters",
         vis.ui.select(
             "project",
@@ -132,18 +148,6 @@ def filters_node(data, filters, folders=()):
             value=filters["label"],
         ),
         vis.ui.select(
-            "priority",
-            [_option(ANY, "All priorities")] + _words(PRIORITIES),
-            label="Priority",
-            value=filters["priority"],
-        ),
-        vis.ui.select(
-            "kind",
-            [_option(ANY, "All types")] + _words(KINDS),
-            label="Type",
-            value=filters["kind"],
-        ),
-        vis.ui.select(
             "group",
             [_option(one, GROUP_WORDS.get(one, one)) for one in GROUPS],
             label="Group by",
@@ -152,6 +156,9 @@ def filters_node(data, filters, folders=()):
         vis.ui.checkbox("flagged", label="Flagged", value=filters["flagged"]),
         vis.ui.checkbox("recent", label="Updated this week", value=filters["recent"]),
         vis.ui.checkbox("hide_done", label="Hide done", value=filters["hide_done"]),
+        columns=4,
+        min_width="md",
+        gap="sm",
     )
 
 
@@ -177,7 +184,7 @@ def create_node(data, *, folders=(), project=ALL, is_open=False):
         "Create issue",
         _project_field(folders, project),
         vis.ui.plaintext("new_title", label="Title", is_required=True, max_length=200),
-        vis.ui.row(
+        vis.ui.flex(
             "new-place",
             vis.ui.select(
                 "new_column",
@@ -192,8 +199,11 @@ def create_node(data, *, folders=(), project=ALL, is_open=False):
                 label="Assignee",
                 value=NO_ONE,
             ),
+            direction="row",
+            is_wrapping=True,
+            gap="sm",
         ),
-        vis.ui.row(
+        vis.ui.flex(
             "new-kind",
             vis.ui.select(
                 "new_priority",
@@ -202,6 +212,9 @@ def create_node(data, *, folders=(), project=ALL, is_open=False):
                 value=DEFAULT_PRIORITY,
             ),
             vis.ui.select("new_kind", _words(KINDS), label="Type", value=DEFAULT_KIND),
+            direction="row",
+            is_wrapping=True,
+            gap="sm",
         ),
         vis.ui.multiline("new_text", label="Description"),
         vis.ui.button("new-submit", "Create", action="submit", variant="primary"),
@@ -342,7 +355,7 @@ class BoardApp:
                     data, folders=self.folders(), project=self.filters["project"]
                 ),
                 description="Plan and track the work of all projects.",
-                header=[tools_node()],
+                header=header_nodes(self.filters),
                 key="board",
                 icon="board",
                 scope="global",
@@ -385,7 +398,7 @@ class BoardApp:
                 self._choices = choices
                 self.view.drop("filters")
                 self.view.add(
-                    filters_node(data, self.filters, self.folders()), after="tools"
+                    filters_node(data, self.filters, self.folders()), after="create"
                 )
             self.view["issues"].set(
                 columns=data["columns"],

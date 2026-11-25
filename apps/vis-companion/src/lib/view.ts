@@ -12,12 +12,60 @@ export const VIEW_EVENT_TYPES = [VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, VIEW_CLOSE_E
 
 export type ViewKind = (typeof VIEW_KINDS)[number];
 
-export type ViewGroupDirection = 'column' | 'row' | 'grid' | 'wrap' | 'toolbar';
-/** How a group lays out its children (`group_direction` in view.json). CLOSED. */
-export const VIEW_GROUP_DIRECTIONS = viewSchema.$defs.group_direction
-  .enum as readonly ViewGroupDirection[];
+export type ViewFlexDirection = 'row' | 'column';
+export type ViewGap = 'none' | 'xs' | 'sm' | 'md' | 'lg';
+export type ViewFlexAlign = 'start' | 'center' | 'end' | 'stretch' | 'baseline';
+export type ViewFlexJustify = 'start' | 'center' | 'end' | 'between';
+export type ViewSize = 'xs' | 'sm' | 'md' | 'lg';
 
-type SchemaBranch = { properties: Record<string, { const?: string; maximum?: number }> };
+export interface ViewFlexLayout {
+  direction: ViewFlexDirection;
+  is_wrapping?: boolean;
+  gap?: ViewGap;
+  align?: ViewFlexAlign;
+  justify?: ViewFlexJustify;
+}
+
+export interface ViewGridLayout {
+  columns?: number;
+  min_width?: ViewSize;
+  gap?: ViewGap;
+}
+
+export const VIEW_CONTAINERS = ['flex', 'grid', 'section', 'collapsible', 'dialog'] as const;
+export type ViewContainerType = (typeof VIEW_CONTAINERS)[number];
+export function isViewContainerType(type: string): type is ViewContainerType {
+  return (VIEW_CONTAINERS as readonly string[]).includes(type);
+}
+
+function readEnum<T extends string>(schema: { enum: string[]; default: string }, raw: unknown): T {
+  return (schema.enum as readonly unknown[]).includes(raw) ? raw as T : schema.default as T;
+}
+
+const GRID_COLUMNS = viewSchema.$defs.component.oneOf.find(
+  (branch) => branch.properties.type.const === 'grid',
+)!.properties.columns as { minimum: number; maximum: number };
+
+export function viewFlexLayout(raw: Record<string, unknown>): ViewFlexLayout {
+  return {
+    direction: readEnum(viewSchema.$defs.flex_direction, raw.direction),
+    ...(raw.is_wrapping === true ? { is_wrapping: true } : {}),
+    gap: readEnum(viewSchema.$defs.gap, raw.gap),
+    align: readEnum(viewSchema.$defs.flex_align, raw.align),
+    justify: readEnum(viewSchema.$defs.flex_justify, raw.justify),
+  };
+}
+
+export function viewGridLayout(raw: Record<string, unknown>): ViewGridLayout {
+  const columns = raw.columns;
+  return {
+    ...(typeof columns === 'number' && Number.isInteger(columns) &&
+      columns >= GRID_COLUMNS.minimum && columns <= GRID_COLUMNS.maximum ? { columns } : {}),
+    min_width: readEnum(viewSchema.$defs.size, raw.min_width),
+    gap: readEnum(viewSchema.$defs.gap, raw.gap),
+  };
+}
+
 export type ViewButtonVariant = 'primary' | 'secondary' | 'destructive';
 type ButtonSchemaBranch = {
   properties: { type?: { const?: string }; variant?: { enum: string[]; default: string } };
@@ -43,20 +91,14 @@ export function appIconName(raw: unknown): AppIconName {
     : (viewSchema.$defs.app_icon.default as AppIconName);
 }
 
-export type ViewCommandIcon = 'refresh' | 'more' | 'plus' | 'search' | 'filter';
-/** The pictures of diff toolbar commands (`command_icon` in view.json). CLOSED. */
-export const VIEW_COMMAND_ICONS = viewSchema.$defs.command_icon.enum as readonly ViewCommandIcon[];
+/** The command icon vocabulary comes from view.json. */
+export const VIEW_COMMAND_ICONS: readonly string[] = viewSchema.$defs.command_icon.enum;
+export type ViewCommandIcon = (typeof VIEW_COMMAND_ICONS)[number];
 
 /** Read a command icon; an absent or unknown one is no icon. */
 export function viewCommandIcon(raw: unknown): { icon?: ViewCommandIcon } {
-  return (VIEW_COMMAND_ICONS as readonly unknown[]).includes(raw) ? { icon: raw as ViewCommandIcon } : {};
+  return typeof raw === 'string' && VIEW_COMMAND_ICONS.includes(raw) ? { icon: raw } : {};
 }
-
-/** The largest `max_columns` of a grid group (view.json). */
-export const VIEW_MAX_COLUMNS =
-  (viewSchema.$defs.component.oneOf as unknown as SchemaBranch[]).find(
-    (branch) => branch.properties.type?.const === 'group',
-  )?.properties.max_columns?.maximum ?? 1;
 
 type ShortcutKeySchema = { oneOf: { enum?: string[] }[] };
 /** The named keys that an app can bind (`shortcut_key` in view.json). CLOSED. */
@@ -69,20 +111,6 @@ export const VIEW_SHORTCUTS_MAX = viewSchema.$defs.live_view.properties.shortcut
 export const VIEW_SHORTCUT_LABEL_MAX = viewSchema.$defs.shortcut.properties.label.maxLength;
 /** The longest note that an app or an HTML page gives the model (view.json). */
 export const VIEW_AGENT_NOTE_MAX = viewSchema.$defs.live_view.properties.agent_note.maxLength;
-
-/** Read a group direction; an unknown or absent one stacks as a column. */
-export function viewGroupDirection(raw: unknown): ViewGroupDirection {
-  return (VIEW_GROUP_DIRECTIONS as readonly unknown[]).includes(raw)
-    ? (raw as ViewGroupDirection)
-    : 'column';
-}
-
-/** Read a grid's column cap: a whole number from 1 to 12, else no cap. */
-export function viewMaxColumns(raw: unknown): number | undefined {
-  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 && raw <= VIEW_MAX_COLUMNS
-    ? raw
-    : undefined;
-}
 
 export const VIEW_ACTIONS = [
   'activate',

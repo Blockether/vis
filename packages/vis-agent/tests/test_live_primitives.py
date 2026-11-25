@@ -21,7 +21,7 @@ def presentation():
             vis.ui.spinner(variant, variant, variant=variant)
             for variant in ("braille", "dots", "line", "pulse")
         ],
-        vis.ui.disclosure(
+        vis.ui.collapsible(
             "details",
             "Details",
             vis.ui.button("go", "Go"),
@@ -147,9 +147,9 @@ def test_shared_fixture_covers_every_primitive_and_spinner():
         for branch in branches
         if "name" in branch["required"]
     }
-    assert {n["type"] for n in nodes} - {"group"} - inputs == {
+    assert {n["type"] for n in nodes} - inputs == {
         branch["properties"]["type"]["const"] for branch in branches
-    } - {"group"} - inputs
+    } - inputs
     assert {n["type"] for n in nodes} & inputs, "the fixture shows one input"
     assert {n["variant"] for n in nodes if n["type"] == "spinner"} == {
         branch["const"] for branch in definition("view", "spinner_variant")["oneOf"]
@@ -569,9 +569,7 @@ def test_canvas_batch_clears_selection_when_it_disables_selection(
 
 
 @pytest.mark.parametrize("host_kind", ["outside", "recorder"])
-def test_a_batch_keeps_a_set_after_the_group_of_its_node_comes_again(
-    monkeypatch, host_kind
-):
+def test_a_batch_keeps_a_set_after_its_container_comes_again(monkeypatch, host_kind):
     # The last set moved before the drop of the group,
     # so the app kept the text of the added group.
     host = (
@@ -580,7 +578,7 @@ def test_a_batch_keeps_a_set_after_the_group_of_its_node_comes_again(
     monkeypatch.setattr(vis, "_host", host)
 
     def box(text):
-        return vis.ui.group("box", vis.ui.paragraph("note", text))
+        return vis.ui.section("box", vis.ui.paragraph("note", text))
 
     with vis.live("Notes", [box("zero")], flush_ms=10000) as view:
         with view.batch():
@@ -619,25 +617,34 @@ def test_outside_shows_an_unknown_button_variant_as_an_error_card():
     assert "primary, secondary, destructive (enum)" in card["text"]
 
 
-def test_recorder_refuses_a_live_group_without_an_id(monkeypatch):
+def test_recorder_refuses_a_live_layout_without_an_id(monkeypatch):
     # #428: the recorder hid the buttons of an unnamed group; the engine refuses it.
     # Vis raises VisToolError, a RuntimeError, so the recorder must raise one too.
     monkeypatch.setattr(vis, "_host", vis.testing.LiveRecorder(vis._host))
-    with pytest.raises(
-        RuntimeError, match=r'group needs an id.*vis\.ui\.group\("actions"'
-    ):
+    with pytest.raises(RuntimeError, match="node needs an id"):
         with vis.live(
-            "Chats", [vis.ui.wrap(vis.ui.button("save", "Save"))], flush_ms=0
+            "Chats",
+            [
+                vis.ui.flex(
+                    vis.ui.button("save", "Save"), direction="row", is_wrapping=True
+                )
+            ],
+            flush_ms=0,
         ):
             pass
 
 
-def test_outside_refuses_a_live_group_without_an_id_with_the_fix():
+def test_outside_refuses_a_live_layout_without_an_id():
     # #428: outside Vis the refusal named no fix for an unnamed group.
-    view = {"title": "Chats", "nodes": [vis.ui.wrap(vis.ui.button("save", "Save"))]}
-    with pytest.raises(
-        RuntimeError, match=r'group needs an id.*vis\.ui\.group\("actions"'
-    ):
+    view = {
+        "title": "Chats",
+        "nodes": [
+            vis.ui.flex(
+                vis.ui.button("save", "Save"), direction="row", is_wrapping=True
+            )
+        ],
+    }
+    with pytest.raises(RuntimeError, match="node needs an id"):
         _outside.live(json.dumps({"op": "open", "view": view}))
 
 
@@ -693,7 +700,7 @@ def test_outside_shows_invalid_primitive_declarations_as_error_cards(
 ):
     monkeypatch.setattr(vis, "_host", _outside.host)
     with vis.live(
-        "Invalid", [vis.ui.disclosure("section", "Section", invalid)], flush_ms=0
+        "Invalid", [vis.ui.collapsible("section", "Section", invalid)], flush_ms=0
     ) as view:
         card = view.state()["nodes"][0]["children"][0]
     assert (card["id"], card["type"], card["tone"]) == ("x", "status", "error")
@@ -763,9 +770,7 @@ def test_divider_is_static_and_retained(monkeypatch, host_kind):
         view.drop("section-break")
         assert len(view.state()["nodes"]) == 1
         view.add(
-            vis.ui.column(
-                "results", divider, vis.ui.paragraph("after", "Review results")
-            )
+            vis.ui.flex("results", divider, vis.ui.paragraph("after", "Review results"))
         )
         assert view.state()["nodes"][1]["children"][0] == divider
         receipt = view.close()
@@ -853,32 +858,53 @@ def test_a_blank_detail_clears_the_status_line(monkeypatch, host_kind):
         assert "detail" not in view.state()["nodes"][0]
 
 
-def test_grid_and_wrap_build_the_layout_directions_of_the_contract():
-    grid = vis.ui.grid(
-        "board", vis.ui.paragraph("a", "A"), vis.ui.paragraph("b", "B"), max_columns=3
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_a_patch_reaches_a_node_in_wrapped_flex_and_grid(monkeypatch, host_kind):
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
     )
-    assert grid["direction"] == "grid"
-    assert grid["max_columns"] == 3
-    assert [child["id"] for child in grid["children"]] == ["a", "b"]
-    actions = vis.ui.wrap(
-        "actions", vis.ui.button("go", "Go"), vis.ui.button("stop", "Stop")
+    monkeypatch.setattr(vis, "_host", host)
+    layout = vis.ui.grid(
+        "page",
+        vis.ui.flex(
+            "commands",
+            vis.ui.button("run", "Run", is_growing=True),
+            direction="row",
+            is_wrapping=True,
+            gap="xs",
+            align="end",
+            justify="between",
+        ),
+        columns=3,
+        min_width="sm",
+        gap="lg",
     )
-    assert actions["direction"] == "wrap"
-    assert "max_columns" not in actions
-    assert "max_columns" not in vis.ui.grid(vis.ui.plaintext("host"))
-    with vis.live("Layout", [grid, actions], flush_ms=0) as view:
-        nodes = view.state()["nodes"]
-        assert [node["direction"] for node in nodes] == ["grid", "wrap"]
+    with vis.live("Layout", [layout], flush_ms=0) as view:
+        view["run"].set(is_disabled=True)
+        node = view.state()["nodes"][0]
+        _contracts.validate("view", "component", node)
+        command = node["children"][0]["children"][0]
+        assert command["is_disabled"] and command["is_growing"]
 
 
-def test_a_group_arranging_nothing_is_refused_where_it_was_written():
-    # Issue #255: an empty layout group used to reach the host as an invalid view.
+@pytest.mark.parametrize(
+    "options", [{"is_wrapping": True}, {"is_wrapping": False}, {"justify": "between"}]
+)
+def test_column_flex_rejects_row_options(options):
+    with pytest.raises(ValueError, match="Only a row"):
+        vis.ui.flex("layout", vis.ui.button("save", "Save"), **options)
+
+
+def test_an_empty_layout_is_refused_where_it_was_written():
+    # Issue #255: the builder used to send an empty layout to the host.
     for build in (
-        lambda: vis.ui.column("targets"),
-        lambda: vis.ui.row(),
+        lambda: vis.ui.flex("targets"),
+        lambda: vis.ui.flex(direction="row"),
         lambda: vis.ui.grid(),
-        lambda: vis.ui.wrap("actions"),
-        lambda: vis.ui.disclosure("targets", "Targets"),
+        lambda: vis.ui.section("actions"),
+        lambda: vis.ui.collapsible("targets", "Targets"),
+        lambda: vis.ui.dialog("confirm", "Confirm"),
+        lambda: vis.ui.menu("actions", "Actions"),
     ):
         with pytest.raises(ValueError, match="at least one node"):
             build()
@@ -911,10 +937,70 @@ def test_stat_and_step_updates_carry_the_label_the_schema_requires(
         assert steps[0]["label"] == "Build" and steps[0]["tone"] == "ok"
 
 
+@pytest.mark.parametrize("many", [False, True])
+def test_a_toggle_in_a_diff_changes_values_and_rejects_unknown_options(
+    monkeypatch, many
+):
+    recorder = vis.testing.LiveRecorder(vis._host)
+    monkeypatch.setattr(vis, "_host", recorder)
+    initial = ["side"] if many else "side"
+    chosen = ["side", "unified"] if many else "unified"
+    diff = vis.ui.diff(
+        "diff",
+        "",
+        children=[
+            vis.ui.toggle(
+                "mode",
+                [vis.ui.toggle.option("side", "Side by side", icon="more"), "unified"],
+                value=initial,
+                is_multiple=many,
+            )
+        ],
+    )
+    app = vis.attach(vis.ui.app("Review", diff, flush_ms=0))
+    app["mode"].set_label("Diff mode")
+    assert app.values() == {"mode": initial}
+    assert recorder.change("mode", chosen)["is_accepted"]
+    assert [(e.node_id, e.value) for e in app.events()] == [("mode", chosen)]
+    with pytest.raises(RuntimeError, match="domain"):
+        app["mode"].set(["missing"] if many else ["side"])
+    assert app["mode"].value == chosen
+    assert recorder.node("mode")["label"] == "Diff mode"
+    app.close()
+
+
+def test_nested_menu_action_and_dialog_close_reach_owner(monkeypatch):
+    recorder = vis.testing.LiveRecorder(vis._host)
+    monkeypatch.setattr(vis, "_host", recorder)
+    menu = vis.ui.menu(
+        "actions",
+        "Actions",
+        vis.ui.menu("scope", "Scope", vis.ui.button("run", "Run")),
+        vis.ui.divider("separator"),
+        vis.ui.button("quit", "Quit"),
+    )
+    dialog = vis.ui.dialog(
+        "details", "Details", vis.ui.paragraph("about", "Information"), is_open=True
+    )
+    app = vis.attach(vis.ui.app("Example", dialog, header=[menu], flush_ms=0))
+    app["scope"].set(label="Choose scope")
+    app["details"].set(description="More information")
+    recorder.activate("run")
+    recorder.activate("details")
+    assert [(e.type, e.node_id) for e in app.events()] == [
+        ("activate", "run"),
+        ("activate", "details"),
+    ]
+    assert recorder.node("scope")["label"] == "Choose scope"
+    assert recorder.node("details")["description"] == "More information"
+    assert recorder.node("details")["is_open"] is False
+    app.close()
+
+
 def _form_nodes():
     return [
         vis.ui.heading("title", "Deploy", level=2),
-        vis.ui.group(
+        vis.ui.section(
             "deploy-form",
             vis.ui.plaintext("target", label="Target", is_required=True),
             vis.ui.password("token", label="Token"),
@@ -977,12 +1063,22 @@ def test_a_live_form_outside_vis_has_values_and_no_events(monkeypatch):
         assert view.events() == []
 
 
+def test_toggle_option_uses_the_contract_icon_vocabulary():
+    option = vis.ui.toggle.option("side", "Side by side", icon="columns")
+    node = vis.ui.toggle("mode", [option, "unified"], label="Mode")
+    assert _contracts.live_node_lines(node) == []
+    with pytest.raises(ValueError, match="icon must be one of"):
+        vis.ui.toggle.option("side", "Side by side", icon="not-an-icon")
+    with pytest.raises(ValueError, match="icon must be one of"):
+        vis.ui.toggle("mode", [{**option, "icon": "not-an-icon"}, "unified"])
+
+
 def test_ask_sends_one_component_tree():
     validators = {}
     request = vis._request_spec(
         "Deploy",
         [
-            vis.ui.group("g", vis.ui.plaintext("a"), label="Group"),
+            vis.ui.section("g", vis.ui.plaintext("a"), label="Group"),
             vis.ui.card("c", "Card"),
         ],
         {},
@@ -990,6 +1086,19 @@ def test_ask_sends_one_component_tree():
     )
     assert request["nodes"][0]["children"] == [{"type": "plaintext", "name": "a"}]
     assert request["nodes"][1] == {"type": "card", "id": "c", "title": "Card"}
+
+
+ASK_CASES = json.loads((_contracts._DATA / "fixtures" / "view.json").read_text())
+
+
+@pytest.mark.parametrize("case", ASK_CASES["form_refusals"], ids=lambda f: f["name"])
+def test_ask_rejects_live_view_controls_with_the_contract_diagnostic(case):
+    request = dict(ASK_CASES["input"], nodes=case["nodes"], channel_ids=["app"])
+    request.pop("created_at")
+    (diagnostic,) = _contracts._explain_lines("view", "request", request)
+    with pytest.raises(ValueError, match="does not take") as exc:
+        vis.ask(request["title"], request["nodes"])
+    assert str(exc.value).endswith(diagnostic)
 
 
 def test_a_panel_view_pushes_events_to_its_open_callback(monkeypatch):

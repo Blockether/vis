@@ -39,23 +39,15 @@ function field(
   return { id, name: id, type, label, is_required: false, ...extra };
 }
 
-/** A layout group: it answers nothing itself, it just arranges what it owns. */
-function group(
+/** Place fields in a flex, with a section when they have a shared label. */
+function fieldLayout(
   id: string,
   direction: 'row' | 'column',
   children: HumanInputField[],
-  extra: Partial<HumanInputField> = {},
+  heading?: { label: string; description?: string },
 ): HumanInputField {
-  return {
-    id,
-    name: id,
-    type: 'group',
-    label: '',
-    is_required: false,
-    direction,
-    children,
-    ...extra,
-  };
+  const layout = field(id, 'flex', '', { direction, is_wrapping: true, children });
+  return heading ? field(`${id}:section`, 'section', heading.label, { description: heading.description, children: [layout] }) : layout;
 }
 
 /**
@@ -237,7 +229,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     description: 'Fields that belong together sit together.',
     source: 'db-migrate.py',
     nodes: [
-      group(
+      fieldLayout(
         'group:host+port',
         'row',
         [
@@ -248,7 +240,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
         ],
         { label: 'Server', description: 'Where the pool dials out.' },
       ),
-      group(
+      fieldLayout(
         'group:user+pass',
         'row',
         [
@@ -258,11 +250,11 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
         { label: 'Sign in' },
       ),
       // A column INSIDE the form and a row inside it: the two directions nest.
-      group(
+      fieldLayout(
         'group:pool',
         'column',
         [
-          group('group:size+tls', 'row', [
+          fieldLayout('group:size+tls', 'row', [
             field('size', 'plaintext', 'Pool size', { placeholder: '8' }),
             field('idle', 'plaintext', 'Idle (s)', { placeholder: '30' }),
           ]),

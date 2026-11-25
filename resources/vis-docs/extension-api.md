@@ -1634,6 +1634,7 @@ Live views has a section for each of these calls:
 - `on_event=callback` gets each `vis.LiveEvent` of a panel view as an extension callback.
 - `vis.attach(vis.ui.app(title, *nodes))` opens an app: a live view that stays in the session.
   People save drafts and send them. [Apps](live-views.md#apps) shows how you answer them.
+- `vis.ui.app(..., header=[search, create])` puts controls in the [compact app header](live-views.md#apps).
 - `vis.ui.app(..., shortcuts=[vis.ui.app.shortcut("n", "next")])` gives an app single-key shortcuts.
   `vis.attach(app, on_event=callback)` and `app.run(callback)` handle its events. [Add shortcuts
   to an app](live-views.md#add-shortcuts-to-an-app) shows them.

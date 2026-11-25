@@ -10,6 +10,7 @@ import fixture from '../lib/live-view.fixture.json';
 import type { GatewayClient } from '../lib/gateway';
 import {
   applyLivePatch,
+  isLiveContainer,
   LIVE_NOTE_CHARS,
   liveViewFromWire,
   type LiveNode,
@@ -33,7 +34,7 @@ function withNode(view: LiveView, node: LiveNode): LiveView {
     nodes.map((existing) =>
       existing.id === node.id
         ? node
-        : existing.type === 'group'
+        : isLiveContainer(existing)
           ? { ...existing, children: swap(existing.children) }
           : existing,
     );
@@ -99,7 +100,7 @@ describe('selecting a table row', () => {
   const selectableView = (): LiveView => {
     const view = opened();
     const hosts = view.nodes
-      .flatMap((node) => (node.type === 'group' ? node.children : [node]))
+      .flatMap((node) => (isLiveContainer(node) ? node.children : [node]))
       .find((node) => node.id === 'hosts');
     if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
     return withNode(view, {
@@ -129,7 +130,7 @@ describe('selecting a table row', () => {
   /** The hosts table of a view, which sits one level down when the view groups it. */
   const hostsTable = (view: LiveView) => {
     const node = view.nodes
-      .flatMap((one) => (one.type === 'group' ? one.children : [one]))
+      .flatMap((one) => (isLiveContainer(one) ? one.children : [one]))
       .find((one) => one.id === 'hosts');
     if (!node || node.type !== 'table') throw new Error('the fixture must hold the hosts table');
     return node;
@@ -329,7 +330,7 @@ describe('a long table', () => {
   const longView = (count: number): LiveView => {
     const view = opened();
     const hosts = view.nodes
-      .flatMap((node) => (node.type === 'group' ? node.children : [node]))
+      .flatMap((node) => (isLiveContainer(node) ? node.children : [node]))
       .find((node) => node.id === 'hosts');
     if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
     return withNode(view, {
@@ -350,7 +351,7 @@ describe('a long table', () => {
     const first = screen.getByText('host-0').closest('tr');
 
     const table = view.nodes
-      .flatMap((node) => (node.type === 'group' ? node.children : [node]))
+      .flatMap((node) => (isLiveContainer(node) ? node.children : [node]))
       .find((node) => node.id === 'hosts');
     if (!table || table.type !== 'table') throw new Error('the long view must hold the table');
     const grown = withNode(view, {
@@ -875,142 +876,47 @@ describe('live horizontal dividers', () => {
   });
 });
 
-// Report: a tab changed its face only when the owner answered, so a strip of tabs read as slow.
-describe('a strip of tabs', () => {
-  afterEach(() => vi.useRealTimers());
-
-  const strip = (selected: string): LiveView => ({
-    ...opened(),
-    nodes: [
-      {
-        id: 'tabs',
-        type: 'group',
-        direction: 'row',
-        children: ['one', 'two'].map((id) => ({
-          id,
-          type: 'button',
-          label: id,
-          action: 'activate',
-          variant: 'secondary',
-          is_disabled: false,
-          is_selected: id === selected,
-          clicks: 0,
-        })),
-      },
-    ],
-  });
-  const held = () =>
-    ['one', 'two'].filter(
-      (name) => screen.getByRole('button', { name }).getAttribute('aria-pressed') === 'true',
-    );
-
-  it('shows the pressed tab at once, then the choice of the owner', () => {
-    const onActivate = vi.fn(() => new Promise<void>(() => {}));
-    const { rerender } = render(<LiveViewPanel view={strip('one')} onActivate={onActivate} />);
-    fireEvent.click(screen.getByRole('button', { name: 'two' }));
-    expect(onActivate).toHaveBeenCalledWith('two');
-    expect(held()).toEqual(['two']);
-    rerender(<LiveViewPanel view={strip('two')} onActivate={onActivate} />);
-    expect(held()).toEqual(['two']);
-    // Another client moves the owner back: the old press holds nothing.
-    rerender(<LiveViewPanel view={strip('one')} onActivate={onActivate} />);
-    expect(held()).toEqual(['one']);
-  });
-
-  it('returns to the choice of the owner when the owner changes nothing', async () => {
-    vi.useFakeTimers();
-    render(<LiveViewPanel view={strip('one')} onActivate={async () => {}} />);
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'two' }));
-    });
-    expect(held()).toEqual(['two']);
-    act(() => {
-      vi.advanceTimersByTime(3000);
-    });
-    expect(held()).toEqual(['one']);
-  });
+it('sends a diff toggle change instead of an activation', async () => {
+  const onChange = vi.fn(async () => {});
+  const onActivate = vi.fn();
+  const view = liveViewFromWire({ ...fixture, nodes: [{
+    id: 'diff', type: 'diff', patch: '--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-before\n+after',
+    children: [{ id: 'area', type: 'toggle', name: 'area', label: 'Area', is_required: true, value: 'work',
+      options: [{ value: 'work', label: 'Workspace' }, { value: 'temp', label: 'Temporary' }] }],
+  }] })!;
+  render(<LiveViewPanel view={view} onChange={onChange} onActivate={onActivate} />);
+  expect(screen.getByRole('radio', { name: 'Workspace' })).toBeChecked();
+  const other = screen.getByRole('radio', { name: 'Temporary' });
+  fireEvent.click(other);
+  expect(other).toBeChecked();
+  await waitFor(() => expect(onChange).toHaveBeenCalledWith('area', 'temp'));
+  expect(onActivate).not.toHaveBeenCalled();
 });
 
-// An app builds its own chrome from view parts: a toolbar names its fields for a
-// screen reader, and a dialog shows while its owner holds it open.
-describe('a toolbar and a dialog of an app', () => {
-  const view = (isOpen: boolean): LiveView => {
-    const parsed = liveViewFromWire({
-      ...fixture,
-      nodes: [
-        {
-          id: 'tools',
-          type: 'group',
-          direction: 'toolbar',
-          label: 'Tools',
-          children: [
-            { id: 'query', type: 'plaintext', label: 'Search issues', icon: 'search' },
-            { id: 'create', type: 'button', label: 'Create issue', icon: 'plus' },
-          ],
-        },
-        {
-          id: 'new-issue',
-          type: 'group',
-          label: 'New issue',
-          is_dialog: true,
-          is_open: isOpen,
-          children: [{ id: 'title', type: 'plaintext', label: 'Title' }],
-        },
-      ],
-    });
-    if (!parsed) throw new Error('the view must be paintable');
-    return parsed;
-  };
-
-  it('names the toolbar fields and closes an open dialog through its owner', () => {
-    const onActivate = vi.fn(async () => {});
-    const { rerender } = render(<LiveViewPanel view={view(false)} onActivate={onActivate} />);
-    const tools = screen.getByRole('toolbar', { name: 'Tools' });
-    expect(tools.querySelector('input')?.getAttribute('placeholder')).toBe('Search issues');
-    expect(screen.getByRole('textbox', { name: 'Search issues' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Create issue' }).textContent).not.toContain('Create issue');
-    expect(screen.queryByRole('textbox', { name: 'Title' })).toBeNull();
-    rerender(<LiveViewPanel view={view(true)} onActivate={onActivate} />);
-    expect(screen.getByRole('textbox', { name: 'Title' })).toBeTruthy();
-    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Title' }), { key: 'Escape' });
-    expect(onActivate).toHaveBeenCalledWith('new-issue');
-  });
-});
-
-// User report: a switch in the app band showed its group name above two squeezed tabs.
-it('shows a switch in a toolbar as one control without a visible group name', async () => {
+it('closes an open dialog through its owner', () => {
   const onActivate = vi.fn(async () => {});
-  const choice = (id: string, label: string, selected: boolean) => ({
-    id,
-    type: 'button',
-    label,
-    is_selected: selected,
-  });
-  const parsed = liveViewFromWire({
-    ...fixture,
-    nodes: [
-      {
-        id: 'band',
-        type: 'group',
-        direction: 'toolbar',
-        label: 'Area',
-        children: [
-          {
-            id: 'area',
-            type: 'group',
-            direction: 'row',
-            label: 'Area',
-            children: [choice('work', 'Workspace', true), choice('temp', 'Temporary', false)],
-          },
-        ],
-      },
-    ],
-  });
-  if (!parsed) throw new Error('the view must be paintable');
-  render(<LiveViewPanel view={parsed} onActivate={onActivate} />);
-  expect(screen.getByRole('group', { name: 'Area' })).toBeTruthy();
-  expect(screen.queryByText('Area')).toBeNull();
-  expect(screen.getByRole('button', { name: 'Workspace' })).toHaveAttribute('aria-pressed', 'true');
-  fireEvent.click(screen.getByRole('button', { name: 'Temporary' }));
-  await waitFor(() => expect(onActivate).toHaveBeenCalledWith('temp'));
+  const view = (isOpen: boolean) => liveViewFromWire({ ...fixture, nodes: [{
+    id: 'new-issue', type: 'dialog', label: 'New issue', description: 'Add a title to the issue.', is_open: isOpen,
+    children: [{ id: 'title', type: 'plaintext', label: 'Title' }],
+  }] })!;
+  const { rerender } = render(<LiveViewPanel view={view(false)} onActivate={onActivate} />);
+  expect(screen.queryByRole('textbox', { name: 'Title' })).toBeNull();
+  rerender(<LiveViewPanel view={view(true)} onActivate={onActivate} />);
+  expect(screen.getByRole('dialog', { name: 'New issue', description: 'Add a title to the issue.' })).toBeVisible();
+  fireEvent.keyDown(screen.getByRole('textbox', { name: 'Title' }), { key: 'Escape' });
+  expect(onActivate).toHaveBeenCalledWith('new-issue');
+});
+
+it('submits only the values in the nearest layout', async () => {
+  const onSubmit = vi.fn(async () => {});
+  const view = liveViewFromWire({ ...fixture, nodes: [
+    { id: 'outside', type: 'plaintext', label: 'Outside', value: 'not sent' },
+    { id: 'section', type: 'section', children: [
+      { id: 'layout', type: 'grid', children: [{ id: 'inside', type: 'plaintext', label: 'Inside', value: 'sent' }] },
+      { id: 'submit', type: 'button', label: 'Send section', action: 'submit' },
+    ] },
+  ] })!;
+  render(<LiveViewPanel view={view} onSubmit={onSubmit} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Send section' }));
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('submit', { inside: 'sent' }));
 });

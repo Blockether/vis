@@ -244,15 +244,6 @@
 
 (def ^:private field-keys "Every key a VALUE field spec may carry." view-spec/field-keys)
 
-(def ^:private layout-keys
-  "The keys only a `group` has. A field that holds an ANSWER carrying one of them
-   is a spec that meant to group and forgot to say so: dropping the key in
-   silence drew the form flat and sent the author hunting for a layout bug in the
-   surfaces, so it is refused with the fix in the message."
-  view-spec/layout-keys)
-
-(def ^:private option-keys "Every key one `:options` entry may carry." view-spec/option-keys)
-
 (def ^:private request-keys
   "Every key a request spec may carry. `:channel-id` is the singular spelling of
    `:channel-ids` — a one-channel convenience, and the only spec key with no
@@ -316,8 +307,9 @@
         :else x))
 
 (defn- normalize-option
-  [field-id option]
-  (when (map? option) (check-keys! "option" option-keys option #(invalid-field! field-id %)))
+  [field-id field-type option]
+  (when (map? option)
+    (check-keys! "option" (view-spec/option-keys field-type) option #(invalid-field! field-id %)))
   (let [[value label]
         (if (map? option) [(:value option) (:label option)] [option option])
 
@@ -325,13 +317,14 @@
         (trimmed value)]
 
     (when-not value (invalid-field! field-id "option values must be non-blank"))
-    {:value value :label (or (trimmed label) value)}))
+    (cond-> {:value value :label (or (trimmed label) value)}
+      (some? (:icon option)) (assoc :icon (:icon option)))))
 
 (defn- normalize-options
   [field-id field-type raw form?]
   (when-not (sequential? raw)
     (invalid-field! field-id (str (name field-type) " needs an :options sequence")))
-  (let [options (mapv #(normalize-option field-id %) raw)]
+  (let [options (mapv #(normalize-option field-id field-type %) raw)]
     (when (empty? options)
       (invalid-field! field-id (str (name field-type) " needs at least one option")))
     (when (and form? (not (apply distinct? (map :value options))))
@@ -460,12 +453,7 @@
   (let [type (:type node)]
     (str/lower-case (or (if (keyword? type) (name type) (trimmed type)) ""))))
 
-(defn- group-node?
-  "True when this RAW spec node asks to be a layout group. Decided from the type
-   name alone, and decided FIRST: which keys are legal, whether a `:name` is
-   required and whether the node may hold children all follow from the answer."
-  [node]
-  (= view-spec/group-type-name (raw-type-name node)))
+(defn- container-node? [node] (view-spec/container? (raw-type-name node)))
 
 (defn normalize-field
   "Validate one FIELD spec — a leaf holding exactly one answer — and return its
@@ -481,7 +469,7 @@
      - `:description` is the prose under that label, rendered in italic by every
        dialog.
 
-   A layout group or a display component is not a field and never arrives
+   A container or a display component is not a field and never arrives
    here: [[normalize-component]] routes it before a single value key is parsed.
 
    `context` is `:form` (the default) or `:live`. For a live input the shared node
@@ -492,12 +480,8 @@
   ([field] (normalize-field field :form))
   ([field context]
    (when-not (map? field) (invalid-field! nil "field must be a map"))
-   (when (group-node? field)
-     (invalid-field! (trimmed (pick field :name :id))
-                     (str "a group is not a field — it holds no answer, only the fields it"
-                          " arranges. Normalize a node of the tree with normalize-node.")))
    (when-let [display (get view-spec/live-node-types
-                           (str/lower-case (or (trimmed (:type field)) "")))]
+                           (raw-type-name field))]
      (invalid-field! (trimmed (pick field :name :id))
                      (str "a " (name display)
                           " is a display component, not a field — it holds no answer."
@@ -506,25 +490,13 @@
          (trimmed (pick field :name :id))
 
          _
-         ;; Layout keys are refused BEFORE the generic key check so the message can
-         ;; say what the author actually meant: `fields` on a `plaintext` is a group
-         ;; that forgot its `:type`, not a misspelling.
-         (when-let [k (first (sort (filter layout-keys (keys field))))]
-           (invalid-field! field-id
-                           (str "key \""
-                                (snake-key k)
-                                "\" only exists on a group — a field that holds an answer has"
-                                " nothing to lay out. Put these fields inside"
-                                " {\"type\": \"group\", \"direction\": \"row\"} instead.")))
-
-         _
          (check-keys! "field" field-keys field #(invalid-field! field-id %))
 
          _
          (when-not field-id (invalid-field! nil "field needs a non-blank :name"))
 
          type-name
-         (or (trimmed (:type field)) "plaintext")
+         (or (not-empty (raw-type-name field)) "plaintext")
 
          field-type
          (get view-spec/field-types (str/lower-case type-name))
@@ -569,6 +541,12 @@
                       :is-required
                       (normalize-bool field-id ":is-required" (:is-required field) false)
                       :is-secret (contains? view-spec/secret-types field-type)}
+               (some? (:is-growing field))
+               (assoc :is-growing (:is-growing field))
+
+               (and (= :toggle field-type) (some? (:is-multiple field)))
+               (assoc :is-multiple (:is-multiple field))
+
                description
                (assoc :description description)
 
@@ -619,14 +597,14 @@
 
 (defn- leaves!
   "Conjoin every ANSWERABLE field of `fields` onto TRANSIENT vector `acc`, depth
-   first. A group is walked through and a decoration is dropped — neither holds
+   first. A container is walked through and a decoration is dropped — neither holds
    a value, so neither can key `:values`. The accumulator is threaded through
    the recursion, so a tree of any depth is flattened in one pass onto one array
    — where the `mapcat` shape this replaces allocated a lazy seq and a fresh
-   vector for every group it entered."
+   vector for every container it entered."
   [acc fields]
   (reduce (fn [acc {:keys [type] :as field}]
-            (cond (= view-spec/group-type type) (leaves! acc (:children field))
+            (cond (view-spec/container? type) (leaves! acc (:children field))
                   (view-spec/decoration? field) acc
                   :else (conj! acc field)))
           acc
@@ -634,7 +612,7 @@
 
 (defn input-fields
   "Every ANSWERABLE field in `fields`, depth-first in the order a surface draws
-   them. A group carries no value, so it is walked through and never returned:
+   them. A container carries no value, so it is walked through and never returned:
    this is the sequence that keys `:values`, and the reason a layout change can
    never change an extension's answer map.
 
@@ -644,27 +622,27 @@
   (persistent! (leaves! (transient []) fields)))
 
 (defn- nodes!
-  "[[leaves!]] for the WHOLE tree: every group is conjoined before the children
+  "[[leaves!]] for the WHOLE tree: every container is conjoined before the children
    it owns, on the same transient accumulator."
   [acc fields]
   (reduce (fn [acc {:keys [type] :as field}]
-            (if (= view-spec/group-type type)
+            (if (view-spec/container? type)
               (nodes! (conj! acc field) (:children field))
               (conj! acc field)))
           acc
           fields))
 
 (defn- all-fields
-  "Every node in the tree, groups included — what name uniqueness is checked on."
+  "Every node in the tree, containers included — what name uniqueness is checked on."
   [fields]
   (persistent! (nodes! (transient []) fields)))
 
 (defn- map-fields
-  "Rewrite every node of the tree with `f`, children before their group."
+  "Rewrite every node of the tree with `f`, children before their parent."
   [f fields]
   (mapv (fn [{:keys [type] :as field}]
           (f (cond-> field
-               (= view-spec/group-type type)
+               (view-spec/container? type)
                (update :children #(map-fields f %)))))
         fields))
 
@@ -764,11 +742,6 @@
   (if-let [why (view-spec/live-patch-error patch)]
     (invalid-live-patch! why)
     patch))
-
-(def ^:private live-group-decl-keys
-  "Every key a live layout GROUP spec may write: its own vocabulary, so `lines` on
-   a `row` is refused by name rather than quietly ignored."
-  view-spec/live-group-keys)
 
 (def ^:private live-item-keys
   "Every key one item of a keyed collection may write, by the key holding them."
@@ -1146,7 +1119,7 @@
   "True when this RAW spec node asks for an input component: neither a group nor
    a display, data or action component. A node without a type is `plaintext`."
   [node]
-  (and (not (group-node? node)) (not (contains? view-spec/live-node-types (raw-type-name node)))))
+  (not (contains? view-spec/live-node-types (raw-type-name node))))
 
 (def ^:private ^:dynamic *host-patch*
   "True while the host writes a patch itself. Its messages keep their authors and it
@@ -1261,9 +1234,7 @@
 
 (declare live-node)
 
-(defn- diff-toolbar
-  "The toolbar `children` of a diff: buttons, and groups of buttons that a surface
-   paints as one menu each. The shared node check holds the toolbar rules."
+(defn- child-nodes
   [fail! context children]
   (if (sequential? children) (mapv #(live-node fail! context %) children) children))
 
@@ -1271,7 +1242,9 @@
   "`built` with each key of `node` that `allowed` does not hold, so the schema of
    the node refuses it by name."
   [built node allowed]
-  (merge (apply dissoc node allowed) (into {} (remove (comp nil? val)) built)))
+  (merge (apply dissoc node allowed)
+         (select-keys node [:is-growing])
+         (into {} (remove (comp nil? val)) built)))
 
 (defn- live-node
   "One declared component of a form or a live view. `fail!` is the refusal of
@@ -1283,7 +1256,7 @@
    `live-view-checks.json`) runs first and is the one refusal. After it this parser
    only normalizes: spellings, defaults and trimmed text.
 
-   A layout GROUP is parsed here too, by recursion: a view arranges its work
+   A container is parsed here too, by recursion: a view arranges its work
    exactly the way a form arranges its questions, and a row inside a column
    costs no second grammar."
   ([fail! node] (live-node fail! :live node))
@@ -1299,60 +1272,28 @@
            (merge (get view-spec/live-node-defaults (raw-type-name node))
                   (into {} (remove (comp nil? val)) node))
 
-           is-group
-           (group-node? node)
+           type-name
+           (raw-type-name node)
 
            allowed
-           (if is-group
-             live-group-decl-keys
-             (get view-spec/live-node-type-keys (raw-type-name node)))]
+           (get view-spec/live-node-type-keys type-name)]
 
-       (if is-group
-         ;; The id addresses the node and names its error, so it comes first.
-         (let [id
-               (trimmed (:id node))
-
-               children
-               (:children node)
-
-               label
-               (trimmed (:label node))
-
-               description
-               (trimmed (:description node))]
-
-           (with-foreign-keys (cond-> {:id id
-                                       :type view-spec/group-type
-                                       :direction (schema-term view-spec/group-directions
-                                                               (:direction node))
-                                       :children (if (sequential? children)
-                                                   (mapv #(live-node fail! context %) children)
-                                                   children)}
-                                label
-                                (assoc :label label)
-
-                                description
-                                (assoc :description description)
-
-                                (some? (:max-columns node))
-                                (assoc :max-columns (schema-long (:max-columns node)))
-
-                                (some? (:is-collapsible node))
-                                (assoc :is-collapsible (schema-bool (:is-collapsible node)))
-
-                                (some? (:default-expanded node))
-                                (assoc :default-expanded (schema-bool (:default-expanded node)))
-
-                                (some? (:icon node))
-                                (assoc :icon (enum-text (:icon node)))
-
-                                (some? (:is-dialog node))
-                                (assoc :is-dialog (schema-bool (:is-dialog node)))
-
-                                (some? (:is-open node))
-                                (assoc :is-open (schema-bool (:is-open node))))
-                              node
-                              allowed))
+       (if (and (view-spec/container? type-name) (not= "diff" type-name))
+         (let [built (-> (select-keys node allowed)
+                         (update :id trimmed)
+                         (assoc :type (get view-spec/live-node-types type-name))
+                         (update :children #(child-nodes fail! context %)))]
+           (with-foreign-keys
+             (reduce-kv (fn [value k table]
+                          (if (contains? value k) (update value k #(schema-term table %)) value))
+                        (cond-> built
+                          (contains? built :columns) (update :columns schema-long)
+                          (contains? built :label) (update :label schema-text)
+                          (contains? built :description) (update :description schema-text)
+                          (contains? built :icon) (update :icon enum-text))
+                        view-spec/layout-terms)
+             node
+             allowed))
          (let [id
                (trimmed (:id node))
 
@@ -1567,7 +1508,7 @@
                  (assoc :threads (app-threads (:threads node)))
 
                  (some? (:children node))
-                 (assoc :children (diff-toolbar fail! context (:children node)))
+                 (assoc :children (child-nodes fail! context (:children node)))
 
                  (sequential? (:previews node))
                  (assoc :previews
@@ -1612,7 +1553,7 @@
   (live-node invalid-live-view! node))
 
 (defn- form-ids
-  "RAW form nodes with a positional `:id` on each group and display component
+  "RAW form nodes with a positional `:id` on each container and display component
    that has none. A form never patches a node, so this id only keys a row."
   [nodes]
   (let [counter (volatile! 0)]
@@ -1621,7 +1562,7 @@
                       (if-not (map? node)
                         node
                         (let [node (cond-> node
-                                     (and (group-node? node) (sequential? (:children node)))
+                                     (and (container-node? node) (sequential? (:children node)))
                                      (update :children walk))]
                           (if (or (input-node? node) (trimmed (:id node)))
                             node
@@ -1639,7 +1580,7 @@
    Throws `ex-info` with `:type :vis/view-invalid-field` on a bad spec.
 
    A form uses the same component catalog as a live view: an input holds one
-   answer, a group arranges its children, and any other component shows text or
+   answer, a container arranges its children, and any other component shows text or
    state without an answer."
   [node]
   (form-node (first (form-ids [node]))))
@@ -1698,19 +1639,14 @@
         (assoc :source source)))))
 
 (defn live-nodes?
-  "Whether `nodes` are the picture a human WATCHES rather than the questions a
-   form asks. A layout group is the ONE node both vocabularies share, so a
-   builder composing one asks its children which check it is dated against — and
-   a group inside a group answers by its own children."
+  "True when `nodes` include an addressed live display node. Layout alone does not
+   make an input form live."
   [nodes]
   (boolean (some (fn [node]
                    (when (map? node)
-                     (if (group-node? node)
+                     (if (view-spec/layout-container? (raw-type-name node))
                        (live-nodes? (:children node))
-                       (and (some? (:id node))
-                            (contains? view-spec/live-node-types
-                                       (some-> (trimmed (:type node))
-                                               str/lower-case))))))
+                       (and (:id node) (contains? view-spec/live-node-types (raw-type-name node))))))
                  nodes)))
 
 (defn- live-shortcuts
@@ -2367,8 +2303,8 @@
    `[:ok coerced]` or `[:error message]`."
   [{:keys [type] :as field} value]
   (cond (contains? view-spec/text-types type) (coerce-text field value)
-        (= :select type) (coerce-select field value)
-        (= :multiselect type) (coerce-multiselect field value)
+        (view-spec/multiple-choice? field) (coerce-multiselect field value)
+        (contains? view-spec/choice-types type) (coerce-select field value)
         (= :checkbox type) (coerce-checkbox field value)
         (= :range type) (coerce-range field value)
         (= :datetime type) (coerce-datetime field value)
@@ -2446,8 +2382,8 @@
    `fields`. Returns `{:is-accepted true :values …}` or
    `{:is-accepted false :errors {id message}}`.
 
-   `fields` may be the request's TREE: layout groups hold no answer, so they are
-   flattened away here and a group can never change what an extension reads.
+   `fields` may be the request's TREE: layout containers hold no answer, so they are
+   flattened away here and a container can never change what an extension reads.
 
    Pure — no vault, no state, no side effect of any kind — but not free: it runs
    the extension's own validator FUNCTIONS. So it runs ONCE, when the human
@@ -2468,8 +2404,10 @@
         ;; letter from "must be one of ...". Custom validator errors are untrusted.
         static-errors
         (into #{}
-              (keep (fn [{:keys [id type]}]
-                      (when (and (contains? (:errors coerced) id) (not= :multiselect type)) id)))
+              (keep (fn [{:keys [id] :as field}]
+                      (when (and (contains? (:errors coerced) id)
+                                 (not (view-spec/multiple-choice? field)))
+                        id)))
               fields)
 
         secrets
@@ -2511,7 +2449,7 @@
    confirmed, a function cannot cross the wire, and a surface's job is to render
    the errors it is handed rather than to invent its own).
 
-   The field TREE is projected as a tree: a group crosses the wire with its own
+   The field TREE is projected as a tree: a container crosses the wire with its own
    `:direction` and `:children`, so both surfaces lay the form out from the same
    data instead of each inventing a layout."
   [request]
@@ -2567,7 +2505,7 @@
         (map (juxt snake-key identity))
         (reduce into
                 #{}
-                [view-spec/live-view-keys view-spec/live-node-keys view-spec/live-group-keys
+                [view-spec/live-view-keys view-spec/live-node-keys view-spec/field-keys
                  view-spec/live-column-keys view-spec/live-table-group-keys view-spec/live-row-keys
                  view-spec/live-stat-keys view-spec/live-step-keys view-spec/live-lane-keys
                  view-spec/live-badge-keys view-spec/live-list-item-keys
@@ -2588,8 +2526,11 @@
    :variant (merge view-spec/spinner-variants view-spec/button-variants)
    :order view-spec/live-orders
    :dir view-spec/live-sort-dirs
-   :align view-spec/live-aligns
-   :direction view-spec/group-directions
+   :align (merge view-spec/live-aligns (:align view-spec/layout-terms))
+   :direction (:direction view-spec/layout-terms)
+   :justify (:justify view-spec/layout-terms)
+   :gap (:gap view-spec/layout-terms)
+   :min-width (:min-width view-spec/layout-terms)
    :kind view-spec/chart-kinds
    :mode view-spec/datetime-mode-terms
    :target-kind view-spec/link-targets
@@ -2906,28 +2847,56 @@
                    :has-separate-canvas-ids true)
             (update :node-seqs into (map #(vector % (:seq view)) changed)))))))
 
+(defn- closed-invalid-app
+  "A closed picture that a surface can show in place of an invalid saved view."
+  [view reason]
+  (-> view
+      (dissoc :header :shortcuts)
+      (assoc :nodes [{:id "unreadable"
+                      :type :status
+                      :tone :error
+                      :text "This saved app uses an invalid view."
+                      :detail reason}])
+      closed-picture))
+
 (defn- replay-app-line
   [state line]
   (case (str (:kind line))
     "open"
     (let [view (materializer/materialize (live<-wire (:view line)))]
-      (if (app/app? view)
-        ;; A compacted record keeps the node seqs as pairs.
-        {:view view :node-seqs (into {} (:node-seqs line))}
-        (reduced nil)))
+      (if-not (app/app? view)
+        (reduced nil)
+        (if-let [why (binding [view-spec/*replay-legacy-canvas-ids* true]
+                       (view-spec/live-view-error view))]
+          {:view (closed-invalid-app view why) :has-invalid-view true}
+          ;; A compacted record keeps the node seqs as pairs.
+          {:view view :node-seqs (into {} (:node-seqs line))})))
 
     "patch"
-    (let [patch
-          (live<-wire (:patch line))
+    (if (:has-invalid-view state)
+      state
+      (let [patch
+            (live<-wire (:patch line))
 
-          state
-          (if (:has-separate-canvas-ids line) (migrate-app-record state) state)]
+            state
+            (if (:has-separate-canvas-ids line) (migrate-app-record state) state)]
 
-      ;; Keep the meaning of an accepted old remove. Only a surviving thread gets a new id.
-      (binding [view-spec/*replay-legacy-canvas-ids* (not (:has-separate-canvas-ids state))]
-        (-> state
-            (update :view materializer/apply-patch patch)
-            (update :node-seqs merge (patch-node-seqs patch)))))
+        ;; Keep the meaning of an accepted old remove. Only a surviving thread gets a new id.
+        (try
+          (binding [view-spec/*replay-legacy-canvas-ids* (not (:has-separate-canvas-ids state))]
+            (-> state
+                (update :view materializer/apply-patch patch)
+                (update :node-seqs merge (patch-node-seqs patch))))
+          (catch clojure.lang.ExceptionInfo e
+            (let [{:keys [type reason]} (ex-data e)]
+              (if (and (= :vis/view-invalid-patch type)
+                       (= (:view-id patch) (get-in state [:view :id]))
+                       (some (fn [{:keys [node-spec]}]
+                               (some (comp string? :type)
+                                     (tree-seq :children :children node-spec)))
+                             (:ops patch)))
+                {:view (closed-invalid-app (:view state) reason) :has-invalid-view true}
+                (throw e)))))))
 
     "close"
     (update state :view closed-picture)
@@ -2941,7 +2910,10 @@
   "The picture of the app that `file` records, with the seq of the last write to
    each node. nil when the record holds no app."
   [file]
-  (migrate-app-record (sink/fold-lines file replay-app-line nil)))
+  (when-let [{:keys [view] :as replayed} (migrate-app-record (sink/fold-lines file replay-app-line nil))]
+    (if-let [why (view-spec/live-view-error view)]
+      (assoc replayed :view (closed-invalid-app view why))
+      replayed)))
 
 (defn- app-entry
   "The registry entry of open app `view`, recorded in `file`. `node-seqs` maps
@@ -4403,12 +4375,14 @@
 
 (defn- submit-scope
   "The components a submit button `node-id` collects: the children of its
-   nearest group, or the whole view when no group holds it."
+   nearest layout container, or the whole view when none holds it."
   [nodes node-id]
   (letfn [(walk [scope nodes]
             (some (fn [node]
                     (cond (= node-id (:id node)) scope
-                          (seq (:children node)) (walk (:children node) (:children node))))
+                          (view-spec/container? (:type node))
+                           (walk (if (view-spec/layout-container? (:type node)) (:children node) scope)
+                                 (:children node))))
                   nodes))]
     (walk nodes nodes)))
 
@@ -4621,7 +4595,7 @@
 (defn- app-submit!
   "Send what the human wrote in open app `entry`: the inputs and the thread drafts
    in the scope of `node-id`, or in the whole app without one. A submit button
-   collects its group, and a diff or a thread node sends only its own drafts. The
+   collects its container, and a diff or a thread node sends only its own drafts. The
    host writes one receipt and gives the owner one submit event. A retry with the
    same idempotency key answers the first receipt."
   [entry view-id {:keys [node-id values idempotency-key] :as action}]
@@ -5098,7 +5072,7 @@
 
 (defn- press-node!
   "Press button or selectable card `node-id` of live `entry`, as a surface does:
-   one more click and one owner `activate` event. A press on an open dialog group
+   one more click and one owner `activate` event. A press on an open dialog
    closes it before the owner hears of it. `base` starts the answer."
   [entry view-id node-id base]
   (let [cell (:view entry)]
@@ -5112,10 +5086,10 @@
                             (tree-seq #(seq (:children %)) :children {:children (:nodes @cell)})))]
           (when-not (or (= :button (:type node))
                         (and (= :card (:type node)) (:is-selectable node))
-                        (:is-dialog node))
+                        (= :dialog (:type node)))
             (invalid-view-action! view-id "activate requires a button, a selectable card or a dialog node"))
           (cond
-            (:is-dialog node)
+            (= :dialog (:type node))
             (if-not (:is-open node)
               (assoc base
                 :is-accepted false

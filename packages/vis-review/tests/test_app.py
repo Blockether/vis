@@ -80,9 +80,9 @@ def controls(recorder):
     nodes = list(recorder.node("diff")["children"])
     while nodes:
         node = nodes.pop()
-        if node["type"] == "group":
+        if node["type"] == "menu":
             nodes.extend(node["children"])
-        else:
+        elif node["type"] == "button":
             found[node["id"]] = node["is_disabled"]
     return found
 
@@ -487,9 +487,15 @@ def test_the_files_after_the_picture_bound_show_no_preview_and_a_note_names_them
 
 
 def node_count(nodes):
-    """The nodes of a view as the contract counts them: a group and its children."""
+    """Count the nodes in the layout; commands and previews have separate bounds."""
     return sum(
-        1 + (node_count(n["children"]) if n["type"] == "group" else 0) for n in nodes
+        1
+        + (
+            node_count(node["children"])
+            if "children" in node and node["type"] not in ("diff", "menu")
+            else 0
+        )
+        for node in nodes
     )
 
 
@@ -551,7 +557,7 @@ def chosen(recorder):
     found = set()
     while nodes:
         node = nodes.pop()
-        if node["type"] == "group":
+        if node["type"] == "menu":
             nodes.extend(node["children"])
         elif node.get("is_selected"):
             found.add(node["id"])
@@ -877,7 +883,7 @@ def test_git_commit_form_suggests_a_message_but_commits_the_persons_message(
     assert wait_for(lambda: "git-form" in recorder.ids())
     recorder.send("activate", "git-suggest")
     assert wait_for(
-        lambda: recorder.node("git-form")["children"][0]["value"] == "Proposed message"
+        lambda: recorder.node("git-message").get("value") == "Proposed message"
     )
     assert "+a = 2" in requests[0]
     assert recorder.submit(

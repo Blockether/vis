@@ -9,8 +9,7 @@
    "new_revision": "now",
    "children": [
     {
-     "type": "group",
-     "direction": "column",
+     "type": "menu",
      "children": [
       {
        "is_selected": false,
@@ -48,8 +47,7 @@
        "id": "branch"
       },
       {
-       "type": "group",
-       "direction": "column",
+       "type": "menu",
        "children": [
         {
          "is_selected": false,
@@ -74,8 +72,7 @@
      "id": "refresh"
     },
     {
-     "type": "group",
-     "direction": "column",
+     "type": "menu",
      "children": [
       {
        "label": "Run checks",
@@ -102,8 +99,7 @@
        "id": "full"
       },
       {
-       "type": "group",
-       "direction": "column",
+       "type": "menu",
        "children": [
         {
          "is_selected": true,
@@ -252,8 +248,7 @@
    "id": "diff"
   },
   {
-   "type": "group",
-   "direction": "column",
+   "type": "section",
    "id": "images",
    "children": [
     {

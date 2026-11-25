@@ -76,8 +76,9 @@
     },
     {
       "id": "reading",
-      "type": "group",
+      "type": "flex",
       "direction": "row",
+      "is_wrapping": true,
       "children": [
         {
           "id": "hosts",

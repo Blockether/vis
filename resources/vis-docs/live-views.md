@@ -54,7 +54,7 @@ This live view updates one pane as jobs finish.
 
 [![Vis live view showing CI run 42, one of three jobs complete and a job status table](assets/screenshots/live-running.png)](assets/screenshots/live-running.png)
 
-Press F3 for the keyboard controls, which expand a disclosure, select a row, or press a button.
+Press F3 for the keyboard controls, which open a collapsible section, select a row, or press a button.
 Press Escape to open the stop confirmation, which [Interruption](#interruption) describes.
 
 [![Vis live view stop confirmation with an optional note for the agent](assets/screenshots/live-stop.png)](assets/screenshots/live-stop.png)
@@ -335,11 +335,16 @@ returns a typed handle that has only the verbs of its node type:
 | `vis.ui.link(id, links=[…])` | Links that a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
 | `vis.ui.paragraph(id, text)` | A paragraph with inline formatting | `.set(text)` |
 | `vis.ui.heading(id, text, level=2)` | A heading at level 1 to 6 | `.set(text, level=)` |
-| `vis.ui.divider(id)` | A rule between sections, vertical in a `wrap` group | None. Use `view.add(...)` or `view.drop(id)`. |
+| `vis.ui.divider(id)` | A rule between nodes or a separator in a menu | None. Use `view.add(...)` or `view.drop(id)`. |
 | `vis.ui.code(id, text, language=None)` | Literal code that keeps its whitespace | `.set(text, language=)` |
 | `vis.ui.spinner(id, text="Working", variant="braille")` | An activity indicator | `.set(text=, variant=, is_active=)` |
-| `vis.ui.button(id, label, is_disabled=False, variant=None)` | An action for the person. `variant` is `primary`, `secondary`, or `destructive`. `is_selected=True` or `False` makes the button one choice of a row, such as a tab, and the Companion app marks the current choice. | `.set(label=, is_disabled=)` |
-| `vis.ui.disclosure(id, label, *nodes, default_expanded=False)` | A column that collapses | Children update by their own IDs. |
+| `vis.ui.button(id, label, is_disabled=False, variant=None)` | An action for the person. `variant` is `primary`, `secondary`, or `destructive`. `is_selected=True` marks the button as pressed. | `.set(label=, is_disabled=)` |
+| `vis.ui.flex(id, *nodes)` and `vis.ui.grid(id, *nodes)` | A [layout](components.md#layout) | No handle. Change the children by ID. |
+| `vis.ui.section(id, *nodes)` | A framed part of the view | `.set(label=, description=)` |
+| `vis.ui.collapsible(id, label, *nodes)` | A part that a person can show or hide | `.set(label=, description=)` |
+| `vis.ui.dialog(id, title, *nodes)` | A window over the view | `.set(label=, description=, is_open=)` |
+| `vis.ui.menu(id, label, *items)` | A list of commands | `.set(label=)` |
+| `vis.ui.toggle(name, options)` | Joined choices | `.value`, `.set(value)`, `.set_label(label)` |
 | `vis.ui.scene(id, width, height, objects=[vis.ui.scene.object(…)])` | A 3D world, which [each client draws](#draw-a-3d-scene) | `.put(object_id, **changes)`, `.mesh(mesh_id, vertices, faces)`, `.set(background=, fov=, is_wrapping=, tick_ms=)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.canvas(id, cards=[vis.ui.canvas.card(…)])` | A [board with items and arrows](#draw-a-board-on-a-canvas) | `.card(id, title, **keys)`, `.shape(…)`, `.note(…)`, `.frame(…)`, `.text(…)`, `.put(*cards)`, `.focus(id, zoom=)`, `.fit()`, `.select(*ids)`, `.set(…)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.board(id, columns, issues)` | Columns of [issues that people move and change](#track-issues-on-a-board) | `.issue(id, title, column, **keys)`, `.put(*issues)`, `.move(id, column, index)`, `.apply(event)`, `.replace(issues)`, `.select(id)`, `.set(…)`, `.remove(*ids)`, `.clear()` |
@@ -454,9 +459,9 @@ with vis.live("Review", [
     vis.ui.paragraph("intro", "Read the output before continuing."),
     vis.ui.code("example", "print('ready')", language="python"),
     vis.ui.spinner("waiting", "Waiting for review", variant="dots"),
-    vis.ui.disclosure("details", "Build details",
-                   vis.ui.output("tests", label="Test output"),
-                   vis.ui.output("build", label="Build output")),
+    vis.ui.collapsible("details", "Build details",
+                       vis.ui.output("tests", label="Test output"),
+                       vis.ui.output("build", label="Build output")),
     vis.ui.divider("review-actions"),
     vis.ui.button("continue", "Continue"),
 ]) as view:
@@ -759,58 +764,24 @@ move gives each issue of the target column its place as its new rank.
 
 ## Layout and text
 
-`vis.ui.row(id, *nodes)`, `vis.ui.column(id, *nodes)`, `vis.ui.grid(id, *nodes)`, and
-`vis.ui.wrap(id, *nodes)` arrange nodes with the layout terms of [Ask
-forms](human-input.md#layout). Each group of a live view has an ID. Groups nest, and a nested group
-uses the width inside its parent, not the full screen width.
+Use [Layout](components.md#layout) to arrange nodes in a row, column, or grid, or to frame related
+nodes. Layouts can nest. A nested layout uses the space inside its parent.
 
-In the Companion app, a row has columns of equal width, each at least `12rem` wide. As the space
-narrows, the row wraps into fewer columns and then stacks. A single column can shrink below that
-minimum to fit a narrower panel. In the terminal, a row has columns of equal width when each child
-gets at least 24 text cells after spacing. If not, the whole row stacks. A column always stacks.
-
-Use a grid for many nodes of one kind, such as cards. It shows equal columns and continues on new
-rows. `vis.ui.grid(id, *nodes, max_columns=3)` limits the columns. A narrow panel shows fewer
-columns, and the narrowest panels stack them. In the terminal, each grid column also needs 24 text
-cells.
-
-Use a wrap for nodes that keep their own width, such as buttons, stats, and statuses. They stand
-side by side and continue on a new line when the next node does not fit. Buttons in a grid or a
-wrap work in both clients.
+`view.add(node)` appends a top-level node. With `after=`, it adds the next sibling of the named
+node in the same container:
 
 ```python
-vis.ui.column("board",
-           vis.ui.grid("services", *cards, max_columns=3),
-           vis.ui.wrap("actions",
-                    vis.ui.button("approve", "Approve release"),
-                    vis.ui.button("rerun", "Run checks again")))
-```
-
-Each `vis.ui.row`, `vis.ui.column`, `vis.ui.grid`, `vis.ui.wrap`, and `vis.ui.disclosure` needs at
-least one child. Without children, these Python builders raise `ValueError` immediately. If you
-have no nodes yet, add the group when its first child is ready.
-
-`view.add(node)` appends a top-level node. With `after=`, the new node becomes the next sibling of
-the named node in the same container:
-
-```python
-view.add(vis.ui.column("builds", vis.ui.status("linux", "Queued")))
+view.add(vis.ui.flex("builds", vis.ui.status("linux", "Queued")))
 view.add(vis.ui.status("macos", "Queued"), after="linux")  # Inside builds.
-view.add(vis.ui.status("summary", "Watching"), after="builds")  # After the group.
+view.add(vis.ui.status("summary", "Watching"), after="builds")  # Beside builds.
 ```
 
-To grow a group, name one of its children in `after=`, not the group. `view.drop(id)` removes a
-node, and a removed group takes its children with it. A group keeps the live interactions of its
-children and produces no form answer.
+To add a child to a container, use the ID of one of its children in `after=`. To remove a node
+with all its children, call `view.drop(id)` on the parent. If its first child is not ready, wait
+to add the container. Vis does not accept empty containers.
 
-`vis.ui.divider("section-break")` draws a rule between sections, as an HTML `<hr>` does. The rule
-fills the width of its container in the terminal and the Companion app, also inside columns and
-disclosures. It stays in completed receipts. Directly inside a `vis.ui.wrap` group, it is a
-vertical line between the items of that line.
-
-A divider has only an ID, with no label, content, style options, or update verbs. For a section
-title, use a heading. To remove the rule, call `view.drop("section-break")`. The wire node is
-`{"id": "section-break", "type": "divider"}`.
+A [divider](components.md#divider) stays in the completed receipt. Use `view.drop(id)` to remove
+it. The wire node is `{"id": "section-break", "type": "divider"}`.
 
 Display text accepts inline Markdown: `` `code` ``, `**bold**`, `_italic_`, and links. Status text
 wraps and is justified in its column.
@@ -868,7 +839,7 @@ view. The **Interrupt** button of the Companion app opens the same input.
 `view.close(reason=…, summary=…, error=…, artifact_id=…, selection_snapshots=…, model_result=…)`
 ends the view and returns `is_completed`, `reason`, `is_from_human`, `note`, the final view state,
 and `summary`. In Vis, the view that the model gets has a size budget. Clients and saved artifacts
-keep the group hierarchy and the current log window.
+keep the layout hierarchy and the current log window.
 
 - `model_result` replaces the result of the model with a string. Clients and the saved artifact
   still get the full view state. A stop by a person at the same time wins and returns an
@@ -934,10 +905,10 @@ A live view can hold the same [inputs](components.md#inputs) as a form. Each inp
 def choose_target() -> str | None:
     """Show a deploy form in a live view and return the chosen target."""
     with vis.live("Deploy", [
-        vis.ui.group("target",
-                  vis.ui.select("env", ["staging", "prod"], label="Target", is_required=True),
-                  vis.ui.multiline("notes", label="Notes"),
-                  vis.ui.button("deploy", "Deploy", action="submit")),
+        vis.ui.section("target",
+                       vis.ui.select("env", ["staging", "prod"], label="Target", is_required=True),
+                       vis.ui.multiline("notes", label="Notes"),
+                       vis.ui.button("deploy", "Deploy", action="submit")),
         vis.ui.status("state", "Waiting for a target", tone="idle"),
     ]) as view:
         while not view.is_interrupted:
@@ -953,8 +924,8 @@ Each action of a person becomes a `vis.LiveEvent`:
 | `type` | When | Fields |
 | --- | --- | --- |
 | `change` | A person changes an input | `node_id` and `value`. A secret input gives only `is_set`. |
-| `activate` | A person presses a button or a selectable card | `node_id` |
-| `submit` | A person presses a button with `action="submit"` | `node_id` and `values` of the inputs in the group of the button |
+| `activate` | A person presses a button or a selectable card, or closes a dialog | `node_id` |
+| `submit` | A person presses a button with `action="submit"` | `node_id` and a flat `values` map for the inputs in the button's scope |
 | `select` | A person selects rows in a selectable table | `node_id` and `item_ids`, the IDs of the selected rows |
 
 - `view.values()` returns the current value of each input by ID, without the secret inputs.
@@ -966,8 +937,10 @@ Each action of a person becomes a `vis.LiveEvent`:
   or `vis.sessions.create`.
 - `view[id].value` reads one input, and `view[id].set(value)` changes it.
 
-A submit first checks each required input and each validator of the group. A bad value shows an
-error at its input, and the view stays open. A `password` or `otp` value never reaches the
+A submit collects inputs in the nearest flex, grid, section, collapsible, or dialog that contains
+the button. If the button has no such parent, the whole view is its scope. Vis checks the required
+inputs and runs their validators before it sends the event. A bad value shows an error at its input,
+and the view stays open. A `password` or `otp` value never reaches the
 transcript, the saved view, or a log. The `submit` event gives a `vis-secret:` handle for it.
 
 To check an input with your own code, give it `validate=`, as in `vis.ask`:
@@ -977,7 +950,7 @@ vis.ui.plaintext("port", label="Port",
                  validate=lambda v: None if v.isdigit() else "Use digits only.")
 ```
 
-- The function gets the value, or the value and all values of the group. It returns `None` for a
+- The function gets the value, or the value and all values in the submit scope. It returns `None` for a
   good value, or the error message.
 - Your code runs the function when the person submits, before Vis accepts the submit. The function
   never leaves your process.
@@ -1036,11 +1009,15 @@ The icon names are:
 - `settings`, `tools`, `rocket`, `flask`, `music`, `image`, `book`, `lightning`.
 
 The header of an app shows its icon, its title, and one dot. The dot is green while the app is
-connected. It is red when the app is closed, archived, or waits for its owner. To put controls in
-the header, give them to `header`, such as `header=[vis.ui.toolbar("tools", search, create)]`. The
-header takes at most 8 nodes, and each node needs an id. A header node is a button, a group, a
-status, a badge, a text input, or a select. The terminal app shows the header nodes at the top of
-the app.
+connected. It is red when the app is closed, archived, or waits for its owner.
+
+To put controls in the header, pass them directly, such as `header=[search, create]`. The header
+takes at most eight nodes. Each node needs an ID. A header node can be a button, menu, toggle,
+status, badge, `plaintext` input, or `select` input.
+
+Header controls use less space than controls in the body. An input keeps its label as its
+accessible name and shows its placeholder when one applies. A button with an icon shows the icon
+instead of its label. The terminal app shows the header nodes at the top of the app.
 
 An app uses these builders and calls:
 
@@ -1049,13 +1026,8 @@ An app uses these builders and calls:
   `vis.ui.thread`.
 - `vis.ui.diff(node_id, patch)` shows a unified diff, and people comment on one line of it.
   `old_revision` and `new_revision` name the compared versions.
-- `children=[...]` gives the diff a toolbar of actions. A `vis.ui.group` of buttons is one menu,
-  and its label names the current choice. A group in a menu opens a submenu. Give
-  `is_selected=True` to the button of the current choice. Give `icon="refresh"` or `icon="more"` to
-  show a picture in place of the label, which stays the name for screen readers.
-- A `vis.ui.group(..., direction="row")` in the toolbar with two or more buttons that each have
-  `is_selected` is a switch, not a menu, so each choice shows. The terminal app shows the switch
-  with its keys in the diff head.
+- `children=[...]` adds controls to the diff header. Give it buttons, [menus](components.md#menu),
+  or [toggles](components.md#toggle). Use a menu to list commands and a toggle to keep choices visible.
 - `previews=[vis.ui.diff.preview(path, node)]` shows a picture, a sound or a video under the header
   of the file `path` in the diff. `node` is a `vis.ui.image` or a `vis.ui.media`. A preview is not a
   node of the view, but its bytes count toward the byte limits of the view. To change the previews,
@@ -1432,7 +1404,7 @@ it and raises `RuntimeError` with the same text. A view is wrong in these cases:
 - It has `shortcuts` but it is not an app, so its `placement` is not `attachment`.
 - Two shortcuts have one key, or a shortcut names no node or a node that a person cannot press.
 
-A group child that is not a map or has no ID gives an error card on its group.
+A container child that is not a map or has no ID gives an error card on its container.
 
 Vis refuses the whole patch in these cases:
 
@@ -1443,8 +1415,9 @@ Vis refuses the whole patch in these cases:
   it changes nothing.
 - An `add-node` names an `after` node that the view does not have.
 - A node breaks its rules after an op. Vis checks the node that the op changed. For an `add-node`
-  or a `remove-node`, it also checks the group that holds the node. Vis refuses a `remove-node` of
-  the only node of a group. The first problem refuses the patch, also when a later op would fix it.
+  or a `remove-node`, it also checks the container that holds the node. Vis refuses a `remove-node`
+  of the only child of a container. The first problem refuses the patch, even if a later op would
+  fix it.
 - The view breaks a view rule after the last op, for example an `add-node` gives two nodes one ID.
 
 The view then stays as it was, and the SDK raises `RuntimeError`. A patch never makes an error

@@ -138,6 +138,77 @@
 
 (defn- field-options [field] (vec (:options field)))
 
+(defn control-icon
+  "A terminal mark for an icon on a compact control."
+  [icon]
+  (let [icon (name icon)]
+    (if (contains? hi-spec/command-icons icon)
+      (case icon
+        "refresh" "↻"
+        "more" "⋯"
+        "plus" "+"
+        "search" "⌕"
+        "filter" "▽"
+        "list" "≡"
+        "grid" "▦"
+        "columns" "▥"
+        "rows" "▤"
+        "wrap" "↵"
+        "expand" "⊞"
+        "collapse" "⊟"
+        "copy" "□"
+        "edit" "✎"
+        "trash" "×"
+        "sort" "⇅"
+        "settings" "⚙"
+        "◆")
+      "◆")))
+
+(defn- multiple-choice?
+  [{:keys [type is-multiple]}]
+  (or (= :multiselect type) (and (= :toggle type) is-multiple)))
+
+(defn toggle-value
+  "Apply one segmentation choice. Multiple answers keep option order."
+  [field value option]
+  (if (multiple-choice? field)
+    (let [selected (set value)
+          selected (if (selected option) (disj selected option) (conj selected option))]
+      (into [] (comp (map :value) (filter selected)) (:options field)))
+    option))
+
+(defn toggle-row
+  "One joined choice row. Keep the cursor's option visible when space is limited."
+  [field value cursor text-w]
+  (let [selected (if (multiple-choice? field) (set value) #{value})
+        options (mapv (fn [{:keys [value label icon]}]
+                        (str (when (selected value) "• ") (if icon (control-icon icon) (or label value))))
+                      (:options field))
+        active (long (or cursor (first (keep-indexed #(when (selected (:value %2)) %1) (:options field))) 0))
+        limit (max 1 (long (or text-w Long/MAX_VALUE)))
+        labels (mapv (fn [i opt] (if (= cursor i) (str "‹" opt "›") (str " " opt " ")))
+                     (range) options)
+        widths (mapv p/display-width labels)
+        fits? (<= (+ 1 (count labels) (reduce + 0 widths)) limit)
+        window (if fits? (vec (range (count labels)))
+                   (loop [from active to active used (long (get widths active 0))]
+                     (cond (and (< (inc to) (count labels))
+                                (<= (+ used 7 (long (nth widths (inc to)))) limit))
+                           (recur from (inc to) (+ used 1 (long (nth widths (inc to)))))
+                           (and (pos? from) (<= (+ used 7 (long (nth widths (dec from)))) limit))
+                           (recur (dec from) to (+ used 1 (long (nth widths (dec from)))))
+                           :else (vec (range from (inc to))))))
+        prefix (if (pos? (long (or (first window) 0))) "[…│" "[")
+        suffix (if (< (long (or (peek window) 0)) (dec (count labels))) "│…]" "]")
+        room (max 1 (- limit (long (p/display-width prefix)) (long (p/display-width suffix))))
+        shown (mapv #(p/ellipsize (get labels % "") room) window)
+        spans (first (reduce (fn [[spans ^long offset] [i label]]
+                               (let [end (+ offset (long (p/display-width label)))]
+                                 [(conj spans [i offset end]) (inc end)]))
+                             [[] (long (p/display-width prefix))] (map vector window shown)))]
+    {:kind :toggle :field-id (:id field) :text (str prefix (str/join "│" shown) suffix)
+     :option-spans spans :is-focused (some? cursor)}))
+
 (defn- folded?
   "True for a `:select` with so many options that the form shows it as one line
    that opens a list. The contract owns the threshold, so the companion folds the
@@ -155,10 +226,11 @@
   [{:keys [type default] :as field}]
   (cond (contains? text-types type) (if (some? default) (str default) "")
         (= :checkbox type) (boolean default)
-        (= :multiselect type) (cond (sequential? default) (vec default)
+        (multiple-choice? field) (cond (sequential? default) (vec default)
                                     (some? default) [default]
                                     :else [])
-        (= :select type) (if (some? default) default (:value (first (field-options field))))
+        (= :toggle type) default
+         (= :select type) (if (some? default) default (:value (first (field-options field))))
         (= :range type) (let [{:keys [lo] :as bounds} (range-bounds field)]
                           (range-snap bounds (if (number? default) default lo)))
         :else nil))
@@ -169,6 +241,10 @@
         (= :checkbox type) [{:kind :checkbox :field-id id}]
         (= :range type) [{:kind :range :field-id id}]
         (folded? field) [{:kind :menu :field-id id}]
+        (= :toggle type) (mapv (fn [{:keys [value]}]
+                                 {:kind (if (:is-multiple field) :multi-option :select-option)
+                                  :field-id id :value value})
+                               (field-options field))
         (contains? hi-spec/choice-types type)
         (mapv (fn [{:keys [value]}]
                 {:kind (if (= :multiselect type) :multi-option :select-option)
@@ -191,11 +267,28 @@
       (get request :is-cancellable true)
       (conj {:kind :action :action :cancel :label (labelled :cancel-label "Cancel")}))))
 
+(defn- disclosure-open?
+  [disclosures {:keys [id default-expanded]}]
+  (get disclosures id default-expanded))
+
+(defn- node-stops
+  [disclosures {:keys [type id children] :as node}]
+  (cond (= :collapsible type)
+        (cond-> [{:kind :disclosure :field-id id :default-expanded (:default-expanded node)}]
+          (disclosure-open? disclosures node) (into (mapcat #(node-stops disclosures %) children)))
+        (hi-spec/container? type) (mapcat #(node-stops disclosures %) children)
+        :else (field-stops node)))
+
 (defn stops
-  "Flat vector of focus stops for `request` — the linear order ↑/↓/Tab walks."
-  [request]
-  (into (into [] (mapcat field-stops) (engine/input-fields (:nodes request)))
-        (action-stops request)))
+  "Flat vector of visible focus stops for the request."
+  ([request] (stops request nil))
+  ([request disclosures]
+   (into (into [] (mapcat #(node-stops disclosures %)) (:nodes request)) (action-stops request))))
+
+(defn- toggle-disclosure
+  [form {:keys [field-id default-expanded]}]
+  (let [disclosures (update (:disclosures form) field-id #(not (if (nil? %) default-expanded %)))]
+    (assoc form :disclosures disclosures :stops (stops (:request form) disclosures))))
 
 (defn init-form
   "Build the form model for a request VIEW. Text cursors start at end-of-text
@@ -540,6 +633,9 @@
         field-id
         (:field-id stop)
 
+        segmented?
+        (= :toggle (:type (field-by-id form field-id)))
+
         stay
         (fn [f]
           {:form f :action nil})
@@ -551,6 +647,8 @@
         (fn [delta]
           (stay (cond text-stop? (move-cursor form field-id delta)
                       range-stop? (nudge-range form field-id delta)
+                      segmented? (let [next (move-focus form delta)]
+                                   (if (= field-id (:field-id (focused-stop next))) next form))
                       :else form)))
 
         submit
@@ -577,6 +675,8 @@
 
       :enter
       (cond (multiline-focus? form) (stay (insert-text form field-id "\n"))
+             (= :disclosure (:kind stop)) (stay (toggle-disclosure form stop))
+            segmented? (stay (toggle-stop form stop))
             ;; Enter on an option/checkbox both picks it AND is the
             ;; natural "I'm done" key — toggling first would make a
             ;; single-option form impossible to accept, so options
@@ -619,6 +719,7 @@
             text-stop? (stay (insert-text form field-id (str char)))
             (not= \space char) (stay form)
             button (press)
+             (= :disclosure (:kind stop)) (stay (toggle-disclosure form stop))
             :else (stay (toggle-stop form stop)))
 
       (stay form))))
@@ -818,12 +919,18 @@
                  (assoc! (if (contains? option-stop-kinds kind) [field-id value] field-id) i)))))))
 
 (defn- row-text-width
-  "Text columns ONE form row asks for inside `text-w`: what a `wrap` group
+  "Text columns ONE form row asks for inside `text-w`: what a wrapping flex layout
    measures its children by. A typed or toggled field keeps its surface and ring,
    so it asks for a readable cell; a nested split row asks for the whole width."
   ^long [text-w row]
   (let [text-w (or text-w 0)]
     (case (:kind row)
+      :section-body
+      (+ 5 (row-text-width (max 1 (- (long text-w) 5)) (:section-child row)))
+
+      :section-rule
+      (+ 5 (long (p/display-width (str (:text row)))))
+
       :columns
       (long text-w)
 
@@ -837,66 +944,30 @@
 
       (long (p/display-width (str (:text row)))))))
 
-(defn- group-rows
-  "A group's optional heading and children, placed by the group's direction just
-   like Live. Nested groups apply the same rules to their available text width:
-
-   - `:row` shares columns when [[columns/row-fits?]] allows it.
-   - `:grid` cuts the children into rows of [[columns/grid-span]] equal columns,
-     the last row padded so its columns stay aligned.
-   - `:wrap` keeps each child at its natural width and packs the children with
-     [[columns/wrap-lines]]; the line carries the widths as `:cell-widths`.
-   - Everything else, and a row or grid too narrow to split, stacks them in
-     source order."
-  [ctx text-w {:keys [direction children] :as group}]
-  (let [heading
-        (into (if (:label group) [{:kind :label :text (:label group)}] [])
-              (description-rows (:description group) text-w))
-
-        n
-        (count children)
-
-        span
-        (if (= :grid direction) (columns/grid-span text-w n (:max-columns group)) 0)
-
-        plan
-        (fn [w child]
-          (vec (field-rows ctx w child)))
-
-        ;; Every field already ends in its own blank row, so the rows of a grid and
-        ;; the lines of a wrap stack with the air a `column` group has between fields.
-        stack
-        (fn [sections]
-          (into [] cat sections))
-
-        body
-        (cond (and (= :row direction) (columns/row-fits? text-w n))
-              (let [cell-w (columns/cell-width text-w n)]
-                (columns/zip-columns (mapv #(plan cell-w %) children)))
-              (< 1 span) (let [cell-w (columns/cell-width text-w span)]
-                           (stack (mapv columns/zip-columns
-                                        (columns/grid-chunks (mapv #(plan cell-w %) children)
-                                                             span))))
-              (and (= :wrap direction) (< 1 n))
-              (let [sections
-                    (mapv #(plan text-w %) children)
-
-                    widths
-                    (mapv (fn [rows]
-                            (columns/natural-width text-w (map #(row-text-width text-w %) rows)))
-                          sections)]
-
-                (stack (mapv (fn [line]
-                               (if (= 1 (count line))
-                                 (nth sections (first line))
-                                 (let [ws (mapv widths line)]
-                                   (mapv #(assoc % :cell-widths ws)
-                                         (columns/zip-columns
-                                           (mapv #(plan %2 (nth children %1)) line ws))))))
-                             (columns/wrap-lines text-w widths))))
-              :else (into [] (mapcat #(field-rows ctx text-w %)) children))]
-
-    (into (if (seq heading) (conj (vec heading) {:kind :blank}) []) body)))
+(defn- container-rows
+  [ctx text-w {:keys [type id children label description icon] :as node}]
+  (let [section? (= :section type)
+        disclosure? (= :collapsible type)
+        open? (or (not disclosure?) (disclosure-open? (get-in ctx [:form :disclosures]) node))
+        body-w (if (and section? text-w) (max 1 (- (long text-w) 5)) text-w)
+        title (str (when icon (str (control-icon icon) " ")) label)
+        prose (description-rows description body-w)
+        plan (fn [child w]
+               (let [rows (vec (field-rows ctx w child))]
+                 (if (= :blank (:kind (peek rows))) (pop rows) rows)))
+        measure (fn [w rows] (columns/natural-width w (map #(row-text-width w %) rows)))
+        body (when open? (columns/layout node body-w children plan measure columns/zip-columns {:kind :blank}))]
+    (if section?
+      (let [framed (mapv (fn [row] {:kind :section-body :section-child row :is-focused (:is-focused row) :is-label (or (:is-label row) (= :label (:kind row)))})
+                         (concat prose body))]
+        (with-meta (into [{:kind :section-rule :edge :top :text title}]
+                         (conj framed {:kind :section-rule :edge :bottom}))
+          {:stretch-row {:kind :section-body :section-child {:kind :blank}}}))
+      (let [heading (when label [{:kind (if disclosure? :disclosure :label)
+                                  :is-focused (and disclosure? (= (:focus ctx) (get (:index ctx) id)))
+                                  :text (str (when disclosure? (if open? "▾ " "▸ ")) title)}])
+            intro (into (vec heading) prose)]
+        (into (cond-> intro (seq intro) (conj {:kind :blank})) body)))))
 
 (defn- scroll-thumb
   "The rows of an `h`-row window at `top` over `n` options that the scroll thumb
@@ -946,10 +1017,10 @@
   "Rows for ONE node of the field tree. `ctx` is the per-paint context built by
    [[form-rows]] — the form, its visible errors, the focused stop and the
    [[stop-index]] — and `text-w` is the prose budget of the column this node
-   lands in, which a `:row`, `:grid` or `:wrap` group narrows for its children."
+   lands in, which a layout can narrow for its children."
   [{:keys [form errors focus index menu-room] :as ctx} text-w {:keys [id type] :as field}]
   (cond
-    (= :group type) (group-rows ctx text-w field)
+    (hi-spec/container? type) (container-rows ctx text-w field)
     (hi-spec/decoration? field) (decor-rows text-w field)
     :else
     (let [idx
@@ -1039,6 +1110,12 @@
                                                   (count description)
                                                   (if (seq description) 1 0))
                                                menu-rows))
+                (= :toggle type)
+                [(toggle-row field value
+                             (when is-active-field
+                               (first (keep-indexed (fn [i option]
+                                                      (when (= (:value option) (:value (focused-stop form))) i))
+                                                    (field-options field)))) text-w)]
                 (contains? hi-spec/choice-types type)
                 (let [chosen (if (= :multiselect type) (set value) #{value})]
                   (mapv (fn [{:keys [value label]}]
@@ -1356,6 +1433,12 @@
    row owns it."
   [g left row inner-w entry]
   (case (:kind entry)
+    :section-rule
+    (dialogs/draw-section-rule! g left row inner-w (= :top (:edge entry)) (:text entry))
+
+    :section-body
+    (dialogs/draw-section-body! g left row inner-w #(paint-row! g %1 row %2 (:section-child entry)))
+
     :blank
     (do (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc (long left)) row inner-w 1)
@@ -1395,6 +1478,9 @@
       (p/styled g [p/BOLD] (p/put-str! g (+ (long left) 2) row head))
       (when mark? (paint-required! g (+ (long left) 2 (count head)) row t/dialog-bg))
       nil)
+
+    (:toggle :disclosure :row-overflow)
+    (do (paint-plain! g left row inner-w (if (:is-focused entry) t/dialog-hint-key t/dialog-fg) (:text entry)) nil)
 
     :error
     (do (paint-plain! g left row inner-w t/footer-error-fg (:text entry)) nil)
@@ -1510,9 +1596,7 @@
           (:cells entry)
 
           places
-          (if-let [ws (:cell-widths entry)]
-            (columns/width-slots inner-w ws)
-            (columns/slots inner-w (count cells)))]
+          (columns/row-slots inner-w entry)]
 
       (reduce (fn [pos [[x width] cell]]
                 (let [here
@@ -1546,8 +1630,8 @@
 
     nil))
 
-(defn toolbar-field-row
-  "One editable row of a toolbar field, with its label as the fallback hint."
+(defn compact-field-row
+  "One editable field row, with its label as the fallback hint."
   [{:keys [type label value] :as field} text-w]
   (if (contains? hi-spec/choice-types type)
     (let [chosen (if (= :multiselect type) (set value) #{value})

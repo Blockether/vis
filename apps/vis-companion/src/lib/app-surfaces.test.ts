@@ -39,7 +39,7 @@ describe('app reveal', () => {
     nodes: [
       {
         id: 'apps',
-        type: 'group',
+        type: 'flex',
         direction: 'grid',
         children: [
           { id: 'open-todo', type: 'card', title: 'Todo', is_selectable: true, reveals: 'todo' },

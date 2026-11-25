@@ -7,7 +7,7 @@
   [fields]
   (persistent! (letfn [(walk [acc nodes]
                          (reduce (fn [a node]
-                                   (cond (= view-spec/group-type (:type node))
+                                   (cond (view-spec/container? (:type node))
                                          (walk a (:children node))
                                          (view-spec/decoration? node) a
                                          :else (conj! a node)))
@@ -16,7 +16,7 @@
                  (walk (transient []) fields))))
 
 (def ^:private keyword-value-keys
-  #{:type :direction :tone :variant :target-kind :status :state :action :kind :mode :align :op
+  #{:type :direction :tone :variant :target-kind :status :state :action :kind :mode :align :gap :justify :min-width :op
     :placement})
 
 (def ^:private app-data-keys

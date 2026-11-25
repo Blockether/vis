@@ -484,7 +484,7 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
   const totals = new Map<string, number>();
   for (const issue of issues) totals.set(issue.column, (totals.get(issue.column) ?? 0) + 1);
 
-  return <section className="board min-w-0 [--board-column-width:max(15rem,85vw)] sm:[--board-column-width:17rem] data-[dragging]:select-none" aria-label={node.label ?? 'Board'} data-dragging={drag ? true : undefined}
+  return <section className="board min-w-0 [--board-column-width:max(15rem,85vw)] sm:[--board-column-width:17rem] data-[dragging]:select-none" aria-label={node.label ? `${node.label} issues` : 'Board issues'} data-dragging={drag ? true : undefined}
     onPointerDown={start} onPointerUpCapture={blockRelease} onClickCapture={(event) => {
       if (event.detail > 0 && blockClick()) { event.preventDefault(); event.stopPropagation(); }
     }}>
@@ -500,7 +500,7 @@ export function LiveBoard({ node, seq, onSelect, onAction }: {
             return <div className={`z-[2] flex min-h-11 min-w-0 items-center gap-1.5 border max-sm:sticky max-sm:top-0 max-sm:snap-start ${closed ? 'justify-center' : 'justify-between pl-2.5 pr-1.5'} ${over ? 'border-edge border-t-err bg-err/10' : 'border-edge bg-panel-2'}`} key={column.id}>
               {!closed && <><div className="flex min-w-0 items-center gap-2">
                 <span className={`size-2 shrink-0 ${TONE_MARK[column.tone ?? (column.is_done ? 'ok' : 'idle')]}`} aria-hidden="true" />
-                <h4 className="min-w-0 truncate text-ui font-semibold uppercase tracking-wide" title={column.title}>{column.title}</h4>
+                <h3 className="min-w-0 truncate text-ui font-semibold uppercase tracking-wide" title={column.title}>{column.title}</h3>
                 {column.is_done && <span role="img" aria-label="Done column" className="text-ok-ink"><Check size={15} aria-hidden="true" /></span>}
                 <span className="shrink-0 border border-edge px-1 font-mono text-meta tabular-nums text-dialog-hint" title={`${total} ${total === 1 ? 'issue' : 'issues'}`}>{total}</span>
               </div>

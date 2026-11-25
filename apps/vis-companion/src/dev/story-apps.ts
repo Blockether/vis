@@ -18,6 +18,7 @@ export type WireApp = {
   title: string;
   seq: number;
   nodes: Record<string, unknown>[];
+  header?: string[];
   shortcuts?: Record<string, unknown>[];
   is_closed?: boolean;
   description?: string;
@@ -47,14 +48,14 @@ export interface StoryApp<S> {
   act: (state: S, action: ViewAction, values: Record<string, unknown>) => { state: S; answer?: AppAnswer };
 }
 
-const STORY_INPUT_TYPES = ['plaintext', 'multiline', 'select', 'multiselect', 'checkbox', 'range'];
+const STORY_INPUT_TYPES = ['plaintext', 'multiline', 'select', 'multiselect', 'toggle', 'checkbox', 'range', 'datetime'];
 
 /** True when `id` names an input whose value the host keeps: no secret. */
 function isOpenInput(nodes: Record<string, unknown>[], id: string): boolean {
   return nodes.some((node) =>
     node.id === id
       ? STORY_INPUT_TYPES.includes(String(node.type))
-      : node.type === 'group' && Array.isArray(node.children) && isOpenInput(node.children as Record<string, unknown>[], id),
+      : Array.isArray(node.children) && isOpenInput(node.children as Record<string, unknown>[], id),
   );
 }
 
@@ -65,7 +66,7 @@ function withValue(nodes: Record<string, unknown>[], id: string, value: unknown)
       const { value: _old, ...rest } = node;
       return value === null || value === undefined ? rest : { ...rest, value };
     }
-    if (node.type === 'group' && Array.isArray(node.children)) {
+    if (Array.isArray(node.children)) {
       return { ...node, children: withValue(node.children as Record<string, unknown>[], id, value) };
     }
     return node;
@@ -174,7 +175,7 @@ export class StoryAppHost<S> {
   private track(nodes: Record<string, unknown>[]): void {
     for (const node of nodes) {
       if (node.type === 'log' && Array.isArray(node.lines)) this.logs.set(String(node.id), [...(node.lines as string[])]);
-      if (node.type === 'group' && Array.isArray(node.children)) this.track(node.children as Record<string, unknown>[]);
+      if (Array.isArray(node.children)) this.track(node.children as Record<string, unknown>[]);
     }
   }
 
@@ -263,8 +264,9 @@ export const COUNTER: StoryApp<{ count: number }> = {
       { id: 'count', type: 'stat', stats: [{ id: 'n', label: 'Count', value_text: String(count), tone: count < 0 ? 'warn' : 'ok' }] },
       {
         id: 'controls',
-        type: 'group',
-        direction: 'wrap',
+        type: 'flex',
+        direction: 'row',
+        is_wrapping: true,
         children: [
           { id: 'dec', type: 'button', label: 'Minus one' },
           { id: 'inc', type: 'button', label: 'Plus one' },
@@ -325,8 +327,7 @@ function sortNodes(state: SortState) {
       },
       {
         id: 'sort',
-        type: 'group',
-        direction: 'column',
+        type: 'section',
         label: 'Kind of each item',
         children: [
           ...SORT_ITEMS.map((label, index) => ({
@@ -387,8 +388,9 @@ function todoNodes(state: TodoState) {
       { id: 'new', type: 'plaintext', label: 'New task', placeholder: 'What needs doing?', value: '' },
       {
         id: 'actions',
-        type: 'group',
-        direction: 'wrap',
+        type: 'flex',
+        direction: 'row',
+        is_wrapping: true,
         children: [
           { id: 'add', type: 'button', label: 'Add' },
           { id: 'clear', type: 'button', label: 'Clear done', is_disabled: state.items.every((item) => !item.done) },
@@ -670,8 +672,9 @@ function wizardNodes(wizard: Wizard) {
       ...body,
       {
         id: 'nav',
-        type: 'group',
-        direction: 'wrap',
+        type: 'flex',
+        direction: 'row',
+        is_wrapping: true,
         children: [
           { id: 'back', type: 'button', label: 'Back', is_disabled: wizard.step === 0 },
           wizard.step === 2

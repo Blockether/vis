@@ -6,26 +6,25 @@ import viewSchema from '../../../../packages/vis-contract/resources/vis-contract
 import type { AppActionResult } from '../lib/app-actions';
 import { Markdown } from './ChatContent';
 import { LiveViewPanel } from './LiveView';
-import { applyLivePatch, liveViewFromWire, type LiveNode, type LiveView } from '../lib/live-view';
+import { applyLivePatch, liveViewFromWire, nestedLiveNodes, type LiveNode, type LiveView } from '../lib/live-view';
 
 afterEach(cleanup);
 const view = () => liveViewFromWire(fixture)!;
 const all = (nodes: LiveNode[]): LiveNode[] =>
-  nodes.flatMap((n) => (n.type === 'group' ? [n, ...all(n.children)] : [n]));
+  nodes.flatMap((n) => [n, ...all(nestedLiveNodes(n))]);
 
 describe('the complete live vocabulary', () => {
   it('decodes every declared primitive and exposes every heading level', () => {
     expect(
       new Set(
         all(view().nodes)
-          .filter((n) => n.type !== 'group')
           .map((n) => n.type),
       ),
     ).toEqual(
       new Set(
         viewSchema.$defs.component.oneOf
           .map((node) => node.properties.type.const)
-          .filter((type) => type !== 'group'),
+,
       ),
     );
     render(<LiveViewPanel view={view()} onActivate={vi.fn()} />);
@@ -549,8 +548,10 @@ describe('a timeline and a line of separated items', () => {
           nodes: [
             {
               id: 'head',
-              type: 'group',
-              direction: 'wrap',
+              type: 'flex',
+              direction: 'row',
+              is_wrapping: true,
+              align: 'center',
               children: [
                 { id: 'team', type: 'paragraph', text: 'TEAM' },
                 { id: 'between', type: 'divider' },

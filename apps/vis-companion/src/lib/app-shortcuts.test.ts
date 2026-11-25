@@ -153,7 +153,7 @@ describe('key caps', () => {
         { id: 'go', type: 'button', label: 'Go' },
         {
           id: 'box',
-          type: 'group',
+          type: 'flex',
           children: [
             { id: 'pick', type: 'card', title: 'Pick' },
             { id: 'note', type: 'paragraph', text: 'Note' },

@@ -1,31 +1,11 @@
-"""Test host for the review app: the SDK LiveRecorder, checking every view against the schema."""
-
-import json
+"""The SDK test host for the review app."""
 
 import blockether.vis.extension as vis
 import pytest
-from blockether.vis import _contracts
 
 
 class Recorder(vis.testing.LiveRecorder):
-    """A LiveRecorder that checks each picture against the canonical view schema."""
-
-    def host_live(self, envelope_json):
-        answer = super().host_live(envelope_json)
-        if json.loads(envelope_json).get("op") in ("open", "patch"):
-            public = {
-                "id": self.view_id,
-                "channel_ids": ["test"],
-                "timeout_ms": 0,
-                "created_at": 1,
-            }
-            public.update(json.loads(json.dumps(self._open_view())))
-            public["seq"] = self._seq
-            _contracts.validate("view", "live_view", public)
-            # The gateway refuses a view with a view fault, such as a shortcut
-            # whose node_id names a node that is not a button.
-            assert _contracts.live_view_faults(public, is_declaration=False).view == []
-        return answer
+    """Send review-specific events through the SDK contract checks."""
 
     def send(self, kind, node_id="", **fields):
         """Give the app one event, as a surface does."""

@@ -27,6 +27,19 @@
           (expect
             (not (document/valid-json? "view" "operator_action" (assoc action "legacy" true))))))))
 
+(defdescribe
+  live-only-components-in-ask-forms
+  (it "refuses each live-only component in the request and its public projection"
+      (let [{:strs [input form_refusals]}
+            (json/read-json (slurp (io/resource "vis-contract/fixtures/view.json")))]
+        (doseq [{:strs [name nodes error]} form_refusals]
+          (let [public (assoc input "nodes" nodes)
+                request (-> public
+                            (dissoc "created_at")
+                            (assoc "channel_ids" ["app"]))]
+            (expect (= error (contract/request-error (wire/->engine request))) name)
+            (expect (not (document/valid-json? "view" "input_view" public)) name))))))
+
 (defdescribe input-view-fixture-is-the-engine-projection
              (it "input view fixture is the engine projection"
                  ;; The real SDK flow exposed a false fixture: request includes channel routing,
@@ -54,11 +67,11 @@
 (defdescribe every-input-field-crosses-the-real-projection
              (it "every input field crosses the real projection"
                  (doseq [type ["checkbox" "multiline" "multiselect" "otp" "password" "plaintext"
-                               "range" "select"]]
+                               "range" "select" "toggle"]]
                    (let [field (cond-> {:type type :id "field" :label "Value"}
-                                 (#{"select" "multiselect"} type)
+                                 (#{"select" "multiselect" "toggle"} type)
                                  (assoc :options ["one" "two"]))
-                         projected (-> {:title "Fields" :nodes [{:type "group" :children [field]}]}
+                         projected (-> {:title "Fields" :nodes [{:type "flex" :children [field]}]}
                                        view/normalize-request
                                        (assoc :created-at 1)
                                        view/request->view
@@ -93,11 +106,11 @@
       (expect (nil? (io/resource "vis-contract/view.json")))
       (expect (= (names fields) (set (keys contract/field-types))))
       (expect (= (names components) (set (keys contract/component-types))))
-      (expect (= (apply disj (names components) "group" (names fields))
+      (expect (= (apply disj (names components) (names fields))
                  (set (keys contract/live-node-types))))
       (expect (= #{:otp :password} contract/secret-types))
       (expect (= #{:multiline :password :plaintext} contract/text-types))
-      (expect (= #{:multiselect :select} contract/choice-types))
+      (expect (= #{:multiselect :select :toggle} contract/choice-types))
       (expect (= {:min 0 :max 100 :step 1} contract/range-defaults))
       (expect (= {:length 6 :ceiling 12} contract/otp-defaults))
       (expect (= #{:id :seq :created-at :owner :extension :is-stale :is-reconnectable :submissions

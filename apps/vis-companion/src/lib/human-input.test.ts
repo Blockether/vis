@@ -82,9 +82,10 @@ describe('humanInputRequestFromWire', () => {
       'notify:plaintext',
       'notes:multiline',
       'due:datetime',
-      'group-4:group',
+      'server:section',
+      'more:collapsible',
     ]);
-    // A group is a BRANCH: it answers nothing, and the leaves under it are the
+    // A container holds no answer. The leaves are the
     // fields the form actually submits.
     expect(humanInputInputFields(request.nodes).map((field) => field.id)).toEqual([
       'env',
@@ -99,6 +100,7 @@ describe('humanInputRequestFromWire', () => {
       'host',
       'port',
       'tls',
+      'regions',
     ]);
     // name keys the answer, label is what the dialog shows, description is the
     // italic line under it. Found by name, not by index: ink leads this form.
@@ -170,7 +172,7 @@ describe('humanInputRequestFromWire', () => {
     const deadline = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      nodes: [{ id: 'a' }],
+      nodes: [{ id: 'a', type: 'plaintext' }],
       timeout_ms: 120_000,
     });
     expect(deadline?.timeout_ms).toBe(120_000);
@@ -180,7 +182,7 @@ describe('humanInputRequestFromWire', () => {
     const forever = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      nodes: [{ id: 'a' }],
+      nodes: [{ id: 'a', type: 'plaintext' }],
       timeout_ms: 0,
     });
     expect(forever?.timeout_ms).toBeUndefined();
@@ -193,7 +195,7 @@ describe('humanInputRequestFromWire', () => {
     const child = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      nodes: [{ id: 'a' }],
+      nodes: [{ id: 'a', type: 'plaintext' }],
       origin: {
         session_id: 'child-1',
         title: 'Read logs',
@@ -215,17 +217,17 @@ describe('humanInputRequestFromWire', () => {
     const top = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      nodes: [{ id: 'a' }],
+      nodes: [{ id: 'a', type: 'plaintext' }],
       origin: { session_id: 'leader-1', title: 'Deploy DEV13' },
     });
     expect(originLabel(top?.origin)).toBeNull();
-    expect(humanInputRequestFromWire({ id: 'r', title: 'T', nodes: [{ id: 'a' }], origin: {} })?.origin)
+    expect(humanInputRequestFromWire({ id: 'r', title: 'T', nodes: [{ id: 'a', type: 'plaintext' }], origin: {} })?.origin)
       .toBeUndefined();
   });
   it('refuses a frame it could not render as an answerable form', () => {
     expect(humanInputRequestFromWire(null)).toBeNull();
-    expect(humanInputRequestFromWire({ title: 'T', nodes: [{ id: 'a' }] })).toBeNull();
-    expect(humanInputRequestFromWire({ id: 'r', nodes: [{ id: 'a' }] })).toBeNull();
+    expect(humanInputRequestFromWire({ title: 'T', nodes: [{ id: 'a', type: 'plaintext' }] })).toBeNull();
+    expect(humanInputRequestFromWire({ id: 'r', nodes: [{ id: 'a', type: 'plaintext' }] })).toBeNull();
     expect(humanInputRequestFromWire({ id: 'r', title: 'T', nodes: [] })).toBeNull();
     expect(
       humanInputRequestFromWire({ id: 'r', title: 'T', nodes: [{ type: 'plaintext' }] }),
@@ -253,6 +255,7 @@ describe('initialHumanInputValues', () => {
       host: '',
       port: '',
       tls: false,
+      regions: ['eu'],
     });
   });
 
@@ -286,7 +289,7 @@ describe('initialHumanInputValues', () => {
 });
 
 describe('required fields', () => {
-  it('carries is_required through a layout group without judging anything', () => {
+  it('carries is_required through a layout without judging anything', () => {
     // This used to gate the app's own submit button. The app no longer decides
     // whether an answer is good: `is_required` is a MARK next to the label, and
     // only the engine turns it into a refusal — with its own words.

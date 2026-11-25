@@ -54,10 +54,6 @@
         "the node needs an id",
         "id"
       ],
-      "group_needs_id": [
-        "a group needs an id, because a patch names a group by its id. Write vis.ui.group(\"actions\", ...)",
-        "id"
-      ],
       "repeated_node_id": [
         "two nodes have the id \"{id}\"",
         "unique"
@@ -106,17 +102,17 @@
         "give one tone or null for each line",
         "line_tones"
       ],
-      "grid_columns": [
-        "only a grid group takes max_columns",
-        "grid"
+      "form_component": [
+        "a form takes no dialog or menu",
+        "form_component"
       ],
-      "dialog_open": [
-        "only a dialog group takes is_open",
-        "dialog"
+      "flex_row_only": [
+        "only a flex row takes {key}",
+        "flex"
       ],
-      "toolbar_menu": [
-        "a toolbar menu holds only buttons and groups of buttons",
-        "toolbar"
+      "child_kind": [
+        "the container holds only these node types: {kinds}",
+        "enum"
       ],
       "thread_anchor": [
         "a diff thread needs an anchor",

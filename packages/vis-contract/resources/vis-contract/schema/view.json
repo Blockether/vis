@@ -666,7 +666,7 @@
         "nodes": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/component"
+            "$ref": "#/$defs/form_component"
           },
           "minItems": 1
         },
@@ -1367,13 +1367,25 @@
       ]
     },
     "command_icon": {
-      "description": "A picture that a surface can show next to the label of a command or a field, or instead of it in a toolbar. The label stays the accessible name.",
+      "description": "A picture that a surface can show next to the label of a command or a field, or instead of it in an app header, a menu or a diff toolbar. The label stays the accessible name.",
       "enum": [
         "refresh",
         "more",
         "plus",
         "search",
-        "filter"
+        "filter",
+        "list",
+        "grid",
+        "columns",
+        "rows",
+        "wrap",
+        "expand",
+        "collapse",
+        "copy",
+        "edit",
+        "trash",
+        "sort",
+        "settings"
       ]
     },
     "reveals": {
@@ -1394,6 +1406,9 @@
             },
             "type": {
               "const": "status"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "text": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -1425,6 +1440,9 @@
             },
             "type": {
               "const": "progress"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "value": {
               "oneOf": [
@@ -1465,6 +1483,9 @@
             "type": {
               "const": "stat"
             },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
             "stats": {
               "default": [],
               "type": "array",
@@ -1493,6 +1514,9 @@
             },
             "type": {
               "const": "steps"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "steps": {
               "default": [],
@@ -1523,6 +1547,9 @@
             "type": {
               "const": "timeline"
             },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
             "lanes": {
               "default": [],
               "type": "array",
@@ -1552,6 +1579,9 @@
             "type": {
               "const": "badge"
             },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
             "badges": {
               "default": [],
               "type": "array",
@@ -1580,6 +1610,9 @@
             },
             "type": {
               "const": "list"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "is_ordered": {
               "default": false,
@@ -1614,6 +1647,9 @@
             },
             "type": {
               "const": "chart"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "kind": {
               "default": "bar",
@@ -1657,6 +1693,9 @@
             },
             "type": {
               "const": "log"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "lines": {
               "default": [],
@@ -1716,6 +1755,9 @@
             },
             "type": {
               "const": "table"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "columns": {
               "type": "array",
@@ -1804,6 +1846,9 @@
             "type": {
               "const": "link"
             },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
             "links": {
               "default": [],
               "type": "array",
@@ -1829,6 +1874,9 @@
             },
             "type": {
               "const": "card"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -1866,27 +1914,34 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "description": "Lays its children out on one line, like a CSS flex box. A surface rounds `gap` to whole cells in a terminal.",
           "properties": {
             "id": {
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "type": {
-              "const": "group"
+              "const": "flex"
             },
-            "label": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "description": {
-              "$ref": "common.json#/$defs/non_blank_string"
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "direction": {
-              "default": "column",
-              "$ref": "#/$defs/group_direction"
+              "$ref": "#/$defs/flex_direction",
+              "default": "column"
             },
-            "max_columns": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 12
+            "is_wrapping": {
+              "type": "boolean",
+              "default": false,
+              "description": "True when the children of a row continue on a new line where the line is full. Only a row takes it."
+            },
+            "gap": {
+              "$ref": "#/$defs/gap"
+            },
+            "align": {
+              "$ref": "#/$defs/flex_align"
+            },
+            "justify": {
+              "$ref": "#/$defs/flex_justify"
             },
             "children": {
               "type": "array",
@@ -1894,23 +1949,6 @@
                 "$ref": "#/$defs/component"
               },
               "minItems": 1
-            },
-            "is_collapsible": {
-              "type": "boolean"
-            },
-            "default_expanded": {
-              "type": "boolean"
-            },
-            "icon": {
-              "$ref": "#/$defs/command_icon"
-            },
-            "is_dialog": {
-              "type": "boolean",
-              "description": "True when the group is a dialog. A surface shows it over the view, with its label as the title, only while `is_open` is true. A person closes it with `activate` on the group: the host sets `is_open` to false and then sends the owner the `activate` event."
-            },
-            "is_open": {
-              "type": "boolean",
-              "description": "True while a dialog group shows. Only a dialog takes it."
             }
           },
           "required": [
@@ -1923,12 +1961,304 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "description": "Lays its children out in equal columns that continue in aligned rows. A surface shows as many columns of at least `min_width`, with `gap` between them, as fit, and at most `columns`. The narrowest surface shows one column.",
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "grid"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12,
+              "description": "The most columns that the grid shows."
+            },
+            "min_width": {
+              "$ref": "#/$defs/size",
+              "description": "The smallest width of one column."
+            },
+            "gap": {
+              "$ref": "#/$defs/gap"
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/component"
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "children"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "A framed part of the view, like a card. Its head shows the label, the icon and the description.",
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "section"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "icon": {
+              "$ref": "#/$defs/command_icon"
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/component"
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "children"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "A part of the view that a person opens and closes with its label. Local choices stay through updates.",
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "collapsible"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "icon": {
+              "$ref": "#/$defs/command_icon"
+            },
+            "default_expanded": {
+              "type": "boolean",
+              "default": false
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/component"
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "label",
+            "children"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "A window over the view, with its label as the title. It shows only while `is_open` is true. A person closes it with `activate` on the dialog: the host sets `is_open` to false and then sends the owner the `activate` event.",
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "dialog"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_open": {
+              "type": "boolean",
+              "default": false
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/component"
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "label",
+            "is_open",
+            "children"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "A button that opens a list of commands. Each button child is one command and sends its own `activate` event. A button with `is_selected` is the current choice, a menu child opens a submenu and a divider separates commands. The label names the current choice or the menu; with an icon, the surface shows the icon and the label stays the accessible name.",
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "menu"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "icon": {
+              "$ref": "#/$defs/command_icon"
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/component"
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "enum": [
+                          "button",
+                          "menu",
+                          "divider"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 64
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "label",
+            "children"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "name": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_required": {
+              "default": false,
+              "type": "boolean"
+            },
+            "is_secret": {
+              "const": false,
+              "readOnly": true
+            },
+            "default": {},
+            "validate": {
+              "type": "array",
+              "items": {},
+              "minItems": 1
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "$ref": "common.json#/$defs/non_blank_string"
+                  },
+                  "label": {
+                    "$ref": "common.json#/$defs/non_blank_string"
+                  },
+                  "icon": {
+                    "$ref": "#/$defs/command_icon"
+                  }
+                },
+                "required": [
+                  "value",
+                  "label"
+                ]
+              },
+              "minItems": 2,
+              "maxItems": 8
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            },
+            "type": {
+              "const": "toggle"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
+            "is_multiple": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "description": "A row of joined choices, like a segmented control. With `is_multiple`, a person can choose more than one, and the answer is a list. An option with an icon shows only the icon, and its label stays the accessible name.",
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required",
+            "options"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "properties": {
             "id": {
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "type": {
               "const": "paragraph"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -1952,6 +2282,9 @@
             },
             "type": {
               "const": "heading"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -1983,6 +2316,9 @@
             "type": {
               "const": "code"
             },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
             },
@@ -2008,6 +2344,9 @@
             },
             "type": {
               "const": "spinner"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -2043,6 +2382,9 @@
             "type": {
               "const": "button"
             },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
             },
@@ -2067,7 +2409,7 @@
             },
             "is_selected": {
               "type": "boolean",
-              "description": "The choice that holds now. A menu of a diff toolbar marks it, a view paints the button as one choice of its row, and a press chooses it again."
+              "description": "True when the button is on. In a menu, it marks the current choice. Elsewhere, the button shows pressed."
             },
             "reveals": {
               "$ref": "#/$defs/reveals"
@@ -2098,6 +2440,9 @@
             },
             "type": {
               "const": "divider"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             }
           },
           "required": [
@@ -2114,6 +2459,9 @@
             },
             "type": {
               "const": "diff"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -2144,7 +2492,7 @@
               "maxItems": 200
             },
             "children": {
-              "description": "The toolbar of the diff. A button is one action. A group of buttons is one menu, and its label names the current choice. A group with direction row of two or more buttons, each with is_selected, is a switch: each choice shows, and the choice that holds is marked.",
+              "description": "The toolbar of the diff: buttons, menus and toggles.",
               "type": "array",
               "items": {
                 "allOf": [
@@ -2156,7 +2504,8 @@
                       "type": {
                         "enum": [
                           "button",
-                          "group"
+                          "menu",
+                          "toggle"
                         ]
                       }
                     }
@@ -2182,6 +2531,9 @@
             },
             "type": {
               "const": "image"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -2229,6 +2581,9 @@
             },
             "type": {
               "const": "media"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -2312,6 +2667,9 @@
             "type": {
               "const": "scene"
             },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
             "width": {
               "type": "number",
               "exclusiveMinimum": 0,
@@ -2393,6 +2751,9 @@
             "type": {
               "const": "board"
             },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
             "group_by": {
               "description": "The field that puts the issues in rows across the columns. Absent means one row.",
               "$ref": "#/$defs/board_group"
@@ -2471,6 +2832,9 @@
             },
             "type": {
               "const": "canvas"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             },
             "zoom": {
               "type": "number",
@@ -2589,6 +2953,9 @@
             "type": {
               "const": "thread"
             },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
+            },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
             },
@@ -2657,6 +3024,9 @@
             },
             "type": {
               "const": "checkbox"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             }
           },
           "required": [
@@ -2717,6 +3087,9 @@
             },
             "type": {
               "const": "datetime"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             }
           },
           "required": [
@@ -2774,6 +3147,9 @@
             },
             "type": {
               "const": "multiline"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             }
           },
           "required": [
@@ -2842,6 +3218,9 @@
             },
             "type": {
               "const": "multiselect"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             }
           },
           "required": [
@@ -2903,6 +3282,9 @@
             },
             "type": {
               "const": "otp"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             }
           },
           "required": [
@@ -2961,6 +3343,9 @@
             },
             "type": {
               "const": "password"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             }
           },
           "required": [
@@ -3020,6 +3405,9 @@
             },
             "type": {
               "const": "plaintext"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             }
           },
           "required": [
@@ -3082,6 +3470,9 @@
             },
             "type": {
               "const": "range"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             }
           },
           "required": [
@@ -3153,6 +3544,9 @@
             },
             "type": {
               "const": "select"
+            },
+            "is_growing": {
+              "$ref": "#/$defs/is_growing"
             }
           },
           "description": "From `x-vis-fold-at` options on, a client shows the field as one line that opens a list. The client fits the list height to its screen.",
@@ -3168,11 +3562,27 @@
         }
       ]
     },
+    "form_component": {
+      "description": "A component in an Ask form. A dialog or menu can only be in a live view.",
+      "$ref": "#/$defs/component",
+      "properties": {
+        "type": {
+          "not": {
+            "enum": ["dialog", "menu"]
+          }
+        },
+        "children": {
+          "items": {
+            "$ref": "#/$defs/form_component"
+          }
+        }
+      }
+    },
     "public_component": {
       "description": "A component as the input View projection shows it. Validation rules and secret-storage flags stay at the host.",
       "allOf": [
         {
-          "$ref": "#/$defs/component"
+          "$ref": "#/$defs/form_component"
         }
       ],
       "properties": {
@@ -3567,7 +3977,7 @@
           "maxItems": 32
         },
         "header": {
-          "description": "The ids of the top nodes that an app shows in its header, in this order. `x-vis-header-kinds` lists the node types that it takes. The body does not show them. The header always has the back and close controls. Only an app takes a header.",
+          "description": "The ids of the top nodes that an app shows in its header, in this order. `x-vis-header-kinds` lists the node types that it takes. The body does not show them. A header node is compact: an input shows its label only as its accessible name, so give it a placeholder, and a button with an icon shows only the icon. The header always has the back and close controls. Only an app takes a header.",
           "type": "array",
           "items": {
             "$ref": "common.json#/$defs/non_blank_string"
@@ -3576,7 +3986,8 @@
           "maxItems": 8,
           "x-vis-header-kinds": [
             "button",
-            "group",
+            "menu",
+            "toggle",
             "status",
             "badge",
             "plaintext",
@@ -3707,7 +4118,13 @@
           "table": ["label", "selected_ids"],
           "link": ["label", "links"],
           "card": ["clicks", "is_selectable", "label", "meta", "text", "title", "tone"],
-          "group": ["is_open", "label"],
+          "flex": [],
+          "grid": [],
+          "section": ["description", "label"],
+          "collapsible": ["description", "label"],
+          "dialog": ["description", "is_open", "label"],
+          "menu": ["label"],
+          "toggle": ["label"],
           "paragraph": ["label", "text"],
           "heading": ["label", "level", "text"],
           "code": ["label", "language", "text"],
@@ -3785,7 +4202,8 @@
           "password": ["value"],
           "plaintext": ["value"],
           "range": ["value"],
-          "select": ["value"]
+          "select": ["value"],
+          "toggle": ["value"]
         },
         "thread": {
           "diff": ["thread"],
@@ -3818,6 +4236,9 @@
               "$ref": "#/$defs/tone"
             },
             "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "value": {
@@ -4748,16 +5169,63 @@
       ],
       "default": "none"
     },
-    "group_direction": {
+    "flex_direction": {
       "type": "string",
       "enum": [
-        "column",
         "row",
-        "grid",
-        "wrap",
-        "toolbar"
+        "column"
       ],
-      "description": "How a group arranges its children. A `toolbar` puts compact children on one line that wraps: a text or choice input shows its label only as its accessible name, and a checkbox keeps its label next to the box. An app puts a toolbar in its header through the `header` of its live view. The other toolbars stay in their places. A group of two or more buttons that each have `is_selected` in a toolbar is a switch: its choices stand side by side as one control, without the group label."
+      "default": "column"
+    },
+    "gap": {
+      "type": "string",
+      "enum": [
+        "none",
+        "xs",
+        "sm",
+        "md",
+        "lg"
+      ],
+      "default": "md",
+      "description": "The space between children. A terminal rounds it to whole cells."
+    },
+    "flex_align": {
+      "type": "string",
+      "enum": [
+        "start",
+        "center",
+        "end",
+        "stretch",
+        "baseline"
+      ],
+      "default": "stretch",
+      "description": "Where the children stand across the direction of the flex."
+    },
+    "flex_justify": {
+      "type": "string",
+      "enum": [
+        "start",
+        "center",
+        "end",
+        "between"
+      ],
+      "default": "start",
+      "description": "Where the children of a row stand along the row. `between` puts the free space between them. Only a row takes it, because a column is as high as its children."
+    },
+    "size": {
+      "type": "string",
+      "enum": [
+        "xs",
+        "sm",
+        "md",
+        "lg"
+      ],
+      "default": "md"
+    },
+    "is_growing": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when the node takes the free width of its parent row. Other parents ignore it."
     },
     "spinner_variant": {
       "oneOf": [

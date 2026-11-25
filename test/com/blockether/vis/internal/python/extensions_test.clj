@@ -9365,10 +9365,10 @@ def _refusal(title, fields, **options):
 
 def forms_report():
     '''await forms_report() -> {'kind', ...} - build a form, let the engine judge it.'''
-    good = vis.ui.column(
+    good = vis.ui.flex(
         vis.ui.heading('Target'),
         vis.ui.paragraph('Staging pages nobody.'),
-        vis.ui.row(
+        vis.ui.flex(
             vis.ui.select(
                 'env',
                 [vis.ui.select.option('staging', 'Staging'), vis.ui.select.option('prod')],
@@ -9376,6 +9376,7 @@ def forms_report():
                 default='prod',
             ),
             vis.ui.slider('canary', min=0, max=100, step=5, default=10),
+            direction='row',
         ),
         vis.ui.plaintext('who', label='Deployer'),
         vis.ui.multiline('note'),
@@ -9417,8 +9418,8 @@ vis.register_extension(vis.Extension(
                          res
                          (:result ((symbol-fn ext 'forms_report)))]
 
-                     ;; the builders compose plain wire data: a group, and nameless ink
-                     (expect (= "group:column" (get res "kind")))
+                     ;; the builders compose plain wire data: a flex layout, and nameless ink
+                     (expect (= "flex:column" (get res "kind")))
                      (expect (= {"type" "heading" "text" "Target"} (get res "ink")))
                      ;; `slider` is spelled so it never shadows the `range` builtin
                      (expect (= "range" (get res "slider_type")))

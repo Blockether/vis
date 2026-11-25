@@ -1156,13 +1156,9 @@ _COMPONENT_SCHEMAS = {
     for branch in _contracts.definition("view", "component")["oneOf"]
 }
 _FIELD_SCHEMAS = _contracts.input_branches()
-_GROUP = next(
-    kind
-    for kind, branch in _COMPONENT_SCHEMAS.items()
-    if "children" in branch["properties"]
-)
+_LAYOUT = {kind for kind in _COMPONENT_SCHEMAS if _contracts.is_layout(kind)}
 # Every component that shows text or state and answers nothing.
-_DECOR = set(_COMPONENT_SCHEMAS) - set(_FIELD_SCHEMAS) - {_GROUP}
+_DECOR = set(_COMPONENT_SCHEMAS) - set(_FIELD_SCHEMAS) - _LAYOUT
 _FIELDS = set(_FIELD_SCHEMAS)
 _TEXT = {
     kind
@@ -1219,13 +1215,12 @@ def _option_pair(option):
 
 
 def _field_nodes(nodes):
-    # Depth first, groups flattened: a row and a column are the same question in
-    # the same order when the surface is a terminal.
+    # Flatten visual layouts in reading order.
     for node in nodes or []:
         if not isinstance(node, dict):
             continue
         kind = node.get("type") or "plaintext"
-        if kind == _GROUP:
+        if kind in _LAYOUT:
             yield from _field_nodes(node.get("children"))
         else:
             yield node
@@ -1249,7 +1244,7 @@ def _prompt(node, kind):
         pairs = [_option_pair(o) for o in node.get("options") or []]
         for i, (_value, text) in enumerate(pairs, 1):
             print(f"  {i}) {text}", file=sys.stderr)
-        many = kind == "multiselect"
+        many = kind == "multiselect" or (kind == "toggle" and node.get("is_multiple"))
         picked = input(
             f"{label} [{'numbers, comma separated' if many else 'number'}]: "
         )
@@ -1306,6 +1301,8 @@ def _validate(node, value, values, counts, run):
     if value is None or value == "":
         # A blank value is never validated: that is is_required's only job.
         return None
+    if node.get("type") == "toggle" and not _contracts.input_accepts(node, value):
+        return "must use the declared options"
     if node.get("type") == "datetime":
         complaint = (
             _contracts.datetime_complaint(node, value)
@@ -1413,19 +1410,19 @@ def request_input(request_json, counts_json, run):
 
 
 def _answers(node):
-    # True for a node that holds an ANSWER: not a decoration, not a group.
+    # An answer comes from an input, not a decoration or a layout.
     kind = node.get("type") or "plaintext"
-    return kind not in _DECOR and kind != _GROUP
+    return kind in _FIELDS
 
 
 def _check_node(node, seen):
     if not isinstance(node, dict):
         return f"every field must be a map, got {node!r}"
     kind = node.get("type") or "plaintext"
-    if kind == _GROUP:
+    if kind in _LAYOUT:
         children = node.get("children")
         if not isinstance(children, (list, tuple)) or not children:
-            return f"a {_GROUP} must arrange at least one node"
+            return f"{kind} needs at least one node"
         for child in children:
             complaint = _check_node(child, seen)
             if complaint:
@@ -1445,8 +1442,13 @@ def _check_node(node, seen):
     if name in seen:
         return f"two fields are named {name!r}"
     seen.add(name)
-    if kind in _CHOICE and not (node.get("options") or []):
-        return f"{name!r} is a {kind} and needs options to pick from"
+    if kind in _CHOICE:
+        options = node.get("options") or []
+        rule = _FIELD_SCHEMAS[kind]["properties"]["options"]
+        if len(options) < rule["minItems"]:
+            return f"{name!r} is a {kind} and needs at least {rule['minItems']} options"
+        if "maxItems" in rule and len(options) > rule["maxItems"]:
+            return f"{name!r} is a {kind} and takes at most {rule['maxItems']} options"
     if kind == "otp":
         boxes = node.get("max_length") or node.get("min_length") or _OTP["default"]
         if int(boxes) > int(_OTP["maximum"]):
@@ -1605,11 +1607,10 @@ def _live_checked(view):
 
 
 def _live_leaves(nodes):
-    # The nodes that PAINT, groups flattened: what a reader reads is CONTENT, and a
-    # row is only how a surface arranged it.
+    # A terminal transcript reads the content without visual layout.
     leaves = []
     for node in nodes or []:
-        if node.get("type") == _GROUP:
+        if node.get("type") in _LAYOUT:
             leaves.extend(_live_leaves(node.get("children")))
         else:
             leaves.append(node)

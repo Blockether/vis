@@ -82,7 +82,7 @@
       (let [request
             {:nodes
              [{:id "group"
-               :type :group
+               :type :flex
                :direction :column
                :children
                [{:id "pw" :type :password :is-secret true :default "fixture-projection-secret"}
@@ -354,11 +354,11 @@
       ;; sets, so nothing declared there can come back as an unknown key here.
       (expect (= #{} (unknown-keys hs/field-keys {"name" "env"} normalized-fields)))
       (expect (= #{}
-                 (unknown-keys hs/group-keys
-                               {"type" "group" "children" [{"name" "a"}]}
+                 (unknown-keys (get hs/live-node-type-keys "flex")
+                               {"type" "flex" "children" [{"name" "a"}]}
                                normalized-fields)))
       (expect (= #{}
-                 (unknown-keys hs/option-keys
+                 (unknown-keys (hs/option-keys :select)
                                {"value" "a"}
                                #(normalized-fields
                                   (hi/spec<-json {"name" "env" "type" "select" "options" [%]})))))
@@ -1158,7 +1158,7 @@
   [& {:as overrides}]
   (hi/normalize-request (hi/spec<-json
                           (merge {"title" "Deploy"
-                                  "nodes" [{"type" "group"
+                                  "nodes" [{"type" "flex"
                                             "direction" "row"
                                             "children"
                                             [{"name" "host" "label" "Host" "is_required" true}
@@ -1180,15 +1180,15 @@
             [group note]
             fields]
 
-        (expect (= :group (:type group)))
+        (expect (= :flex (:type group)))
         (expect (= :row (:direction group)))
         (expect (= ["host" "port"] (mapv :id (:children group))))
         (expect (= :multiline (:type note)))
         (expect (= ["host" "port" "note"] (mapv :id (hi/input-fields fields))))))
   (it "nests, so a row of stacks needs no new key"
-      (let [[outer] (normalized-fields (hi/spec<-json {"type" "group"
+      (let [[outer] (normalized-fields (hi/spec<-json {"type" "flex"
                                                        "direction" "row"
-                                                       "children" [{"type" "group"
+                                                       "children" [{"type" "flex"
                                                                     "children" [{"name" "a"}
                                                                                 {"name" "b"}]}
                                                                    {"name" "c"}]}))]
@@ -1198,82 +1198,49 @@
   (it "takes a positional id when the spec does not give one"
       ;; A form never patches a node, so a group without an `id` gets one from its
       ;; place in the tree, numbered depth first, and carries no `name`.
-      (let [[outer] (normalized-fields (hi/spec<-json {"type" "group"
-                                                       "children" [{"type" "group"
+      (let [[outer] (normalized-fields (hi/spec<-json {"type" "flex"
+                                                       "children" [{"type" "flex"
                                                                     "children" [{"name" "a"}]}]}))]
-        (expect (= "group-2" (:id outer)))
-        (expect (= "group-1" (:id (first (:children outer)))))
+        (expect (= "flex-2" (:id outer)))
+        (expect (= "flex-1" (:id (first (:children outer)))))
         (expect (not (contains? outer :name))))
       (let [[outer] (normalized-fields (hi/spec<-json
-                                         {"id" "when" "type" "group" "children" [{"name" "a"}]}))]
+                                         {"id" "when" "type" "flex" "children" [{"name" "a"}]}))]
         (expect (= "when" (:id outer)))))
-  (it "takes a grid with a column cap and a wrap row"
-      (let [[grid wrap] (normalized-fields (hi/spec<-json {"type" "group"
-                                                           "direction" "grid"
-                                                           "max_columns" 3
-                                                           "children" [{"name" "a"} {"name" "b"}]})
-                                           (hi/spec<-json {"type" "group"
-                                                           "direction" "wrap"
-                                                           "children" [{"name" "c"}]}))]
-        (expect (= :grid (:direction grid)))
-        (expect (= 3 (:max-columns grid)))
-        (expect (= :wrap (:direction wrap)))
-        (expect (not (contains? wrap :max-columns)))))
-  (it "refuses a column cap outside a grid or outside its bounds"
-      (let [message (fn [spec]
-                      (try (normalized-fields (hi/spec<-json spec))
-                           nil
-                           (catch clojure.lang.ExceptionInfo e (ex-message e))))]
-        (expect (str/includes?
-                  (message
-                    {"type" "group" "direction" "row" "max_columns" 2 "children" [{"name" "a"}]})
-                  "/max_columns - only a grid group takes max_columns (grid)"))
-        (expect (str/includes?
-                  (message
-                    {"type" "group" "direction" "grid" "max_columns" 13 "children" [{"name" "a"}]})
-                  "/max_columns - the number is greater than the maximum 12 (maximum)"))
-        (expect (str/includes?
-                  (message
-                    {"type" "group" "direction" "grid" "max_columns" 1.5 "children" [{"name" "a"}]})
-                  "/max_columns - expected integer, got number (type)"))))
+  (it "answers a nested toggle as one value or a list"
+      (let [fields (normalized-fields {:type :grid :columns 3 :min-width :sm
+                                       :children [{:name "one" :type :toggle :options ["a" "b"]}
+                                                  {:name "many" :type :toggle :is-multiple true
+                                                   :options ["a" "b"]}]})]
+        (expect (= {"one" "b" "many" ["a" "b"]}
+                   (:values (hi/coerce-values fields {"one" "b" "many" ["a" "b"]}))))))
   (it "refuses a direction that is not a flexbox direction"
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields (hi/spec<-json {"type" "group"
+                       #(normalized-fields (hi/spec<-json {"type" "flex"
                                                            "direction" "diagonal"
                                                            "children" [{"name" "a"}]})))))
   (it "refuses a group with nothing in it"
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields (hi/spec<-json {"type" "group"}))))
+                       #(normalized-fields (hi/spec<-json {"type" "flex"}))))
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields (hi/spec<-json {"type" "group" "children" []})))))
+                       #(normalized-fields (hi/spec<-json {"type" "flex" "children" []})))))
   (it "refuses a key that only an answerable field could use"
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields (hi/spec<-json {"type" "group"
+                       #(normalized-fields (hi/spec<-json {"type" "flex"
                                                            "is_required" true
                                                            "children" [{"name" "a"}]}))))
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields (hi/spec<-json {"type" "group"
+                       #(normalized-fields (hi/spec<-json {"type" "flex"
                                                            "default" "x"
                                                            "children" [{"name" "a"}]})))))
-  (it "refuses a layout key on a field that could never lay anything out"
-      ;; The mirror of the rule above: `fields`/`direction` describe an
-      ;; arrangement, and a leaf arranges nothing — silently ignoring them would
-      ;; drop half the form the caller wrote.
+  (it "refuses children on an answer field"
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields (hi/spec<-json {"name" "host"
-                                                           "children" [{"name" "a"}]}))))
-      (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields (hi/spec<-json {"name" "host" "direction" "row"}))))
-      (expect (str/includes? (try (normalized-fields (hi/spec<-json {"name" "host"
-                                                                     "direction" "row"}))
-                                  nil
-                                  (catch clojure.lang.ExceptionInfo e (ex-message e)))
-                             "only exists on a group")))
+                       #(normalized-fields {:name "host" :children [{:name "a"}]}))))
   (it "still refuses two fields with the same name across different groups"
       (expect (throws? clojure.lang.ExceptionInfo
                        #(normalized-fields
-                          (hi/spec<-json {"type" "group" "children" [{"name" "a"}]})
-                          (hi/spec<-json {"type" "group" "children" [{"name" "a"}]})))))
+                          (hi/spec<-json {"type" "flex" "children" [{"name" "a"}]})
+                          (hi/spec<-json {"type" "flex" "children" [{"name" "a"}]})))))
   (it "validates and answers the nested fields as if the tree were flat"
       (let [request (grouped-request)]
         (expect (= {"host" "is required" "port" "must be a whole number"}
@@ -1285,7 +1252,7 @@
       (let [request (hi/normalize-request
                       (hi/spec<-json
                         {"title" "Sign in"
-                         "nodes" [{"type" "group"
+                         "nodes" [{"type" "flex"
                                    "direction" "row"
                                    "children" [{"name" "pw" "type" "password" "label" "Password"}]}
                                   {"name" "pw2"
@@ -1299,9 +1266,8 @@
       (let [view
             (hi/request->view (hi/normalize-request
                                 (hi/spec<-json {"title" "Deploy"
-                                                "nodes" [{"type" "group"
+                                                "nodes" [{"type" "flex"
                                                           "direction" "row"
-                                                          "label" "Target"
                                                           "children" [{"name" "host"
                                                                        :validate [(fn [_]
                                                                                     true)]}]}]})))
@@ -1309,9 +1275,8 @@
             [group]
             (:nodes view)]
 
-        (expect (= :group (:type group)))
+        (expect (= :flex (:type group)))
         (expect (= :row (:direction group)))
-        (expect (= "Target" (:label group)))
         (expect (not (contains? (first (:children group)) :validate)))
         (expect (not (contains? (first (:children group)) :is-secret))))))
 
@@ -1344,7 +1309,7 @@
                                {:name "pct" :type "range" :min 0 :max 100 :step 5 :default 25}
                                {:name "code" :type "otp"}
                                {:id "grp"
-                                :type "group"
+                                :type "flex"
                                 :direction "row"
                                 :children [{:name "a"} {:name "b" :type "checkbox"}]}]
                        :timeout-ms 0})]
@@ -1357,7 +1322,7 @@
               group (last nodes)]
 
           (expect (every? #(nil? (hs/field-error %)) (butlast nodes)))
-          (expect (nil? (hs/group-error group)))
+          (expect (nil? (hs/live-node-error group)))
           (expect (every? #(nil? (hs/field-error %)) (:children group))))))
   (it "a request spelled the Python way lands in the very same form"
       (let [request (hi/normalize-request (hi/spec<-json {"title" "Deploy"
@@ -1434,7 +1399,7 @@
                        {:name "pw" :type "password"}
                        {:name "pct" :type "range" :min 0 :max 100 :step 5}
                        {:id "grp"
-                        :type "group"
+                        :type "flex"
                         :direction "row"
                         :children [{:name "code" :type "otp" :max-length 6}]}]
                :timeout-ms 0})
@@ -1496,25 +1461,16 @@
   (it "answers nothing, so it never keys the values map — not even inside a group"
       (let [fields (normalized-fields (hi/spec<-json {"type" "heading" "text" "H"})
                                       (hi/spec<-json {"name" "host"})
-                                      (hi/spec<-json {"type" "group"
+                                      (hi/spec<-json {"type" "flex"
                                                       "id" "g"
                                                       "children" [{"type" "paragraph" "text" "P"}
                                                                   {"name" "pw"
                                                                    "type" "password"}]}))]
         (expect (= ["host" "pw"] (mapv :name (hi/input-fields fields))))))
-  (it "is neither a field nor a group, and the three contracts refuse each other"
-      (let [[head field group]
-            (normalized-fields (hi/spec<-json {"type" "heading" "text" "H"})
-                               (hi/spec<-json {"name" "host"})
-                               (hi/spec<-json {"type" "group" "id" "g" "children" [{"name" "a"}]}))]
-        ;; One home for the vocabulary, as with the field and group tables.
-        (expect (contains? (set (vals hs/live-node-types)) :heading))
-        (expect (not (contains? (set (vals hs/field-types)) :heading)))
+  (it "refuses a display component as an answer field"
+      (let [[head] (normalized-fields {:type :heading :text "H"})]
         (expect (nil? (hs/live-node-error head)))
-        (expect (some? (hs/field-error head)))
-        (expect (some? (hs/group-error head)))
-        (expect (nil? (hs/group-error group)))
-        (expect (some? (hs/group-error field)))))
+        (expect (some? (hs/field-error head)))))
   (it "refuses a decoration that tries to ask something"
       ;; A `:name` would make it keyed, a `:default` would make it answerable:
       ;; both are a spec that meant to add a field.
@@ -1584,22 +1540,22 @@
   (it "takes the FORM's own row as a live node, and refuses layout declared on a leaf"
       (expect (nil? (hs/live-view-error
                       (live-view {:id "reading"
-                                  :type :group
+                                  :type :flex
                                   :direction :row
                                   :children [{:id "beside" :type :status :text "b" :tone :ok}]}))))
       (expect (some? (hs/live-view-error
                        (live-view {:id "reading"
-                                   :type :group
+                                   :type :flex
                                    :direction :sideways
                                    :children [{:id "beside" :type :status :text "b" :tone :ok}]}))))
       (expect (some? (hs/live-view-error
-                       (live-view {:id "reading" :type :group :direction :row :children []})))
+                       (live-view {:id "reading" :type :flex :direction :row :children []})))
               "a row holding nothing is a layout with no content")
       (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 0 :direction] :row)))
               "only a group arranges")
       (expect (some? (hs/live-view-error
                        (live-view {:id "reading"
-                                   :type :group
+                                   :type :flex
                                    :direction :row
                                    :children [{:id "state" :type :status :text "b" :tone :ok}]})))
               "and an id is unique across the whole tree, because a patch names it alone"))
@@ -1934,7 +1890,7 @@
       (watching (live-spec
                   (hi/spec<-json
                     {"id" "reading"
-                     "type" "group"
+                     "type" "flex"
                      "direction" "row"
                      "children"
                      [{"id" "hosts" "type" "table" "columns" [{"id" "host" "label" "Host"}]}
@@ -1957,18 +1913,13 @@
                   (hi/patch-live! (:id view) [{:op "set" :node-id "why" :tone "error"}])
                   (let [row (first (:nodes (hi/live-view (:id view))))]
                     (expect (= :error (:tone (second (:children row)))))))))
-  (it "refuses a group without an id and names the Python fix"
-      ;; #428: the refusal gave no fix, so an extension author did not know what to write.
+  (it "refuses a live flex without an id"
       (recorded (fn []
-                  (let [refused (live-refusal #(hi/open-live! (live-spec (hi/spec<-json
-                                                                           {"type" "group"
-                                                                            "direction" "wrap"
-                                                                            "children"
-                                                                            [{"id" "save"
-                                                                              "type" "button"
-                                                                              "label" "Save"}]}))))]
-                    (expect (some? refused))
-                    (expect (str/includes? (str refused) "vis.ui.group(\"actions\", ...)"))))))
+                  (let [refused (live-refusal #(hi/open-live!
+                                                (live-spec {:type :flex
+                                                            :children [{:id "note" :type :paragraph
+                                                                        :text "Note"}]})))]
+                    (expect (str/includes? refused "the node needs an id"))))))
   (it
     "keeps every ACCEPTED patch on disk, in the order the engine accepted them"
     (recorded
@@ -2856,7 +2807,7 @@
         (let [spec
               (assoc (live-spec {:id "outside" :type "plaintext" :label "Outside"}
                                 {:id "actions"
-                                 :type "group"
+                                 :type "flex"
                                  :direction "column"
                                  :children
                                  [{:id "target" :type "plaintext" :label "Target" :is-required true}
@@ -3298,8 +3249,7 @@
                  "patch" ""
                  "children" [{"id" "refresh" "type" "button" "label" "Refresh" "icon" "refresh"}
                              {"id" "more"
-                              "type" "group"
-                              "direction" "column"
+                              "type" "menu"
                               "label" "More actions"
                               "icon" "more"
                               "children" [{"id" "run" "type" "button" "label" "Run"}]}]}
@@ -3332,8 +3282,7 @@
                "patch" ""
                "children"
                [{"id" "scope"
-                 "type" "group"
-                 "direction" "column"
+                 "type" "menu"
                  "label" "Uncommitted"
                  "children"
                  [{"id" "all" "type" "button" "label" "All changes"}
@@ -3367,13 +3316,11 @@
                "type" "diff"
                "patch" ""
                "children" [{"id" "scope"
-                            "type" "group"
-                            "direction" "column"
+                            "type" "menu"
                             "label" "All changes"
                             "children" [{"id" "all" "type" "button" "label" "All changes"}
                                         {"id" "checkpoints"
-                                         "type" "group"
-                                         "direction" "column"
+                                         "type" "menu"
                                          "label" "Checkpoint"
                                          "children" [{"id" "checkpoint-1"
                                                       "type" "button"
@@ -4305,6 +4252,33 @@
                 (restart-app! id)
                 (expect (= continued (hi/app-view sid id))))
               (finally (when (hi/live-view id) (hi/close-live! id)))))))))
+
+(defdescribe
+  invalid-saved-app-test
+  (it "closes a saved app when its opening picture or an add-node uses a removed type"
+      (recorded
+        (fn []
+          (doseq [added? [false true]]
+            (let [sid (str (random-uuid))
+                  id (str (random-uuid))
+                  path (live-sink/view-file sid id)
+                  heading {:id "text" :type "paragraph" :text "Saved"}
+                  removed {:id "old" :type "group" :direction "row"
+                           :children [(assoc heading :id "child")]}
+                  view {:id id :session-id sid :title "Saved" :placement :attachment
+                        :channel-ids ["app"] :created-at 1 :timeout-ms 0 :seq 0
+                        :nodes [(if added? heading removed)]}
+                  op (if added?
+                       {:op "add-node" :node-spec removed}
+                       {:op "set" :node-id "old" :label "Changed"})
+                  lines [{:kind "open" :view view}
+                         {:kind "patch" :patch {:view-id id :seq 1 :ops [op]}}]]
+              (io/make-parents path)
+              (spit path (apply str (map #(str (json/write-json-str (hs/wire-data %)) "\n") lines)))
+              (let [closed (hi/app-view sid id)]
+                (expect (:is-closed closed))
+                (expect (nil? (hi/live-view id)))
+                (expect (nil? (hs/live-view-error closed))))))))))
 
 (defn- event-types
   [sid view-id after]

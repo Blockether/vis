@@ -59,6 +59,35 @@ def test_a_view_record_takes_each_field_that_its_schema_allows():
         assert set(allowed) <= {field.name for field in fields(record)}, record.__name__
 
 
+def test_live_app_header_ids_roundtrip_as_immutable_metadata():
+    from blockether.vis.views import LiveView
+
+    sample = {
+        **fixtures()["live"],
+        "placement": "attachment",
+        "nodes": [
+            {
+                "id": "menu",
+                "type": "menu",
+                "label": "Menu",
+                "children": [
+                    {
+                        "id": "run",
+                        "type": "button",
+                        "label": "Run",
+                        "action": "activate",
+                        "is_disabled": False,
+                    },
+                ],
+            }
+        ],
+        "header": ["menu"],
+    }
+    view = LiveView.from_wire(sample)
+    assert view.header == ("menu",)
+    assert view.to_wire() == sample
+
+
 def test_live_view_owner_roundtrips_as_immutable_metadata():
     from blockether.vis.views import LiveView
 

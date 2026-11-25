@@ -8,6 +8,104 @@
   ],
   "cases": [
     {
+      "name": "a header takes command icons on toggle options, menus and buttons",
+      "view": {
+        "title": "Command icons",
+        "placement": "attachment",
+        "key": "icons",
+        "header": [
+          "layout",
+          "menu",
+          "copy"
+        ],
+        "nodes": [
+          {
+            "id": "layout",
+            "type": "toggle",
+            "options": [
+              {
+                "value": "list",
+                "label": "List",
+                "icon": "list"
+              },
+              {
+                "value": "grid",
+                "label": "Grid",
+                "icon": "grid"
+              },
+              {
+                "value": "columns",
+                "label": "Columns",
+                "icon": "columns"
+              },
+              {
+                "value": "rows",
+                "label": "Rows",
+                "icon": "rows"
+              },
+              {
+                "value": "wrap",
+                "label": "Wrap",
+                "icon": "wrap"
+              },
+              {
+                "value": "expand",
+                "label": "Expand",
+                "icon": "expand"
+              },
+              {
+                "value": "collapse",
+                "label": "Collapse",
+                "icon": "collapse"
+              },
+              {
+                "value": "copy",
+                "label": "Copy",
+                "icon": "copy"
+              }
+            ]
+          },
+          {
+            "id": "menu",
+            "type": "menu",
+            "label": "Settings",
+            "icon": "settings",
+            "children": [
+              {
+                "id": "edit",
+                "type": "button",
+                "label": "Edit",
+                "icon": "edit"
+              },
+              {
+                "id": "trash",
+                "type": "button",
+                "label": "Trash",
+                "icon": "trash"
+              },
+              {
+                "id": "sort",
+                "type": "button",
+                "label": "Sort",
+                "icon": "sort"
+              }
+            ]
+          },
+          {
+            "id": "copy",
+            "type": "button",
+            "label": "Copy",
+            "icon": "copy"
+          }
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
+    },
+    {
       "name": "every node type is valid",
       "view": {
         "title": "Every type",
@@ -66,7 +164,7 @@
           },
           {
             "id": "spinners",
-            "type": "group",
+            "type": "flex",
             "direction": "row",
             "children": [
               {
@@ -101,7 +199,7 @@
           },
           {
             "id": "actions",
-            "type": "group",
+            "type": "flex",
             "direction": "row",
             "children": [
               {
@@ -229,8 +327,7 @@
           },
           {
             "id": "plans",
-            "type": "group",
-            "direction": "row",
+            "type": "section",
             "label": "Plans",
             "children": [
               {
@@ -253,10 +350,8 @@
           },
           {
             "id": "details",
-            "type": "group",
-            "direction": "column",
+            "type": "collapsible",
             "label": "Details",
-            "is_collapsible": true,
             "default_expanded": false,
             "children": [
               {
@@ -712,6 +807,68 @@
               "width": 2,
               "height": 2
             }
+          },
+          {
+            "id": "grid",
+            "type": "grid",
+            "columns": 3,
+            "min_width": "sm",
+            "children": [
+              {
+                "id": "card",
+                "type": "section",
+                "label": "Card",
+                "children": [
+                  {
+                    "id": "c",
+                    "type": "paragraph",
+                    "text": "x"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "nested-menu",
+            "type": "menu",
+            "label": "Choose",
+            "children": [
+              {
+                "id": "separator",
+                "type": "divider"
+              },
+              {
+                "id": "more",
+                "type": "menu",
+                "label": "More",
+                "children": [
+                  {
+                    "id": "choice",
+                    "type": "button",
+                    "label": "Choice"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "choice-toggle",
+            "type": "toggle",
+            "options": [
+              {
+                "value": "a",
+                "label": "A"
+              },
+              {
+                "value": "b",
+                "label": "B",
+                "icon": "plus"
+              }
+            ],
+            "is_multiple": true,
+            "value": [
+              "b"
+            ]
           }
         ]
       },
@@ -754,7 +911,7 @@
       }
     },
     {
-      "name": "a group child without an id is a fault of the group",
+      "name": "a flex child without an id is a fault of the flex",
       "view": {
         "title": "Checks",
         "nodes": [
@@ -765,13 +922,14 @@
           },
           {
             "id": "g",
-            "type": "group",
+            "type": "flex",
             "children": [
               {
                 "type": "paragraph",
                 "text": "x"
               }
-            ]
+            ],
+            "direction": "column"
           }
         ]
       },
@@ -786,7 +944,7 @@
       }
     },
     {
-      "name": "a group child that is no map is a fault of the group",
+      "name": "a flex child that is no map is a fault of the flex",
       "view": {
         "title": "Checks",
         "nodes": [
@@ -797,10 +955,11 @@
           },
           {
             "id": "g",
-            "type": "group",
+            "type": "flex",
             "children": [
               "x"
-            ]
+            ],
+            "direction": "column"
           }
         ]
       },
@@ -847,7 +1006,7 @@
       }
     },
     {
-      "name": "a toolbar menu that holds a status is a node fault",
+      "name": "a menu that holds a paragraph is a node fault",
       "view": {
         "title": "Checks",
         "nodes": [
@@ -858,49 +1017,8 @@
           },
           {
             "id": "d",
-            "type": "diff",
-            "patch": "",
-            "children": [
-              {
-                "id": "m",
-                "type": "group",
-                "children": [
-                  {
-                    "id": "s",
-                    "type": "status",
-                    "text": "x"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "expect": {
-        "class": "node",
-        "cards": [
-          "d"
-        ],
-        "text": [
-          "node d /children/0 - a toolbar menu holds only buttons and groups of buttons (toolbar)"
-        ]
-      }
-    },
-    {
-      "name": "max_columns on a group that is not a grid is a node fault",
-      "view": {
-        "title": "Checks",
-        "nodes": [
-          {
-            "id": "a",
-            "type": "paragraph",
-            "text": "x"
-          },
-          {
-            "id": "g",
-            "type": "group",
-            "direction": "row",
-            "max_columns": 2,
+            "type": "menu",
+            "label": "Menu",
             "children": [
               {
                 "id": "c",
@@ -914,58 +1032,88 @@
       "expect": {
         "class": "node",
         "cards": [
-          "g"
+          "d"
         ],
         "text": [
-          "node g /max_columns - only a grid group takes max_columns (grid)"
+          "node d /children/0 - the container holds only these node types: button, menu, divider (enum)"
         ]
       }
     },
     {
-      "name": "a toolbar, a field icon, a dialog and a board row field are valid",
+      "name": "a flex with default direction does not take is_wrapping",
       "view": {
         "title": "Checks",
         "nodes": [
           {
-            "id": "tools",
-            "type": "group",
-            "direction": "toolbar",
+            "id": "layout",
+            "type": "flex",
+            "is_wrapping": false,
             "children": [
               {
-                "id": "query",
-                "type": "plaintext",
-                "name": "query",
-                "label": "Search issues",
-                "placeholder": "Search issues",
-                "icon": "search"
-              },
-              {
-                "id": "create",
-                "type": "button",
-                "label": "Create issue",
-                "icon": "plus"
+                "id": "copy",
+                "type": "paragraph",
+                "text": "Note"
               }
             ]
-          },
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "layout"
+        ],
+        "text": [
+          "node layout /is_wrapping - only a flex row takes is_wrapping (flex)"
+        ]
+      }
+    },
+    {
+      "name": "a flex column does not take justify",
+      "view": {
+        "title": "Checks",
+        "nodes": [
           {
-            "id": "issues",
-            "type": "board",
-            "group_by": "assignee",
-            "columns": [],
-            "issues": []
-          },
-          {
-            "id": "new-issue",
-            "type": "group",
-            "label": "New issue",
-            "is_dialog": true,
-            "is_open": false,
+            "id": "layout",
+            "type": "flex",
+            "direction": "column",
+            "justify": "start",
             "children": [
               {
-                "id": "title",
-                "type": "plaintext",
-                "name": "title",
-                "label": "Title"
+                "id": "copy",
+                "type": "paragraph",
+                "text": "Note"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "layout"
+        ],
+        "text": [
+          "node layout /justify - only a flex row takes justify (flex)"
+        ]
+      }
+    },
+    {
+      "name": "a flex row takes is_wrapping and justify",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "layout",
+            "type": "flex",
+            "direction": "row",
+            "is_wrapping": true,
+            "justify": "between",
+            "children": [
+              {
+                "id": "copy",
+                "type": "paragraph",
+                "text": "Note"
               }
             ]
           }
@@ -978,7 +1126,7 @@
       }
     },
     {
-      "name": "is_open on a group that is not a dialog is a node fault",
+      "name": "an unknown flex gap is a node fault",
       "view": {
         "title": "Checks",
         "nodes": [
@@ -989,8 +1137,9 @@
           },
           {
             "id": "g",
-            "type": "group",
-            "is_open": true,
+            "type": "flex",
+            "direction": "row",
+            "gap": "wide",
             "children": [
               {
                 "id": "c",
@@ -1007,7 +1156,93 @@
           "g"
         ],
         "text": [
-          "node g /is_open - only a dialog group takes is_open (dialog)"
+          "node g /gap - the value is not one of none, xs, sm, md, lg (enum)"
+        ]
+      }
+    },
+    {
+      "name": "an app header and a dialog are valid",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "query",
+            "type": "plaintext",
+            "name": "query",
+            "label": "Search issues",
+            "placeholder": "Search issues",
+            "icon": "search"
+          },
+          {
+            "id": "create",
+            "type": "button",
+            "label": "Create issue",
+            "icon": "plus"
+          },
+          {
+            "id": "issues",
+            "type": "board",
+            "group_by": "assignee",
+            "columns": [],
+            "issues": []
+          },
+          {
+            "id": "new-issue",
+            "type": "dialog",
+            "label": "New issue",
+            "is_open": false,
+            "children": [
+              {
+                "id": "title",
+                "type": "plaintext",
+                "name": "title",
+                "label": "Title"
+              }
+            ]
+          }
+        ],
+        "placement": "attachment",
+        "key": "checks",
+        "header": [
+          "query",
+          "create"
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
+    },
+    {
+      "name": "a toggle with one option is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "g",
+            "type": "toggle",
+            "options": [
+              {
+                "value": "a",
+                "label": "A"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "g"
+        ],
+        "text": [
+          "node g /options - the array has 1 items, the minimum is 2 (minItems)"
         ]
       }
     },
@@ -1990,19 +2225,20 @@
       }
     },
     {
-      "name": "a top group without an id is a view fault",
+      "name": "a top flex without an id is a view fault",
       "view": {
         "title": "Checks",
         "nodes": [
           {
-            "type": "group",
+            "type": "flex",
             "children": [
               {
                 "id": "c",
                 "type": "paragraph",
                 "text": "x"
               }
-            ]
+            ],
+            "direction": "column"
           }
         ]
       },
@@ -2010,7 +2246,7 @@
         "class": "view",
         "cards": [],
         "text": [
-          "/nodes/0 - a group needs an id, because a patch names a group by its id. Write vis.ui.group(\"actions\", ...) (id)"
+          "/nodes/0 - the node needs an id (id)"
         ]
       }
     },
@@ -2518,14 +2754,15 @@
         "nodes": [
           {
             "id": "row",
-            "type": "group",
+            "type": "flex",
             "children": [
               {
                 "id": "new",
                 "type": "button",
                 "label": "New"
               }
-            ]
+            ],
+            "direction": "column"
           }
         ],
         "header": [
@@ -2564,7 +2801,7 @@
         "class": "view",
         "cards": [],
         "text": [
-          "/header/0 - a header holds only these node types: button, group, status, badge, plaintext, select (header)"
+          "/header/0 - a header holds only these node types: button, menu, toggle, status, badge, plaintext, select (header)"
         ]
       }
     },
@@ -7348,13 +7585,13 @@
       }
     },
     {
-      "name": "a remove-node of the only node of a group is refused with the check of the group",
+      "name": "a remove-node of the only node of a flex is refused with the check of the flex",
       "view": {
         "title": "Apply",
         "nodes": [
           {
             "id": "g",
-            "type": "group",
+            "type": "flex",
             "direction": "row",
             "children": [
               {
@@ -8302,7 +8539,7 @@
         }
       ],
       "expect": {
-        "refusal": "Invalid live-view patch: node d /children/1/type - the value is not one of button, group (enum)"
+        "refusal": "Invalid live-view patch: node d /children/1 - the container holds only these node types: button, menu, toggle (enum)"
       }
     },
     {

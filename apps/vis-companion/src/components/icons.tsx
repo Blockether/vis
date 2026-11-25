@@ -10,6 +10,7 @@ import {
   SquareTerminal,
   GitCommitHorizontal,
   GitBranch,
+  List,
   ListChecks,
   PanelsTopLeft,
   Activity,
@@ -111,7 +112,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { appIconName, type AppIconName, type ViewCommandIcon } from '../lib/view';
+import { appIconName, VIEW_COMMAND_ICONS, type AppIconName } from '../lib/view';
 
 /** One class list from parts, so an absent one leaves no hole behind. */
 const classes = (...parts: (string | false | undefined)[]) =>
@@ -508,14 +509,36 @@ export function FilterIcon({ className }: { className?: string }) {
   return <Mark icon={ListFilter} className={className} />;
 }
 
-/** The picture of each `command_icon` of view.json. An app names one; it draws no icon. */
-export const COMMAND_ICONS = {
+const commandMark = (icon: LucideIcon) => ({ className }: { className?: string }) =>
+  <Mark icon={icon} className={className} />;
+
+type CommandIconRenderer = (props: { className?: string; isBusy?: boolean }) => React.JSX.Element;
+const commandIconRenderers: Readonly<Partial<Record<string, CommandIconRenderer>>> = {
   refresh: RefreshIcon,
   more: MoreIcon,
   plus: PlusIcon,
   search: SearchIcon,
   filter: FilterIcon,
-} as const satisfies Record<ViewCommandIcon, unknown>;
+  list: commandMark(List),
+  grid: commandMark(LayoutGrid),
+  columns: commandMark(Columns2),
+  rows: commandMark(Rows3),
+  wrap: WrapIcon,
+  expand: ExpandAllIcon,
+  collapse: CollapseAllIcon,
+  copy: CopyIcon,
+  edit: PencilIcon,
+  trash: TrashIcon,
+  sort: SortIcon,
+  settings: SettingsIcon,
+};
+
+/** Draw only the command icons declared in view.json. */
+export const COMMAND_ICONS = Object.fromEntries(VIEW_COMMAND_ICONS.map((name) => {
+  const render = commandIconRenderers[name];
+  if (!render) throw new Error(`No renderer for command icon: ${name}`);
+  return [name, render];
+}));
 
 /** Every file folds to its header. */
 export function CollapseAllIcon({ className }: { className?: string }) {

@@ -12,10 +12,12 @@ import type { SseEvent } from './types';
 import {
   VIEW_CLOSE_EVENT,
   VIEW_OPEN_EVENT,
-  type ViewGroupDirection,
-  viewGroupDirection,
+  isViewContainerType,
+  type ViewFlexLayout,
+  type ViewGridLayout,
+  viewFlexLayout,
+  viewGridLayout,
   viewKind,
-  viewMaxColumns,
   viewCommandIcon,
   type ViewCommandIcon,
 } from './view';
@@ -27,6 +29,7 @@ export const HUMAN_INPUT_FIELD_TYPES = [
   'multiline',
   'select',
   'multiselect',
+  'toggle',
   'checkbox',
   'range',
   'datetime',
@@ -41,12 +44,14 @@ export const HUMAN_INPUT_FIELD_TYPES = [
 export const HUMAN_INPUT_DECOR_TYPES = ['heading', 'paragraph'] as const;
 
 /**
- * Every node a request's tree can hold: the answerable fields, the layout
- * `group` that arranges them, and the decorations that are only read.
+ * Every node a request's tree can hold: the answerable fields, the containers that arrange them, and the decorations that are only read.
  */
 export const HUMAN_INPUT_NODE_TYPES = [
   ...HUMAN_INPUT_FIELD_TYPES,
-  'group',
+  'flex',
+  'grid',
+  'section',
+  'collapsible',
   ...HUMAN_INPUT_DECOR_TYPES,
 ] as const;
 
@@ -125,9 +130,10 @@ export function humanInputIsDecoration(node: { type: HumanInputFieldType }): boo
 export interface HumanInputOption {
   value: string;
   label: string;
+  icon?: ViewCommandIcon;
 }
 
-export interface HumanInputField {
+export interface HumanInputField extends Partial<ViewFlexLayout>, ViewGridLayout {
   /** How the answer is keyed. `name` is the contract; `id` is its alias. */
   id: string;
   name: string;
@@ -152,11 +158,9 @@ export interface HumanInputField {
   earliest?: string;
   latest?: string;
   default?: unknown;
-  /** `group` only — how its children are laid out. */
-  direction?: ViewGroupDirection;
-  /** `grid` group only — the most columns it shows. */
-  max_columns?: number;
-  /** `group` only — the nodes it owns, which may be groups themselves. */
+  is_growing?: boolean;
+  is_multiple?: boolean;
+  default_expanded?: boolean;
   children?: HumanInputField[];
   /** A DECORATION only — the words it paints. It has no name and no label. */
   text?: string;
@@ -216,11 +220,11 @@ function optionalText(value: unknown): string | undefined {
   return trimmed === '' ? undefined : trimmed;
 }
 
-function fieldType(value: unknown): HumanInputFieldType {
+function fieldType(value: unknown): HumanInputFieldType | null {
   const name = text(value);
   return (HUMAN_INPUT_NODE_TYPES as readonly string[]).includes(name)
     ? (name as HumanInputFieldType)
-    : 'plaintext';
+    : null;
 }
 
 function optionFromWire(raw: unknown): HumanInputOption | null {
@@ -228,7 +232,7 @@ function optionFromWire(raw: unknown): HumanInputOption | null {
   if (!row) return null;
   const value = text(row.value);
   if (value === '') return null;
-  return { value, label: text(row.label) || value };
+  return { value, label: text(row.label) || value, ...viewCommandIcon(row.icon) };
 }
 
 /** One finite number off the wire — a `range` bound, or nothing. */
@@ -240,34 +244,35 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
   const row = record(raw);
   if (!row) return null;
   const type = fieldType(row.type);
+  if (!type) return null;
+  const growth = row.is_growing === true ? { is_growing: true } : {};
   // A DECORATION is parsed BEFORE identity: nobody answers a heading, so it has
   // no name to key and nothing to check but the words it paints — and blank ink
   // paints nothing, so it never reaches the screen.
   if (humanInputIsDecoration({ type })) {
     const words = optionalText(row.text);
     if (!words) return null;
-    return { id: '', name: '', type, label: '', is_required: false, text: words };
+    return { id: '', name: '', type, label: '', is_required: false, text: words, ...growth };
   }
   const id = text(row.name) || text(row.id);
   if (id === '') return null;
-  // A LAYOUT GROUP answers nothing itself: it owns fields, and an empty one is
-  // not a form control but a hole, so it never reaches the screen.
-  if (type === 'group') {
+  if (isViewContainerType(type)) {
     const children = (Array.isArray(row.children) ? row.children : [])
       .map(fieldFromWire)
       .filter((field): field is HumanInputField => field !== null);
     if (!children.length) return null;
-    const direction = viewGroupDirection(row.direction);
-    const maxColumns = direction === 'grid' ? viewMaxColumns(row.max_columns) : undefined;
     return {
       id,
       name: id,
       type,
       label: text(row.label),
       is_required: false,
-      direction,
-      ...(maxColumns === undefined ? {} : { max_columns: maxColumns }),
       children,
+      ...growth,
+      ...(type === 'flex' ? viewFlexLayout(row) : {}),
+      ...(type === 'grid' ? viewGridLayout(row) : {}),
+      ...(type === 'section' || type === 'collapsible' ? viewCommandIcon(row.icon) : {}),
+      ...(type === 'collapsible' ? { default_expanded: row.default_expanded === true } : {}),
       ...(optionalText(row.description) ? { description: optionalText(row.description) } : {}),
     };
   }
@@ -295,6 +300,7 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
       ...(description ? { description } : {}),
       ...(placeholder ? { placeholder } : {}),
       mode,
+      ...growth,
       ...(isHumanInputDatetimeText(mode, row.min) ? { earliest: row.min as string } : {}),
       ...(isHumanInputDatetimeText(mode, row.max) ? { latest: row.max as string } : {}),
       ...(row.default === undefined ? {} : { default: row.default }),
@@ -308,7 +314,9 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
     is_required: row.is_required === true,
     ...(description ? { description } : {}),
     ...(placeholder ? { placeholder } : {}),
+    ...growth,
     ...(type === 'plaintext' ? viewCommandIcon(row.icon) : {}),
+    ...(type === 'toggle' && row.is_multiple === true ? { is_multiple: true } : {}),
     ...(options ? { options } : {}),
     ...(minLength ? { min_length: minLength } : {}),
     ...(maxLength ? { max_length: maxLength } : {}),
@@ -448,14 +456,13 @@ export function humanInputOtpDigits(field: HumanInputField, raw: string): string
 }
 
 /**
- * Every field that ANSWERS something, depth first, in reading order. A layout
- * group is a branch of the tree and holds no value of its own, and a decoration
+ * Every field that ANSWERS something, depth first, in reading order. A container is a branch of the tree and holds no value of its own, and a decoration
  * holds none either, so everything that reads or writes values walks the leaves
  * and never the nodes.
  */
 export function humanInputInputFields(fields: readonly HumanInputField[]): HumanInputField[] {
   return fields.flatMap((field) => {
-    if (field.type === 'group') return humanInputInputFields(field.children ?? []);
+    if (isViewContainerType(field.type)) return humanInputInputFields(field.children ?? []);
     return humanInputIsDecoration(field) ? [] : [field];
   });
 }
@@ -512,7 +519,8 @@ export function humanInputFormRefused(
 /** The value a field starts with: its own default, or the empty value of its type. */
 export function humanInputDefaultValue(field: HumanInputField): HumanInputValue {
   const fallback = field.default;
-  switch (field.type) {
+  const type = field.type === 'toggle' && field.is_multiple ? 'multiselect' : field.type;
+  switch (type) {
     case 'checkbox':
       return fallback === true;
     case 'multiselect':

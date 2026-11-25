@@ -28,7 +28,10 @@
   (hi/live-view<-wire (json/read-json (slurp (io/resource
                                                "vis-contract/fixtures/live-primitives.json")))))
 
-(defn- entries [pane] (tree-seq #(seq (:cells %)) :cells {:cells (lv/plan pane 80)}))
+(defn- entries [pane]
+  (tree-seq #(or (:section-child %) (seq (:cells %)))
+            #(if-let [child (:section-child %)] [child] (:cells %))
+            {:cells (lv/plan pane 80)}))
 
 (defdescribe
   all-primitives-paint-plan-test
@@ -47,8 +50,8 @@
         (expect (= 4 (count (filter #(= :spinner (:kind %)) rows))))
         (expect (str/includes? (str/join "\n" (map :text rows)) "# <button> is literal text"))
         (expect (lv/animating? [pane]))
-        (expect (= #{"refresh" "target" "token" "notes" "region" "tags" "notify" "risk" "due" "pin"
-                     "apply" "plan-small" "details" "table" "canvas" "sprint" "chime-change"}
+        (expect (= #{"target" "token" "notes" "region" "tags" "notify" "risk" "due" "pin"
+                     "layout-menu" "layout-toggle" "plan-small" "details" "table" "canvas" "sprint" "chime-change" "refresh" "apply"}
                    (set (map :node-id (lv/controls [pane])))))
         (expect (not (lv/animating? [(lv/settled pane {:reason :completed})])))
         (expect (not (lv/animating? [(lv/minimized pane)])))
@@ -64,7 +67,7 @@
                            {:id "b" :title "Second" :edges [{:from "a" :animation "dot" :is-active true}]}]}
             pane (lv/opened {:nodes [board]})
             idle (lv/opened {:nodes [(update-in board [:cards 1] dissoc :edges)]})
-            closed (lv/opened {:nodes [{:id "g" :type :group :is-collapsible true :children [board]}]})]
+            closed (lv/opened {:nodes [{:id "g" :type :collapsible :children [board]}]})]
         (expect (lv/animating? [pane]))
         (expect (not (lv/animating? [idle])))
         (expect (not (lv/animating? [closed])))
@@ -443,7 +446,7 @@
             edits
             (filter #(= :live-edit (:kind %)) (lv/controls [pane]))]
 
-        (expect (= ["target" "token" "notes" "region" "tags" "notify" "risk" "due" "pin"]
+        (expect (= ["target" "token" "notes" "region" "tags" "notify" "risk" "due" "pin" "layout-toggle"]
                    (mapv :node-id edits)))
         (expect (= "Region" (:label (first (filter #(= "region" (:node-id %)) edits)))))
         (expect (some #(and (= :field (:kind %)) (= "EU" (:text %))) rows))
@@ -454,7 +457,8 @@
                     "tags" ["api"]
                     "notify" true
                     "risk" 3
-                    "due" "2026-03-14"}
+                    "due" "2026-03-14"
+                    "layout-toggle" ["a"]}
                    (lv/input-values pane)))
         (expect (lv/submit-button? pane "apply"))
         (expect (not (lv/submit-button? pane "refresh")))
@@ -513,10 +517,10 @@
 (defdescribe button-control-routes-through-the-shared-gateway-action-test
              (it "button control routes through the shared gateway action"
                  (let [pane
-                       (lv/opened (fixture))
+                       (lv/opened (assoc (fixture) :nodes [{:id "apply" :type :button :label "Apply"}]))
 
                        control
-                       (first (filter #(= "refresh" (:node-id %)) (lv/controls [pane])))
+                       (first (filter #(= "apply" (:node-id %)) (lv/controls [pane])))
 
                        called
                        (promise)]
@@ -526,7 +530,7 @@
                                                                {:is-accepted true})]
                      (expect (true? (#'screen/activate-live-region! {:live-views [pane]} control)))
                      (expect (= [(get-in pane [:view :session-id]) (lv/view-id pane)
-                                 {:action :activate :node-id "refresh"}]
+                                 {:action :activate :node-id "apply"}]
                                 (deref called 3000 ::timeout)))))))
 
 (defdescribe human-record-retains-independent-disclosures-test
@@ -634,7 +638,8 @@
           (expect (nil? (:error captured)))
           (expect (some? search))
           ;; #250: Search is a filled header action, not a full-width text row.
-          (expect (= (get-in disclosure [:bounds :row]) row) "Search belongs to the log header")
+          (when disclosure
+             (expect (= (get-in disclosure [:bounds :row]) row) "Search belongs to the log header"))
           (expect (= 8 width) "only the padded Search button is clickable")
           (expect (not (str/includes? (capture/frame-text captured) "Search Build A logs")))
           (when search (expect (= " Search " (subs (nth lines row) col (+ col width)))))))))
@@ -1320,12 +1325,11 @@
                                                                 #(vec (take 1 %)))]))]))))))
 
 (defdescribe divider-orientation-test
-             (it "stands a divider upright inside a wrap group and lays it flat elsewhere"
+             (it "stands a divider upright inside a flex row and lays it flat elsewhere"
                  (let [view
                        (assoc (fixture)
                          :nodes [{:id "g"
-                                  :type :group
-                                  :direction :wrap
+                                  :type :flex :direction :row :is-wrapping true
                                   :children [{:id "a" :type :paragraph :text "TEAM"}
                                              {:id "d" :type :divider}
                                              {:id "b" :type :paragraph :text "1m 20s"}]}

@@ -43,7 +43,8 @@ import {
   TextButton,
   Toast,
   ViewHeading,
-  ViewLayout,
+  ViewFlex,
+  ViewGrid,
   ViewParagraph,
 } from './ui';
 import {
@@ -1053,20 +1054,20 @@ export const HoverNotes: Story = {
 export const ViewLayouts: Story = {
   render: () => (
     <Sheet>
-      <Group of="ViewLayout — responsive row with a nested row">
-        <ViewLayout direction="row" data-testid="view-row" className="w-full shrink-0">
-          <ViewLayout>
+      <Group of="ViewGrid — responsive grid with a nested flex">
+        <ViewGrid columns={2} min_width="xs" className="w-full">
+          <ViewFlex>
             <ViewHeading>Connection</ViewHeading>
             <ViewParagraph>gateway.example.com</ViewParagraph>
-          </ViewLayout>
-          <ViewLayout direction="row" data-testid="nested-row">
+          </ViewFlex>
+          <ViewFlex direction="row" is_wrapping>
             <ViewParagraph>Port 5432</ViewParagraph>
             <ViewParagraph>Encrypted transport</ViewParagraph>
-          </ViewLayout>
-        </ViewLayout>
+          </ViewFlex>
+        </ViewGrid>
       </Group>
       <Group of="ChoiceRow — long, selected and disabled">
-        <ViewLayout className="w-full max-w-72">
+        <ViewFlex className="w-full max-w-72">
           <ChoiceRow isOn={false} mark={HUMAN_INPUT_CHOICE_MARKS.exclusiveOff} aria-pressed={false}>
             Require an encrypted connection to gateway.example.com before continuing
           </ChoiceRow>
@@ -1076,10 +1077,7 @@ export const ViewLayouts: Story = {
           <ChoiceRow isOn={false} mark={HUMAN_INPUT_CHOICE_MARKS.exclusiveOff} disabled>
             Connection unavailable
           </ChoiceRow>
-        </ViewLayout>
-      </Group>
-      <Group of="ViewLayout — empty">
-        <ViewLayout direction="row" data-testid="empty-layout" />
+        </ViewFlex>
       </Group>
     </Sheet>
   ),

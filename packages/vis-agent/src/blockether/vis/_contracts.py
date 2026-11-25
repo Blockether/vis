@@ -848,6 +848,15 @@ def _error_lines(error, prefix: str = "") -> list[str]:
     return [line(_render(table.get(keyword) or _messages()["default"], values))]
 
 
+_NODE_SHAPE = {
+    "type": "button",
+    "id": "item",
+    "label": "Item",
+    "action": "activate",
+    "is_disabled": False,
+}
+
+
 def _explain_lines(
     name: str, target: str, value: Any, *, prefix: str = "", skip: str | None = None
 ) -> list[str]:
@@ -855,13 +864,23 @@ def _explain_lines(
     `oneOf` gives the faults of the one branch whose discriminator `const` holds.
     Without one such branch, it is one line. `prefix` goes in front of each path,
     and the faults inside top key `skip` are left out."""
+    check = (
+        {**value, skip: _NODE_SHAPE}
+        if skip and isinstance(value, dict) and skip in value
+        else value
+    )
     lines = {
         line
-        for error in _validator(name, target).iter_errors(value)
-        if not (skip and error.absolute_path and error.absolute_path[0] == skip)
+        for error in _validator(name, target).iter_errors(check)
         for line in _error_lines(error, prefix)
     }
     return sorted(lines)
+
+
+def form_kind_error(kind: Any, path: str) -> str | None:
+    """The schema fault when `kind` is not allowed in an Ask form."""
+    lines = _explain_lines("view", "form_component/properties/type", kind, prefix=path)
+    return lines[0] if lines else None
 
 
 @cache
@@ -958,6 +977,16 @@ def component_variant(node_type: Any) -> tuple[int, dict[str, Any]] | None:
         if branch["properties"]["type"].get("const") == node_type:
             return index, branch
     return None
+
+
+def is_layout(node_type: Any) -> bool:
+    """True when a node arranges children and sets the scope of a submit button."""
+    found = component_variant(node_type)
+    return (
+        found is not None
+        and (found[1]["properties"].get("children", {}).get("items", {})).get("$ref")
+        == "#/$defs/component"
+    )
 
 
 class Bound(NamedTuple):
@@ -1100,31 +1129,6 @@ def _non_finite_paths(value: Any, path: str = "") -> list[str]:
     return []
 
 
-def _child_path(line: str) -> bool:
-    # A group child is checked on its own. Only the rule that the group puts on
-    # the type of a child stays with the group.
-    return re.search(r"^/children/\d+[/ ]", line) is not None
-
-
-def _toolbar_stamp_lines(children: Any, path: str) -> list[str]:
-    """A `read_only` line for each key that only the host writes on a node of diff
-    toolbar `children`, a menu child too. The diff node check does not see them,
-    because a toolbar button is no node of the view."""
-    lines: list[str] = []
-    for i, child in enumerate(children if isinstance(children, list) else []):
-        if not isinstance(child, dict):
-            continue
-        found = component_variant(child.get("type"))
-        properties = found[1].get("properties", {}) if found else {}
-        lines += [
-            named_line(f"{path}/{i}/{key}", "read_only")
-            for key, rule in sorted(properties.items())
-            if rule.get("readOnly") and key in child
-        ]
-        lines += _toolbar_stamp_lines(child.get("children"), f"{path}/{i}/children")
-    return lines
-
-
 def _repeated(ids) -> str | None:
     counts: dict[str, int] = {}
     for one in ids:
@@ -1226,6 +1230,8 @@ def datetime_complaint(node: dict[str, Any], value: str) -> str | None:
 
 def _in_domain(node: dict[str, Any], value: Any, *, is_default: bool) -> bool:
     kind = node.get("type")
+    if kind == "toggle":
+        kind = "multiselect" if node.get("is_multiple") else "select"
     if kind == "datetime":
         if value is None:
             return not is_default
@@ -1246,11 +1252,11 @@ def _in_domain(node: dict[str, Any], value: Any, *, is_default: bool) -> bool:
         if kind in text_kinds:
             return isinstance(value, str)
         if kind == "select":
-            return value in chosen
+            return isinstance(value, str) and value in chosen
         if kind == "multiselect":
             return (
                 isinstance(value, list)
-                and all(one in chosen for one in value)
+                and all(isinstance(one, str) and one in chosen for one in value)
                 and len(value) == len({json.dumps(one) for one in value})
             )
         if kind == "checkbox":
@@ -1288,6 +1294,11 @@ def _in_domain(node: dict[str, Any], value: Any, *, is_default: bool) -> bool:
     if kind == "range":
         return _is_number(value) and node["min"] <= value <= node["max"]
     return False
+
+
+def input_accepts(node: dict[str, Any], value: Any) -> bool:
+    """True when an input can hold a value in its declared domain."""
+    return _in_domain(node, value, is_default=False)
 
 
 def _input_lines(node: dict[str, Any]) -> list[str]:
@@ -1340,17 +1351,6 @@ def _input_lines(node: dict[str, Any]) -> list[str]:
         if not _in_domain(checked, node["value"], is_default=False):
             lines.append(named_line("/value", "value_domain"))
     return lines
-
-
-def _toolbar_command(node: Any) -> bool:
-    return isinstance(node, dict) and (
-        node.get("type") == "button"
-        or (
-            node.get("type") == "group"
-            and isinstance(node.get("children"), list)
-            and all(_toolbar_command(child) for child in node["children"])
-        )
-    )
 
 
 def _picture_reason(raw: dict[str, Any]) -> str | None:
@@ -1450,22 +1450,17 @@ def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
         ]
     if "is_required" in properties:
         lines += _input_lines(node)
-    if kind == "log":
+    if kind == "flex" and node.get("direction") == "column":
+        lines += [
+            named_line(f"/{key}", "flex_row_only", {"key": key})
+            for key in ("is_wrapping", "justify")
+            if key in node
+        ]
+    elif kind == "log":
         tones = node.get("line_tones")
         if isinstance(tones, list) and len(tones) != len(node.get("lines") or []):
             lines.append(named_line("/line_tones", "line_tones"))
-    elif kind == "group":
-        if "max_columns" in node and node.get("direction") != "grid":
-            lines.append(named_line("/max_columns", "grid_columns"))
-        if "is_open" in node and node.get("is_dialog") is not True:
-            lines.append(named_line("/is_open", "dialog_open"))
     elif kind == "diff":
-        if is_declaration:
-            lines += _toolbar_stamp_lines(node.get("children"), "/children")
-        for i, child in enumerate(node.get("children") or []):
-            if isinstance(child, dict) and child.get("type") == "group":
-                if not _toolbar_command(child):
-                    lines.append(named_line(f"/children/{i}", "toolbar_menu"))
         for i, thread in enumerate(node.get("threads") or []):
             if isinstance(thread, dict) and "anchor" not in thread:
                 lines.append(named_line(f"/threads/{i}", "thread_anchor"))
@@ -1593,7 +1588,7 @@ def live_node_lines(node: Any, *, is_declaration: bool = True) -> list[str]:
     """The sorted fault lines of wire node `node` after `fill_live_node`. A line
     names the path in the node, the broken rule and its keyword, never a value.
     With `is_declaration`, a key that only the host writes is a fault. The faults
-    of a group child belong to the child, which the caller checks on its own."""
+    of a layout child belong to the child, which the caller checks on its own."""
     node = fill_live_node(node)
     if not isinstance(node, dict):
         return [named_line("/", "node_not_map")]
@@ -1604,24 +1599,41 @@ def live_node_lines(node: Any, *, is_declaration: bool = True) -> list[str]:
     bad = _non_finite_paths(node)
     if bad:
         return sorted({named_line(path, "not_finite") for path in bad})
-    is_group = kind == "group"
-    lines = _explain_lines("view", f"component/oneOf/{found[0]}", node)
-    if is_group:
-        lines = [line for line in lines if not _child_path(line)]
-        # A group child is checked on its own, so it needs a map and an id.
-        children = node.get("children")
-        for i, child in enumerate(children if isinstance(children, list) else []):
+    children = node.get("children")
+    layout = is_layout(kind)
+    child_items = found[1]["properties"].get("children", {}).get("items", {})
+    kinds = next(
+        (
+            rule["properties"]["type"]["enum"]
+            for rule in child_items.get("allOf", [])
+            if "properties" in rule
+        ),
+        None,
+    )
+    check = node
+    if isinstance(children, list) and (layout or kinds is not None):
+        # Check this node and the length of its list, not the full tree again.
+        check = {**node, "children": [_NODE_SHAPE] * len(children)}
+    lines = _explain_lines("view", f"component/oneOf/{found[0]}", check)
+    if isinstance(children, list) and (layout or kinds is not None):
+        for i, child in enumerate(children):
+            path = f"/children/{i}"
             if not isinstance(child, dict):
-                lines.append(named_line(f"/children/{i}", "child_not_map"))
-            elif not (isinstance(child.get("id"), str) and child["id"].strip()):
-                rule = (
-                    "group_needs_id"
-                    if child.get("type") == "group"
-                    else "node_needs_id"
+                lines.append(named_line(path, "child_not_map"))
+            elif kinds is not None and child.get("type") not in kinds:
+                lines.append(
+                    named_line(path, "child_kind", {"kinds": ", ".join(kinds)})
                 )
-                lines.append(named_line(f"/children/{i}", rule))
+            elif not (isinstance(child.get("id"), str) and child["id"].strip()):
+                lines.append(named_line(path, "node_needs_id"))
     if not lines:
         lines = _hand_lines(node, is_declaration=is_declaration)
+        if kinds is not None and isinstance(children, list):
+            for i, child in enumerate(children):
+                lines.extend(
+                    f"/children/{i}{line}"
+                    for line in live_node_lines(child, is_declaration=is_declaration)
+                )
     return sorted(set(lines))
 
 
@@ -1678,21 +1690,12 @@ _VIEW_STAMPS = {
 }
 
 
-def _wire_tree(nodes: Any):
+def _wire_tree(nodes: Any, *, commands: bool = True):
     for node in nodes if isinstance(nodes, list) else []:
         if isinstance(node, dict):
             yield node
-            if node.get("type") == "group":
-                yield from _wire_tree(node.get("children"))
-
-
-def _command_tree(nodes: Any):
-    """Each map node, also each child of a group or a diff toolbar: the nodes that a
-    shortcut can press."""
-    for node in nodes if isinstance(nodes, list) else []:
-        if isinstance(node, dict):
-            yield node
-            yield from _command_tree(node.get("children"))
+            if commands or is_layout(node.get("type")):
+                yield from _wire_tree(node.get("children"), commands=commands)
 
 
 def _shortcut_lines(view: dict[str, Any], nodes: Any) -> list[str]:
@@ -1716,7 +1719,7 @@ def _shortcut_lines(view: dict[str, Any], nodes: Any) -> list[str]:
             lines.append(named_line(f"/shortcuts/{i}", "repeated_shortcut_key"))
         elif key is not None:
             seen.add(key)
-    by_id = {node.get("id"): node for node in _command_tree(nodes)}
+    by_id = {node.get("id"): node for node in _wire_tree(nodes)}
     for i, shortcut in enumerate(shortcuts):
         node_id = shortcut.get("node_id") if isinstance(shortcut, dict) else None
         if not isinstance(node_id, str):
@@ -2155,13 +2158,13 @@ def _live_tree(nodes: Any):
 
 
 def _live_place(
-    nodes: Any, node_id: Any, group: Any = None
+    nodes: Any, node_id: Any, parent: Any = None
 ) -> tuple[list[Any], int, Any] | None:
     """The list that holds the node `node_id` at any depth, its index there and the
-    layout group that holds the list, or None at the top."""
+    parent that holds the list, or None at the top."""
     for index, node in enumerate(nodes or []):
         if node.get("id") == node_id:
-            return nodes, index, group
+            return nodes, index, parent
         if isinstance(node.get("children"), list):
             if (found := _live_place(node["children"], node_id, node)) is not None:
                 return found
@@ -2193,7 +2196,7 @@ def apply_live_ops(
     give a copy.
 
     The check order is the same in every host: after each op, the node that it
-    changed, and for `add-node` or `remove-node` also the group that holds the node;
+    changed, and for `add-node` or `remove-node` also the parent that holds the node;
     the first fault refuses. After the last op, the view faults."""
     written: list[Any] = []
     for op in ops:
@@ -2212,13 +2215,13 @@ def apply_live_ops(
                         [named_line("/after", "missing_after", {"after": after})],
                     )
                 )
-            siblings, index, group = (
+            siblings, index, parent = (
                 (view["nodes"], len(view["nodes"]), None)
                 if found is None
                 else (found[0], found[1] + 1, found[2])
             )
             siblings.insert(index, node)
-            _checked_live_node(group)
+            _checked_live_node(parent)
             written.append(node)
         elif name == "shortcuts":
             if op.get("shortcuts"):
@@ -2300,10 +2303,7 @@ def live_view_faults(view: Any, *, is_declaration: bool = True) -> ViewFaults:
             if not isinstance(node, dict):
                 lines.append(named_line(f"/nodes/{i}", "node_not_map"))
             elif not (isinstance(node.get("id"), str) and node["id"].strip()):
-                rule = (
-                    "group_needs_id" if node.get("type") == "group" else "node_needs_id"
-                )
-                lines.append(named_line(f"/nodes/{i}", rule))
+                lines.append(named_line(f"/nodes/{i}", "node_needs_id"))
     if is_declaration:
         properties = definition("view", "live_view")["properties"]
         lines += [
@@ -2320,8 +2320,8 @@ def live_view_faults(view: Any, *, is_declaration: bool = True) -> ViewFaults:
         if not (line.endswith("(oneOf)") and line.split(" - ", 1)[0] in covered)
     ]
     lines += shortcuts
-    tree = list(_wire_tree(nodes))
-    if (one := _repeated(node.get("id") for node in tree)) is not None:
+    tree = list(_wire_tree(nodes, commands=False))
+    if (one := _repeated(node.get("id") for node in _wire_tree(nodes))) is not None:
         lines.append(named_line("/nodes", "repeated_node_id", {"id": one}))
     most = definition("view", "live_view")["x-vis-max-nodes"]
     if len(tree) > most:
@@ -2350,7 +2350,7 @@ def live_view_faults(view: Any, *, is_declaration: bool = True) -> ViewFaults:
         if node_lines:
             found[node["id"]] = fault_text(node["id"], node_lines)
             broken.update(one.get("id") for one in _wire_tree([node]))
-        elif node.get("type") == "group":
+        elif is_layout(node.get("type")):
             for child in node.get("children") or []:
                 if isinstance(child, dict):
                     walk(child)

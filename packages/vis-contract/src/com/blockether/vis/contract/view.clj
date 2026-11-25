@@ -94,15 +94,36 @@
 
                  type)))
 
-(def group-type-name
-  "Wire name of a layout group."
-  (get-in components ["group" "properties" "type" "const"]))
+(def ^:private child-items
+  (into {}
+        (keep (fn [[type shape]]
+                (let [items (get-in shape ["properties" "children" "items"])]
+                  (when (some #(= "#/$defs/component" (get % "$ref"))
+                              (cons items (get items "allOf")))
+                    [type items]))))
+        components))
 
-(def group-type "Internal type of a layout group." (keyword group-type-name))
+(defn container?
+  "True when the component type holds other components in `children`."
+  [type]
+  (contains? child-items (if (keyword? type) (name type) type)))
 
-(def group-directions
-  "Wire layout direction to internal direction."
-  (keyword-map (enum-values "group_direction")))
+(defn layout-container?
+  "True when a container has no restriction on the kind of component it holds."
+  [type]
+  (= "#/$defs/component" (get-in child-items [(if (keyword? type) (name type) type) "$ref"])))
+
+(defn multiple-choice?
+  "True when a choice field holds a list of option values."
+  [{:keys [type is-multiple]}]
+  (or (= :multiselect type) (and (= :toggle type) (true? is-multiple))))
+
+(def layout-terms
+  "Wire layout terms, indexed by engine key."
+  (into {}
+        (map (fn [[key definition]] [key (keyword-map (enum-values definition))]))
+        {:direction "flex_direction" :gap "gap" :align "flex_align"
+         :justify "flex_justify" :min-width "size"}))
 
 (def otp-defaults
   "Default and maximum one-time-code lengths."
@@ -148,7 +169,7 @@
 
 (def live-node-types
   "Wire display, data and action component name to internal type."
-  (keyword-map (remove #{group-type-name} (keys live-nodes))))
+  (keyword-map (keys live-nodes)))
 
 (def component-types
   "Wire component name to internal type, for every component in the catalog."
@@ -167,7 +188,7 @@
   (keyword-map (get-in live-nodes ["button" "properties" "variant" "enum"])))
 
 (def command-icons
-  "Wire names of the pictures that a diff toolbar command can show."
+  "Wire names of the pictures that commands and inputs can show."
   (set (enum-values "command_icon")))
 
 (def link-targets
@@ -197,11 +218,6 @@
   {:window-lines (get-in live-nodes ["log" "properties" "window_lines" "default"])
    :window-lines-cap (get-in live-nodes ["log" "properties" "window_lines" "maximum"])
    :max-patch-lines (get-in patches ["append" "properties" "lines" "maxItems"])})
-
-(def grid-columns
-  "Bounds of a grid group's `max_columns`: `[minimum maximum]`."
-  (let [prop (get-in live-nodes [group-type-name "properties" "max_columns"])]
-    [(get prop "minimum") (get prop "maximum")]))
 
 (def table-defaults
   "Live table collection and patch bounds."
@@ -403,16 +419,9 @@
   "Every key a `{:by …}` table order may carry."
   (property-keys (get-in live-nodes ["table" "properties" "order" "oneOf" 1])))
 
-(def live-group-keys
-  "Every key a layout group may carry, in a form and in a live view. Nested
-   groups use their own available width in each client.
-
-   No `:name`: a group holds no answer, so there is nothing to key."
-  (property-keys (get live-nodes group-type-name)))
-
 (def live-node-keys
   "Allowed keys for a live node."
-  (reduce into #{} (map property-keys (vals (dissoc live-nodes group-type-name)))))
+  (reduce into #{} (map property-keys (vals live-nodes))))
 
 (def live-node-type-keys
   "Wire live component name to the keys that its own schema variant allows."
@@ -658,19 +667,14 @@
   "Every key a field spec may be WRITTEN with: the union of the per-type sets,
    less what the engine derives. The parser accepts exactly this vocabulary in
    its snake_case spelling, so there is no second table of keys to keep in step."
-  (apply disj (into text-keys (concat choice-keys range-keys datetime-keys)) derived-keys))
+  (apply disj (reduce into #{} (map property-keys (vals fields))) derived-keys))
 
-(def group-keys
-  "Every key a layout group may carry. A node that holds no answer has no key
-   that describes one."
-  live-group-keys)
-
-(def layout-keys
-  "The keys only a group has. A field carrying one meant to group and forgot to
-   say so, which is worth its own message rather than an unknown-key refusal."
-  (apply disj group-keys field-keys))
-
-(def option-keys "Every key one `:options` entry may carry." (schema-keys "option"))
+(defn option-keys
+  "The allowed keys in an option for the given field type."
+  [type]
+  (if (= :toggle type)
+    (property-keys (get-in fields ["toggle" "properties" "options" "items"]))
+    (schema-keys "option")))
 
 (def request-keys "Every key a request may carry." (schema-keys "request"))
 
@@ -748,9 +752,9 @@
     (cond (not (contains? field :default)) true
           (nil? default) false
           (contains? text-types type) (string? default)
-          (= :select type) (contains? chosen default)
-          (= :multiselect type)
+          (multiple-choice? field)
           (and (vector? default) (every? chosen default) (= (count default) (count (set default))))
+          (choice-types type) (contains? chosen default)
           (= :checkbox type) (boolean? default)
           (= :range type) (and (number? default) (<= (double lo) (double default) (double hi)))
           (= :datetime type) (and (non-blank-string? default) (dated-in-domain? field default))
@@ -783,11 +787,6 @@
         "datetime min must not be after max")
       (when-not (default-in-domain? field) "default is outside the field domain")))
 
-(defn group-error
-  "nil when `group` is a valid normalized layout group, otherwise a reason."
-  [group]
-  (component-error group-type-name group))
-
 (defn- field-names
   [fields]
   (mapcat (fn [node]
@@ -801,10 +800,27 @@
   (let [names (field-names nodes)]
     (= (count names) (count (set names)))))
 
+(def ^:private live-only-form-types
+  (set (get-in (definition "form_component") ["properties" "type" "not" "enum"])))
+
+(defn- form-component-lines
+  [path nodes]
+  (when (sequential? nodes)
+    (mapcat (fn [i {:keys [type children]}]
+              (let [at (str path "/" i)
+                    kind (if (keyword? type) (name type) type)]
+                (if (contains? live-only-form-types kind)
+                  [(document/named-line (str at "/type") "form_component")]
+                  (form-component-lines (str at "/children") children))))
+            (range)
+            nodes)))
+
 (defn request-error
   "nil when `request` is a valid normalized request, otherwise a reason."
   [request]
-  (or (schema-error "request" request)
+  (or (when-let [lines (seq (form-component-lines "/nodes" (:nodes request)))]
+        (document/joined-lines lines))
+      (schema-error "request" request)
       (when-not (distinct-names? request) "field names must be unique")))
 
 (defn- typed-in-domain?
@@ -857,6 +873,11 @@
     :multiselect
     (picked-in-domain? field value)
 
+    :toggle
+    (if (multiple-choice? field)
+      (picked-in-domain? field value)
+      (selected-in-domain? field value))
+
     :checkbox
     (ticked-in-domain? field value)
 
@@ -874,7 +895,7 @@
 (defn- answerable
   [fields]
   (mapcat (fn [{:keys [type] :as node}]
-            (cond (= group-type type) (answerable (:children node))
+            (cond (container? type) (answerable (:children node))
                   (decoration? node) []
                   :else [node]))
           fields))
@@ -1297,7 +1318,7 @@
   "Live wire node `node` with the defaults that every host fills: a null key is an
    absent key, a node without a type is a `plaintext` input, an input takes its name
    and label from its id, a link with a scheme is a `url` link, and each required key
-   with a schema `default` takes it. The children of a group are filled too."
+   with a schema `default` takes it. The children of a container are filled too."
   [node]
   (if-not (map? node)
     node
@@ -1349,7 +1370,7 @@
                      (or (get shape "properties") {}))]
 
       (cond-> node
-        (sequential? (get node "children"))
+        (and (container? (get node "type")) (sequential? (get node "children")))
         (update "children" #(mapv fill-live-node %))))))
 
 (defn- non-finite-paths
@@ -1366,8 +1387,7 @@
         :else []))
 
 (defn- child-path?
-  "True for a fault inside a group child: the child is checked on its own. Only the
-   rule that the group puts on the type of a child stays with the group."
+  "True for a fault inside a child that the host checks on its own."
   [line]
   (boolean (re-find #"^/children/\d+[/ ]" line)))
 
@@ -1441,33 +1461,6 @@
                        (not (value-in-domain? checked (:value field))))
               [(document/named-line "/value" "value_domain")]))))
 
-(defn- toolbar-command?
-  [node]
-  (and (map? node)
-       (or (= "button" (get node "type"))
-           (and (= "group" (get node "type"))
-                (sequential? (get node "children"))
-                (every? toolbar-command? (get node "children"))))))
-
-(defn- toolbar-stamp-lines
-  "A `read_only` line for each key that only the host writes on a node of diff
-   toolbar `children` at JSON pointer `path`, a menu child too. The diff node check
-   does not see them, because a toolbar button is no node of the view."
-  [children path]
-  (when (sequential? children)
-    (mapcat (fn [i child]
-              (when (map? child)
-                (let [at (str path "/" i)]
-                  (concat (for [[k rule] (sort-by key
-                                                  (get (second (variant (get child "type")))
-                                                       "properties"))
-                                :when (and (get rule "readOnly") (contains? child k))]
-
-                            (document/named-line (str at "/" k) "read_only"))
-                          (toolbar-stamp-lines (get child "children") (str at "/children"))))))
-            (range)
-            children)))
-
 (defn- canvas-picture-lines
   "Faults in the pictures of the canvas cards at JSON pointer `path`."
   [cards path decl? new-alt?]
@@ -1521,26 +1514,19 @@
           (line (str "/" k) "read_only")))
       (when (contains? (get shape "properties") "is_required") (input-lines node))
       (case kind
+        "flex"
+        (when (= "column" (get node "direction"))
+          (for [k ["is_wrapping" "justify"]
+                :when (contains? node k)]
+            (line (str "/" k) "flex_row_only" {"key" k})))
+
         "log"
         (let [tones (get node "line_tones")]
           (when (and (sequential? tones) (not= (count tones) (count (get node "lines"))))
             [(line "/line_tones" "line_tones")]))
 
-        "group"
-        (concat
-          (when (and (contains? node "max_columns") (not= "grid" (get node "direction")))
-            [(line "/max_columns" "grid_columns")])
-          (when (and (contains? node "is_open") (not (true? (get node "is_dialog"))))
-            [(line "/is_open" "dialog_open")]))
-
         "diff"
         (concat
-          (when decl? (toolbar-stamp-lines (get node "children") "/children"))
-          (keep-indexed
-            (fn [i child]
-              (when (and (map? child) (= "group" (get child "type")) (not (toolbar-command? child)))
-                (line (str "/children/" i) "toolbar_menu")))
-            (get node "children"))
           (keep-indexed (fn [i thread]
                           (when (and (map? thread) (not (contains? thread "anchor")))
                             (line (str "/threads/" i) "thread_anchor")))
@@ -1730,7 +1716,7 @@
   "The sorted fault lines of wire node `node` after [[fill-live-node]], or an empty
    vector. A line names the path in the node, the broken rule and its keyword, never a
    value. With `decl?`, a key that only the host writes is a fault. The faults of a
-   group child belong to the child, which the caller checks on its own."
+   child belong to the child, which the caller checks on its own."
   [node decl?]
   (let [node
         (fill-live-node node)
@@ -1744,25 +1730,27 @@
                   (if (seq bad)
                     (vec (sort (distinct (map #(document/named-line % "not_finite") bad))))
                     (let [[index] (variant kind)
-                          group? (= "group" kind)
-                          schema (cond->> (vec (sort (distinct (variant-lines index node))))
-                                   group?
-                                   (remove child-path?))
-                          ;; A group child is checked on its own, so it needs a map and an id.
-                          schema
-                          (concat
-                            schema
-                            (when group?
-                              (keep-indexed
-                                (fn [i child]
-                                  (cond (not (map? child)) (document/named-line (str "/children/" i)
-                                                                                "child_not_map")
-                                        (not (non-blank-string? (get child "id")))
-                                        (document/named-line (str "/children/" i)
-                                                             (if (= "group" (get child "type"))
-                                                               "group_needs_id"
-                                                               "node_needs_id"))))
-                                (when (sequential? (get node "children")) (get node "children")))))
+                          items (get child-items kind)
+                          allowed (some #(get-in % ["properties" "type" "enum"])
+                                        (get items "allOf"))
+                          children (get node "children")
+                          schema (cond->> (variant-lines index node)
+                                   items (remove child-path?))
+                          schema (concat schema
+                                         (when (and items (sequential? children))
+                                           (mapcat
+                                             (fn [i child]
+                                               (let [at (str "/children/" i)]
+                                                 (cond (not (map? child))
+                                                       [(document/named-line at "child_not_map")]
+                                                       (not (non-blank-string? (get child "id")))
+                                                       [(document/named-line at "node_needs_id")]
+                                                       (and allowed (not (some #{(get child "type")} allowed)))
+                                                       [(document/named-line at "child_kind"
+                                                                             {"kinds" (str/join ", " allowed)})]
+                                                       allowed (nested-lines at (live-node-lines child decl?)))))
+                                             (range)
+                                             children)))
                           lines (if (seq schema) schema (hand-lines node decl?))]
 
                       (vec (sort (distinct lines)))))))))
@@ -1829,15 +1817,7 @@
   [nodes]
   (mapcat (fn [node]
             (when (map? node)
-              (cons node (when (= "group" (get node "type")) (wire-tree (get node "children"))))))
-          (when (sequential? nodes) nodes)))
-
-(defn- command-tree
-  "Each map node of wire `nodes`, also each child of a group or of a diff toolbar:
-   the nodes that a shortcut can press."
-  [nodes]
-  (mapcat (fn [node]
-            (when (map? node) (cons node (command-tree (get node "children")))))
+              (cons node (when (container? (get node "type")) (wire-tree (get node "children"))))))
           (when (sequential? nodes) nodes)))
 
 (defn- pressable?
@@ -1854,7 +1834,7 @@
     (when (sequential? shortcuts)
       (if (not= "attachment" (get view "placement"))
         [(document/named-line "/shortcuts" "shortcut_needs_app")]
-        (let [by-id (into {} (map (juxt #(get % "id") identity)) (command-tree nodes))]
+        (let [by-id (into {} (map (juxt #(get % "id") identity)) (wire-tree nodes))]
           (concat (->> shortcuts
                        (map-indexed vector)
                        (reduce (fn [[seen lines] [i shortcut]]
@@ -1968,7 +1948,7 @@
                       (not (non-blank-string? (get node "id")))
                       (document/named-line
                         (str "/nodes/" i)
-                        (if (= "group" (get node "type")) "group_needs_id" "node_needs_id"))))
+                        "node_needs_id")))
               nodes))
 
           tree
@@ -2053,7 +2033,7 @@
                                    (get node "id")
                                    (node-fault-text (get node "id") node-lines))
                            (vswap! broken-ids into (keep #(get % "id")) (wire-tree [node])))
-                       (when (= "group" (get node "type"))
+                       (when (layout-container? (get node "type"))
                          (run! walk (filter map? (get node "children")))))))]
 
         (run! walk nodes)

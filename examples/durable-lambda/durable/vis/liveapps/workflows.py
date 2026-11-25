@@ -36,8 +36,11 @@ NO_GATE = ("No run waits", "idle", "A run that waits for the decision of a perso
 
 
 def tabs(tab: str) -> dict[str, Any]:
-    """Return the row of tabs. Vis marks the button with `is_selected`."""
-    return vis.ui.wrap("tabs", *(vis.ui.button(f"tab-{name}", label, is_selected=name == tab) for name, label in TABS))
+    """Return the segmented choice of the page to show."""
+    return vis.ui.toggle(
+        "tabs", [vis.ui.toggle.option(name, label) for name, label in TABS],
+        label="Workflow page", value=tab,
+    )
 
 
 def done(activities: list[list[str]]) -> str:
@@ -70,13 +73,13 @@ class Workflows(threading.Thread):
         """Return the form, or the progress of the followed run in its place."""
         if self.followed:
             headline, tone, detail = self.picture()["state"]
-            return vis.ui.column(
+            return vis.ui.flex(
                 "body",
                 vis.ui.status("state", headline, tone=tone, detail=detail),
                 vis.ui.steps("activities", []),
                 vis.ui.button("new-run", "New run"),
             )
-        return vis.ui.column(
+        return vis.ui.flex(
             "body",
             vis.ui.paragraph("about", "Select a workflow and give its input. A run works in its own new Vis session, or in a session that you select."),
             self.form(),
@@ -89,7 +92,7 @@ class Workflows(threading.Thread):
     def form(self) -> dict[str, Any]:
         """Return the form of a new run from the lists that the app holds. It reads nothing."""
         flows, sessions = self.lists
-        return vis.ui.group(
+        return vis.ui.section(
             "start",
             vis.ui.select("workflow", [vis.ui.select.option(name, title) for name, title in flows], label="Workflow", is_required=True),
             vis.ui.multiline("input", label="Input", description="A text for the first input of the workflow, or a JSON object."),
@@ -105,7 +108,7 @@ class Workflows(threading.Thread):
     def gates_tab(self) -> dict[str, Any]:
         """Return the place of the gate. `paint` puts the gate of the oldest waiting run below the status."""
         text, tone, detail = NO_GATE
-        return vis.ui.column("body", vis.ui.status("state", text, tone=tone, detail=detail))
+        return vis.ui.flex("body", vis.ui.status("state", text, tone=tone, detail=detail))
 
     def gate_form(self, gate: tuple[str, str, str, str | None, str | None]) -> dict[str, Any]:
         """Return the form of a gate: what to check, its document, a comment and the two decisions."""
@@ -114,10 +117,10 @@ class Workflows(threading.Thread):
         if document and session:
             try:
                 body = self.api.files.attached_file(session, document)[2]
-                nodes.append(vis.ui.disclosure("gate-document", document, vis.ui.code("gate-text", body.decode(errors="replace")[:20000], language="markdown"), default_expanded=True))
+                nodes.append(vis.ui.collapsible("gate-document", document, vis.ui.code("gate-text", body.decode(errors="replace")[:20000], language="markdown"), default_expanded=True))
             except Refused:  # S3 has no copy of the file: the session of the run has it
                 nodes.append(vis.ui.paragraph("gate-document", f"Read {document} in the session of the run."))
-        return vis.ui.group(
+        return vis.ui.section(
             "gate",
             *nodes,
             vis.ui.multiline("comment", label="Comment", description="For a rejection: the change that you want."),
@@ -129,7 +132,7 @@ class Workflows(threading.Thread):
         # Three columns: a phone shows them without a break in a word.
         """Return the counters and the table of the last runs, without their data."""
         columns = [("workflow", "Workflow"), ("started", "Started (UTC)"), ("status", "Status")]
-        return vis.ui.column(
+        return vis.ui.flex(
             "body",
             vis.ui.stat("counts", [{"id": count, "label": label, "value_text": "0"} for count, label, _, _ in COUNTS]),
             vis.ui.table("runs", [vis.ui.table.column(column, label) for column, label in columns]),
@@ -229,8 +232,11 @@ class Workflows(threading.Thread):
 
     def handle(self, app: Any, event: Any) -> None:
         """Do one action of a person: change the tab, start a run, decide at a gate, retry a failed run or show the form again."""
-        if event.type == "activate" and event.node_id in {f"tab-{name}" for name, _ in TABS}:
-            self.show(app, event.node_id.removeprefix("tab-"))
+        if event.type == "change" and event.node_id == "tabs":
+            if event.value in dict(TABS) and event.value != self.tab:
+                self.show(app, event.value)
+            elif event.value is None:
+                app["tabs"].set(self.tab)
         elif event.type == "submit" and event.node_id == "start-run":
             values = event.values or {}
             try:

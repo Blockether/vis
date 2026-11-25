@@ -41,6 +41,16 @@ with vis.live("Deploy", [vis.ui.status("state", "Waiting", tone="idle"),
 Text and status fields accept [inline Markdown](live-views.md#layout-and-text). A `tone` is one of
 `idle`, `running`, `ok`, `warn`, and `error`.
 
+### Command icons
+
+The `icon` field accepts these names on buttons, menus, `plaintext` inputs, sections,
+collapsible sections, and toggle options. When an icon replaces the visible label, the label
+stays the accessible name. [App icons](live-views.md#apps) use a separate list.
+
+- `refresh`, `more`, `plus`, `search`, `filter`.
+- `list`, `grid`, `columns`, `rows`, `wrap`, `expand`, `collapse`.
+- `copy`, `edit`, `trash`, `sort`, `settings`.
+
 ## Text
 
 ### Heading
@@ -60,9 +70,7 @@ runs the code.
 
 ### Divider
 
-`vis.ui.divider(id)` draws a rule across its container, like an HTML `<hr>`. It has no text and no
-options. [Layout and text](live-views.md#layout-and-text) describes a divider inside a
-`vis.ui.wrap` group.
+`vis.ui.divider(id)` draws a rule between nodes. In a [menu](#menu), it separates commands.
 
 ## State
 
@@ -124,14 +132,14 @@ with `●` and an unselected row with `○`.
 ### Choose one value for each item
 
 A table cell holds text only. To let a person choose one value for each item, give each item its
-own `vis.ui.select`. Put the selects in one group with a submit button. The submit event then holds
-every choice under the name of its select.
+own `vis.ui.select`. Put the selects and the submit button in one [section](#section). The
+submit event holds each choice under the name of its select.
 
 ```python
 ITEMS = [("item-1", "Item one"), ("item-2", "Item two"), ("item-3", "Item three"),
          ("item-4", "Item four"), ("item-5", "Item five"), ("item-6", "Item six")]
 
-vis.ui.group(
+vis.ui.section(
     "sort",
     *[vis.ui.select(item_id, ["Work", "Personal"], label=label) for item_id, label in ITEMS],
     vis.ui.button("save", "Save", action="submit", variant="primary"),
@@ -139,8 +147,8 @@ vis.ui.group(
 )
 ```
 
-Keep the submit button directly in the group of the selects. A button inside a nested `vis.ui.wrap`
-collects only the inputs of that wrap.
+Keep the submit button directly in the section that holds the selects. A button in a nested
+[flex](#flex) has a different [submit scope](live-views.md#collect-input-in-a-view).
 
 Use a selectable table only when the person picks items, not values for items.
 
@@ -223,6 +231,7 @@ live view, the input keeps its `value`.
 | `vis.ui.otp(name)` | `otp` | A `vis-secret:` handle for a code of digits |
 | `vis.ui.select(name, options)` | `select` | One option value |
 | `vis.ui.select.many(name, options)` | `multiselect` | A list of option values |
+| `vis.ui.toggle(name, options)` | `toggle` | One option value, or a list with `is_multiple=True` |
 | `vis.ui.checkbox(name)` | `checkbox` | `True` or `False` |
 | `vis.ui.slider(name, min=0, max=100, step=1)` | `range` | A number |
 | `vis.ui.datetime(name, mode="datetime")` | `datetime` | Text for a date, a time, or both |
@@ -291,6 +300,26 @@ both. The value is text without a time zone. `mode` sets its form:
 outside the bounds. The Companion app shows the date or time control of the device. The terminal
 takes typed text and shows the form as a hint.
 
+### Toggle
+
+Use `vis.ui.toggle(name, options, is_multiple=False)` when all two to eight choices should stay
+visible. The options appear as joined buttons. Use `is_multiple=True` to let the person choose
+more than one. The value is then a list, as for [Multiselect](#multiselect).
+
+Give `label` to name the input. An option from `vis.ui.toggle.option(value, label, icon=...)`
+shows only the [command icon](#command-icons) when you give one. The input supports `default`,
+`is_required`, and `validate`, as [Select](#select) does.
+
+For a single-choice toggle, use the arrow keys to move focus without changing the value. Press
+**Space** or **Enter** to select the focused option.
+
+```python
+vis.ui.toggle("file-layout", [
+    vis.ui.toggle.option("list", "List", icon="list"),
+    vis.ui.toggle.option("grid", "Grid", icon="grid"),
+], label="File layout", default="list")
+```
+
 ## Actions
 
 ### Button
@@ -299,44 +328,131 @@ takes typed text and shows the form as a hint.
 the client. The extension decides what a press does.
 
 - `action="activate"`, the default, counts the press in `clicks` and sends an `activate` event.
-- `action="submit"` collects the inputs of the nearest group of the button. Vis checks each
-  required input and each validator first. Then it sends one `submit` event with all `values`.
+- `action="submit"` sends one `submit` event with the validated inputs in the button's
+  [submit scope](live-views.md#collect-input-in-a-view).
 - `is_disabled=True` refuses presses. Change it with `view[id].set(is_disabled=False)`.
-- `is_selected=True` or `False` makes the button one choice of a set, such as a tab. Put only such
-  buttons in one `vis.ui.wrap` or `vis.ui.row`. The Companion app shows that group as a strip of
-  tabs. Each client marks the selected choice, and the terminal marks it with `•`.
+- `is_selected=True` marks a button as pressed. In a [menu](#menu), it marks the current choice.
+  Use [Toggle](#toggle) for a set of joined choices.
 - `variant` sets the rank of the button. It is `primary`, `secondary`, or `destructive`, and
-  `secondary` is the default. Give the main action of a group `variant="primary"`. Give an action
+  `secondary` is the default. Give the main action `variant="primary"`. Give an action
   that deletes or discards data `variant="destructive"`. The terminal fills a primary button. Vis
   refuses an unknown variant and names the allowed variants in the error.
 
 A form has its own submit and cancel buttons. Use buttons in live views.
 
-## Layout
+### Menu
 
-### Group
+`vis.ui.menu(id, label, *items, icon=None)` opens a list of 1 to 64 items. A button sends an
+`activate` event with its own ID. A disabled button cannot be selected. A nested menu opens a
+submenu, and a divider separates commands. With an icon, the trigger shows the icon and keeps
+the label as its accessible name.
 
-`vis.ui.group(id, *children, direction="column")` arranges its children. A group has no value.
-
-- `direction="row"` puts the children side by side. They stack when the space is too narrow.
-- `direction="grid"` and `direction="wrap"` arrange the children as [Layout](human-input.md#layout)
-  describes. Only a grid accepts `max_columns`. Use a grid for many cards, and a wrap for buttons,
-  stats, and statuses.
-- `label` and `description` show a title and a short text above the children.
-- `is_collapsible=True` lets a person fold the group. `default_expanded` sets the first state.
-- A submit button collects only the inputs of its own group, so one view can hold several small
-  forms.
-
-`vis.ui.row(id, ...)`, `vis.ui.column(id, ...)`, `vis.ui.grid(id, ..., max_columns=3)`, and
-`vis.ui.wrap(id, ...)` are short forms of a group. `vis.ui.disclosure(id, label,
-...)` is a collapsible column that starts folded. A form accepts a group without an id.
+Use a menu in the body of a live view, the app header, or the diff header.
 
 ```python
-vis.ui.group("new-task",
-          vis.ui.plaintext("title", label="Title", is_required=True),
-          vis.ui.multiline("details", label="Details"),
-          vis.ui.button("add", "Add task", action="submit"),
-          label="New task")
+vis.ui.menu("file-actions", "File actions",
+    vis.ui.button("rename", "Rename"),
+    vis.ui.menu("export", "Export", vis.ui.button("csv", "CSV")),
+    vis.ui.divider("file-action-break"),
+    vis.ui.button("archive", "Archive", is_disabled=True),
+)
+```
+
+## Layout
+
+A layout needs at least one child and produces no input value. Give each layout an ID in a live
+view. In a form, you can omit the ID of a flex, grid, or section.
+
+### Flex
+
+`vis.ui.flex(id, *children, direction="column")` puts its children in a column. Set
+`direction="row"` to put them side by side. In a row, `is_wrapping=True` starts a new line
+when the next child does not fit. The default is `False`.
+
+- `gap` sets the space between children. It accepts `none`, `xs`, `sm`, `md`, and `lg`. The
+  default is `md`. The terminal uses whole text cells.
+- `align` sets alignment across the layout direction. It accepts `start`, `center`, `end`,
+  `stretch`, and `baseline`. The default is `stretch`.
+- `justify` places children along a row. It accepts `start`, `center`, `end`, and `between`.
+  The default is `start`. Use `between` to put the free space between children.
+- A child with `is_growing=True` takes free width in a flex row. Other parents ignore the flag.
+
+In a terminal row, `baseline` uses the same alignment as `start`. When a row is too wide and
+wrapping is off, the terminal shows marked continuation rows. The Companion app lets you scroll
+sideways.
+
+```python
+vis.ui.flex("filters",
+    vis.ui.plaintext("query", label="Search", is_growing=True),
+    vis.ui.button("find", "Find", variant="primary"),
+    direction="row", is_wrapping=True, gap="sm", align="center",
+)
+```
+
+### Grid
+
+`vis.ui.grid(id, *children, columns=None, min_width="md")` arranges children in equal columns.
+As the available width decreases, fewer columns fit. At least one column stays visible.
+
+- `columns` sets a limit of 1 to 12 columns.
+- `min_width` sets the minimum column width. Choose a width from the table. The default is `md`.
+- `gap` takes the same values as [Flex](#flex).
+
+| `min_width` | Companion app | Terminal |
+| --- | --- | --- |
+| `xs` | `10rem` | 16 text cells |
+| `sm` | `14rem` | 24 text cells |
+| `md` | `18rem` | 32 text cells |
+| `lg` | `24rem` | 40 text cells |
+
+```python
+vis.ui.grid("services",
+    vis.ui.status("api", "API ready", tone="ok"),
+    vis.ui.status("worker", "Worker ready", tone="ok"),
+    columns=2, min_width="sm", gap="sm",
+)
+```
+
+### Section
+
+`vis.ui.section(id, *children, label=None, description=None, icon=None)` frames related nodes.
+The header shows the label, description, and icon when you give them.
+
+```python
+vis.ui.section("build",
+    vis.ui.status("checks", "Checks passed", tone="ok"),
+    label="Build", description="Results from the last run", icon="refresh",
+)
+```
+
+### Collapsible
+
+`vis.ui.collapsible(id, label, *children, default_expanded=False)` lets a person show or hide
+part of a form or view. Set `default_expanded=True` to show the children at first. Updates keep
+the person's choice. A completed receipt starts with the children hidden.
+
+The optional `description` stays visible under the trigger label when the section is closed.
+The `icon` is optional.
+
+```python
+vis.ui.collapsible("details", "Build details",
+    vis.ui.paragraph("workers", "Four workers completed the build."),
+)
+```
+
+### Dialog
+
+`vis.ui.dialog(id, title, *children, is_open=False)` shows its children in a window over a
+live view when `is_open` is `True`. Give `description` to add text under the title. Call
+`view[id].set(is_open=True)` to open it. When a person closes it, the host sets `is_open` to
+`False` and sends an `activate` event with the dialog's ID.
+
+```python
+vis.ui.dialog("create", "New issue",
+    vis.ui.plaintext("title", label="Title", is_required=True),
+    vis.ui.button("save", "Create", action="submit", variant="primary"),
+    description="The issue starts in Backlog.",
+)
 ```
 
 ## See also

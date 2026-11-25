@@ -17,6 +17,7 @@
             [com.blockether.vis.tui.columns :as columns]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.frame :as frame]
+             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.live-view :as lv]
@@ -38,16 +39,12 @@
 
 ;;; ── Rows ───────────────────────────────────────────────────────────────────
 
-(defn- holds-threads?
-  [node]
-  (some (comp app/thread-types :type) (tree-seq #(seq (:children %)) :children node)))
-
 (defn- pressable-entry?
   "True when Enter on plan `entry` does something: an enabled button, a selectable
    card or table row, or the first row of an enabled field."
   [entry first-field-row?]
   (case (:kind entry)
-    :button
+    (:button :menu)
     (not (:is-disabled entry))
 
     (:card :trow)
@@ -56,7 +53,7 @@
     :board-issue
     (boolean (or (:is-selectable entry) (:is-editable entry)))
 
-    (:picture-open :media-open :disclosure)
+    (:picture-open :media-open :disclosure :thread-node :thread-head)
     true
 
     :field
@@ -65,10 +62,20 @@
 
     false))
 
-(defn- cell-entries
-  "The cells of a plan `entry` that lays nodes side by side, or nil."
-  [entry]
-  (when (= :columns (:kind entry)) (:cells entry)))
+(defn- entry-leaves
+  "All leaves with the positions the row painter uses."
+  [entry x width]
+  (let [x (long x)
+        width (long width)
+        indent (min width (long (or (:indent entry) 0)))
+        x (+ x indent)
+        width (- width indent)]
+    (cond (or (nil? entry) (not (pos? width))) []
+          (:section-child entry) (entry-leaves (:section-child entry) (+ x 3) (- width 5))
+          (= :columns (:kind entry))
+          (into [] (mapcat (fn [[[at w] part]] (entry-leaves part (+ x (long at)) w)))
+                (map vector (columns/row-slots width entry) (:cells entry)))
+          :else [{:entry (dissoc entry :indent) :at x :width width}])))
 
 (defn- pressable-parts
   "The indexes of the pressable parts of one plan row and the field ids seen
@@ -76,7 +83,8 @@
   [parts seen]
   (reduce (fn [[found seen] [i part]]
             (let [field?
-                  (and (= :field (:kind part)) (not= :blank (get-in part [:field :kind])))
+                  (and (= :field (:kind part)) (or (= :toggle (get-in part [:field :kind]))
+                       (and (not (:segmented? part)) (not= :blank (get-in part [:field :kind])))))
 
                   first-field-row?
                   (and field? (not (contains? seen (:node-id part))))]
@@ -91,34 +99,28 @@
           (map-indexed vector parts)))
 
 (defn- plan-rows
-  "Rows of a node that the live view paints: one `:plan` row for each plan entry.
-   The cursor stops on each control, and on one row of each field. A row of
-   side-by-side cells has one stop for each control in it, in `:cells`."
-  [view node width disclosures]
+  "Convert live paint rows to app rows with a focus stop for each control."
+  [view node width {:keys [disclosures compact-ids toggle-focus]}]
   (first
     (reduce (fn [[rows seen] entry]
-              (let [cells
-                    (cell-entries entry)
-
-                    [found seen]
-                    (pressable-parts (or cells [entry]) seen)]
-
-                [(conj rows
-                       (cond-> {:kind :plan
-                                :node-id (:node-id entry)
-                                :item-id (:item-id entry)
-                                 :thread-id (:canvas-thread-id entry)
-                                 :entry entry
-                                :text (:text entry)
-                                :is-selectable (boolean (seq found))}
-                         cells
-                         (assoc :cells found))) seen]))
+              (let [leaves (entry-leaves entry 0 (+ (long width) 3))
+                    [found seen] (pressable-parts (map :entry leaves) seen)
+                    parts (mapv leaves found)]
+                [(conj rows (cond-> {:kind :plan
+                                    :node-id (:node-id entry)
+                                    :item-id (:item-id entry)
+                                    :thread-id (:canvas-thread-id entry)
+                                    :entry entry
+                                    :text (:text entry)
+                                    :is-selectable (boolean (seq parts))}
+                              (and (seq parts) (or (= :columns (:kind entry)) (:section-child entry)))
+                              (assoc :cells (vec (range (count parts))) :parts parts)))
+                 seen]))
             [[] #{}]
             (lv/layout-plan (cond-> (assoc (lv/opened (assoc view :nodes [node] :description nil))
-                                    :disclosures disclosures)
-                       (= :canvas (:type node))
-                       (lv/expanded (:id node)))
-                     width))))
+                                           :disclosures disclosures :compact-ids compact-ids :toggle-focus toggle-focus)
+                              (= :canvas (:type node)) (lv/expanded (:id node)))
+                            width))))
 
 (defn- canvas-rows
   [view node width disclosures]
@@ -134,7 +136,7 @@
                       (concat (if selectable? [head comment] [head])
                               (map #(cond-> % (:thread-id %) (assoc :is-selectable true)) more)))
                     rows)))
-        (partition-by :item-id (plan-rows view node width disclosures))))
+        (partition-by :item-id (plan-rows view node width {:disclosures disclosures}))))
 
 (defn- preview-key
   [{:keys [diff-id path preview]}]
@@ -151,51 +153,27 @@
                 (into []
                       (comp (remove #(= :node (get-in % [:entry :kind])))
                             (map #(merge % owner)))
-                      (plan-rows view planned width disclosures)))
+                      (plan-rows view planned width {:disclosures disclosures})))
               [row]))
           rows))
 
-(defn- switch-text
-  "The text of the diff switch `group`: each choice with its key, the one that holds
-   marked like a checked menu row."
-  [view group]
-  (let [key-of (into {} (map (juxt :node-id :key)) (:shortcuts view))]
-    (str "["
-         (str/join " │ "
-                   (map (fn [{:keys [id label is-selected]}]
-                          (str (some-> (get key-of id) (str " ")) (when is-selected "• ") label))
-                        (:children group)))
-         "]")))
-
 (defn- node-rows
   [view node width folded opts]
-  (cond (:is-dialog node) []
+  (cond (= :dialog (:type node)) []
         (= :diff (:type node))
-        ;; Toolbar buttons that no key covers stand above the diff as rows.
-        (into (into [] (mapcat #(plan-rows view % width (:disclosures opts))) (:children node))
+        (into (plan-rows view {:id (:id node) :type :flex :direction :row :is-wrapping true
+                              :gap :sm :children (:children node)} width
+                         (assoc opts :compact-ids (into #{} (map :id) (:children node))))
               (diff-row-plans view width folded (:disclosures opts)
-                              (cond-> (model/diff-rows (dissoc node :children ::switch) width folded opts)
-                                (::switch node)
-                                (update-in [0 :text] str "   " (switch-text view (::switch node))))))
+                              (model/diff-rows (dissoc node :children) width folded opts)))
         (= :thread (:type node))
-        (into [{:kind :thread-node
-                :node-id (:id node)
-                :thread-id (:id node)
-                :text (or (:label node) "Discussion")
-                :is-selectable true}]
+        (into [{:kind :thread-node :node-id (:id node) :thread-id (:id node)
+                :text (or (:label node) "Discussion") :is-selectable true}]
               (model/thread-rows node width {:node-id (:id node) :thread-id (:id node)}))
-        (and (seq (:children node)) (holds-threads? node))
-        (let [disclosures (:disclosures opts)
-              header (plan-rows view (dissoc node :children) width disclosures)
-              open? (or (not (:is-collapsible node))
-                        (get disclosures (:id node) (:default-expanded node)))]
-          (cond-> header
-            open? (into (mapcat #(node-rows view % width folded opts)) (:children node))))
         (= :canvas (:type node)) (canvas-rows view node width (:disclosures opts))
         (= :image (:type node))
-        (plan-rows view (assoc node :is-flipped (contains? folded [:picture (:id node)]))
-                   width (:disclosures opts))
-        :else (plan-rows view node width (:disclosures opts))))
+        (plan-rows view (assoc node :is-flipped (contains? folded [:picture (:id node)])) width opts)
+        :else (plan-rows view node width opts)))
 
 (def ^:private surface-letters
   "The letters that the surface gives to its own verbs. An automatic key takes none
@@ -203,17 +181,13 @@
   (into #{} (map str) "uwftiacvsrl"))
 
 (defn- buttons-in
-  "The buttons of `nodes` in reading order. A button of a strip of tabs has `::tab?`."
+  "Buttons outside menus and dialogs, in reading order."
   [nodes]
   (mapcat (fn [node]
-            (cond (:is-dialog node) []
-                  ;; A toolbar keeps its own rows; only its switch takes tab keys.
-                  (lv/toolbar? node) (mapcat #(when (lv/choice-strip? %)
-                                                (map (fn [tab] (assoc tab ::tab? true)) (:children %)))
-                                             (:children node))
-                  (= :button (:type node)) [node]
-                  (lv/choice-strip? node) (map #(assoc % ::tab? true) (:children node))
-                  :else (buttons-in (:children node))))
+            (case (:type node)
+              (:dialog :menu) []
+              :button [node]
+              (buttons-in (:children node))))
           nodes))
 
 (defn- letter-key
@@ -230,47 +204,35 @@
 
     (some #(when-not (contains? taken %) %) candidates)))
 
-(defn- dialog-nodes [nodes]
-  (mapcat (fn [node]
-            (if (:is-dialog node)
-              [node]
-              (dialog-nodes (:children node))))
-          nodes))
-
-(defn- without-dialog-shortcuts [view]
-  (if (seq (:shortcuts view))
-    (let [dialogs (dialog-nodes (:nodes view))
-          ids (into #{} (comp (mapcat #(tree-seq (comp seq :children) :children %)) (map :id)) dialogs)]
-      (update view :shortcuts #(into [] (remove (comp ids :node-id)) %)))
-    view))
+(defn- hidden-shortcut-ids
+  [disclosures nodes]
+  (into #{}
+        (mapcat (fn [node]
+                  (if (or (= :dialog (:type node))
+                          (and (= :collapsible (:type node))
+                               (not (get disclosures (:id node) (:default-expanded node)))))
+                    (map :id (mapcat #(tree-seq (comp seq :children) :children %) (:children node)))
+                    (hidden-shortcut-ids disclosures (:children node)))))
+        nodes))
 
 (defn auto-keyed
   "`view` with a key for each button, when the app declares no shortcut of its own:
-   in a terminal a key is better than a button row. A strip of tabs takes the digits
-   from 1, and an action takes a letter of its label. An app that declares shortcuts
+   an action takes a letter of its label. An app that declares shortcuts
    keeps full control of its keys. A disabled button gets no shortcut, so it keeps
    its row and still shows that it exists."
   [view]
   (if (or (seq (:shortcuts view)) (model/read-only? view))
     view
     (let [buttons
-          (buttons-in (:nodes view))
+          (buttons-in (remove (comp (set (:header view)) :id) (:nodes view)))
 
-          tab-keys
-          (into {}
-                (map-indexed (fn [i button]
-                               [(:id button) (str (inc (long i)))]))
-                (take 9 (filter ::tab? buttons)))
-
-          ;; Each button takes part, also a disabled one: a key stays with its button
-          ;; when another button turns on or off.
           [_ keys]
           (reduce (fn [[taken keys] button]
                     (if-let [k (letter-key (:label button) taken)]
                       [(conj taken k) (assoc keys (:id button) k)]
                       [taken keys]))
-                  [(into surface-letters (vals tab-keys)) tab-keys]
-                  (remove ::tab? buttons))
+                  [surface-letters {}]
+                  buttons)
 
           shortcuts
           (into []
@@ -285,30 +247,15 @@
           shortcuts :auto-keys?
           true)))))
 
-(defn- diff-switch
-  "The switch of diff `node`: its first `row` strip of tabs, or nil."
-  [node]
-  (when (= :diff (:type node))
-    (first (filter #(and (= :row (:direction %)) (lv/choice-strip? %)) (:children node)))))
-
 (defn- keyed-buttons
-  "Remove buttons named by shortcuts before layout, including nested controls. A diff
-   keeps its switch as `::switch` when keys cover it, so its head shows the choice."
+  "Remove body buttons named by shortcuts. Menus keep their own items."
   [nodes covered]
   (into []
         (comp (remove #(and (= :button (:type %)) (contains? covered (:id %))))
-              (keep (fn [node]
-                      (if (and (seq (:children node)) (not (lv/toolbar? node)))
-                        (let [children (keyed-buttons (:children node) covered)
-                              switch (diff-switch node)
-                              node (cond-> node
-                                     (and switch (not-any? #(= (:id switch) (:id %)) children))
-                                     (assoc ::switch switch))]
-                          (cond (seq children) (assoc node :children children)
-                                ;; A diff toolbar is optional; the diff stays without it.
-                                (= :diff (:type node)) (dissoc node :children)
-                                :else nil))
-                        node))))
+              (map (fn [node]
+                     (cond-> node
+                       (and (seq (:children node)) (not (#{:menu :dialog} (:type node))))
+                       (update :children keyed-buttons covered)))))
         nodes))
 
 (defn surface-rows
@@ -317,24 +264,19 @@
    and `:wrap?` choices."
   ([view width folded] (surface-rows view width folded nil))
   ([view width folded opts]
-   (let [receipts
-         (model/receipt-rows view)
-
-         view
-         (update view :nodes keyed-buttons (set (keep :node-id (:shortcuts view))))]
-
-     (cond-> (into []
-                   (comp (map #(seq (node-rows view % width folded opts)))
-                         (filter some?)
-                         (interpose [{:kind :section-gap :text ""}])
-                         cat)
-                   ;; The app header stands at the top, in its order.
-                   (let [nodes (:nodes view)
-                         header (:header view)]
-                     (concat (keep (into {} (map (juxt :id identity)) nodes) header)
-                             (remove (comp (set header) :id) nodes))))
-       (seq receipts)
-       (into (cons {:kind :receipts-head :text "Send receipts"} receipts))))))
+   (let [receipts (model/receipt-rows view)
+         header-ids (set (:header view))
+         header (into [] (keep (into {} (map (juxt :id identity)) (:nodes view))) (:header view))
+         nodes (keyed-buttons (remove (comp header-ids :id) (:nodes view))
+                              (set (keep :node-id (:shortcuts view))))
+         band (when (seq header)
+                (plan-rows view {:type :flex :direction :row :is-wrapping true :gap :sm :children header} width
+                           (assoc opts :compact-ids header-ids)))]
+     (cond-> (into [] cat (interpose [{:kind :section-gap :text ""}]
+                                    (filter seq (into [band] (map #(node-rows view % width folded opts)) nodes))))
+        (seq receipts) (conj {:kind :receipts-head :is-selectable true
+                              :text (str (if (:receipts-open? opts) "▾ " "▸ ") "Send receipts")})
+        (and (seq receipts) (:receipts-open? opts)) (into receipts)))))
 
 (defn selectable-indexes
   "The row indexes that the cursor stops on."
@@ -425,7 +367,7 @@
    side-by-side cells, else the entry of the row."
   [row cell]
   (if (and (some? cell) (seq (:cells row)))
-    (nth (get-in row [:entry :cells]) cell nil)
+    (get-in row [:parts cell :entry])
     (:entry row)))
 
 (defn- move
@@ -587,16 +529,11 @@
                                  (save-editor state view effects false)))
         :else (update-in state [:editor :input] edit-input-key key)))
 
-(defn- input-values
-  "The value of every input of `view`: what a Send carries."
-  [view]
-  (lv/input-values {:view view}))
-
 (defn- send-app
   "Send the app with idempotency key reuse; `node-id` names the submit button."
   [state view node-id {:keys [send!]}]
   (let [k (send-key (:send state) model/idempotency-key)]
-    (send! (model/submit-action view k (input-values view)) node-id)
+    (send! (model/submit-action view k (lv/input-values {:view view} node-id)) node-id)
     (assoc state :send {:state :sending :key k})))
 
 (def disconnected-notice
@@ -773,6 +710,46 @@
       (merge (dissoc row :anchor) (get row (:diff-side state)))
       row)))
 
+(defn- menu-items [node]
+  (vec (:children node)))
+
+(defn- menu-selectable? [node]
+  (and (#{:menu :button} (:type node)) (not (:is-disabled node))))
+
+(defn- menu-level [node]
+  {:id (:id node) :at (first (keep-indexed #(when (menu-selectable? %2) %1) (menu-items node)))})
+
+(defn- open-menu [state view id]
+  (assoc state :node-menu [(menu-level (model/find-node view id))]))
+
+(defn- toggle-key
+  [state ^KeyStroke key {:keys [view rows]} {:keys [change!]}]
+  (let [entry (focused-entry (selected-row state rows) (:cell state))
+        id (:node-id entry)
+        kt (.getKeyType key)]
+    (when (and (= :toggle (get-in entry [:field :kind]))
+               (not (or (.isCtrlDown key) (.isAltDown key)))
+               (or (#{KeyType/ArrowLeft KeyType/ArrowRight KeyType/Enter} kt)
+                   (and (= KeyType/Character kt) (= \space (.getCharacter key)))))
+      (let [node (model/find-node view id)
+            options (vec (:options node))
+            value (:value node (:default node))
+            selected (if (:is-multiple node) (set value) #{value})
+            at (long (or (get-in state [:toggle-focus id])
+                         (first (keep-indexed #(when (selected (:value %2)) %1) options)) 0))]
+        (cond (empty? options) state
+              (#{KeyType/ArrowLeft KeyType/ArrowRight} kt)
+              (assoc-in state [:toggle-focus id]
+                        (mod (+ at (if (= KeyType/ArrowLeft kt) -1 1)) (count options)))
+              (model/read-only? view) state
+              (model/stale? view) (assoc state :notice (waiting-notice view))
+               :else (let [option (:value (nth options (min at (dec (count options)))))
+                           next-value (hi/toggle-value node value option)]
+                       (change! {:action :change :node-id id :value next-value})
+                       (let [pending (:toggle-pending state)
+                             values (when (= (:seq view) (:seq pending)) (:values pending))]
+                         (assoc state :toggle-pending {:seq (:seq view) :values (assoc values id next-value)}))))))))
+
 (defn- enter-row
   [state {:keys [view rows]} {:keys [inspect! media!] :as effects}]
   (let [row
@@ -782,6 +759,8 @@
         (focused-entry row (:cell state))]
 
     (case (:kind row)
+      :receipts-head (update state :receipts-open? not)
+
       :file-item
       (if-let [i (file-row-of rows (:path row))]
         (-> state
@@ -803,6 +782,8 @@
               (assoc-in state
                 [:disclosures id]
                 (not (get (:disclosures state) id (:default-expanded node)))))
+            (and (= :menu (:kind entry)) (not (model/read-only? view)))
+            (open-menu state view (:node-id entry))
             (= :media-open (:kind entry))
             (do ((or media! media/open!)
                  (or (:preview row) (model/find-node view (:node-id entry))) (:item-id entry))
@@ -812,7 +793,7 @@
             (do (inspect! (:preview row)) state)
 
             (model/read-only? view) (assoc state :save {:state :closed})
-            :else (if-let [target (editor-target view row)]
+            :else (if-let [target (editor-target view (if (#{:thread-node :thread-head} (:kind entry)) (merge row entry) row))]
                     (assoc-in (open-editor state target) [:editor :base-seq] (:seq view))
                     (if (and entry (:is-selectable row))
                       (press state view (:node-id entry) (:item-id entry) effects)
@@ -1178,19 +1159,21 @@
 
 (defn mouse-cell
   "The selectable cell at terminal column `col`, or nil for a full row."
-  [row {:keys [left inner-w]} col]
-  (when (seq (:cells row))
-    (let [entry (:entry row)
-          indent (long (or (:indent entry) 0))
-          w (- (long inner-w) indent)
-          x (- (long col) (long left) indent)
-          cells (if-let [ws (:cell-widths entry)]
-                  (columns/width-slots w ws)
-                  (columns/slots w (count (:cells entry))))]
-      (some (fn [i]
-              (let [[at width] (nth cells i)]
-                (when (<= (inc (long at)) x (+ (long at) (long width))) i)))
-            (:cells row)))))
+  [row {:keys [left]} col]
+  (let [x (- (long col) (long left))]
+    (some (fn [[i {:keys [at width]}]]
+            (when (<= (inc (long at)) x (+ (long at) (long width))) i))
+          (map-indexed vector (:parts row)))))
+
+(defn- click-toggle
+  [state row geom col effects]
+  (let [part (nth (:parts row) (long (or (:cell state) 0)) nil)
+        entry (or (:entry part) (:entry row))
+        x (- (long col) (long (get-in geom [:bounds :left])) (long (or (:at part) 0)) 2)]
+    (when-let [option (some (fn [[i start end]] (when (<= (long start) x (dec (long end))) i))
+                            (get-in entry [:field :option-spans]))]
+      (toggle-key (assoc-in state [:toggle-focus (:node-id entry)] option)
+                  (KeyStroke. KeyType/Enter) geom effects))))
 
 (defn- mouse-key
   [state ^MouseAction key geom effects]
@@ -1209,10 +1192,11 @@
                              :selected i
                              :cell (mouse-cell row (:bounds geom) (.getColumn pos))
                              :diff-side (if (< (.getColumn pos) midpoint) :left :right))]
-              (if (or (= :file (:kind row))
-                       (= :media-open (:kind (focused-entry row (:cell selected)))))
-                 (enter-row selected geom effects)
-                 selected))
+               (or (click-toggle selected row geom (.getColumn pos) effects)
+                   (if (or (= :file (:kind row))
+                           (#{:media-open :menu} (:kind (focused-entry row (:cell selected)))))
+                     (enter-row selected geom effects)
+                     selected)))
             state)
 
           :else state)))
@@ -1225,17 +1209,86 @@
           (and (:item-id row) (or (:thread-id row) (#{:canvas-select :canvas-comment} (:kind row))))
           ((juxt :node-id :item-id :thread-id :kind) row))))
 
+(defn- close-dialog
+  [state view dialog-id {:keys [activate!]}]
+  (if (model/stale? view)
+    (assoc state :notice (waiting-notice view))
+    (do (activate! {:action :activate :node-id dialog-id})
+        (update state :closed-dialogs (fnil conj #{}) dialog-id))))
+
 (defn- dialog-key
   [state ^KeyStroke key {:keys [view dialog-id] :as geom} effects]
   (cond (instance? MouseAction key) (mouse-key state key geom effects)
-        (= KeyType/Escape (.getKeyType key))
-        (if (model/stale? view)
-          (assoc state :notice (waiting-notice view))
-          (do ((:activate! effects) {:action :activate :node-id dialog-id}) state))
+        (= KeyType/Escape (.getKeyType key)) (close-dialog state view dialog-id effects)
         (#{KeyType/Tab KeyType/ReverseTab} (.getKeyType key))
         (move geom state (if (or (.isShiftDown key) (= KeyType/ReverseTab (.getKeyType key))) -1 1))
         (= KeyType/Character (.getKeyType key)) state
         :else (surface-key (dissoc state :notice) key geom effects)))
+
+(defn- node-menu-layout
+  [state {:keys [view bounds]}]
+  (when-let [node (model/find-node view (:id (peek (:node-menu state))))]
+    (let [{:keys [left right top bottom]} bounds
+          at (:at (peek (:node-menu state)))
+          items (menu-items node)
+          width (min 44 (inc (- (long right) (long left))))
+          height (min (+ 4 (count items)) (inc (- (long bottom) (long top))))
+          x (+ (long left) (quot (- (inc (- (long right) (long left))) width) 2))
+          y (+ (long top) (quot (- (inc (- (long bottom) (long top))) height) 2))
+          box {:left x :right (+ x width -1) :top y :bottom (+ y height -1)
+               :inner-w (- width 2) :inner-h (- height 2)}
+          capacity (max 0 (- height 4))
+          start (if (and at (pos? capacity)) (dlg/visible-window-start at 0 capacity (count items)) 0)]
+      (when (and (>= width 6) (>= height 5))
+        {:box box :width width :x x :y y :at at :start start
+         :title (:label node) :items (subvec items start (min (count items) (+ start capacity)))}))))
+
+(defn- node-menu-key
+  [state ^KeyStroke key {:keys [view] :as geom} effects]
+  (let [levels (:node-menu state)
+        {:keys [id at]} (peek levels)
+        node (model/find-node view id)
+        items (menu-items node)
+        positions (into [] (keep-indexed #(when (menu-selectable? %2) %1)) items)
+        current (when at (nth items at nil))
+        kt (.getKeyType key)
+        back #(if (> (count levels) 1) (update state :node-menu pop) (dissoc state :node-menu))]
+    (cond (nil? node) (dissoc state :node-menu)
+          (instance? MouseAction key)
+          (let [^MouseAction mouse key
+                pos (.getPosition mouse)]
+            (if (= MouseActionType/CLICK_RELEASE (.getActionType mouse))
+              (if-let [{:keys [box x y start items]} (node-menu-layout state geom)]
+                (let [col (.getColumn pos)
+                      row (.getRow pos)
+                      index (- row (long y) 2)
+                      item (nth items index nil)]
+                  (cond (not (and (<= (long x) col (long (:right box)))
+                                  (<= (long y) row (long (:bottom box)))))
+                        (dissoc state :node-menu)
+                        (and (< (long x) col (long (:right box))) (menu-selectable? item))
+                        (node-menu-key (assoc-in state [:node-menu (dec (count levels)) :at] (+ (long start) index))
+                                       (KeyStroke. KeyType/Enter) geom effects)
+                        :else state))
+                (dissoc state :node-menu))
+              state))
+          (= KeyType/Escape kt) (back)
+          (= KeyType/ArrowLeft kt) (if (> (count levels) 1) (back) state)
+          (and (#{KeyType/ArrowUp KeyType/ArrowDown KeyType/Home KeyType/End} kt) (seq positions))
+          (let [i (long (or (first (keep-indexed #(when (= at %2) %1) positions)) 0))
+                target (cond (= KeyType/Home kt) 0
+                             (= KeyType/End kt) (dec (count positions))
+                             :else (mod (+ i (if (= KeyType/ArrowDown kt) 1 -1)) (count positions)))]
+            (assoc-in state [:node-menu (dec (count levels)) :at] (nth positions target)))
+          (and (= :menu (:type current))
+               (or (#{KeyType/Enter KeyType/ArrowRight} kt) (= "Space" (shortcut-key key))))
+          (update state :node-menu conj (menu-level current))
+          (and (menu-selectable? current) (or (= KeyType/Enter kt) (= "Space" (shortcut-key key))))
+          (if (model/stale? view)
+            (assoc state :notice (waiting-notice view))
+            (do ((:activate! effects) {:action :activate :node-id (:id current)})
+                (dissoc state :node-menu)))
+          :else state)))
 
 (defn handle-key
   "The next surface state for `key`. `geom` holds `:rows`, `:view` and `:list-h`;
@@ -1249,13 +1302,14 @@
   (let [next-state
         (cond (pasted-key? key) (paste-key state (:paste key) paste)
               (not (instance? KeyStroke key)) state
-              (:dialog-id geom) (dialog-key state key geom effects)
+              (:node-menu state) (node-menu-key state key geom effects)
+               (:dialog-id geom) (or (toggle-key state key geom effects) (dialog-key state key geom effects))
               (log-chip-click? key (:log-chip geom)) (do ((:log! effects)) state)
               (instance? MouseAction key) (or (map-mouse state key geom) (mouse-key state key geom effects))
               (:key-menu state) (menu-key state key geom effects)
               (:editor state) (editor-key state key view effects)
               (:search state) (search-key state key (:rows geom))
-              :else (command-key state key geom effects))]
+              :else (or (toggle-key state key geom effects) (command-key state key geom effects)))]
     (if (and (contains? next-state :selected)
              (not= ((juxt :selected :cell) state) ((juxt :selected :cell) next-state)))
       (assoc next-state :canvas-focus (canvas-focus (nth (:rows geom) (:selected next-state) nil)
@@ -1553,26 +1607,11 @@
                               (p/ellipsize text (max 1 (- (long inner-w) indent 3)))))))))
 
 (defn- paint-row-focus!
-  "Mark the focused control of plan `row`: the whole entry, or cell `cell` at
-   the place where the live view paints that cell."
+  "Mark the focused control in the same slot that paints it."
   [g left row-y inner-w view-id row cell]
-  (let [entry (:entry row)]
-    (if (and (some? cell) (seq (:cells row)))
-      (let [indent (min (long (or (:indent entry) 0)) (max 0 (long inner-w)))
-            inner-w (- (long inner-w) indent)
-            places (if-let [ws (:cell-widths entry)]
-                     (columns/width-slots inner-w ws)
-                     (columns/slots inner-w (count (:cells entry))))
-            [x w] (nth places cell nil)]
-
-        (when (and x (pos? (long w)))
-          (paint-focus! g
-                        (+ (long left) indent (long x))
-                        row-y
-                        w
-                        view-id
-                        (nth (:cells entry) cell))))
-      (paint-focus! g left row-y inner-w view-id entry))))
+  (if-let [{:keys [entry at width]} (nth (:parts row) (long (or cell 0)) nil)]
+    (paint-focus! g (+ (long left) (long at)) row-y width view-id entry)
+    (paint-focus! g left row-y inner-w view-id (:entry row))))
 
 (defn- paint-plain-row!
   [g left row-y inner-w row text]
@@ -2049,12 +2088,14 @@
 
 (defn- surface-plan
   [view width state]
-  (let [opts (select-keys state [:unified? :wrap? :files? :hide-tests? :hide-whitespace? :disclosures])
+  (let [opts (select-keys state [:unified? :wrap? :files? :hide-tests? :hide-whitespace? :disclosures :toggle-focus :receipts-open?])
         inputs [width (:folded state) opts @t/theme-revision]
         cached @surface-plan-cache]
     (if (and (identical? view (:source cached)) (= inputs (:inputs cached)))
       (:plan cached)
-      (let [view* (without-dialog-shortcuts (auto-keyed view))
+      (let [hidden (into (hidden-shortcut-ids (:disclosures opts) (:nodes view))
+                          (map :id) (lv/dialog-nodes (:nodes view)))
+             view* (update (auto-keyed view) :shortcuts (fn [shortcuts] (filterv #(not (hidden (:node-id %))) shortcuts)))
             rows (surface-rows view* width (:folded state) opts)
             selectable (selectable-indexes rows)
             anchors (into {} (keep (fn [[idx cell :as pos]]
@@ -2077,6 +2118,17 @@
           (reset! surface-plan-cache {:source view :inputs inputs :plan plan}))
         plan))))
 
+(defn- with-pending-toggles
+  [view {:keys [seq values]}]
+  (if (and (not-empty values) (= seq (:seq view)))
+    (letfn [(update-node [node]
+              (cond-> node
+                (and (= :toggle (:type node)) (contains? values (:id node)))
+                (assoc :value (get values (:id node)))
+                (:children node) (update :children #(mapv update-node %))))]
+      (update view :nodes #(mapv update-node %)))
+    view))
+
 (defn- geom-in
   "The surface geometry for `state` in the box `bounds`."
   [state cols rows-count content-w bounds view]
@@ -2087,7 +2139,7 @@
         (max 1 (- (long (:inner-w bounds)) 3))
 
         {:keys [view] :as plan}
-        (surface-plan view width state)
+        (surface-plan (with-pending-toggles view (:toggle-pending state)) width state)
 
         content-h
         (long content-h)
@@ -2122,15 +2174,17 @@
 (defn- inset-dialog
   "Measure the first open dialog inside the app box. Its controls use the app's owner."
   [state {:keys [bounds view] :as geom}]
-  (if-let [node (and (not (model/read-only? view))
-                    (first (filter :is-open (dialog-nodes (:nodes view)))))]
+  (if-let [node (lv/open-dialog view state)]
     (let [{:keys [left right top bottom]} bounds
           inset (if (>= (- (long right) (long left)) 20) 2 0)
           inner-w (- (long right) (long left) 1 (* 2 inset))
-          content (-> view
-                      (dissoc :shortcuts :submissions)
-                      (assoc :nodes [(dissoc node :is-dialog :is-open :label)]))
-          rows (surface-rows content (max 1 (- inner-w 3)) #{} (select-keys state [:disclosures]))
+          form (assoc (dissoc node :is-open :label :description) :type :flex :direction :column)
+          content (assoc (dissoc view :shortcuts :submissions :header) :nodes
+                         (cond-> []
+                           (not (str/blank? (:description node)))
+                           (conj {:type :paragraph :text (:description node)})
+                           true (conj form)))
+          rows (surface-rows content (max 1 (- inner-w 3)) #{} (select-keys state [:disclosures :toggle-focus]))
           height (min (inc (- (long bottom) (long top))) (+ (count rows) 8))
           y (+ (long top) (quot (- (inc (- (long bottom) (long top))) height) 2))
           bounds {:left (+ (long left) inset) :right (- (long right) inset)
@@ -2154,6 +2208,14 @@
                            (in-app-region
                              #(dlg/dialog-bounds cols rows-count content-w (app-content-h rows-count)))
                            view))))
+
+(defn measure-dialog-overlay
+  "Measure the app dialog over a standalone live view, without an app backdrop."
+  [state cols rows view]
+  (when (lv/open-dialog view state)
+    (let [content-w (dlg/default-content-width cols)
+          bounds (in-app-region #(dlg/dialog-bounds cols rows content-w (app-content-h rows)))]
+      (inset-dialog state {:view (with-pending-toggles view (:toggle-pending state)) :bounds bounds}))))
 
 (defn pane-measure
   "The surface geometry for `state` in a side pane: the box at `left` and `top`,
@@ -2189,7 +2251,7 @@
   [state dialog-id]
   (if (= (:dialog-id state) dialog-id)
     state
-    (let [state (dissoc state :key-menu :editor :search :prefix :canvas-map :reading? :notice)]
+    (let [state (dissoc state :key-menu :node-menu :editor :search :prefix :canvas-map :reading? :notice)]
       (if dialog-id
         (assoc state :dialog-id dialog-id
                      :background-focus (or (:background-focus state)
@@ -2201,6 +2263,7 @@
   "Keep the cursor on a stop and in view."
   [state {:keys [rows list-h view canvas? anchors items stops dialog-id] :as geom}]
   (let [state (reconcile-dialog-focus state dialog-id)
+        state (lv/retain-dialog-dismissals view state)
         stops
         (or stops (selectable-indexes rows))
 
@@ -2511,13 +2574,41 @@
     (dlg/draw-hint-bar! g left hint-row inner-w (cond-> [["Esc" "close form"]] enter (conj enter)))
     nil))
 
+(defn- paint-node-menu!
+  [g state geom]
+  (when-let [{:keys [box width x y at start title items]} (node-menu-layout state geom)]
+    (paint-pane-chrome! g box title nil)
+    (doseq [[i item] (map-indexed vector items)]
+      (let [kind (:type item)
+            focused? (= at (+ (long start) (long i)))
+            paper (if focused? t/header-active-tab-bg t/dialog-bg)
+            ink (cond focused? t/header-active-tab-fg
+                      (:is-disabled item) t/dialog-hint
+                      :else t/dialog-fg)
+            label (case kind
+                    :divider (apply str (repeat (- (long width) 4) "─"))
+                    (str (if (:is-selected item) "✓ " "  ") (:label item)
+                         (when (= :menu kind) " ▸")))
+            row (+ (long y) 2 (long i))]
+        (p/set-colors! g ink paper)
+        (p/fill-rect! g (inc (long x)) row (- (long width) 2) 1)
+        (p/put-str! g (+ (long x) 2) row (p/ellipsize label (- (long width) 4)))))))
+
+(defn paint-dialog-overlay!
+  "Paint the dialog alone over the current frame."
+  [g state geom]
+  (paint-dialog! g state geom)
+  (when (:node-menu state) (paint-node-menu! g state geom))
+  nil)
+
 (defn- paint!
   [g state {:keys [background] :as geom}]
   (if background
     (do (binding [interactions/hit-map (interactions/create-hit-map)]
           (paint-surface! g (merge (initial-state) (:background-focus state)) background))
-        (paint-dialog! g state geom))
-    (paint-surface! g state geom)))
+        (paint-dialog-overlay! g state geom))
+    (let [cursor (paint-surface! g state geom)]
+      (if (:node-menu state) (do (paint-node-menu! g state geom) nil) cursor))))
 
 ;;; ── Driver ─────────────────────────────────────────────────────────────────
 
@@ -2757,6 +2848,7 @@
               (run-action! box session-id view-id action noticed))
    :move! (fn [action]
              (run-action! box session-id view-id action noticed))
+   :change! (fn [action] (run-action! box session-id view-id action noticed))
    :edit! (partial edit-effect! box session-id view-id screen modal!)
    :shortcut! (partial shortcut-effect! box session-id view-id)
    :reload! (fn []

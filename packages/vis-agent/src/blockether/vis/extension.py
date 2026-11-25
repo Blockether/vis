@@ -5155,14 +5155,19 @@ def _field_specs(nodes, validators):
     # this process: every field's callables are popped out of the spec and kept
     # in `validators` by field name. The host is told only HOW MANY each field
     # declared and is handed a callback it re-enters on the thread the human
-    # submitted on. Groups nest, so this walks the whole tree.
+    # submitted on. Layouts nest, so this walks the whole tree.
     if not isinstance(nodes, (list, tuple)) or not nodes:
         raise TypeError("a form needs a non-empty list of nodes")
 
-    def one(f):
+    from blockether.vis import _contracts
+
+    def one(f, path):
         if not isinstance(f, dict):
             raise TypeError("each node is a dict of snake_case string keys")
         spec = {str(k): v for k, v in f.items()}
+        kind = spec.get("type")
+        if complaint := _contracts.form_kind_error(kind, f"{path}/type"):
+            raise ValueError(f"vis.ask() does not take {kind} nodes: {complaint}")
         checks = spec.pop("validate", None)
         if checks is not None:
             name = str(spec.get("name") or spec.get("id") or "").strip()
@@ -5171,10 +5176,12 @@ def _field_specs(nodes, validators):
             validators[name] = _validator_list(checks)
         children = spec.get("children")
         if isinstance(children, (list, tuple)):
-            spec["children"] = [one(c) for c in children]
+            spec["children"] = [
+                one(c, f"{path}/children/{i}") for i, c in enumerate(children)
+            ]
         return spec
 
-    return [one(f) for f in nodes]
+    return [one(f, f"/nodes/{i}") for i, f in enumerate(nodes)]
 
 
 def _request_spec(title, nodes, options, validators):
@@ -5221,17 +5228,11 @@ def ask(title, nodes, **options):
     #        'validate': lambda v: None if v.isdigit() else 'must be digits'},
     #       {'name': 'confirm', 'type': 'password', 'validate':
     #        lambda v, values: None if v == values['pw'] else 'must match Password'},
-    # A 'group' is not a field at all — it LAYS OUT: 'children' and 'direction'
-    # ('column' stacks, the default; 'row' side by side; 'grid' equal columns
-    # that wrap, capped by 'max_columns'; 'wrap' natural widths). Groups nest and never
-    # appear in `values`, which stays flat.
-    # Layout and value keys never mix: 'default'/'is_required'/'validate' on a
-    # group, or 'children'/'direction' on an answerable field, are both REFUSED.
+    # Flex, grid, section and collapsible arrange nodes and do not give
+    # answers. They can nest. The values stay in one flat dict.
+    # Dialog and menu nodes are only for live views.
     # Field types: plaintext, password, multiline, select, multiselect,
-    # checkbox, range, otp. Every other component of the catalog answers
-    # nothing: 'heading', 'paragraph', 'card', 'status' and the rest SHOW text
-    # or state, so a long form reads like a page instead of a list. They never
-    # land in `values`; giving one a name, a default or a validate is REFUSED.
+    # toggle, checkbox, range, datetime and otp.
     # Dialog options: description (prose under the title explaining
     # what the whole ask is about — it wraps), submit_label, cancel_label,
     # is_cancellable, timeout_ms.
@@ -5288,9 +5289,10 @@ def ask(title, nodes, **options):
 #   answer = vis.ask('Deploy', [
 #       vis.ui.heading('Target'),
 #       vis.ui.paragraph('Staging pages nobody.'),
-#       vis.ui.row(vis.ui.select('env', ['staging', 'prod'], label='Where',
-#                          is_required=True),
-#               vis.ui.slider('canary', min=0, max=100, step=5)),
+#       vis.ui.flex(vis.ui.select('env', ['staging', 'prod'], label='Where',
+#                                 is_required=True),
+#                   vis.ui.slider('canary', min=0, max=100, step=5),
+#                   direction='row'),
 #       vis.ui.password('token', label='Deploy token', is_required=True),
 #   ])
 #
@@ -5308,6 +5310,7 @@ def _node(type_name, name, spec):
 
 def _ui_plaintext(name, **spec):
     # One typed line, answered as a string.
+    _command_icon(spec.get("icon"))
     return _node("plaintext", name, spec)
 
 
@@ -5371,75 +5374,119 @@ def _ui_option(value, label=None):
     return {"value": value} if label is None else {"value": value, "label": label}
 
 
-def _group_fields(builder, fields):
-    # A group ARRANGES nodes, so one arranging nothing is a typo. Refuse it
-    # where it was written, instead of letting the host refuse the whole view
-    # or patch and make a finished operation look failed.
-    if not fields:
+def _command_icon(icon):
+    if icon is not None:
+        from blockether.vis import _contracts
+
+        icons = _contracts.definition("view", "command_icon")["enum"]
+        if icon not in icons:
+            raise ValueError("icon must be one of " + ", ".join(icons))
+    return icon
+
+
+def _ui_toggle(name, options, *, is_multiple=False, **spec):
+    """Choose one option, or a list of options when ``is_multiple`` is true."""
+    spec["options"] = [
+        _toggle_option(one) if isinstance(one, str) else one for one in options
+    ]
+    for one in spec["options"]:
+        if isinstance(one, dict):
+            _command_icon(one.get("icon"))
+    spec["is_multiple"] = is_multiple
+    return _node("toggle", name, spec)
+
+
+def _toggle_option(value, label=None, *, icon=None):
+    """An option with a value and label. An icon replaces the visible label."""
+    option = {"value": value, "label": value if label is None else label}
+    if icon is not None:
+        option["icon"] = _command_icon(icon)
+    return option
+
+
+def _container(kind, children, *, id=None, **spec):
+    if children and isinstance(children[0], str):
+        if id is not None:
+            raise TypeError(f"vis.ui.{kind}() takes an id once")
+        id, *children = children
+    if not children:
         raise ValueError(
-            f"vis.{builder}() needs at least one node: a group arranges nodes, "
-            "and an empty one arranges nothing. For a section that fills while a "
-            "live view runs, declare its first node and add the rest with "
-            "view.add(node, after=id)."
+            f"vis.ui.{kind}() needs at least one node. Declare its first node "
+            "and add more with view.add(node, after=id)."
         )
-    return list(fields)
-
-
-def _group(direction, fields):
-    # A group answers nothing and never appears in `values`, which stays flat
-    # however deep the tree goes. A LEADING STRING is the group's id: a live view
-    # patches by id and `after=` names a group too, so the same builder serves a
-    # form (no id needed) and a live view (an id required).
-    group = {"type": "group", "direction": direction}
-    if fields and isinstance(fields[0], str):
-        group["id"] = fields[0]
-        fields = fields[1:]
-    group["children"] = _group_fields(direction, fields)
-    return group
-
-
-def _ui_row(*fields):
-    # Lay these nodes out side by side: `vis.ui.row(vis.text("host"), vis.text("port"))`
-    # on a form, `vis.ui.row("reading", vis.ui.table("hosts", ...), vis.ui.status("why"))`
-    # in a live view.
-    return _group("row", fields)
-
-
-def _ui_column(*fields):
-    # Stack these nodes, the default arrangement: worth saying out loud inside a
-    # `row`.
-    return _group("column", fields)
-
-
-def _ui_grid(*fields, max_columns=None):
-    """Lay ``fields`` out in equal columns that wrap into aligned rows.
-
-    ``max_columns`` (1 to 12) caps the columns. A narrow surface shows fewer
-    columns, and the smallest surface stacks them.
-    """
-    node = _group("grid", fields)
-    if max_columns is not None:
-        node["max_columns"] = max_columns
+    node = {"type": kind, "children": list(children)}
+    if id is not None:
+        node["id"] = str(id)
+    node.update({key: value for key, value in spec.items() if value is not None})
     return node
 
 
-def _ui_wrap(*fields):
-    """Put ``fields`` side by side at their own width, wrapping onto new lines.
+def _ui_flex(
+    *children,
+    id=None,
+    direction="column",
+    is_wrapping=None,
+    gap=None,
+    align=None,
+    justify=None,
+    is_growing=None,
+):
+    """Lay out children in a row or a column. A leading string names this layout.
 
-    Use it for buttons, stats, statuses and links that keep a natural width.
+    ``align`` sets the cross axis. In a row, ``justify`` sets the main axis,
+    and ``is_wrapping`` starts a new line when the children do not fit.
+    A child with ``is_growing=True`` takes free space along the main axis.
     """
-    return _group("wrap", fields)
+    if direction == "column" and (is_wrapping is not None or justify is not None):
+        raise ValueError("Only a row takes is_wrapping or justify.")
+    return _container(
+        "flex",
+        children,
+        id=id,
+        direction=direction,
+        is_wrapping=is_wrapping,
+        gap=gap,
+        align=align,
+        justify=justify,
+        is_growing=is_growing,
+    )
 
 
-def _ui_group(*children, direction="column", **spec):
-    """Group ``children`` with optional ``label``, ``description`` and folding.
+def _ui_grid(
+    *children, id=None, columns=None, min_width=None, gap=None, is_growing=None
+):
+    """Lay out children in equal columns. A leading string names this layout.
 
-    A leading string is the group id. A submit button inside a group collects
-    the inputs of that group, so one view can hold several small forms.
+    ``columns`` caps the number of columns, and ``min_width`` sets the smallest
+    width of each column. A narrow surface shows fewer columns.
     """
-    node = _group(str(direction), children)
-    node.update({str(k): v for k, v in spec.items() if v is not None})
-    return node
+    return _container(
+        "grid",
+        children,
+        id=id,
+        columns=columns,
+        min_width=min_width,
+        gap=gap,
+        is_growing=is_growing,
+    )
+
+
+def _ui_section(
+    *children, id=None, label=None, description=None, icon=None, is_growing=None
+):
+    """Frame children with an optional label, description and icon.
+
+    A leading string names this section.
+    """
+    return _container(
+        "section",
+        children,
+        id=id,
+        label=label,
+        description=description,
+        icon=_command_icon(icon),
+        is_growing=is_growing,
+    )
 
 
 def _ui_card(node_id, title, **spec):
@@ -5452,24 +5499,28 @@ def _ui_card(node_id, title, **spec):
     return _live_node("card", node_id, dict(spec, title=str(title)))
 
 
-def _ui_heading(text, live_text=None, **spec):
+def _ui_heading(text, live_text=None, *, is_growing=None, **spec):
     """Form heading, or live ``heading(id, text, level=1..6)``."""
+    growth = {} if is_growing is None else {"is_growing": is_growing}
     if live_text is not None:
         return _live_node(
-            "heading", text, dict(spec, text=str(live_text), level=spec.get("level", 2))
+            "heading",
+            text,
+            dict(spec, **growth, text=str(live_text), level=spec.get("level", 2)),
         )
     if spec:
         raise TypeError("live heading options require both id and text")
-    return {"type": "heading", "text": str(text)}
+    return {"type": "heading", "text": str(text), **growth}
 
 
-def _ui_paragraph(text, live_text=None, **spec):
+def _ui_paragraph(text, live_text=None, *, is_growing=None, **spec):
     """Form Markdown prose, or live ``paragraph(id, text)`` with inline Markdown."""
+    growth = {} if is_growing is None else {"is_growing": is_growing}
     if live_text is not None:
-        return _live_node("paragraph", text, dict(spec, text=str(live_text)))
+        return _live_node("paragraph", text, dict(spec, **growth, text=str(live_text)))
     if spec:
         raise TypeError("live paragraph options require both id and text")
-    return {"type": "paragraph", "text": str(text)}
+    return {"type": "paragraph", "text": str(text), **growth}
 
 
 def reveal(handle):
@@ -6495,12 +6546,36 @@ class Canvas(_KeyedNode):
         return list(self._view._node_state(self.node_id).get("selected_ids") or [])
 
 
-class Dialog(_Node):
-    """A dialog group. It shows its nodes over the view while it is open."""
+class Toggle(Input):
+    """An input that shows its options side by side."""
 
-    def set(self, *, is_open=None, label=None):
-        """Open or close the dialog, or change its title."""
-        return self._op("set", is_open=is_open, label=label)
+    def set_label(self, label):
+        """Change the label of the toggle."""
+        return self._op("set", label=label)
+
+
+class Section(_Node):
+    """A section or collapsible part of a view."""
+
+    def set(self, *, label=None, description=None):
+        """Change the label or description."""
+        return self._op("set", label=label, description=description)
+
+
+class Dialog(_Node):
+    """A dialog over the view while it is open."""
+
+    def set(self, *, is_open=None, label=None, description=None):
+        """Open or close the dialog, or change its label or description."""
+        return self._op("set", is_open=is_open, label=label, description=description)
+
+
+class Menu(_Node):
+    """A list of commands that opens from a trigger."""
+
+    def set(self, *, label):
+        """Change the label of the menu."""
+        return self._op("set", label=label)
 
 
 class Board(_KeyedNode):
@@ -6676,7 +6751,10 @@ _LIVE_NODES = {
     "scene": Scene,
     "canvas": Canvas,
     "board": Board,
-    "group": Dialog,
+    "section": Section,
+    "collapsible": Section,
+    "dialog": Dialog,
+    "menu": Menu,
 }
 # The typed handle of each node type that is not an input. Each input type of the
 # view schema has an `Input` handle. A test compares this table with the schema.
@@ -6853,22 +6931,14 @@ class LiveView:
         self._index(nodes)
 
     def _index(self, nodes, parent=None):
-        # A group is LAYOUT: it holds no items and takes no op, so a row lends its
-        # place in the order to the nodes it arranges and never answers itself.
-        # Every id keeps its group, so a dropped group also drops what it holds.
+        # Keep parent ids so a dropped container also drops what it holds.
         for node in nodes:
             node_id = isinstance(node, dict) and (node.get("id") or node.get("name"))
             if not node_id:
                 continue
             self._parents[str(node_id)] = parent
             children = node.get("children")
-            # The toolbar of a diff is in `children` too, and the diff takes ops. A
-            # dialog is a group that opens and closes, so it answers by its id.
-            if (
-                node.get("type") != "group"
-                or node.get("is_dialog")
-                or not isinstance(children, list)
-            ):
+            if node.get("type") not in ("flex", "grid"):
                 self._nodes[str(node_id)] = str(node.get("type") or "plaintext")
                 self._order.append(str(node_id))
             if isinstance(children, list):
@@ -7144,7 +7214,10 @@ class LiveView:
         if not type_name:
             known = ", ".join(self._order) or "no nodes"
             raise KeyError(f"this view has no node {name!r} — it has {known}")
-        handle = Input if type_name in _input_types() else _LIVE_NODES[type_name]
+        if type_name == "toggle":
+            handle = Toggle
+        else:
+            handle = Input if type_name in _input_types() else _LIVE_NODES[type_name]
         return handle(self, name, type_name)
 
     def __getitem__(self, node_id):
@@ -8237,11 +8310,13 @@ class _LiveRecorder:
 
     def picture(self):
         """Return the terminal, layout-free picture surfaces and the model read."""
+        from blockether.vis import _contracts
+
         picture = self._copy(self._view)
         picture.pop("seq", None)
         leaves = []
         for node in self._nodes(picture.get("nodes")):
-            if node.get("type") == "group":
+            if _contracts.is_layout(node.get("type")):
                 continue
             node.pop("selected_ids", None)
             node.pop("is_selectable", None)
@@ -8402,7 +8477,7 @@ class _LiveRecorder:
         with self._condition:
             node = self.node(node_id)
             is_card = node.get("type") == "card" and node.get("is_selectable")
-            is_dialog = bool(node.get("is_dialog") and node.get("is_open"))
+            is_dialog = node.get("type") == "dialog" and node.get("is_open")
             if (
                 self._result is not None
                 or (node.get("type") != "button" and not is_card and not is_dialog)
@@ -8574,7 +8649,7 @@ class _LiveRecorder:
             return {"is_accepted": True, "node_id": str(node_id)}
 
     def submit(self, node_id, values=None):
-        """Simulate a submit button: check its group and queue one `submit` event.
+        """Simulate a submit button: check its container and queue one `submit` event.
 
         A required input without a value gives field errors and changes nothing,
         like the host does.
@@ -8641,7 +8716,8 @@ class _LiveRecorder:
             return {"is_accepted": True, "node_id": str(node_id)}
 
     def _scope(self, node_id):
-        """The nodes that submit button `node_id` collects: its nearest group."""
+        """The nodes that a submit button collects from its nearest layout."""
+        from blockether.vis import _contracts
 
         def walk(scope, nodes):
             for node in nodes or []:
@@ -8649,7 +8725,10 @@ class _LiveRecorder:
                     return scope
                 children = node.get("children")
                 if children:
-                    found = walk(children, children)
+                    next_scope = (
+                        children if _contracts.is_layout(node.get("type")) else scope
+                    )
+                    found = walk(next_scope, children)
                     if found is not None:
                         return found
             return None
@@ -8906,10 +8985,8 @@ testing = _Testing()
 # here talks to the host, and `vis.live` is what carries it to the engine that
 # judges it.
 #
-# Layout is the FORM's own vocabulary, not a second one: `vis.ui.row("reading",
-# table, status)` stands its nodes side by side and `vis.ui.column(...)` stacks them,
-# with a live group taking the id every op addresses. It is DECLARED once and no
-# op carries it, so a layout never rearranges itself while a human is reading it.
+# Forms and live views use the same layout builders. A live view uses the
+# container id to find its children when it applies a patch.
 
 
 def _live_node(type_name, node_id, spec):
@@ -8919,60 +8996,70 @@ def _live_node(type_name, node_id, spec):
     return node
 
 
-def _ui_disclosure(node_id, label, *nodes, default_expanded=False):
-    """A collapsible column.
+def _ui_collapsible(
+    node_id,
+    label,
+    *children,
+    default_expanded=False,
+    description=None,
+    icon=None,
+    is_growing=None,
+):
+    """A part of the view that a person opens and closes with its label.
 
-    Local choices survive updates, and receipts start collapsed.
+    Local choices stay through updates. Receipts start closed.
     """
-    return _live_node(
-        "group",
-        node_id,
-        {
-            "label": str(label),
-            "direction": "column",
-            "children": _group_fields("disclosure", nodes),
-            "is_collapsible": True,
-            "default_expanded": default_expanded,
-        },
+    return _container(
+        "collapsible",
+        children,
+        id=node_id,
+        label=str(label),
+        default_expanded=default_expanded,
+        description=description,
+        icon=_command_icon(icon),
+        is_growing=is_growing,
     )
 
 
-def _ui_toolbar(*fields):
-    """Put compact ``fields`` on one line that wraps, such as a search and filters.
-
-    An input in a toolbar shows its label only as its accessible name, so give it a
-    ``placeholder``. To show a toolbar in the app header, give it to the ``header``
-    of ``vis.ui.app``. In a toolbar, a group of two or more buttons that each have
-    ``is_selected`` is a switch: its choices stand side by side as one control,
-    without the group label.
-    """
-    return _group("toolbar", fields)
-
-
-def _ui_dialog(node_id, title, *nodes, is_open=False, description=None):
-    """A dialog with ``title`` that shows ``nodes`` over the view while it is open.
+def _ui_dialog(
+    node_id, title, *children, is_open=False, description=None, is_growing=None
+):
+    """A dialog with ``title`` that shows its children over the view while open.
 
     Open or close it with ``view[node_id].set(is_open=...)``. When the person
     closes it, the host sets ``is_open`` to false and sends an ``activate`` event
     for ``node_id``. A submit button in it collects the inputs of the dialog.
     """
-    return _live_node(
-        "group",
-        node_id,
-        {
-            "label": str(title),
-            "description": description,
-            "direction": "column",
-            "children": _group_fields("dialog", nodes),
-            "is_dialog": True,
-            "is_open": bool(is_open),
-        },
+    return _container(
+        "dialog",
+        children,
+        id=node_id,
+        label=str(title),
+        description=description,
+        is_open=is_open,
+        is_growing=is_growing,
     )
 
 
-def _ui_divider(node_id):
-    """A static horizontal rule across its live container. Add or drop it by id."""
-    return _live_node("divider", node_id, {})
+def _ui_menu(node_id, label, *items, icon=None, is_growing=None):
+    """Open a list of buttons, submenus and dividers.
+
+    A button sends its own ``activate`` event. ``is_selected`` marks a current
+    choice. With an icon, the label is only the accessible name.
+    """
+    return _container(
+        "menu",
+        items,
+        id=node_id,
+        label=str(label),
+        icon=_command_icon(icon),
+        is_growing=is_growing,
+    )
+
+
+def _ui_divider(node_id, *, is_growing=None):
+    """A horizontal rule. In a menu, it separates commands."""
+    return _live_node("divider", node_id, {"is_growing": is_growing})
 
 
 def _ui_code(node_id, text, *, language=None, **spec):
@@ -8993,12 +9080,13 @@ def _ui_button(node_id, label, *, is_disabled=False, variant=None, **spec):
     """An operator action. Accepted presses increment ``clicks`` in ``view.state()``.
 
     ``variant`` is ``"primary"``, ``"secondary"`` (the default) or ``"destructive"``.
-    Give one primary action per group. No callback or code crosses the wire.
+    Give one primary action per form. No callback or code crosses the wire.
     Disabled buttons and completed receipts cannot be activated.
     ``reveals="key"`` names another app of the same owner: a press also shows it.
     """
     from blockether.vis import _contracts
 
+    _command_icon(spec.get("icon"))
     complaint = _contracts.button_variant_error(variant)
     if complaint:
         raise ValueError(f"button {node_id}: {complaint}")
@@ -9155,13 +9243,8 @@ def _ui_diff(
 
     People comment on a line and send their comments. The owner answers in the same
     thread. `old_revision` and `new_revision` name the compared versions.
-    `children` is the toolbar of the diff. Each button is one action. Each
-    `vis.ui.group(...)` of buttons is one menu, and its label names the current choice.
-    A group in a menu opens a submenu. `is_selected=True` marks the button of the
-    current choice. A `vis.ui.group(..., direction="row")` of two or more buttons,
-    each with `is_selected`, is a switch instead of a menu: each choice shows.
-    `icon="refresh"` or `icon="more"` shows a picture instead of
-    the label, and the label stays the accessible name.
+    `children` is the toolbar of the diff. Give it buttons for actions, menus
+    for commands and toggles for choices.
     `previews` holds a `vis.ui.diff.preview(...)` for each changed picture, sound or
     video. A surface shows each one under the header of its file.
     """
@@ -9247,7 +9330,16 @@ def _ui_picture(data_or_path, *, media_type=None):
     )
 
 
-def _ui_image(node_id, data_or_path, *, alt, label=None, before=None, media_type=None):
+def _ui_image(
+    node_id,
+    data_or_path,
+    *,
+    alt,
+    label=None,
+    before=None,
+    media_type=None,
+    is_growing=None,
+):
     """A picture in an app, from bytes or a file path.
 
     `alt` says what it shows, for a person who cannot see it. With `before` (bytes,
@@ -9273,7 +9365,9 @@ def _ui_image(node_id, data_or_path, *, alt, label=None, before=None, media_type
             if isinstance(before, Mapping)
             else _ui_picture(before)
         )
-    return _live_node("image", node_id, dict(node, alt=alt, label=label))
+    return _live_node(
+        "image", node_id, dict(node, alt=alt, label=label, is_growing=is_growing)
+    )
 
 
 def _media_data(data_or_path, most):
@@ -9339,7 +9433,15 @@ def _media_source(source, kind=None, media_type=None):
 
 
 def _ui_media(
-    node_id, source, *, alt, kind=None, label=None, before=None, media_type=None
+    node_id,
+    source,
+    *,
+    alt,
+    kind=None,
+    label=None,
+    before=None,
+    media_type=None,
+    is_growing=None,
 ):
     """A sound or a video in an app, from bytes, a file path or a web address.
 
@@ -9364,7 +9466,11 @@ def _ui_media(
     node: dict[str, Any] = dict(found)
     if before is not None:
         node["before"] = _media_source(before, kind)[1]
-    return _live_node("media", node_id, dict(node, kind=kind, alt=alt, label=label))
+    return _live_node(
+        "media",
+        node_id,
+        dict(node, kind=kind, alt=alt, label=label, is_growing=is_growing),
+    )
 
 
 def _ui_thread(node_id, *, messages=None, **spec):
@@ -9605,9 +9711,9 @@ def _ui_app(
     `key` makes the app adoptable: its owner can open the same key again later.
     `shortcuts` is a list of `vis.ui.app.shortcut(...)` values, at most 32.
     `header` is a list of at most 8 nodes with ids that the app header shows, in
-    order, next to the back and close controls: buttons, choice rows, menus,
-    search inputs, selects, statuses and badges. The body does not show them. A
-    patch changes them by id, like the other nodes.
+    order, next to the back and close controls: buttons, menus, toggles,
+    statuses, badges, plaintext inputs and selects. The header shows compact
+    controls; give an input a placeholder. A patch changes them by id.
     `icon` selects an app icon, such as `review`, `chart`, `music` or `terminal`.
     `surfaces` sets where the app shows by default, for example
     `{"inline": False, "session": "chat"}`. `inline` shows it in the chat turn
@@ -9625,7 +9731,14 @@ def _ui_app(
     request = {str(k): v for k, v in options.items()}
     request.update(placement="attachment", title=str(title), nodes=list(nodes))
     if header is not None:
+        from blockether.vis import _contracts
+
         header = list(header)
+        for index, node in enumerate(header):
+            if isinstance(node, dict) and "id" not in node:
+                filled = _contracts.fill_live_node(node)
+                if "id" in filled:
+                    header[index] = dict(node, id=filled["id"])
         if not all(isinstance(node, dict) and node.get("id") for node in header):
             raise ValueError("each vis.ui.app header node needs an id")
         request["nodes"] = header + request["nodes"]
@@ -9916,6 +10029,13 @@ class _SelectUI:
     option = staticmethod(_ui_option)
 
 
+class _ToggleUI:
+    """Build a segmented choice and its options."""
+
+    __call__ = staticmethod(_ui_toggle)
+    option = staticmethod(_toggle_option)
+
+
 class _LimitUI:
     """Read the limits of node fields from the view schema."""
 
@@ -9989,21 +10109,20 @@ class _UI:
     password = staticmethod(_ui_password)
     multiline = staticmethod(_ui_multiline)
     select = _SelectUI()
+    toggle = _ToggleUI()
     checkbox = staticmethod(_ui_checkbox)
     slider = staticmethod(_ui_slider)
     datetime = staticmethod(_ui_datetime)
     otp = staticmethod(_ui_otp)
 
     # Layout
-    row = staticmethod(_ui_row)
-    column = staticmethod(_ui_column)
+    flex = staticmethod(_ui_flex)
     grid = staticmethod(_ui_grid)
-    wrap = staticmethod(_ui_wrap)
-    group = staticmethod(_ui_group)
-    toolbar = staticmethod(_ui_toolbar)
+    section = staticmethod(_ui_section)
+    collapsible = staticmethod(_ui_collapsible)
     dialog = staticmethod(_ui_dialog)
+    menu = staticmethod(_ui_menu)
     card = staticmethod(_ui_card)
-    disclosure = staticmethod(_ui_disclosure)
 
     # Text and links
     heading = staticmethod(_ui_heading)

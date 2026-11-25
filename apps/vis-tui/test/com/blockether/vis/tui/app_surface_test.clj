@@ -346,8 +346,7 @@
         (expect (= "second-thread" (:thread-id (row-at refreshed next-view))))))
   (it "opens a collapsed group to reach its canvas and can close it again"
       (let [v (update (canvas-view {}) :nodes
-                      (fn [nodes] [{:id "group" :type :group :label "Review queue"
-                                    :is-collapsible true :children nodes}]))
+                      (fn [nodes] [{:id "group" :type :collapsible :label "Review queue" :children nodes}]))
             {:keys [press start]} (harness v)
             opened (press start (k KeyType/Enter))
             closed (press opened (k KeyType/Enter))
@@ -479,17 +478,13 @@
         (expect (= "kept" (input/input->text (get-in st [:editor :input]))))
         (expect (nil? (:editor (press st (k KeyType/Escape)))))
         (expect (empty? @calls))))
-  (it "edits the thread node from its head row"
-      (let [{:keys [press start]}
-            (harness view)
-
-            stops
-            (count (surface/selectable-indexes (:rows (surface/measure start 100 40 view))))
-
-            st
-            (press (down press start (dec stops)) (k KeyType/Enter))]
-
-        (expect (= "notes" (get-in st [:editor :target :thread-id]))))))
+   (it "edits the thread node from its head row"
+       (let [{:keys [press start]} (harness view)
+             rows (:rows (surface/measure start 100 40 view))
+             stops (surface/selectable-indexes rows)
+             steps (count (take-while #(not= :thread-node (:kind (nth rows %))) stops))
+             st (press (down press start steps) (k KeyType/Enter))]
+         (expect (= "notes" (get-in st [:editor :target :thread-id]))))))
 
 (defdescribe
   save-and-send-states
@@ -893,8 +888,8 @@
                       (swap! calls conj [:activate action]))
          :select! (fn [action]
                     (swap! calls conj [:select action]))
-         :edit! (fn [node]
-                  (swap! calls conj [:edit (:id node)]))
+          :change! (fn [action] (swap! calls conj [:change action]))
+          :edit! (fn [node] (swap! calls conj [:edit (:id node)]))
          :shortcut! (fn [action s]
                       (swap! calls conj [:shortcut action (:action s)]))
          :reload! (fn []
@@ -1103,61 +1098,54 @@
    :placement :attachment
    :shortcuts own-keys
    :nodes [{:id "entry"
-            :type :group
+            :type :flex
             :direction :row
             :children [{:id "new" :type :plaintext :name "new" :label "New task" :value ""}
                        {:id "add" :type :button :label "Add" :action :activate}]}
            {:id "acts"
-            :type :group
+            :type :flex
             :direction :row
             :children [{:id "undo" :type :button :label "Undo" :action :activate}
                        {:id "off" :type :button :label "Off" :is-disabled true}
                        {:id "clear" :type :button :label "Clear" :action :activate}]}]})
 
 (def ^:private composed-app
-  {:id "composed" :title "Work" :seq 1 :placement :attachment :header ["tools"]
+  {:id "composed" :title "Work" :seq 1 :placement :attachment :header ["search" "new"]
    :nodes [{:id "content" :type :paragraph :text "App body"}
-           {:id "tools" :type :group :direction :toolbar
-            :children [{:id "search" :type :plaintext :label "Find an issue"
-                        :placeholder "Search issues" :icon :search}
-                       {:id "new" :type :button :label "Create" :icon :plus}]}
-           {:id "form" :type :group :direction :column :label "New issue"
-            :is-dialog true :is-open false
+           {:id "search" :type :plaintext :label "Find an issue" :placeholder "Search issues"}
+           {:id "new" :type :button :label "Create" :icon :plus}
+           {:id "form" :type :dialog :label "New issue" :description "Enter the issue details" :is-open false
             :children [{:id "name" :type :plaintext :label "Summary" :value "Next task"}
                        {:id "save" :type :button :label "Save issue" :action :submit}]}]})
 
 (defn- screen-lines [frame]
   (mapv #(apply str (map :ch %)) (:cells frame)))
 
-(defdescribe composed-toolbar
-  (it "puts the search and its action together above the body, then wraps on a narrow screen"
-      (let [st (surface/initial-state)
-            rows (screen-lines (app-frame composed-app st 100 30))
-            narrow (screen-lines (app-frame composed-app st 34 24))]
-        (expect (some #(re-find #"Search issues.*Create" %) rows))
-        (expect (> (count (take-while #(not (str/includes? % "App body")) rows))
-                   (count (take-while #(not (str/includes? % "Search issues")) rows))))
-        (expect (not-any? #(str/includes? % "Find an issue") rows))
-        (expect (some #(str/includes? % "Search issues") narrow))
-        (expect (some #(str/includes? % "Create") narrow))
-        (expect (not-any? #(re-find #"Search issues.*Create" %) narrow)))))
+(defdescribe composed-header
+  (it "puts the compact search and icon button beside each other above the body"
+      (doseq [width [80 120]]
+        (let [rows (screen-lines (app-frame composed-app (surface/initial-state) width 30))]
+          (expect (some #(re-find #"Search issues.*\[ \+ \]" %) rows))
+          (expect (not-any? #(re-find #"Find an issue|Create" %) rows))))))
 
 (defdescribe composed-dialog
   (it "shows the form only when it is open, above the app"
       (let [st (surface/initial-state)
             shut (screen-lines (app-frame composed-app st 100 30))
-            open (screen-lines (app-frame (assoc-in composed-app [:nodes 2 :is-open] true) st 100 30))]
+            open (screen-lines (app-frame (assoc-in composed-app [:nodes 3 :is-open] true) st 100 30))]
         (expect (not-any? #(re-find #"New issue|Summary|Save issue" %) shut))
-        (doseq [text ["New issue" "Summary" "Save issue"]]
+        (doseq [text ["New issue" "Enter the issue details" "Summary" "Save issue"]]
           (expect (some #(str/includes? % text) open)))))
   (it "edits and submits the form, then sends its close action on Escape"
-      (let [v (assoc-in composed-app [:nodes 2 :is-open] true)
+      (let [v (assoc-in composed-app [:nodes 3 :is-open] true)
             {:keys [calls press start]} (game-harness v)
             save (press start (k KeyType/ArrowDown))]
         (press start (k KeyType/Enter))
         (press save (k KeyType/Enter))
-        (let [closed (press start (k KeyType/Escape))]
-          (expect (not (contains? closed ::dlg/done))))
+         (let [closed (press start (k KeyType/Escape))]
+           (expect (not (contains? closed ::dlg/done)))
+           (expect (not-any? #(str/includes? % "New issue")
+                             (screen-lines (app-frame v closed 100 30)))))
         (expect (= [[:edit "name"] [:send :submit "save"]
                     [:activate {:action :activate :node-id "form"}]]
                    (mapv (fn [[kind action node-id :as call]]
@@ -1443,9 +1431,9 @@
       (let [v
             {:id "keys"
              :nodes [{:id "group"
-                      :type :group
+                      :type :flex
                       :children [{:id "toolbar"
-                                  :type :group
+                                  :type :flex
                                   :children [{:id "covered" :type :button :label "Covered"}]}
                                  {:id "visible" :type :button :label "Visible"}]}]
              :shortcuts [{:key "F" :node-id "covered"}]}
@@ -1472,7 +1460,7 @@
           menu
           (surface/surface-rows
             (assoc (toolbar {:id "scope"
-                             :type :group
+                             :type :menu
                              :label "This session"
                              :children [{:id "checkpoint-2" :type :button :label "#2 edit"}]})
               :shortcuts [{:key "r" :node-id "refresh"}])
@@ -1482,41 +1470,16 @@
       (expect (some #(= :diff-head (:kind %)) covered))
       (expect (not-any? #(= "refresh" (:node-id %)) covered))
       (expect (some #(= :diff-head (:kind %)) menu))
-      (expect (some #(= "checkpoint-2" (get-in % [:entry :node-id] (:node-id %))) menu))))
-  ;; A switch in the diff toolbar shows its choice in the diff head, also when its keys
-  ;; take the buttons out of the rows.
-  (it "shows the diff switch with its keys and the choice that holds in the diff head"
-      (let [choice (fn [id label selected?] {:id id :type :button :label label :is-selected selected?})
-            v (-> view
-                  (assoc-in [:nodes 0 :children]
-                            [{:id "area" :type :group :direction :row
-                              :children [(choice "workspace" "Workspace" false)
-                                         (choice "temp" "Temporary" true)]}])
-                  (assoc :shortcuts [{:key "1" :node-id "workspace"} {:key "2" :node-id "temp"}]))
-            head (first (filter #(= :diff-head (:kind %)) (surface/surface-rows v 80 #{})))]
-        (expect (str/ends-with? (:text head) "[1 Workspace │ 2 • Temporary]"))))
-  ;; User report: a switch in the app band showed its group name twice and had no keys.
-  (it "gives a toolbar switch tab keys and shows it as one unnamed row"
-      (let [choice (fn [id label selected?] {:id id :type :button :label label :is-selected selected?})
-            band {:id "band" :type :group :direction :toolbar :label "Area"
-                  :children [{:id "area" :type :group :direction :row :label "Area"
-                              :children [(choice "work" "Workspace" true)
-                                         (choice "temp" "Temporary" false)]}]}
-            v (surface/auto-keyed (update view :nodes #(into [band] %)))
-            rows (surface/surface-rows v 80 #{})
-            texts (map :text rows)]
-        (expect (= [{:key "1" :node-id "work"} {:key "2" :node-id "temp"}]
-                   (take 2 (:shortcuts v))))
-        (expect (not-any? #(= "Area" %) texts))
-        (expect (some #(= ["work" "temp"] (mapv :node-id (get-in % [:entry :cells]))) rows))))
-  (it "shows the app header first, in its order"
-      (let [v {:id "v"
-               :nodes [{:id "notes" :type :plaintext :text "Body"}
-                       {:id "live" :type :status :label "Live"}
-                       {:id "go" :type :button :label "Go"}]
-               :header ["go" "live"]}]
-        (expect (= ["go" "live" "notes"]
-                   (distinct (keep :node-id (surface/surface-rows v 80 #{})))))))
+      (expect (some #(= "scope" (get-in % [:entry :node-id] (:node-id %))) menu))))
+  (it "shows the app header before its body"
+      (let [v {:id "v" :nodes [{:id "notes" :type :paragraph :text "Body"}
+                               {:id "live" :type :status :text "Live"}
+                               {:id "go" :type :button :label "Go"}]
+               :header ["go" "live"]}
+            rows (surface/surface-rows v 80 #{})]
+        (expect (= ["go" "live"] (mapv :node-id (get-in (first rows) [:entry :cells]))))
+        (expect (some #(= "notes" (:node-id %)) (rest rows)))))
+
   ;; User request: the state shows as one dot, green or red, as in a chat app.
   (it "shows the connection as a green or red dot in the title, without a word"
       (let [v {:id "v" :title "T" :nodes [{:id "go" :type :button :label "Go"}]}
@@ -1566,14 +1529,12 @@
   (it
     "keeps all rails and outside cells unchanged while highlighting the choice mark"
     (doseq [nested? [false true]]
-      (let [v (assoc game :nodes [(nth (:nodes game) 3)])
-            table-row (first (filter #(= :trow (get-in % [:entry :kind]))
-                                     (surface/surface-rows v 38 #{})))
-            row (if nested?
-                  (assoc table-row
-                    :cells [0]
-                    :entry {:kind :columns :cells [(:entry table-row)]})
-                  table-row)
+      (let [table (nth (:nodes game) 3)
+            node (if nested? {:id "layout" :type :flex :direction :row :children [table]} table)
+            v (assoc game :nodes [node])
+            row (first (filter #(or (= :trow (get-in % [:entry :kind]))
+                                    (= :trow (get-in % [:parts 0 :entry :kind])))
+                               (surface/surface-rows v 39 #{})))
             paint
             (fn [selected?]
               (binding [interactions/hit-map (interactions/create-hit-map)]
@@ -1983,14 +1944,14 @@
    :seq 1
    :placement :attachment
    :nodes [{:id "tabs"
-            :type :group
-            :direction :wrap
+            :type :flex
+            :direction :row :is-wrapping true
             :children [{:id "tab-run" :type :button :label "Run" :is-selected true}
                        {:id "tab-history" :type :button :label "History" :is-selected false}]}
            {:id "name" :type :plaintext :label "Name"}
            {:id "actions"
-            :type :group
-            :direction :wrap
+            :type :flex
+            :direction :row :is-wrapping true
             :children [{:id "new" :type :button :label "New run"}
                        {:id "reset" :type :button :label "Reset"}
                        {:id "delete" :type :button :label "Delete" :is-disabled true}]}]})
@@ -2012,7 +1973,7 @@
   automatic-keys
   ;; User report 2026-11-14: in the terminal, keys are better than buttons. An app
   ;; with no shortcut of its own showed each button as a row.
-  (it "gives each button of an app without shortcuts a key, and the tabs the digits"
+  (it "gives each button of an app without shortcuts a key"
       (let [geom
             (surface/measure (surface/initial-state) 100 40 workflows)
 
@@ -2020,10 +1981,10 @@
             (game-harness workflows)]
 
         ;; `r` is the surface key of Reload, so Reset takes the next free letter.
-        (expect (= [["1" "• Run"] ["2" "History"] ["n" "New run"] ["R" "Reset"]] (:legend geom)))
+        (expect (= [["R" "• Run"] ["h" "History"] ["n" "New run"] ["e" "Reset"]] (:legend geom)))
         ;; A disabled button has no key: it keeps its row and shows that it exists.
         (expect (= ["delete"] (button-ids (:rows geom))))
-        (press start (ch \2))
+        (press start (ch \h))
         (press start (ch \n))
         (expect (= [[:activate {:action :activate :node-id "tab-history"}]
                     [:activate {:action :activate :node-id "new"}]]
@@ -2047,7 +2008,7 @@
 
         (expect (nil? (:error shot)))
         ;; The buttons have no row, so only the bar names their keys.
-        (expect (some #(re-find #"1 • Run  ·  2 History  ·  n New run  ·  R Reset" %) lines))))
+        (expect (some #(re-find #"R • Run  ·  h History  ·  n New run  ·  e Reset" %) lines))))
   (it "keeps the keys of the surface: Reload still answers r"
       (let [{:keys [press start calls]} (game-harness workflows)]
         (press start (ch \r))
@@ -2056,3 +2017,115 @@
       (let [geom (surface/measure (surface/initial-state) 100 40 (assoc workflows :is-closed true))]
         (expect (nil? (:legend geom)))
         (expect (= 5 (count (button-ids (:rows geom))))))))
+
+(defdescribe composed-focus-and-section
+  (it "paints aligned and nested controls once, in their layout slots"
+      (doseq [w [80 120]
+              props [{:direction :row :justify :center}
+                     {:direction :row :justify :end}
+                     {:direction :column :align :center}
+                     {:direction :column :align :end}]]
+        (let [view {:id "layout" :placement :attachment
+                    :nodes [(merge {:id "layout" :type :flex
+                                    :children [{:id "outer" :type :button :label "Outside"}
+                                               {:id "section" :type :section :label "Verification"
+                                                :children [{:id "inner" :type :button :label "Inside"}]}]}
+                                   props)]}
+              rows (screen-lines (app-frame view (surface/initial-state) w 26))
+              text (str/join "\n" rows)]
+          (expect (= 1 (count (re-seq #"Outside" text))))
+          (expect (= 1 (count (re-seq #"Inside" text))))
+          (expect (some #(re-find #"╭.*Verification.*╮" %) rows))))))
+
+(defdescribe composed-thread
+  (it "paints the thread heading once, beside its sibling in a row"
+      (doseq [w [80 120]]
+        (let [view {:id "v" :placement :attachment
+                    :shortcuts [{:key "z" :label "Other" :action "other"}]
+                    :nodes [{:id "layout" :type :flex :direction :row :justify :end :gap :lg
+                             :children [{:id "before" :type :button :label "Before thread"}
+                                        {:id "notes" :type :thread :label "Composition thread"}]}]}
+              rows (screen-lines (app-frame view (surface/initial-state) w 28))]
+          (expect (some #(re-find #"Before thread.*Composition thread" %) rows))
+          (expect (= 1 (count (filter #(str/includes? % "Composition thread") rows))))))))
+
+(defdescribe stretched-section
+  (it "puts the bottoms of short and tall section frames on the same row"
+      (doseq [w [80 120]]
+        (let [view {:id "v" :placement :attachment
+                    :nodes [{:id "row" :type :flex :direction :row :align :stretch
+                             :children [{:id "short" :type :section :label "Short"
+                                         :children [{:id "one" :type :paragraph :text "One"}]}
+                                        {:id "tall" :type :section :label "Tall"
+                                         :children [{:id "two" :type :paragraph :text "Two"}
+                                                    {:id "three" :type :paragraph :text "Three"}]}]}]}
+              rows (screen-lines (app-frame view (surface/initial-state) w 28))]
+          (expect (some #(re-find #"╰.*╯.*╰.*╯" %) rows))))))
+
+(defdescribe wide-toggle
+  (it "keeps the focused segment visible and selects the clicked option"
+      (let [options (mapv (fn [n] {:value (str n) :label (str "Option " n " long label")}) (range 1 9))
+            view {:id "v" :placement :attachment
+                  :nodes [{:id "scope" :type :toggle :name "scope" :label "Scope" :options options}]}
+            {:keys [press start calls]} (game-harness view)
+            last-option (nth (iterate #(press % (k KeyType/ArrowRight)) start) 7)
+            rendered (fn [w] (screen-lines (app-frame view last-option w 40)))
+            frame (app-frame view last-option 100 40)
+            line (first (keep-indexed #(when (str/includes? %2 "Option 8 long label") %1) (screen-lines frame)))
+            row (when line (nth (screen-lines frame) line))]
+        (doseq [w [80 120]]
+          (expect (some #(str/includes? % "Option 8 long label") (rendered w))))
+        (expect (some? row))
+        (when row
+          (press last-option (MouseAction. MouseActionType/CLICK_RELEASE 1
+                                           (TerminalPosition. (str/index-of row "Option 8") line))))
+        (expect (= [[:change {:action :change :node-id "scope" :value "8"}]] @calls)))))
+
+(defdescribe dense-composition
+  (it "keeps every control reachable when a terminal row is overfull"
+      (doseq [w [80 120]]
+        (let [buttons (mapv (fn [n] {:id (str "b" n) :type :button :label (str "Button " n)}) (range 24))
+              view {:id "dense" :placement :attachment :shortcuts [{:key "z" :label "Other" :action "other"}]
+                    :nodes [{:id "actions" :type :flex :direction :row :gap :lg :children buttons}]}
+              rows (:rows (surface/measure (surface/initial-state) w 45 view))]
+          (expect (= (set (map :id buttons))
+                     (into #{} (mapcat (fn [row] (map #(get-in % [:entry :node-id]) (:parts row)))) rows)))
+          (expect (some #(= :row-overflow (get-in % [:entry :kind])) rows))))))
+
+(defdescribe composed-controls
+  (it "opens a submenu, skips disabled items, and sends the chosen action"
+      (let [v {:id "v" :placement :attachment :header ["tools"]
+               :nodes [{:id "tools" :type :menu :label "Tools"
+                        :children [{:id "off" :type :button :label "Disabled" :is-disabled true}
+                                   {:id "sep" :type :divider}
+                                   {:id "more" :type :menu :label "More"
+                                    :children [{:id "go" :type :button :label "Run"}]}]}]}
+             {:keys [press start calls]} (game-harness v)
+             opened (press start (k KeyType/Enter))
+             submenu (press opened (k KeyType/ArrowRight))
+             chosen (press submenu (k KeyType/Enter))]
+         (expect (nil? (:node-menu chosen)))
+         (expect (= [[:activate {:action :activate :node-id "go"}]] @calls))))
+  (it "activates the item that the person clicks in the popup"
+      (let [v {:id "v" :placement :attachment
+               :nodes [{:id "tools" :type :menu :label "Tools"
+                        :children [{:id "first" :type :button :label "First"}
+                                   {:id "second" :type :button :label "Second"}]}]}
+            {:keys [press start calls]} (game-harness v)
+            opened (press start (k KeyType/Enter))
+            click (MouseAction. MouseActionType/CLICK_RELEASE 1 (TerminalPosition. 50 20))
+            done (press opened click)]
+        (expect (= [[:activate {:action :activate :node-id "second"}]] @calls))
+        (expect (nil? (:node-menu done)))))
+  (it "moves the segmented cursor without a change and selects with Space"
+      (let [v {:id "v" :placement :attachment
+               :nodes [{:id "scope" :type :toggle :name "scope" :label "Scope"
+                        :options [{:label "Work" :value "work"} {:label "Stage" :value "stage"}]
+                        :is-multiple true :value ["work"]}]}
+            {:keys [press start calls]} (game-harness v)
+            st (press start (k KeyType/ArrowRight))]
+        (expect (empty? @calls))
+        (let [both (press st (ch \space))]
+          (press (press both (k KeyType/ArrowLeft)) (ch \space)))
+        (expect (= [[:change {:action :change :node-id "scope" :value ["work" "stage"]}]
+                    [:change {:action :change :node-id "scope" :value ["stage"]}]] @calls)))))

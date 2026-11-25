@@ -56,7 +56,7 @@ import { createPortal } from 'react-dom';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 
 import { EDGE_MARGIN, menuPosition, spanningPosition } from '../lib/anchored-menu';
-import type { ViewGroupDirection } from '../lib/view';
+import type { ViewFlexLayout, ViewGridLayout, ViewGap, ViewSize } from '../lib/view';
 import { useBackLayer, useEdgeBack } from '../lib/edge-back';
 import {
   AlertIcon,
@@ -1226,63 +1226,148 @@ export function ChoiceSegments({
   );
 }
 
-/** A grid track: at least 12rem, or the whole width when that is narrower. */
-const VIEW_TRACK = 'min(100%, 12rem)';
+const LAYOUT_GAP: Record<ViewGap, string> = {
+  none: '0px', xs: '0.25rem', sm: '0.5rem', md: '1rem', lg: '1.5rem',
+};
+const GRID_TRACK: Record<ViewSize, string> = { xs: '10rem', sm: '14rem', md: '18rem', lg: '24rem' };
+const GRID_COLUMN_LIMIT = Math.max(...viewSchema.$defs.component.oneOf.flatMap(({ properties }) => {
+  const maximum = properties?.type?.const === 'grid' ? properties.columns?.maximum : undefined;
+  return typeof maximum === 'number' ? [maximum] : [];
+}));
 
-/**
- * The grid template of one layout direction. A `grid` keeps empty tracks, so
- * its last row aligns with the rows above; `maxColumns` makes each track at
- * least one column's share of the width.
- */
-function viewTemplate(direction: ViewGroupDirection, maxColumns?: number): string | undefined {
-  if (direction === 'row') return `repeat(auto-fit, minmax(${VIEW_TRACK}, 1fr))`;
-  if (direction !== 'grid') return undefined;
-  const track = maxColumns
-    ? `max(${VIEW_TRACK}, calc((100% - ${maxColumns - 1} * 0.75rem) / ${maxColumns}))`
-    : VIEW_TRACK;
-  return `repeat(auto-fill, minmax(${track}, 1fr))`;
+export function viewFlexChildClass(direction: ViewFlexLayout['direction'] | undefined, type: string, isGrowing?: boolean) {
+  if (direction !== 'row') return 'min-w-0';
+  if (['button', 'toggle', 'menu', 'badge', 'status'].includes(type)) {
+    return `${isGrowing ? 'grow ' : ''}min-w-max shrink-0 whitespace-nowrap`;
+  }
+  if (isGrowing) return 'min-w-0 flex-1';
+  if (['plaintext', 'password', 'multiline', 'number'].includes(type)) return 'min-w-0';
+  return 'max-w-full shrink-0';
 }
 
-/**
- * Shared layout for Ask fields and Live nodes, with a shared 12px gap:
- *
- * - `column` stacks children in source order.
- * - `row` fits equal-width columns of at least 12rem and wraps when too narrow.
- * - `grid` lays equal 12rem-or-wider tracks that wrap into aligned rows;
- *   `maxColumns` caps the tracks.
- * - `wrap` keeps each child at its own width and wraps onto new lines.
- * - `toolbar` is one compact line of controls at their own width that wraps when too narrow.
- *
- * Each nested layout measures its own space through CSS, not the viewport.
- * This component owns no label, fieldset, disclosure, focus or value state.
- */
-export function ViewLayout({
-  direction = 'column',
-  maxColumns,
-  className = '',
-  style,
-  children,
-  ...props
-}: HTMLAttributes<HTMLDivElement> & {
-  direction?: ViewGroupDirection;
-  /** `grid` only: the most columns that it shows. */
-  maxColumns?: number;
-}) {
-  const template = viewTemplate(direction, maxColumns);
+export function ViewFlex({
+  direction = 'column', is_wrapping, gap = 'md', align = 'stretch', justify = 'start',
+  className = '', style, ...props
+}: HTMLAttributes<HTMLDivElement> & Partial<ViewFlexLayout>) {
+  const scrolls = direction === 'row' && !is_wrapping;
+  const main = justify === 'between' ? 'space-between' : justify === 'start' || justify === 'end' ? `flex-${justify}` : justify;
   return (
     <div
       {...props}
-      data-view-layout={direction}
-      style={template ? { ...style, gridTemplateColumns: template } : style}
-      className={`min-w-0 [overflow-wrap:anywhere] [&>*]:min-w-0 ${
-        direction === 'toolbar'
-          ? 'flex flex-wrap items-center gap-2 [&>*]:max-w-full'
-          : direction === 'wrap'
-            ? 'flex flex-wrap items-start gap-3 [&>*]:max-w-full'
-            : `grid items-start gap-3 ${template ? '' : 'grid-cols-1'}`
-      } ${className}`}
-    >
+      data-view-layout="flex"
+      className={`flex min-w-0 [overflow-wrap:anywhere] ${scrolls ? 'overflow-x-auto' : ''} ${className}`}
+      style={{
+        ...style,
+        flexDirection: direction,
+        flexWrap: is_wrapping ? 'wrap' : 'nowrap',
+        gap: LAYOUT_GAP[gap],
+        alignItems: align === 'start' || align === 'end' ? `flex-${align}` : align,
+        justifyContent: scrolls && (justify === 'center' || justify === 'end') ? `safe ${main}` : main,
+      }}
+    />
+  );
+}
+
+export function ViewGrid({
+  columns = GRID_COLUMN_LIMIT, min_width = 'md', gap = 'md', className = '', style, ...props
+}: HTMLAttributes<HTMLDivElement> & ViewGridLayout) {
+  const space = LAYOUT_GAP[gap];
+  const minimum = GRID_TRACK[min_width];
+  const width = `max(${minimum}, calc((100% - ${columns - 1} * ${space}) / ${columns}))`;
+  return (
+    <div
+      {...props}
+      data-view-layout="grid"
+      className={`grid min-w-0 items-start [overflow-wrap:anywhere] [&>*]:min-w-0 ${className}`}
+      style={{ ...style, gap: space, gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${width}), 1fr))` }}
+    />
+  );
+}
+
+export function ViewSection({ label, description, icon, children }: {
+  label?: string; description?: string; icon?: ReactNode; children: ReactNode;
+}) {
+  const heading = useId();
+  return (
+    <section aria-labelledby={label ? heading : undefined} className="min-w-0 space-y-3 rounded-[0.5rem] border border-edge-strong bg-panel px-4 py-3">
+      {(label || icon || description) && (
+        <header className="space-y-0.5">
+          {label ? <h3 id={heading} className="flex items-center gap-2 text-body font-semibold text-white">{icon}{label}</h3> : icon}
+          {description && <p className="text-ui text-dialog-hint">{description}</p>}
+        </header>
+      )}
       {children}
+    </section>
+  );
+}
+
+export function ViewCollapsible({ label, description, icon, isOpen, onToggle, children }: {
+  label: ReactNode; description?: string; icon?: ReactNode; isOpen: boolean;
+  onToggle: () => void; children: ReactNode;
+}) {
+  const id = useId();
+  return (
+    <div className="min-w-0 rounded-[0.5rem] border border-edge-strong">
+      <Disclosure aria-controls={id} isOpen={isOpen} inlineChevron tone="branch" density="comfortable" className="justify-between px-4 py-3 [&>svg:last-child]:mt-0.5 [&>svg:last-child]:self-start" onClick={onToggle}>
+        <span className="min-w-0">
+          <span className="flex items-center gap-2">{icon}{label}</span>
+          {description && <span className="block text-ui font-normal text-dialog-hint">{description}</span>}
+        </span>
+      </Disclosure>
+      <div id={id} hidden={!isOpen} className="border-t border-edge-strong px-4 py-3">{isOpen && children}</div>
+    </div>
+  );
+}
+
+export function ToggleGroup({ options, value, isMultiple, disabled, onToggle, ...props }: {
+  options: readonly { value: string; label: string; icon?: ReactNode }[];
+  value: string | string[] | undefined;
+  isMultiple?: boolean;
+  disabled?: boolean;
+  onToggle: (value: string) => void;
+} & Pick<HTMLAttributes<HTMLDivElement>, 'id' | 'aria-label' | 'aria-labelledby' | 'aria-describedby' | 'aria-invalid' | 'aria-required'>) {
+  const selected = (option: string) => Array.isArray(value) ? value.includes(option) : value === option;
+  const [tabStop, setTabStop] = useState<string>();
+  const selectedOption = options.find((option) => selected(option.value));
+  const current = options.find((option) => option.value === tabStop) ?? selectedOption ?? options[0];
+  return (
+    <div
+      {...props}
+      role={isMultiple ? 'group' : 'radiogroup'}
+      className="flex min-w-0 max-w-full flex-wrap pl-px [&>*]:max-w-full"
+      onKeyDown={(event) => {
+        if (disabled || !(event.target instanceof HTMLButtonElement)) return;
+        const buttons = [...event.currentTarget.querySelectorAll('button')];
+        const at = buttons.indexOf(event.target);
+        const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+        const next = step ? (at + step + buttons.length) % buttons.length : event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : -1;
+        if (next < 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        buttons[next]?.focus();
+      }}
+    >
+      {options.map((option) => {
+        const on = selected(option.value);
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role={isMultiple ? undefined : 'radio'}
+            aria-checked={isMultiple ? undefined : on}
+            aria-pressed={isMultiple ? on : undefined}
+            aria-label={option.icon ? option.label : undefined}
+            title={option.icon ? option.label : undefined}
+            tabIndex={isMultiple || option === current ? undefined : -1}
+            onFocus={isMultiple ? undefined : () => setTabStop(option.value)}
+            disabled={disabled}
+            onClick={() => onToggle(option.value)}
+            className={`relative -ml-px inline-flex h-8 min-w-0 items-center justify-center border px-2.5 font-mono text-ui first:rounded-l-[0.375rem] last:rounded-r-[0.375rem] focus-visible:z-[2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 mouse:h-7 ${on ? 'z-[1] border-accent bg-accent text-accent-foreground' : 'border-field-edge bg-input text-white enabled:hover:text-accent-ink'}`}
+          >
+            {option.icon ?? <span className="truncate">{option.label}</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -2548,6 +2633,225 @@ export function useAnchoredLayer(options: AnchoredLayer) {
   }, [isOpen]);
 }
 
+export type DropdownItem = {
+  id: string;
+  label: string;
+  icon?: ReactNode;
+  disabled?: boolean;
+  checked?: boolean;
+  danger?: boolean;
+  shortcut?: string;
+  children?: readonly DropdownItem[];
+  isSeparator?: boolean;
+};
+
+type DropdownLevel = { item: DropdownItem; trigger: HTMLButtonElement };
+const DROPDOWN_PANEL = 'w-[min(14rem,calc(100vw-1.5rem))] overflow-y-auto overscroll-contain rounded-[0.5rem] border border-dialog-edge bg-panel p-1 font-mono text-ui text-white shadow-float';
+
+function DropdownPanel({ id, label, items, branch, onSubmenu, onChoose, onBack, onDismiss, panelRef, style }: {
+  id?: string;
+  label: string;
+  items: readonly DropdownItem[];
+  branch?: string;
+  onSubmenu: (item: DropdownItem, trigger: HTMLButtonElement) => void;
+  onChoose: (id: string) => void;
+  onBack?: () => void;
+  onDismiss: () => void;
+  panelRef: RefObject<HTMLDivElement | null>;
+  style?: CSSProperties;
+}) {
+  return (
+    <div
+      ref={panelRef}
+      id={id}
+      role="menu"
+      tabIndex={-1}
+      aria-label={label}
+      className={`${style ? 'fixed' : 'absolute'} ${DROPDOWN_PANEL}`}
+      style={style}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' || event.key === 'Tab' || (event.key === 'ArrowLeft' && onBack)) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.key !== 'Tab' && onBack) onBack();
+          else onDismiss();
+          return;
+        }
+        const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+        const rows = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+        if (rows.length === 0) return;
+        const at = rows.indexOf(document.activeElement as HTMLButtonElement);
+        const next = step ? (at < 0 ? step > 0 ? 0 : rows.length - 1 : (at + step + rows.length) % rows.length) : event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : -1;
+        if (next < 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        showOption(event.currentTarget, rows[next]);
+      }}
+    >
+      {onBack && (
+        <button type="button" role="menuitem" tabIndex={-1} className="flex min-h-10 w-full items-center gap-2 rounded-[0.25rem] px-2 text-left text-dialog-hint outline-none hover:bg-hover focus-visible:bg-hover mouse:min-h-7" onClick={onBack}>
+          <ChevronIcon className="size-3 rotate-180" /> Back
+        </button>
+      )}
+      {items.map((item) => item.isSeparator ? (
+        <div key={item.id} role="separator" className="my-1 border-t border-edge-strong" />
+      ) : (
+        <button
+          key={item.id}
+          type="button"
+          role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
+          tabIndex={-1}
+          data-node-id={item.id}
+          disabled={item.disabled}
+          aria-checked={item.checked}
+          aria-haspopup={item.children ? 'menu' : undefined}
+          aria-expanded={item.children ? branch === item.id : undefined}
+          aria-keyshortcuts={item.shortcut}
+          className={`flex min-h-10 w-full items-center gap-2 rounded-[0.25rem] px-2 py-1.5 text-left outline-none enabled:hover:bg-hover focus-visible:bg-hover disabled:opacity-50 mouse:min-h-7 ${item.danger ? 'text-err-ink' : 'text-white'}`}
+          onClick={(event) => item.children ? onSubmenu(item, event.currentTarget) : onChoose(item.id)}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowRight' || !item.children) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onSubmenu(item, event.currentTarget);
+          }}
+        >
+          {item.checked !== undefined && <span aria-hidden="true" className="size-3 shrink-0">{item.checked && <CheckIcon className="size-3" />}</span>}
+          {item.icon}
+          <span className="min-w-0 flex-1 break-words">{item.label}</span>
+          {item.children && <ChevronIcon className="size-3 shrink-0" />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DropdownSub({ level, ...props }: Omit<Parameters<typeof DropdownPanel>[0], 'panelRef' | 'style' | 'label' | 'items'> & {
+  level: DropdownLevel;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = panel.current;
+    if (!node) return;
+    const place = () => {
+      const box = level.trigger.getBoundingClientRect();
+      const { innerWidth, innerHeight } = window;
+      const margin = EDGE_MARGIN;
+      const width = node.offsetWidth;
+      const roomRight = innerWidth - margin - box.right;
+      const roomLeft = box.left - margin;
+      const beside = roomRight >= width + 4 || roomLeft >= width + 4;
+      const left = beside ? roomRight >= width + 4 ? box.right + 4 : box.left - width - 4 : box.left;
+      node.style.left = `${Math.max(margin, Math.min(left, innerWidth - width - margin))}px`;
+      node.style.maxHeight = `${Math.max(0, innerHeight - 2 * margin)}px`;
+      node.style.top = `${Math.max(margin, Math.min(box.top, innerHeight - node.offsetHeight - margin))}px`;
+    };
+    place();
+    (node.querySelector<HTMLButtonElement>('[data-node-id]:not(:disabled)') ?? node).focus({ preventScroll: true });
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  }, [level.trigger]);
+  return <DropdownPanel {...props} label={level.item.label} items={level.item.children ?? []} panelRef={panel} style={{}} />;
+}
+
+/** A shared command menu with nested levels and keyboard focus. */
+export function DropdownMenu({ label, icon, items, disabled, onChoose, nodeId }: {
+  label: string;
+  icon?: ReactNode;
+  items: readonly DropdownItem[];
+  disabled?: boolean;
+  onChoose: (id: string) => void;
+  nodeId?: string;
+}) {
+  const menuId = useId();
+  const [open, setOpen] = useState(false);
+  const [levels, setLevels] = useState<DropdownLevel[]>([]);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const layer = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const restoreFocus = useRef(false);
+  const isOpen = open && !disabled;
+  const dismiss = (restore = true) => {
+    restoreFocus.current = restore;
+    setOpen(false);
+    setLevels([]);
+  };
+  const goBack = (index: number, anchor: HTMLButtonElement) => {
+    setLevels((held) => held.slice(0, index));
+    anchor.focus({ preventScroll: true });
+  };
+  useBackLayer(isOpen ? () => {
+    const last = levels.at(-1);
+    if (last) goBack(levels.length - 1, last.trigger);
+    else dismiss();
+  } : null);
+  useAnchoredLayer({
+    isOpen,
+    layerRef: layer,
+    panelRef: panel,
+    triggerRef: trigger,
+    maxHeight: 320,
+    isTriggerWide: false,
+    onOpen: (menu) => (menu.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? menu).focus({ preventScroll: true }),
+    onOutsidePress: () => dismiss(false),
+    onClose: (button) => { if (restoreFocus.current) button.focus({ preventScroll: true }); },
+  });
+  const openSubmenu = (at: number, item: DropdownItem, anchor: HTMLButtonElement) => {
+    setLevels((held) => [...held.slice(0, at), { item, trigger: anchor }]);
+  };
+  const choose = (id: string) => {
+    dismiss();
+    onChoose(id);
+  };
+  const activeLevels: DropdownLevel[] = [];
+  let children = items;
+  for (const level of levels) {
+    const item = children.find((candidate) => candidate.id === level.item.id);
+    if (!item?.children) break;
+    activeLevels.push({ item, trigger: level.trigger });
+    children = item.children;
+  }
+  return (
+    <>
+      <Button
+        ref={trigger}
+        data-node-id={nodeId}
+        variant="secondary"
+        pressEffect="none"
+        className="inline-flex min-w-0 max-w-full items-center gap-2 align-middle"
+        aria-haspopup="menu"
+        aria-controls={isOpen ? menuId : undefined}
+        aria-expanded={isOpen}
+        aria-label={icon ? label : undefined}
+        title={icon ? label : undefined}
+        disabled={disabled}
+        onClick={() => isOpen ? dismiss() : setOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        {icon ?? <><span className="truncate">{label}</span><ChevronIcon open className="size-3 shrink-0 opacity-70" /></>}
+      </Button>
+      {isOpen && createPortal(
+        <div
+          ref={layer}
+          role="presentation"
+          className="fixed inset-0 z-[60]"
+          onClick={(event) => { if (event.target === event.currentTarget) dismiss(); }}
+        >
+          <DropdownPanel id={menuId} panelRef={panel} label={label} items={items} branch={activeLevels[0]?.item.id} onChoose={choose} onDismiss={dismiss} onSubmenu={(item, anchor) => openSubmenu(0, item, anchor)} />
+          {activeLevels.map((level, i) => (
+            <DropdownSub key={level.item.id} level={level} branch={activeLevels[i + 1]?.item.id} onChoose={choose} onDismiss={dismiss} onBack={() => goBack(i, level.trigger)} onSubmenu={(item, anchor) => openSubmenu(i + 1, item, anchor)} />
+          ))}
+        </div>, document.body,
+      )}
+    </>
+  );
+}
+
 /**
  * A choice with app-owned faces and a listbox anchored to its trigger.
  *
@@ -3404,6 +3708,7 @@ export function PaneHeader({
   subtitle,
   leading,
   actions,
+  wrapActions = false,
   onClose,
   closeLabel,
 }: {
@@ -3413,16 +3718,17 @@ export function PaneHeader({
   leading?: ReactNode;
   /** `BandButton` cells; the header draws them as 28px squares. */
   actions?: ReactNode;
+  wrapActions?: boolean;
   onClose?: () => void;
   closeLabel?: string;
 }) {
   return (
     // The height of the session header beside it, so the way out stands on the line of
     // the header's icons (user report: the close button stood 4px higher).
-    <header role="presentation" className="pane-header flex h-13 shrink-0 items-center gap-1 px-2 text-fg">
+    <header role="presentation" className={`pane-header flex shrink-0 items-center gap-1 px-2 text-fg ${wrapActions ? 'app-header-wrap min-h-13' : 'h-13'}`}>
       {leading}
       <h2 className="pane-header-title flex h-6 min-w-0 shrink items-center rounded-lg bg-hover px-2 text-[12px] leading-4 font-medium">
-        <span className="truncate">{title}</span>
+        <span className={wrapActions ? '[overflow-wrap:anywhere]' : 'truncate'}>{title}</span>
       </h2>
       {subtitle && (
         <div className="pane-header-title min-w-0 truncate px-1 text-[12px] leading-4 text-dialog-hint">{subtitle}</div>
@@ -3438,6 +3744,8 @@ export function DialogHeader({
   title,
   titleId,
   subtitle,
+  subtitleId,
+  wrapActions = false,
   isTitleHidden = false,
   isTitleTruncated = false,
   actions,
@@ -3453,6 +3761,8 @@ export function DialogHeader({
   /** For a surface labelled by `aria-labelledby` rather than `aria-label`. */
   titleId?: string;
   subtitle?: ReactNode;
+  subtitleId?: string;
+  wrapActions?: boolean;
   /** Keep the title accessible without a visible headline above the subtitle. */
   isTitleHidden?: boolean;
   /** Keep a filename on one line. The full title remains accessible. */
@@ -3514,7 +3824,7 @@ export function DialogHeader({
       role="presentation"
       className={`flex min-h-12 shrink-0 items-stretch overflow-hidden bg-dialog-title text-dialog-title-foreground mouse:min-h-9 ${
         isUnderNotch ? 'box-content pt-[env(safe-area-inset-top)] sm:pt-0' : ''
-      } ${isStacked ? 'border-t border-dialog-title-foreground/20' : ''} ${className}`}
+      } ${isStacked ? 'border-t border-dialog-title-foreground/20' : ''} ${wrapActions ? 'app-header-wrap' : ''} ${className}`}
     >
       {isCloseLeading && onClose && closeLabel && (
         <CloseButton isBand isLeading label={closeLabel} onClick={onClose} />
@@ -3534,7 +3844,7 @@ export function DialogHeader({
           {title}
         </h2>
         {subtitle && (
-          <Text as="p" variant="meta" tone="inherit" className="truncate">
+          <Text id={subtitleId} as="p" variant="meta" tone="inherit" className="truncate">
             {subtitle}
           </Text>
         )}
@@ -3554,6 +3864,8 @@ export function DialogHeader({
 export function DialogFrame({
   title,
   subtitle,
+  describeWithSubtitle = false,
+  wrapActions = false,
   isTitleHidden = false,
   actions,
   leading,
@@ -3567,6 +3879,8 @@ export function DialogFrame({
   title: string;
   /** The line under the title — which machine, which model, which paste. */
   subtitle?: ReactNode;
+  describeWithSubtitle?: boolean;
+  wrapActions?: boolean;
   /** Keep the title accessible without a visible headline above the subtitle. */
   isTitleHidden?: boolean;
   /**
@@ -3592,6 +3906,8 @@ export function DialogFrame({
   className?: string;
 }) {
   const frame = useRef<HTMLElement>(null);
+  const subtitleId = useId();
+  const description = describeWithSubtitle && subtitle ? subtitleId : undefined;
   useLayoutEffect(() => {
     if (!manageFocus) return;
     const node = frame.current;
@@ -3632,10 +3948,11 @@ export function DialogFrame({
     <section
       className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-t-2 border-accent bg-panel ${
         isContentSheet ? '' : 'pt-[env(safe-area-inset-top)]'
-      } pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-float sm:duration-200 sm:starting:translate-y-2 ${manageFocus ? 'outline-none' : ''} ${className}`}
+      } pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-float sm:duration-200 sm:starting:translate-y-2 ${manageFocus ? 'outline-none' : ''} ${wrapActions ? 'app-header-container' : ''} ${className}`}
       role="dialog"
       aria-modal="true"
       aria-label={title}
+      aria-describedby={description}
       {...(manageFocus ? { ref: frame, tabIndex: -1, onKeyDown: dialogKey } : {})}
     >
       {/* A dialog knows its own title, so it is never told the name of its own way
@@ -3644,6 +3961,8 @@ export function DialogFrame({
         title={title}
         leading={leading}
         subtitle={subtitle}
+        subtitleId={description}
+        wrapActions={wrapActions}
         isTitleHidden={isTitleHidden}
         actions={actions}
         {...closeWith(onClose, closeLabel ?? `Close ${title}`)}
