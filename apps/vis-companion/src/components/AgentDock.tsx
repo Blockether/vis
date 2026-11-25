@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import { useCommands } from '../lib/commands';
 import type { Subagent, TeamClock } from '../lib/types';
-import { TeamLine, TimelineToggle, TurnAgents, currentTurn, dockTeams, hasTimeline, longestClock, type TeamProps } from './AgentTeam';
+import { TeamFold, TeamLine, TimelineToggle, TurnAgents, currentTurn, dockTeams, hasTimeline, longestClock, type TeamProps } from './AgentTeam';
 import { ChevronIcon, MARK_NUDGE } from './icons';
 
 /**
@@ -66,9 +66,9 @@ export function AgentDock({ agents, sid, runningTurnId, leader, clocks, ...team 
           <TeamLine agents={members} clock={clock} action={toggle} labelId={line} />
         </span>
       </div>
-      <div id={body} hidden={!open} className="max-h-[40dvh] space-y-2 overflow-y-auto border-t border-dialog-edge px-3 sm:px-0">
+      <TeamFold id={body} isOpen={open} className="max-h-[40dvh] space-y-2 overflow-y-auto border-t border-dialog-edge px-3 sm:px-0">
         <TurnAgents agents={members} placement="dock" isTimeline={isTimeline} leader={head} {...team} />
-      </div>
+      </TeamFold>
     </section>
   );
 }

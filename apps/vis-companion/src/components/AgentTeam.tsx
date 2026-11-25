@@ -235,6 +235,28 @@ export function hasTimeline(agents: readonly Subagent[], leader?: LeaderLane): b
 }
 
 /**
+ * The body of a team fold. It grows from its top and shrinks back, so a click on the team line shows motion, not a jump.
+ * The content mounts at the first open and stays, so the fold can also close with motion. A closed body is inert and
+ * hidden from assistive technology.
+ */
+export function TeamFold({ id, isOpen, className, children }: { id: string; isOpen: boolean; className: string; children: ReactNode }) {
+  return (
+    <div
+      id={id}
+      aria-hidden={!isOpen}
+      inert={!isOpen}
+      className={`grid transition-[grid-template-rows] duration-200 ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none ${
+        isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+      }`}
+    >
+      <div className="min-h-0 overflow-hidden">
+        <div className={className}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * The control that swaps the notes of a team for its timeline, and back: a quiet mark at the end of the team line,
  * so the line reads as status first (user decision). It takes the page ink, with no border, while the timeline shows.
  */
@@ -246,7 +268,7 @@ export function TimelineToggle({ isOn, onToggle }: { isOn: boolean; onToggle: ()
       title="Timeline"
       aria-pressed={isOn}
       onClick={onToggle}
-      className={`pointer-events-auto relative -my-0.5 inline-flex min-h-6 min-w-6 shrink-0 items-center justify-center after:absolute after:-inset-2 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 mouse:after:content-none ${
+      className={`pointer-events-auto relative -my-0.5 inline-flex min-h-6 min-w-6 shrink-0 items-center justify-end pr-0.5 after:absolute after:-inset-2 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 mouse:after:content-none ${
         isOn ? 'text-white' : 'text-dialog-hint hover:text-white'
       }`}
     >
@@ -844,6 +866,8 @@ export function TurnAgents({ agents, onOpen, leader, clock, placement = 'transcr
 }) {
   const [isOwnTimeline, setOwnTimeline] = useState(false);
   const [isOpen, setOpen] = useState(false);
+  const [hasOpened, setOpened] = useState(false);
+  if (isOpen && !hasOpened) setOpened(true);
   const body = useId();
   const line = useId();
   const now = useNow(agents.some((agent) => agent.status === 'running') || (leader != null && leader.end == null));
@@ -867,7 +891,7 @@ export function TurnAgents({ agents, onOpen, leader, clock, placement = 'transcr
       data-transcript-part
     >
       {/* The fold control lies under the whole line, so the timeline control can stand inside it. */}
-      <div className={`relative flex min-w-0 items-baseline gap-2 bg-panel px-3 py-1 sm:py-1.5 ${isOpen ? 'border-b border-dialog-edge' : ''}`}>
+      <div className="relative flex min-w-0 items-baseline gap-2 bg-panel px-3 py-1 sm:py-1.5">
         <button
           type="button"
           aria-expanded={isOpen}
@@ -881,7 +905,9 @@ export function TurnAgents({ agents, onOpen, leader, clock, placement = 'transcr
           <TeamLine agents={rows} clock={clock} action={toggle} labelId={line} />
         </span>
       </div>
-      <div id={body} hidden={!isOpen} className="px-3 sm:px-0">{isOpen && table}</div>
+      <TeamFold id={body} isOpen={isOpen} className="border-t border-dialog-edge px-3 sm:px-0">
+        {hasOpened && table}
+      </TeamFold>
     </section>
   ) : table;
 }
