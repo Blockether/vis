@@ -173,15 +173,17 @@
                         (finally (reset! (deref #'python-host/bound) bound))))))
 
 (defdescribe concurrent-calls-keep-their-activity-sinks-test
-  (it "keeps activity sinks separate while calls in the same session overlap"
+  (it "concurrent calls keep their activity sinks"
+      ;; Issue #283: overlapping calls must not share the same activity sink.
       (let [session (block-session! {"publish" extension/publish-activity!})
             events (atom [])
             entered (promise)
             release (promise)
             publish (fn [call]
-                      (json/read-json
-                        (python-host/dispatch session call "publish"
-                                              (json/write-json-str {"args" [{}]}))))
+                      (binding [extension/*activity-content-sink* nil]
+                        (json/read-json
+                          (python-host/dispatch session call "publish"
+                                                (json/write-json-str {"args" [{}]})))))
             one (future (binding [extension/*activity-content-sink* (fn [_] (swap! events conj :one))]
                           (python-host/conveying* session "one"
                             #(do (deliver entered true) @release (publish "one")))))]
@@ -266,7 +268,8 @@
                         (finally (deliver release true) (future-cancel (:result first-call)))))))
 
 (defdescribe failed-calls-release-the-context-test
-  (it "a failing invocation releases its frame, not the other invocation's frame"
+  (it "failed calls release the context"
+      ;; Issue #283: failure must remove only the failed call's frame.
       (let [session "vis-host-frame-failure"
             failure (ex-info "Driver failed" {})]
         (python-host/conveying* session "outer"
@@ -277,6 +280,34 @@
             (expect (python-host/active-call? session "outer"))
             (expect (not (python-host/active-call? session "inner")))))
         (expect (not (python-host/active-call? session "outer"))))))
+
+(defdescribe interrupted-waiter-preserves-the-active-context-test
+  (it "interrupted waiter preserves the active context"
+      ;; Issue #283: interruption must not remove another call's activity sink.
+      (let [session (block-session! {"publish" extension/publish-activity!})
+            events (atom [])
+            waiting (promise)
+            blocked (promise)]
+        (try (binding [extension/*activity-content-sink* #(swap! events conj (get % "headline"))]
+               (python-host/conveying* session "holder"
+                 (fn []
+                   (let [{:keys [thread result]}
+                         (start-call #(try (python-host/conveying* session "waiter"
+                                             (fn [] (deliver waiting true) @blocked))
+                                           (catch InterruptedException _ :interrupted)))]
+                     (try (expect (true? (deref waiting 5000 nil)))
+                          (.interrupt ^Thread (deref thread 5000 nil))
+                          (expect (= :interrupted (deref result 5000 ::timeout)))
+                          (expect (not (python-host/active-call? session "waiter")))
+                          (binding [extension/*activity-content-sink* nil]
+                            (expect (= {"value" true}
+                                       (json/read-json
+                                         (python-host/dispatch session "holder" "publish"
+                                           (json/write-json-str {"args" [{"headline" "Holder"}]}))))))
+                          (expect (= ["Holder"] @events))
+                          (finally (deliver blocked true) (future-cancel result)))))))
+             (finally (python-host/forget-session! session)
+                      (runtime/close-session! session))))))
 
 (defdescribe guest-thread-frame-test
              ;; #405: a guest thread that meets an active call must keep its limits.

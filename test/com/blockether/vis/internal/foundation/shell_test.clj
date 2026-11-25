@@ -1660,13 +1660,33 @@
                        ;; shared runner schedules the return within one frame.
                        (expect (< (- back (long (get st "finished_at"))) 500))))
                    (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
-   ;; Issue #396: publish only after the final bytes reach the log.
-   (it "includes the final bytes in a terminal result"
-       (let [env {:session-id "shell-final-bytes"}]
-         (try (shell* env {"command" "printf tail" "id" "tail"})
-              (let [r (wait* env "tail" 5)]
-                (expect (= [0 "tail"] [(get r "exit") (get r "out")])))
-              (finally (resources/stop-all! (:session-id env))))))
+  ;; Issue #396: publish only after the final bytes reach the log.
+  (it "reads once more after the exit, then answers"
+      (let [env {:session-id "shell-final-bytes"}]
+        (try (shell* env {"command" "printf tail" "id" "tail"})
+             (let [r (wait* env "tail" 5)]
+               (expect (= [0 "tail"] [(get r "exit") (get r "out")])))
+             (finally (resources/stop-all! (:session-id env))
+                      (shell-log/delete-session-logs! (:session-id env))))))
+  ;; Issue #396: a parked wait must not sleep through process exit.
+  (it "wakes from the idle sleep when the command exits"
+      (let [session "shell-exit-wake"
+            env {:session-id session}
+            parked (promise)]
+        (try (shell* env {"command" "read line; printf '%s' \"$line\""
+                          "id" "wake" "stdin" "tty"})
+             (let [id (get-in (#'shell/bg-entry session "wake") [:task :id])
+                   waiter (future (task/await! session id {:token :test
+                                                           :timeout-ms 10000
+                                                           :hold #(do (deliver parked true) nil)}))]
+               (try (expect (true? (deref parked 5000 nil)))
+                    (shell-send* env "wake" "ready")
+                    (let [r (deref waiter 5000 ::timeout)]
+                      (expect (= :done (:state r)))
+                      (expect (= 0 (get-in r [:value "exit"]))))
+                    (finally (future-cancel waiter))))
+             (finally (resources/stop-all! session)
+                      (shell-log/delete-session-logs! session)))))
   ;; Regression, gateway CPU audit: a JFR profile of a live gateway caught it
   ;; forking `/bin/ps` EIGHT times a second — 388 of 395 process spawns in a 46 s
   ;; window came from this one loop. Every poll asked [[bg-core]] for the tree's
