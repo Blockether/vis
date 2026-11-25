@@ -85,6 +85,10 @@ const DATETIME_DEFAULT_MODE =
   (viewSchema.$defs.component.oneOf as unknown as DatetimeFieldSchema[]).find(
     (branch) => branch.properties.type?.const === 'datetime',
   )?.properties.mode?.default ?? 'datetime';
+/** From this many options on, a `select` is one line that opens a list (`x-vis-fold-at`). */
+export const HUMAN_INPUT_SELECT_FOLD_AT = (
+  viewSchema.$defs.component.oneOf as unknown as (DatetimeFieldSchema & { 'x-vis-fold-at'?: number })[]
+).find((branch) => branch.properties.type?.const === 'select')!['x-vis-fold-at'] as number;
 
 /** Read the mode of a `datetime` field; an absent or unknown one is the schema default. */
 export function humanInputDatetimeMode(raw: unknown): HumanInputDatetimeMode {

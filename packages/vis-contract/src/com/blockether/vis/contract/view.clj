@@ -109,6 +109,10 @@
   {:length (get-in fields ["otp" "properties" "max_length" "default"])
    :ceiling (get-in fields ["otp" "properties" "max_length" "maximum"])})
 
+(def select-fold-at
+  "From this many options on, a client shows a `select` as one line that opens a list."
+  (get-in fields ["select" "x-vis-fold-at"]))
+
 (def range-defaults
   "Default numeric range."
   (into {}

@@ -253,8 +253,14 @@ Read the text on the trusted side with `vis.reveal(handle)`. A live view never s
 `vis.ui.select(name, options, label="Target")` takes exactly one option. An option is a string, or
 `vis.ui.select.option(value, label)` when the value and the shown text differ.
 
-The Companion app shows two to four short options as one strip. In a live view, it shows six or
-more options as a list that opens on a press. It shows other sets of options as rows.
+The Companion app shows two to four short options as one strip. Both clients show six or more
+options as one line with the current option. A press on that line opens a list, and in the terminal,
+Space opens it. Both clients show other sets of options as rows.
+
+The list starts on the current option. It scrolls when the screen cannot show all options, and the
+terminal shows at most eight rows. Arrow keys, Page Up, Page Down, Home, End, and a typed letter
+move in the list. Enter or Space chooses an option and closes the list, but does not submit the
+form. Escape closes the list and keeps the value.
 
 ### Multiselect
 

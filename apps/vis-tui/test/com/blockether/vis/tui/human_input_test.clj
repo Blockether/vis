@@ -1262,6 +1262,79 @@
 
     [(.getColumn ^TerminalPosition pos) (.getRow ^TerminalPosition pos)]))
 
+;; Issue #519: a single select with many options painted one row per option, so
+;; the later fields and the Submit cap left the band.
+(defn- target-form
+  "A form whose first field is a select with `n` targets, `target-15` chosen."
+  [n]
+  (hi/init-form (canonical-input-view
+                  {"title" "Choose target"
+                   "nodes" [{"name" "target"
+                             "type" "select"
+                             "label" "Target"
+                             "default" "target-15"
+                             "options" (mapv #(format "target-%02d" %) (range n))}
+                            {"name" "note" "type" "plaintext" "label" "Note"}]})))
+
+(defdescribe
+  folded-select-test
+  (it "shows a long select as one line, so the band stays short"
+      (let [form (target-form 30)]
+        (expect (= [:menu :text :action :action] (mapv :kind (:stops form))))
+        (expect (= 1 (count (filter #(= :menu (:kind %)) (hi/form-rows form 70)))))
+        (expect (empty? (filter #(= :option (:kind %)) (hi/form-rows form 70))))))
+  (it "keeps a short select as a list of options"
+      (expect (= :select-option (:kind (first (:stops (target-form 5))))))
+      (expect (= :menu (:kind (first (:stops (target-form view-spec/select-fold-at)))))))
+  (it "opens on the current option and shows at most eight, with a scroll bar"
+      (let [form
+            (feed (target-form 30) [(ch \space)])
+
+            options
+            (filter #(= :option (:kind %)) (hi/form-rows form 70))]
+
+        (expect (= 8 (count options)))
+        (expect (= "target-15" (:text (first (filter :is-focused options)))))
+        (expect (every? :bar options))
+        (expect (some #(= :thumb (:bar %)) options))))
+  (it "picks with Enter without submitting, and Esc keeps the value"
+      (let [open
+            (feed (target-form 30) [(ch \space) {:kind :next} {:kind :next}])
+
+            picked
+            (hi/handle-event open {:kind :enter})
+
+            dismissed
+            (hi/handle-event open {:kind :cancel})]
+
+        (expect (nil? (:action picked)))
+        (expect (= "target-17" (get-in picked [:form :values "target"])))
+        (expect (nil? (get-in picked [:form :menu])))
+        (expect (nil? (:action dismissed)))
+        (expect (= "target-15" (get-in dismissed [:form :values "target"])))
+        (expect (nil? (get-in dismissed [:form :menu])))))
+  (it "moves by page, to the ends and by a typed letter, clamped to the options"
+      (let [open (feed (target-form 30) [(ch \space)])
+            at #(get-in (feed open %) [:menu :at])]
+        (expect (= 23 (at [{:kind :page-down}])))
+        (expect (= 29 (at [{:kind :end} {:kind :next}])))
+        (expect (= 0 (at [{:kind :home} {:kind :prev}])))
+        (expect (= 16 (at [(ch \t)])))
+        (expect (= :page-down (:kind (hi/key->event (KeyStroke. KeyType/PageDown)))))))
+  (it "fits an open list into a short band with the cursor and the caps in view"
+      (let [{:keys [screen g]}
+            (virtual-screen 18)
+
+            _
+            (hi/paint! g 80 18 (feed (target-form 30) [(ch \space) {:kind :next}]))
+
+            text
+            (str/join "\n" (map #(screen-row screen %) (range 18)))]
+
+        (expect (str/includes? text "target-16"))
+        (expect (str/includes? text " Submit "))
+        (expect (not (str/includes? text "target-09"))))))
+
 (defdescribe
   group-layout-test
   (it "lays a `row` group side by side: two labels on one line, two inputs on the next"

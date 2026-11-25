@@ -41,6 +41,7 @@ import {
   toggleHumanInputOption,
   HUMAN_INPUT_CHOICE_MARKS,
   HUMAN_INPUT_DATETIME_FORMS,
+  HUMAN_INPUT_SELECT_FOLD_AT,
   type HumanInputDatetimeMode,
   type HumanInputField,
   type HumanInputForm,
@@ -419,9 +420,6 @@ function HumanInputFieldLabel({ field }: { field: HumanInputField }) {
   );
 }
 
-/** From this many choices on, a choice in a view folds into one line that opens a list. */
-const FOLDED_CHOICES = 6;
-
 /** The native control that asks for each mode of a `datetime` field. */
 const DATETIME_CONTROLS: Record<HumanInputDatetimeMode, 'date' | 'time' | 'datetime-local'> = {
   date: 'date',
@@ -643,8 +641,9 @@ export function HumanInputFieldRow({
       );
     }
     // Three faces for one exclusive choice. A few short words are a strip of cells.
-    // Many choices in a view fold into one line that opens a list. The rest is a list.
-    if (!isMulti && isCompact && options.length >= FOLDED_CHOICES) {
+    // Many choices fold into one line that opens a list, in a view and in a question,
+    // so the fields after them and the submit button stay in view. The rest is a list.
+    if (!isMulti && options.length >= HUMAN_INPUT_SELECT_FOLD_AT) {
       return (
         <FieldShell field={field} controlId={controlId} {...(error ? { error } : {})}>
           <Select

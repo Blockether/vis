@@ -90,19 +90,17 @@ describe('one exclusive choice', () => {
   const long = ['Story to SPEC', 'Review a pull request', 'Triage', 'Notes', 'Audit', 'Hello'];
 
   // Reported on the Workflows app: six workflows stood as six framed rows and pushed
-  // the rest of the form off a phone screen.
-  it('folds a long choice in a view into one list, and keeps every choice in a question', async () => {
-    const onChange = choiceRow(long, true);
-    expect(screen.queryAllByRole('radio')).toHaveLength(0);
-    const trigger = screen.getByRole('combobox', { name: /Workflow/ });
-    expect(trigger).toHaveTextContent('Story to SPEC');
-    await userEvent.click(trigger);
-    await userEvent.click(screen.getByRole('option', { name: 'Audit' }));
-    expect(onChange).toHaveBeenCalledWith('pick', 'audit');
-
-    choiceRow(long, false);
-    expect(screen.queryByRole('combobox')).toBeNull();
-    expect(screen.getAllByRole('radio')).toHaveLength(6);
+  // the rest of the form off a phone screen. Issue #519: a question did the same.
+  it('folds a long choice into one list, in a view and in a question', async () => {
+    for (const isCompact of [true, false]) {
+      const onChange = choiceRow(long, isCompact);
+      expect(screen.queryAllByRole('radio')).toHaveLength(0);
+      const trigger = screen.getByRole('combobox', { name: /Workflow/ });
+      expect(trigger).toHaveTextContent('Story to SPEC');
+      await userEvent.click(trigger);
+      await userEvent.click(screen.getByRole('option', { name: 'Audit' }));
+      expect(onChange).toHaveBeenCalledWith('pick', 'audit');
+    }
   });
 
   it('keeps a short choice as radios that answer a press, in a view and in a question', () => {

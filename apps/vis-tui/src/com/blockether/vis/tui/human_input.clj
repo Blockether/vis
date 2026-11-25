@@ -13,8 +13,9 @@
    interaction is testable without a terminal.
 
    Navigation is a flat list of STOPS — one per text field, one per checkbox,
-   and one per select/multiselect OPTION — so ↑/↓/Tab walks the form the way
-   the settings dialog walks its rows."
+   one per OPTION of a multiselect or a short select, and one for a long select,
+   which opens a list — so ↑/↓/Tab walks the form the way the settings dialog
+   walks its rows."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.columns :as columns]
             [com.blockether.vis.tui.components :as components]
@@ -137,6 +138,17 @@
 
 (defn- field-options [field] (vec (:options field)))
 
+(defn- folded?
+  "True for a `:select` with so many options that the form shows it as one line
+   that opens a list. The contract owns the threshold, so the companion folds the
+   same fields."
+  [{:keys [type] :as field}]
+  (and (= :select type) (>= (count (field-options field)) (long hi-spec/select-fold-at))))
+
+(def ^:private menu-rows
+  "The most options an open list shows before it scrolls. A short band shows fewer."
+  8)
+
 (defn default-value
   "The value a field starts with: its declared `:default` coerced to the shape
    the field type submits, else that type's empty value."
@@ -156,6 +168,7 @@
   (cond (contains? text-types type) [{:kind :text :field-id id}]
         (= :checkbox type) [{:kind :checkbox :field-id id}]
         (= :range type) [{:kind :range :field-id id}]
+        (folded? field) [{:kind :menu :field-id id}]
         (contains? hi-spec/choice-types type)
         (mapv (fn [{:keys [value]}]
                 {:kind (if (= :multiselect type) :multi-option :select-option)
@@ -355,6 +368,65 @@
                   (range-snap bounds (+ (double current) (* delta (double (:st bounds))))))
         (update :errors dissoc field-id))))
 
+;; Folded select
+
+(defn- menu-at
+  "Move the open list to option `at`, clamped, and scroll it the least that shows it."
+  [form ^long at]
+  (let [n (count (field-options (field-by-id form (get-in form [:menu :field-id]))))
+        at (clamp at 0 (max 0 (dec n)))]
+    (update form
+            :menu
+            #(assoc %
+               :at at
+               :top (dialogs/visible-window-start at (long (:top % 0)) (min n (long menu-rows)) n)))))
+
+(defn- open-menu
+  "Open the list of a folded select on its current option."
+  [form field-id]
+  (let [value (get-in form [:values field-id])
+        at (first (keep-indexed (fn [i option]
+                                  (when (= value (:value option)) i))
+                                (field-options (field-by-id form field-id))))]
+    (menu-at (assoc form :menu {:field-id field-id :top 0}) (long (or at 0)))))
+
+(defn- typed-option
+  "Index of the next option after `at` whose label starts with `c`, or nil."
+  [options ^long at c]
+  (let [n (count options)
+        prefix (str/lower-case (str c))
+        label (fn [i]
+                (let [{:keys [value label]} (nth options i)]
+                  (str/lower-case (str (or label value)))))]
+    (first (filter #(str/starts-with? (label %) prefix)
+                   (map #(mod (+ at 1 (long %)) n) (range n))))))
+
+(defn- menu-event
+  "Apply one event to the open list of a folded select. Enter or Space chooses the
+   option and closes the list, but does not submit. Esc closes the list and keeps
+   the value. A letter moves to the next option that starts with it."
+  [{{:keys [field-id at]} :menu :as form} {:keys [kind char]}]
+  (let [options (field-options (field-by-id form field-id))
+        at (long at)
+        stay (fn [f]
+               {:form f :action nil})]
+    (case kind
+      :next (stay (menu-at form (inc at)))
+      :prev (stay (menu-at form (dec at)))
+      :page-down (stay (menu-at form (+ at (long menu-rows))))
+      :page-up (stay (menu-at form (- at (long menu-rows))))
+      :home (stay (menu-at form 0))
+      :end (stay (menu-at form (dec (count options))))
+      :cancel (stay (dissoc form :menu))
+      :submit {:form (dissoc form :menu) :action :submit}
+      (:enter :char)
+      (if (or (= :enter kind) (= \space char))
+        (stay (-> (dissoc form :menu)
+                  (assoc-in [:values field-id] (:value (nth options at)))
+                  (update :errors dissoc field-id)))
+        (stay (if-let [i (typed-option options at char)] (menu-at form i) form)))
+      (stay form))))
+
 ;; Toggling
 
 (defn- toggle-stop
@@ -369,6 +441,9 @@
     (-> form
         (assoc-in [:values field-id] value)
         (update :errors dissoc field-id))
+
+    :menu
+    (open-menu form field-id)
 
     :multi-option
     (let [order
@@ -410,6 +485,8 @@
         KeyType/ArrowUp {:kind :prev}
         KeyType/ArrowLeft {:kind :left}
         KeyType/ArrowRight {:kind :right}
+        KeyType/PageUp {:kind :page-up}
+        KeyType/PageDown {:kind :page-down}
         KeyType/Home {:kind :home}
         KeyType/End {:kind :end}
         KeyType/Backspace {:kind :backspace}
@@ -445,11 +522,8 @@
   (let [stop (focused-stop form)]
     (and (= :text (:kind stop)) (= :multiline (:type (field-by-id form (:field-id stop)))))))
 
-(defn handle-event
-  "PURE reducer: apply ONE normalized event to `form`.
-
-   Returns `{:form form' :action action}` where `action` is nil (stay open),
-   `:submit` (ask the engine to accept `submit-values`), or `:cancel`."
+(defn- form-event
+  "Apply one event to `form` while no list is open."
   [form {:keys [kind char] :as _event}]
   (let [stop
         (focused-stop form)
@@ -548,6 +622,15 @@
             :else (stay (toggle-stop form stop)))
 
       (stay form))))
+
+(defn handle-event
+  "PURE reducer: apply ONE normalized event to `form`. An open list of a folded
+   select takes every event first.
+
+   Returns `{:form form' :action action}` where `action` is nil (stay open),
+   `:submit` (ask the engine to accept `submit-values`), or `:cancel`."
+  [form event]
+  (if (:menu form) (menu-event form event) (form-event form event)))
 
 (defn set-errors
   "The ONE way a form turns red: the engine's per-field verdict on a CONFIRMATION.
@@ -744,7 +827,7 @@
       :columns
       (long text-w)
 
-      (:input :otp :range)
+      (:input :otp :range :menu)
       (max (long columns/min-cell-width)
            (+ 2
               (long (p/display-width (str (or (not-empty (str (:text row))) (:placeholder row)))))))
@@ -815,12 +898,56 @@
 
     (into (if (seq heading) (conj (vec heading) {:kind :blank}) []) body)))
 
+(defn- scroll-thumb
+  "The rows of an `h`-row window at `top` over `n` options that the scroll thumb
+   covers, or nil when every option fits."
+  [^long top ^long h ^long n]
+  (when (> n h)
+    (let [size (max 1 (quot (* h h) n))
+          at (if (= top (- n h)) (- h size) (min (- h size) (quot (* top h) n)))]
+      (set (range at (+ at size))))))
+
+(defn- folded-rows
+  "Rows of a folded select: the closed line, then the open list under it. The list
+   shows at most `room` options, so the band holds the label, the line and the
+   list. It scrolls the least that keeps the cursor in it, with a scroll bar when
+   options are hidden."
+  [form {:keys [id] :as field} value focused? room]
+  (let [options (field-options field)
+        n (count options)
+        menu (when (= id (get-in form [:menu :field-id])) (:menu form))
+        chosen (some #(when (= value (:value %)) %) options)
+        closed {:kind :menu
+                :field-id id
+                :text (or (:label chosen) (some-> value str) "")
+                :is-open (some? menu)
+                :is-focused (and focused? (nil? menu))
+                :is-active-field focused?}]
+    (if-not menu
+      [closed]
+      (let [at (long (:at menu))
+            h (max 1 (min n (long menu-rows) (long room)))
+            top (dialogs/visible-window-start at (long (:top menu)) h n)
+            thumb (scroll-thumb top h n)]
+        (into [closed]
+              (map (fn [^long i]
+                     (let [option (nth options i)]
+                       (cond-> {:kind :option
+                                :field-id id
+                                :is-exclusive true
+                                :text (or (:label option) (str (:value option)))
+                                :is-checked (= (:value option) (:value chosen))
+                                :is-focused (= i at)}
+                         thumb
+                         (assoc :bar (if (contains? thumb (- i top)) :thumb :track))))))
+              (range top (+ top h)))))))
+
 (defn- field-rows
   "Rows for ONE node of the field tree. `ctx` is the per-paint context built by
    [[form-rows]] — the form, its visible errors, the focused stop and the
    [[stop-index]] — and `text-w` is the prose budget of the column this node
    lands in, which a `:row`, `:grid` or `:wrap` group narrows for its children."
-  [{:keys [form errors focus index] :as ctx} text-w {:keys [id type] :as field}]
+  [{:keys [form errors focus index menu-room] :as ctx} text-w {:keys [id type] :as field}]
   (cond
     (= :group type) (group-rows ctx text-w field)
     (hi-spec/decoration? field) (decor-rows text-w field)
@@ -900,6 +1027,18 @@
                                      :is-required (boolean (:is-required field))
                                      :is-checked (boolean value)
                                      :is-focused (= idx focus)}]
+                (folded? field) (folded-rows form
+                                             field
+                                             value
+                                             (= idx focus)
+                                             ;; The label, its blank and the closed line stay
+                                             ;; in the band, and so does the prose between them.
+                                             (if menu-room
+                                               (- (long menu-room)
+                                                  3
+                                                  (count description)
+                                                  (if (seq description) 1 0))
+                                               menu-rows))
                 (contains? hi-spec/choice-types type)
                 (let [chosen (if (= :multiselect type) (set value) #{value})]
                   (mapv (fn [{:keys [value label]}]
@@ -993,9 +1132,11 @@
    this body, so they are never scrolled away.
 
    `text-w` is the column budget prose gets — the request's description and
-   every field's wrap to it. Omit it (or pass nil) for the unwrapped plan."
+   every field's wrap to it. Omit it (or pass nil) for the unwrapped plan.
+   `body-h` is the most body rows the band can show; an open list shrinks to fit."
   ([form] (form-rows form nil))
-  ([{:keys [request focus stops] :as form} text-w]
+  ([form text-w] (form-rows form text-w nil))
+  ([{:keys [request focus stops] :as form} text-w body-h]
    (let [head
          ;; The origin and the tool that asks each take one row. The painter shortens each.
          (let [metadata (into []
@@ -1012,7 +1153,11 @@
          ;; ONE context per paint — including the stop index the whole tree shares,
          ;; so nested groups cost lookups, not rescans.
          ctx
-         {:form form :errors (:errors form) :focus (or focus 0) :index (stop-index stops)}]
+         {:form form
+          :errors (:errors form)
+          :focus (or focus 0)
+          :index (stop-index stops)
+          :menu-room body-h}]
 
      (into (vec head) (mapcat #(field-rows ctx text-w %)) (:nodes request)))))
 
@@ -1077,6 +1222,13 @@
       ;; have, and the same word then meant two different things one field apart.
       (= :select-option (:kind stop))
       (conj ["Space" "pick"])
+
+      (and (= :menu (:kind stop)) (not (:menu form)))
+      (conj ["Space" "open"])
+
+      ;; Esc closes the list here, not the form.
+      (:menu form)
+      (conj ["Enter" "pick"] ["Esc" "close"])
 
       otp?
       (conj ["0-9" "fill"])
@@ -1308,7 +1460,31 @@
           inner-w
           (:is-focused entry)
           (str (dialogs/choice-mark (:is-exclusive entry) (:is-checked entry)) (:text entry)))
+        ;; An open list that hides options shows its scroll bar in the free column
+        ;; past the text, inside the band's own scroll lane.
+        (when-let [bar (:bar entry)]
+          (p/set-colors! g (if (= :thumb bar) t/dialog-hint-key t/border-fg) t/dialog-bg)
+          (p/put-str! g (+ (long left) (long inner-w) -1) row (if (= :thumb bar) "┃" "│")))
         nil)
+
+    ;; A folded select is one line on a field surface: the choice, then the ▾ that
+    ;; says Space opens a list.
+    :menu
+    (let [w
+          (dialogs/field-content-w inner-w)
+
+          shown
+          (dialogs/ellipsize (str (:text entry)) (max 0 (- w 2)))]
+
+      (dialogs/draw-field-row! g
+                               left
+                               row
+                               inner-w
+                               (:is-active-field entry)
+                               (str shown
+                                    (str/join (repeat (max 0 (- w 1 (long (p/display-width shown)))) " "))
+                                    (if (:is-open entry) "▴" "▾")))
+      nil)
 
     :range
     (do (dialogs/draw-toggle-row! g left row inner-w (:is-focused entry) (:text entry)) nil)
@@ -1431,9 +1607,13 @@
         actions-h
         (if actions 2 0)
 
+        ;; The most body rows a band of any height gets, as `paint!` counts them.
+        body-h
+        (- (long (:visible (tr/band-geometry region Integer/MAX_VALUE false))) 1 (long actions-h))
+
         ;; The body opens one column inside the rails (see `paint!`).
         plan
-        (form-rows form (prose-width (dec (long inner-w))))]
+        (form-rows form (prose-width (dec (long inner-w))) body-h)]
 
     {:plan plan
      :actions actions

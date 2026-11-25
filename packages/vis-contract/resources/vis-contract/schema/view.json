@@ -3046,6 +3046,8 @@
               "const": "select"
             }
           },
+          "description": "From `x-vis-fold-at` options on, a client shows the field as one line that opens a list. The client fits the list height to its screen.",
+          "x-vis-fold-at": 6,
           "required": [
             "id",
             "name",
