@@ -1057,6 +1057,19 @@
         "width": 2,
         "height": 2
       }
+    },
+    {
+      "id": "chime-change",
+      "type": "media",
+      "label": "Chime",
+      "kind": "audio",
+      "alt": "The chime, silent before and a short tone after",
+      "media_type": "audio/wav",
+      "data": "UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQgAAACAoMCggGBAYA==",
+      "before": {
+        "media_type": "audio/wav",
+        "data": "UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQgAAACAgICAgICAgA=="
+      }
     }
   ],
   "title": "Live view components",

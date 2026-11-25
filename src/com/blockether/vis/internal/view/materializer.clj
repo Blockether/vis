@@ -766,6 +766,37 @@
   [node _]
   (marked-lines :image [(tagged-json "image" (image-facts node))]))
 
+(defn- media-source-facts
+  "What a reader learns of media source `m` without its bytes: media type, web
+   address and size in bytes."
+  [{:keys [media-type data bytes url]}]
+  (cond-> {}
+    media-type
+    (assoc :media-type media-type)
+
+    url
+    (assoc :url url)
+
+    (or data bytes)
+    (assoc :bytes (if data (spec/picture-byte-count data) bytes))))
+
+(defn- media-facts
+  "Media node `node` as the model reads it: kind, alt text and the facts of each
+   version. The base64 bytes never reach the model."
+  [{:keys [kind alt before] :as node}]
+  (cond-> (assoc (media-source-facts node) :kind kind :alt alt)
+    before
+    (assoc :before (media-source-facts before))))
+
+(defn- media-elided
+  "How many versions of media node `node` lose their bytes in the model copy."
+  [node]
+  (count (filter :data [node (:before node)])))
+
+(defmethod node->markdown :media
+  [node _]
+  (marked-lines :media [(tagged-json "media" (media-facts node))]))
+
 (defmethod node->markdown :thread
   [node _]
   (marked-lines :thread
@@ -1115,6 +1146,12 @@
   (with-meta (merge (select-keys node [:id :type :label]) (image-facts node))
     {:elided (if (:before node) 2 1)}))
 
+(defn- budget-media
+  "A media node as facts: its bytes never reach the model, and they count as elided."
+  [node _]
+  (with-meta (merge (select-keys node [:id :type :label]) (media-facts node))
+    {:elided (media-elided node)}))
+
 (defn- budget-scene
   "A scene node with the first `table-rows` objects."
   [node {:keys [table-rows]}]
@@ -1175,6 +1212,9 @@
 
     :image
     (budget-image node budget)
+
+    :media
+    (budget-media node budget)
 
     :scene
     (budget-scene node budget)
@@ -1406,7 +1446,7 @@
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
   (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image
-          :badge :list :chart :canvas :board}
+          :media :badge :list :chart :canvas :board}
         (vals spec/field-types)))
 
 (def ^:private presentation-marker
@@ -1562,6 +1602,11 @@
   [_ {:keys [at lines]}]
   (let [facts (tagged-value at "image" (second lines))]
     (with-meta (merge {:type :image} facts) {:elided (if (:before facts) 2 1)})))
+
+(defmethod markdown->node :media
+  [_ {:keys [at lines]}]
+  (let [facts (tagged-value at "media" (second lines))]
+    (with-meta (merge {:type :media} facts) {:elided (count (filter :bytes [facts (:before facts)]))})))
 
 (defmethod markdown->node :scene
   [_ {:keys [at lines]}]

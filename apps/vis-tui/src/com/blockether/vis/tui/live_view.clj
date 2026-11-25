@@ -1045,6 +1045,28 @@
                                                       [:media-type :data :width :height :bytes]))
                       (when before (str "  ·  " (if (= :side shape) "side by side" "stacked"))))})))
 
+(defmethod node-rows :media
+  [{:keys [id kind alt before] :as node} {:keys [text-w]}]
+  (let [versions (if before [[:before "Before" before] [:after "After" node]]
+                             [[:after nil node]])]
+    (into (mapv (fn [text] {:kind :media-facts :node-id id :text text})
+                (p/word-wrap (str (str/capitalize (name kind)) " · " alt) (max 1 (long text-w))))
+          (map (fn [[version label {:keys [data url media-type] :as source}]]
+                 (let [action (cond url "Open"
+                                    data (if (= :audio kind) "Play" "Open"))
+                       bytes (live/media-bytes source)
+                       facts (str/join " · " (remove nil? [media-type
+                                                         (when bytes (str bytes " bytes"))
+                                                         (when url "Web link")]))]
+                   {:kind (if action :media-open :media-facts)
+                    :node-id id
+                    :item-id version
+                    :action-label action
+                    :label (str action (when label (str " " label)) " — " (or (:label node) alt))
+                    :text (str (when action (str "[ " action " ]  "))
+                               (when label (str label " · ")) facts)})))
+          versions)))
+
 (defn- app-entries
   [rows text-w]
   (mapv (fn [row]
@@ -2907,6 +2929,9 @@
                              (:disclosure :more :tparent)
                              :live-expand
 
+                             :media-open
+                             :live-media
+
                              :button
                              (when-not (:is-disabled entry) :live-activate)
 
@@ -3741,6 +3766,19 @@
 
     :picture
     (paint-picture! g left row inner-w entry)
+
+    :media-facts
+    (paint-plain! g left row inner-w t/dialog-fg (:text entry))
+
+    :media-open
+    (let [text (:text entry)
+          width (min (long inner-w) (long (p/display-width text)))]
+      (paint-plain! g left row inner-w t/dialog-hint-key text)
+      (when (pos? width)
+        (.register interactions/hit-map
+                   {:bounds {:row (+ (long row) (long *hit-row-offset*)) :col left :width width}
+                    :kind :live-media :view-id view-id :node-id (:node-id entry)
+                    :item-id (:item-id entry) :enabled? true})))
 
     :picture-open
     (paint-plain! g left row inner-w t/dialog-hint (:text entry))

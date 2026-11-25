@@ -21,6 +21,7 @@
     [com.blockether.vis.tui.queue-tray :as queue-tray]
     [com.blockether.vis.tui.app-log :as app-log]
     [com.blockether.vis.tui.picture :as picture]
+    [com.blockether.vis.tui.media :as media]
     [com.blockether.vis.tui.app-model :as app-model]
     [com.blockether.vis.tui.app-surface :as app-surface]
     [com.blockether.vis.tui.app-surfaces :as app-surfaces]
@@ -1212,6 +1213,11 @@
 
     :live-log-page
     (do (when (= (:view-id hit) (:live-viewer-id db)) (page-live-log! db (:direction hit))) true)
+
+    :live-media
+    (do (when-let [pane (live-pane db (:view-id hit))]
+          (media/open! (app-model/find-node (:view pane) (:node-id hit)) (:item-id hit)))
+        true)
 
     :live-activate
     (do (activate-live-button! db hit) true)
@@ -9970,7 +9976,7 @@
             (:live-log-search :live-log-page)
             (activate-live-region! db hit)
 
-            :live-activate
+            (:live-activate :live-media)
             (activate-live-region! db hit)
 
             :live-select
@@ -10164,7 +10170,7 @@
           (:live-log-search :live-log-page)
           (activate-live-region! db hit)
 
-          :live-activate
+          (:live-activate :live-media)
           (activate-live-region! db hit)
 
           :live-select
@@ -10511,11 +10517,18 @@
                 nil))))
         ::recur)
       ;; A click in the side pane app focuses the pane and moves the app cursor there.
-      ;; Its release does nothing more, unless a transcript selection drag ends there.
+      ;; A release can also open media, unless a transcript selection drag ends there.
       (and (= atype MouseActionType/CLICK_DOWN) (app-pane-click! db mx my)) ::recur
       (and (= atype MouseActionType/CLICK_RELEASE)
            (nil? @mouse-selection-anchor)
-           (app-pane-point db mx my))
+           (when-let [{:keys [row]} (app-pane-point db mx my)]
+              (when row
+                (let [{:keys [bounds rows]} (:geom (current-app-pane))
+                      entry (nth rows row nil)
+                      cell (app-surface/mouse-cell entry bounds mx)]
+                  (when (= :media-open (:kind (app-surface/focused-entry entry cell)))
+                    (app-pane-key! db key))))
+              true))
       ::recur
       ;; Treat release as a fallback click only when no drag or matching handled
       ;; press exists, avoiding double actions on normal terminals.

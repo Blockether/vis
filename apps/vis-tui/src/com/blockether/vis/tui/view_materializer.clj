@@ -780,6 +780,32 @@
                                          [:width :height :background :fov :is-wrapping :tick-ms
                                           :meshes :objects]))]))
 
+(defn media-bytes
+  "The size of a media source without decoding it, or nil if unknown."
+  [{:keys [data bytes]}]
+  (if data (spec/picture-byte-count data) bytes))
+
+(defn- media-source-facts
+  [source]
+  (let [bytes (media-bytes source)]
+    (cond-> (select-keys source [:media-type :url])
+      (some? bytes)
+      (assoc :bytes bytes))))
+
+(defn- media-facts
+  [{:keys [before] :as node}]
+  (cond-> (merge (select-keys node [:id :type :label :kind :alt]) (media-source-facts node))
+    before
+    (assoc :before (media-source-facts before))))
+
+(defmethod node->markdown :media
+  [node _]
+  (marked-lines :media
+                [(str "media "
+                      (wire/json-str (walk/postwalk #(if (map? %) (into (sorted-map) %) %)
+                                                    (wire/->wire (dissoc (media-facts node)
+                                                                         :id :type :label)))))]))
+
 (defn- picture-facts
   "What a reader learns of picture `p` without its bytes: media type, size in
    bytes and the width and height."
@@ -1104,6 +1130,9 @@
                :board
                (board-picture (dissoc node :is-selectable :is-editable :selected-ids) table-rows)
 
+               :media
+               (media-facts node)
+
                :canvas
                (let [cards
                      (:cards node)
@@ -1272,7 +1301,7 @@
 
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
-  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image
+  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image :media
           :badge :list :chart :canvas :board}
         (vals spec/field-types)))
 
@@ -1486,6 +1515,14 @@
     (when-not (and (string? line) (str/starts-with? line "image "))
       (invalid-markdown! at "expected an `image` line"))
     (merge {:type :image} (wire/->engine (wire/parse-json (subs line (count "image ")))))))
+
+(defmethod markdown->node :media
+  [_ {:keys [at lines]}]
+  (let [line (second lines)]
+    (when-not (and (string? line) (str/starts-with? line "media "))
+      (invalid-markdown! at "expected a `media` line"))
+    (let [node (wire/->engine (wire/parse-json (subs line (count "media "))))]
+      (assoc (media-facts (update node :kind keyword)) :type :media))))
 
 (defmethod markdown->node :thread
   [_ {:keys [at lines]}]

@@ -20,6 +20,7 @@
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.live-view :as lv]
+             [com.blockether.vis.tui.media :as media]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.theme :as t]
@@ -55,7 +56,7 @@
     :board-issue
     (boolean (or (:is-selectable entry) (:is-editable entry)))
 
-    (:picture-open :disclosure)
+    (:picture-open :media-open :disclosure)
     true
 
     :field
@@ -732,7 +733,7 @@
       row)))
 
 (defn- enter-row
-  [state {:keys [view rows]} effects]
+  [state {:keys [view rows]} {:keys [media!] :as effects}]
   (let [row
         (selected-row state rows)
 
@@ -761,6 +762,10 @@
               (assoc-in state
                 [:disclosures id]
                 (not (get (:disclosures state) id (:default-expanded node)))))
+            (= :media-open (:kind entry))
+            (do ((or media! media/open!) (model/find-node view (:node-id entry)) (:item-id entry))
+                state)
+
             (model/read-only? view) (assoc state :save {:state :closed})
             :else (if-let [target (editor-target view row)]
                     (assoc-in (open-editor state target) [:editor :base-seq] (:seq view))
@@ -1158,7 +1163,10 @@
                              :selected i
                              :cell (mouse-cell row (:bounds geom) (.getColumn pos))
                              :diff-side (if (< (.getColumn pos) midpoint) :left :right))]
-              (if (= :file (:kind row)) (enter-row selected geom effects) selected))
+              (if (or (= :file (:kind row))
+                       (= :media-open (:kind (focused-entry row (:cell selected)))))
+                 (enter-row selected geom effects)
+                 selected))
             state)
 
           :else state)))
@@ -1697,6 +1705,9 @@
       "fold or expand"
       :field
       "edit"
+
+      :media-open
+      (some-> (focused-entry row (:cell state)) :action-label str/lower-case)
 
       :picture-open
       "open"

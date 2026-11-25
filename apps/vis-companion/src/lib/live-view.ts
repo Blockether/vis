@@ -5,6 +5,8 @@
  */
 
 import type { SseEvent } from './types';
+import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
+
 import type { ActivityProjection, ActivityRow } from './activity';
 import {
   VIEW_CLOSE_EVENT,
@@ -100,6 +102,7 @@ export const LIVE_NODE_TYPES = [
   'canvas',
   'board',
   'image',
+  'media',
 ] as const;
 
 /** The inputs a live view can hold: the form's own input types. */
@@ -144,6 +147,10 @@ export const LIVE_OPS = [
 
 /** The picture formats an `image` node carries (`picture.media_type`). CLOSED. */
 export const LIVE_IMAGE_MEDIA = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+
+const MEDIA_FIELDS = viewSchema.$defs.media.properties;
+const MEDIA_URL = viewSchema.$defs.canvas_media.properties.url;
+const MEDIA_URL_PATTERN = new RegExp(MEDIA_URL.pattern);
 
 /** How serious one app log entry is (`log_level`), least serious first. CLOSED. */
 export const LIVE_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
@@ -626,6 +633,20 @@ export interface LivePicture {
   height?: number;
 }
 
+/** A single version of a sound or video (`view.json` `media`). */
+export type LiveMediaSource =
+  | { url: string; media_type?: string }
+  | { data: string; media_type: string }
+  | { bytes: number; media_type: string };
+
+/** With `before`, the surface shows the old and new versions. */
+export type LiveMediaNode = LiveNodeBase & LiveMediaSource & {
+  type: 'media';
+  kind: CanvasMediaKind;
+  alt: string;
+  before?: LiveMediaSource;
+};
+
 /** A picture. With `before`, the surface compares the old picture with the new one. */
 export interface LiveImageNode extends LiveNodeBase, LivePicture {
   type: 'image';
@@ -698,7 +719,8 @@ export type LiveLeafNode =
   | LiveSceneNode
   | LiveCanvasNode
   | LiveBoardNode
-  | LiveImageNode;
+  | LiveImageNode
+  | LiveMediaNode;
 
 /** A node either paints something, or arranges the nodes it holds. */
 export type LiveNode = LiveLeafNode | LiveGroupNode;
@@ -1336,6 +1358,29 @@ function pictureFromWire(raw: unknown): LivePicture | null {
   };
 }
 
+/** One version, playable or reduced to facts by the host. */
+function mediaFromWire(raw: unknown, kind: CanvasMediaKind): LiveMediaSource | undefined {
+  const source = record(raw);
+  if (!source) return undefined;
+  const mediaType = text(source.media_type);
+  const url = text(source.url);
+  const data = text(source.data);
+  if (mediaType && (!MEDIA_FIELDS.media_type.enum.includes(mediaType) || !mediaType.startsWith(`${kind}/`))) {
+    return undefined;
+  }
+  if (url) {
+    if (data || url.length > MEDIA_URL.maxLength || !MEDIA_URL_PATTERN.test(url)) return undefined;
+    return { url, ...optional('media_type', mediaType || undefined) };
+  }
+  if (!mediaType) return undefined;
+  if (data && data.length <= MEDIA_FIELDS.data.maxLength) return { data, media_type: mediaType };
+  const bytes = optionalNumber(source.bytes);
+  if (!data && bytes !== undefined && Number.isInteger(bytes) && bytes >= MEDIA_FIELDS.bytes.minimum) {
+    return { bytes, media_type: mediaType };
+  }
+  return undefined;
+}
+
 /** One log entry read from the wire, or null when a required key is wrong. */
 export function logEntryFromWire(raw: Record<string, unknown>): LiveLogEntry | null {
   const level = text(raw.level);
@@ -1642,6 +1687,14 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
     }
     case 'thread':
       return { ...base, type: 'thread', ...threadPartsFromWire(node) };
+    case 'media': {
+      const kind = canvasMediaKind(node.kind);
+      const alt = optionalText(node.alt);
+      if (!kind || !alt) return null;
+      const source = mediaFromWire(node, kind);
+      if (!source) return null;
+      return { ...base, type: 'media', kind, alt, ...source, ...optional('before', mediaFromWire(node.before, kind)) };
+    }
     case 'image': {
       const picture = pictureFromWire(node);
       const alt = text(node.alt).trim();
@@ -2090,6 +2143,8 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
     case 'card':
     case 'image':
       return liveNodeFromWire({ ...node, ...op }) ?? node;
+    case 'media':
+      return 'label' in op ? { ...node, label: optionalText(op.label) } : node;
     case 'status':
       return {
         ...node,

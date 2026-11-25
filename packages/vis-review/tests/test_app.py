@@ -424,6 +424,26 @@ def test_a_changed_picture_shows_its_old_and_new_version(tmp_path, recorder):
     assert wait_for(lambda: set(images(recorder)) == {"+ huge.png"})
 
 
+def test_a_changed_sound_plays_its_old_and_new_version(tmp_path, recorder):
+    # Request of Karol: the diff showed no player for an MP3.
+    root, journal, app = setup(tmp_path, recorder)
+    put(root, "song.mp3", b"ID3\x03\x00\x00\x00\x00\x00\x00old")
+    journal.checkpoint("block", "add song")
+    put(root, "song.mp3", b"ID3\x03\x00\x00\x00\x00\x00\x00new song")
+    journal.checkpoint("block", "change song")
+    recorder.send("activate", f"checkpoint-{journal.entries[-1].seq}")
+    assert wait_for(lambda: "• song.mp3" in image_rows(recorder))
+    press_image(recorder, "• song.mp3")
+    assert wait_for(lambda: "• song.mp3" in images(recorder))
+    node = images(recorder)["• song.mp3"]
+    assert (node["type"], node["kind"], node["media_type"]) == (
+        "media",
+        "audio",
+        "audio/mpeg",
+    )
+    assert node["before"]["media_type"] == "audio/mpeg"
+
+
 def test_a_deleted_picture_shows_its_old_version_alone():
     # CRAP audit A11: the deleted branch of image_node.
     old = png(2, 3)

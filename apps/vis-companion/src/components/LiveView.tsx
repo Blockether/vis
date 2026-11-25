@@ -44,6 +44,7 @@ import { LiveBoard } from './LiveBoard';
 import { LiveCanvas } from './LiveCanvas';
 import { LiveScene } from './LiveScene';
 import { ImageNodeView } from './AppImage';
+import { MediaNodeView } from './AppMedia';
 import { humanInputDefaultValue, type HumanInputValue } from '../lib/human-input';
 import { ariaShortcut, nodeShortcuts } from '../lib/app-shortcuts';
 import { formatDuration } from '../lib/time-axis';
@@ -2436,6 +2437,7 @@ function NodeCell({
               <LiveCanvas node={node} mark={canvasMark} onSelect={onSelect} app={presentation.app} />
             ))}
           {node.type === 'image' && <ImageNodeView node={node} />}
+          {node.type === 'media' && <MediaNodeView node={node} />}
         </div>
       )}
     </div>

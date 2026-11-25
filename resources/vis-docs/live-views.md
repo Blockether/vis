@@ -1050,6 +1050,11 @@ An app uses these builders and calls:
   or WebP picture from bytes or a file. Vis reads the type and the size from the bytes. With
   `before`, the client compares the old picture with the new one. A picture holds at most 2 MiB. To
   change a picture, drop the node and add a new one.
+- `vis.ui.media(node_id, source, alt=..., kind=None, label=None, before=None)` plays a sound or a
+  video from bytes, a file path or a web address. Sounds are MP3, MP4, AAC, WAV, Ogg, FLAC or WebM, and
+  videos are MP4, WebM or Ogg. Vis reads the type from the bytes. Give `kind="audio"` or
+  `kind="video"` for MP4 bytes and for a web address. With `before`, the client also plays the old
+  version. One sound or video holds at most 8 MiB, and all media in one app hold at most 16 MiB.
 - `vis.attach(...)` opens the app and returns a `vis.LiveAttachment` handle, and `app.id` is the ID
   of the app. An app takes no other argument of `vis.attach`.
 - With `key`, `vis.attach` returns the open app of your extension with the same key in the same

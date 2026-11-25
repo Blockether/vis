@@ -12,6 +12,7 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.live-view :as lv]
+            [com.blockether.vis.tui.media :as media]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.scroll :as scroll]
@@ -100,6 +101,20 @@
 
                      (expect (= 1 (count (filter #(= "Comment" (str/trim (subs % 1))) lines))))
                      (expect (= 1 (count (filter #(= "Title" (str/trim (subs % 1))) lines))))))))
+
+(defdescribe media-panel-test
+  (it "plays the version clicked in the side panel"
+      (let [v (view "a" "Review" "review" :panel)
+            node (some #(when (= "chime-change" (:id %)) %) (:nodes v))
+            pane (lv/opened (assoc v :nodes [node]))
+            db {:live-views [pane]}
+            opened (atom [])]
+        (binding [interactions/hit-map (interactions/create-hit-map)]
+          (with-redefs [media/open! (fn [node version] (swap! opened conj [(:id node) version]))]
+            (panel-lines [pane] {} 48 16)
+            (doseq [hit (filter #(= :live-media (:kind %)) (.current interactions/hit-map))]
+              (#'screen/activate-live-region! db hit))
+            (expect (= [["chime-change" :before] ["chime-change" :after]] @opened)))))))
 
 (defdescribe
   panel-state-test

@@ -951,8 +951,9 @@
           (Long/parseLong (subs hex at (+ at 2)) 16))
         (range 0 (count hex) 2)))
 
-(def ^:private picture-magic
-  "Each media type with its lists of `[offset bytes]`; a picture matches one list."
+(defn- magic-table
+  "Each media type of `rule` with its lists of `[offset bytes]`; data matches one list."
+  [rule]
   (into {}
         (map (fn [[media-type alternatives]]
                [media-type
@@ -961,7 +962,9 @@
                                 [offset (hex-bytes hex)])
                               alternative))
                       alternatives)]))
-        (get picture-rule "x-vis-magic")))
+        (get rule "x-vis-magic")))
+
+(def ^:private picture-magic (magic-table picture-rule))
 
 (def picture-media-types "The media types that an image node shows." (set (keys picture-magic)))
 
@@ -983,7 +986,7 @@
           (range width)))
 
 (defn- matches-magic?
-  [^bytes data media-type]
+  [magic ^bytes data media-type]
   (some (fn [alternative]
           (every? (fn [[^long offset expected]]
                     (and (<= (+ offset (count expected)) (alength data))
@@ -991,7 +994,7 @@
                                    (= (long (nth expected i)) (byte-at data (+ offset i))))
                                  (range (count expected)))))
                   alternative))
-        (get picture-magic media-type)))
+        (get magic media-type)))
 
 (defn- ascii-at [^bytes data ^long at ^long width] (String. data (int at) (int width) "ISO-8859-1"))
 
@@ -1076,14 +1079,16 @@
                (catch IllegalArgumentException _ nil)))
 
         [w h]
-        (when (and decoded (matches-magic? decoded media-type)) (picture-size decoded media-type))]
+        (when (and decoded (matches-magic? picture-magic decoded media-type))
+          (picture-size decoded media-type))]
 
     (cond (not (picture-media-types media-type))
           {:error (str "needs a media type: " (str/join ", " (sort picture-media-types)))}
           too-long? {:error (str "data is " (count data)
                                  " characters; the most is " (:data-chars picture-bounds))}
           (nil? decoded) {:error "data must be base64 text"}
-          (not (matches-magic? decoded media-type)) {:error (str "data is not " media-type " data")}
+          (not (matches-magic? picture-magic decoded media-type))
+          {:error (str "data is not " media-type " data")}
           (not (and w h (pos? (long w)) (pos? (long h))))
           {:error "the picture header does not give its size"}
           (> (long w) (quot (long (:pixels picture-bounds)) (long h)))
@@ -1105,6 +1110,41 @@
 
       (- (quot (* 3 n) 4) pad))
     0))
+
+(defn- base64-bytes
+  "The bytes of base64 text `data` no longer than `most` characters, or nil."
+  [data ^long most]
+  (when (and (string? data) (<= (count data) most))
+    (try (.decode (java.util.Base64/getDecoder) ^String data)
+         (catch IllegalArgumentException _ nil))))
+
+;; Media: the bytes behind a media node
+
+(def ^:private media-rule (definition "media"))
+
+(def ^:private media-magic (magic-table media-rule))
+
+(def media-types "The media types that a media node plays." (set (keys media-magic)))
+
+(def media-bounds
+  "The most base64 characters of media data, and the most media bytes in one live view."
+  {:data-chars (get-in media-rule ["properties" "data" "maxLength"])
+   :view-bytes (get (definition "live_view") "x-vis-max-media-bytes")})
+
+(defn read-media
+  "nil when media source `raw` (`:media-type`, base64 `:data`) plays, otherwise
+   `{:error reason}`. The bytes must start like the media type. Data over the length
+   bound is refused before it is decoded."
+  [{:keys [media-type data]}]
+  (let [most (long (:data-chars media-bounds))
+        decoded (base64-bytes data most)]
+    (cond (not (media-types media-type))
+          {:error (str "needs a media type: " (str/join ", " (sort media-types)))}
+          (and (string? data) (> (count data) most))
+          {:error (str "data is " (count data) " characters; the most is " most)}
+          (nil? decoded) {:error "data must be base64 text"}
+          (not (matches-magic? media-magic decoded media-type))
+          {:error (str "data is not " media-type " data")})))
 
 (defn canvas-card-facts
   "A card with its picture size in bytes in place of the data."
@@ -1132,6 +1172,17 @@
     0
     nodes))
 
+(defn- view-media-bytes
+  [nodes]
+  (transduce (map (fn [node]
+                    (if (#{"media" :media} (:type node))
+                      (+ (picture-byte-count (:data node))
+                         (picture-byte-count (get-in node [:before :data])))
+                      0)))
+             +
+             0
+             nodes))
+
 (defn- live-tree
   [nodes]
   (into []
@@ -1146,6 +1197,13 @@
     (when (> total (long (:view-bytes picture-bounds)))
       (str "the pictures of this view hold " total
            " bytes; the most is " (:view-bytes picture-bounds)))))
+
+(defn media-budget-error
+  "nil when the media of live `view` fit its byte bound, otherwise the reason."
+  [view]
+  (let [total (long (view-media-bytes (live-tree (:nodes view))))]
+    (when (> total (long (:view-bytes media-bounds)))
+      (str "the media of this view hold " total " bytes; the most is " (:view-bytes media-bounds)))))
 
 ;; Live view checks: the one check of every host. The Python SDK runs the same
 ;; algorithm (`blockether.vis._contracts.live_view_faults`), and the shared cases in
@@ -1630,6 +1688,17 @@
 
           (line path "picture" {"reason" reason}))
 
+        "media"
+        (for [[path raw]
+              [["/" node] ["/before" (get node "before")]]
+
+              :when (and (map? raw) (contains? raw "data"))
+              :let [reason
+                    (:error (read-media (wire/->engine raw)))]
+              :when reason]
+
+          (line path "media" {"reason" reason}))
+
         nil))))
 
 (defn live-node-lines
@@ -1861,6 +1930,9 @@
           picture-total
           (long (view-picture-bytes (map wire/->engine tree)))
 
+          media-total
+          (long (view-media-bytes (map wire/->engine tree)))
+
           lines
           (vec
             (sort
@@ -1887,7 +1959,12 @@
                           [(document/named-line "/nodes"
                                                 "picture_budget"
                                                 {"count" picture-total
-                                                 "limit" (:view-bytes picture-bounds)})])))))]
+                                                 "limit" (:view-bytes picture-bounds)})])
+                        (when (> media-total (long (:view-bytes media-bounds)))
+                          [(document/named-line "/nodes"
+                                                "media_budget"
+                                                {"count" media-total
+                                                 "limit" (:view-bytes media-bounds)})])))))]
 
       lines)))
 

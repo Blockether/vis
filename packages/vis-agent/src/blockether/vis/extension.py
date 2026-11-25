@@ -6332,6 +6332,13 @@ class ImageNode(_Node):
     """
 
 
+class MediaNode(_Node):
+    """A sound or a video, or an old and a new version to compare.
+
+    It takes no op: drop it and add a new `vis.ui.media(...)` to change it.
+    """
+
+
 class ThreadNode(_Node):
     """One conversation between people and the owner of the app."""
 
@@ -6662,6 +6669,7 @@ _LIVE_NODES = {
     "card": Card,
     "diff": DiffNode,
     "image": ImageNode,
+    "media": MediaNode,
     "thread": ThreadNode,
     "scene": Scene,
     "canvas": Canvas,
@@ -8208,7 +8216,10 @@ class _LiveRecorder:
     def _check_pictures(self):
         from blockether.vis import _contracts
 
-        complaint = _contracts.picture_budget_error(self._open_view().get("nodes"))
+        nodes = self._open_view().get("nodes")
+        complaint = _contracts.picture_budget_error(
+            nodes
+        ) or _contracts.media_budget_error(nodes)
         if complaint:
             raise RuntimeError(complaint)
 
@@ -9239,6 +9250,97 @@ def _ui_image(node_id, data_or_path, *, alt, label=None, before=None, media_type
     return _live_node("image", node_id, dict(node, alt=alt, label=label))
 
 
+def _media_data(data_or_path, most):
+    """The bytes of a sound or a video from bytes or a file path, at most `most` of them."""
+    if isinstance(data_or_path, (bytes, bytearray, memoryview)):
+        data = bytes(data_or_path)
+    elif isinstance(data_or_path, (str, os.PathLike)):
+        size = Path(data_or_path).stat().st_size
+        if size > most:
+            raise ValueError(
+                f"{str(data_or_path)!r} has {size} bytes; a media node holds at most {most} bytes"
+            )
+        data = Path(data_or_path).read_bytes()
+    else:
+        raise TypeError("media is bytes, a file path or a web address")
+    if len(data) > most:
+        raise ValueError(
+            f"the media has {len(data)} bytes; a media node holds at most {most} bytes"
+        )
+    return data
+
+
+def _media_source(source, kind=None, media_type=None):
+    """`(kind, source)` of one sound or video: a web address, bytes or a file path.
+
+    The media type of bytes comes from their magic bytes; a given `media_type`
+    must match them, and so must `kind`. Bytes that more than one kind can hold,
+    such as MP4, need `kind`.
+    """
+    from blockether.vis import _contracts
+
+    rule = _contracts.definition("view", "media")["properties"]
+    types = rule["media_type"]["enum"]
+    if media_type is not None and media_type not in types:
+        raise ValueError(f"media_type must be one of {', '.join(types)}")
+    if kind is None and media_type is not None:
+        kind = media_type.split("/")[0]
+    if isinstance(source, str) and re.match(r"https?://", source):
+        if kind is None:
+            raise ValueError("a media web address needs kind='audio' or kind='video'")
+        found = {"url": source}
+        if media_type is not None:
+            found["media_type"] = media_type
+        return kind, found
+    data = _media_data(source, rule["data"]["maxLength"] // 4 * 3)
+    if media_type is not None:
+        if not _contracts.matches_magic(data, media_type, "media"):
+            raise ValueError(f"the bytes are not {media_type} data")
+    else:
+        kinds = [kind] if kind is not None else ["audio", "video"]
+        matches = [found for one in kinds if (found := _contracts.media_type(data, one))]
+        if not matches:
+            raise ValueError(f"the bytes are not media of type {', '.join(types)}")
+        if len({found.split('/')[0] for found in matches}) > 1:
+            raise ValueError(f"the bytes can be {' or '.join(matches)}: give kind=")
+        media_type = matches[0]
+    if kind is not None and not media_type.startswith(kind + "/"):
+        raise ValueError(f"the media type {media_type} is not of kind {kind}")
+    return media_type.split("/")[0], {
+        "media_type": media_type,
+        "data": base64.b64encode(data).decode("ascii"),
+    }
+
+
+def _ui_media(
+    node_id, source, *, alt, kind=None, label=None, before=None, media_type=None
+):
+    """A sound or a video in an app, from bytes, a file path or a web address.
+
+    `alt` says what it holds, for a person who cannot play it. The media type of
+    bytes comes from their magic bytes. `kind` is "audio" or "video"; bytes that
+    more than one kind can hold, such as MP4, and a web address need it. With
+    `before` (bytes, a path or a web address), the surface also plays the old
+    version. Media larger than the contract allows raises ValueError.
+    """
+    from blockether.vis import _contracts
+
+    alt_rule = next(
+        branch["properties"]["alt"]
+        for branch in _contracts.definition("view", "component")["oneOf"]
+        if branch["properties"].get("type", {}).get("const") == "media"
+    )
+    if not isinstance(alt, str) or not alt.strip() or len(alt) > alt_rule["maxLength"]:
+        raise ValueError(
+            f"a media node needs alt text of 1 to {alt_rule['maxLength']} characters"
+        )
+    kind, found = _media_source(source, kind, media_type)
+    node: dict[str, Any] = dict(found)
+    if before is not None:
+        node["before"] = _media_source(before, kind)[1]
+    return _live_node("media", node_id, dict(node, kind=kind, alt=alt, label=label))
+
+
 def _ui_thread(node_id, *, messages=None, **spec):
     """One conversation in an app: people write and send, the owner replies."""
     return _live_node("thread", node_id, dict(spec, messages=list(messages or [])))
@@ -9884,6 +9986,7 @@ class _UI:
     app = _AppUI()
     diff = staticmethod(_ui_diff)
     image = staticmethod(_ui_image)
+    media = staticmethod(_ui_media)
     picture = _PictureUI()
     thread = staticmethod(_ui_thread)
     scene = _SceneUI()

@@ -153,6 +153,17 @@ describe('a live view read off the wire', () => {
     });
   });
 
+  it('renames a sound without replacing either version', () => {
+    const view = liveViewFromWire(primitives)!;
+    const chime = primitives.nodes.find((node) => node.id === 'chime-change')!;
+    const updated = patched(view, 1, [{
+      op: 'set', node_id: chime.id, label: 'Renamed chime', data: 'AAAA', before: null,
+    }]);
+    expect(nodeOfType(updated, chime.id, 'media')).toMatchObject({
+      label: 'Renamed chime', data: chime.data, before: chime.before,
+    });
+  });
+
   // WHERE a node stands is the run's declaration, carried by no op: a view lays
   // itself out with the FORM's own group, so both surfaces put the same sentence
   // beside the same table and neither guesses.

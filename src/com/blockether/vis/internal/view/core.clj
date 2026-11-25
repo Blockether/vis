@@ -1578,6 +1578,14 @@
                  (some? (:before node))
                  (assoc :before (picture (:before node))))
 
+               ;; The node check read the media bytes; here they only pass through.
+               :media
+               (cond-> (merge base
+                              (select-keys node [:alt :media-type :data :url])
+                              {:kind (enum-text (:kind node))})
+                 (map? (:before node))
+                 (assoc :before (select-keys (:before node) [:media-type :data :url])))
+
                :thread
                (merge base
                       (dissoc (app-thread
@@ -3599,7 +3607,7 @@
             patched
             (materializer/apply-patch before applied)]
 
-        (some-> (view-spec/picture-budget-error patched)
+        (some-> (or (view-spec/picture-budget-error patched) (view-spec/media-budget-error patched))
                 invalid-live-patch!)
         (reset! cell patched)
         (sink/append! (:file entry) applied)

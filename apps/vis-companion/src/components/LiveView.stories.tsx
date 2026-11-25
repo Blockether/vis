@@ -71,6 +71,12 @@ export const AllPrimitives: Story = {
         canvas.getByRole('heading', { level, name: `Heading level ${level}` }),
       ).toBeVisible();
     }
+    const chime = args.view.nodes.find((node) => node.type === 'media' && node.id === 'chime-change');
+    if (chime?.type !== 'media') throw new Error('The shared fixture has no chime');
+    for (const version of ['Before', 'After']) {
+      const player = canvas.getByRole('group', { name: `${version}: ${chime.alt}` });
+      await expect(within(player).getByRole('button', { name: 'Play' })).toBeVisible();
+    }
     await expect(canvas.getByRole('button', { name: 'Unavailable action' })).toBeDisabled();
     await userEvent.click(canvas.getByRole('button', { name: 'Refresh results' }));
     await expect(args.onActivate).toHaveBeenCalledWith('refresh');

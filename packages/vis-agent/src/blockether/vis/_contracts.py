@@ -434,9 +434,9 @@ def picture_type(data: bytes) -> str | None:
     return None
 
 
-def matches_magic(data: bytes, media_type: str) -> bool:
-    """True when `data` starts like one magic of `media_type` in the contract."""
-    choices = definition("view", "picture")["x-vis-magic"].get(media_type) or []
+def matches_magic(data: bytes, media_type: str, rule: str = "picture") -> bool:
+    """True when `data` starts like one magic of `media_type` in `$defs.<rule>`."""
+    choices = definition("view", rule)["x-vis-magic"].get(media_type) or []
     return any(
         all(
             data[part["offset"] : part["offset"] + len(part["hex"]) // 2]
@@ -558,6 +558,72 @@ def read_picture(picture: Any) -> dict[str, Any]:
             f"header size {width}x{height}"
         )
     return dict(picture, width=width, height=height)
+
+
+def media_type(data: bytes, kind: str) -> str | None:
+    """The media type of `kind` whose `x-vis-magic` the first bytes of `data` match, or None."""
+    for found in definition("view", "media")["x-vis-magic"]:
+        if found.startswith(kind + "/") and matches_magic(data, found, "media"):
+            return found
+    return None
+
+
+def _base64_bytes(data: Any) -> bytes | None:
+    """The bytes of base64 text `data` as Java's decoder reads them, or None."""
+    import base64
+    import binascii
+
+    if not isinstance(data, str):
+        return None
+    # Match Java's decoder: unpadded data is valid, but partial or extra padding is not.
+    core = data.rstrip("=")
+    needed = -len(core) % 4
+    if needed == 3 or data not in (core, core + "=" * needed):
+        return None
+    try:
+        return base64.b64decode(core + "=" * needed, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def read_media(media: Any) -> None:
+    """Raise ValueError when Vis refuses the data of media source `media`.
+
+    The bytes must start like the media type. Data over the length bound is
+    refused before it is decoded.
+    """
+    rule = definition("view", "media")
+    types = sorted(rule["x-vis-magic"])
+    if not isinstance(media, dict) or media.get("media_type") not in types:
+        raise ValueError("media needs a media type: " + ", ".join(types))
+    found, data = media["media_type"], media.get("data")
+    longest = rule["properties"]["data"]["maxLength"]
+    if isinstance(data, str) and len(data) > longest:
+        raise ValueError(f"media data is {len(data)} characters; the most is {longest}")
+    decoded = _base64_bytes(data)
+    if decoded is None:
+        raise ValueError("media data must be base64 text")
+    if not matches_magic(decoded, found, "media"):
+        raise ValueError(f"media data is not {found} data")
+
+
+def node_media_bytes(node: dict[str, Any]) -> int:
+    """The media bytes of one live node."""
+    if node.get("type") != "media":
+        return 0
+    before = node.get("before")
+    return picture_byte_count(node.get("data")) + picture_byte_count(
+        before.get("data") if isinstance(before, dict) else None
+    )
+
+
+def media_budget_error(nodes: list[dict[str, Any]]) -> str | None:
+    """None when the media of live `nodes` (a tree) fit the view bound, else why."""
+    total = sum(node_media_bytes(node) for node in _wire_tree(nodes or []))
+    most = definition("view", "live_view")["x-vis-max-media-bytes"]
+    if total > most:
+        return f"the media of this view hold {total} bytes; the most is {most}"
+    return None
 
 
 def picture_byte_count(data: Any) -> int:
@@ -1282,6 +1348,15 @@ def _picture_reason(raw: dict[str, Any]) -> str | None:
     return None
 
 
+def _media_reason(raw: dict[str, Any]) -> str | None:
+    try:
+        read_media(raw)
+    except ValueError as error:
+        # The engine names the media in the line, so the reason starts later.
+        return re.sub(r"^media (?=needs|data)", "", str(error))
+    return None
+
+
 def _ids(items: Any) -> list[Any]:
     return [one.get("id") if isinstance(one, dict) else None for one in items or []]
 
@@ -1481,6 +1556,11 @@ def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
             if isinstance(raw, dict) and "data" in raw:
                 if (reason := _picture_reason(raw)) is not None:
                     lines.append(named_line(path, "picture", {"reason": reason}))
+    elif kind == "media":
+        for path, raw in (("/", node), ("/before", node.get("before"))):
+            if isinstance(raw, dict) and "data" in raw:
+                if (reason := _media_reason(raw)) is not None:
+                    lines.append(named_line(path, "media", {"reason": reason}))
     return lines
 
 
@@ -2195,6 +2275,12 @@ def live_view_faults(view: Any, *, is_declaration: bool = True) -> ViewFaults:
     if total > budget:
         lines.append(
             named_line("/nodes", "picture_budget", {"count": total, "limit": budget})
+        )
+    total = sum(node_media_bytes(node) for node in tree)
+    budget = definition("view", "live_view")["x-vis-max-media-bytes"]
+    if total > budget:
+        lines.append(
+            named_line("/nodes", "media_budget", {"count": total, "limit": budget})
         )
     if lines:
         return ViewFaults(sorted(set(lines)), {})

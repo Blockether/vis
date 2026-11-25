@@ -42,6 +42,46 @@ describe('the complete live vocabulary', () => {
     expect(document.querySelectorAll('.animate-spinner-frame').length).toBe(40);
   });
 
+  it('plays the before and after versions of a sound', () => {
+    const played: string[] = [];
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (
+      this: HTMLMediaElement,
+    ) {
+      played.push(this.src);
+      return Promise.resolve();
+    });
+    try {
+      render(<LiveViewPanel view={view()} />);
+      const chime = fixture.nodes.find((node) => node.id === 'chime-change')!;
+      expect(screen.getByText(chime.label!)).toBeVisible();
+      for (const version of ['Before', 'After']) {
+        const player = screen.getByRole('group', { name: `${version}: ${chime.alt}` });
+        fireEvent.click(within(player).getByRole('button', { name: 'Play' }));
+      }
+      expect(played).toEqual([
+        `data:${chime.before!.media_type};base64,${chime.before!.data}`,
+        `data:${chime.media_type};base64,${chime.data}`,
+      ]);
+    } finally {
+      play.mockRestore();
+    }
+  });
+
+  it('shows facts without a player for a version whose bytes are not available', () => {
+    const url = 'https://example.com/demo.mp4';
+    const alt = 'Screen recording of the release';
+    const clip = liveViewFromWire({ ...fixture, nodes: [{
+      id: 'clip', type: 'media', kind: 'video', alt, url,
+      before: { media_type: 'video/mp4', bytes: 2048 },
+    }] })!;
+    render(<LiveViewPanel view={clip} />);
+    const before = screen.getByRole('group', { name: `Before: ${alt}` });
+    expect(within(before).getByText(`${alt} · video · video/mp4 · 2.0KB`)).toBeVisible();
+    expect(before.querySelector('video')).toBeNull();
+    const after = screen.getByRole('group', { name: `After: ${alt}` });
+    expect(within(after).getByLabelText(`After: ${alt}`)).toHaveProperty('src', `${url}#t=0.001`);
+  });
+
   it('applies mutable primitive fields without dropping ids, metadata or literal whitespace', () => {
     const changed = applyLivePatch(view(), {
       view_id: fixture.id,

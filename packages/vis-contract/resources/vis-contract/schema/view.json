@@ -2183,6 +2183,76 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "description": "A sound or a video that the person plays: base64 `data` with its `media_type`, or a web `url`. With `before`, the surface also plays the old version. A surface plays nothing until the person starts it. The media type starts with the kind.",
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "media"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "kind": {
+              "$ref": "#/$defs/canvas_media/properties/kind"
+            },
+            "alt": {
+              "description": "What the sound or the video holds, for a person who cannot play it.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            "media_type": {
+              "$ref": "#/$defs/media/properties/media_type"
+            },
+            "data": {
+              "$ref": "#/$defs/media/properties/data"
+            },
+            "bytes": {
+              "$ref": "#/$defs/media/properties/bytes"
+            },
+            "url": {
+              "$ref": "#/$defs/media/properties/url"
+            },
+            "before": {
+              "description": "The old version. Absent means a single version.",
+              "$ref": "#/$defs/media"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "kind",
+            "alt"
+          ],
+          "if": {"required": ["url"]},
+          "then": {"not": {"required": ["data"]}},
+          "else": {"required": ["media_type"]},
+          "allOf": [
+            {
+              "if": {"properties": {"kind": {"const": "audio"}}},
+              "then": {
+                "properties": {
+                  "media_type": {"pattern": "^audio/"},
+                  "before": {"properties": {"media_type": {"pattern": "^audio/"}}}
+                }
+              }
+            },
+            {
+              "if": {"properties": {"kind": {"const": "video"}}},
+              "then": {
+                "properties": {
+                  "media_type": {"pattern": "^video/"},
+                  "before": {"properties": {"media_type": {"pattern": "^video/"}}}
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "description": "A 3D picture that the owner describes and every surface draws. x points right, y up and z to the viewer; the camera fits the rectangle from (0, 0) to (width, height) at z = 0.",
           "x-vis-light": {
             "ambient": 0.35,
@@ -3506,7 +3576,8 @@
         "created_at"
       ],
       "x-vis-max-nodes": 64,
-      "x-vis-max-picture-bytes": 8388608
+      "x-vis-max-picture-bytes": 8388608,
+      "x-vis-max-media-bytes": 16777216
     },
     "draft_entry": {
       "description": "One saved thread draft of an app. `quote` holds the messages of the thread, such as a finding of a check.",
@@ -3588,6 +3659,7 @@
           "button": ["clicks", "is_disabled", "label"],
           "diff": ["label", "new_revision", "old_revision", "patch"],
           "image": ["label"],
+          "media": ["label"],
           "scene": ["background", "fov", "is_wrapping", "label", "tick_ms"],
           "canvas": ["flow", "focus", "is_locked", "is_selectable", "label", "pattern", "selected_ids", "zoom"],
           "board": ["columns", "epics", "group_by", "is_editable", "is_selectable", "label", "people", "selected_ids"],
@@ -6357,6 +6429,188 @@
         "url",
         "alt"
       ]
+    },
+    "media": {
+      "description": "One sound or video: base64 `data` with its `media_type`, or a web `url`. The data holds at most 8 MiB of media bytes; JSON makes it 4/3 larger. An app sends `data` or `url`; only the media that the model reads has `bytes` in place of `data`. `x-vis-magic` lists the first bytes of each media type: the data matches one list, and each entry of that list is hex bytes at an offset.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string",
+          "enum": [
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/aac",
+            "audio/wav",
+            "audio/ogg",
+            "audio/flac",
+            "audio/webm",
+            "video/mp4",
+            "video/webm",
+            "video/ogg"
+          ]
+        },
+        "bytes": {
+          "description": "Set by the host in the media that the model reads: the size of the data in bytes. The model never reads `data`.",
+          "type": "integer",
+          "minimum": 0,
+          "readOnly": true
+        },
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 11184812,
+          "contentEncoding": "base64"
+        },
+        "url": {
+          "$ref": "#/$defs/canvas_media/properties/url"
+        }
+      },
+      "if": {
+        "required": [
+          "url"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "data"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "media_type"
+        ]
+      },
+      "x-vis-magic": {
+        "audio/mpeg": [
+          [
+            {
+              "offset": 0,
+              "hex": "494433"
+            }
+          ],
+          [
+            {
+              "offset": 0,
+              "hex": "fffb"
+            }
+          ],
+          [
+            {
+              "offset": 0,
+              "hex": "fffa"
+            }
+          ],
+          [
+            {
+              "offset": 0,
+              "hex": "fff3"
+            }
+          ],
+          [
+            {
+              "offset": 0,
+              "hex": "fff2"
+            }
+          ],
+          [
+            {
+              "offset": 0,
+              "hex": "ffe3"
+            }
+          ],
+          [
+            {
+              "offset": 0,
+              "hex": "ffe2"
+            }
+          ]
+        ],
+        "audio/mp4": [
+          [
+            {
+              "offset": 4,
+              "hex": "66747970"
+            }
+          ]
+        ],
+        "audio/aac": [
+          [
+            {
+              "offset": 0,
+              "hex": "fff1"
+            }
+          ],
+          [
+            {
+              "offset": 0,
+              "hex": "fff9"
+            }
+          ]
+        ],
+        "audio/wav": [
+          [
+            {
+              "offset": 0,
+              "hex": "52494646"
+            },
+            {
+              "offset": 8,
+              "hex": "57415645"
+            }
+          ]
+        ],
+        "audio/ogg": [
+          [
+            {
+              "offset": 0,
+              "hex": "4f676753"
+            }
+          ]
+        ],
+        "audio/flac": [
+          [
+            {
+              "offset": 0,
+              "hex": "664c6143"
+            }
+          ]
+        ],
+        "audio/webm": [
+          [
+            {
+              "offset": 0,
+              "hex": "1a45dfa3"
+            }
+          ]
+        ],
+        "video/mp4": [
+          [
+            {
+              "offset": 4,
+              "hex": "66747970"
+            }
+          ]
+        ],
+        "video/webm": [
+          [
+            {
+              "offset": 0,
+              "hex": "1a45dfa3"
+            }
+          ]
+        ],
+        "video/ogg": [
+          [
+            {
+              "offset": 0,
+              "hex": "4f676753"
+            }
+          ]
+        ]
+      }
     },
     "canvas_route": {
       "description": "The path of an arrow. An elbow has only lines at right angles, and it goes around the items and the other arrows. A curve and a straight line take the shortest path.",

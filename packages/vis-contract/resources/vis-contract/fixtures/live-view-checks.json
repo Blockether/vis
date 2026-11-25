@@ -1609,6 +1609,97 @@
       }
     },
     {
+      "name": "media bytes that do not match the media type are a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "m",
+            "type": "media",
+            "kind": "audio",
+            "alt": "x",
+            "media_type": "audio/wav",
+            "data": "aGVsbG8="
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "m"
+        ],
+        "text": [
+          "node m / - data is not audio/wav data (media)"
+        ]
+      }
+    },
+    {
+      "name": "a media type of another kind is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "m",
+            "type": "media",
+            "kind": "video",
+            "alt": "x",
+            "media_type": "audio/wav",
+            "data": "UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQgAAACAoMCggGBAYA=="
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "m"
+        ],
+        "text": [
+          "node m /media_type - the string does not match the pattern of the schema (pattern)"
+        ]
+      }
+    },
+    {
+      "name": "media with both a web address and data is a node fault",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "m",
+            "type": "media",
+            "kind": "audio",
+            "alt": "x",
+            "media_type": "audio/wav",
+            "data": "UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQgAAACAoMCggGBAYA==",
+            "url": "https://example.com/a.wav"
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "m"
+        ],
+        "text": [
+          "node m / - the value breaks the not rule (not)"
+        ]
+      }
+    },
+    {
       "name": "a select value outside its options is a node fault",
       "view": {
         "title": "Checks",

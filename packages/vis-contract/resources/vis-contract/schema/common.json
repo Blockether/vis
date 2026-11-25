@@ -70,6 +70,10 @@
         "the pictures hold {count} bytes, the maximum is {limit}",
         "x-vis-max-picture-bytes"
       ],
+      "media_budget": [
+        "the media hold {count} bytes, the maximum is {limit}",
+        "x-vis-max-media-bytes"
+      ],
       "unknown_type": [
         "unknown node type",
         "type"
@@ -181,6 +185,10 @@
       "picture": [
         "{reason}",
         "picture"
+      ],
+      "media": [
+        "{reason}",
+        "media"
       ],
       "id_name": [
         "the id and the name of an input differ",

@@ -20,12 +20,14 @@
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]))
 
-(defn- image-node
-  []
+(defn- fixture-node
+  [type]
   (let [view (hi/live-view<-wire
                (json/read-json (slurp (io/resource "vis-contract/fixtures/live-primitives.json"))))]
-    (some #(when (= :image (:type %)) %)
+    (some #(when (= type (:type %)) %)
           (tree-seq #(seq (:children %)) :children {:children (:nodes view)}))))
+
+(defn- image-node [] (fixture-node :image))
 
 (defn- image-rows [node text-w] (#'lv/node-rows node {:text-w text-w}))
 
@@ -89,6 +91,30 @@
                   (expect (not-any? :frame (mapcat :parts rows)))
                   (expect (some #(re-find #"PNG" %) texts))
                   (expect (<= (long (part-right (filter #(= :picture (:kind %)) rows))) 60))))))
+
+(defdescribe
+  media-decisions
+  (it "makes both versions playable, but does not expose their data to the model"
+      (let [node (fixture-node :media)
+            view {:id "v" :title "Comparison" :nodes [node]}
+            rows (surface/surface-rows view 60 #{})
+            opened (atom [])
+            geom {:view view :rows rows :list-h 12}
+            model-view (:view (materializer/picture view))
+            model-node (first (:nodes model-view))
+            markdown (materializer/->markdown view)
+            decoder (java.util.Base64/getDecoder)]
+        (doseq [i (surface/selectable-indexes rows)]
+          (surface/handle-key (assoc (surface/initial-state) :selected i)
+                              (KeyStroke. KeyType/Enter)
+                              geom
+                              {:media! (fn [node version] (swap! opened conj [node version]))}))
+        (expect (= [[node :before] [node :after]] @opened))
+        (expect (empty? (surface/selectable-indexes (surface/surface-rows model-view 60 #{}))))
+        (doseq [[source facts] [[node model-node] [(:before node) (:before model-node)]]]
+          (expect (= (alength (.decode decoder ^String (:data source))) (:bytes facts)))
+          (expect (not (contains? facts :data)))
+          (expect (not (str/includes? markdown (:data source))))))))
 
 (defdescribe
   app-log-decisions

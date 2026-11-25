@@ -152,8 +152,14 @@ MOST_PICTURE_BYTES = _contracts.definition("view", "live_view")[
 ]
 # The order of findings when the threads cannot hold them all.
 _LEVEL_RANK = {"error": 0, "warning": 1}
-# Decoded picture bytes that the image cache keeps, newest first.
-MOST_CACHED_PICTURE_BYTES = 2 * MOST_PICTURE_BYTES
+# Decoded sound and video bytes that the app shows together, old and new: the view bound.
+MOST_MEDIA_BYTES = _contracts.definition("view", "live_view")["x-vis-max-media-bytes"]
+# Decoded picture and media bytes that the image cache keeps, newest first.
+MOST_CACHED_PICTURE_BYTES = 2 * MOST_PICTURE_BYTES + MOST_MEDIA_BYTES
+# Suffixes of sounds in a container that can also hold a video, such as MP4.
+_AUDIO_SUFFIXES = frozenset(
+    (".aac", ".flac", ".m4a", ".m4b", ".mp3", ".oga", ".ogg", ".opus", ".wav", ".weba")
+)
 MOST_CACHED_IMAGES = 256
 # The name of a checks run, by whether it runs the tests too.
 _RUN_NAMES = {True: "Tests and checks", False: "Checks"}
@@ -455,7 +461,9 @@ class ReviewApp:
         room = MOST_NODES - len(list(_contracts._wire_tree(nodes))) - 2
         images = self.image_nodes(diffs, room)
         if images:
-            nodes.append(ui.group("images", *images, label="Changed images"))
+            nodes.append(
+                ui.group("images", *images, label="Changed images, sounds and videos")
+            )
         return nodes
 
     def _keep_path(self, paths: list[str]) -> None:
@@ -909,12 +917,12 @@ class ReviewApp:
         )
 
     def image_nodes(self, diffs: list[FileDiff], room: int) -> list[dict]:
-        """The table of the changed pictures, then each picture that a person opened.
+        """The table of the changed pictures, sounds and videos, then each one that a person opened.
 
-        A row of the table is no node and holds no bytes, so each changed picture
+        A row of the table is no node and holds no bytes, so each changed file
         has a row and none shows until a person presses its row. The view has room
-        for `room` open pictures and for `MOST_PICTURE_BYTES`: when a new picture
-        needs that room, the pictures that were opened first close.
+        for `room` open files, for `MOST_PICTURE_BYTES` and for `MOST_MEDIA_BYTES`:
+        when a new file needs that room, the files that were opened first close.
         """
         files: dict[str, FileDiff] = {}
         for diff in diffs:
@@ -924,7 +932,7 @@ class ReviewApp:
                 files[_image_id(diff.path)] = diff
         if not files:
             return []
-        budget = MOST_PICTURE_BYTES
+        budget, media_budget = MOST_PICTURE_BYTES, MOST_MEDIA_BYTES
         shown: dict[str, dict] = {}
         closed: set[str] = set()
         for row_id in reversed(self._open):
@@ -933,10 +941,12 @@ class ReviewApp:
                 continue
             node = self._image(_image_key(diff), diff)
             size = _contracts.node_picture_bytes(node)
-            if closed or len(shown) == room or size > budget:
+            media = _contracts.node_media_bytes(node)
+            if closed or len(shown) == room or size > budget or media > media_budget:
                 closed.add(row_id)
                 continue
             budget -= size
+            media_budget -= media
             shown[row_id] = dict(node, label=_file_label(diff))
         self._open = [row_id for row_id in self._open if row_id not in closed]
         table = ui.table(
@@ -964,14 +974,12 @@ class ReviewApp:
             return self._images[key]
         node = image_node(diff, self.journal.store.get)
         self._images[key] = node
-        cached = sum(
-            _contracts.node_picture_bytes(n or {}) for n in self._images.values()
-        )
+        cached = sum(_node_bytes(n or {}) for n in self._images.values())
         while len(self._images) > 1 and (
             cached > MOST_CACHED_PICTURE_BYTES or len(self._images) > MOST_CACHED_IMAGES
         ):
             _, old = self._images.popitem(last=False)
-            cached -= _contracts.node_picture_bytes(old or {})
+            cached -= _node_bytes(old or {})
         return node
 
     # Events ------------------------------------------------------------------
@@ -1365,7 +1373,7 @@ def image_node(diff: FileDiff, blob: Callable[[str], bytes | None]) -> dict | No
     is_old = bool(old) and ui.picture.type(old) is not None
     is_new = bool(new) and ui.picture.type(new) is not None
     if not (is_old or is_new):
-        return None
+        return media_node(diff, old, new)
     node_id = _image_id(diff.path)
     try:
         if is_new:
@@ -1376,6 +1384,52 @@ def image_node(diff: FileDiff, blob: Callable[[str], bytes | None]) -> dict | No
                 before=old if is_old else None,
             )
         return ui.image(node_id, old, alt=f"The deleted file {diff.path}"[:300])
+    except ValueError as error:
+        return ui.status(
+            node_id,
+            text=f"{diff.path}: no preview",
+            detail=str(error),
+            tone="warn",
+        )
+
+
+def _node_bytes(node: dict) -> int:
+    """The decoded picture and media bytes of one node."""
+    return _contracts.node_picture_bytes(node) + _contracts.node_media_bytes(node)
+
+
+def _media_kind(data: bytes | None, path: str) -> str | None:
+    """"audio" or "video" for bytes that a surface plays, else None.
+
+    An MP4, Ogg or WebM container can hold either, so the file suffix decides.
+    """
+    kinds = [kind for kind in ("audio", "video") if data and _contracts.media_type(data, kind)]
+    if len(kinds) > 1:
+        return "audio" if os.path.splitext(path)[1].lower() in _AUDIO_SUFFIXES else "video"
+    return kinds[0] if kinds else None
+
+
+def media_node(diff: FileDiff, old: bytes | None, new: bytes | None) -> dict | None:
+    """The media node of one changed sound or video, a note when it cannot play, or None.
+
+    A modified file plays its old and its new version. None means that the file
+    is no sound or video that a surface plays.
+    """
+    is_old, is_new = _media_kind(old, diff.path), _media_kind(new, diff.path)
+    kind = is_new or is_old
+    if kind is None:
+        return None
+    node_id = _image_id(diff.path)
+    try:
+        if is_new:
+            return ui.media(
+                node_id,
+                new,
+                kind=kind,
+                alt=f"The new version of {diff.path}"[:300],
+                before=old if is_old == kind else None,
+            )
+        return ui.media(node_id, old, kind=kind, alt=f"The deleted file {diff.path}"[:300])
     except ValueError as error:
         return ui.status(
             node_id,
