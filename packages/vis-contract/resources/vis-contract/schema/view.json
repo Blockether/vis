@@ -2144,7 +2144,7 @@
               "maxItems": 200
             },
             "children": {
-              "description": "The toolbar of the diff. A button is one action. A group of buttons is one menu, and its label names the current choice.",
+              "description": "The toolbar of the diff. A button is one action. A group of buttons is one menu, and its label names the current choice. A group with direction row of two or more buttons, each with is_selected, is a switch: each choice shows, and the choice that holds is marked.",
               "type": "array",
               "items": {
                 "allOf": [
@@ -4714,6 +4714,7 @@
       "enum": [
         "completed",
         "failed",
+        "cancelled",
         "interrupted",
         "superseded",
         "timeout",

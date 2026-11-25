@@ -327,6 +327,40 @@ describe('DiffNodeView', () => {
     await waitFor(() => expect(onActivate).toHaveBeenLastCalledWith('refresh'));
   });
 
+  // A row of choices is a switch: each choice shows, so the person sees the one that
+  // holds without opening a menu.
+  it('shows a row group of choices as a switch, not a menu', async () => {
+    const onActivate = vi.fn(async () => {});
+    const choice = (id: string, label: string, is_selected: boolean) => ({
+      id,
+      type: 'button' as const,
+      label,
+      action: 'activate' as const,
+      variant: 'secondary' as const,
+      is_disabled: false,
+      is_selected,
+      clicks: 0,
+    });
+    const node: LiveDiffNode = {
+      ...DIFF,
+      children: [
+        {
+          id: 'area',
+          type: 'group',
+          label: 'Area',
+          direction: 'row',
+          children: [choice('workspace', 'Workspace', true), choice('temp', 'Temporary', false)],
+        },
+      ],
+    };
+    render(<DiffNodeView node={node} commands={{ onActivate, isSettled: false }} />);
+    expect(screen.getByRole('button', { name: 'Workspace' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Temporary' })).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(screen.getByRole('button', { name: 'Temporary' }));
+    await waitFor(() => expect(onActivate).toHaveBeenCalledWith('temp'));
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
   it('is read only without app actions and when the app is closed', () => {
     const { unmount } = render(<DiffNodeView node={DIFF} />);
     expect(screen.queryByRole('button', { name: /Comment on/ })).toBeNull();

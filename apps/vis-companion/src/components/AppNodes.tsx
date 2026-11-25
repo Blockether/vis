@@ -1363,7 +1363,8 @@ export interface DiffCommandActions {
 /**
  * The commands an app puts in the toolbar of its diff (`view.json` `diff` `children`).
  * A button is one action. A group of buttons is one menu, and its label names the
- * current choice, like the `Changes ▾` picker of a code review. A group inside a menu
+ * current choice, like the `Changes ▾` picker of a code review. A `row` group of choice
+ * buttons (each with `is_selected`) is a segmented switch instead. A group inside a menu
  * is a submenu.
  */
 function useDiffCommands({ onActivate, isSettled }: DiffCommandActions) {
@@ -1402,10 +1403,46 @@ interface DiffCommandProps {
   keys?: ReadonlyMap<string, LiveShortcut>;
 }
 
-/** One toolbar command: a text menu, an icon menu, a text action or an icon action. */
+/** True for a `row` group of two or more choice buttons: a segmented switch, not a menu. */
+function isDiffSwitch(node: LiveNode): node is Extract<LiveNode, { type: 'group' }> {
+  return (
+    node.type === 'group' &&
+    node.direction === 'row' &&
+    node.children.length > 1 &&
+    node.children.every((child) => child.type === 'button' && child.is_selected !== undefined)
+  );
+}
+
+/** One toolbar command: a switch, a text menu, an icon menu, a text action or an icon action. */
 function DiffCommand({ node, state, keys }: DiffCommandProps) {
   if (node.type !== 'group' && node.type !== 'button') return null;
   const Icon = node.icon ? COMMAND_ICONS[node.icon] : undefined;
+  if (isDiffSwitch(node)) {
+    return (
+      <span className="diff-layout diff-switch" role="group" aria-label={node.label} data-node-id={node.id}>
+        {node.children.map((choice) => {
+          if (choice.type !== 'button') return null;
+          const shortcut = keys?.get(choice.id);
+          return (
+            <button
+              key={choice.id}
+              type="button"
+              className="diff-command app-focus-ring"
+              data-node-id={choice.id}
+              title={shortcut ? `${choice.label} (${shortcut.key})` : choice.label}
+              aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
+              aria-pressed={choice.is_selected === true}
+              aria-busy={state.pending === choice.id}
+              disabled={state.inert || choice.is_disabled}
+              onClick={() => void state.press(choice.id)}
+            >
+              <span className="min-w-0 truncate">{choice.label}</span>
+            </button>
+          );
+        })}
+      </span>
+    );
+  }
   if (node.type === 'group') {
     const label = node.label ?? 'More';
     return (

@@ -155,6 +155,18 @@
               [row]))
           rows))
 
+(defn- switch-text
+  "The text of the diff switch `group`: each choice with its key, the one that holds
+   marked like a checked menu row."
+  [view group]
+  (let [key-of (into {} (map (juxt :node-id :key)) (:shortcuts view))]
+    (str "["
+         (str/join " │ "
+                   (map (fn [{:keys [id label is-selected]}]
+                          (str (some-> (get key-of id) (str " ")) (when is-selected "• ") label))
+                        (:children group)))
+         "]")))
+
 (defn- node-rows
   [view node width folded opts]
   (cond (:is-dialog node) []
@@ -162,7 +174,9 @@
         ;; Toolbar buttons that no key covers stand above the diff as rows.
         (into (into [] (mapcat #(plan-rows view % width (:disclosures opts))) (:children node))
               (diff-row-plans view width folded (:disclosures opts)
-                              (model/diff-rows (dissoc node :children) width folded opts)))
+                              (cond-> (model/diff-rows (dissoc node :children ::switch) width folded opts)
+                                (::switch node)
+                                (update-in [0 :text] str "   " (switch-text view (::switch node))))))
         (= :thread (:type node))
         (into [{:kind :thread-node
                 :node-id (:id node)
@@ -275,14 +289,25 @@
           shortcuts :auto-keys?
           true)))))
 
+(defn- diff-switch
+  "The switch of diff `node`: its first `row` strip of tabs, or nil."
+  [node]
+  (when (= :diff (:type node))
+    (first (filter #(and (= :row (:direction %)) (choice-strip? %)) (:children node)))))
+
 (defn- keyed-buttons
-  "Remove buttons named by shortcuts before layout, including nested controls."
+  "Remove buttons named by shortcuts before layout, including nested controls. A diff
+   keeps its switch as `::switch` when keys cover it, so its head shows the choice."
   [nodes covered]
   (into []
         (comp (remove #(and (= :button (:type %)) (contains? covered (:id %))))
               (keep (fn [node]
                       (if (and (seq (:children node)) (not (lv/toolbar? node)))
-                        (let [children (keyed-buttons (:children node) covered)]
+                        (let [children (keyed-buttons (:children node) covered)
+                              switch (diff-switch node)
+                              node (cond-> node
+                                     (and switch (not-any? #(= (:id switch) (:id %)) children))
+                                     (assoc ::switch switch))]
                           (cond (seq children) (assoc node :children children)
                                 ;; A diff toolbar is optional; the diff stays without it.
                                 (= :diff (:type node)) (dissoc node :children)

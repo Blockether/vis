@@ -1483,6 +1483,18 @@
       (expect (not-any? #(= "refresh" (:node-id %)) covered))
       (expect (some #(= :diff-head (:kind %)) menu))
       (expect (some #(= "checkpoint-2" (get-in % [:entry :node-id] (:node-id %))) menu))))
+  ;; A switch in the diff toolbar shows its choice in the diff head, also when its keys
+  ;; take the buttons out of the rows.
+  (it "shows the diff switch with its keys and the choice that holds in the diff head"
+      (let [choice (fn [id label selected?] {:id id :type :button :label label :is-selected selected?})
+            v (-> view
+                  (assoc-in [:nodes 0 :children]
+                            [{:id "area" :type :group :direction :row
+                              :children [(choice "workspace" "Workspace" false)
+                                         (choice "temp" "Temporary" true)]}])
+                  (assoc :shortcuts [{:key "1" :node-id "workspace"} {:key "2" :node-id "temp"}]))
+            head (first (filter #(= :diff-head (:kind %)) (surface/surface-rows v 80 #{})))]
+        (expect (str/ends-with? (:text head) "[1 Workspace │ 2 • Temporary]"))))
   (it "uses the current button label and leaves disabled keys out of the legend"
       (let [v (assoc game :shortcuts [{:key "g" :node-id "go"} {:key "o" :node-id "off"}])]
         (expect (= [["g" "Go"]] (surface/shortcut-legend v)))

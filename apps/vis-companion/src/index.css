@@ -1265,6 +1265,13 @@ ol.markdown-list > li::before {
   background: var(--diff-paper);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.1);
 }
+/* An app's switch: the choice that does not hold is dim text in the well. */
+.diff-toolbar .diff-switch button.diff-command[aria-pressed='false'] {
+  color: var(--dialog-hint);
+}
+.diff-toolbar .diff-switch button.diff-command[aria-pressed='false']:hover:not(:disabled) {
+  color: var(--fg);
+}
 @media (width >= 40rem) and (pointer: fine) {
   .diff-toolbar {
     min-height: 28px;

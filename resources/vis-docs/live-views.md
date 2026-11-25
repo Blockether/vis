@@ -1045,6 +1045,9 @@ An app uses these builders and calls:
   and its label names the current choice. A group in a menu opens a submenu. Give
   `is_selected=True` to the button of the current choice. Give `icon="refresh"` or `icon="more"` to
   show a picture in place of the label, which stays the name for screen readers.
+- A `vis.ui.group(..., direction="row")` in the toolbar with two or more buttons that each have
+  `is_selected` is a switch, not a menu, so each choice shows. The terminal app shows the switch
+  with its keys in the diff head.
 - `previews=[vis.ui.diff.preview(path, node)]` shows a picture, a sound or a video under the header
   of the file `path` in the diff. `node` is a `vis.ui.image` or a `vis.ui.media`. A preview is not a
   node of the view, but its bytes count toward the byte limits of the view. To change the previews,
