@@ -189,13 +189,15 @@ def test_live_view_documentation_renders_terminal_jobs(monkeypatch):
         ]
     )
 
-    def shell(request):
-        requests.append(request)
+    def shell(command):
+        requests.append(command)
         polled_at.append(now[0])
-        fields = request["command"].split("--json ")[1].split(",")
+        fields = command.split("--json ")[1].split(",")
         snapshot = next(replies)
         return SimpleNamespace(
-            wait=lambda _: {"out": json.dumps({key: snapshot[key] for key in fields})}
+            result=lambda timeout: SimpleNamespace(
+                out=json.dumps({key: snapshot[key] for key in fields})
+            )
         )
 
     def sleep(view, seconds):

@@ -321,8 +321,8 @@
 
 (defn stop!
   "Atomically claim a resource and run its `:stop-fn`.
-   THE single stop path — `sh.stop()` and the footer both land here, always
-   scoped to `session` so no session can stop another's resource. A successful
+   The footer stops resources here. For a shell, the callback sends the same
+   Task cancellation request as `sh.cancel()`. The resource belongs to `session`. A successful
    stop leaves the claimed generation unregistered. If its callback throws, that
    generation is restored only when the id is still vacant, preserving both a
    retry handle and any replacement registered during teardown. Returns a result

@@ -10,6 +10,8 @@
   "The `[session id]` of the Task that owns this host call."
   nil)
 
+(def ^:dynamic ^:private *ticket* nil)
+
 (defn call-id [] (str (UUID/randomUUID)))
 
 (defn- key-for [session id] [(str session) :entries id])
@@ -66,62 +68,113 @@
          (catch Throwable e
            (tel/log! {:level :warn :id ::view-close-failed :error e :data {:view-id view-id}})))))
 
+(defn- settlement
+  [entry produce]
+  (when-let [interrupted (:interrupt-complete entry)] @interrupted)
+  (let [outcome (try (produce)
+                     (catch Throwable e
+                       {:state :failed :error (or (ex-message e) (str e))}))]
+    (if (or (:interrupt-complete entry)
+            (and (:cancel-on-request? entry) (get-in entry [:row :cancel-reason])))
+      (do (doseq [rollback (:handoff-rollbacks entry)] (rollback))
+          {:state :cancelled})
+      outcome)))
+
 (defn- settle!
-  [session id ticket {:keys [state error] :as outcome}]
+  [session id ticket produce]
   (let [path (key-for session id)
         entry (locking sessions
                 (let [{:keys [row closing?] :as entry} (get-in @sessions path)]
                   (when (and (identical? ticket (:ticket entry))
                              (= :running (:state row)) (not closing?))
                     (swap! sessions update-in path #(-> % (assoc :closing? true)
-                                                         (dissoc :views :release-activity)))
+                                                         (dissoc :views :release-activity :handoff-rollbacks)))
                     entry)))]
     (when entry
-      (close-views! (:views entry) (case state
-                                    :cancelled {:reason :cancelled}
-                                    :failed {:reason :failed :error error}
-                                    {:reason :completed}))
-      (when-let [release (:release-activity entry)] (release outcome))
-      (locking sessions
-        (when (identical? ticket (get-in @sessions (conj path :ticket)))
-          (let [{:keys [signal waiters]} (get-in @sessions path)]
-            (doseq [{:keys [release]} (vals waiters)] (when release (release)))
-            (deliver signal true))
-          (swap! sessions update-in path
-                 #(-> %
-                      (assoc :outcome (cond-> outcome
-                                         (:cancelling %) (assoc :cancelling (:cancelling %))
-                                         (and (= :cancelled state) (:cancel-message %))
-                                         (assoc :message (:cancel-message %))))
-                       (dissoc :interrupt :waiters)
-                       (update :row merge (cond-> {:state state :view-ids []
-                                                 :ended-at (System/currentTimeMillis)}
-                                           error (assoc :error error)))))
-          true)))))
+      (let [{:keys [state error] :as outcome} (settlement entry produce)]
+        (close-views! (:views entry) (case state
+                                      :cancelled {:reason :cancelled}
+                                      :failed {:reason :failed :error error}
+                                      {:reason :completed}))
+        (when-let [release (:release-activity entry)] (release outcome))
+        (locking sessions
+          (when (identical? ticket (get-in @sessions (conj path :ticket)))
+            (let [{:keys [signal waiters]} (get-in @sessions path)]
+              (doseq [{:keys [release]} (vals waiters)] (when release (release)))
+              (deliver signal true))
+            (swap! sessions update-in path
+                   #(-> %
+                        (assoc :outcome (cond-> outcome
+                                           (:cancelling %) (assoc :cancelling (:cancelling %))
+                                           (and (= :cancelled state) (:cancel-message %))
+                                           (assoc :message (:cancel-message %))))
+                        (dissoc :interrupt :interrupt-complete :waiters)
+                        (update :row merge (cond-> {:state state :view-ids []
+                                                   :ended-at (System/currentTimeMillis)}
+                                             error (assoc :error error)))))
+            true))))))
+
+(declare cancel!)
+
+(defn- register!
+  [session {:keys [kind name origin detachable? guest-data guest?]
+            :or {kind :tool detachable? true guest? true}} extra]
+  (let [sid (str session)
+        ticket (Object.)
+        parent-path (when (and *ticket* (= sid (first *task*))) (apply key-for *task*))]
+    (locking sessions
+      (let [parent (when parent-path (get-in @sessions parent-path))]
+        (when (and parent-path (not (identical? *ticket* (:ticket parent))))
+          (throw (ex-info "The parent Task no longer belongs to this session." {})))
+        (when (and (:manual? extra) (:cancel-on-request? parent) (get-in parent [:row :cancel-reason]))
+          (throw (ex-info "The shell starter was cancelled." {}))))
+      (let [n (inc (long (get-in @sessions [sid :sequence] 0)))
+            id (str "t" n)
+            row {:id id
+                 :session-id sid
+                 :kind kind
+                 :name (str id " " name)
+                 :origin (or origin {})
+                 :started-at (System/currentTimeMillis)
+                 :state :running
+                 :view-ids []
+                 :detached false}]
+        (swap! sessions update sid assoc :sequence n
+               :entries (assoc (get-in @sessions [sid :entries]) id
+                               (merge {:row row :number n :signal (promise) :detachable? detachable?
+                                       :ticket ticket :guest? guest? :guest-data guest-data}
+                                      extra)))
+        (when (and parent-path (:manual? extra) (get-in @sessions (conj parent-path :cancel-on-request?)))
+          (let [interrupt (:interrupt extra)]
+            (swap! sessions update-in (conj parent-path :handoff-rollbacks) (fnil conj [])
+                   (fn [] (when (cancel! sid id :agent) (interrupt :cancel))))))
+        [row ticket]))))
+
+(defn guest-task
+  "The guest descriptor, or nil for a Task it does not own."
+  [session id]
+  (let [{:keys [row guest? guest-data]} (get-in @sessions (key-for session id))]
+    (when guest?
+      (merge (select-keys row [:id :name :kind]) guest-data))))
+
+(defn owns-generation?
+  "Whether this Task still names the given process generation."
+  [session id generation]
+  (and (some? generation)
+       (= generation (get-in @sessions (conj (key-for session id) :guest-data :generation)))))
+
+(defn start-manual!
+  "Register work whose owner will call `complete!` with an outcome function once
+   it ends. Its interrupt is installed before the row becomes visible."
+  [session opts interrupt]
+  (let [[{:keys [id] :as row} ticket] (register! session opts {:manual? true :interrupt interrupt})]
+    {:row row :complete! (partial settle! session id ticket)}))
 
 (defn start!
   "Start `run` once. It returns `{:state :done|:failed|:cancelled, ...}`."
-  [session {:keys [kind name origin detachable? hold-activity] :or {kind :tool detachable? true}} run]
-  (let [sid (str session)
-        ticket (Object.)
-        row (locking sessions
-              (let [n (inc (long (get-in @sessions [sid :sequence] 0)))
-                    id (str "t" n)
-                    row {:id id
-                         :session-id sid
-                         :kind kind
-                         :name (str id " " name)
-                         :origin (or origin {})
-                         :started-at (System/currentTimeMillis)
-                         :state :running
-                         :view-ids []
-                         :detached false}]
-                (swap! sessions update sid assoc :sequence n
-                       :entries (assoc (get-in @sessions [sid :entries]) id
-                                       {:row row :number n :signal (promise) :detachable? detachable?
-                                        :ticket ticket}))
-                row))
-        id (:id row)
+  [session {:keys [hold-activity cancel-on-request?] :as opts} run]
+  (let [[{:keys [id] :as row} ticket] (register! session opts {:cancel-on-request? cancel-on-request?})
+        sid (str session)
         path (key-for sid id)]
     (try (let [release (when hold-activity (hold-activity [sid id]))
                admitted? (locking sessions
@@ -134,14 +187,15 @@
                (bound-fn []
                  (when (locking sessions
                          (identical? ticket (get-in @sessions (conj path :ticket))))
-                   (binding [*task* [sid id]]
-                     (settle! sid id ticket
-                              (try (run)
-                                   (catch Throwable e
-                                     {:state :failed :error (or (ex-message e) (str e))})))))))
+                   (binding [*task* [sid id]
+                             *ticket* ticket]
+                     (let [outcome (try (run)
+                                        (catch Throwable e
+                                          {:state :failed :error (or (ex-message e) (str e))}))]
+                       (settle! sid id ticket (constantly outcome)))))))
              (when release (release {:state :cancelled}))))
          (catch Throwable e
-           (settle! sid id ticket {:state :failed :error (or (ex-message e) (str e))})))
+           (settle! sid id ticket (constantly {:state :failed :error (or (ex-message e) (str e))}))))
     row))
 
 (defn install-interrupt!
@@ -163,15 +217,24 @@
   ([session id reason kind message]
    (let [path (key-for session id)
          request (locking sessions
-                   (when-let [{:keys [row interrupt]} (get-in @sessions path)]
-                     (when (= :running (:state row))
-                       (swap! sessions update-in path
-                              #(-> %
-                                   (assoc :interrupt-kind kind :cancel-message message)
-                                   (update :cancelling (fnil inc 0))
-                                   (assoc-in [:row :cancel-reason] reason)))
-                       {:interrupt interrupt})))]
-     (when-let [interrupt (:interrupt request)] (interrupt kind))
+                   (when-let [{:keys [row interrupt manual? cancel-on-request? closing? interrupt-complete]}
+                              (get-in @sessions path)]
+                     (when (and (= :running (:state row))
+                                (or (not manual?) (not (or closing? interrupt-complete)))
+                                 (or (not cancel-on-request?) (not (or closing? (:cancel-reason row)))))
+                       (let [complete (when manual? (promise))]
+                         (swap! sessions update-in path
+                                #(cond-> (-> %
+                                             (assoc :interrupt-kind kind :cancel-message message)
+                                             (update :cancelling (fnil inc 0))
+                                             (assoc-in [:row :cancel-reason] reason))
+                                   complete (assoc :interrupt-complete complete)))
+                         {:interrupt interrupt :complete complete}))))]
+     (when-let [interrupt (:interrupt request)]
+       (if-let [complete (:complete request)]
+         (cancellation/worker-future "vis-task-cancel"
+           (fn [] (try (interrupt kind) (finally (deliver complete true)))))
+         (interrupt kind)))
      (boolean request))))
 
 (defn cancelling [session id]
@@ -195,7 +258,7 @@
 
 (defn await!
   "Read an outcome, or wait for it. `token` registers a wait by this block."
-  [session id {:keys [block token timeout-ms leave? hold]}]
+  [session id {:keys [block token timeout-ms leave? hold observation?]}]
   (let [path (key-for session id)
         signal (locking sessions
                  (when-let [entry (get-in @sessions path)]
@@ -206,7 +269,7 @@
                        (when (and (= :running (get-in entry [:row :state]))
                                   (not (contains? (:waiters entry) token)))
                          (swap! sessions assoc-in (conj path :waiters token)
-                                {:block block :release (when hold (hold))}))))
+                                {:block block :observation? observation? :release (when hold (hold))}))))
                    (:signal entry)))]
     (if leave?
       {:state :released}
@@ -292,7 +355,9 @@
   (into []
         (keep (fn [[id {:keys [row waiters]}]]
                 (when (and (= :running (:state row))
-                           (some #(and (= block (:block %)) (not (:detached? %))) (vals waiters)))
+                           (some #(and (= block (:block %)) (not (:detached? %))
+                                        (not (:observation? %)))
+                                  (vals waiters)))
                   id)))
         (get-in @sessions [(str session) :entries])))
 

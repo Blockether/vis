@@ -114,10 +114,13 @@
   "Create (truncating) the log file for `session`/`id` and return the sink the
    pump writes through: `{:path :out}`. Truncating is the point — a new spawn
    under an id IS a new shell, and its log starts at offset 0."
-  [session id]
-  (let [^File f (io/file (session-dir session) (str (safe-name id) ".log"))]
-    (io/make-parents f)
-    {:path (.getPath f) :out (java.io.BufferedOutputStream. (java.io.FileOutputStream. f false))}))
+  ([session id] (open! session id nil))
+  ([session id generation]
+   (let [^File f (if generation
+                   (io/file (session-dir session) "generations" (str (safe-name generation) ".log"))
+                   (io/file (session-dir session) (str (safe-name id) ".log")))]
+     (io/make-parents f)
+     {:path (.getPath f) :out (java.io.BufferedOutputStream. (java.io.FileOutputStream. f false))})))
 
 (defn drain!
   "Copy raw bytes from `in` to `sink` with a fixed-size transfer buffer.

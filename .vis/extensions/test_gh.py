@@ -14,6 +14,7 @@ import json
 import pathlib
 import re
 from dataclasses import FrozenInstanceError
+from types import SimpleNamespace
 
 import blockether.vis.extension as vis
 import gh
@@ -1246,20 +1247,18 @@ def test_capture_does_not_accept_partial_output_from_a_timed_out_process(monkeyp
         path.write_text('{"status": "completed"}')
         output_paths.append(path)
 
-        def operation(options):
-            operations.append(options["op"])
-            if options["op"] == "stop":
-                return {"status": "stopped", "exit": 143}
-            return {"status": "running", "exit": None, "timed_out": True}
+        def result(timeout):
+            operations.append("result")
+            raise TimeoutError
 
-        return vis.Shell({"id": "slow-gh", "status": "running"}, operation)
+        return SimpleNamespace(result=result, cancel=lambda: operations.append("cancel"))
 
     monkeypatch.setattr(vis, "shell", start)
     exit_code, text = gh._capture("gh run view 42 --json status", seconds=1)
 
     assert exit_code != 0
     assert "timed out" in text
-    assert operations == ["wait", "stop"]
+    assert operations == ["result", "cancel"]
     assert all(not path.exists() for path in output_paths)
 
 
@@ -1278,16 +1277,14 @@ def test_stop_during_a_cli_request_releases_the_process_and_reports_it(
             recorder.close(reason="interrupted", note="Stop watching")
         return original_live(envelope_json)
 
-    def operation(options):
-        operations.append(options["op"])
-        if options["op"] == "stop":
-            return {"status": "stopped", "exit": 143}
-        if options["op"] == "wait":
-            recorder.close(reason="interrupted", note="Stop watching")
-        return {"status": "running", "exit": None, "timed_out": True}
+    def done():
+        operations.append("done")
+        return False
 
     monkeypatch.setattr(recorder, "live", live)
-    monkeypatch.setattr(vis, "shell", lambda _: vis.Shell({"id": "slow-gh"}, operation))
+    monkeypatch.setattr(vis, "shell", lambda _: SimpleNamespace(
+        done=done, cancel=lambda: operations.append("cancel"),
+    ))
     polls = []
 
     def poll():
@@ -1306,7 +1303,7 @@ def test_stop_during_a_cli_request_releases_the_process_and_reports_it(
 
     assert outcome.ending == "interrupted"
     assert outcome.human_note == "Stop watching"
-    assert operations == ["logs", "stop"]
+    assert operations == ["done", "cancel"]
     assert waits and max(waits) <= 200
     # The stop releases the running CLI process; the job that had already failed is
     # still asked for, once, after the view is closed.
@@ -1372,11 +1369,11 @@ def test_cli_terminal_results_keep_the_exit_status(
 ):
     operations = []
 
-    def operation(options):
-        operations.append(options["op"])
+    def result(timeout):
+        operations.append(timeout)
         return {"status": "exited", "exit": exit_code}
 
-    monkeypatch.setattr(vis, "shell", lambda _: vis.Shell({"id": "gh"}, operation))
+    monkeypatch.setattr(vis, "shell", lambda _: SimpleNamespace(result=result, done=lambda: True))
     if watching:
         with vis.live("CLI test", [vis.ui.status("state", "Running")]) as view:
             with gh._watch_commands(view):
@@ -1384,7 +1381,7 @@ def test_cli_terminal_results_keep_the_exit_status(
     else:
         result = gh._shell("gh run view 42")
     assert result["exit"] == exit_code
-    assert operations == (["logs"] if watching else ["wait"])
+    assert operations == ([0] if watching else [120])
     assert gh._watch_view.get() is None
 
 
@@ -1401,20 +1398,22 @@ def test_cli_deadline_is_not_extended_by_view_events(recorder, monkeypatch):
             return json.dumps({"view_id": recorder.view_id, "is_open": True})
         return original_live(envelope_json)
 
-    def operation(options):
-        operations.append(options["op"])
-        return {"status": "running", "exit": None}
+    def result(timeout):
+        assert timeout == 0
+        raise TimeoutError
 
     monkeypatch.setattr(gh.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(recorder, "live", live)
-    monkeypatch.setattr(vis, "shell", lambda _: vis.Shell({"id": "gh"}, operation))
+    monkeypatch.setattr(vis, "shell", lambda _: SimpleNamespace(
+        done=lambda: False, result=result, cancel=lambda: operations.append("cancel"),
+    ))
     with vis.live("CLI test", [vis.ui.status("state", "Running")]) as view:
         with gh._watch_commands(view):
             exit_code, text = gh._capture("gh run view 42", seconds=0.3)
     assert exit_code == 124
     assert "timed out" in text
     assert now[0] == pytest.approx(0.3)
-    assert operations == ["logs"] * 4 + ["stop"]
+    assert operations == ["cancel"]
     assert gh._watch_view.get() is None
 
 
@@ -1432,12 +1431,12 @@ class _LoginProcess(dict):
         self.sent.append((text, is_enter))
         return self
 
-    def wait(self, seconds=120):
+    def result(self, timeout=None):
         return {"status": "exited", "exit": 0, "out": "Authentication complete."}
 
-    def stop(self):
+    def cancel(self):
         self.stopped = True
-        return {"status": "stopped", "exit": 143, "out": ""}
+        return True
 
 
 def test_device_login_keeps_the_oauth_code_inside_human_input(monkeypatch):

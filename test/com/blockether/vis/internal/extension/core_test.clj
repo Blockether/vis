@@ -1166,12 +1166,15 @@
                      (expect (re-matches #"[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*"
                                          (name sym))
                              (str sym)))
-                   ;; Every bound door is DOCUMENTED — `doc(name)` is the only contract
-                   ;; a function has now, so a binding without one is unreachable prose.
-                   ;; (The reverse does not hold: an aliased extension such as MCP's
-                   ;; `call` documents itself here and binds as `mcp__call` per turn.)
-                   (doseq [sym bound]
-                     (expect (contains? (set (keys docs)) sym) (str sym))))))
+                   ;; Public doors have a page. Hidden raw transports do not.
+                   (let [private (into #{}
+                                       (comp (mapcat extension/ext-symbols)
+                                             (filter #(and (:ext.symbol/raw? %) (:ext.symbol/hidden? %)))
+                                             (map :ext.symbol/symbol))
+                                       (extension/registered-extensions))]
+                     (doseq [sym bound]
+                       (expect (= (not (contains? private sym)) (contains? docs sym))
+                               (str sym)))))))
 
 (defdescribe
   symbol-signature-test
@@ -1263,10 +1266,10 @@
                                 'get-session "(target=None)"
                                 'list-sessions "(search=None)"
                                 'council.wait "(session_ids=None, *, timeout_secs=..., **kwargs)"
-                                'council.cancel "(session_id)"
-                                '_shell-stop "(id)"}]
+                                'council.cancel "(session_id)"}]
           (expect (= expected (get sigs sym)) (str sym)))
-        (expect (str/includes? (get sigs '_shell-wait) "offset=..."))
+        (expect (not-any? #(contains? sigs %) '[_shell-wait _shell-stop]))
+        (expect (str/includes? (get sigs '_shell-logs) "offset=..."))
         (expect (str/includes? (get sigs '_shell-type) "is_enter=..."))))
   ;; THE INVARIANT: prose can describe a verb, but only its parameter list says
   ;; what it takes, which of it is required and in what order. A tool that

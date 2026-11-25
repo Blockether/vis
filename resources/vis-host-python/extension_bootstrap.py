@@ -195,7 +195,11 @@ def __vis_typed__(call):
 
     def typed(tool, args, kwargs):
         paging = __vis_paged_spec__(tool, args, kwargs)  # noqa: F821
-        return __vis_as_result__(call(tool, args, kwargs), paging)  # noqa: F821
+        value = call(tool, args, kwargs)
+        if tool == "shell":
+            # The SDK binds the process capability to a synchronous Future.
+            return value
+        return __vis_as_result__(value, paging)  # noqa: F821
 
     return typed
 
@@ -224,7 +228,6 @@ _vis_host = _vis_types.SimpleNamespace(
     }
 )
 _vis_host.call_tool = __vis_typed__(_vis_host.call_tool)
-__VisShell__.__vis_shell_route__ = __vis_tool_route__(_vis_host.call_tool)  # noqa: F821
 __VisGrep__.__vis_page_route__ = __vis_tool_route__(_vis_host.call_tool)  # noqa: F821
 
 

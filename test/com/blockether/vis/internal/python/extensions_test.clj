@@ -2948,13 +2948,16 @@ def fetch_run(run_id, repo=None):
                            (constantly (io/file ext-dir "views"))
                            #'shell/trusted-extension-shell
                            (fn [_ opts]
-                             (let [op (get opts "op")]
-                               (swap! operations conj op)
-                               (when (#{"logs" "wait"} op) (stop-view!))
-                               (extension/success {:result {"id" "gh-stop-test"
-                                                            "status"
-                                                            (if (= "stop" op) "stopped" "running")
-                                                            "exit" (when (= "stop" op) 143)}})))}
+                             (swap! operations conj (get opts "op"))
+                             (extension/success
+                               {:result {"__vis_shell_task__" {"id" "gh-task" "token" "gh-token"
+                                                              "snapshot" {"id" "gh-stop-test"
+                                                                          "status" "running"}}}}))
+                           #'shell/sdk-task-op
+                           (fn [_ op _]
+                             (case op
+                               "await" (do (stop-view!) {"state" "running"})
+                               "cancel" (do (swap! operations conj op) true)))}
             (fn []
               (try
                 (let [owner
@@ -2991,7 +2994,7 @@ def fetch_run(run_id, repo=None):
                   (expect (true? (get-in answer [:result "__vis_attrs__" "is_stopped_by_human"])))
                   (expect (= "Stop CI monitoring"
                              (get-in answer [:result "__vis_attrs__" "human_note"])))
-                  (expect (= ["background" "logs" "stop"] @operations))
+                  (expect (= ["background" "cancel"] @operations))
                   (expect (not-any? #(= sid (:session-id %)) (human-input/live-views))))
                 (finally (stop-view!))))))))))
 
@@ -3599,7 +3602,7 @@ vis.register_extension(vis.Extension(
             (set (keys worker/engine-sources))
 
             schemas
-            (->> (re-seq #"\"([a-z_]+)\""
+            (->> (re-seq #"\"([a-z_-]+)\""
                          (second (re-find #"(?s)_SCHEMA_NAMES\s*=\s*\(([^)]*)\)"
                                           (slurp (io/file package "_contracts.py")))))
                  (map second))]
@@ -6741,16 +6744,15 @@ vis.register_extension(vis.Extension(
 ;; Regression, issue #113: ordinary extension process calls from process-level
   ;; provider callbacks were redirected into the session-only jail and returned nil.
 (defn- jail-wait
-  "`sh.wait(secs)` for a jailed-shell handle — the HOST's own wait op through the
-   jailed entry point, so the test waits exactly as an extension does and no copy
-   of the poll loop lives here."
+  "Read the result of the process Task created by a jailed start."
   [started]
-  (:result (shell/jailed-shell nil {"op" "wait" "id" (get started "id") "seconds" 20})))
+  (let [id (get-in (:result (shell/task-result started)) ["__vis_shell_task__" "id"])]
+    (:value (task/await! nil id {:timeout-ms 20000}))))
 
 (def ^:private shell-provider-py
   "The ONE shelling-provider fixture. Both process-boundary cases load it — the
    session jail and the user's `shell` toggle — so the two cannot drift apart."
-  "import blockether.vis.extension as vis\ndef detect():\n    handle = vis.shell({'command': 'printf regular-shell'})\n    result = handle.wait(30)\n    for _ in range(3):\n        if not result.get('timed_out'):\n            break\n        result = handle.wait(30)\n    return vis.ProviderCredential(result['out'], source='shell')\nvis.register_extension(vis.Extension(name='shell-provider', description='shell provider', providers=[vis.Provider(id='shell-provider', label='Shell provider', detect_fn=detect)]))")
+  "import blockether.vis.extension as vis\ndef detect():\n    handle = vis.shell({'command': 'printf regular-shell'})\n    result = handle.result(30)\n    return vis.ProviderCredential(result['out'], source='shell')\nvis.register_extension(vis.Extension(name='shell-provider', description='shell provider', providers=[vis.Provider(id='shell-provider', label='Shell provider', detect_fn=detect)]))")
 
 (def ^:private popen-probe-py
   "Issue #142's own reproduction as an extension: start a child, hand the pid
@@ -6858,10 +6860,10 @@ vis.register_extension(vis.Extension(
                                                      (swap! configs subvec 1)
                                                      value))
                                                (load-config)))]
-        (let [first-run (:result (shell/jailed-shell
+        (let [first-run (shell/jailed-shell
                                    nil
                                    {"cwd" (.getCanonicalPath latest-root)
-                                    "command" "test -r latest.txt && printf latest-policy"}))
+                                    "command" "test -r latest.txt && printf latest-policy"})
               second-run (try (:result (shell/jailed-shell nil
                                                            {"cwd" (.getCanonicalPath latest-root)
                                                             "command" "printf must-not-run"}))
@@ -6885,7 +6887,7 @@ vis.register_extension(vis.Extension(
     ;; policy snapshot bought nothing over the merged config read at every spawn.
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\ndef latest():\n    \"Use the jail.\"\n    return vis.jailed_shell({'command':'echo latest'})['out']\ndef removed():\n    \"Report the removed session-snapshot API.\"\n    return [str(hasattr(vis, 'jailed_shell_session')), str(hasattr(vis._host, 'jailed_shell_session'))]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(latest), vis.Symbol(removed)]))"}
+       "import blockether.vis.extension as vis\ndef latest():\n    \"Use the jail.\"\n    return vis.jailed_shell({'command':'echo latest'}).result(5)['out']\ndef removed():\n    \"Report the removed session-snapshot API.\"\n    return [str(hasattr(vis, 'jailed_shell_session')), str(hasattr(vis._host, 'jailed_shell_session'))]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(latest), vis.Symbol(removed)]))"}
       (fn [_ _]
         (let [ext
               (registered "jail")
@@ -6904,7 +6906,9 @@ vis.register_extension(vis.Extension(
 
           (with-redefs [shell/jailed-shell (fn [actual-env opts]
                                              (swap! seen conj [actual-env opts])
-                                             {"out" "latest"})]
+                                             {"__vis_shell_task__" {"id" "latest-task" "token" "latest-token"
+                                                                     "snapshot" {"id" "latest"}}})
+                        shell/sdk-task-op (fn [_ _ _] {"state" "done" "value" {"out" "latest"}})]
             (binding [extension/*current-environment* env]
               (expect (= "latest" (:result (latest))))
               (expect (= ["False" "False"] (:result (removed)))))
@@ -6917,30 +6921,7 @@ vis.register_extension(vis.Extension(
     ;; :result" — blaming the extension for the framework's own payload.
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    r = vis.jailed_shell({'command': 'echo hi'})\n    return [r['out'], r['stage'], sorted(r.keys())]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
-      (fn [_ _]
-        (let [run
-              (symbol-fn (registered "jail") 'run)
-
-              env
-              {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
-
-          (with-redefs [shell/jailed-shell (fn [_env opts]
-                                             (extension/success {:result {"out" (get opts "command")
-                                                                          "stage" :run}
-                                                                 :op :shell
-                                                                 :metadata {:duration-ms 1}}))]
-            (binding [extension/*current-environment* env]
-              ;; Python sees the UNWRAPPED, deep-stringified `:result` only.
-              (expect (= ["echo hi" "run" ["out" "stage"]] (:result (run))))))))))
-  (it
-    "hands an extension the SAME live handle the sandbox gets, not a raw dict"
-    ;; Regression, handle audit: `__VisShell__` was applied only in the model's
-    ;; sandbox, so an extension's only continuation was hand-authoring the
-    ;; `{"op": "logs", "id": …}` grammar that the handle object replaced.
-    (with-loaded
-      {"jail.py"
-       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.logs(offset=0)['stage'], sh.wait(5)['stage'], sh.type('y')['stage'], sh.stop() is sh, sh['stage']]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
+       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi'})\n    r = sh.result(5)\n    return [r['out'], sh['stage']]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
       (fn [_ _]
         (let [run
               (symbol-fn (registered "jail") 'run)
@@ -6950,14 +6931,24 @@ vis.register_extension(vis.Extension(
 
           (with-redefs [shell/jailed-shell (fn [_env opts]
                                              (extension/success
-                                               {:result {"id" (get opts "id")
-                                                         "stage" (or (get opts "op") "run")}
-                                                :op :shell
-                                                :metadata {:duration-ms 1}}))]
+                                                {:result {"__vis_shell_task__" {"id" (get opts "command")
+                                                                               "token" "envelope-token"
+                                                                               "snapshot" {"id" "test" "stage" :run}}}
+                                                 :op :shell :metadata {:duration-ms 1}}))
+                        shell/sdk-task-op (fn [cap _ _] {"state" "done" "value" {"out" (:task-id cap)}})]
             (binding [extension/*current-environment* env]
-              ;; Every op reaches the ONE dispatch grammar, and every answer is
-              ;; itself a handle. A stop answers into the handle that the caller holds.
-              (expect (= ["h" "logs" "wait" "send" true "stop"] (:result (run))))))))))
+              ;; Python sees the UNWRAPPED, deep-stringified `:result` only.
+              (expect (= ["echo hi" "run"] (:result (run))))))))))
+  (it
+    "returns a Future that reads the final result of a jailed command"
+    (with-loaded
+      {"jail.py"
+       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    r = sh.result(5)\n    return [r['id'], sh.logs(offset=0)['stage'], r['stage'], r['exit'], sh.done(), sh.cancel()]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
+      (fn [_ _]
+        (let [run (symbol-fn (registered "jail") 'run)
+              env {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
+          (binding [extension/*current-environment* env]
+            (expect (= ["h" "logs" "run" 0 true false] (:result (run)))))))))
   (it
     "raises a failing host tool envelope instead of handing Python the envelope"
     (with-loaded

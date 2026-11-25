@@ -1941,8 +1941,8 @@ A result has the shape that the model sees:
 - Text and list answers support `.get()` and `.keys()`, as sandbox results do.
 - Search pages support `next(page)`, `page.pages()`, and `page.all()`. Each next page calls the
   host with the original search options.
-- The answer of `vis.tools.shell(...)` is the live handle that `py3` gets.
-  `sh.wait()`, `sh.logs()`, and `sh.stop()` control the process.
+- `vis.tools.shell(...)` starts a shell under the active session's policy. It returns the
+  [shell Future](#start-a-process). The sandbox starts the same process type but returns a Task.
 
 The record is a copy in your extension's process, not an instance of the other extension's
 class. So check its fields, not `isinstance` with that class.
@@ -2067,11 +2067,25 @@ configuration on disk, read again at every spawn, with or without a session.
 `vis.shell("npm test", cwd="app")` and `vis.shell({"command": "npm test", "cwd": "app"})` start
 the same process. The child runs under a terminal, and Vis keeps its output in a log.
 
-Both calls return the same live handle. `sh.logs()`, `sh.wait(30)`, `sh.type("y")`, and
-`sh.stop()` control the process that you started. The stdin of the child is empty, so a program
-that reads it gets end of input at once. To answer a prompt with `sh.type("y")`, add
-`stdin="tty"` to the call. [Read the shell log](#read-the-shell-log) gives the calls of the
-handle.
+`vis.shell` and `vis.jailed_shell` return a synchronous `concurrent.futures.Future` for the
+process. Use `sh.result(timeout=30)` to wait up to 30 seconds for the exit. A wait that reaches
+its limit raises `TimeoutError` and leaves the process running. A nonzero exit code is part of
+the result, not an exception.
+
+Use `sh.done()` to check completion and `sh.exception(timeout=30)` to read a process error.
+Use `sh.add_done_callback(fn)` to receive the Future when the process ends. A callback can run
+on a background thread. Use `sh.cancel()` to request cancellation of the process and its
+children. If the process was cancelled, `sh.result()` raises `concurrent.futures.CancelledError`.
+
+By default, a read from the child's stdin gives end of input. To send a line with
+`sh.type("y")`, add `stdin="tty"` when you start the process. To read output while the process
+runs, use [`sh.logs()`](#read-the-shell-log).
+
+```python
+sh = vis.shell("npm test", cwd="app")
+result = sh.result(timeout=30)
+print(result.exit, result.out)
+```
 
 A jailed child sees the session's roots and the egress proxy. A language runtime may need more.
 Two options of `vis.jailed_shell` add exactly what you created for the child:
@@ -2112,17 +2126,17 @@ A page never holds a part of a character. `n` and `tail` mean `lines`, `start` m
 and `bytes` means `limit`.
 
 `next(page)` answers the page that follows, and `next(page, None)` answers `None` after the last
-page. `page.pages()` gives the pages from this page to the end of the log. `sh.wait(30)` waits
-for the exit for at most 30 seconds, and `secs` and `timeout` mean `seconds`.
+page. `page.pages()` gives the pages from this page to the end of the log. You can read a log
+after the command ends or is cancelled.
 
-Read a field of the handle by key, such as `sh["exit"]`. A field is also an attribute, such as
-`sh.exit`, when no dictionary method has its name. So read the `keys` field with `sh["keys"]`.
+Read the terminal result by key, such as `result["exit"]`, or by attribute, such as `result.exit`.
+If a field has the name of a dictionary method, use the key. For example, use `result["keys"]`.
+The Future holds a snapshot of the start. Use `sh.result()` for the final status and exit code.
 
 ### The shell outside Vis
 
-Outside Vis, for example in a plain unit test, the SDK starts the command itself. The handle
-takes the same calls. For the calls of the contract fixture `shell-handle.json`, it gives the
-answers of Vis, with these differences:
+Outside Vis, `vis.shell` starts a local process and returns a Future. `vis.tools` still needs
+a bound session. The local process has these differences:
 
 - The child has pipes and no terminal. In Vis, a terminal writes two bytes at the end of a line.
   Outside Vis, the log has one, so the byte offsets of the same output differ.
@@ -2136,7 +2150,7 @@ answers of Vis, with these differences:
   `{"keychain": "name"}`, raises an error.
 - Ctrl-D that you type does not end the input of the command. The byte goes into the pipe.
 - An error is a `RuntimeError`, but its class is not `VisToolError`.
-- The keys of the handle have a different order.
+- The keys of a result have a different order.
 
 ### Toolchain grants
 

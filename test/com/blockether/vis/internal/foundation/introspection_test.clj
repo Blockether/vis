@@ -276,7 +276,7 @@
         (try (let [sid (h/store-session! s {:channel :tui :title "Await fixture"})
                    env {:session-id sid :db-info s}
                    bindings (extension/builtin-sandbox-bindings (constantly env))
-                   {:keys [python-context]} (tpc/new-context bindings)
+                   {:keys [python-context]} (tpc/new-context bindings nil {:session-id sid})
                    events (atom [])
                    result (binding [extension/*tool-event-sink* #(swap! events conj %)]
                             (env-python/run-python-block
@@ -286,13 +286,13 @@
                                    "print('sid:', sid)\n"
                                    "sh = await shell('cd " (System/getProperty "user.dir")
                                    " && git branch --show-current')\n"
-                                   "print(sh.wait(10)['out'])")))]
+                                   "print((await sh)['out'])")))]
 
                (try (expect (nil? (:error result)))
                     (expect (str/includes? (:stdout result) (str "sid: " sid)))
-                    (expect (= [:read-session :read-session :shell :shell :_shell-wait :_shell-wait]
+                    (expect (= [:read-session :read-session :shell :shell]
                                (mapv :operation @events)))
-                    (expect (= [:start :terminal :start :terminal :start :terminal]
+                    (expect (= [:start :terminal :start :terminal]
                                (mapv :phase @events)))
                     (finally (resources/stop-all! (str sid))
                              (env-python/dispose-python-context! python-context))))

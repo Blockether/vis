@@ -77,9 +77,12 @@ TONES = {"": "running", "success": "ok", "skipped": "idle"}  # anything else is 
 
 
 def poll(run_id):
-    done = vis.shell({"op": "background", "id": "gh",
-                      "command": f"gh run view {run_id} --json jobs,status,conclusion,url"}).wait(60)
-    return json.loads(done["out"])
+    sh = vis.shell(f"gh run view {run_id} --json jobs,status,conclusion,url")
+    try:
+        return json.loads(sh.result(timeout=60).out)
+    except TimeoutError:
+        sh.cancel()
+        raise
 
 
 def watch_run(run_id: int) -> dict:

@@ -40,7 +40,7 @@ def _shell(result):
     if result.get("duration_ms") is not None:
         parts.append(_duration(result["duration_ms"]))
     if result.get("timed_out"):
-        waiting = result.get("op") == "_shell_wait" or result.get("stage") == "wait"
+        waiting = result.get("stage") == "wait"
         parts.append("wait timed out" if waiting else "timed_out")
     lines = ["; ".join(parts)]
     if result.get("out"):

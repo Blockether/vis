@@ -6,6 +6,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
+            [com.blockether.vis.contract.document :as contract]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.loop :as loop]
             [com.blockether.vis.internal.loop.environment :as loop-env]
@@ -96,6 +97,50 @@ except asyncio.CancelledError as e:
 print(b in asyncio.all_tasks())")]
                 (expect (= "2\nFalse\n" (:stdout last-block)) (pr-str last-block)))
               (finally (deliver finish true) (deliver cancel :interrupt))))))))
+
+(defdescribe worker-shell-task-test
+  (it "recovers a process Task after its start handle is dropped"
+      (with-worker-context
+        (fn [session]
+          (let [shell-env {:session-id session :jail-policy-fn (constantly {:disabled? true})}]
+            (env/set-python-bindings!
+              session (map (fn [[sym val]] {:sym sym :val val :task? (= 'shell sym)})
+                           (extension/builtin-sandbox-bindings (constantly shell-env)))))
+          (let [started (env/run-python-block session
+                          "import asyncio
+start = shell('printf stage2; sleep 1; exit 7', id='retained')
+process = await start
+assert process is not start and isinstance(process, asyncio.Task)
+del process, start
+print('started')")]
+            (expect (= "started\n" (:stdout started)) (pr-str started)))
+          (let [completed (env/run-python-block session
+                            "import json
+[process] = asyncio.all_tasks() - {asyncio.current_task()}
+result = await process
+assert result is await process
+fresh = await shell('sleep 30', id='retained')
+assert not process.cancel() and not fresh.done()
+try:
+    process.logs()
+except RuntimeError as error:
+    assert 'no longer the same process' in str(error)
+else:
+    raise AssertionError('stale handle read the replacement log')
+assert fresh.wait(1) is fresh and fresh.timed_out and not fresh.cancelled()
+assert fresh.cancel()
+try:
+    await fresh
+except asyncio.CancelledError:
+    assert not fresh.cancel()
+else:
+    raise AssertionError('the process Task did not cancel')
+print(json.dumps(dict(result)))")]
+            (expect (nil? (:error completed)) (pr-str completed))
+            (when-let [out (:stdout completed)]
+              (let [result (json/read-json out)]
+                (expect (= [7 "stage2"] ((juxt #(get % "exit") #(get % "out")) result)))
+                (expect (contract/valid? "shell-result" result)))))))))
 
 (defdescribe worker-host-task-composition-test
   (it "composes host and local Tasks with gather, as_completed and TaskGroup"

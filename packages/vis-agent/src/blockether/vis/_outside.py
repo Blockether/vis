@@ -15,6 +15,7 @@ import json
 import os
 import queue
 import secrets
+import shlex
 import shutil
 import signal
 import stat
@@ -578,6 +579,7 @@ _SHELL_RESULT_KEYS = (
 )
 
 _RUNS = {}
+_RUNS_LOCK = threading.Lock()
 _LOG_RETENTION_SECS = 14 * 86400
 _LOG_SWEEP_INTERVAL_SECS = 3600
 _LOG_SWEEPERS = {}
@@ -588,15 +590,10 @@ def _end_runs():
 
     Each shell leads its own session, so nothing else ends it after this process.
     """
-    live = [run for run in list(_RUNS.values()) if run.process.poll() is None]
+    with _RUNS_LOCK:
+        live = list(_RUNS.values())
     for run in live:
-        run.signal_group(signal.SIGTERM)
-    deadline = time.monotonic() + 2
-    for run in live:
-        try:
-            run.process.wait(timeout=max(0.0, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            run.signal_group(signal.SIGKILL)
+        run.cancel()
 
 
 atexit.register(_end_runs)
@@ -693,59 +690,89 @@ class _Run:
         self.log_path = str(log_dir / f"shell-{self.id}.log")
         self.finished_at = None
         self.is_stopped = False
+        self._lock = threading.RLock()
+        self._terminal = None
         self._sink = open(self.log_path, "wb")
-        self.process = subprocess.Popen(
-            command
-            if isinstance(command, (list, tuple))
-            else ["/bin/sh", "-c", command],
-            cwd=self.cwd,
-            # A name mapped to None is unset for the child, as in the engine.
-            env={
-                name: value
-                for name, value in {**os.environ, **(env or {})}.items()
-                if value is not None
-            },
-            # Empty stdin unless asked, as in the engine: a program that reads stdin
-            # must not wait for bytes that nothing types.
-            stdin=subprocess.PIPE if stdin == "tty" else subprocess.DEVNULL,
-            stdout=self._sink,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+        try:
+            self.process = subprocess.Popen(
+                command
+                if isinstance(command, (list, tuple))
+                else ["/bin/sh", "-c", command],
+                cwd=self.cwd,
+                # A name mapped to None is unset for the child, as in the engine.
+                env={
+                    name: value
+                    for name, value in {**os.environ, **(env or {})}.items()
+                    if value is not None
+                },
+                # Empty stdin unless asked, as in the engine: a program that reads stdin
+                # must not wait for bytes that nothing types.
+                stdin=subprocess.PIPE if stdin == "tty" else subprocess.DEVNULL,
+                stdout=self._sink,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        except BaseException:
+            self._sink.close()
+            raise
         _start_log_sweeper(log_root)
 
     def poll(self):
-        code = self.process.poll()
-        if code is not None and self.finished_at is None:
-            self.finished_at = time.time()
-            try:
+        with self._lock:
+            code = self.process.poll()
+            if code is not None and self.finished_at is None:
+                self.finished_at = time.time()
                 self._sink.close()
-            except OSError:
-                pass
-        # A shell reports an end by signal N as exit 128 + N, and so does the engine.
-        return 128 - code if code is not None and code < 0 else code
+                if self.process.stdin is not None:
+                    self.process.stdin.close()
+            # Report an end by signal N as exit 128 + N, as the engine does.
+            return 128 - code if code is not None and code < 0 else code
 
     def signal_group(self, sig):
-        # The command leads its own session, so its process group holds every process
-        # that it started. The group id is the command's pid: it stays ours only until
-        # the command is reaped.
-        if self.process.poll() is None:
-            try:
-                os.killpg(self.process.pid, sig)
-            except (PermissionError, ProcessLookupError):
-                pass
-
-    def kill(self):
-        self.signal_group(signal.SIGTERM)
         try:
-            self.process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
+            os.killpg(self.process.pid, sig)
+        except (PermissionError, ProcessLookupError):
+            pass
+
+    def cancel(self):
+        with self._lock:
+            if self.is_stopped or self.poll() is not None:
+                return False
+            self.signal_group(signal.SIGTERM)
+            time.sleep(0.1)
+            # Keep the leader unreaped until the final signal, so the group ID
+            # cannot refer to another process if the leader exits first.
             self.signal_group(signal.SIGKILL)
             try:
                 self.process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 pass
-        self.poll()
+            self.poll()
+            self.is_stopped = True
+            self._terminal = {"state": "cancelled"}
+            return True
+
+    def outcome(self, timeout_ms):
+        deadline = time.monotonic() + timeout_ms / 1000
+        while True:
+            with self._lock:
+                if self._terminal is not None:
+                    return self._terminal
+                if self.poll() is not None:
+                    raw = self.log()
+                    out, omitted = _result_text(raw)
+                    self._terminal = {
+                        "state": "done",
+                        "value": _result(
+                            self, "run", out=out, out_omitted_chars=omitted,
+                            next_offset=len(raw),
+                        ),
+                    }
+                    return self._terminal
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return {"state": "running"}
+            time.sleep(min(0.05, left))
 
     def log(self):
         try:
@@ -761,7 +788,6 @@ _LOG_PAGE_BYTES = 16384
 _LOG_PAGE_CAP_BYTES = 262144
 _WAIT_HEAD_CHARS = 100000
 _WAIT_TAIL_CHARS = 300000
-_WAIT_MAX_SECS = 1800
 
 
 def _tail_start(raw, end, limit, count):
@@ -844,9 +870,9 @@ def _read_log(raw, offset, limit, lines):
     return text, start + head, start + head + keep
 
 
-def _wait_text(raw, offset):
-    """Answer the log text from `offset` and the count of the characters left out."""
-    text = raw[offset:].decode("utf-8", "replace")
+def _result_text(raw):
+    """Return bounded terminal text and the number of characters left out."""
+    text = raw.decode("utf-8", "replace")
     omitted = len(text) - _WAIT_HEAD_CHARS - _WAIT_TAIL_CHARS
     if omitted <= 0:
         return text, 0
@@ -888,8 +914,7 @@ def _shell_option(opts, *names):
 
 
 def _result(run, stage, **fields):
-    # The answer of one op. Only a log read and a wait answer log text and its
-    # cursor, as in the engine; `fields` holds them.
+    # Log pages and the terminal result include log text and its cursor.
     code = run.poll()
     now = time.time()
     result: dict[str, Any] = dict.fromkeys(_SHELL_RESULT_KEYS)
@@ -898,7 +923,9 @@ def _result(run, stage, **fields):
             "stage": stage,
             "id": run.id,
             "cwd": run.cwd,
-            "command": run.command,
+            "command": (
+                run.command if isinstance(run.command, str) else shlex.join(run.command)
+            ),
             "status": "running" if code is None else "exited",
             "pid": run.process.pid,
             "exit": code,
@@ -926,14 +953,14 @@ def _result(run, stage, **fields):
 
 
 _SPAWN_OPS = ("run", "background")
-_HANDLE_OPS = ("logs", "wait", "send", "stop")
+_HANDLE_OPS = ("logs", "send")
 
 
 def _shell_vocabulary():
     """The ops this host answers, worded the way the engine words its own refusal."""
     names = [
         '"{}"{}'.format(op, " (default)" if op == "run" else "")
-        for op in _SPAWN_OPS + _HANDLE_OPS
+        for op in _SPAWN_OPS + ("attach",) + _HANDLE_OPS
     ]
     return ", ".join(names[:-1]) + " or " + names[-1]
 
@@ -1003,30 +1030,30 @@ def _live_run(run_id, command, cwd):
     if reason:
         raise Refused(
             f"Shell '{run_id}' is already running and {reason} — nothing was started. "
-            "Stop it first with sh.stop(), or start this command under a different id."
+            "Cancel it first with sh.cancel(), or start this command under a different id."
         )
     return run
 
 
 def _known_run(opts, op):
     # The run that a handle op names, or the refusal of the engine in its words.
-    run_id = opts.get("id")
-    if run_id is None or not str(run_id).strip():
+    id_option = opts.get("id")
+    run_id = "" if id_option is None else str(id_option).strip()
+    if not run_id:
         raise Refused("shell: id required; use the handle returned by shell().")
-    run = _RUNS.get(run_id)
-    if op in ("logs", "wait"):
-        if run is None:
-            raise Refused(
-                f"shell: unknown id {run_id!r}; use the handle returned by shell()."
-            )
-        return run
-    if run is None or run.is_stopped:
-        advice = (
-            "nothing to stop."
-            if op == "stop"
-            else 'start one with await shell({"command": "…", "wait": 0, "id": id}).'
+    with _RUNS_LOCK:
+        run = _RUNS.get(run_id)
+    if op == "logs" and run is None:
+        raise Refused(
+            f"shell: unknown id {run_id!r}; use the handle returned by shell()."
         )
-        raise Refused(f"No background shell {run_id!r} in this session — {advice}")
+    if op == "attach" and run is None:
+        raise Refused(f"No running background shell {run_id!r} in this session.")
+    if run is None or (run.is_stopped and op == "send"):
+        raise Refused(
+            f"No background shell {run_id!r} in this session — "
+            'start one with await shell({"command": "…", "wait": 0, "id": id}).'
+        )
     return run
 
 
@@ -1059,30 +1086,54 @@ def shell(opts):
         # A named start keeps the id that it was given. While that shell runs, the
         # same start answers the same process and starts no second one.
         run_id = str(opts["id"]).strip() if "id" in opts else None
-        if run_id:
-            live = _live_run(run_id, command, cwd)
+        with _RUNS_LOCK:
+            live = _live_run(run_id, command, cwd) if run_id else None
             if live is not None:
-                return _result(
+                snapshot = _result(
                     live,
                     op,
                     already_running=True,
-                    note=(
-                        f"Shell '{run_id}' was ALREADY running — nothing was "
-                        "restarted. Read it with sh.logs(offset=0) and stop it with "
-                        "sh.stop()."
-                    ),
+                    note=f"Shell '{run_id}' is already running. Nothing was restarted.",
                 )
-        run = _Run(command, cwd, env, stdin)
-        if run_id:
-            run.id = run_id
-        _RUNS[run.id] = run
-        # The start answer says that the process runs: only a later call reads the
-        # exit, also the exit of a command that ends at once. The engine can answer
-        # `exited` here, when its command ended before the answer.
-        return _result(run, op, status="running", exit=None, is_eof=False)
+                return _shell_descriptor(live, snapshot)
+            run = _Run(command, cwd, env, stdin)
+            if run_id:
+                run.id = run_id
+            _RUNS[run.id] = run
+            snapshot = _result(run, op, status="running", exit=None, is_eof=False)
+            return _shell_descriptor(run, snapshot)
+    if op == "attach":
+        if opts.get("command") is not None:
+            raise Refused(
+                'shell op "attach" takes no command — it acts on {"id": "…"}.'
+            )
+        if opts.get("text") is not None:
+            raise Refused('shell op "attach" takes no text payload.')
+        run = _known_run(opts, op)
+        with run._lock:
+            if run.is_stopped or run.poll() is not None:
+                raise Refused(
+                    f"No running background shell {run.id!r} in this session."
+                )
+            return _shell_descriptor(run, _result(run, "run", already_running=True))
     if op not in _HANDLE_OPS:
         raise Refused(f"Unknown shell op {json.dumps(op)} — use {_shell_vocabulary()}.")
-    run = _known_run(opts, op)
+    return shell_task(_known_run(opts, op), op, opts)
+
+
+def _shell_descriptor(run, snapshot):
+    # The local host can pass its capability by reference without a token registry.
+    return {"__vis_shell_task__": {"token": run, "snapshot": snapshot}}
+
+
+def shell_task(run, op, opts):
+    """Drive the exact local process that this capability identifies."""
+    if not isinstance(run, _Run):
+        raise Refused("This extension does not own that shell Task.")
+    if op == "await":
+        return run.outcome(min(250, opts.get("timeout_ms", 0)))
+    if op == "cancel":
+        return run.cancel()
     if op == "logs":
         offset = _whole(_shell_option(opts, "offset", "start"), "offset")
         lines = _whole(_shell_option(opts, "lines", "n", "tail"), "lines")
@@ -1098,7 +1149,7 @@ def shell(opts):
             raise Refused("shell `text` must be a string.")
         if opts.get("is_enter", True):
             text += "\n"
-        if run.poll() is not None:
+        if run.is_stopped or run.poll() is not None:
             raise Refused(
                 f"Background shell '{run.id}' has exited — nothing to send to. "
                 "Read its output with sh.logs(offset=0)."
@@ -1114,39 +1165,7 @@ def shell(opts):
         except (OSError, ValueError, AttributeError):
             pass
         return _result(run, "send")
-    if op == "stop":
-        run.kill()
-        # A stopped run still answers `logs` and `wait`; `send` and a second `stop`
-        # refuse it, as in the engine.
-        run.is_stopped = True
-        return _result(run, "stop", status="stopped", is_eof=True)
-    if op == "wait":
-        seconds = _not_negative(
-            _shell_option(opts, "seconds", "secs", "timeout"), "seconds"
-        )
-        seconds = min(
-            max(_WAIT_MAX_SECS if seconds is None else seconds, 1), _WAIT_MAX_SECS
-        )
-        offset = _not_negative(_shell_option(opts, "offset", "start"), "offset") or 0
-        deadline = time.time() + seconds
-        while run.poll() is None and time.time() < deadline:
-            time.sleep(0.05)
-        raw = run.log()
-        out, omitted = _wait_text(raw, min(offset, len(raw)))
-        return _result(
-            run,
-            "wait",
-            timed_out=run.poll() is None,
-            timeout_secs=seconds,
-            out=out,
-            out_omitted_chars=omitted,
-            offset=offset,
-            next_offset=len(raw),
-            is_eof=True,
-        )
-    # Reached only when the contract declares a handle op this host never grew a
-    # branch for: say so, instead of blaming the caller for the engine's vocabulary.
-    raise Refused(f"shell op {op!r} is declared in the contract but unimplemented here")
+    raise Refused(f"Unknown SDK shell Task operation: {op!r}.")
 
 
 # -- Asking a human, with no dialog surface -----------------------------------
@@ -1855,6 +1874,7 @@ _IMPLEMENTATIONS = {
     "bus_subscribe": bus_subscribe,
     "bus_unsubscribe": bus_unsubscribe,
     "shell": shell,
+    "shell_task": shell_task,
     "jailed_shell": jailed_shell,
     "call_env": call_env,
     "tool_call_provider": tool_call_provider,

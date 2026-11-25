@@ -27,8 +27,9 @@ This step searches the project and runs the tests in one Python program:
 ```python
 hits = grep({"query": ["def parse_date"], "paths": ["src"]})
 print(hits)
-tests = (await shell("pytest tests/test_dates.py -q")).wait(120)
-print(tests.exit, tests.logs(-10))
+tests = await shell("pytest tests/test_dates.py -q")
+result = await tests
+print(result.exit, tests.logs(-10).out)
 ```
 
 Only the printed text goes back to the model. The full results stay in Python variables, as

@@ -511,7 +511,7 @@
   {"ban" (str "`subprocess`, `os.system` and `os.popen` cannot start a process here. "
               "Use the sandbox `shell` verb.")
    "use" (str "Use `sh = await shell('npm test')`. Control the process with `sh.logs()`, "
-              "`sh.wait()`, `sh.type()` and `sh.stop()`. Each answer includes the shell status.")
+              "`sh.wait()`, `sh.type()` and `sh.cancel()`. Use `await sh` for the exit and output.")
    "off" (str "Shell commands are off in this sandbox. `shell` is not bound, and you cannot "
               "use a live handle. `subprocess`, `os.system` and `os.popen` raise an error. "
               "Nothing here can start a process. Turn on 'Shell commands' in the settings dialog.")
@@ -1759,14 +1759,14 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
   ([session stop-awaited?]
    (boolean
      (when session
-       (if-let [k (worker-of session)]
-         (when-let [call (get @block-calls session)]
-           (when stop-awaited?
-             (let [sid (python-host/task-session session)]
-               (doseq [id (task/awaited-ids sid call)]
-                 (task/cancel! sid id :turn :interrupt))))
-           (pyext/interrupt-call! k session call :interrupt))
-         (py-interrupt! session))))))
+       (let [call (get @block-calls session)]
+         (when (and call stop-awaited?)
+           (let [sid (python-host/task-session session)]
+             (doseq [id (task/awaited-ids sid call)]
+               (task/cancel! sid id :turn :interrupt))))
+         (if-let [k (worker-of session)]
+           (when call (pyext/interrupt-call! k session call :interrupt))
+           (py-interrupt! session)))))))
 
 (def ^:private excerpt-width
   "Characters of the failing line an excerpt shows. A longer line shows only this

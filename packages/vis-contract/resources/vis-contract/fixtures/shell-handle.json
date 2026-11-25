@@ -1,12 +1,14 @@
 {
-  "description": "Shell handle rules. Each case starts a shell with `args` and `kwargs`, then runs `steps` as Python. The steps see `sh` (the handle), `view` and `door` (the call that started the shell) and put the result in `answer`. `expect` is the answer of `vis.shell` in the engine. The engine test `shell-handle-contract-test` runs each case in a real extension worker through `vis.shell` (the SDK handle) and through `vis.tools.shell` (the runtime handle). The SDK test `test_shell_contract.py` runs each case on the host outside Vis. Where one of them answers differently, the case has a `tools` or `outside` object with a `reason` (a key of `exceptions`) and its own `expect`. `runner` is the Python source that all three use. A handle id in an answer shows as '<id>'.",
+  "description": "ShellTask and ShellResult rules. Each case starts a shell with `args` and `kwargs`, then runs `steps` as Python. The steps see `sh` (the handle), `view`, and `door` (the call that started the shell) and put the result in `answer`. `expect` is the answer of `vis.shell` in the engine. The engine test `shell-handle-contract-test` runs each case in a real extension worker through `vis.shell` and `vis.tools.shell`. Both return an SDK Future. The SDK test `test_shell_contract.py` runs each case on the host outside Vis. Where one door answers differently, the case has a `tools` or `outside` object with a `reason` (a key of `exceptions`) and its own `expect`. The Python `runner` also accepts a sandbox ShellTask. A handle id in an answer shows as '<id>'.",
   "exceptions": {
     "pipe": "Outside Vis, a child process has pipes and no terminal. A line ends with one byte, typed text has no echo, `type` needs a command that started with `stdin: tty`, and Ctrl-D does not end the input.",
     "sh": "Outside Vis, the command runs with `/bin/sh -c`. The engine runs it with `bash -lc`.",
-    "raw-op": "`vis.tools.shell` is the `shell` tool of the model. It starts a command only and does not take an op map.",
+    "raw-op": "`vis.tools.shell` starts a command or attaches to a running alias. It does not take the raw logs or send operations.",
     "op-key": "The answer of the `shell` tool has the `op` key. The SDK handle does not have it.",
     "local": "Outside Vis, no session holds the shell. `attach` is empty, `note` says that the command is a local process, and `keys` is empty after `type`.",
-    "roots": "`vis.tools.shell` is the `shell` tool of the model. It keeps the working directory in the filesystem roots of the session, and it checks that first."
+    "roots": "`vis.tools.shell` is the `shell` tool of the model. It keeps the working directory in the filesystem roots of the session, and it checks that first.",
+    "guest-wait": "The guest Task has wait(seconds). The SDK Future has result(timeout), which raises TimeoutError if the command is still running.",
+    "other-origin": "Outside Vis, there is no second active session tool with a separate trust origin."
   },
   "runner": [
     "import json",
@@ -28,6 +30,13 @@
     "    raise AssertionError(f\"the log never showed {text!r}\")",
     "",
     "",
+    "def finish(sh, seconds=30):",
+    "    if hasattr(sh, \"task_id\"):",
+    "        sh.wait(seconds)",
+    "        return sh.result()",
+    "    return sh.result(seconds)",
+    "",
+    "",
     "def refusal(error):",
     "    text = error.args[0] if isinstance(error, KeyError) and error.args else str(error)",
     "    return {\"error\": str(text), \"is_runtime_error\": isinstance(error, RuntimeError)}",
@@ -43,23 +52,20 @@
     "    return value",
     "",
     "",
-    "def drive(door, case):",
+    "def drive(door, case, other_door=None):",
     "    try:",
     "        sh = door(*case.get(\"args\", []), **case.get(\"kwargs\", {}))",
     "    except Exception as error:",
     "        return refusal(error)",
-    "    scope = {\"sh\": sh, \"view\": view, \"door\": door, \"until\": until}",
+    "    scope = {\"sh\": sh, \"view\": view, \"door\": door, \"until\": until, \"finish\": finish, \"other_door\": other_door}",
     "    try:",
     "        exec(\"\\n\".join(case[\"steps\"]), scope)",
     "        answer = scope.get(\"answer\")",
     "    except Exception as error:",
     "        answer = refusal(error)",
     "    finally:",
-    "        if sh.get(\"status\") == \"running\":",
-    "            try:",
-    "                sh.stop()",
-    "            except Exception:",
-    "                pass",
+    "        if hasattr(sh, \"cancel\") and not sh.done():",
+    "            sh.cancel()",
     "    return masked(json.loads(json.dumps(answer)), \"'\" + str(sh.get(\"id\")) + \"'\")"
   ],
   "cases": [
@@ -71,7 +77,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs())"
+        "finish(sh)",
+        "answer = view(sh.logs())"
       ],
       "expect": [
         "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\n",
@@ -89,7 +96,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(-5))"
+        "finish(sh)",
+        "answer = view(sh.logs(-5))"
       ],
       "expect": [
         "line8\nline9\nline10\nline11\nline12\n",
@@ -107,7 +115,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(0, 10))"
+        "finish(sh)",
+        "answer = view(sh.logs(0, 10))"
       ],
       "expect": [
         "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n",
@@ -125,7 +134,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(-5, 2))"
+        "finish(sh)",
+        "answer = view(sh.logs(-5, 2))"
       ],
       "expect": [
         "line8\nline9\n",
@@ -143,7 +153,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(lines=2))"
+        "finish(sh)",
+        "answer = view(sh.logs(lines=2))"
       ],
       "expect": [
         "line11\nline12\n",
@@ -161,7 +172,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(tail=2))"
+        "finish(sh)",
+        "answer = view(sh.logs(tail=2))"
       ],
       "expect": [
         "line11\nline12\n",
@@ -179,7 +191,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(n=2))"
+        "finish(sh)",
+        "answer = view(sh.logs(n=2))"
       ],
       "expect": [
         "line11\nline12\n",
@@ -197,7 +210,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(lines=0))"
+        "finish(sh)",
+        "answer = view(sh.logs(lines=0))"
       ],
       "expect": [
         "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\n",
@@ -215,7 +229,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(start=12))"
+        "finish(sh)",
+        "answer = view(sh.logs(start=12))"
       ],
       "expect": [
         "line3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\n",
@@ -233,7 +248,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(offset=12, lines=2))"
+        "finish(sh)",
+        "answer = view(sh.logs(offset=12, lines=2))"
       ],
       "expect": [
         "line3\nline4\n",
@@ -251,7 +267,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(24, -2))"
+        "finish(sh)",
+        "answer = view(sh.logs(24, -2))"
       ],
       "expect": [
         "line3\nline4\n",
@@ -269,7 +286,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(lines=-2))"
+        "finish(sh)",
+        "answer = view(sh.logs(lines=-2))"
       ],
       "expect": [
         "line11\nline12\n",
@@ -287,7 +305,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(12, -9))"
+        "finish(sh)",
+        "answer = view(sh.logs(12, -9))"
       ],
       "expect": [
         "line1\nline2\n",
@@ -305,7 +324,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(limit=20))"
+        "finish(sh)",
+        "answer = view(sh.logs(limit=20))"
       ],
       "expect": [
         "ine10\nline11\nline12\n",
@@ -323,7 +343,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(0, limit=20))"
+        "finish(sh)",
+        "answer = view(sh.logs(0, limit=20))"
       ],
       "expect": [
         "line1\nline2\nline3\nli",
@@ -341,7 +362,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(0, bytes=3))"
+        "finish(sh)",
+        "answer = view(sh.logs(0, bytes=3))"
       ],
       "expect": [
         "lin",
@@ -359,7 +381,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(10**9))"
+        "finish(sh)",
+        "answer = view(sh.logs(10**9))"
       ],
       "expect": [
         "",
@@ -377,7 +400,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(limit=0))"
+        "finish(sh)",
+        "answer = view(sh.logs(limit=0))"
       ],
       "expect": [
         "\n",
@@ -395,7 +419,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(limit=-1))"
+        "finish(sh)",
+        "answer = view(sh.logs(limit=-1))"
       ],
       "expect": {
         "error": "limit must not be negative, got -1.",
@@ -410,7 +435,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(lines=3, limit=10))"
+        "finish(sh)",
+        "answer = view(sh.logs(lines=3, limit=10))"
       ],
       "expect": [
         "11\nline12\n",
@@ -428,7 +454,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(-5, limit=10))"
+        "finish(sh)",
+        "answer = view(sh.logs(-5, limit=10))"
       ],
       "expect": [
         "11\nline12\n",
@@ -446,7 +473,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(0, limit=5))"
+        "finish(sh)",
+        "answer = view(sh.logs(0, limit=5))"
       ],
       "expect": [
         "zaż",
@@ -464,7 +492,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(3, limit=6))"
+        "finish(sh)",
+        "answer = view(sh.logs(3, limit=6))"
       ],
       "expect": [
         "ół",
@@ -482,7 +511,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs(limit=3))"
+        "finish(sh)",
+        "answer = view(sh.logs(limit=3))"
       ],
       "expect": [
         "ą\n",
@@ -500,7 +530,8 @@
         }
       ],
       "steps": [
-        "p = sh.wait(30).logs()",
+        "finish(sh)",
+        "p = sh.logs()",
         "answer = [len(p['out']), p['out'][:12]] + view(p)[1:]"
       ],
       "expect": [
@@ -520,7 +551,8 @@
         }
       ],
       "steps": [
-        "p = sh.wait(30).logs(0)",
+        "finish(sh)",
+        "p = sh.logs(0)",
         "q = next(p)",
         "answer = [view(x, 'offset', 'next_offset', 'is_eof') for x in (p, q)] + [len(list(sh.logs(0).pages())), next(q, None)]"
       ],
@@ -547,7 +579,7 @@
         }
       ],
       "steps": [
-        "p = sh.wait(60).logs(0, limit=10**7)",
+        "p = finish(sh, 60).logs(0, limit=10**7)",
         "answer = [len(p['out'])] + view(p)[1:]"
       ],
       "expect": [
@@ -566,15 +598,15 @@
         }
       ],
       "steps": [
-        "sh.wait(30)",
-        "answer = view(sh, 'stage', 'status', 'exit', 'timed_out', 'timeout_secs', 'out', 'out_omitted_chars', 'offset', 'next_offset', 'is_eof', 'waiting_for_input', 'already_running')"
+        "result = finish(sh, 30)",
+        "answer = view(result, 'stage', 'status', 'exit', 'timed_out', 'timeout_secs', 'out', 'out_omitted_chars', 'offset', 'next_offset', 'is_eof', 'waiting_for_input', 'already_running')"
       ],
       "expect": [
-        "wait",
+        "run",
         "exited",
         0,
         false,
-        30,
+        null,
         "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\n",
         0,
         0,
@@ -592,8 +624,8 @@
         }
       ],
       "steps": [
-        "sh.wait(30)",
-        "answer = [len(sh['out']), sh['out'][:12]] + view(sh)[1:]"
+        "result = finish(sh, 30)",
+        "answer = [len(result['out']), result['out'][:12]] + view(result)[1:]"
       ],
       "expect": [
         23893,
@@ -612,8 +644,8 @@
         }
       ],
       "steps": [
-        "sh.wait(60)",
-        "answer = [len(sh['out']), sh['out'][99990:100030]] + view(sh)[1:]"
+        "result = finish(sh, 60)",
+        "answer = [len(result['out']), result['out'][99990:100030]] + view(result)[1:]"
       ],
       "expect": [
         400027,
@@ -688,93 +720,84 @@
       ]
     },
     {
-      "name": "wait zero waits one second",
+      "name": "a bounded observation does not cancel a command",
       "args": [
         {
           "command": "sleep 20"
         }
       ],
       "steps": [
-        "sh.wait(0)",
-        "answer = view(sh, 'stage', 'status', 'exit', 'timed_out', 'timeout_secs', 'out', 'is_eof')"
+        "try:",
+        "    if hasattr(sh, \"task_id\"):",
+        "        sh.wait(0)",
+        "        assert sh[\"timed_out\"]",
+        "    else:",
+        "        sh.result(0)",
+        "except TimeoutError:",
+        "    pass",
+        "answer = [sh.done(), sh.cancelled()]"
       ],
       "expect": [
-        "wait",
-        "running",
-        null,
-        true,
-        1,
-        "",
-        true
-      ]
-    },
-    {
-      "name": "a negative wait is refused",
-      "args": [
-        {
-          "command": "sleep 20"
-        }
-      ],
-      "steps": [
-        "sh.wait(-1)"
-      ],
-      "expect": {
-        "error": "seconds must not be negative, got -1.",
-        "is_runtime_error": true
-      }
-    },
-    {
-      "name": "timeout means seconds",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
-      "steps": [
-        "sh.wait(timeout=7)",
-        "answer = view(sh, 'timeout_secs', 'timed_out')"
-      ],
-      "expect": [
-        7,
+        false,
         false
       ]
     },
     {
-      "name": "wait has a maximum",
+      "name": "the terminal result stays on the Task",
       "args": [
         {
           "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
         }
       ],
       "steps": [
-        "sh.wait(30)",
-        "sh.wait(10**6)",
-        "answer = sh['timeout_secs']"
+        "result = finish(sh)",
+        "answer = [sh.done(), sh.cancelled(), sh.exception(), result is sh.result()]"
       ],
-      "expect": 1800
+      "expect": [
+        true,
+        false,
+        null,
+        true
+      ]
     },
     {
-      "name": "a fraction of a second is refused",
+      "name": "a callback receives the completed process without a caller waiting",
+      "args": [
+        {
+          "command": "read word; printf '%s' \"$word\"",
+          "stdin": "tty"
+        }
+      ],
+      "steps": [
+        "from threading import Event",
+        "received = Event()",
+        "answer = []",
+        "def collect(future):",
+        "    answer.extend([future.result()['out'].endswith('ready'), future.done(), future.cancelled()])",
+        "    received.set()",
+        "sh.add_done_callback(collect)",
+        "sh.type('ready')",
+        "if not received.wait(5):",
+        "    raise RuntimeError('shell completion callback was not delivered')"
+      ],
+      "expect": [
+        true,
+        true,
+        false
+      ]
+    },
+    {
+      "name": "a complete command cannot be cancelled",
       "args": [
         {
           "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
         }
       ],
       "steps": [
-        "sh.wait(30)",
-        "door({'op': 'wait', 'id': sh['id'], 'seconds': 0.5})"
+        "finish(sh)",
+        "answer = sh.cancel()"
       ],
-      "expect": {
-        "error": "seconds must be a whole number, got 0.5 — a fraction rounds into a different value.",
-        "is_runtime_error": true
-      },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
+      "expect": false
     },
     {
       "name": "a fraction of an offset is refused",
@@ -784,7 +807,7 @@
         }
       ],
       "steps": [
-        "sh.wait(30)",
+        "finish(sh, 30)",
         "door({'op': 'logs', 'id': sh['id'], 'offset': 1.5})"
       ],
       "expect": {
@@ -800,68 +823,41 @@
       }
     },
     {
-      "name": "text seconds are refused",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
-      "steps": [
-        "sh.wait(30)",
-        "door({'op': 'wait', 'id': sh['id'], 'seconds': 'soon'})"
-      ],
-      "expect": {
-        "error": "seconds must be a number, got \"soon\".",
-        "is_runtime_error": true
-      },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
-      "name": "stop answers the stopped process",
+      "name": "cancellation is accepted once",
       "args": [
         {
           "command": "sleep 30"
         }
       ],
       "steps": [
-        "sh.stop()",
-        "answer = view(sh, 'stage', 'status', 'exit', 'timed_out', 'out', 'offset', 'next_offset', 'is_eof')"
+        "answer = [sh.cancel(), sh.cancel()]"
       ],
       "expect": [
-        "stop",
-        "stopped",
-        143,
-        false,
-        "",
-        0,
-        0,
+        true,
+        false
+      ]
+    },
+    {
+      "name": "a cancelled command raises CancelledError",
+      "args": [
+        {
+          "command": "sleep 30"
+        }
+      ],
+      "steps": [
+        "sh.cancel()",
+        "try:",
+        "    finish(sh)",
+        "except BaseException as error:",
+        "    answer = [type(error).__name__, sh.cancelled()]"
+      ],
+      "expect": [
+        "CancelledError",
         true
       ]
     },
     {
-      "name": "a second stop is refused",
-      "args": [
-        {
-          "command": "sleep 30"
-        }
-      ],
-      "steps": [
-        "sh.stop()",
-        "sh.stop()"
-      ],
-      "expect": {
-        "error": "No background shell '<id>' in this session — nothing to stop.",
-        "is_runtime_error": true
-      }
-    },
-    {
-      "name": "logs read after stop",
+      "name": "logs remain after cancellation",
       "args": [
         {
           "command": "echo before; sleep 30"
@@ -869,66 +865,51 @@
       ],
       "steps": [
         "until(sh, 'before')",
-        "sh.stop()",
-        "answer = view(sh.logs(), 'stage', 'status', 'exit', 'out')"
+        "sh.cancel()",
+        "try:",
+        "    finish(sh)",
+        "except BaseException as error:",
+        "    assert type(error).__name__ == \"CancelledError\"",
+        "answer = view(sh.logs(), 'stage', 'out')"
       ],
       "expect": [
         "logs",
-        "exited",
-        143,
         "before\n"
       ]
     },
     {
-      "name": "wait answers after stop",
+      "name": "type refuses a cancelled command",
       "args": [
         {
           "command": "sleep 30"
         }
       ],
       "steps": [
-        "sh.stop()",
-        "sh.wait(1)",
-        "answer = view(sh, 'stage', 'status', 'exit', 'timed_out')"
+        "sh.cancel()",
+        "try:",
+        "    finish(sh)",
+        "except BaseException as error:",
+        "    assert type(error).__name__ == \"CancelledError\"",
+        "try:",
+        "    sh.type(\"x\")",
+        "except RuntimeError:",
+        "    answer = True"
       ],
-      "expect": [
-        "wait",
-        "exited",
-        143,
-        false
-      ]
+      "expect": true
     },
     {
-      "name": "type after stop",
-      "args": [
-        {
-          "command": "sleep 30"
-        }
-      ],
-      "steps": [
-        "sh.stop()",
-        "sh.type('x')"
-      ],
-      "expect": {
-        "error": "No background shell '<id>' in this session — start one with await shell({\"command\": \"…\", \"wait\": 0, \"id\": id}).",
-        "is_runtime_error": true
-      }
-    },
-    {
-      "name": "stop after the exit",
+      "name": "cancel does not change a terminal result",
       "args": [
         {
           "command": "true"
         }
       ],
       "steps": [
-        "sh.wait(30)",
-        "sh.stop()",
-        "answer = view(sh, 'stage', 'status', 'exit')"
+        "result = finish(sh)",
+        "answer = [sh.cancel(), result[\"exit\"]]"
       ],
       "expect": [
-        "stop",
-        "stopped",
+        false,
         0
       ]
     },
@@ -940,8 +921,8 @@
         }
       ],
       "steps": [
-        "sh.wait(30)",
-        "answer = view(sh, 'status', 'exit', 'out')"
+        "result = finish(sh, 30)",
+        "answer = view(result, 'status', 'exit', 'out')"
       ],
       "expect": [
         "exited",
@@ -957,7 +938,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs())"
+        "finish(sh)",
+        "answer = view(sh.logs())"
       ],
       "expect": [
         "",
@@ -976,14 +958,14 @@
         }
       ],
       "steps": [
-        "sh.wait(30)",
-        "answer = view(sh, 'status', 'exit', 'timed_out', 'timeout_secs', 'out')"
+        "result = finish(sh, 30)",
+        "answer = view(result, 'status', 'exit', 'timed_out', 'timeout_secs', 'out')"
       ],
       "expect": [
         "exited",
         0,
         false,
-        30,
+        null,
         "late\n"
       ]
     },
@@ -1006,7 +988,8 @@
         }
       ],
       "steps": [
-        "answer = view(sh.wait(30).logs())"
+        "finish(sh)",
+        "answer = view(sh.logs())"
       ],
       "expect": [
         "a\nb\n",
@@ -1037,7 +1020,8 @@
       "steps": [
         "until(sh, 'ready')",
         "sh.type('hello')",
-        "answer = view(sh.wait(30).logs())"
+        "finish(sh)",
+        "answer = view(sh.logs())"
       ],
       "expect": [
         "ready\nhello\ngot:hello\n",
@@ -1107,11 +1091,11 @@
         }
       ],
       "steps": [
-        "sh.wait(30)",
-        "try:\n    sh['zzz']\nexcept KeyError as error:\n    head, rest = str(error.args[0]).split(' Keys: ', 1)\n    answer = [head, rest[rest.index('.'):]]"
+        "result = finish(sh, 30)",
+        "try:\n    result['zzz']\nexcept KeyError as error:\n    head, rest = str(error.args[0]).split(' Keys: ', 1)\n    answer = [head, rest[rest.index('.'):]]"
       ],
       "expect": [
-        "'zzz' is not a key of '_shell_wait' result.",
+        "'zzz' is not a key of 'shell' result.",
         ". Read the keys it returned instead of guessing another name; use .get(k, default) when the field is optional."
       ]
     },
@@ -1138,7 +1122,8 @@
         }
       ],
       "steps": [
-        "p = sh.wait(30).logs()",
+        "finish(sh)",
+        "p = sh.logs()",
         "try:\n    p['outp']\nexcept KeyError as error:\n    head, rest = str(error.args[0]).split(' Keys: ', 1)\n    answer = [head, rest[rest.index('.'):]]"
       ],
       "expect": [
@@ -1154,13 +1139,13 @@
         }
       ],
       "steps": [
-        "sh.wait(30)",
-        "try:\n    sh.outp\nexcept AttributeError as error:\n    head, rest = str(error.args[0]).split(' Keys: ', 1)\n    answer = [head, rest[rest.index('.'):]]"
+        "result = finish(sh)",
+        "try:",
+        "    result.outp",
+        "except AttributeError as error:",
+        "    answer = \"out\" in str(error)"
       ],
-      "expect": [
-        "'outp' is not a field of this shell result. A field answers by key, and by attribute when no dict method has its name: r['exit'] is r.exit.",
-        ". Did you mean 'out'? Methods: logs(offset, lines), wait(secs), type(text), stop()."
-      ]
+      "expect": true
     },
     {
       "name": "a field by attribute",
@@ -1170,13 +1155,13 @@
         }
       ],
       "steps": [
-        "sh.wait(30)",
-        "answer = [sh.exit, sh.status, sh.stage, sh.out == sh['out'], callable(sh.keys), sh['keys']]"
+        "result = finish(sh, 30)",
+        "answer = [result.exit, result.status, result.stage, result.out == result['out'], callable(result.keys), result['keys']]"
       ],
       "expect": [
         0,
         "exited",
-        "wait",
+        "run",
         true,
         true,
         null
@@ -1190,7 +1175,7 @@
         }
       ],
       "steps": [
-        "answer = sorted(sh)"
+        "answer = sorted(finish(sh))"
       ],
       "expect": [
         "already_running",
@@ -1263,7 +1248,8 @@
         }
       ],
       "steps": [
-        "sh.wait(30).logs(offset=0, start=0)"
+        "finish(sh)",
+        "sh.logs(offset=0, start=0)"
       ],
       "expect": {
         "error": "logs: offset named twice, as 'start' too.",
@@ -1278,7 +1264,8 @@
         }
       ],
       "steps": [
-        "sh.wait(30).logs(rows=1)"
+        "finish(sh)",
+        "sh.logs(rows=1)"
       ],
       "expect": {
         "error": "logs: no keyword 'rows'. Keywords: offset, lines, limit (n/tail mean lines, start means offset).",
@@ -1291,7 +1278,7 @@
         "echo hi"
       ],
       "steps": [
-        "answer = sh.wait(30)['out']"
+        "answer = finish(sh, 30)['out']"
       ],
       "expect": "hi\n"
     },
@@ -1304,7 +1291,7 @@
         "cwd": "src"
       },
       "steps": [
-        "answer = sh.wait(30)['out']"
+        "answer = finish(sh, 30)['out']"
       ],
       "expect": "src\n"
     },
@@ -1317,7 +1304,7 @@
         }
       ],
       "steps": [
-        "answer = sh.wait(30)['out']"
+        "answer = finish(sh, 30)['out']"
       ],
       "expect": "src\n"
     },
@@ -1329,7 +1316,7 @@
         "cwd": "src"
       },
       "steps": [
-        "answer = sh.wait(30)['out']"
+        "answer = finish(sh, 30)['out']"
       ],
       "expect": "src\n"
     },
@@ -1345,7 +1332,7 @@
         }
       ],
       "steps": [
-        "answer = sh.wait(30)['out']"
+        "answer = finish(sh, 30)['out']"
       ],
       "expect": "a b"
     },
@@ -1416,7 +1403,7 @@
       ],
       "steps": [],
       "expect": {
-        "error": "Unknown shell op \"nope\" — use \"run\" (default), \"background\", \"logs\", \"wait\", \"send\" or \"stop\".",
+        "error": "Unknown shell op \"nope\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".",
         "is_runtime_error": true
       },
       "tools": {
@@ -1459,7 +1446,7 @@
       ],
       "steps": [],
       "expect": {
-        "error": "shell: unknown id 'no-such-shell'; use the handle returned by shell().",
+        "error": "Unknown shell op \"wait\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".",
         "is_runtime_error": true
       },
       "tools": {
@@ -1502,7 +1489,7 @@
       ],
       "steps": [],
       "expect": {
-        "error": "No background shell 'no-such-shell' in this session — nothing to stop.",
+        "error": "Unknown shell op \"stop\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".",
         "is_runtime_error": true
       },
       "tools": {
@@ -1543,7 +1530,7 @@
       ],
       "steps": [],
       "expect": {
-        "error": "shell: id required; use the handle returned by shell().",
+        "error": "Unknown shell op \"wait\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".",
         "is_runtime_error": true
       },
       "tools": {
@@ -1584,7 +1571,7 @@
       ],
       "steps": [],
       "expect": {
-        "error": "shell: id required; use the handle returned by shell().",
+        "error": "Unknown shell op \"stop\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".",
         "is_runtime_error": true
       },
       "tools": {
@@ -1641,7 +1628,7 @@
         }
       ],
       "steps": [
-        "sh.wait(30)",
+        "finish(sh, 30)",
         "sh.type('x')"
       ],
       "expect": {
@@ -1658,7 +1645,7 @@
         }
       ],
       "steps": [
-        "sh.wait(30)",
+        "finish(sh, 30)",
         "sh.type('x')"
       ],
       "expect": {
@@ -1722,7 +1709,8 @@
         }
       ],
       "steps": [
-        "page = sh.wait(30).logs()",
+        "finish(sh)",
+        "page = sh.logs()",
         "answer = [sorted(name for name in dir(str) if not name.startswith('_') and callable(getattr(page, name, None))), page.splitlines(), page.find('line2')]"
       ],
       "expect": [
@@ -1765,16 +1753,12 @@
       ],
       "steps": [
         "again = door({'command': 'sleep 30', 'id': 'contract-live'})",
-        "answer = [again['already_running'], again['pid'] == sh['pid'], again['id'], again['status'], again['stage'], again['note'], sh['already_running']]"
+        "answer = [again['pid'] == sh['pid'], again['id'], not again.done()]"
       ],
       "expect": [
         true,
-        true,
         "contract-live",
-        "running",
-        "run",
-        "Shell '<id>' was ALREADY running — nothing was restarted. Read it with sh.logs(offset=0) and stop it with sh.stop().",
-        false
+        true
       ]
     },
     {
@@ -1794,7 +1778,7 @@
       ],
       "expect": [
         true,
-        "Shell '<id>' is already running and it is running a different command (sleep 30) — nothing was started. Stop it first with sh.stop(), or start this command under a different id."
+        "Shell '<id>' is already running and it is running a different command (sleep 30) — nothing was started. Cancel it first with sh.cancel(), or start this command under a different id."
       ]
     },
     {
@@ -1826,9 +1810,9 @@
         }
       ],
       "steps": [
-        "sh.wait(5)",
+        "finish(sh, 5)",
         "again = door({'command': 'echo two', 'id': 'contract-exit'})",
-        "page = again.wait(5)",
+        "page = finish(again, 5)",
         "answer = [again['already_running'], again['id'], page['out'], page['exit']]"
       ],
       "expect": [
@@ -1839,7 +1823,7 @@
       ]
     },
     {
-      "name": "an id is free after stop",
+      "name": "an id is free after cancellation",
       "args": [
         {
           "command": "sleep 30",
@@ -1847,9 +1831,13 @@
         }
       ],
       "steps": [
-        "sh.stop()",
+        "sh.cancel()",
+        "try:",
+        "    finish(sh)",
+        "except BaseException as error:",
+        "    assert type(error).__name__ == \"CancelledError\"",
         "again = door({'command': 'echo two', 'id': 'contract-stop'})",
-        "page = again.wait(5)",
+        "page = finish(again, 5)",
         "answer = [again['already_running'], again['id'], page['out'], page['exit']]"
       ],
       "expect": [
@@ -1867,7 +1855,7 @@
         }
       ],
       "steps": [
-        "sh.wait(5)",
+        "finish(sh, 5)",
         "try:",
         "    door({'op': 'logs', 'id': sh['id'], 'lines': True})",
         "    answer = 'no refusal'",
@@ -1894,7 +1882,7 @@
         }
       ],
       "steps": [
-        "sh.wait(5)",
+        "finish(sh, 5)",
         "try:",
         "    door({'op': 'logs', 'id': sh['id'], 'offset': False})",
         "    answer = 'no refusal'",
@@ -1921,7 +1909,7 @@
         }
       ],
       "steps": [
-        "sh.wait(5)",
+        "finish(sh, 5)",
         "try:",
         "    door({'op': 'logs', 'id': sh['id'], 'limit': True})",
         "    answer = 'no refusal'",
@@ -1941,7 +1929,7 @@
       }
     },
     {
-      "name": "a boolean is no number of seconds",
+      "name": "the raw wait operation is removed",
       "args": [
         {
           "command": "echo a"
@@ -1950,13 +1938,12 @@
       "steps": [
         "try:",
         "    door({'op': 'wait', 'id': sh['id'], 'seconds': True})",
-        "    answer = 'no refusal'",
         "except Exception as error:",
         "    answer = [isinstance(error, RuntimeError), str(error)]"
       ],
       "expect": [
         true,
-        "seconds must be a number, got true."
+        "Unknown shell op \"wait\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\"."
       ],
       "tools": {
         "reason": "raw-op",
@@ -1976,7 +1963,7 @@
       ],
       "steps": [
         "door({'op': 'send', 'id': sh['id'], 'text': 'raw'})",
-        "page = sh.wait(5)",
+        "page = finish(sh, 5)",
         "answer = ['got:raw' in page['out'], page['exit']]"
       ],
       "expect": [
@@ -2002,7 +1989,7 @@
       "steps": [
         "door({'op': 'send', 'id': sh['id'], 'text': 'ra', 'is_enter': False})",
         "door({'op': 'send', 'id': sh['id'], 'text': 'w'})",
-        "page = sh.wait(5)",
+        "page = finish(sh, 5)",
         "answer = ['got:raw' in page['out'], page['exit']]"
       ],
       "expect": [
@@ -2045,14 +2032,15 @@
       }
     },
     {
-      "name": "wait reads from an offset",
+      "name": "logs reads from an offset",
       "args": [
         {
           "command": "printf abcdef"
         }
       ],
       "steps": [
-        "answer = view(door({'op': 'wait', 'id': sh['id'], 'offset': 3, 'seconds': 5}))"
+        "finish(sh)",
+        "answer = view(sh.logs(offset=3))"
       ],
       "expect": [
         "def",
@@ -2060,49 +2048,37 @@
         6,
         true,
         0
-      ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
+      ]
     },
     {
-      "name": "wait from an offset after the end",
+      "name": "logs from an offset after the end",
       "args": [
         {
           "command": "printf abcdef"
         }
       ],
       "steps": [
-        "answer = view(door({'op': 'wait', 'id': sh['id'], 'offset': 99, 'seconds': 5}))"
+        "finish(sh)",
+        "answer = view(sh.logs(offset=99))"
       ],
       "expect": [
         "",
-        99,
+        6,
         6,
         true,
         0
-      ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
+      ]
     },
     {
-      "name": "wait from an offset before the first byte",
+      "name": "logs from an offset before the first byte",
       "args": [
         {
           "command": "sleep 0.3; printf abcdef"
         }
       ],
       "steps": [
-        "answer = view(door({'op': 'wait', 'id': sh['id'], 'offset': 3, 'seconds': 5}))"
+        "finish(sh)",
+        "answer = view(sh.logs(offset=3))"
       ],
       "expect": [
         "def",
@@ -2110,39 +2086,26 @@
         6,
         true,
         0
-      ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
+      ]
     },
     {
-      "name": "wait from an offset after the end before the first byte",
+      "name": "logs from an offset after the end before the first byte",
       "args": [
         {
           "command": "sleep 0.3; printf abcdef"
         }
       ],
       "steps": [
-        "answer = view(door({'op': 'wait', 'id': sh['id'], 'offset': 99, 'seconds': 5}))"
+        "finish(sh)",
+        "answer = view(sh.logs(offset=99))"
       ],
       "expect": [
         "",
-        99,
+        6,
         6,
         true,
         0
-      ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
+      ]
     },
     {
       "name": "a file as cwd is refused",
@@ -2197,7 +2160,7 @@
         }
       ],
       "steps": [
-        "answer = door({'command': 'echo ok', 'cwd': '  '}).wait(5)['out']"
+        "answer = finish(door({'command': 'echo ok', 'cwd': '  '}), 5)['out']"
       ],
       "expect": "ok\n"
     },
@@ -2209,7 +2172,7 @@
         }
       ],
       "steps": [
-        "answer = door({'command': 'echo ok', 'cmd': ''}).wait(5)['out']"
+        "answer = finish(door({'command': 'echo ok', 'cmd': ''}), 5)['out']"
       ],
       "expect": "ok\n"
     },
@@ -2221,7 +2184,7 @@
         }
       ],
       "steps": [
-        "answer = door({'command': 'echo v=$ZZ_N', 'env': {'ZZ_N': 1}}).wait(5)['out']"
+        "answer = finish(door({'command': 'echo v=$ZZ_N', 'env': {'ZZ_N': 1}}), 5)['out']"
       ],
       "expect": "v=1\n"
     },
@@ -2233,7 +2196,7 @@
         }
       ],
       "steps": [
-        "answer = door({'command': 'echo v=$ZZ_N$HOME', 'env': {'ZZ_N': True, 'HOME': None}}).wait(5)['out']"
+        "answer = finish(door({'command': 'echo v=$ZZ_N$HOME', 'env': {'ZZ_N': True, 'HOME': None}}), 5)['out']"
       ],
       "expect": "v=true\n"
     },
@@ -2247,8 +2210,13 @@
       ],
       "steps": [
         "door({'op': 'send', 'id': sh['id'], 'text': '\\x04', 'is_enter': False})",
-        "page = sh.wait(3)",
-        "answer = ['ended' in page['out'], page['timed_out'], page['status']]"
+        "try:",
+        "    page = finish(sh, 3)",
+        "except TimeoutError:",
+        "    page = sh.logs()",
+        "    answer = ['ended' in page['out'], not sh.done(), page['status']]",
+        "else:",
+        "    answer = ['ended' in page['out'], page['timed_out'], page['status']]"
       ],
       "expect": [
         true,
@@ -2269,6 +2237,62 @@
           true,
           "running"
         ]
+      }
+    },
+    {
+      "name": "attach to the live generation without starting a command",
+      "args": [
+        {
+          "command": "sleep 30"
+        }
+      ],
+      "steps": [
+        "attached = door({\"op\": \"attach\", \"id\": sh[\"id\"]})",
+        "answer = [attached[\"pid\"] == sh[\"pid\"], attached[\"stage\"], attached[\"already_running\"], attached.cancel()]"
+      ],
+      "expect": [
+        true,
+        "run",
+        true,
+        true
+      ]
+    },
+    {
+      "name": "refuse to attach after exit",
+      "args": [
+        {
+          "command": "true"
+        }
+      ],
+      "steps": [
+        "finish(sh)",
+        "door({\"op\": \"attach\", \"id\": sh[\"id\"]})"
+      ],
+      "expect": {
+        "error": "No running background shell '<id>' in this session.",
+        "is_runtime_error": true
+      }
+    },
+    {
+      "name": "refuse to attach from another trust origin",
+      "args": [
+        {
+          "command": "sleep 30"
+        }
+      ],
+      "steps": [
+        "if other_door is None:",
+        "    answer = \"no second trust origin\"",
+        "else:",
+        "    other_door({\"op\": \"attach\", \"id\": sh[\"id\"]})"
+      ],
+      "expect": {
+        "error": "Shell '<id>' was started by a different trust origin.",
+        "is_runtime_error": true
+      },
+      "outside": {
+        "reason": "other-origin",
+        "expect": "no second trust origin"
       }
     }
   ]

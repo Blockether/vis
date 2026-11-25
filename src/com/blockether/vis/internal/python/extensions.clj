@@ -1210,6 +1210,31 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                 "cwd" (str (io/file (project-root-in (session-root "vis.shell") project-path) cwd)))
               opts)))
 
+        shell-capabilities
+        (atom {})
+
+        shell-session
+        (fn [] (or (call-session bound-session) sess))
+
+        shell-origin
+        (fn [kind]
+          (if (call-session bound-session)
+            (pr-str [kind home-root project-path (or (extension/current-extension-id) label)])
+            (str kind ":" sess)))
+
+        shell-env
+        (fn [kind] (assoc extension/*current-environment* :session-id (shell-session)
+                          :shell-origin (shell-origin kind)))
+
+        admit-shell
+        (fn [value origin]
+          (when-let [row (get value "__vis_shell_task__")]
+            (when-let [token (get row "token")]
+              (swap! shell-capabilities assoc token
+                     {:session (shell-session) :task-id (get row "id") :token token
+                      :origin origin :id (get-in row ["snapshot" "id"])})))
+          value)
+
         ;; #326: a project extension's setting is known only where its project runs.
         setting-root
         (fn []
@@ -1410,26 +1435,29 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             nil))
     (put! g
           "__vis_host_call_tool__"
-          ;; `vis.tools`: another active session tool, called as the model calls
-          ;; it - an extension's object methods (`alias.method`) included.
           (fn [tool args kwargs]
-            (call-tool! sess (str tool) args kwargs)))
+            (let [value (call-tool! sess (str tool) args kwargs)]
+              (if (= "shell" (str tool)) (admit-shell value "tool") value))))
     (put! g
           "__vis_host_shell__"
-          ;; `vis.shell` follows the extension's trusted process boundary,
-          ;; even when its caller has an enabled session jail. It keeps the
-          ;; native shell tool's one-options-map result grammar.
           (fn [opts]
-            (host-tool-result (shell/trusted-extension-shell extension/*current-environment*
-                                                             (project-shell-opts opts)))))
+            (admit-shell (host-tool-result
+                           (shell/task-result
+                             (shell/trusted-extension-shell (shell-env "trusted-extension") (project-shell-opts opts))))
+                         (shell-origin "trusted-extension"))))
     (put! g
           "__vis_host_jailed_shell__"
-          ;; Latest-config jail: the shell implementation reloads, validates,
-          ;; and freezes the merged disk policy at each process spawn. It is
-          ;; deliberately independent of the invoking session snapshot.
           (fn [opts]
-            (host-tool-result (shell/jailed-shell extension/*current-environment*
-                                                  (project-shell-opts opts)))))
+            (admit-shell (host-tool-result
+                           (shell/task-result
+                             (shell/jailed-shell (shell-env "jailed-extension") (project-shell-opts opts))))
+                         (shell-origin "jailed-extension"))))
+    (put! g
+          "__vis_host_shell_task__"
+          (fn [token op opts]
+            (if-let [capability (get @shell-capabilities token)]
+              (shell/sdk-task-op capability op opts)
+              (throw (ex-info "This extension does not own that shell Task." {:op op})))))
     (put! g
           "__vis_host_request_input__"
           ;; Typed input View pause: one JSON request object in, one JSON
@@ -1690,6 +1718,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                  opened? (not (pending-context? ctx))]
 
              ;; An owned live view and the subscriptions end with the context that made them.
+             (task/sweep! ctx :session-close)
              (try (view/close-owned-by! ctx) (catch Throwable _ nil))
              (bus/forget-context! ctx)
              (swap! pending-contexts dissoc ctx)

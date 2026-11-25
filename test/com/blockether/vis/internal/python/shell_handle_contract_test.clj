@@ -30,10 +30,10 @@
     "exec(\"\\n\".join(TABLE[\"runner\"]), globals())\n" "\n"
     "\n" "def sdk() -> str:\n"
     "    \"Run each case through vis.shell.\"\n"
-    "    return json.dumps([drive(vis.shell, case) for case in TABLE[\"cases\"]])\n"
+    "    return json.dumps([drive(vis.shell, case, vis.tools.shell) for case in TABLE[\"cases\"]])\n"
     "\n" "\n"
     "def tools() -> str:\n" "    \"Run each case through vis.tools.shell.\"\n"
-    "    return json.dumps([drive(vis.tools.shell, case) for case in TABLE[\"cases\"]])\n" "\n"
+    "    return json.dumps([drive(vis.tools.shell, case, vis.shell) for case in TABLE[\"cases\"]])\n" "\n"
     "\n"
     "vis.register_extension(vis.Extension(name=\"shellcontract\", description=\"Shell contract fixture\", alias=\"shellcontract\", symbols=[vis.Symbol(sdk), vis.Symbol(tools)]))\n"))
 

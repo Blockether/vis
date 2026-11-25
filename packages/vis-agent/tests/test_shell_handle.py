@@ -1,147 +1,166 @@
 """The shell handle of an extension answers the calls of the sandbox handle."""
 
 import json
-import time
+import threading
+from concurrent.futures import CancelledError, Future, as_completed, wait
 
 import blockether.vis.extension as vis
 import pytest
 from blockether.vis import _outside
 
 
-def _handle():
-    """A handle on a fake host, and the options that the host received."""
-    sent = []
-
-    def call(opts):
-        sent.append(dict(opts))
-        return {
-            "id": "s1",
-            "stage": opts.get("op", "run"),
-            "out": "one\ntwo\n",
-            "exit": 0,
-            "offset": 0,
-            "next_offset": 8,
-            "is_eof": True,
-        }
-
-    return vis.Shell(call({"command": "true"}), call), sent
-
-
 @pytest.fixture
 def four_lines():
-    return vis.shell({"command": "printf 'one\\ntwo\\nthree\\nfour\\n'"}).wait(10)
+    return vis.shell("printf 'one\\ntwo\\nthree\\nfour\\n'").result(10)
 
 
-@pytest.mark.parametrize(
-    ("read", "options"),
-    [
-        (lambda sh: sh.logs(), {}),
-        (lambda sh: sh.logs(-5), {"offset": -5}),
-        (lambda sh: sh.logs(0, 10), {"offset": 0, "lines": 10}),
-        (lambda sh: sh.logs(8, -2), {"offset": 8, "lines": -2}),
-        (lambda sh: sh.logs(lines=5), {"lines": 5}),
-        (lambda sh: sh.logs(tail=5), {"lines": 5}),
-        (lambda sh: sh.logs(n=5), {"lines": 5}),
-        (lambda sh: sh.logs(start=4), {"offset": 4}),
-        (lambda sh: sh.logs(limit=64), {"limit": 64}),
-        (lambda sh: sh.logs(bytes=64), {"limit": 64}),
-    ],
-)
-def test_logs_sends_the_options_of_the_sandbox_handle(read, options):
-    sh, sent = _handle()
-    read(sh)
-    assert sent[-1] == {"op": "logs", "id": "s1", **options}
-
-
-@pytest.mark.parametrize(
-    "wait",
-    [
-        lambda sh: sh.wait(7),
-        lambda sh: sh.wait(seconds=7),
-        lambda sh: sh.wait(secs=7),
-        lambda sh: sh.wait(timeout=7),
-    ],
-)
-def test_wait_takes_each_name_of_its_seconds(wait):
-    sh, sent = _handle()
-    assert wait(sh) is sh
-    assert sent[-1] == {"op": "wait", "id": "s1", "seconds": 7}
-
-
-def test_an_unknown_keyword_names_the_keywords_and_sends_nothing():
-    sh, sent = _handle()
-    with pytest.raises(TypeError, match="logs: no keyword 'rows'. Keywords: offset"):
-        sh.logs(rows=3)
-    with pytest.raises(TypeError, match="logs: lines named twice, as 'tail' too"):
-        sh.logs(lines=1, tail=2)
-    with pytest.raises(TypeError, match="wait: no keyword 'until'. Keywords: seconds"):
-        sh.wait(until=3)
-    assert len(sent) == 1
-
-
-def test_a_field_answers_by_attribute_and_a_miss_names_the_fields():
-    sh, _ = _handle()
-    assert sh.exit == 0
-    assert sh.out == sh.stdout == sh.stderr == "one\ntwo\n"
-    assert list(sh.keys()) == list(dict(sh))
-    assert json.loads(json.dumps(sh)) == dict(sh)
+def test_a_field_answers_by_attribute_and_a_miss_names_the_fields(four_lines):
+    assert four_lines.exit == 0
+    assert four_lines.out == four_lines.stdout == four_lines.stderr
+    assert list(four_lines.keys()) == list(dict(four_lines))
+    assert json.loads(json.dumps(four_lines)) == dict(four_lines)
     with pytest.raises(AttributeError) as attribute:
-        str(sh.outp)
+        str(four_lines.outp)
     assert "'outp' is not a field of this shell result" in str(attribute.value)
     assert "Did you mean 'out'?" in str(attribute.value)
-    # `keys` is a dict method, so the text must not say that each field is an attribute.
     assert "when no dict method has its name: r['exit'] is r.exit." in str(
         attribute.value
     )
     with pytest.raises(KeyError) as key:
-        sh["nope"]
-    assert "'nope' is not a key of 'shell' result. Keys: 'id'" in str(key.value)
+        four_lines["nope"]
+    assert "'nope' is not a key of 'shell' result." in str(key.value)
     with pytest.raises(KeyError) as key:
-        sh.logs()["nope"]
+        four_lines.logs()["nope"]
     assert "'nope' is not a key of '_shell_logs' result." in str(key.value)
 
 
-def test_type_and_stop_answer_the_handle():
-    sh, sent = _handle()
-    assert sh.type("y", is_enter=False) is sh
-    assert sent[-1] == {"op": "send", "id": "s1", "text": "y", "is_enter": False}
-    assert sh["stage"] == "send"
-    assert sh.stop() is sh
+@pytest.mark.parametrize("complete", [True, False])
+def test_done_callback_reads_the_outcome_without_a_caller_waiting(complete):
+    sh = vis.shell("read word; printf '%s' \"$word\"", stdin="tty")
+    seen = []
+    observed = threading.Event()
+
+    def receive(future):
+        seen.append((future, future.result()["out"], future.exception()))
+        observed.set()
+
+    try:
+        if complete:
+            sh.type("value")
+            sh.result(5)
+        sh.add_done_callback(receive)
+        if not complete:
+            sh.type("value")
+        assert observed.wait(5)
+        assert seen == [(sh, "value", None)]
+        assert sh.result(0) is sh.result(0)
+    finally:
+        sh.cancel()
 
 
-class _OptionsHost:
-    """A host that keeps the options of each shell call."""
+@pytest.mark.parametrize("collect", ["wait", "as_completed"])
+def test_stdlib_wait_collects_a_shell_without_a_result_reader(collect):
+    sh = vis.shell("read word; printf '%s' \"$word\"", stdin="tty")
+    try:
+        sh.type("observed")
+        if collect == "wait":
+            assert wait([sh], timeout=2).done == {sh}
+        else:
+            assert list(as_completed([sh], timeout=2)) == [sh]
+        assert sh.result(0).out == "observed"
+    finally:
+        sh.cancel()
 
-    def __init__(self):
-        self.sent = []
 
-    def shell(self, options):
-        self.sent.append(dict(options))
-        return {"id": "s1", "stage": "run"}
+def test_cancelled_shell_notifies_stdlib_waiters_before_callbacks():
+    sh = vis.shell("sleep 30")
+    reported = threading.Event()
+    seen = []
 
-    jailed_shell = shell
+    def finished(future):
+        seen.append(wait([future], timeout=0).done)
+        reported.set()
+
+    try:
+        sh.add_done_callback(finished)
+        assert sh.cancel()
+        assert list(as_completed([sh], timeout=5)) == [sh]
+        assert reported.wait(5)
+        assert seen == [{sh}]
+        with pytest.raises(CancelledError):
+            sh.result(0)
+    finally:
+        sh.cancel()
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"command": "true"}, "takes no command"),
+        ({"text": "hi"}, "takes no text payload"),
+    ],
+)
+def test_attach_refuses_command_and_text(options, message):
+    with pytest.raises(RuntimeError, match=message):
+        vis.shell(op="attach", id="attach-invalid", **options)
+
+
+@pytest.mark.parametrize(
+    ("alias", "cancel"), [(" attach-existing-future ", False), (413, True)]
+)
+def test_attach_recovers_the_live_generation_without_starting_a_process(alias, cancel):
+    with pytest.raises(RuntimeError, match="No running background shell"):
+        vis.shell(op="attach", id=alias)
+    original = vis.shell("read word", stdin="tty", id=alias)
+    try:
+        recovered = vis.shell(op="attach", id=alias)
+        assert isinstance(recovered, Future)
+        assert (recovered.pid, recovered.already_running) == (original.pid, True)
+        if cancel:
+            assert recovered.cancel()
+            with pytest.raises(CancelledError):
+                original.result(5)
+        else:
+            recovered.type("done")
+            assert recovered.result(5).exit == original.result(5).exit == 0
+        with pytest.raises(RuntimeError, match="No running background shell"):
+            vis.shell(op="attach", id=alias)
+    finally:
+        original.cancel()
+
+
+def test_timeout_and_late_cancel_do_not_end_a_replacement():
+    first = vis.shell("printf old; read word", stdin="tty", id="shared")
+    try:
+        assert isinstance(first, Future)
+        with pytest.raises(TimeoutError):
+            first.exception(0.02)
+        assert first.running()
+        assert first.type("finish") is first
+        assert first.result(5)["out"] == "old"
+        second = vis.shell("printf new; read word", stdin="tty", id="shared")
+        try:
+            assert not first.cancel()
+            assert first.logs()["out"] == "old"
+            assert not second.done()
+            assert second.cancel()
+            with pytest.raises(CancelledError):
+                second.exception(5)
+            assert second.done() and second.cancelled()
+        finally:
+            second.cancel()
+    finally:
+        first.cancel()
 
 
 @pytest.mark.parametrize("door", ["shell", "jailed_shell"])
-def test_a_command_string_and_keyword_options_make_one_options_map(door, monkeypatch):
-    host = _OptionsHost()
-    monkeypatch.setattr(vis, "_host", host)
+def test_a_command_string_and_keyword_options_make_one_options_map(door):
     start = getattr(vis, door)
-    start("ls")
-    start("ls", cwd="src")
-    start("ls", {"cwd": "src"}, stdin="tty")
-    start(command="ls", cwd="src")
-    start({"command": "ls"})
-    assert host.sent == [
-        {"command": "ls"},
-        {"command": "ls", "cwd": "src"},
-        {"command": "ls", "cwd": "src", "stdin": "tty"},
-        {"command": "ls", "cwd": "src"},
-        {"command": "ls"},
-    ]
+    if door == "jailed_shell":
+        with pytest.raises(_outside.Refused, match="needs the Vis host's jail"):
+            start("true")
     with pytest.raises(TypeError, match=f"{door} takes a command and one options map"):
         start("ls", "src")
-    assert len(host.sent) == 5
 
 
 def test_a_log_page_walks_forward_by_lines(four_lines):
@@ -190,11 +209,6 @@ def test_a_log_page_reads_as_text(four_lines):
 def test_only_a_log_page_continues(four_lines):
     with pytest.raises(RuntimeError, match="shell log paging starts on a log page"):
         next(four_lines)
-    page = four_lines.logs(0, 1)
-    assert page.wait(secs=1) is page
-    assert page["stage"] == "wait"
-    with pytest.raises(RuntimeError, match="shell log paging starts on a log page"):
-        next(page)
 
 
 def test_the_outside_host_reads_the_option_names_of_the_engine(four_lines):
@@ -207,23 +221,3 @@ def test_the_outside_host_reads_the_option_names_of_the_engine(four_lines):
     assert logs(offset=0, bytes=3)["out"] == "one"
     first = logs(offset=0, lines=1)
     assert (first["out"], first["next_offset"], first["is_eof"]) == ("one\n", 4, False)
-
-
-def test_the_outside_wait_reads_each_name_of_its_seconds(monkeypatch):
-    sleeper = vis.shell({"command": "sleep 30"})
-    clock = [time.time()]
-    try:
-        with monkeypatch.context() as patched:
-            patched.setattr(_outside.time, "time", lambda: clock[0])
-            patched.setattr(
-                _outside.time,
-                "sleep",
-                lambda seconds: clock.__setitem__(0, clock[0] + seconds),
-            )
-            for name in ("seconds", "secs", "timeout"):
-                before = clock[0]
-                options = {"op": "wait", "id": sleeper["id"], name: 3}
-                assert _outside.shell(options)["status"] == "running"
-                assert 3 <= clock[0] - before < 4
-    finally:
-        sleeper.stop()

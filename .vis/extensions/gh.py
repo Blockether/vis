@@ -866,31 +866,32 @@ def _shell(command, seconds=120):
     )
     finished = False
     try:
-        if view is None:
-            done = handle.wait(int(seconds))
-        else:
-            deadline = time.monotonic() + seconds
-            while True:
-                if view.is_interrupted:
-                    raise vis.Interrupted(
-                        view.view_id, reason=view.reason, note=view.note
-                    )
-                done = handle.logs(-1)
-                if done.get("status") != "running":
-                    break
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-                view.sleep(min(0.2, remaining))
-        if done.get("status") == "running":
-            raise TimeoutError(f"GitHub CLI command timed out after {seconds:g}s")
+        try:
+            if view is None:
+                done = handle.result(timeout=seconds)
+            else:
+                deadline = time.monotonic() + seconds
+                while True:
+                    if view.is_interrupted:
+                        raise vis.Interrupted(
+                            view.view_id, reason=view.reason, note=view.note
+                        )
+                    if handle.done():
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    view.sleep(min(0.2, remaining))
+                done = handle.result(timeout=0)
+        except TimeoutError as error:
+            raise TimeoutError(f"GitHub CLI command timed out after {seconds:g}s") from error
         if done.get("exit") is None:
             raise RuntimeError("GitHub CLI command ended without an exit status")
         finished = True
         return done
     finally:
         if not finished:
-            handle.stop()
+            handle.cancel()
 
 
 def _capture(command, seconds=120):
@@ -948,10 +949,13 @@ def _device_authorization(process, hostname, seconds=60):
             raise GhMissing(
                 "GitHub CLI exited before browser authorization could begin"
             )
-        if time.monotonic() >= deadline:
-            process.stop()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             raise GhMissing("GitHub CLI did not produce a browser authorization code")
-        process.wait(1)
+        try:
+            process.result(timeout=min(1, remaining))
+        except TimeoutError:
+            pass
 
 
 def _login(hostname="github.com") -> Account:
@@ -1015,11 +1019,12 @@ def _login(hostname="github.com") -> Account:
                 raise GhMissing("GitHub authentication was cancelled by the human")
             raise GhMissing(f"GitHub authentication could not continue: {reason}")
 
-        finished = process.wait(300)
-        if finished.get("status") == "running":
+        try:
+            finished = process.result(timeout=300)
+        except TimeoutError as error:
             raise GhMissing(
                 "GitHub authentication did not finish after human authorization"
-            )
+            ) from error
         if finished.get("exit") != 0 or not _auth_status(hostname):
             raise GhMissing(
                 "GitHub rejected or could not complete browser authentication"
@@ -1030,7 +1035,7 @@ def _login(hostname="github.com") -> Account:
         )
     finally:
         if not completed:
-            process.stop()
+            process.cancel()
 
 
 def require_gh():

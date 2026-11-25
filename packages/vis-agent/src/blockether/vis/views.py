@@ -80,6 +80,7 @@ class LiveView(_ViewRecord):
     source: str | None = None
     session_id: str | None = None
     owner: Mapping[str, Any] | None = None
+    task_id: str | None = None
     placement: str | None = None
     key: str | None = None
     extension: str | None = None

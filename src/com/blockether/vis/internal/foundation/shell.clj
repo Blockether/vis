@@ -36,7 +36,7 @@
    text directly, `next(page)` continues the read and `page.pages()` walks its ready
    pages lazily, bounded to ten by default, while
    `lines=-10` walks back up. `sh.wait(30)` is the bounded poll loop written once
-   in the engine, `sh.type(\"y\")` types into the pty and `sh.stop()` kills the tree.
+   in the engine, `sh.type(\"y\")` types into the pty and `sh.cancel()` kills the tree.
    There are no id-taking verbs to re-type an id into; re-issuing a LIVE id gives
    the same handle back.
 
@@ -69,6 +69,8 @@
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.python.host :as python-host]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.foundation.shell-log :as shell-log]
@@ -592,7 +594,7 @@
        "descriptors held by unreachable objects. Usual cause: sandbox Python that "
        "opened files without closing them — a dropped file object is NOT closed "
        "there, so always `with open(...) as f:` — or many live background shells "
-       "(`sh.stop()`). Free them and retry."))
+       "(`sh.cancel()`). Free them and retry."))
 
 (defn- spawn-retrying-fds
   "Run `spawn` (a thunk that starts an OS process) and, ONLY when it failed
@@ -778,11 +780,11 @@
 (def ^:private shell-result-base
   "The ONE result shape of the whole shell family — every stage, every tool.
 
-   `shell` itself, each handle op (`sh.logs`, `sh.type`, `sh.stop`, `sh.wait`) and
+   `shell` itself, each result or snapshot (`await sh`, `sh.logs`, `sh.type`, `sh.wait`) and
    an argv run all answer THIS key set, so a caller reads `r[\"exit\"]`, `r[\"out\"]`,
    `r[\"command\"]` and `r[\"status\"]` the same way whatever produced the map and no
-   key can KeyError. `stage` NAMES the producer (`run` / `background` / `logs` /
-   `send` / `stop`) — it is the only thing that varies, and it varies as DATA, not
+   key can KeyError. `stage` names the producer (`run` / `background` / `logs` /
+   `send` / `wait`) — it is the only thing that varies, and it varies as DATA, not
    as a different shape. A key a stage has nothing to say about stays
     present-but-neutral rather than vanishing.
 
@@ -1073,29 +1075,18 @@
   (str (or (:shell-origin env) "tool")))
 
 (defn- authorize-origin!
-  "Refuse to act on a handle created by a DIFFERENT trust origin. An unknown id is
-   not this function's business — the op's own \"no such shell\" error says that
-   better."
-  [env session id]
-  (when-let [e (bg-entry session (str id))]
-    (let [want (env-origin env)
-          have (str (or (:origin e) want))]
-
-      (when-not (= want have)
-        (throw (ex-info (str "Shell '" id
-                             "' was started by a different trust origin (" have
-                             ", not " want
-                             ") and cannot be read, typed at, stopped or re-issued from"
-                             " here. Start your own shell under your own id.")
-                        {:type ::foreign-shell :id id :origin have :caller want}))))))
-
-(defn- live-bg-entry
-  "The registry entry for `id` when its process is STILL RUNNING, else nil. One
-   place decides \"is this handle alive\", so a start, a re-issue and a stop all
-   agree about it."
-  [session id]
-  (when-let [e (bg-entry session id)]
-    (when (live-entry? e) e)))
+  "Check the same entry that the operation will use. A stale token cannot
+   read or change a replacement process under the same alias."
+  ([env session id] (authorize-origin! env id (bg-entry session id) nil))
+  ([env id entry token]
+   (when (and token (not= token (:generation entry)))
+     (throw (ex-info (str "Shell '" id "' is no longer the same process.")
+                     {:type ::stale-shell :id id})))
+   (let [want (env-origin env)
+         have (or (:origin entry) want)]
+     (when-not (= want have)
+       (throw (ex-info (str "Shell '" id "' was started by a different trust origin.")
+                       {:type ::foreign-shell :id id :origin have :caller want}))))))
 
 (defn- canonical-dir
   [d]
@@ -1130,7 +1121,8 @@
    `cwd`, used to answer success for a process that never ran what was asked, in a
    directory nobody requested. That is a silent no-op, so it is refused."
   [env session id command cwd]
-  (when-let [e (live-bg-entry session id)]
+  (when-let [e (let [entry (bg-entry session id)]
+                 (when (or (get-in entry [:proc :destroy]) (live-entry? entry)) entry))]
     (authorize-origin! env session id)
     (let [want-cmd (some-> command
                            str
@@ -1144,7 +1136,7 @@
       (when mismatch
         (throw (ex-info (str "Shell '" id
                              "' is already running and " mismatch
-                             " — nothing was started. Stop it first with sh.stop(),"
+                             " — nothing was started. Cancel it first with sh.cancel(),"
                              " or start this command under a different id.")
                         {:type ::id-in-use :id id})))
       e)))
@@ -1321,30 +1313,26 @@
   nil)
 
 (defn- stop-bg-generation!
-  "Stop only the generation this callback registered, looking up its live state.
-   Completed entries have no process callbacks: their old OS pid is not a target."
+  "Stop exactly the generation that installed this callback. Do not join the
+   pump under its lifecycle lock. The pump closes the log and completes the Task."
   [session id exit-atom]
   #_{:clj-kondo/ignore [:locking-suspicious-lock]}
   (locking (bg-lifecycle-lock session id)
-    (let [entry (bg-entry session id)]
-      (when (identical? exit-atom (:exit entry))
-        (reset! (:stopped? entry) true)
-        (let [p (:proc entry)]
-          (when (:destroy p) (kill-tree! p))
-          (when-let [in (:in p)]
-            (try (.close ^java.io.InputStream in) (catch Throwable _ nil))))
-        (when-let [pump (:pump entry)]
-          (try (.join ^Thread pump 3000) (catch InterruptedException _ nil)))
-        (when-let [bridge (:bridge entry)]
-          (try ((:stop bridge)) (catch Throwable _ nil)))
-        (when (identical? exit-atom (:exit (bg-entry session id))) (drop-bg-entry! session id)))))
-  nil)
+    (let [{:keys [proc stopped? bridge] :as entry} (bg-entry session id)]
+      (when (and (identical? exit-atom (:exit entry)) (:destroy proc)
+                 (compare-and-set! stopped? false true))
+        (when (live-entry? entry) (kill-tree! proc))
+        (when-let [in (:in proc)]
+          (try (.close ^java.io.InputStream in) (catch Throwable _ nil)))
+        (when bridge (try ((:stop bridge)) (catch Throwable _ nil)))
+        (resources/unregister! session id)))))
 
 (defn- shell-resource-fns
   "Resource callbacks retain only identity and a path, not process/output state."
-  [session id exit-atom file]
+  [session id task-id exit-atom file]
   {:stop-fn (fn []
-              (stop-bg-generation! session id exit-atom))
+              (when (task/cancel! session task-id :person)
+                (stop-bg-generation! session id exit-atom)))
    :alive-fn (fn []
                (identical? exit-atom (:exit (bg-entry session id))))
    :logs-fn (fn []
@@ -1353,51 +1341,31 @@
                   normalize-terminal-output
                   str/split-lines))
    :health-fn (fn []
-                (cond (not (identical? exit-atom (:exit (bg-entry session id)))) :down
-                      (some-> (:log-error (bg-entry session id))
-                              deref)
-                      :failed
-                      (nil? @exit-atom) :running
-                      (zero? (long @exit-atom)) :exited
-                      :else :failed))})
+                (let [entry (bg-entry session id)]
+                  (cond (not (identical? exit-atom (:exit entry))) :down
+                        (some-> (:log-error entry) deref) :failed
+                        (nil? @exit-atom) :running
+                        (zero? (long @exit-atom)) :exited
+                        :else :failed)))})
 
 (defn- start-pump!
-  "Drain raw process bytes to disk, then release live process state.
-   Only bounded transfer buffers exist while pumping. Resource/log readers open
-   the file on demand; completed handles keep lightweight metadata until stopped."
-  ^Thread [session id p exit-atom exited-at stopped? bridge-atom sink index-fn log-error]
+  "Drain to disk first, then notify the process owner. The caller starts the
+   returned thread only after it publishes this generation."
+  ^Thread [id p stopped? sink log-error finish!]
   (doto (Thread.
           (fn []
-            (try (with-open [in ^java.io.InputStream (:in p)]
-                   (shell-log/drain! in sink))
-                 (catch Throwable t
-                   (when-not @stopped?
-                     (reset! log-error (str "Shell log write failed: " (.getMessage t)))
-                     (kill-tree! p))))
-            ;; Publish exit only after the final log bytes are visible on disk.
-            (shell-log/close! sink)
-            (let [code (try ((:wait p)) (catch Throwable _ nil))]
-              (compare-and-set! exited-at nil (util/now-ms))
-              (reset! exit-atom code)
-              (index-fn {:ended-at @exited-at :exit code})
-              (when-not @stopped?
-                #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-                (locking (bg-lifecycle-lock session id)
-                  (when (and (not @stopped?) (identical? p (:proc (bg-entry session id))))
-                    (when-let [b @bridge-atom]
-                      (try ((:stop b)) (catch Throwable _ nil)))
-                    (reset! bridge-atom nil)
-                    (retire-bg-entry! session id p)
-                    (try (resources/update! session
-                                            id
-                                            {:status :exited
-                                             :detail (or @log-error
-                                                         (str "exit " code " — log on disk"))})
-                         (catch Throwable _ nil))))))
-            (cleanup-jail-policy! {::cleanup (::cleanup p)})))
+            (try
+              (try (with-open [in ^java.io.InputStream (:in p)]
+                     (shell-log/drain! in sink))
+                   (catch Throwable t
+                     (when-not @stopped?
+                       (reset! log-error (str "Shell log write failed: " (.getMessage t)))
+                       (kill-tree! p))))
+              (shell-log/close! sink)
+              (finish! (try ((:wait p)) (catch Throwable _ nil)))
+              (finally (cleanup-jail-policy! {::cleanup (::cleanup p)})))))
     (.setName (str "vis-shell-bg-" id))
-    (.setDaemon true)
-    (.start)))
+    (.setDaemon true)))
 
 (defn- tree-handles
   "This process and every descendant of it that is still alive. A shell's cost is
@@ -1607,6 +1575,70 @@
                         deref)
          "attach" (when bridge (str "vis-agent extension shell attach " id))}))))
 
+(defn- result-window
+  [stage id entry]
+  (let [file (io/file (:log-path entry))
+        end (.length file)
+        {:keys [text omitted]} (capture-log file)]
+    (assoc (bg-core stage id entry)
+           "out" (normalize-terminal-output text)
+           "out_omitted_chars" (long (or omitted 0))
+           "duration_ms" (max 0 (- (long (or @(:exited-at entry) (util/now-ms)))
+                                      (long (:started-at entry))))
+           "next_offset" end)))
+
+(defn- register-process!
+  [env id {:keys [exit generation log-path command] :as entry}]
+  (let [session (:session-id env)
+        snapshot (bg-core "run" id entry {:sample-usage? false})
+        {:keys [row complete!]}
+        (task/start-manual!
+          session
+          {:kind :shell :name (str "shell(" (pr-str (one-line command 72)) ")")
+           :origin python-host/*task-origin*
+           :guest? (= "tool" (env-origin env))
+           :guest-data {:generation generation :snapshot snapshot}}
+          (fn [_] (stop-bg-generation! session id exit)))]
+    (assoc entry :task row :complete! complete! :log-path log-path)))
+
+(defn- finish-process!
+  [session id {:keys [exit exited-at proc log-error stopped? bridge complete!] :as entry} index-fn code]
+  (let [retire (delay
+                 #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+                 (locking (bg-lifecycle-lock session id)
+                   (compare-and-set! exited-at nil (util/now-ms))
+                   (reset! exit code)
+                   (when (identical? exit (:exit (bg-entry session id)))
+                     (index-fn {:ended-at @exited-at :exit code})
+                     (when (and bridge (not @stopped?))
+                       (try ((:stop bridge)) (catch Throwable _ nil)))
+                     (retire-bg-entry! session id proc)
+                     (when-not @stopped?
+                       (resources/update! session id {:status :exited
+                                                      :detail (or @log-error (str "exit " code " — log on disk"))})))))
+        outcome (fn []
+                  @retire
+                  (cond @stopped? {:state :cancelled}
+                        @log-error {:state :failed :error @log-error}
+                        (nil? code) {:state :failed :error "Shell exit code is unavailable."}
+                        :else {:state :done :value (result-window "run" id (dissoc entry :bridge))}))]
+    (try (complete! outcome) (finally @retire))))
+
+(defn- process-descriptor
+  [entry snapshot]
+  {"id" (get-in entry [:task :id])
+   "kind" "shell"
+   "name" (get-in entry [:task :name])
+   "snapshot" snapshot
+   "token" (:generation entry)})
+
+(defn task-result
+  "Return the shell process descriptor at a Python-facing start boundary."
+  [{:keys [result] :as envelope}]
+  (if-let [entry (::process (meta envelope))]
+    (with-meta (assoc envelope :result {"__vis_shell_task__" (process-descriptor entry result)}) nil)
+    envelope))
+
 (defn- stdin-tty?
   "Whether a new shell reads its stdin from the terminal. By default its stdin is empty:
    a program that read an open terminal stdin waited for hours for bytes that nothing
@@ -1625,164 +1657,97 @@
                       {:type ::bad-stdin :stdin v})))))
 
 (defn- shell-bg-spawn!
-  "Spawn a NEW background PTY under `id`. Callers guarantee no LIVE entry holds
-   the id (`shell-bg-impl` owns that check); an exited-but-unread entry under
-   the same id is replaced, discarding its retained logs by intent."
-  [env id command opts]
-  (let [session
-        (:session-id env)
-
-        id
-        (str id)
-
-        ;; ONE command, so the script the pty is fed and the line the entry keeps are
-        ;; the same string — there is no group to join.
-        script
-        (str command)
-
-        stdin-tty?
-        (stdin-tty? opts)]
-
+  "Start a process under its alias reservation. Publish the entry before the pump runs."
+  [env id script opts]
+  (let [session (:session-id env)
+        stdin-tty? (stdin-tty? opts)]
     (when (str/blank? id)
       (throw (ex-info "The shell background op needs a non-blank resource id ({\"id\": …})."
                       {:type ::blank-id})))
     (when (str/blank? script)
       (throw (ex-info "The shell background op needs its `command` as the first argument."
                       {:type ::blank-command})))
-    ;; A CLAIM is this start's own reservation of the id and has no process to
-    ;; retire; only a previous generation's entry does.
-    (when-let [stale (let [e (bg-entry session id)]
-                       (when (:proc e) e))]
-      ;; The caller established that this generation has exited. Retire its
-      ;; async pump/bridge under the lifecycle lock before reusing the socket path.
-      ;; The pump re-checks this flag + process identity under the same lock, so it
-      ;; cannot publish the old exit status onto the replacement.
-      (reset! (:stopped? stale) true)
-      (try (.close ^java.io.InputStream (:in (:proc stale))) (catch Throwable _ nil))
-      (when-let [bridge (:bridge stale)]
-        (try ((:stop bridge)) (catch Throwable _ nil)))
-      (resources/unregister! session id)
-      (drop-bg-entry! session id))
-    (let [policy
-          (call-jail-policy env opts)
-
-          dir
-          (resolve-dir-for-policy opts env policy)
-
-          ;; Open storage before spawning; failure cannot orphan a new process.
-          sink
-          (shell-log/open! session id)
-
-          p
-          (try (pty-spawn! (if stdin-tty? script (str "exec 0</dev/null; " script)) dir policy)
-               (catch Throwable t (shell-log/close! sink) (throw t)))
-
-          exit-atom
-          (atom nil)
-
-          log-error
-          (atom nil)
-
-          ;; Stamped ONCE, by whichever stage first observes the child is gone: an
-          ;; uptime is a lifetime, so it must stop growing the moment the process ends
-          ;; instead of measuring how long ago it was started.
-          exited-at
-          (atom nil)
-
-          stopped?
-          (atom false)
-
-          bridge-atom
-          (atom nil)
-
-          t0
-          (util/now-ms)
-
-          ;; One sidecar row per log, so "what did that build print" is answerable a
-          ;; turn later with no handle in hand. Written at spawn, and again by the
-          ;; pump once the child is gone.
-          db-info
-          (:db-info env)
-
-          index-fn
-          (fn [m]
-            (shell-log/index! db-info
-                              session
-                              id
-                              (merge {:command script
-                                      :script script
-                                      :dir (.getPath dir)
-                                      :log-path (:path sink)
-                                      :started-at t0
-                                      :ended-at nil
-                                      :exit nil}
-                                     m)))
-
-          pump
-          (start-pump! session
-                       id
-                       p
-                       exit-atom
-                       exited-at
-                       stopped?
-                       bridge-atom
-                       sink
-                       index-fn
-                       log-error)
-
-          ;; Passthrough bridge: expose this PTY over a per-shell AF_UNIX socket
-          ;; so a HUMAN can `vis-agent extension shell attach <id>` into the live terminal
-          ;; (browser OAuth, a prompt only a person can answer) and detach again,
-          ;; child untouched. Best-effort — if AF_UNIX bind fails the shell still
-          ;; runs, just without human attach.
-          bridge
-          (try (pty-bridge/serve!
-                 {:pty p
-                  :path (pty-bridge/socket-path session id)
-                  :replay-fn (fn []
-                               (.getBytes ^String
-                                          (:text (shell-log/read-chunk id (io/file (:path sink))))
-                                          java.nio.charset.StandardCharsets/UTF_8))})
-               (catch Throwable _ nil))]
-
-      (reset! bridge-atom bridge)
+    (let [policy (call-jail-policy env opts)
+          dir (resolve-dir-for-policy opts env policy)
+          generation (task/call-id)
+          ;; Do not truncate a log still used by another generation's pump or readers.
+          sink (if (bg-id-taken? session id (when (:proc (bg-entry session id)) (bg-entry session id)))
+                 (shell-log/open! session id generation)
+                 (shell-log/open! session id))
+          p (try (pty-spawn! (if stdin-tty? script (str "exec 0</dev/null; " script)) dir policy)
+                 (catch Throwable t (shell-log/close! sink) (throw t)))
+          t0 (util/now-ms)
+          bridge (try (pty-bridge/serve!
+                        {:pty p
+                         :path (pty-bridge/socket-path session id)
+                         :replay-fn (fn []
+                                      (.getBytes ^String
+                                                 (:text (shell-log/read-chunk id (io/file (:path sink))))
+                                                 java.nio.charset.StandardCharsets/UTF_8))})
+                      (catch Throwable _ nil))
+          entry (try (register-process!
+                  env id {:proc p :exit (atom nil) :exited-at (atom nil) :stopped? (atom false)
+                          :log-error (atom nil) :send (:send p) :bridge bridge
+                          :stdin-tty? stdin-tty? :command script :script script :dir (.getPath dir)
+                          :log-path (:path sink) :origin (env-origin env) :started-at t0
+                          :generation generation})
+                     (catch Throwable t
+                       (when bridge ((:stop bridge)))
+                       (when ((:alive? p)) (kill-tree! p))
+                       (try (.close ^java.io.InputStream (:in p)) (catch Throwable _ nil))
+                       (shell-log/close! sink)
+                       (cleanup-jail-policy! {::cleanup (::cleanup p)})
+                       (throw t)))
+          index-fn (fn [m]
+                     (shell-log/index! (:db-info env) session id
+                                       (merge {:command script :script script :dir (.getPath dir)
+                                               :shell-origin (:origin entry) :log-path (:path sink)
+                                               :started-at t0 :ended-at nil :exit nil}
+                                              m)))
+          pump (start-pump! id p (:stopped? entry) sink (:log-error entry)
+                            (partial finish-process! session id entry index-fn))]
       (index-fn nil)
-      (swap! bg-procs assoc-in
-        [(str session) id]
-        {:proc p
-         :exit exit-atom
-         :log-error log-error
-         :exited-at exited-at
-         :pump pump
-         :stopped? stopped?
-         :send (:send p)
-         :bridge bridge
-         :stdin-tty? stdin-tty?
-         :command script
-         :script script
-         :dir (.getPath dir)
-         :log-path (:path sink)
-         :origin (env-origin env)
-         :started-at t0})
-      (resources/register! session
-                           {:id id
-                            :kind :shell
-                            :label (one-line script 48)
-                            :detail script
-                            :pid (:pid p)
-                            :owner "foundation-core"
-                            :status :running}
-                           (shell-resource-fns session id exit-atom (io/file (:path sink))))
-      (extension/success
-        ;; TOTAL result shape, shared with every other stage through `bg-core`:
-        ;; run / background / logs / send / stop all answer with the same key set
-        ;; (`op` says which stage ran), so model Python never KeyErrors on a field
-        ;; another stage would have carried. `already_running` false on a fresh
-        ;; spawn, `note` nil when there is nothing to say.
-        {:result (assoc (bg-core "background" id (bg-entry session id)) "already_running" false)
-         :op :shell
-         :metadata
-         {:command script :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}}))))
+      (swap! bg-procs assoc-in [(str session) id] (assoc entry :pump pump))
+      (try
+        (resources/register! session {:id id :kind :shell :label (one-line script 48) :detail script
+                                      :pid (:pid p) :owner "foundation-core" :status :running}
+                             (shell-resource-fns session id (get-in entry [:task :id])
+                                                 (:exit entry) (io/file (:path sink))))
+        (.start pump)
+        (catch Throwable t
+          (stop-bg-generation! session id (:exit entry))
+          (shell-log/close! sink)
+          (cleanup-jail-policy! {::cleanup (::cleanup p)})
+          (finish-process! session id entry index-fn nil)
+          (throw t)))
+      (with-meta
+        (extension/success
+          {:result (bg-core "background" id entry)
+           :op :shell
+           :metadata {:command script :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}})
+        {::process entry}))))
+
+(defn- reattached-process
+  [stage id entry]
+  (with-meta
+    (extension/success
+      {:result (assoc (bg-core stage id entry)
+                 "already_running" true
+                 "note" "This shell is ALREADY running. Read it with sh.logs() or await it.")
+       :op :shell
+       :metadata {:command (:script entry) :pid (:pid (:proc entry))
+                  :started-at-ms (:started-at entry) :finished-at-ms (util/now-ms) :duration-ms 0}})
+    {::process entry}))
+
+(defn- shell-attach
+  "Return the live generation of an alias. Never start a new process."
+  [env id]
+  (let [entry (bg-entry (:session-id env) id)]
+    (authorize-origin! env id entry nil)
+    (when-not (and (live-entry? entry) (not @(:stopped? entry)))
+      (throw (ex-info (str "No running background shell '" id "' in this session.")
+                      {:type ::unknown-bg-id :id id})))
+    (reattached-process "run" id entry)))
 
 (defn- shell-bg-impl
   "`await shell(\"npm run dev\", {\"id\": id})` — IDEMPOTENT on a live id.
@@ -1810,18 +1775,7 @@
     (locking (bg-lifecycle-lock session id)
       (let [live (reissue-live-entry env session id command (get opts "cwd"))]
         (if live
-          (extension/success
-            {:result (assoc (bg-core "background" id live)
-                       "already_running" true
-                       "note" (str "Background shell '" id
-                                   "' was ALREADY running — nothing was restarted. Read its output "
-                                   "with sh.logs(). To start a fresh process, first sh.stop()."))
-             :op :shell
-             :metadata {:command (:script live)
-                        :pid (:pid (:proc live))
-                        :started-at-ms (:started-at live)
-                        :finished-at-ms (util/now-ms)
-                        :duration-ms 0}})
+          (reattached-process "background" id live)
           (if-let [command (some-> command
                                    str
                                    not-empty)]
@@ -1852,74 +1806,32 @@
               (if force? (.destroyForcibly p) (.destroy p)))})
 
 (defn- adopt-run!
-  "Adopt a blocking run whose wait expired; its existing pump writes only to disk.
-   The watcher closes the sink and retires process state after the drain finishes."
-  [{:keys [session id proc sink script cwd drains exit-atom exited-at stopped? index-fn]}]
-  (swap! bg-procs assoc-in [(str session) id :dir] cwd)
-  (index-fn {:dir cwd})
-  (let [log-error
-        (atom nil)
-
-        watcher
-        (Thread.
-          (fn []
-            (doseq [f drains]
-              (try (deref f)
-                   (catch Throwable t
-                     (cancellation/preserve-interrupt! t)
-                     (when-not @stopped?
-                       (reset! log-error (str "Shell log write failed: " (.getMessage t)))))))
-            (shell-log/close! sink)
-            (let [code (try ((:wait proc)) (catch Throwable _ nil))]
-              (compare-and-set! exited-at nil (util/now-ms))
-              (reset! exit-atom code)
-              (index-fn {:dir cwd :ended-at @exited-at :exit code})
-              (when-not @stopped?
-                #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-                (locking (bg-lifecycle-lock session id)
-                  (when (and (not @stopped?) (identical? proc (:proc (bg-entry session id))))
-                    (retire-bg-entry! session id proc)
-                    (try (resources/update! session
-                                            id
-                                            {:status :exited
-                                             :detail (or @log-error
-                                                         (str "exit " code " — log on disk"))})
-                         (catch Throwable _ nil))))))))]
-
-    (swap! bg-procs update-in [(str session) id] assoc :pump watcher :log-error log-error)
-    (resources/register! session
-                         {:id id
-                          :kind :shell
-                          :label (one-line script 48)
-                          :detail script
-                          :pid (:pid proc)
-                          :owner "foundation-core"
-                          :status :running}
-                         (shell-resource-fns session id exit-atom (io/file (:path sink))))
-    (doto watcher (.setName (str "vis-shell-run-" id)) (.setDaemon true) (.start)))
+  "Register a foreground process that outlived its bounded wait."
+  [{:keys [env session id proc sink script cwd drains index-fn]}]
+  #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+  (locking (bg-lifecycle-lock session id)
+    (let [entry (register-process!
+                  env id (assoc (bg-entry session id) :dir cwd :log-error (atom nil)
+                                :generation (task/call-id)))
+          watcher (Thread.
+                    (fn []
+                      (doseq [f drains]
+                        (try (deref f)
+                             (catch Throwable t
+                               (cancellation/preserve-interrupt! t)
+                               (when-not @(:stopped? entry)
+                                 (reset! (:log-error entry) (str "Shell log write failed: " (ex-message t)))))))
+                      (shell-log/close! sink)
+                      (finish-process! session id entry #(index-fn (assoc % :dir cwd))
+                                       (try ((:wait proc)) (catch Throwable _ nil)))))]
+      (index-fn {:dir cwd})
+      (swap! bg-procs assoc-in [(str session) id] (assoc entry :pump watcher))
+      (resources/register! session {:id id :kind :shell :label (one-line script 48) :detail script
+                                    :pid (:pid proc) :owner "foundation-core" :status :running}
+                           (shell-resource-fns session id (get-in entry [:task :id])
+                                               (:exit entry) (io/file (:path sink))))
+      (doto watcher (.setName (str "vis-shell-run-" id)) (.setDaemon true) (.start))))
   nil)
-
-(defn- live-run-result
-  "A named run whose shell is ALREADY live: the same run shape, answering with the
-   process that exists instead of spawning a second copy of it. Re-issuing an id is
-   how a caller re-attaches to work it already started, so this is a success and
-   never a refusal — and `timed_out` is FALSE, because no wait was made and
-   `timed_out` only ever means one that was made expired."
-  [id entry]
-  (let [t (util/now-ms)]
-    (extension/success {:result (assoc (bg-core "run" id entry)
-                                  "duration_ms" 0
-                                  ;; NOTHING was waited for, so nothing expired. `timed_out` means one
-                                  ;; thing only — a wait ran out — and re-attaching to a live shell
-                                  ;; never made a wait.
-                                  "timed_out" false
-                                  "already_running" true
-                                  "note" (str
-                                           "Shell '" id
-                                           "' was ALREADY running — nothing was restarted. Read it"
-                                           " with sh.logs(offset=0) and stop it with sh.stop()."))
-                        :op :shell
-                        :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))
 
 (defn- run-of-background
   "A background start answered in the RUN shape. Waiting is the ONLY difference
@@ -1948,7 +1860,7 @@
                                 (get m "id")
                                 "' — read it with sh.logs(offset=0), type at it with"
                                 " sh.type(text), wait for it with sh.wait(secs), and"
-                                " stop it with sh.stop().")))
+                                " stop it with sh.cancel().")))
       :op :shell)))
 
 (defn run-blocking
@@ -1963,7 +1875,7 @@
    the result carries that id whether the command finished or not, and a wait that
    expires is no longer a lost process: it keeps running under its id,
    `sh.logs(offset=0)` reads everything the timed-out call never saw, and
-   `sh.stop()` ends it. A command that finished inside its wait drops the
+   `sh.cancel()` ends it. A command that finished inside its wait drops the
    registry entry — there is no live process to account for — while its log file
    stays readable by id for as long as the session does."
   [env command opts]
@@ -2054,16 +1966,14 @@
         (when (get r "timed_out") (meta r))]
 
     (if timed-out
-      (adopt-run! {:session session
+      (adopt-run! {:env env
+                   :session session
                    :id id
                    :proc (:proc (bg-entry session id))
                    :sink sink
                    :script command
                    :cwd cwd
                    :drains (:drains timed-out)
-                   :exit-atom exit-atom
-                   :exited-at exited-at
-                   :stopped? stopped?
                    :index-fn index-fn})
       (do (shell-log/close! sink)
           (reset! exited-at (util/now-ms))
@@ -2089,7 +1999,7 @@
                                   (str "The WAIT expired, not the process: it is still running as"
                                        " shell '" id
                                        "\" — read everything it printed with sh.logs(offset=0),"
-                                       " and stop it with sh.stop().")
+                                       " and stop it with sh.cancel().")
                                   (get r "note"))}))
        :op :shell})))
 
@@ -2149,7 +2059,7 @@
    it waits, so a batch that ended inside its wait still has a log to read, and the
    file is what answers once the registry entry is gone."
   ([env id] (shell-logs-impl env id nil))
-  ([env id {:keys [offset limit lines sample-usage?] :or {sample-usage? true} :as opts}]
+  ([env id {:keys [offset limit lines generation sample-usage?] :or {sample-usage? true}}]
    (let [session
          (:session-id env)
 
@@ -2167,7 +2077,7 @@
                       (get retired "log_path")
                       (.getPath (shell-log/log-file session id))))]
 
-     (authorize-origin! env session id)
+     (authorize-origin! env id entry generation)
      (when-not (or entry (.isFile file))
        (throw (ex-info (str "shell: unknown id '" id "'; use the handle returned by shell().")
                        {:type ::unknown-bg-id :id id})))
@@ -2189,234 +2099,12 @@
                     ;; is the terminal's own reading of those bytes — the raw stream stays
                     ;; whole on disk at `log_path` for anyone who wants it.
                     "out"
-                    (if (::raw-output? opts) (:text chunk) (terminal-log-text id file entry chunk))
+                    (terminal-log-text id file entry chunk)
                     "offset" (:offset chunk)
                     "next_offset" (:next-offset chunk)
                     "is_eof" (:is-eof chunk))
           :op :_shell-logs
           :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
-
-(defn- wait-idle-poll-ms
-  "Idle sleep before the next read while the child is ALIVE and its log is at EOF,
-   as a function of how many idle reads came before it. It is pure LATENCY on a
-   command that is about to finish — a flat 50 ms cadence made a 5 ms `echo` cost
-   130 ms and looked, correctly, like a wait waiting for nothing — so the first
-   reads are near-instant and only a command that keeps running settles on the
-   cheap cadence a `npm run dev` deserves."
-  [^long idle]
-  (cond (< idle 4) 2
-        (< idle 10) 10
-        :else 50))
-
-(defn- await-exit
-  "Sleep up to `ms` while shell `id` runs, and wake when it exits (#396).
-   Answer true when the shell has exited."
-  [env id ms]
-  (if-let [exit (:exit (bg-entry (:session-id env) (str id)))]
-    (let [done (promise)
-          k (Object.)]
-
-      (add-watch exit
-                 k
-                 (fn [_ _ _ code]
-                   (when (some? code) (deliver done true))))
-      (try (or (some? @exit) (deref done (long ms) false)) (finally (remove-watch exit k))))
-    (do (Thread/sleep (long ms)) false)))
-
-(def ^:private wait-chunk-limit
-  "Bytes one wait iteration reads. Large enough that a build's output is drained in
-   a few reads, small enough that a runaway producer cannot allocate without bound
-   before the deadline is checked again."
-  262144)
-
-(defn- shell-wait-impl
-  "`sh.wait(secs)` — the ONE bounded wait in the whole product, written HERE and
-   reused by every caller: the sandbox handle, the extension handle and the tests
-   all call this instead of writing the poll loop a fourth time.
-
-   Read from the cursor, keep reading while bytes are still available, sleep only
-   when the log is at EOF and the child is alive, and stop at the deadline — which
-   bounds EVERY iteration, not only the idle one, because a command that never
-   stops printing always has more bytes and a clock checked only at EOF is never
-   reached. A child that has exited is drained to quiet before the wait reports,
-   so the last line the pump wrote after the exit is never lost.
-
-   `out` is everything printed since this wait's own cursor, under the same key
-   a log read answers with, and `timed_out` says which of the two ended it: the
-   deadline (true, the process runs on under its id) or the process (false).
-
-   A cancel lands when this wait's own bound expires: the interpreter raises it
-   at the guest's next bytecode boundary, and a host call is not one."
-  [env id {:keys [seconds offset]}]
-  (let [t0
-        (util/now-ms)
-
-        secs
-        (clamp-timeout-secs seconds "seconds")
-
-        deadline
-        (+ t0 (* 1000 secs))
-
-        start
-        (long (or (->pos-long offset "offset") 0))
-
-        ;; A wait accumulates as much as a foreground run captured, and no more: a
-        ;; command that never stops printing (`yes`) produced a megabyte a second on
-        ;; this machine, so an unbounded accumulator turns a 600 s wait into a heap
-        ;; problem. Same head+tail capture, same inline omitted-count marker.
-        acc
-        (capped-capture max-sync-head-chars max-sync-tail-chars)
-
-        ;; The CPU time of the tree at the first poll, from the JDK: no `ps` fork. The
-        ;; quiet note judges the CPU that the wait itself saw. Linux `ps` gives `pcpu`
-        ;; as an average over the whole life of a process, so a command that worked
-        ;; first and then waited for input stayed above 1 % for minutes and never got
-        ;; the note. Where the JDK cannot read a child (macOS), `ps` gives a recent
-        ;; share, and the note uses `cpu_percent`.
-        cpu-start
-        (volatile! ::unsampled)
-
-        finish
-        (fn [res nxt reader]
-          (let [snap
-                ((:snapshot acc))
-
-                ;; The polls read without sampling, so the tree's cost is taken
-                ;; HERE — once, on the result that is actually returned, with the
-                ;; same values a `logs` read answers with. A child that has
-                ;; already exited is not sampled, exactly as [[bg-core]] would
-                ;; not sample it: there is nothing left to measure.
-                res
-                (if (= "running" (get res "status"))
-                  (merge res (process-usage (get res "pid")))
-                  res)
-
-                elapsed-ms
-                (- (util/now-ms) t0)
-
-                quiet?
-                (and (nil? reader)
-                     (= "running" (get res "status"))
-                     (str/blank? (:text snap))
-                     (>= elapsed-ms (long quiet-note-ms))
-                     (if-let [cpu-end (when (number? @cpu-start)
-                                        (tree-cpu-ms (tree-handles (get res "pid"))))]
-                       (< (* 100 (- (long cpu-end) (long @cpu-start))) elapsed-ms)
-                       (some-> (get res "cpu_percent")
-                               double
-                               (< 1.0))))
-
-                res
-                (cond-> res
-                  reader
-                  (assoc "note"
-                    (str "The process waits for terminal input: pid " reader
-                         " blocks in a read on "
-                         "its terminal. Type with sh.type(text), or stop it with sh.stop()."))
-
-                  (and quiet? (nil? (get res "note")))
-                  (assoc "note"
-                    (str "No output and almost no CPU for "
-                         (quot elapsed-ms 1000)
-                         " s: the process "
-                         "can wait for input, a lock or the network. sh.logs(-20) shows its last "
-                         "lines, and sh.stop() stops it.")))]
-
-            (extension/success
-              {:result (assoc res
-                         "stage" "wait"
-                         "offset" start
-                         "next_offset" nxt
-                         "out" (normalize-terminal-output (:text snap))
-                         "out_omitted_chars" (long (or (:omitted snap) 0))
-                         ;; The WAIT expired, not the process: a still-running child means
-                         ;; the deadline ended this call and the shell keeps its id.
-                         "timed_out" (and (nil? reader) (= "running" (get res "status")))
-                         "waiting_for_input" (some? reader)
-                         "timeout_secs" secs
-                         "duration_ms" (- (util/now-ms) t0))
-               :op :_shell-wait
-               :metadata {:id id
-                          :started-at-ms t0
-                          :finished-at-ms (util/now-ms)
-                          :duration-ms (- (util/now-ms) t0)}})))]
-
-    (loop [off
-           start
-
-           ;; Consecutive reads that brought no bytes — the poll cadence backs off
-           ;; along this counter, so a fast command is noticed in single-digit ms.
-           idle
-           0
-
-           ;; Whether the exit was already seen when THIS read started. The pump
-           ;; publishes the exit only after the last byte is on disk, so such a read
-           ;; is complete. The read that first sees the exit took its chunk before it
-           ;; looked at the status, so it can still miss the tail.
-           exit-seen?
-           false
-
-           ;; Whether the last /proc probe saw the process block in a terminal read.
-           reader-seen?
-           false]
-
-      (let [res
-            (:result (shell-logs-impl env
-                                      id
-                                      {:offset off
-                                       :limit wait-chunk-limit
-                                       ;; The loop below reads `out`, `next_offset`,
-                                       ;; `is_eof` and `status` and NOTHING else, so a
-                                       ;; per-iteration `ps` fork buys a number no one
-                                       ;; reads. `finish` takes the one sample that
-                                       ;; reaches a caller.
-                                       :sample-usage? false
-                                       ;; Terminal controls and CR redraws can span reads.
-                                       ::raw-output? true}))
-
-            _
-            (when (= ::unsampled @cpu-start)
-              (vreset! cpu-start (tree-cpu-ms (tree-handles (get res "pid")))))
-
-            text
-            (or (get res "out") "")
-
-            nxt
-            (long (or (get res "next_offset") off))
-
-            ;; A read past the end answers the end of the log as `next_offset`. Before
-            ;; the first byte that end is 0, so the cursor must not follow it back.
-            cursor
-            (max off nxt)
-
-            idle
-            (if (= "" text) idle 0)
-
-            ;; One /proc probe every ten idle reads, about twice a second.
-            probe?
-            (and (pos? idle) (zero? (mod (long idle) 10)) (= "running" (get res "status")))
-
-            reader
-            (when probe? (terminal-reader (get res "pid")))
-
-            ;; A program can block in a read for a moment. Two probes with no output
-            ;; between them show that it waits for input.
-            seen?
-            (cond (not= "" text) false
-                  probe? (some? reader)
-                  :else reader-seen?)]
-
-        ((:append! acc) text)
-        (cond (>= (util/now-ms) deadline) (finish res nxt nil)
-              (not (get res "is_eof")) (recur cursor 0 exit-seen? false)
-              (and reader reader-seen?) (finish res nxt reader)
-              (= "running" (get res "status"))
-              (recur cursor (inc idle) (await-exit env id (wait-idle-poll-ms idle)) seen?)
-              ;; Exited: one more read, with no sleep, unless this read already
-              ;; started after the exit. A silent command no longer waits out a
-              ;; drain window that only guessed when the pump was done.
-              exit-seen? (finish res nxt nil)
-              :else (recur cursor (inc idle) true seen?))))))
 
 (def ^:private control-key-names
   "Human names for the control characters `send` writes into a PTY, so its factual
@@ -2470,7 +2158,7 @@
          (let [e (first (remove nil? (map #(get opts %) ["is_enter" "enter"])))]
            (if (nil? e) true (boolean e)))]
 
-     (authorize-origin! env session id)
+     (authorize-origin! env id entry (get opts "token"))
      (when-not entry
        (throw (ex-info (str "No background shell '" id
                             "' in this session — start one with"
@@ -2521,49 +2209,13 @@
         (let [v (get opts (name (first ks)))]
           (if (some? v) v (recur (rest ks))))))))
 
-(defn- shell-stop-impl
-  "`sh.stop()` — the TERMINAL lifecycle stage. Routes through
-   `resources/stop!` — the single stop path that the footer shares —
-   so the process tree dies and the registry entry disappears exactly once.
-   The log stays on disk and remains readable by id."
-  [env id]
-  (let [session
-        (:session-id env)
-
-        id
-        (str id)
-
-        t
-        (util/now-ms)
-
-        ;; Make a native stop linearizable against native starts of the same id.
-        ;; The stop callback re-enters this monitor (JVM monitors are reentrant).
-        [entry r]
-        #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-        (locking (bg-lifecycle-lock session id)
-          (authorize-origin! env session id)
-          [(bg-entry session id) (resources/stop! session id)])]
-
-    (when (= :unknown (:result r))
-      (throw (ex-info (str "No background shell '" id "' in this session — nothing to stop.")
-                      {:type ::unknown-bg-id :id id})))
-    (when (= :error (:result r))
-      (throw (ex-info (str "Background shell '" id "' failed to stop: " (:message r))
-                      {:type ::stop-failed :id id})))
-    (extension/success {:result (assoc (bg-core "stop" id entry) "status" "stopped")
-                        ;; Tagged with its OWN tool: each of the five verbs is a
-                        ;; registered symbol op carrying its own observation/mutation tag.
-                        :op :_shell-stop
-                        :metadata
-                        {:id id :started-at-ms t :finished-at-ms (util/now-ms) :duration-ms 0}})))
-
 (defn shell-dispatch
   "INTERNAL shell lifecycle grammar, kept for the Python-extension entry points
    (`trusted-extension-shell` and `jailed-shell`) whose
    caller authors an options map by hand and therefore genuinely needs an `op`
    discriminator. The MODEL never reaches this: it calls the `shell` PYTHON verb —
    one call that spawns one command — and drives what came back through the
-   HANDLE's own methods (`sh.logs()`, `sh.wait()`, `sh.type(\"y\")`, `sh.stop()`), so one
+   HANDLE's own methods (`sh.logs()`, `sh.wait()`, `sh.type(\"y\")`, `sh.cancel()`), so one
    disambiguate."
   [env opts]
   (when-not (opts-arg? opts)
@@ -2603,7 +2255,7 @@
         ;; mechanically reuses the start shape may still carry `command`; it is not
         ;; relevant to these stages and must not make an otherwise valid call fail.
         opts
-        (if (#{"logs" "wait" "send" "stop"} op) (dissoc raw-opts "command") raw-opts)
+        (if (#{"logs" "send"} op) (dissoc raw-opts "command") raw-opts)
 
         command
         (opt opts :command)
@@ -2664,10 +2316,7 @@
               session
               run-id
               (fn [run-id]
-                (let [opts (assoc opts "id" run-id)]
-                  (if-let [live (reissue-live-entry env session run-id cmd (opt opts :cwd))]
-                    (live-run-result run-id live)
-                    (run-of-background (shell-bg-impl env run-id cmd opts))))))))
+                (run-of-background (shell-bg-impl env run-id cmd (assoc opts "id" run-id)))))))
 
       "background"
       ;; A start is the one background stage with no prior handle: derive the id from
@@ -2682,6 +2331,9 @@
                              (fn [bg-id]
                                (shell-bg-impl env bg-id valid-command opts)))))
 
+      "attach"
+      (do (reject-command) (reject-text) (shell-attach env (need-id)))
+
       "logs"
       (do (reject-command)
           (reject-text)
@@ -2689,27 +2341,30 @@
                            (need-id)
                            {:offset (->whole-long (opt opts :offset :start) "offset")
                             :limit (->pos-long (opt opts :limit :bytes) "limit")
-                            :lines (->whole-long (opt opts :lines :n :tail) "lines")}))
-
-      "wait"
-      ;; The ONE wait, on the handle and in the host: no caller writes a poll loop.
-      (do (reject-command)
-          (reject-text)
-          (shell-wait-impl env
-                           (need-id)
-                           {:seconds (opt opts :seconds :secs :timeout)
-                            :offset (opt opts :offset :start)}))
+                            :lines (->whole-long (opt opts :lines :n :tail) "lines")
+                            :generation (get opts "token")}))
 
       "send"
       (do (reject-command) (shell-send-impl env (need-id) (need-text) opts))
 
-      "stop"
-      (do (reject-command) (reject-text) (shell-stop-impl env (need-id)))
-
       (throw (ex-info (str "Unknown shell op " (pr-str op)
-                           " — use \"run\" (default), \"background\", \"logs\", \"wait\","
-                           " \"send\" or \"stop\".")
+                           " — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".")
                       {:type ::unknown-op :op op})))))
+
+(defn sdk-task-op
+  "Drive the exact process that the SDK installation admitted."
+  [{:keys [session task-id id origin token]} op opts]
+  (let [env {:session-id session :shell-origin origin}]
+    (case op
+      "await" (if-let [outcome (when (task/owns-generation? session task-id token)
+                                 (task/await! session task-id
+                                   {:timeout-ms (min 250 (long (get opts "timeout_ms" 0)))}))]
+                (python-host/task-reply outcome)
+                {"state" "missing"})
+      "cancel" (boolean (and (task/owns-generation? session task-id token)
+                             (task/cancel! session task-id :agent)))
+      ("logs" "send") (:result (shell-dispatch env (assoc opts "op" op "id" id "token" token)))
+      (throw (ex-info "Unknown SDK shell Task operation." {:op op})))))
 
 (defn run-argv
   "Run ONE literal argv through the SAME bounded machinery `shell` runs its own
@@ -2733,7 +2388,7 @@
    boundary. Foreground calls therefore work outside a session too."
   [env opts]
   (shell-dispatch (-> (or env {})
-                      (assoc :shell-origin "trusted-extension")
+                      (assoc :shell-origin (or (:shell-origin env) "trusted-extension"))
                       ;; Unconfined, but the workspace's `.env` and the operator's
                       ;; `environment:` declarations still apply: they say where a variable
                       ;; comes from, not who may see it.
@@ -2877,7 +2532,7 @@
          :unix-connect (granted-paths opts :unix_connect "unix_connect")}]
 
     (shell-dispatch (-> (or env {})
-                        (assoc :shell-origin "jailed-extension")
+                        (assoc :shell-origin (or (:shell-origin env) "jailed-extension"))
                         (assoc :jail-policy-fn #(with-granted-paths (latest-jail-policy env)
                                                                     grants)))
                     opts)))
@@ -2943,11 +2598,12 @@
    the HANDLE now. Every run is a background run; waiting is `sh.wait(secs)`, the
    only wait there is. The handle reads (`page = sh.logs(0, lines=100)`); the page
    slices directly as its `out` text (`page[-4000:]`), continues with `next(page)` or
-   lazily with `page.pages()`, types (`sh.type(text)`) and kills (`sh.stop()`). Its log
+   lazily with `page.pages()`, types (`sh.type(text)`) and kills (`sh.cancel()`). Its log
    so nothing is ever lost to a deadline or to a call that already returned."
   {:arglists '([command] [command opts])}
   [env & args]
-  (shell-dispatch env (assoc (shell-call-opts ["command"] args) "op" "run")))
+  (let [opts (shell-call-opts ["command"] args)]
+    (task-result (shell-dispatch env (assoc opts "op" (if (= "attach" (get opts "op")) "attach" "run"))))))
 
 (defn shell-logs
   "`page = sh.logs()` — read a background shell's log from a byte offset, or the
@@ -2965,13 +2621,27 @@
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "logs")))
 
-(defn shell-wait
-  "`sh.wait(secs)` — the ONLY wait there is. Block until the shell exits or the
-   deadline passes, and answer the accumulated `out` plus the final `exit`.
-   `timed_out` true means the WAIT expired; the process runs on under its id."
-  {:arglists '([id] [id seconds] [id seconds opts])}
-  [env & args]
-  (shell-dispatch env (assoc (shell-call-opts ["id" "seconds"] args) "op" "wait")))
+(defn shell-snapshot
+  "Read or probe a ShellTask without waiting."
+  [env opts]
+  (let [id (str (get opts "id"))
+        entry (bg-entry (:session-id env) id)
+        token (get opts "token")]
+    (when-not (and entry token)
+      (throw (ex-info "This shell handle has no process generation." {:id id})))
+    (authorize-origin! env id entry token)
+    (cond (get opts "budget") (clamp-timeout-secs (get opts "seconds") "seconds")
+          (get opts "probe") (when (and (:stdin-tty? entry) (live-entry? entry))
+                              (terminal-reader (:pid (:proc entry))))
+          :else (let [result (result-window "wait" id entry)
+                      seconds (clamp-timeout-secs (get opts "seconds") "seconds")
+                      elapsed (long (or (get opts "elapsed_ms") 0))]
+                  (cond-> (assoc result "timeout_secs" seconds)
+                    (and (live-entry? entry) (>= elapsed (long quiet-note-ms))
+                         (str/blank? (get result "out"))
+                         (some-> (get result "cpu_percent") double (< 1.0)))
+                    (assoc "note" (str "No output and almost no CPU for " (quot elapsed 1000)
+                                       " s. Check the log with sh.logs(-20).")))))))
 
 (defn shell-type
   "`sh.type(\"y\")` — type keystrokes at a background shell's stdin.
@@ -2980,13 +2650,6 @@
   {:arglists '([id text] [id text opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id" "text"] args) "op" "send")))
-
-(defn shell-stop
-  "`sh.stop()` — kill the process tree and drop the retained logs and
-   session resource."
-  {:arglists '([id])}
-  [env & args]
-  (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "stop")))
 
 ;; Compact shell labels used by the live process ticker.
 
@@ -3130,23 +2793,24 @@
        "`out` is the one stream of the pty. Stdout and stderr are the same channel there, so `out` "
        "holds what the command wrote to either, in order. There is one name and no `stderr` key. "
        "`out` is always a string. An empty string means that this stage returned no output, not that "
-       "the process log is empty. Use `sh.logs()` to read the log, also after `sh.stop()`.\n\n"
+       "the process log is empty. Use `sh.logs()` to read the log, also after `sh.cancel()`.\n\n"
        "`out` normalizes terminal colours and controls automatically, so parse this text view. "
        "`log_path` keeps the raw terminal stream, including ANSI sequences.")
      :description
      (str
        "`shell(command, {\"id\": …, \"cwd\": …})` starts ONE `bash -lc` `command` under a real pty and "
-       "returns its HANDLE at once. Every run is a background run. Chain steps with `&&`, and run "
+       "returns a ShellTask at once. Every run is a background run. Chain steps with `&&`, and run "
        "independent work as separate calls. Every answer already carries the status "
        "(`status`/`exit`, the clock, `log_path` and live cpu/rss), so you never need to ask again.\n\n"
-       "Drive the process through the handle. `sh.wait(secs)` is the only wait, and `timed_out` "
+       "Drive the process through the handle. `await sh` gives the exit and output. `sh.wait(secs)` updates the handle, and `timed_out` "
        "means that the wait expired, not the process. `sh.logs(-50)` gives the last 50 LINES. `page "
        "= sh.logs(0, lines=10)` gives a ten-line window: `next(page)` continues, `page.pages()` "
        "walks ready pages lazily with a default bound of ten, and `lines=-10` walks upward. Use "
-       "`sh.type(text)` for input and `sh.stop()` to stop, never a rerun. `wait`, `type` and `stop` "
+       "`sh.type(text)` for input and `sh.cancel()` to stop, never a rerun. `wait` and `type` "
        "write their answer into the same handle and return it, so `sh` stays current after "
        "`sh.wait(30)`. A log page is a separate object. Calling `shell` again with a live `id` "
-       "returns that shell.\n\n"
+       "returns that shell. Use `await shell(op=\"attach\", id=alias)` to recover a live shell "
+       "by alias without starting a command. The alias must belong to the same trust origin.\n\n"
        "The stdin of a command is empty, so a program that reads it gets end of input at once. Give "
        "`{\"stdin\": \"tty\"}` for a program that reads `sh.type(text)` or a person's answer on its "
        "stdin. When a program waits for input on its terminal, `sh.wait` returns early with "
@@ -3161,7 +2825,8 @@
        "[\"executable\", \"arg\", …]}`. The command is an argv list, never a shell string. Use a source "
        "map for a secret, because a literal stays in the transcript. Use null to unset a variable. "
        "Example: `print((await shell(\"npm test\", {\"env\": {\"NODE_ENV\": \"test\"}})).wait(300)[\"out\"])`.")
-     :params [{:name "id" :note "reuse to re-attach a live shell"} {:name "cwd"}
+     :params [{:name "id" :note "the live shell alias"} {:name "cwd"}
+              {:name "op" :note "attach to a live alias without starting a command"}
               {:name "timeout_secs"} {:name "env" :note "THIS run's variables, over the project's"}
               {:name "stdin" :note "\"tty\" lets the program read sh.type; empty by default"}]
      :ticker-fn (shell-ticker "run")
@@ -3203,29 +2868,6 @@
      :ticker-fn (shell-ticker "logs")
      :on-error-fn (shell-on-error :_shell-logs)}))
 
-(def shell-wait-symbol
-  (extension/symbol
-    #'shell-wait
-    {:activity (presenter/for-tool :_shell-wait)
-     :symbol '_shell-wait
-     :name "_shell_wait"
-     :result
-     (str
-       "The same shell result shape (`stage` \"wait\"). `out` is everything printed since the cursor "
-       "of this wait. `exit`/`status` are final unless `timed_out` is true. `timed_out` means that "
-       "the WAIT expired and the shell keeps running under its id.")
-     :description
-     (str
-       "Transport for `sh.wait(seconds)`. Call the handle that the shell result already is, not "
-       "this. It blocks until the command exits or the deadline passes. The bounded poll loop lives "
-       "here, so no caller writes one.")
-     :params [{:name "id" :required? true} {:name "seconds"} {:name "offset"}]
-     :inject-env? true
-     :tag :observation
-     :presenter :shell
-     :ticker-fn (shell-ticker "wait")
-     :on-error-fn (shell-on-error :_shell-wait)}))
-
 (def shell-type-symbol
   (extension/symbol
     #'shell-type
@@ -3247,36 +2889,23 @@
      :ticker-fn (shell-ticker "send")
      :on-error-fn (shell-on-error :_shell-type)}))
 
-(def shell-stop-symbol
+(defn- shell-snapshot-tool
+  "Read a process snapshot for ShellTask.wait without waiting."
+  [opts]
+  (shell-snapshot extension/*current-environment* opts))
+
+(def ^:private shell-snapshot-symbol
   (extension/symbol
-    #'shell-stop
-    {:activity (presenter/for-tool :_shell-stop)
-     :symbol '_shell-stop
-     :name "_shell_stop"
-     :result
-     (str
-       "The same shell result shape (`stage` \"stop\"): `status` \"stopped\", `exit`. `out` is an empty "
-       "string. You can still read the process log with `sh.logs()`.")
-     :description
-     (str "Transport for `sh.stop()`. Call the handle instead. It kills the process tree of a "
-          "background shell and releases its live resource. The log stays on disk.")
-     :call {:pos ["id"]}
-     :inject-env? true
-     :tag :mutation
-     :presenter :shell
-     :ticker-fn (shell-ticker "stop")
-     :on-error-fn (shell-on-error :_shell-stop)}))
+    #'shell-snapshot-tool
+    {:symbol '__vis-shell-snapshot__ :name "__vis_shell_snapshot__" :raw? true :hidden? true}))
 
 (defn shell-enabled? [_env] (toggles/enabled? "shell"))
 
 (def shell-symbols
-  ;; `shell` is an engine-bound sandbox verb; `_shell_logs` / `_shell_wait` /
-  ;; `_shell_type` / `_shell_stop` are PRIVATE transport (underscore-prefixed so
-  ;; `apropos` never lists them). The model calls the handle's own `sh.logs()` /
-  ;; `sh.wait()` / `sh.type("y")` / `sh.stop()`. Every stage already carries its
-  ;; status block.
+  ;; Private reads are bound only when the model can start a shell.
   (mapv #(assoc % :ext.symbol/active-fn shell-enabled?)
-        [shell-symbol shell-logs-symbol shell-wait-symbol shell-type-symbol shell-stop-symbol]))
+        [(assoc shell-symbol :ext.symbol/python-task? true)
+         shell-logs-symbol shell-type-symbol shell-snapshot-symbol]))
 
 (defn prompt
   "How to call `shell` and drive its handle, only while the shell layer is on.
@@ -3289,13 +2918,11 @@
       "file and data work in Python.\n"
       "- `sh = await shell(cmd, cwd=dir)` starts one `bash -lc` command and returns its handle at "
       "once, while the program runs.\n"
-      "- `sh.wait(300)` waits up to 300 s; one wait lasts at most "
-      (quot (long max-timeout-secs) 60)
-      " min. "
-      "`sh.logs(-50)` gives the last 50 lines, `sh.type(text)` "
-      "sends input to a command started with `stdin=\"tty\"` and `sh.stop()` stops it. Each returns the handle with `status`, `exit` and "
-      "`out`.\n"
-      "- Example: `print((await shell(\"npm test\")).wait(300).out)`. `doc(\"shell\")` gives the rest.")))
+      "- `r = await sh` waits for the exit and gives a ShellResult. A nonzero exit is data.\n"
+      "- `sh.wait(300)` waits up to 300 s and updates the handle. It does not cancel the process. "
+      "`sh.logs(-50)` gives the last 50 lines. `sh.type(text)` sends input to a command that "
+      "started with `stdin=\"tty\"`. `sh.cancel()` stops the process.\n"
+      "- Example: `sh = await shell(\"npm test\"); print((await sh).out)`. `doc(\"shell\")` gives the rest.")))
 
 (defn shell-attach-command
   "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live

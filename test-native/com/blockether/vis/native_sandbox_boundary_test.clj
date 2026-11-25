@@ -33,8 +33,13 @@
            "assert await asyncio.to_thread(probe.echo, value='thread') == 'thread!'\n"
            "print('NATIVE_KEYWORDS_READY')\n"
            ;; #207: execute the owned-process and capture boundary in the image.
-           "child = await shell('sleep 30')\n" "stopped = await child.stop()\n"
-           "assert stopped['status'] == 'stopped', str(stopped)\n"
+           "import importlib\n"
+           "child = await shell('sleep 30')\n"
+           "assert isinstance(child, importlib.import_module('asyncio').Task)\n"
+           "assert child.cancel() and not child.cancel()\n"
+           "try:\n    await child\nexcept asyncio.CancelledError:\n    pass\nelse:\n    raise AssertionError('cancel did not reach the child')\n"
+           "assert child.cancelled() and child.logs().status == 'exited'\n"
+           "await shell('printf native-result; exit 7', id='native-recovery')\n"
            "print('NATIVE_PROCESS_CLEANUP_READY')\n"
            "from pathlib import Path\n"
            ;; Cold root and subtree listings must keep native overlays without building an index.
@@ -64,6 +69,9 @@
                             :arguments (json/write-json-str
                                          {:code (str "assert scan_kept == 279\n"
                                                      "assert len(list(scan_root.iterdir())) == 1\n"
+                                                     "recovered = next(t for t in asyncio.all_tasks() if getattr(t, 'id', None) == 'native-recovery')\n"
+                                                     "result = await recovered\n"
+                                                     "assert result.exit == 7 and result.out == 'native-result'\n"
                                                      "print('NATIVE_TRAVERSAL_RECOVERED')")})}}]
          whole @#'native/whole-body
          stream @#'native/stream-body

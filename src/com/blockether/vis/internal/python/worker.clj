@@ -138,7 +138,7 @@
                        [(str "vis_engine/blockether/vis/_data/schema/" schema ".json")
                         (str "vis-contract/schema/" schema ".json")])
                      ["activity" "agents" "automations" "common" "config" "content" "council" "diff"
-                      "evals" "gateway" "keymap" "provider" "symbol" "toggle" "view" "voice"]))))
+                      "evals" "gateway" "keymap" "provider" "shell-result" "symbol" "task" "toggle" "view" "voice"]))))
 
 (defonce ^:private guest-sources
   (delay (into {}
@@ -190,7 +190,9 @@
   #{"__vis_host_request__" "__vis_host_live__" "__vis_host_state_get__" "__vis_host_state_put__"
     "__vis_host_state_del__" "__vis_host_state_keys__" "__vis_host_log__"
     ;; #507: answers nil to a thread, so the thread never reads the provider of a call.
-    "__vis_host_tool_call_provider__"})
+    "__vis_host_tool_call_provider__"
+    ;; The shell door accepts only a process capability admitted by this binding.
+    "__vis_host_shell_task__"})
 
 (defn- serve-host-call!
   "Serve only identities the host assigned to this connection. Worker claims do

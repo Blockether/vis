@@ -1,8 +1,10 @@
 (ns com.blockether.vis.internal.foundation.shell-test
   (:require [clojure.java.io :as io]
+            [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.shell :as shell]
@@ -66,7 +68,14 @@
 
 (def ^:private shell-send* @#'shell/shell-send-impl)
 
-(def ^:private shell-stop* @#'shell/shell-stop-impl)
+(defn- shell-stop* [env id]
+  (let [session (:session-id env)
+        _ (#'shell/authorize-origin! env session id)
+        entry (#'shell/bg-entry session id)
+        task-id (get-in entry [:task :id])]
+    (task/cancel! session task-id :agent)
+    (task/await! session task-id {:timeout-ms 5000})
+    {:result (assoc (#'shell/bg-core "cancel" id entry) "status" "stopped")}))
 
 (def ^:private shell* @#'shell/shell-dispatch)
 
@@ -117,12 +126,20 @@
        (filter #(or (str/starts-with? % "vis-shell") (str/starts-with? % "vis-pty")))
        count))
 
-(def ^:private shell-wait* @#'shell/shell-wait-impl)
+(defn- shell-wait* [env id {:keys [seconds offset]}]
+  (let [session (:session-id env)
+        entry (#'shell/bg-entry session id)
+        opts {"id" id "token" (:generation entry) "seconds" seconds}
+        _ (when-not entry (throw (ex-info "shell: unknown id" {:id id})))
+        limit (shell/shell-snapshot env (assoc opts "budget" true))
+        outcome (task/await! session (get-in entry [:task :id]) {:timeout-ms (* 1000 limit)})
+        result (or (:value outcome) (shell/shell-snapshot env (assoc opts "elapsed_ms" (* 1000 limit))))]
+    {:result (cond-> (assoc result "stage" "wait" "timed_out" (= :running (:state outcome)))
+               offset (merge (select-keys (:result (shell-logs* env id {:offset offset}))
+                                           ["out" "offset" "next_offset" "is_eof"])))}))
 
 (defn- wait*
-  "`sh.wait(secs)` in Clojure — the SAME host loop the sandbox handle and an
-   extension handle call, not a fourth copy of it: the test waits exactly the way
-   the product does, so a bug in the loop fails here."
+  "Wait on the registered process task in a host-side test."
   ([env id] (wait* env id 30))
   ([env id secs] (:result (shell-wait* env id {:seconds secs}))))
 
@@ -388,18 +405,13 @@
               command "printf '\\033[32mgreen\\033[0m\\nfirst\\rlast\\n\\033]0;title\\007body\\n'"
               plain "green\nlast\nbody\n"]
 
-          (try (doseq [limit [1 2 3 4 5 7]]
-                 (let [id (str "split-" limit)]
-                   (shell-bg* env id command)
-                   (with-redefs-fn {#'shell/wait-chunk-limit limit}
-                     (fn []
-                       (let [waited (wait* env id)
-                             logged (:result (shell-logs* env id {:offset 0}))]
-
-                         (expect (= 0 (get waited "exit")))
-                         (expect (= plain (get waited "out")))
-                         (expect (= plain (get logged "out")))
-                         (expect (str/includes? (slurp (get logged "log_path")) "\u001b[")))))))
+          (try (shell-bg* env "split" command)
+               (let [waited (wait* env "split")
+                     logged (:result (shell-logs* env "split" {:offset 0}))]
+                 (expect (= 0 (get waited "exit")))
+                 (expect (= plain (get waited "out")))
+                 (expect (= plain (get logged "out")))
+                 (expect (str/includes? (slurp (get logged "log_path")) "\u001b[")))
                (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))
 
 (defdescribe
@@ -1115,38 +1127,19 @@
                        (expect (= 1 (count registered)))
                        (expect (= (first pids) (get (first registered) "pid")))))
                    (finally (resources/stop-all! sid))))))))
-  (it "serializes an external stop callback with replacement of the same shell id"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let [sid "shell-ext-stop-replace-race"
-                  env {:session-id sid}
-                  drop-var #'shell/drop-bg-entry!
-                  original-drop (var-get drop-var)
-                  entered (promise)
-                  release (promise)]
-
-              (try (shell-bg* env "same" "exit 0")
-                   (poll #(:result (shell-logs* env "same")) #(= "exited" (get % "status")))
-                   (with-redefs-fn {drop-var (fn [session id]
-                                               (deliver entered true)
-                                               @release
-                                               (original-drop session id))}
-                     (fn []
-                       (let [stopping (future (resources/stop! sid "same"))]
-                         (expect (not= ::timed-out (deref entered 5000 ::timed-out)))
-                         (let [starting (future (shell-bg* env "same" "sleep 60"))]
-                           ;; The replacement waits behind teardown instead of being
-                           ;; installed and then erased by the old callback's keyed drop.
-                           (expect (= ::blocked (deref starting 50 ::blocked)))
-                           (deliver release true)
-                           (expect (= :stopped (:result @stopping)))
-                           (let [replacement (:result @starting)]
-                             (expect (false? (get replacement "already_running")))
-                             (expect (= "running" (get replacement "status")))
-                             (expect (= (get replacement "pid")
-                                        (get (:result (shell-logs* env "same")) "pid"))))))))
-                   (finally (deliver release true) (resources/stop-all! sid))))))))
+  (it "does not let a completed task cancel a replacement under the same alias"
+      (let [sid "shell-ext-stop-replace-race"
+            env {:session-id sid}]
+        (try (shell-bg* env "same" "exit 7")
+             (let [old-id (get-in (#'shell/bg-entry sid "same") [:task :id])
+                   before (task/await! sid old-id {:timeout-ms 5000})]
+               (shell-bg* env "same" "sleep 60")
+               (let [new-id (get-in (#'shell/bg-entry sid "same") [:task :id])]
+                 (expect (not= old-id new-id))
+                 (expect (false? (task/cancel! sid old-id :agent)))
+                 (expect (= 7 (get-in before [:value "exit"])))
+                 (expect (= :running (:state (task/await! sid new-id {}))))))
+             (finally (resources/stop-all! sid)))))
   (it "prevents an exiting old pump from publishing status onto its replacement"
       (with-shell-on
         (fn []
@@ -1504,17 +1497,18 @@
                      [(str "i=0; while [ $i -lt 150000 ]; do i=$((i+1)); done; : > '"
                            marker
                            "'; sleep 30") marker])]]
-            (try (shell* env {"command" command "id" "quiet" "timeout_secs" 1})
+            (let [id (if worked "quiet-after-work" "quiet")]
+              (try (shell* env {"command" command "id" id "timeout_secs" 1})
                  ;; The marker says that the work ended, so the wait sees only the sleep.
                  (when worked (poll #(.isFile worked) true? 100))
                  (with-redefs-fn {#'shell/quiet-note-ms 500}
                    (fn []
-                     (let [r (wait* env "quiet" 2)]
+                     (let [r (wait* env id 2)]
                        (expect (true? (get r "timed_out")))
                        (expect (str/includes? (str (get r "note")) "No output") command))))
                  (finally (resources/stop-all! sid)
                           (some-> worked
-                                  .delete))))))))
+                                  .delete)))))))))
 
 (defdescribe
   shell-bg-lifecycle-op-test
@@ -1535,7 +1529,7 @@
                      (expect (= "logs" (get logs "stage"))))
                    (let [sent (:result (shell* env {"op" "send" "id" "ops" "text" "hello"}))]
                      (expect (= "\"hello\" ↵" (get sent "keys"))))
-                   (let [stop (:result (shell* env {"op" "stop" "id" "ops"}))]
+                   (let [stop (:result (shell-stop* env "ops"))]
                      (expect (= "stopped" (get stop "status"))))
                    (finally (resources/stop-all! sid)))))))))
 
@@ -1630,7 +1624,7 @@
                      ;; The log FILE outlives the process, and every stage still names it.
                      (expect (.isFile (io/file ^String (get r "log_path"))))))
                  ;; STOP is a stage too: it reports the shell it just killed.
-                 (let [stopped (:result (shell* env {"op" "stop" "id" "st1"}))]
+                 (let [stopped (:result (shell-stop* env "st1"))]
                    (expect (= "stopped" (get stopped "status")))
                    (expect (some? (get stopped "log_path"))))
                  (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
@@ -1666,57 +1660,13 @@
                        ;; shared runner schedules the return within one frame.
                        (expect (< (- back (long (get st "finished_at"))) 500))))
                    (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
-  ;; Issue #396: a silent command waited out 50 quiet reads, a quarter second,
-  ;; after it exited. The pump publishes the exit only after its last byte is on
-  ;; disk, so one read that starts after the exit is seen is complete.
-  (it "reads once more after the exit, then answers"
-      (let [reads
-            (atom 0)
-
-            ;; The read that first sees the exit took its chunk before the tail
-            ;; landed. The next read gets the tail.
-            tail-pump
-            (fn [_env _id _opts]
-              (let [n (swap! reads inc)]
-                {:result {"out" (if (= 2 n) "late-line" "")
-                          "status" "exited"
-                          "exit" 0
-                          "is_eof" true
-                          "next_offset" (if (< n 2) 0 9)}}))]
-
-        (with-redefs-fn {#'shell/shell-logs-impl tail-pump}
-          (fn []
-            (let [w (:result (shell-wait* {} "late" {:seconds 5}))]
-              (expect (= "late-line" (get w "out")))
-              (expect (false? (get w "timed_out")))
-              (expect (= 2 @reads)))))))
-  (it "answers a silent exited command after one confirming read"
-      (let [reads
-            (atom 0)
-
-            silent
-            (fn [_env _id _opts]
-              (swap! reads inc)
-              {:result {"out" "" "status" "exited" "exit" 0 "is_eof" true "next_offset" 0}})]
-
-        (with-redefs-fn {#'shell/shell-logs-impl silent}
-          (fn []
-            (let [w (:result (shell-wait* {} "quiet" {:seconds 5}))]
-              (expect (= "" (get w "out")))
-              (expect (false? (get w "timed_out")))
-              (expect (= 2 @reads)))))))
-  ;; Issue #396: the idle sleep wakes when the command exits, not at the poll end.
-  (it "wakes from the idle sleep when the command exits"
-      (let [exit (atom nil)]
-        (with-redefs-fn {#'shell/bg-procs (atom {"s396" {"w" {:exit exit}}})}
-          (fn []
-            (let [t0 (System/currentTimeMillis)
-                  _ (future (Thread/sleep 50) (reset! exit 0))
-                  woke (#'shell/await-exit {:session-id "s396"} "w" 10000)]
-
-              (expect (true? woke))
-              (expect (< (- (System/currentTimeMillis) t0) 5000))
-              (expect (true? (#'shell/await-exit {:session-id "s396"} "w" 10000))))))))
+   ;; Issue #396: publish only after the final bytes reach the log.
+   (it "includes the final bytes in a terminal result"
+       (let [env {:session-id "shell-final-bytes"}]
+         (try (shell* env {"command" "printf tail" "id" "tail"})
+              (let [r (wait* env "tail" 5)]
+                (expect (= [0 "tail"] [(get r "exit") (get r "out")])))
+              (finally (resources/stop-all! (:session-id env))))))
   ;; Regression, gateway CPU audit: a JFR profile of a live gateway caught it
   ;; forking `/bin/ps` EIGHT times a second — 388 of 395 process spawns in a 46 s
   ;; window came from this one loop. Every poll asked [[bg-core]] for the tree's
@@ -1750,41 +1700,7 @@
                      (expect (pos? (long (get waited "rss_bytes"))))
                      (expect (number? (get waited "cpu_percent")))
                      (expect (number? (get waited "cpu_ms"))))
-                   (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
-  (it
-    "tells the ticker WHAT it waits for — the command and the budget, not the op"
-    (with-shell-on
-      (fn []
-        (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (let [sid "shell-wait-ticker"
-                env {:session-id sid}
-                ticker-of #(:ext.symbol/ticker-fn %)]
-
-            (try
-              (shell* env {"command" "sleep 30" "id" "dev"})
-              ;; The live phrase names the COMMAND and the budget — never the
-              ;; handle, which is the caller's own bookkeeping and answers as
-              ;; little as `_shell-wait dev` did.
-              (expect (= "waiting up to 60s for: sleep 30"
-                         ((ticker-of shell/shell-wait-symbol) env [{"id" "dev" "seconds" 60}])))
-              (expect (= (str "waiting up to " rt/DEFAULT_SHELL_TIMEOUT_SECS "s for: sleep 30")
-                         ((ticker-of shell/shell-wait-symbol) env [{"id" "dev"}])))
-              ;; User report: the ticker said 3600s while the wait ended at the 1800 s cap.
-              (expect (= (str "waiting up to " rt/MAX_SHELL_TIMEOUT_SECS "s for: sleep 30")
-                         ((ticker-of shell/shell-wait-symbol) env [{"id" "dev" "seconds" 3600}])))
-              (expect (= "stopping: sleep 30"
-                         ((ticker-of shell/shell-stop-symbol) env [{"id" "dev"}])))
-              ;; The SPAWN says what it is about to run, read from its own
-              ;; argument — the one call that cannot look the command up yet.
-              (expect (= "running: npm test" ((ticker-of shell/shell-symbol) env ["npm test"])))
-              ;; Regression, user report (paraphrased: what is `tt`?): no live
-              ;; shell answers, and the sentence says the generic noun rather
-              ;; than a token only the caller can resolve.
-              (expect (= "reading the log of the shell"
-                         ((ticker-of shell/shell-logs-symbol) env [{"id" "zq7"}])))
-              (expect (not (str/includes? ((ticker-of shell/shell-wait-symbol) env [{"id" "zq7"}])
-                                          "zq7")))
-              (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
+                   (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
 
 (defdescribe
   shell-one-shape-test
@@ -1808,7 +1724,7 @@
                        logs (:result (shell-logs* env "s1"))
                        sent (:result (shell-send* env "s1" "yes"))
                        waited (wait* env (get run "id"))
-                       stopped (:result (shell* env {"op" "stop" "id" "s1"}))
+                       stopped (:result (shell-stop* env "s1"))
                        git (shell/run-argv env ["git" "--version"] nil)]
 
                    (expect (= (ks run)
@@ -1820,7 +1736,7 @@
                               (ks stopped)
                               (ks git)))
                    ;; `stage` is the ONE thing that varies, and it varies as DATA.
-                   (expect (= ["run" "run" "logs" "logs" "wait" "send" "stop" "run"]
+                   (expect (= ["run" "run" "logs" "logs" "wait" "send" "cancel" "run"]
                               (mapv #(get % "stage") [run bg logs2 logs waited sent stopped git])))
                    ;; The bytes have ONE name, whether the call waited for them or
                    ;; came back for them later.
@@ -1907,7 +1823,7 @@
                                                           {"command" "echo before-stop; sleep 30"
                                                            "id" "victim"}))
                                       _ (Thread/sleep 300)
-                                      _ (shell* env {"op" "stop" "id" "victim"})
+                                      _ (shell-stop* env "victim")
                                       r (wait* env (get sh "id") 10)]
 
                                   (expect (false? (get r "timed_out")))
@@ -2016,7 +1932,7 @@
               (try (let [_ (shell* mine {"command" "sleep 30" "id" "owned"})]
                      (doseq [call [#(shell* theirs {"op" "logs" "id" "owned"})
                                    #(shell* theirs {"op" "send" "id" "owned" "text" "x"})
-                                   #(shell* theirs {"op" "stop" "id" "owned"})
+                                   #(shell-stop* theirs "owned")
                                    #(shell* theirs {"command" "sleep 30" "id" "owned"})]]
                        (expect (str/includes? (str (throw-message call)) "different trust origin")))
                      ;; The owner is unaffected.
@@ -2208,12 +2124,95 @@
   "A real sandbox session wired with the REAL built-in bindings, so `shell` here
    is the genuine tool (not a stub) resolving `env` at call time."
   ^String [env]
-  (:python-context (tpc/new-context (extension/builtin-sandbox-bindings (constantly env)))))
+  (let [ctx (:python-context (tpc/new-context {} nil {:session-id (or (:session-id env) "")}))]
+    (ep/set-python-bindings! ctx
+                             (map (fn [[sym val]] {:sym sym :val val :task? (= 'shell sym)})
+                                  (extension/builtin-sandbox-bindings (constantly env))))
+    ctx))
 
 (defn- py
   "Eval one Python expression in session `c` and marshal the value back to Clojure."
   [^String c code]
-  (tpc/ev c code))
+  (let [i (inc (or (str/last-index-of code "\n") -1))
+        source (str (subs code 0 i) "print(__import__('json').dumps((" (subs code i) ")))\n")
+        {:keys [error stdout]} (ep/run-python-block c source)]
+    (when error (throw (ex-info (:message error) error)))
+    (when-not (str/blank? stdout) (json/read-json stdout :key-fn keyword))))
+
+(defn- with-shell-task-context [f]
+  (let [sid (str "shell-task-" (random-uuid))
+        ctx (py-ctx {:session-id sid})]
+    (try (f sid ctx)
+         (finally (resources/stop-all! sid) (ep/dispose-python-context! ctx)))))
+
+(defn- shell-pid-gone? [pid]
+  (let [pid (long pid)]
+    (loop [n 0]
+      (if (some-> (java.lang.ProcessHandle/of pid) (.orElse nil) (.isAlive))
+        (if (< n 160) (do (Thread/sleep 25) (recur (inc n))) false)
+        true))))
+
+(defdescribe shell-starter-cancellation-test
+  (it "does not leave a child if the shell starter is cancelled during spawn"
+      (with-shell-task-context
+        (fn [_ ctx]
+          (let [spawn @#'shell/pty-spawn!
+                entered (promise)
+                gate (promise)
+                pid (promise)]
+            (try (with-redefs-fn
+                   {#'shell/pty-spawn! (fn [& args]
+                                        (deliver entered true)
+                                        @gate
+                                        (let [proc (apply spawn args)]
+                                          (deliver pid (:pid proc))
+                                          proc))}
+                   (fn []
+                     (expect (true? (py ctx "start = shell('sleep 30', id='pending')\nTrue")))
+                     (expect (true? (deref entered 3000 nil)))
+                     (expect (true? (py ctx "start.cancel()")))
+                     (deliver gate true)
+                     (let [seen (py ctx (str "import asyncio\n"
+                                              "answer = 'returned'\ntry:\n    await start\n"
+                                              "except asyncio.CancelledError:\n    answer = 'cancelled'\nanswer"))
+                           child (deref pid 500 nil)]
+                       (expect (= "cancelled" seen))
+                       (expect (or (nil? child) (shell-pid-gone? child)) (str "spawned pid " child)))))
+                 (finally (deliver gate true))))))))
+
+(defdescribe shell-await-stop-test
+  (it "turn Stop kills only the shell awaited by that block"
+      (with-shell-task-context (fn [sid c]
+             (let [[wp bp] (py c (str "w = await shell('sleep 30', id='waited')\n"
+                                      "b = await shell('sleep 30', id='background')\n"
+                                      "[w.pid, b.pid]"))
+                   waiter (future (ep/run-python-block c "await w"))]
+               (try
+                 (loop [n 0]
+                   (when (and (< n 120) (not (some #(seq (:waiters %))
+                                                  (vals (get-in @@#'task/sessions [sid :entries])))))
+                     (Thread/sleep 25) (recur (inc n))))
+                 (ep/interrupt-guest! c)
+                 (expect (not= ::stuck (deref waiter 5000 ::stuck)))
+                 (expect (shell-pid-gone? wp))
+                 (expect (= [true true] (py c "await __import__('asyncio').sleep(.2)\n[w.cancelled(), not b.done()]")))
+                 (expect (false? (shell-pid-gone? bp)))
+                 (finally (future-cancel waiter))))))))
+
+(defdescribe shell-observation-stop-test
+  (it "keeps the process alive when Stop interrupts a bounded observation"
+      (with-shell-task-context (fn [sid c]
+             (let [[id pid] (py c "b = await shell('sleep 30', id='bounded')\n[b.task_id, b.pid]")
+                   waiter (future (ep/run-python-block c "b.wait(60)"))]
+               (try
+                 (loop [n 0]
+                   (when (and (< n 120) (not (seq (get-in @@#'task/sessions [sid :entries id :waiters]))))
+                     (Thread/sleep 25) (recur (inc n))))
+                 (ep/interrupt-guest! c)
+                 (expect (not= ::stuck (deref waiter 5000 ::stuck)))
+                 (expect (= :running (:state (task/state sid id))))
+                 (expect (some-> (java.lang.ProcessHandle/of (long pid)) (.orElse nil) (.isAlive)))
+                 (finally (future-cancel waiter))))))))
 
 (defdescribe
   python-sandbox-surface-test
@@ -2225,18 +2224,18 @@
             c
             (py-ctx {:session-id sid})]
 
-        (try (expect (= ["wait" "hi" "echo hi"]
+        (try (expect (= ["run" "hi" "echo hi"]
                         (py c
-                            (str "r = __vis_settle__(shell('echo hi')).wait(20)\n"
+                            (str "sh = await shell('echo hi')\nr = await sh\n"
                                  "[r['stage'], r['out'].strip(), r['command']]"))))
              ;; User report: a held handle stayed at `running` after `sh.wait(...)`; a
              ;; driving stage now answers into that handle, a log page does not.
-             (expect (= ["stop" "logs" "stop" true]
+             (expect (= ["run" "logs" true false]
                         (py c
                             (str
-                              "b = __vis_settle__(shell('echo alive; sleep 30', {'id':'pyjob'}))\n"
+                              "b = await shell('echo alive; sleep 30', {'id':'pyjob'})\n"
                               "l = b.logs(limit=10)\n"
-                              "s = b.stop()\n" "[b['stage'], l['stage'], s['stage'], s is b]"))))
+                              "s = b.cancel()\n" "[b['stage'], l['stage'], s, s is b]"))))
              (finally (resources/stop-all! sid)))))
   (it "bounds sh.wait(secs) even when the command NEVER stops printing"
       ;; Regression, shell audit: the poll loop only checked its deadline once the log
@@ -2251,12 +2250,12 @@
         (try (expect (= [true "running" true]
                         (py c
                             (str "import time\n"
-                                 "sh = __vis_settle__(shell('while true; do echo x; done',"
-                                 " {'id':'chatty'}))\n"
+                                 "sh = await shell('while true; do echo x; done',"
+                                 " {'id':'chatty'})\n"
                                  "t0 = time.time()\n" "r = sh.wait(1)\n"
                                  "took = time.time() - t0\n"
                                  "seen = [bool(r['timed_out']), r['status'], took < 45]\n"
-                                 "sh.stop()\n" "seen"))))
+                                 "sh.cancel()\n" "seen"))))
              (finally (resources/stop-all! sid)))))
   (it
     "answers with a HANDLE whose own methods drive the process"
@@ -2268,21 +2267,21 @@
           c
           (py-ctx {:session-id sid})]
 
-      ;; Regression: slicing type/stop output raised TypeError after the operation succeeded.
+      ;; A send has an empty output window even when the following result has text.
       (try
         (expect
           (=
-            [true "__VisShell__" false true "exited" false "" "" true]
+            [true "ShellTask" false true "exited" false "" false true]
             (py
               c
               (str
-                "sh = __vis_settle__(shell('read x; echo got $x', {'id':'handle', 'stdin':'tty'}))\n"
+                "sh = await shell('read x; echo got $x', {'id':'handle', 'stdin':'tty'})\n"
                 "sent = sh.type('ready')['out'][-300:]\n"
                 "w = sh.wait(30)\n"
                 "seen = ['got ready' in w['out'], w['status'], w['timed_out']]\n"
-                "stopped = sh.stop()\n"
-                "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals()]"
-                " + seen + [sent, stopped.out[-300:]," " 'got ready' in sh.logs(-7)['out']]"))))
+                "stopped = sh.cancel()\n"
+                "[isinstance(sh, __import__('asyncio').Task), type(sh).__name__, 'shell_logs' in globals()]"
+                " + seen + [sent, stopped," " 'got ready' in sh.logs(-7)['out']]"))))
         (finally (resources/stop-all! sid)))))
   (it "reads a LINE window on the handle, folds `n`, and refuses a keyword by name"
       ;; A near-miss keyword used to cross as an unread key: `sh.logs(n=10)` came
@@ -2296,13 +2295,13 @@
 
         (try (expect (= [true true true true]
                         (py c
-                            (str "sh = __vis_settle__(shell('for i in $(seq 1 40); do echo line-$i;"
-                                 " done', {'id':'walk'}))\n"
+                            (str "sh = await shell('for i in $(seq 1 40); do echo line-$i;"
+                                 " done', {'id':'walk'})\n"
                                  "sh.wait(30)\n" "a = sh.logs(lines=3)\n"
                                  "b = sh.logs(n=3)\n" "head = sh.logs(0, 10)\n"
                                  "try:\n" "    sh.logs(nlines=3)\n"
                                  "    refusal = 'nothing was refused'\n" "except TypeError as e:\n"
-                                 "    refusal = str(e)\n" "sh.stop()\n"
+                                 "    refusal = str(e)\n" "sh.cancel()\n"
                                  "[a['out'].strip().splitlines() =="
                                  " ['line-38', 'line-39', 'line-40'],"
                                  " a['out'] == b['out']," " head['out'].strip().splitlines() =="
@@ -2326,8 +2325,8 @@
                (= [true true true true true true true true true true]
                   (py c
                       (str
-                        "status_res = __vis_settle__(shell('printf abcdefghij',"
-                        " {'id':'text'}))\n" "status_res.wait(30)\n"
+                        "status_res = await shell('printf abcdefghij',"
+                        " {'id':'text'})\n" "status_res.wait(30)\n"
                         "page = status_res.logs(-120)\n" "tail = page[-4000:]\n"
                         "lines = status_res.logs.splitlines()\n"
                         "[tail == page['out'], ('STATUS:' + page[-4:]) == 'STATUS:ghij',"
@@ -2357,8 +2356,8 @@
         (try (expect (= [true true true true true true "exited" true true true true true]
                         (py c
                             (str
-                              "sh = __vis_settle__(shell('printf abcdefghij', {'id':'aliases'}))\n"
-                              "waited = sh.wait(30)\n"
+                              "sh = await shell('printf abcdefghij', {'id':'aliases'})\n"
+                              "waited = await sh\n"
                               "try:\n" "    waited.output\n"
                               "    miss = 'nothing was refused'\n" "except AttributeError as e:\n"
                               "    miss = str(e)\n"
@@ -2381,18 +2380,18 @@
       (try (expect
              (= [true true true true true true true true true true true]
                 (py c
-                    (str "sh = __vis_settle__(shell('for i in $(seq 1 40); do echo line-$i;"
-                         " done', {'id':'pages'}))\n"
+                    (str "sh = await shell('for i in $(seq 1 40); do echo line-$i;"
+                         " done', {'id':'pages'})\n"
                          "sh.wait(30)\n" "try:\n"
                          "    next(sh)\n" "    refusal = 'nothing was refused'\n"
-                         "except RuntimeError as e:\n" "    refusal = str(e)\n"
+                         "except TypeError as e:\n" "    refusal = str(e)\n"
                          "first = sh.logs(0, lines=10)\n" "second = next(first)\n"
                          "pages = list(sh.logs(0, lines=10).pages())\n"
                          "default_bounded = list(sh.logs(0, lines=1).pages())\n"
                          "bounded = list(sh.logs(0, lines=3).pages(max_pages=2))\n"
                          "tail = sh.logs(lines=-10)\n"
                          "above = next(tail)\n" "done = next(pages[-1], None)\n"
-                         "sh.stop()\n" "[first['out'].strip().splitlines() =="
+                         "sh.cancel()\n" "[first['out'].strip().splitlines() =="
                          " ['line-%d' % i for i in range(1, 11)],"
                          " second['out'].strip().splitlines() =="
                          " ['line-%d' % i for i in range(11, 21)]," " len(pages) == 4,"
@@ -2405,7 +2404,7 @@
                          " above['out'].strip().splitlines() =="
                          " ['line-%d' % i for i in range(21, 31)]," " done is None,"
                          " set(iter(first)) == set(first.keys()),"
-                         " refusal.endswith('sh.logs(0, lines=100) first.')]"))))
+                         " 'not an iterator' in refusal]"))))
            (finally (resources/stop-all! sid)))))
   (it "scrolls the LINE window back UP: `lines=-10` is the ten ABOVE an offset"
       ;; The window only ever moved forward, so a reader who paged past the line they
@@ -2418,11 +2417,11 @@
 
         (try (expect (= [true true true]
                         (py c
-                            (str "sh = __vis_settle__(shell('for i in $(seq 1 40); do echo line-$i;"
-                                 " done', {'id':'back'}))\n" "sh.wait(30)\n"
+                            (str "sh = await shell('for i in $(seq 1 40); do echo line-$i;"
+                                 " done', {'id':'back'})\n" "sh.wait(30)\n"
                                  "down = sh.logs(0, 10)\n"
                                  "further = sh.logs(down['next_offset'], 10)\n"
-                                 "up = sh.logs(down['next_offset'], -10)\n" "sh.stop()\n"
+                                 "up = sh.logs(down['next_offset'], -10)\n" "sh.cancel()\n"
                                  "[further['out'].strip().splitlines() =="
                                  " ['line-%d' % i for i in range(11, 21)],"
                                  " up['out'] == down['out'],"
@@ -2447,12 +2446,12 @@
             (py
               c
               (str
-                "sh = __vis_settle__(shell('sleep 30', {'id':'stat'}))\n"
+                "sh = await shell('sleep 30', {'id':'stat'})\n"
                 "seen = [hasattr(sh, 'status'), callable(sh.status),"
                 " sh.status == sh['status'], sh['status'], sh['exit'] is None,"
                 " sh['log_path'].endswith('stat.log'),"
                 " isinstance(sh['rss_bytes'], int) and sh['rss_bytes'] >= 0, sh['started_at'] > 0]\n"
-                "sh.stop()\n" "seen"))))
+                "sh.cancel()\n" "seen"))))
         (finally (resources/stop-all! sid)))))
   (it "removes the binding when the shell toggle is off"
       (let [before
@@ -2476,7 +2475,7 @@
              ;; A handle that a block still holds says the same sentence.
              (expect (= (str "RuntimeError: " (get ep/PROCESS_SURFACE "off"))
                         (py c
-                            (str "try:\n    __VisShell__({'op': 'shell', 'id': 'held'}).wait(1)\n"
+                            (str "try:\n    __VisShell__({'op': 'shell', 'id': 'held'}).logs()\n"
                                  "except Exception as error:\n"
                                  "    said = f'{type(error).__name__}: {error}'\n" "said"))))
              (finally (toggles/set-enabled! "shell" before)))))
@@ -2567,14 +2566,15 @@
             c
             (py-ctx {:session-id sid})]
 
-        (try (expect (= ["stop" "logs" "stop"]
+        (try (expect (= ["run" "logs" false true]
                         (py c
                             (str "job = "
                                  (pr-str sid)
                                  "\n"
-                                 "b = __vis_settle__(shell(['echo ready; sleep 30'], {'id':job}))\n"
+                                 "b = await shell('echo ready; sleep 30', {'id':job})\n"
                                  "l = b.logs(limit=1)\n"
-                                 "s = b.stop()\n" "[b['stage'], l['stage'], s['stage']]"))))
+                                 "running = not b.done()\n"
+                                 "s = b.cancel()\n" "[b['stage'], l['stage'], not running, s]"))))
              (finally (resources/stop-all! sid))))))
 
 (defn- interrupt-during
@@ -2597,7 +2597,8 @@
         guest
         (doto (Thread. ^Runnable
                        (fn []
-                         (deliver outcome (try (py c code) :returned (catch Throwable _ :unwound))))
+                         (deliver outcome (try (if (:error (ep/run-python-block c code)) :unwound :returned)
+                                               (catch Throwable _ :unwound))))
                        label)
           (.setDaemon true)
           (.start))]
@@ -2622,9 +2623,9 @@
              ;; parked, and the session it owned was unusable from then on.
              (it "unwinds a parked sh.wait at the cancel and REUSES the session"
                  (let [result (interrupt-during "shell-wait-cancel-test"
-                                                (str "sh = __vis_settle__(shell("
+                                                (str "sh = await shell("
                                                      "'while true; do echo x; done',"
-                                                     " {'id':'parked'}))\n" "sh.wait(60)"))]
+                                                     " {'id':'parked'})\n" "sh.wait(60)"))]
                    ;; The host interrupt can finish the block before the guest signal,
                    ;; so :landed may be false. Require the actual unwind and session
                    ;; reuse rather than an acknowledgement of an already-finished block.
@@ -2632,43 +2633,12 @@
                    (expect (:reusable result)))))
 
 (defdescribe shell-run-cancel-test
-             "A cancel reaches a FOREGROUND run — the longest host wait in the product."
-             ;; Session 7df808ff pinned the other half of the cancel contract. A run parks in
-             ;; `Process.waitFor` for up to ten minutes, and the wedge that started that
-             ;; investigation was a cancel that could not reach a parked block at all: the
-             ;; guest thread stayed inside the interpreter and the session it owned was
-             ;; wedged for every later turn. That is what must not regress: the child dies,
-             ;; the block gets its own envelope back rather than an unwind, and the SAME
-             ;; session serves the next turn.
-             (it "kills the child and keeps the session USABLE, whatever budget the run owned"
-                 (let [marker
-                       (java.io.File/createTempFile "vis-run-cancel" ".log")
-
-                       result
-                       (interrupt-during "shell-run-cancel-test"
-                                         (str "__vis_settle__(shell("
-                                              (pr-str (str "while true; do echo x >> "
-                                                           (.getAbsolutePath marker)
-                                                           "; sleep 0.05; done"))
-                                              ", {'timeout_secs': 300}))"))
-
-                       at-cancel
-                       (.length marker)]
-
-                   ;; The interpreter's own interrupt cannot land here — the block is
-                   ;; parked INSIDE a host call (`Process.waitFor`), which is exactly
-                   ;; the `false` the door documents. The thread interrupt is what ends
-                   ;; this park, and what the loop's cancel sends first.
-                   (expect (false? (:landed result)))
-                   ;; The run ANSWERS: `shell-run-impl` kills the tree and reports, so the
-                   ;; block resumes at its next statement instead of unwinding.
-                   (expect (= :returned (:outcome result)))
-                   (expect (:reusable result))
-                   ;; The tree died WITH the cancel: a child that outlives the turn that
-                   ;; spawned it would keep writing here for another five minutes.
-                   (Thread/sleep 700)
-                   (expect (= at-cancel (.length marker)))
-                   (.delete marker))))
+             ;; Cancel a waiting block without killing the process it started.
+             (it "unwinds an awaited shell Task and keeps the session usable"
+                 (let [result (interrupt-during "shell-run-cancel-test"
+                                                "sh = await shell('sleep 30', id='parked')\nr = await sh")]
+                   (expect (= :unwound (:outcome result)))
+                   (expect (:reusable result)))))
 
 (def ^:private fd-exhaustion? @#'shell/fd-exhaustion?)
 
@@ -3140,8 +3110,8 @@
 
         (try (expect (= [true "audit-A" "audit-A" "audit-B"]
                         (py c
-                            (str "a = __vis_settle__(shell('printf audit-A'))\n" "a.wait(20)\n"
-                                 "b = __vis_settle__(shell('printf audit-B'))\n" "b.wait(20)\n"
+                            (str "a = await shell('printf audit-A')\n" "a.wait(20)\n"
+                                 "b = await shell('printf audit-B')\n" "b.wait(20)\n"
                                  "[a['id'] != b['id'], a.logs()['out'],"
                                  " a.wait(20)['out'], b.logs()['out']]"))))
              (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))
@@ -3225,7 +3195,7 @@
                                env {:session-id sid}]
 
                            (try (shell-bg* env "quick" "echo done")
-                                (let [r (:result (shell* env {"op" "wait" "id" "quick" "secs" 20}))]
+                                (let [r (wait* env "quick" 20)]
                                   (expect (= 0 (get r "exit")))
                                   (expect (false? (get r "timed_out")))
                                   (expect (str/includes? (str (get r "out")) "done")))
@@ -3286,18 +3256,17 @@
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let [started (:result (shell/jailed-shell nil
+            (let [started (:result (shell/task-result (shell/jailed-shell nil
                                                        {"id" "jailed-grants"
                                                         "command" "printf granted"
                                                         "allow_read_write" ["/tmp/vis-grant-fifo"]
-                                                        "unix_connect" ["/tmp/vis-grant.sock"]}))
-                  done (:result (shell/jailed-shell
-                                  nil
-                                  {"op" "wait" "id" (get started "id") "seconds" 20}))]
+                                                        "unix_connect" ["/tmp/vis-grant.sock"]})))
+                  id (get-in started ["__vis_shell_task__" "id"])
+                  done (:value (task/await! nil id {:timeout-ms 20000}))]
 
               (try (expect (str/ends-with? (str (get done "out")) "granted"))
                    (expect (= 0 (get done "exit")))
-                   (finally (shell/jailed-shell nil {"op" "stop" "id" (get started "id")})))))))))
+                   (finally (task/cancel! nil id :agent)))))))))
 
 (defdescribe shell-option-keys-test
              (it "reads shell options under their string names and near-miss aliases only (#291)"

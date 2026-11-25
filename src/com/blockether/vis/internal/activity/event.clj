@@ -670,7 +670,9 @@
   [{:keys [operation presenter args result result-envelope] :as details}]
   (let [shell-id
         (when (shell-presenter? operation presenter)
-          (or (when (map? result) (get result "id")) (shell-id-from-args operation args)))
+          (or (get-in result ["__vis_shell_task__" "snapshot" "id"])
+              (when (map? result) (get result "id"))
+              (shell-id-from-args operation args)))
 
         refs
         (concat (declared-resources result)
@@ -832,7 +834,8 @@
         summary
         (if (= outcome :succeeded)
           (when-not (get-in details [:activity :summary-only])
-            (some-> (displayable-result result)
+            (some-> (displayable-result (or (get-in result ["__vis_shell_task__" "snapshot"])
+                                            result))
                     (bounded-summary max-detail-bytes)))
           (bounded-rendered (paths/compact-path-text (:workspace-root details)
                                                      (util/redact-secret-text (or (some->

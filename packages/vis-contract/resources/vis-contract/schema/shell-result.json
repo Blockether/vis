@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vis.blockether.com/schema/shell-result.json",
+  "$ref": "#/$defs/shell_result",
+  "$defs": {
+    "shell_result": {
+      "type": "object",
+      "required": [
+        "already_running",
+        "attach",
+        "command",
+        "cpu_ms",
+        "cpu_percent",
+        "cwd",
+        "duration_ms",
+        "exit",
+        "finished_at",
+        "id",
+        "is_eof",
+        "keys",
+        "log_path",
+        "next_offset",
+        "note",
+        "offset",
+        "out",
+        "out_omitted_chars",
+        "pid",
+        "rss_bytes",
+        "stage",
+        "started_at",
+        "status",
+        "timed_out",
+        "timeout_secs",
+        "uptime_ms",
+        "waiting_for_input"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "already_running": {
+          "type": "boolean"
+        },
+        "attach": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cpu_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cpu_percent": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "exit": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "finished_at": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_eof": {
+          "type": "boolean"
+        },
+        "keys": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "log_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "next_offset": {
+          "type": "integer"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "out": {
+          "type": "string"
+        },
+        "out_omitted_chars": {
+          "type": "integer"
+        },
+        "pid": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "rss_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "run",
+            "logs",
+            "send",
+            "wait"
+          ]
+        },
+        "started_at": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timed_out": {
+          "type": "boolean"
+        },
+        "timeout_secs": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "uptime_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "waiting_for_input": {
+          "type": "boolean"
+        },
+        "op": {
+          "const": "shell"
+        }
+      }
+    }
+  }
+}

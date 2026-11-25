@@ -20,10 +20,12 @@ import mimetypes
 import os
 import re
 import sys
+import threading
 import time
 from asyncio import CancelledError as _CancelledError
 from collections.abc import Callable, Mapping, Sequence
 from collections.abc import MutableMapping as _MutableMapping
+from concurrent.futures import Future
 from contextlib import contextmanager
 from contextvars import ContextVar as _ContextVar
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass
@@ -154,11 +156,15 @@ class Host(Protocol):
         ...
 
     def shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Run one shell operation. Return the contract's result shape."""
+        """Start one shell Task, or read or send to a shell by alias."""
         ...
 
     def jailed_shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Run one shell op inside the workspace jail."""
+        """Run one shell operation inside the workspace jail."""
+        ...
+
+    def shell_task(self, token: Any, op: str, options: Mapping[str, Any]) -> Any:
+        """Read, cancel, or send to the shell Task that this capability names."""
         ...
 
     def call_env(self) -> Mapping[str, str | None]:
@@ -546,7 +552,8 @@ class _Tools:
             raise TypeError(
                 "vis.tools is not a tool; call one, such as vis.tools.spel.reserve(...)"
             )
-        return _host.call_tool(self._name, _tool_data(args), _tool_data(kwargs))
+        value = _host.call_tool(self._name, _tool_data(args), _tool_data(kwargs))
+        return _shell_answer(value, is_tool=True) if self._name == "shell" else value
 
     def __repr__(self):
         return f"<vis tool {self._name}>" if self._name else "<vis tools>"
@@ -2851,7 +2858,8 @@ class Symbol:
             spec = _symbol_spec(
                 self.fn, self.name, self.tag, self.is_hidden, self.activity
             )
-            return dict(spec, detachable=self.detachable)
+            spec["detachable"] = self.detachable
+            return spec
         if names := _symbol_tag_names(self.tag):
             raise ValueError(f"vis.Symbol tag must be one of {names}")
         if self.activity is not None:
@@ -4728,36 +4736,14 @@ class _ShellLogs:
         return self()[key]
 
 
-class Shell(dict):
-    # A SHELL RESULT IS A LIVE HANDLE — the SAME contract the model's sandbox gets.
-    # `vis.shell` and `vis.jailed_shell` both answer this
-    # dict-with-methods, so an extension drives a process on the object the call
-    # returned (`sh.logs()`, `sh.wait(30)`, `sh.type('y')`, `sh.stop()`) instead of
-    # hand-authoring `{'op': 'logs', 'id': …}` maps. It IS a dict — `sh['exit']`,
-    # `json.dumps(sh)`, `{**sh}` all behave — and every op answers the one shell
-    # result shape, so no key can KeyError.
-    #
-    # The sandbox handle is the reference for each call that this class answers.
-    # It is a class of the Python runtime, and it calls session tools. This class
-    # calls the host of the extension, which is also there outside Vis.
-    # The options of the log read that made this page. Only a log page has them.
+class ShellResult(dict):
+    """Shell fields and a log reader bound to the process that produced them."""
+
     _vis_logs_spec: dict[str, Any] | None = None
 
-    def __init__(self, raw, call):
-        dict.__init__(self, dict(raw or {}))
-        self._vis_call = call
-
-    def _vis_op(self, opts):
-        return Shell(self._vis_call(dict(opts, id=self.get("id"))), self._vis_call)
-
-    def _vis_drive(self, opts):
-        # `wait`, `type` and `stop` write their answer into THIS handle and return
-        # it, as the sandbox handle does. A log page stays its own object.
-        answer = self._vis_op(opts)
-        self.clear()
-        self.update(answer)
-        self.__dict__.pop("_vis_logs_spec", None)
-        return self
+    def __init__(self, raw, read_logs):
+        super().__init__(raw)
+        self._vis_read_logs = read_logs
 
     def _vis_is_log_page(self):
         return dict.get(self, "stage") == "logs"
@@ -4810,8 +4796,7 @@ class Shell(dict):
             f"{name!r} is not a field of this shell result. A field answers by key, "
             f"and by attribute when no dict method has its name: {example}. "
             f"Keys: {self._vis_keys_text('(none)')}."
-            f"{_shell_name_tip(self, name)} "
-            "Methods: logs(offset, lines), wait(secs), type(text), stop()."
+            f"{_shell_name_tip(self, name)}"
         )
 
     def _vis_log_text_concat(self, other, is_reversed):
@@ -4838,7 +4823,7 @@ class Shell(dict):
         return _ShellLogs(self)
 
     def _vis_log_page(self, spec):
-        page = self._vis_op(dict(spec, op="logs"))
+        page = ShellResult(self._vis_read_logs(spec), self._vis_read_logs)
         page._vis_logs_spec = dict(spec)
         return page
 
@@ -4900,53 +4885,125 @@ class Shell(dict):
                 break
             page = next(page, None)
 
-    def type(self, text, is_enter=True):
-        return self._vis_drive(
-            {"op": "send", "text": str(text), "is_enter": bool(is_enter)}
+
+class ShellFuture(Future[ShellResult]):
+    """The synchronous Future for a shell process owned by the host."""
+
+    def __init__(self, descriptor, call, *, is_tool=False):
+        super().__init__()
+        self._vis_is_tool = is_tool
+        self._vis_call = call
+        self._vis_token = descriptor["token"]
+        self._vis_snapshot = self._result_from(descriptor["snapshot"])
+        # Future.cancel() fires callbacks before an executor would notify its
+        # aggregate waiters. Notify those waiters before any user callback.
+        super().add_done_callback(self._notify_cancelled)
+        observer = threading.Thread(
+            target=self._watch, name="vis-shell-result", daemon=True
         )
+        try:
+            observer.start()
+        except RuntimeError:
+            self.cancel()
+            raise
 
-    def stop(self):
-        return self._vis_drive({"op": "stop"})
+    @staticmethod
+    def _notify_cancelled(future):
+        if future.cancelled():
+            future.set_running_or_notify_cancel()
 
-    def wait(self, seconds=120, **aliases):
-        # ONE wait, in the HOST: `{'op': 'wait'}` runs the bounded poll loop that the
-        # sandbox handle also calls, so an extension and the model can never disagree
-        # about when a wait ends or what it accumulated.
-        # `secs` and `timeout` mean `seconds`.
-        for key in ("secs", "timeout"):
-            if key in aliases:
-                seconds = aliases.pop(key)
-        if aliases:
-            raise TypeError(
-                f"wait: no keyword '{sorted(aliases)[0]}'. "
-                "Keywords: seconds (secs/timeout mean it)."
-            )
-        return self._vis_drive({"op": "wait", "seconds": int(seconds)})
+    def _op(self, op, **options):
+        return self._vis_call(self._vis_token, op, options)
+
+    def _result_from(self, value):
+        if self._vis_is_tool:
+            value = {"op": "shell", **value}
+        return ShellResult(value, self._read_logs)
+
+    def _read_logs(self, spec):
+        return self._op("logs", **spec)
+
+    @property
+    def logs(self):
+        return self._vis_snapshot.logs
+
+    def type(self, text, is_enter=True):
+        answer = self._op("send", text=str(text), is_enter=bool(is_enter))
+        self._vis_snapshot = self._result_from(answer)
+        return self
+
+    def __getitem__(self, key):
+        return self._vis_snapshot[key]
+
+    def get(self, key, default=None):
+        return self._vis_snapshot.get(key, default)
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._vis_snapshot, name)
+
+    def running(self):
+        return not self.done()
+
+    def cancel(self):
+        if self.done():
+            return False
+        return bool(self._op("cancel"))
+
+    def _watch(self):
+        # Only this observer reads and publishes the process outcome. A missing
+        # capability after owner teardown is terminal too.
+        try:
+            while True:
+                answer = self._op("await", timeout_ms=250)
+                state = answer["state"]
+                if state != "running":
+                    break
+            if state == "done":
+                result = self._result_from(answer["value"])
+            elif state == "cancelled":
+                result = None
+            else:
+                message = answer.get("error") or answer.get("message")
+                raise RuntimeError(message or f"Shell Task is {state}.")
+        except Exception as error:
+            self.set_exception(error)
+        else:
+            if result is None:
+                super().cancel()
+            else:
+                self.set_result(result)
 
 
-def _shell_call(name):
-    def call(opts):
-        return getattr(_host, name)(opts)
+def _shell_answer(raw, *, is_tool=False):
+    descriptor = raw.get("__vis_shell_task__")
+    if descriptor is None:
+        raise RuntimeError("Shell start did not return a process Task.")
+    return ShellFuture(descriptor, _host.shell_task, is_tool=is_tool)
 
-    return call
+
+def _sdk_shell_call(name, args, options):
+    call = getattr(_host, name)
+    opts = _shell_options(name, args, options)
+    raw = call(opts)
+    if str(opts.get("op")).strip() in ("logs", "send"):
+        return ShellResult(raw, lambda spec: call(dict(spec, id=raw["id"], op="logs")))
+    return _shell_answer(raw)
 
 
 def shell(*args, **options):
-    """Start one command and answer its handle.
+    """Start a command and return its Future. Use `result()` to read the exit.
 
     Give the command as text with keyword options, or give one options map:
     `shell("ls", cwd="src")` is `shell({"command": "ls", "cwd": "src"})`.
     """
-    # Trusted extensions get the same unrestricted process boundary as subprocess.
-    call = _shell_call("shell")
-    return Shell(call(_shell_options("shell", args, options)), call)
+    return _sdk_shell_call("shell", args, options)
 
 
 def jailed_shell(*args, **options):
-    """Start one command in the jail and answer its handle. See `shell`."""
-    # Strictly re-read the latest merged on-disk config at each process spawn.
-    call = _shell_call("jailed_shell")
-    return Shell(call(_shell_options("jailed_shell", args, options)), call)
+    """Start a command in the jail and return its Future. See `shell`."""
+    return _sdk_shell_call("jailed_shell", args, options)
 
 
 class _Fs:

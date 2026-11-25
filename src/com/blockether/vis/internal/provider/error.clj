@@ -984,7 +984,7 @@
     (case (provider-error-kind err)
       :file-descriptors-exhausted
       (str "NEXT STEP: free the descriptors and retry — stop chatty background "
-           "shells (`sh.stop()`), and hold fewer files open at once: the sandbox "
+           "shells (`sh.cancel()`), and hold fewer files open at once: the sandbox "
            "interpreter hands a descriptor back the moment the block drops the "
            "handle, so what exhausts the table is handles something still HOLDS. "
            "If it recurs, raise the process open-file limit (Vis raises it at "

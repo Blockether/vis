@@ -10691,7 +10691,7 @@
                                                      (:lock entry)))))))))
 
 (defdescribe session-sandbox-bindings-test
-             (it "binds no resource_stop: sh.stop() ends a background shell"
+             (it "does not expose resource_stop in the sandbox"
                  (let [environment (loop-env/create-environment ::router {:db :memory})]
                    (try (let [result
                               (python-exec/execute-code

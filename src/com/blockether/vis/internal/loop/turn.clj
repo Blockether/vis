@@ -780,7 +780,8 @@
         (util/now-ms)
 
         result-map
-        (:result envelope)
+        (or (get-in envelope [:result "__vis_shell_task__" "snapshot"])
+            (:result envelope))
 
         err
         (:error envelope)

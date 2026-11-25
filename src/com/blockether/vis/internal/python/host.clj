@@ -221,43 +221,55 @@
                                    :error-data (get reply "error_data")}
         :else {:state :done :value (get reply "value")}))
 
+(defn task-reply
+  "Encode the outcome shared by guest waits and the SDK shell door."
+  [result]
+  (cond-> {"state" (name (:state result))}
+    (contains? result :value) (assoc "value" (:value result))
+    (:message result) (assoc "message" (:message result))
+    (:cancelling result) (assoc "cancelling" (:cancelling result))
+    (:error result) (assoc "error" (:error result))
+    (:error-data result) (assoc "error_data" (:error-data result))))
+
 (defn- task-call [session call tool f request]
   (let [[arg x] (get request "args")
         sid (task-session session)]
-    (case tool
-      "_task_start"
+    (cond
+      (= tool "_task_start")
       (if-let [tool-spec (and f (get-in @task-tools [session arg]))]
         (let [args (call-args (guest-records (get request "tool_args"))
                               (guest-records (get request "kwargs")))
               row (task/start! sid (assoc tool-spec :kind :tool
                                            :name (str arg (get request "call_display" "(...)"))
-                                           :origin *task-origin* :hold-activity *hold-task-activity*)
+                                           :origin *task-origin* :hold-activity *hold-task-activity*
+                                            :cancel-on-request? (= "shell" arg))
                                #(binding [rt/*blocking-wall-park* nil
                                           rt/*blocking-wall-hold* nil]
                                   (task-outcome (answer arg f args))))]
           {"id" (:id row) "name" (:name row)})
         (throw (ex-info (str "no Task tool named `" arg "` in this session") {})))
-      "_task_await"
-      (let [token (when-let [token (get x "token")] [call token])
-            opts {:block call :token token :timeout-ms (min 250 (long (get x "timeout_ms" 0)))
-                  :leave? (true? (get x "leave"))
-                  :hold rt/*blocking-wall-hold*}
-            result (task/await! sid arg opts)]
-        (if result
-          (cond-> {"state" (name (:state result))}
-            (contains? result :value) (assoc "value" (:value result))
-            (:message result) (assoc "message" (:message result))
-            (:cancelling result) (assoc "cancelling" (:cancelling result))
-            (:error result) (assoc "error" (:error result))
-            (:error-data result) (assoc "error_data" (:error-data result)))
-          {"state" "missing"}))
-      "_task_ack" (task/acknowledge! sid arg)
-      "_task_cancel" (task/cancel! sid arg :agent :cancel x)
-      "_task_state" (if-let [row (task/state sid arg)] (name (:state row)) "missing")
-      "_task_cancelling" (task/cancelling sid arg)
-      "_task_uncancel" (task/uncancel! sid arg)
-      "_task_rename" (task/rename! sid arg (str x))
-      "_task_list" (mapv #(select-keys % [:id :name]) (task/tasks sid)))))
+
+      (= tool "_task_list")
+      (into [] (keep #(task/guest-task sid (:id %))) (task/tasks sid))
+
+      :else
+      (let [owned? (task/guest-task sid arg)]
+        (case tool
+          "_task_await"
+          (let [token (when-let [token (get x "token")] [call token])
+                opts {:block call :token token :timeout-ms (min 250 (long (get x "timeout_ms" 0)))
+                      :leave? (true? (get x "leave"))
+                      :observation? (true? (get x "observation"))
+                      :hold rt/*blocking-wall-hold*}]
+            (if-let [result (when owned? (task/await! sid arg opts))]
+              (task-reply result)
+              {"state" "missing"}))
+          "_task_ack" (when owned? (task/acknowledge! sid arg))
+          "_task_cancel" (boolean (and owned? (task/cancel! sid arg :agent :cancel x)))
+          "_task_state" (if-let [row (when owned? (task/state sid arg))] (name (:state row)) "missing")
+          "_task_cancelling" (if owned? (task/cancelling sid arg) 0)
+          "_task_uncancel" (when owned? (task/uncancel! sid arg))
+          "_task_rename" (when owned? (task/rename! sid arg (str x))))))))
 
 (def ^:private task-ops
   #{"_task_start" "_task_await" "_task_ack" "_task_cancel" "_task_state" "_task_cancelling"

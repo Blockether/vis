@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2",
   "vis-agent>=0.5.35",
-  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v4.2.1",
+  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v4.2.2",
 ]
 
 [tool.vis]

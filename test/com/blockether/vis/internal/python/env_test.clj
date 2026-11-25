@@ -1305,7 +1305,7 @@
               s
               (ext/ext-symbols e)
 
-              :when (contains? bind (:ext.symbol/symbol s))]
+              :when (and (contains? bind (:ext.symbol/symbol s)) (not (:ext.symbol/hidden? s)))]
 
           (ep/sym->py-name (:ext.symbol/symbol s)))]
 
@@ -1340,6 +1340,9 @@
           (expect (re-find #"ls=True" out))
           ;; `rg`/`find_files` were replaced by `grep` (name + content search in one tool)
           (expect (re-find #"grep=True" out))))
+    (it "keeps the ShellTask snapshot transport out of the documentation"
+        (let [out (run "print(doc('__vis_shell_snapshot__'))")]
+          (expect (not (str/includes? out "Read a process snapshot")) out)))
     (it "finds callables by name or row opening and documentation pages by their outline"
         (let [out (run (str "print('body='+str(len(apropos('TUPLE UNPACKING'))))\n"
                             "print('exact='+apropos(r'^grep$')[0].name)\n"

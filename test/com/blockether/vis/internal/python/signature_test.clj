@@ -2,7 +2,6 @@
   "Registered call shapes inspected and invoked through the real sandbox boundary."
   (:require [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
-            [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.foundation.shell-log :as shell-log]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.python.env :as ep]
@@ -262,17 +261,12 @@
     (binding [workspace/*workspace-root* (workspace/trunk-root)]
       (let [sid (str "signature-shell-" (random-uuid))
             env {:session-id sid}
-            ext {:ext/name "foundation-core"}
-            bindings (into {}
-                           (map (fn [entry]
-                                  [(:ext.symbol/symbol entry)
-                                   (fn [& args]
-                                     (extension/invoke-symbol-wrapper ext entry args env))]))
-                           shell/shell-symbols)]
-
+            bindings (extension/builtin-sandbox-bindings (constantly env))]
         (try
           (tpc/with-own
-            [ctx bindings nil {:worker? true}]
+            [ctx {} nil {:worker? true :session-id sid}]
+            (ep/set-python-bindings!
+              ctx (map (fn [[sym val]] {:sym sym :val val :task? (= 'shell sym)}) bindings))
             (let
               [answer
                (ep/run-python-block
@@ -280,19 +274,20 @@
                  (str
                    "import inspect\n" "sh = await shell('printf inspection-ready')\n"
                    "try:\n"
-                   "    signatures = {name: inspect.signature(getattr(sh, name)) for name in ('logs', 'wait', 'type', 'stop')}\n"
+                   "    signatures = {name: inspect.signature(getattr(sh, name)) for name in ('logs', 'wait', 'type', 'cancel')}\n"
                    "    assert 'offset' in signatures['logs'].parameters\n"
                    "    assert 'lines' in signatures['logs'].parameters\n"
                    "    assert 'seconds' in signatures['wait'].parameters\n"
                    "    assert signatures['type'].parameters['text'].default is inspect.Parameter.empty\n"
                    "    assert 'is_enter' in signatures['type'].parameters\n"
-                   "    assert not signatures['stop'].parameters\n"
+                   "    assert 'msg' in signatures['cancel'].parameters\n"
                    "    assert all('self' not in sig.parameters for sig in signatures.values())\n"
-                   "    done = await sh.wait(seconds=10)\n"
+                   "    sh.wait(seconds=10)\n"
+                   "    done = await sh\n"
                    "    assert done['exit'] == 0\n" "    page = await sh.logs(offset=0)\n"
                    "    assert 'inspection-ready' in page['out']\n"
                    "    print('shell methods inspected')\n"
-                   "finally:\n" "    await sh.stop()\n"))]
+                   "finally:\n" "    sh.cancel()\n"))]
               (expect (nil? (:error answer)) (pr-str answer))
               (expect (= "shell methods inspected\n" (:stdout answer)))))
           (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))

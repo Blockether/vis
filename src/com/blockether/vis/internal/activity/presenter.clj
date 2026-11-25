@@ -1047,7 +1047,7 @@
       (cond (= op "read_session") (read-session-presentation value)
             (str/starts-with? op "council.") (council-presentation op value)
             (str/starts-with? op "automations.") (automation-presentation op value)
-            (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation value)
+            (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation (or (get-in value ["__vis_shell_task__" "snapshot"]) value))
             :else {"headline" headline "summary" summary "content" content}))))
 
 (defn for-tool

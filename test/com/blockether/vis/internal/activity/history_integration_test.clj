@@ -144,7 +144,7 @@
 (defdescribe
   shell-receipt-integration-test
   (it
-    "reconciles real shell, logs and wait invocations in persisted Activity"
+    "reconciles shell start and log invocations in persisted Activity"
     (let [store
           (h/store)
 
@@ -156,13 +156,14 @@
 
       (try
         (tpc/with-own
-          [pc (extension/builtin-sandbox-bindings (constantly env))]
+          [pc (extension/builtin-sandbox-bindings (constantly env)) nil {:session-id sid}]
           (let [result
                 (#'python-exec/run-python-code
                  pc
                  (str "sh = await shell('printf first; sleep 0.2; printf second')\n"
+                      "r = await sh\n"
                       "sh.logs()\n"
-                      "print((await sh.wait(10))['out'])")
+                      "print(r['out'])")
                  :env
                  env)
 
@@ -181,12 +182,12 @@
             (expect (nil? (:error result)))
             (expect (= "firstsecond\n" (:stdout result)))
             (expect (= 1 (count (:rows page))))
-            (expect (= ["shell" "_shell-logs" "_shell-wait"] (mapv :operation children)))
+            (expect (= ["shell" "_shell-logs"] (mapv :operation children)))
             (expect (= "printf first; sleep 0.2; printf second"
                        (get-in group [:presentation "headline"])))
             (expect (= ["firstsecond"] lines))
             (expect (= "firstsecond" (get-in group [:presentation "outcome"])))
-            (expect (= 3 (get-in page [:counts :succeeded])))
+            (expect (= 2 (get-in page [:counts :succeeded])))
             (expect
               (= (mapv :id children)
                  (mapv :id (:children (first (all-rows store sid (get-in page [:history :id])))))))

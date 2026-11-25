@@ -153,19 +153,22 @@ its own host bindings. In both places, the bundled SDK wins over pip copies and 
 
 A tool returns its complete result to Python, but only printed text reaches the next model
 request. The agent keeps a large result in a variable and prints only the fields that it needs.
-Each of these calls shows more of a shell result:
+A call to `shell` starts the command. The first `await` returns a `ShellTask` after the
+process starts. Await the Task to get the exit code and bounded output:
 
 ```python
-r = await shell("ls -la")
-print(r["status"])       # running, exited or timed out
-print(r.logs(-20))       # the last twenty output lines
-print(r["out"])          # everything the process has written
+sh = await shell("ls -la")
+result = await sh
+print(result.exit, sh.logs(-20).out)
 ```
 
-A shell result is a handle that reads as a dictionary and has the `wait`, `logs`, `type`, and
-`stop` methods. Its short view has the status, exit, and timeout information. When the view omits
-text, it names the field or the log cursor that holds the rest. `dict(r)` gives the full mapping,
-and `json.dumps(r)` serializes every field. Both can print much more than the model needs.
+Use `sh.wait(30)` to wait up to 30 seconds and refresh the handle. The wait does not cancel the
+process when time runs out. Use `sh.cancel()` to request cancellation and `sh.done()` to check
+if the process ended. Use `sh.type(text)` to send input to a shell started with `stdin="tty"`.
+
+The process can continue after the block or turn ends. In another block, `asyncio.all_tasks()`
+finds running host Tasks and completed host Tasks whose results you have not read. The result
+of `await sh` is a dictionary. Use `sh.logs()` for pages of output beyond the result's limit.
 
 Read a result map by key or by attribute. `r["status"]` and `r.status` return the same field, at
 each depth, so `r["transcript"]["turns"]` is `r.transcript.turns`. `session` reads the same way.

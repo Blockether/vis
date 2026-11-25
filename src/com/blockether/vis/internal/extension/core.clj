@@ -4040,16 +4040,17 @@
 (defn symbol-doc-text
   "Model-facing doc text for ONE symbol ENTRY: the compact `:description`, falling
    back to the implementation docstring. Returns nil without prose — a handle with
-   no description has no page. This is the single source of the prose that
-   `doc(name)` answers with.
+   no description has no page. Hidden raw transports have no model-facing
+   prose. This is the single source of the prose that `doc(name)` answers with.
 
    PROSE ONLY. How the handle is CALLED and what it RETURNS are structure, not
    text: `symbol-signature` renders the call line, `symbol-keys-line` the
    required keys and `symbol-result-line` the raw result, and
    `doc-corpus/entry-text` prints all three above this document."
   [entry]
-  (let [prose (or (:ext.symbol/description entry) (:ext.symbol/doc entry))]
-    (when (util/non-blank-string? prose) prose)))
+  (when-not (and (:ext.symbol/raw? entry) (:ext.symbol/hidden? entry))
+    (let [prose (or (:ext.symbol/description entry) (:ext.symbol/doc entry))]
+      (when (util/non-blank-string? prose) prose))))
 
 (defn symbol-result-line
   "`Raw result: …` — the declared raw-result contract of ONE entry, nil without
