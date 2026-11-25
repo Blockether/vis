@@ -764,7 +764,10 @@ class _Run:
                     self._terminal = {
                         "state": "done",
                         "value": _result(
-                            self, "run", out=out, out_omitted_chars=omitted,
+                            self,
+                            "run",
+                            out=out,
+                            out_omitted_chars=omitted,
                             next_offset=len(raw),
                         ),
                     }
@@ -1320,7 +1323,9 @@ def _validate(node, value, values, counts, run):
     if node.get("type") in _CHOICE:
         choice = {
             **node,
-            "options": [{"value": _option_pair(one)[0]} for one in node.get("options") or []],
+            "options": [
+                {"value": _option_pair(one)[0]} for one in node.get("options") or []
+            ],
         }
         if not _contracts.input_accepts(choice, value):
             return "must use the declared options"
@@ -1394,7 +1399,9 @@ def request_input(request_json, counts_json, run):
                 if value is None and node.get("default") is not None:
                     value = node.get("default")
                 if kind in _CHOICE and node.get("is_multiple") is True:
-                    options = [_option_pair(option)[0] for option in node.get("options") or []]
+                    options = [
+                        _option_pair(option)[0] for option in node.get("options") or []
+                    ]
                     value = _contracts.ordered_choice(options, value)
                 values[name] = value
                 complaint = _validate(node, value, values, counts, run)

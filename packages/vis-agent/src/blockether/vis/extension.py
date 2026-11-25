@@ -9490,10 +9490,12 @@ def _media_source(source, kind=None, media_type=None):
             raise ValueError(f"the bytes are not {media_type} data")
     else:
         kinds = [kind] if kind is not None else ["audio", "video"]
-        matches = [found for one in kinds if (found := _contracts.media_type(data, one))]
+        matches = [
+            found for one in kinds if (found := _contracts.media_type(data, one))
+        ]
         if not matches:
             raise ValueError(f"the bytes are not media of type {', '.join(types)}")
-        if len({found.split('/')[0] for found in matches}) > 1:
+        if len({found.split("/")[0] for found in matches}) > 1:
             raise ValueError(f"the bytes can be {' or '.join(matches)}: give kind=")
         media_type = matches[0]
     if kind is not None and not media_type.startswith(kind + "/"):

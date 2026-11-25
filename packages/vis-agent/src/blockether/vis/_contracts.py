@@ -1197,7 +1197,9 @@ def input_types() -> set[str]:
 def choice_input_types() -> set[str]:
     """The types of inputs that take choices."""
     return {
-        kind for kind, branch in input_branches().items() if "options" in branch["properties"]
+        kind
+        for kind, branch in input_branches().items()
+        if "options" in branch["properties"]
     }
 
 
