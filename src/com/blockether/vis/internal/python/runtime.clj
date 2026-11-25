@@ -958,13 +958,14 @@
   ([python] ["--python" python "--no-python-downloads"]))
 
 (defn- export-project
-  "Read uv's locked dependency selection. Automatic preparation can update a stale lock."
-  [^File project update? prune?]
+  "Read uv's locked dependency selection without the `pruned` packages and the dependencies
+   that only they select. Automatic preparation can update a stale lock."
+  [^File project update? pruned]
   (let [requirements (Files/createTempFile (.toPath (paths/temp-dir)) "vis-project-" ".txt"
                                            (make-array FileAttribute 0))]
     (try (let [command (into (cond-> [(bundled-uv!) "export" "--format" "requirements-txt" "--no-header"
                                      "--no-annotate" "--no-hashes" "--output-file" (str requirements)]
-                              prune? (into ["--prune" "vis-agent"]))
+                              (seq pruned) (into (mapcat #(vector "--prune" %) pruned)))
                             (embedded-python (embedded-executable)))
                locked (into command ["--locked" "--offline"])]
            (if update?
@@ -977,7 +978,7 @@
 (defn- shared-project?
   "Use shared packages when uv selects no project installation or dependencies beyond the SDK."
   [^File project automatic?]
-  (str/blank? (export-project project automatic? true)))
+  (str/blank? (export-project project automatic? ["vis-agent"])))
 
 (defn- sdk-lock?
   "True when a project lock includes the SDK."
@@ -991,18 +992,32 @@
   (when-let [[_ name] (re-find #"(?i)^([a-z0-9][a-z0-9._-]*)\s*(?:==|@)" line)]
     (str/replace (str/lower-case name) #"[-_.]+" "-")))
 
+(def ^:private sdk-evaluation-packages
+  "The SDK dependencies that only `blockether.vis.evals` imports. A managed environment omits
+   their tree. The bundled SDK brings no dependencies, and `vis.session` and the contracts
+   import the other ones, so the environment keeps them."
+  ["harbor" "litellm"])
+
+(def ^:private sdk-selection
+  "The SDK selection that a stamp records. A stamp of another selection needs uv's check again."
+  "sdk-runtime-kept")
+
 (defn- sdk-exclusions
-  "Omit packages that occur only in the SDK tree. Keep names selected on any other branch.
-   If uv emits a changed line without a package name, keep the full selection."
-  [full pruned]
+  "Omit the SDK and the packages that only its evaluation tree selects. `pruned` is the
+   selection without the SDK tree, `kept` the selection without the evaluation tree.
+   Keep names selected on any other branch. If uv emits a changed line without a package
+   name, keep the full selection."
+  [full pruned kept]
   (let [lines #(set (remove str/blank? (str/split-lines %)))
         retained (lines pruned)
         removed (remove retained (lines full))
         removed-names (map install-package-name removed)
-        retained-names (set (map install-package-name retained))]
+        retained-names (set (map install-package-name retained))
+        kept-names (set (map install-package-name (lines kept)))]
     (when (and (some #{"vis-agent"} removed-names) (every? some? removed-names)
                (not (contains? retained-names nil)))
-      (sort (remove retained-names (set removed-names))))))
+      (sort (filter #(or (= "vis-agent" %) (not (kept-names %)))
+                    (remove retained-names (set removed-names)))))))
 
 (defn- project-packages
   "Ask uv's project interpreter for its site-packages; do not guess workspace paths.
@@ -1235,11 +1250,11 @@
   ^File [^File project]
   (let [stamp (io/file project (automatic-environment) prepared-stamp)]
     (when (.isFile stamp)
-      (try (let [{:keys [inputs packages managed-selection?]} (edn/read-string (slurp stamp))
+      (try (let [{:keys [inputs packages selection]} (edn/read-string (slurp stamp))
                  packages (io/file (str packages))]
 
              (when (and (string? inputs)
-                        (or managed-selection? *environment* (not (sdk-lock? project)))
+                        (or (= sdk-selection selection) *environment* (not (sdk-lock? project)))
                         (= inputs (prepared-inputs project packages)))
                (.getCanonicalFile packages)))
            (catch Exception _ nil)))))
@@ -1254,7 +1269,7 @@
   "Record a verified preparation in the project's own automatic environment and return `packages`.
    An environment elsewhere, such as a workspace member's, keeps the uv check.
    A read-only environment, such as one in a container image, keeps the uv check too."
-  ^File [^File project ^File packages managed-selection?]
+  ^File [^File project ^File packages selection]
   (let [environment
         (.getCanonicalFile (io/file project (automatic-environment)))
 
@@ -1271,7 +1286,7 @@
                                                            0))]
              (try (spit (.toFile staging)
                         (pr-str {:inputs inputs :packages (.getCanonicalPath packages)
-                                 :managed-selection? managed-selection?}))
+                                 :selection selection}))
                   (Files/move staging
                               (.toPath (io/file environment prepared-stamp))
                               (into-array CopyOption
@@ -1347,7 +1362,7 @@
                     (not (Files/isSymbolicLink (.toPath (io/file workspace (automatic-environment)))))
                     (not (str/includes? (or manifest "") "workspace"))
                     (or (sdk-lock? project) (str/includes? (or manifest "") "vis-agent")))
-        pruned (when prune? (export-project project true true))]
+        pruned (when prune? (export-project project true ["vis-agent"]))]
     (if (if prune? (str/blank? pruned) (shared-project? project true))
       (let [packages (.getCanonicalFile (io/file (runtime/packages-dir)))]
         (when-let [inputs (shared-decision-inputs project packages)]
@@ -1355,7 +1370,9 @@
         (preparation-stage! project "cached")
         packages)
       (let [exclusions (when prune?
-                         (sdk-exclusions (export-project project false false) pruned))
+                         (sdk-exclusions (export-project project false nil)
+                                         pruned
+                                         (export-project project false sdk-evaluation-packages)))
             uv (bundled-uv!)
             options (cond-> (embedded-python)
                       (seq exclusions) (into (cons "--locked" (mapcat #(vector "--no-install-package" %) exclusions))))
@@ -1370,7 +1387,7 @@
           (remove-environment-shell! project)
           (run-uv! project (into [uv "sync"] options)))
         (let [packages (project-packages project)]
-          (stamp-prepared! project packages true)
+          (stamp-prepared! project packages sdk-selection)
           (preparation-stage! project (if ready? "cached" "ready"))
           packages)))))
 
@@ -2335,7 +2352,7 @@ else:
              (run-uv! project (into [(bundled-uv!) "sync" "--check" "--offline"] (embedded-python)))
              (let [packages (project-packages project)]
                (compile-bytecode! project packages)
-               (stamp-prepared! project packages false))))
+               (stamp-prepared! project packages nil))))
          (catch Exception _ nil))))
 
 (defn uv-command!
