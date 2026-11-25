@@ -1666,6 +1666,29 @@
         "patch": {
           "request": "json",
           "response": "json",
+          "request_schema": "session_workspace_branch_request",
+          "response_schema": "session_workspace_branches"
+        }
+      },
+      "path": "/v1/sessions/:sid/workspace/branch"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "session_workspace_branches"
+        }
+      },
+      "path": "/v1/sessions/:sid/workspace/branches"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "patch": {
+          "request": "json",
+          "response": "json",
           "response_schema": "session_workspace"
         }
       },
@@ -6195,6 +6218,48 @@
       },
       "required": [
         "workspace"
+      ]
+    },
+    "session_workspace_branch_request": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Local branch to check out in the session workspace."
+        }
+      },
+      "required": [
+        "branch"
+      ]
+    },
+    "session_workspace_branches": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Checked-out branch; null when HEAD is detached or the workspace is not a git repository."
+        },
+        "branches": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Local branches, most recently committed first; empty outside git."
+        }
+      },
+      "required": [
+        "branch",
+        "branches"
       ]
     },
     "session_read": {

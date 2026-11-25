@@ -558,6 +558,11 @@ export function ReasoningIcon({ className }: { className?: string }) {
   return <Mark icon={ChartNoAxesColumn} className={className} />;
 }
 
+/** BRANCH — the git branch that the session's workspace has checked out. */
+export function BranchIcon({ className }: { className?: string }) {
+  return <Mark icon={GitBranch} className={className} />;
+}
+
 /**
  * VERBOSITY — lines of prose, ragged right: how MUCH the answer says. Bars stand
  * up and lines lie down, so the two level chips never read as one mark repeated.

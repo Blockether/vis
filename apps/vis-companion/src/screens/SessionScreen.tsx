@@ -244,6 +244,7 @@ import { OpenPathContext } from '../lib/open-path';
 import { projectPath, sessionIsArchived } from '../lib/fleet';
 import { workspaceRelativePath } from '../lib/path';
 import { WorkspaceRootsContext } from '../lib/workspace-roots';
+import { useWorkspaceBranches } from '../lib/workspace-branches';
 import { randomUuid } from '../lib/uuid';
 
 const TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
@@ -1085,6 +1086,7 @@ export function SessionScreen({
   // The bubble this screen re-enters with, resolved ONCE at mount.
   const [runningTurnSeed] = useState(() => seedRunningTurn(client, subscriptions, sid));
   const [running, setRunning] = useState(runningTurnSeed?.turn.status === 'running');
+  const workspaceBranches = useWorkspaceBranches(client, sid, session?.workspace?.root, running);
   const [runningTurn, setRunningTurn] = useState<RunningTurn | null>(runningTurnSeed?.turn ?? null);
   const [cancelledTurnSnapshots, setCancelledTurnSnapshots] = useState<
     ReadonlyMap<string, RunningTurn>
@@ -5004,6 +5006,7 @@ export function SessionScreen({
   }
 
   const activePastes = Array.from(pastes.values()).filter((paste) => prompt.includes(paste.token));
+  const branches = workspaceBranches.branches;
   const responseControls: ComposerResponseControlsModel = {
     model: {
       value: selectedModel ?? 'model',
@@ -5063,6 +5066,19 @@ export function SessionScreen({
             flipSwitch(codexFastAvailable, codexFastAvailable.enabled ?? false, setCodexFast),
         }
       : undefined,
+    branch:
+      branches && branches.branches.length > 0
+        ? {
+            value: branches.branch,
+            choices: branches.branches,
+            busy: running || workspaceBranches.isSwitching,
+            refresh: () => workspaceBranches.refresh(),
+            choose: (branch: string) =>
+              workspaceBranches.choose(branch).catch((e: unknown) => {
+                setComposerNotice((e as Error).message);
+              }),
+          }
+        : undefined,
   };
   const title = session?.title?.trim() || 'Chat';
   const runningTurnId = runningTurn?.id;

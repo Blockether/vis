@@ -430,4 +430,50 @@
            (tel/log! :warn ["git: workspace-status failed" (str root) (ex-message t)])
            nil))))
 
+;; branches
+
+(defn- head-name
+  "`refs/heads/x` as `x`."
+  [ref]
+  (str/replace-first (str/trim ref) #"^refs/heads/" ""))
+
+(defn branches
+  "Local branches of the repository at `root`, for a branch picker:
+   `{:branch <checked-out name, nil when HEAD is detached> :branches [<name> ...]}`,
+   most recently committed first. nil when `root` is outside git."
+  [root]
+  (when-let [top (some-> (util/non-blank root)
+                         io/file
+                         repo-work-tree)]
+    (when-let [out (git-ok top
+                           ["for-each-ref" "--sort=-committerdate" "--format=%(refname)"
+                            "refs/heads"])]
+      {:branch (some-> (git-ok top ["symbolic-ref" "--quiet" "HEAD"])
+                       head-name
+                       util/non-blank)
+       :branches (into [] (comp (map head-name) (remove str/blank?)) (str/split-lines out))})))
+
+(defn switch-branch!
+  "Check out the local branch `branch` in the repository at `root`, as `git switch`
+   does in a shell, and return the new [[branches]]. Git keeps local changes that do
+   not collide and refuses a switch that would overwrite them. Throws ex-info with
+   `:type` `:git/not-a-repository`, `:git/unknown-branch` or `:git/switch-failed`
+   (git's own message)."
+  [root branch]
+  (let [known (branches root)]
+    (cond (nil? known) (throw (ex-info "The session workspace is not a git repository."
+                                       {:type :git/not-a-repository}))
+          (not (some #{branch} (:branches known)))
+          (throw (ex-info (str "No local branch named " branch ".")
+                          {:type :git/unknown-branch :branch branch})))
+    (let [{:keys [exit err]}
+          (run-git (repo-work-tree (io/file (str root))) ["switch" branch] {:timeout-secs 60})]
+
+      ;; The footer must not show the old branch for another cache period.
+      (swap! working-tree-status-cache dissoc (.getPath (.getCanonicalFile (io/file (str root)))))
+      (when-not (= 0 exit)
+        (throw (ex-info (or (util/non-blank err) "git switch failed.")
+                        {:type :git/switch-failed :branch branch})))
+      (branches root))))
+
 ;; file-picker helper: per-path status + ignore snapshot

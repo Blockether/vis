@@ -103,6 +103,7 @@ import type {
   ExtensionReload,
   SettingPreviewResult,
   WorkspaceFile,
+  WorkspaceBranches,
 } from './types';
 import { PROTOCOL_HEADERS } from './compat';
 import { inputViewsFromWire, type HumanInputRequest } from './human-input';
@@ -3958,6 +3959,28 @@ export class GatewayClient {
       signal,
     );
     return rows ?? [];
+  }
+
+  // GET /v1/sessions/:sid/workspace/branches — the local branches of the
+  // session's workspace. Outside git the list is empty.
+  async workspaceBranches(sid: string, signal?: AbortSignal): Promise<WorkspaceBranches> {
+    return await this.request<WorkspaceBranches>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/workspace/branches`,
+      undefined,
+      signal,
+    );
+  }
+
+  // PATCH /v1/sessions/:sid/workspace/branch — `git switch` the workspace to one
+  // local branch. The gateway refuses while a turn runs and passes git's own
+  // message through when the switch would lose work.
+  async switchBranch(sid: string, branch: string): Promise<WorkspaceBranches> {
+    return await this.request<WorkspaceBranches>(
+      'PATCH',
+      `/v1/sessions/${encodeURIComponent(sid)}/workspace/branch`,
+      { branch },
+    );
   }
 
   // POST /v1/sessions/:sid/fs/actions/open — open one workspace file in the

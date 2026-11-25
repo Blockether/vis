@@ -260,6 +260,13 @@ export interface BrowseEntry {
   branch?: string | null;
 }
 
+/** The local branches of a session's git workspace, newest commit first. */
+export interface WorkspaceBranches {
+  /** The checked-out branch; `null` on a detached HEAD or outside git. */
+  branch: string | null;
+  branches: string[];
+}
+
 /** One directory of a machine's filesystem, as the browse sheet reads it. */
 export interface BrowseListing {
   path: string;

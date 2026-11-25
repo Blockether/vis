@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useId, useState } from 'react';
 
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
-import { FastIcon, ReasoningIcon, ThinkingIcon, VerbosityIcon } from './icons';
+import { BranchIcon, FastIcon, ReasoningIcon, ThinkingIcon, VerbosityIcon } from './icons';
 import { useCommands } from '../lib/commands';
 import { keepKeyboard } from '../lib/keyboard';
-import { Menu, MENU_WIDTH, MenuItem } from './Menu';
+import { Menu, MENU_WIDTH, MenuItem, MenuNote } from './Menu';
 import { MetaButton } from './ui';
 
 type CycleControl = {
@@ -40,6 +40,20 @@ export type ComposerResponseControlsModel = {
   verbosity?: CycleControl;
   thinking?: ToggleControl;
   fast?: ToggleControl;
+  /** The git branch of the workspace; absent outside git. */
+  branch?: BranchControl;
+};
+
+type BranchControl = {
+  /** The checked-out branch; `null` on a detached HEAD. */
+  value: string | null;
+  /** The local branches, newest commit first. */
+  choices: readonly string[];
+  /** A turn runs or a switch is in flight; the gateway refuses a switch then. */
+  busy: boolean;
+  /** Reads the list again, so the menu shows branches made since the last read. */
+  refresh: () => void | Promise<void>;
+  choose: (branch: string) => void | Promise<void>;
 };
 
 function Divider() {
@@ -106,6 +120,65 @@ function ReasoningChoice({ control }: { control: ChoiceControl }) {
       </MetaButton>
       {menu && (
         <Menu label={control.label} at={menu} onDismiss={close}>
+          {control.choices.map((choice) => (
+            <MenuItem
+              key={choice}
+              title={choice}
+              badge={choice === control.value ? 'current' : undefined}
+              onSelect={() => {
+                close();
+                if (choice !== control.value) void control.choose(choice);
+              }}
+            />
+          ))}
+        </Menu>
+      )}
+    </>
+  );
+}
+
+/** The branch chip opens the local branches, and a tap on a row switches the workspace to it. */
+function BranchChoice({ control }: { control: BranchControl }) {
+  const [menu, setMenu] = useState<MenuPosition | null>(null);
+  const close = useCallback(() => setMenu(null), []);
+  // Escape closes the list before the screen reads it as "cancel the turn".
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [menu, close]);
+  const value = control.value ?? 'detached';
+
+  return (
+    <>
+      <MetaButton
+        isPicker
+        density="compact"
+        className="min-w-0 shrink"
+        onMouseDown={keepKeyboard}
+        onClick={(event) => {
+          void control.refresh();
+          setMenu(menuPosition(event.currentTarget.getBoundingClientRect(), MENU_WIDTH));
+        }}
+        disabled={control.busy}
+        aria-busy={control.busy}
+        aria-haspopup="dialog"
+        aria-expanded={menu !== null}
+        aria-label={`Branch — ${value}, choose a branch`}
+        title={`Branch: ${value} — choose a branch`}
+      >
+        <BranchIcon className="size-3 shrink-0" />
+        <span className="truncate">{value}</span>
+      </MetaButton>
+      {menu && (
+        <Menu label="Branch" at={menu} onDismiss={close}>
+          {control.choices.length === 0 && <MenuNote>No local branches.</MenuNote>}
           {control.choices.map((choice) => (
             <MenuItem
               key={choice}
@@ -244,6 +317,12 @@ export function ComposerResponseControls({
             {controls.fast.enabled ? 'fast' : 'standard'}
           </MetaButton>
         </>
+      )}
+
+      {controls.branch && (
+        <div className="ml-auto flex min-w-0 shrink items-center">
+          <BranchChoice control={controls.branch} />
+        </div>
       )}
     </div>
   );

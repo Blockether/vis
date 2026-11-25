@@ -1962,6 +1962,38 @@ class Routes:
         )
         return response.json()
 
+    def patch_session_workspace_branch(
+        self,
+        sid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> _types.SessionWorkspaceBranches:
+        """PATCH /v1/sessions/:sid/workspace/branch — json response."""
+        response = self._client._request(
+            "PATCH",
+            "/v1/sessions/:sid/workspace/branch",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def get_session_workspace_branches(
+        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> _types.SessionWorkspaceBranches:
+        """GET /v1/sessions/:sid/workspace/branches — json response."""
+        response = self._client._request(
+            "GET",
+            "/v1/sessions/:sid/workspace/branches",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
     def patch_session_workspace_root(
         self,
         sid: str,

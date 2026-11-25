@@ -1568,6 +1568,11 @@ class VoiceLiveSnapshot(TypedDict):
     receipts: list[VoiceLiveReceipt]
 
 
+class SessionWorkspaceBranches(TypedDict):
+    branch: str | None
+    branches: list[str]
+
+
 class SessionArchive(TypedDict):
     archived: list[str]
     working: list[str]
@@ -3214,6 +3219,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/sessions/:sid/voice/jobs/:job-id": "VoiceJob",
     "GET /v1/sessions/:sid/voice/live/:vid": "VoiceLiveSnapshot",
     "GET /v1/sessions/:sid/workspace": "SessionWorkspace",
+    "GET /v1/sessions/:sid/workspace/branches": "SessionWorkspaceBranches",
     "GET /v1/sessions/actions/search": "SessionSearch",
     "GET /v1/settings": "Settings",
     "GET /v1/settings/:id": "Setting",
@@ -3232,6 +3238,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "PATCH /v1/sessions/:sid": "SessionRecord",
     "PATCH /v1/sessions/:sid/model": "SessionModelRecord",
     "PATCH /v1/sessions/:sid/turns/:tid": "TurnRecord",
+    "PATCH /v1/sessions/:sid/workspace/branch": "SessionWorkspaceBranches",
     "PATCH /v1/sessions/:sid/workspace/root": "SessionWorkspace",
     "PATCH /v1/settings": "Settings",
     "PATCH /v1/speech/voices/:voice-id": "SpeechVoice",

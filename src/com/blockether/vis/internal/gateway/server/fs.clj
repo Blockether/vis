@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.workspace.git :as git]
             [com.blockether.vis.internal.workspace.read-gate :as read-gate]
             [ring.core.protocols :as ring-protocols]))
 
@@ -673,12 +674,56 @@
                (throw e)))))
     (http/session-404 (get-in request [:path-params :sid]))))
 
+(defn- branches-handler
+  "GET /v1/sessions/:sid/workspace/branches — the local branches of the session's
+   repository and the one checked out, for a branch picker. Outside git both are empty."
+  [request]
+  (if-let [sid (http/path-sid request)]
+    (if-let [root (get (state/session-workspace-info sid) "root")]
+      (http/json-response (or (git/branches root) {:branch nil :branches []}))
+      (http/error-response 409 :workspace-unavailable "Session workspace is unavailable."))
+    (http/session-404 (get-in request [:path-params :sid]))))
+
+(defn- switch-branch-handler
+  "PATCH /v1/sessions/:sid/workspace/branch {branch} — check out another local branch
+   of the session's repository; the answer is the new branch list. Refused while the
+   session works, because the agent edits that tree. When git refuses the switch, for
+   example over local changes, its message is the answer."
+  [request]
+  (if-let [sid (http/path-sid request)]
+    (let [{:strs [branch]}
+          (http/body-json request)
+
+          root
+          (get (state/session-workspace-info sid) "root")]
+
+      (cond (state/session-archived? sid) (http/session-archived-409 sid)
+            (state/session-working? sid)
+            (http/error-response 409
+                                 :session-busy
+                                 "this session is still working - switch the branch once its turn is done"
+                                 :session_id (str sid))
+            (not (util/non-blank-string? branch))
+            (http/error-response 400 :invalid-request "branch must be a non-blank string")
+            (nil? root)
+            (http/error-response 409 :workspace-unavailable "Session workspace is unavailable.")
+            :else (try (http/json-response (git/switch-branch! root branch))
+                       (catch clojure.lang.ExceptionInfo e
+                         (case (:type (ex-data e))
+                           :git/unknown-branch (http/error-response 400 :unknown-branch (ex-message e))
+                           :git/not-a-repository (http/error-response 409 :not-a-repository (ex-message e))
+                           :git/switch-failed (http/error-response 409 :branch-switch-failed (ex-message e))
+                           (throw e))))))
+    (http/session-404 (get-in request [:path-params :sid]))))
+
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/fs"] browse-fs-handler
    [:post "/v1/fs/actions/mkdir"] create-directory-handler
    [:get "/v1/sessions/:sid/workspace"] workspace-handler
    [:patch "/v1/sessions/:sid/workspace/root"] change-root-handler
+   [:get "/v1/sessions/:sid/workspace/branches"] branches-handler
+   [:patch "/v1/sessions/:sid/workspace/branch"] switch-branch-handler
    [:post "/v1/sessions/:sid/fs/actions/open"] open-file-handler
    [:get "/v1/sessions/:sid/fs/file"] read-file-handler
    [:get "/v1/sessions/:sid/fs/file/content"] read-content-handler})

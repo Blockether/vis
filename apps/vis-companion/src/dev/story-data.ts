@@ -1643,6 +1643,7 @@ const composerStoryAnswers: Record<string, unknown> = {
   voiceModel: async () => null,
   queuedTurns: async () => ({ turns: [], paused: null }),
   turnTrace: async () => null,
+  workspaceBranches: async () => ({ branch: 'main', branches: ['main', 'feature/branch-picker'] }),
   retainAttachment: () => composerStoryNoop,
 };
 export const STORY_COMPOSER_CLIENT = new Proxy(composerStoryAnswers, {
