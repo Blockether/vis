@@ -1307,8 +1307,16 @@ export const ProjectGroup = memo(function ProjectGroup({
   // The gateway owns the groups and their archive stamps, not this device.
   // Revalidate on fleet changes and on every accepted snapshot of this machine, including
   // one whose head window did not move: that read is this wall's only safety net.
+  // A wall comes back on screen without a read of its own: the list reads every machine
+  // when it shows again, and that read moves `reads`. Only a new question reads the wall.
+  const wallAsked = useRef('');
+  const wasVisible = useRef(isVisible);
   useEffect(() => {
-    if (!isVisible) return;
+    const isBack = isVisible && !wasVisible.current;
+    wasVisible.current = isVisible;
+    if (!isVisible || (isBack && wallAsked.current !== '')) return;
+    const question = `${machineKey(conn)}\u0000${root}\u0000${groupArchived}\u0000${bandOffset}\u0000${groupsRead}\u0000${reads}`;
+    if (question === wallAsked.current) return;
     const control = new AbortController();
     let live = true;
     void (async () => {
@@ -1320,6 +1328,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           bandWindow,
         );
         if (!live) return;
+        wallAsked.current = question;
         setGroups((current) => keepUnchanged(current, answer?.groups ?? []));
         setGroupTotal(answer?.total ?? 0);
         setGroupSessionTotal(answer?.session_total ?? 0);

@@ -62,13 +62,14 @@ function mount() {
     },
   };
   let revision = 0;
+  let isVisible = true;
   const project = () => (
     <ProjectGroup
       group={{ root: ROOT, label: 'Project', projectId: STORY_NEWER_PROJECT.projectId,
         sessions: [], tally: { count: 0, live: 0, awaiting: 0, unread: 0 } }}
       machine={{ conn, sessions: [] }}
       context={context}
-      reading={{ pageSize: 10, isVisible: true, revision, reads: revision }}
+      reading={{ pageSize: 10, isVisible, revision, reads: revision }}
       creation={{ state: null, start: vi.fn(async () => {}), importSnapshot: vi.fn() }}
       initiallyOpen
     />
@@ -76,6 +77,12 @@ function mount() {
   const view = render(project());
   return {
     server, client,
+    /** The list is hidden behind a transcript, or shown again. */
+    async show(next: boolean) {
+      isVisible = next;
+      view.rerender(project());
+      await act(async () => {});
+    },
     /** A fleet read moved this machine: the page and the groups are read again. */
     async refresh() {
       const pages = client.listProjectPage.mock.calls.length;
@@ -111,5 +118,20 @@ describe('session group revalidation', () => {
     for (const [id, count] of renders) {
       expect([id, count]).toEqual([id, (before.get(id) ?? 0) + (id === 'filed-3' ? 1 : 0)]);
     }
+  });
+
+  // Regression, user report in this Vis session: a window resized across the desk rail
+  // with a session open hides and shows the list, and each show read every project's
+  // wall twice. The fleet read on show moves `reads`, and that alone reads the wall.
+  it('reads the wall for a new fleet read, not for showing again', async () => {
+    const { client, show, refresh } = mount();
+    await waitFor(() => expect(client.listSessionGroups).toHaveBeenCalledTimes(1));
+
+    await show(false);
+    await show(true);
+    expect(client.listSessionGroups).toHaveBeenCalledTimes(1);
+
+    await refresh();
+    expect(client.listSessionGroups).toHaveBeenCalledTimes(2);
   });
 });

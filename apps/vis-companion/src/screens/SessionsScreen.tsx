@@ -1135,10 +1135,13 @@ export function SessionsScreen({
       // Coalesce lifecycle bursts, then ask the gateway for its canonical order.
       refreshTimer = window.setTimeout(() => refreshGateway(subscriptions.gatewayUrl), 120);
     };
+    // The first report is this list joining a stream, not the stream starting: the load
+    // on becoming visible reads the window already. A stream that starts later can have
+    // missed frames, so it reads the window again.
+    let wasStreaming: boolean | null = null;
     const stopState = subscriptions.subscribeFleetState((streaming) => {
-      if (streaming && !fleetStreamingRef.current) {
-        readWindow();
-      }
+      if (streaming && wasStreaming === false) readWindow();
+      wasStreaming = streaming;
       fleetStreamingRef.current = streaming;
     });
     const unsubscribe = subscriptions.subscribeFleet((event) => {

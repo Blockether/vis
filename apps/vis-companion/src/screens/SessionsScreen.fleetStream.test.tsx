@@ -566,6 +566,33 @@ describe('a session list carried by the fleet stream', () => {
     expect(screen.getByText('LIVE')).toBeVisible();
   });
 
+  // Regression, user report in this Vis session: a window resized across the desk rail
+  // with a session open hides and shows this list. Each show read the window twice: the
+  // load on show, and again for the stream report that a list gets when it subscribes.
+  // Each window read makes every project read its wall again.
+  it('reads the window once when the list shows again beside a live stream', async () => {
+    const fleet = fleetHub();
+    const view = renderSessionsScreen({
+      machines: [{ sessions: [listSession({ id: 's1', title: 'First' })] }],
+      subscriptions: fleet.hub as never,
+    });
+    restore = view.restore;
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
+    await settle(200);
+    const before = listReads(view.requests);
+
+    view.setVisible(false);
+    view.setVisible(true);
+    await settle(1_000);
+    expect(listReads(view.requests)).toBe(before + 1);
+
+    // A stream that starts again can have missed frames: that still reads the window.
+    await fleet.streaming(false);
+    await fleet.streaming(true);
+    await settle(1_000);
+    expect(listReads(view.requests)).toBe(before + 2);
+  });
+
   it('does not count superseded read failures against a newer successful connection', async () => {
     const fleet = fleetHub();
     const rejectReads: (() => void)[] = [];
@@ -574,7 +601,6 @@ describe('a session list carried by the fleet stream', () => {
         rejectReads.push(() => reject(new Error('obsolete read')));
       });
     const read = vi.spyOn(GatewayClient.prototype, 'listSessions')
-      .mockImplementationOnce(holdFailure)
       .mockImplementationOnce(holdFailure);
     const view = renderSessionsScreen({
       machines: [{ sessions: [listSession({ id: 's1', title: 'First', live: true })] }],
@@ -586,7 +612,7 @@ describe('a session list carried by the fleet stream', () => {
       view.restore();
     };
     await settle(200);
-    expect(rejectReads).toHaveLength(2);
+    expect(rejectReads).toHaveLength(1);
     view.setVisible(false);
     view.setVisible(true);
     await settle(200);
