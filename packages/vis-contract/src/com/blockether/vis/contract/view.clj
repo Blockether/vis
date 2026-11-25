@@ -1153,11 +1153,20 @@
     (update card :picture #(assoc (dissoc % :data) :bytes (picture-byte-count data)))
     card))
 
+(defn- preview-nodes
+  "The image and media nodes of the previews of diff `node`, else nil."
+  [node]
+  (when (and (#{"diff" :diff} (:type node)) (sequential? (:previews node)))
+    (filter map? (map :node (filter map? (:previews node))))))
+
 (defn- view-picture-bytes
   [nodes]
   (transduce
     (map (fn [node]
            (case (:type node)
+             ("diff" :diff)
+             (view-picture-bytes (preview-nodes node))
+
              ("image" :image)
              (+ (picture-byte-count (:data node))
                 (picture-byte-count (get-in node [:before :data])))
@@ -1175,10 +1184,14 @@
 (defn- view-media-bytes
   [nodes]
   (transduce (map (fn [node]
-                    (if (#{"media" :media} (:type node))
-                      (+ (picture-byte-count (:data node))
-                         (picture-byte-count (get-in node [:before :data])))
-                      0)))
+                    (cond (#{"media" :media} (:type node))
+                          (+ (picture-byte-count (:data node))
+                             (picture-byte-count (get-in node [:before :data])))
+
+                          (#{"diff" :diff} (:type node))
+                          (view-media-bytes (preview-nodes node))
+
+                          :else 0)))
              +
              0
              nodes))
@@ -1480,6 +1493,11 @@
   "Let the engine read an old record with card and thread ids that overlap."
   false)
 
+(defn- nested-lines
+  "Fault lines `lines` of a node that stands at JSON pointer `at` in another node."
+  [at lines]
+  (map #(str at (if (str/starts-with? % "/ ") (subs % 1) %)) lines))
+
 (defn- hand-lines
   "The rules of filled node `node` that JSON Schema cannot say. Each one is a case
    of `live-view-checks.json`."
@@ -1538,7 +1556,14 @@
           (some->> (repeated (map #(get % "id") (get node "threads")))
                    (array-map "id")
                    (line "/threads" "repeated_item_id")
-                   vector))
+                   vector)
+          ;; The schema checked each preview node; the rules of its bytes run here.
+          (mapcat (fn [i preview]
+                    (when (map? (get preview "node"))
+                      (nested-lines (str "/previews/" i "/node")
+                                    (live-node-lines (get preview "node") decl?))))
+                  (range)
+                  (when (sequential? (get node "previews")) (get node "previews"))))
 
         ("stat" "steps" "badge" "list" "chart")
         (let [k (name (:key (get item-bounds (keyword kind))))]

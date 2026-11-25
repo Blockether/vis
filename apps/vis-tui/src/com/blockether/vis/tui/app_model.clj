@@ -663,6 +663,9 @@
   (let [node-id
         (:id node)
 
+        by-path
+        (group-by :path (:previews node))
+
         by-anchor
         (group-by (comp anchor-key :anchor) (app/threads node))
 
@@ -708,7 +711,14 @@
                                                     (contains? folded file)))
                                                 (when-let [anchor (:anchor row)]
                                                   (mapcat thread-block
-                                                          (get by-anchor (anchor-key anchor)))))))))
+                                                          (get by-anchor (anchor-key anchor))))))
+
+                                  (and (= :file (:kind row)) (not (contains? folded file)))
+                                  (update :rows into
+                                          (map (fn [{:keys [node path]}]
+                                                 {:kind :diff-preview :node-id node-id
+                                                  :path path :node node}))
+                                          (get by-path file)))))
                             {:file nil :rows []}
                             lines))
                   (mapcat thread-block orphans)))))
@@ -891,6 +901,14 @@
   [view node-id]
   (some #(when (= node-id (:id %)) %)
         (tree-seq #(seq (:children %)) :children {:children (:nodes view)})))
+
+(defn find-preview
+  "Preview `id` of file `path` in diff `diff-id`, or nil."
+  [view {:keys [diff-id path]} id]
+  (some (fn [preview]
+          (when (and (= path (:path preview)) (= id (get-in preview [:node :id])))
+            (:node preview)))
+        (:previews (find-node view diff-id))))
 
 (defn draft-action
   "The gateway `draft` action that saves `body` for `target`

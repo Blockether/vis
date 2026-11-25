@@ -1045,6 +1045,10 @@ An app uses these builders and calls:
   and its label names the current choice. A group in a menu opens a submenu. Give
   `is_selected=True` to the button of the current choice. Give `icon="refresh"` or `icon="more"` to
   show a picture in place of the label, which stays the name for screen readers.
+- `previews=[vis.ui.diff.preview(path, node)]` shows a picture, a sound or a video under the header
+  of the file `path` in the diff. `node` is a `vis.ui.image` or a `vis.ui.media`. A preview is not a
+  node of the view, but its bytes count toward the byte limits of the view. To change the previews,
+  call `set(previews=[...])` on the diff.
 - `vis.ui.thread(node_id)` shows one conversation.
 - `vis.ui.image(node_id, data_or_path, alt=..., label=None, before=None)` shows a PNG, JPEG, GIF,
   or WebP picture from bytes or a file. Vis reads the type and the size from the bytes. With

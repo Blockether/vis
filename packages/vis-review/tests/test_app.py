@@ -363,27 +363,9 @@ def put(root, rel, data):
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
 
 
-def image_group(recorder):
-    """The children of the group of the changed images: its table, then the open pictures."""
-    group = next(
-        (n for n in recorder._open_view()["nodes"] if n["id"] == "images"), None
-    )
-    return [] if group is None else group["children"]
-
-
-def image_rows(recorder):
-    """The row id of each changed image by its label."""
-    return {row["cells"][0]: row["id"] for row in image_group(recorder)[0]["rows"]}
-
-
-def images(recorder):
-    """The open pictures by their label."""
-    return {n["label"]: n for n in image_group(recorder)[1:]}
-
-
-def press_image(recorder, label):
-    """Press the row of one changed image, as a surface does."""
-    recorder.send("select", "image-files", item_ids=[image_rows(recorder)[label]])
+def previews(recorder):
+    """The preview node of each changed picture, sound and video of the diff, by path."""
+    return {p["path"]: p["node"] for p in recorder.node("diff").get("previews") or []}
 
 
 def test_a_changed_picture_shows_its_old_and_new_version(tmp_path, recorder):
@@ -397,31 +379,21 @@ def test_a_changed_picture_shows_its_old_and_new_version(tmp_path, recorder):
     (root / "gone.png").unlink()
     journal.checkpoint("block", "change logo")
     app.refresh()
-    # Request of Karol: a picture of 1490x2670 was open and filled the panel.
-    assert images(recorder) == {}
-    # From the start, logo.png is new: one picture. Huge files show a note.
-    press_image(recorder, "+ logo.png")
-    press_image(recorder, "+ huge.png")
-    assert wait_for(lambda: set(images(recorder)) == {"+ logo.png", "+ huge.png"})
-    shown = images(recorder)
-    assert "before" not in shown["+ logo.png"]
-    assert "no preview" in shown["+ huge.png"]["text"]
+    # Request of Karol: the picture shows under the header of its file in the diff,
+    # without a separate list. From the start, logo.png is new: one picture.
+    assert wait_for(lambda: set(previews(recorder)) == {"logo.png", "new.png"})
+    assert "before" not in previews(recorder)["logo.png"]
+    # A huge file shows a note.
+    assert any("huge.png: no preview" in text for text in notes(recorder))
     last = journal.entries[-1].seq
     recorder.send("activate", f"checkpoint-{last}")
-    # An open picture stays open in another range.
-    assert wait_for(lambda: "• logo.png" in images(recorder))
-    # The marks of GitHub take the place of "(added)" and "(deleted)".
-    assert set(image_rows(recorder)) == {
-        "• logo.png",
-        "+ new.png",
-        "+ huge.png",
-        "- gone.png",
-    }
-    changed = images(recorder)["• logo.png"]
+    assert wait_for(
+        lambda: set(previews(recorder)) == {"logo.png", "new.png", "gone.png"}
+    )
+    changed = previews(recorder)["logo.png"]
     assert (changed["width"], changed["before"]["width"]) == (3, 2)
     assert changed["media_type"] == changed["before"]["media_type"] == "image/png"
-    press_image(recorder, "• logo.png")
-    assert wait_for(lambda: set(images(recorder)) == {"+ huge.png"})
+    assert previews(recorder)["gone.png"]["alt"] == "The deleted file gone.png"
 
 
 def test_a_changed_sound_plays_its_old_and_new_version(tmp_path, recorder):
@@ -432,10 +404,8 @@ def test_a_changed_sound_plays_its_old_and_new_version(tmp_path, recorder):
     put(root, "song.mp3", b"ID3\x03\x00\x00\x00\x00\x00\x00new song")
     journal.checkpoint("block", "change song")
     recorder.send("activate", f"checkpoint-{journal.entries[-1].seq}")
-    assert wait_for(lambda: "• song.mp3" in image_rows(recorder))
-    press_image(recorder, "• song.mp3")
-    assert wait_for(lambda: "• song.mp3" in images(recorder))
-    node = images(recorder)["• song.mp3"]
+    assert wait_for(lambda: "song.mp3" in previews(recorder))
+    node = previews(recorder)["song.mp3"]
     assert (node["type"], node["kind"], node["media_type"]) == (
         "media",
         "audio",
@@ -461,16 +431,16 @@ def test_a_binary_file_that_is_no_picture_gives_no_image():
     assert image_node(diff, blobs.get) is None
 
 
-def test_the_images_go_away_when_the_range_has_no_picture(tmp_path, recorder):
+def test_the_previews_go_away_when_the_range_has_no_picture(tmp_path, recorder):
     root, journal, app = setup(tmp_path, recorder)
     put(root, "logo.png", png(2, 2))
     journal.checkpoint("block")
     edit(root, "a.py", "a = 2\n")
     text = journal.checkpoint("block")
     app.refresh()
-    assert "images" in recorder.ids()
+    assert "logo.png" in previews(recorder)
     recorder.send("activate", f"checkpoint-{text.seq}")
-    assert wait_for(lambda: "images" not in recorder.ids())
+    assert wait_for(lambda: previews(recorder) == {})
 
 
 def test_the_log_tells_timings_failures_and_refused_actions(tmp_path, recorder):
@@ -496,11 +466,10 @@ def test_the_log_tells_timings_failures_and_refused_actions(tmp_path, recorder):
     assert "model is away" in failure["message"] and "Traceback" in failure["detail"]
 
 
-def test_a_new_open_picture_closes_the_oldest_when_the_view_is_full(
+def test_the_files_after_the_picture_bound_show_no_preview_and_a_note_names_them(
     tmp_path, recorder, monkeypatch
 ):
-    # Audit L2: only a picture that shows counts against the view bound. The picture
-    # that a person opens always shows: "no preview" for a full view hid it.
+    # Audit L2: only a picture that shows counts against the view bound.
     import vis_review.app as review
 
     small = png(1, 1)
@@ -510,17 +479,11 @@ def test_a_new_open_picture_closes_the_oldest_when_the_view_is_full(
         put(root, name, small)
     journal.checkpoint("block")
     app.refresh()
-    press_image(recorder, "+ a.png")
-    press_image(recorder, "+ b.png")
-    assert wait_for(lambda: set(images(recorder)) == {"+ a.png", "+ b.png"})
-    press_image(recorder, "+ c.png")
-    assert wait_for(lambda: set(images(recorder)) == {"+ b.png", "+ c.png"})
-    assert {node["type"] for node in images(recorder).values()} == {"image"}
-    rows = image_rows(recorder)
-    assert image_group(recorder)[0]["selected_ids"] == [
-        rows["+ b.png"],
-        rows["+ c.png"],
-    ]
+    assert wait_for(lambda: set(previews(recorder)) == {"a.png", "b.png"})
+    assert any(
+        "No preview, because the view is full: c.png" in text
+        for text in notes(recorder)
+    )
 
 
 def node_count(nodes):
@@ -530,11 +493,9 @@ def node_count(nodes):
     )
 
 
-def test_each_changed_picture_has_a_row_and_no_bytes_until_a_person_opens_it(
-    tmp_path, recorder
-):
-    # A view holds 64 nodes and 8 MiB of pictures: only about 31 pictures had a row,
-    # and each picture went to the surface while its row was closed.
+def test_each_changed_picture_shows_a_preview_beyond_the_node_bound(tmp_path, recorder):
+    # A view holds 64 nodes: only about 31 pictures had a row. A preview is no node
+    # of the view.
     from blockether.vis import _contracts
 
     most = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
@@ -543,11 +504,8 @@ def test_each_changed_picture_has_a_row_and_no_bytes_until_a_person_opens_it(
         put(root, f"p{index:02}.png", png(1, 1))
     journal.checkpoint("block")
     app.refresh()
-    assert len(image_rows(recorder)) == most + 6
-    assert images(recorder) == {}
-    press_image(recorder, f"+ p{most + 5}.png")
-    assert wait_for(lambda: len(images(recorder)) == 1)
-    assert images(recorder)[f"+ p{most + 5}.png"]["type"] == "image"
+    assert wait_for(lambda: len(previews(recorder)) == most + 6)
+    assert previews(recorder)[f"p{most + 5}.png"]["type"] == "image"
     assert node_count(recorder._open_view()["nodes"]) <= most
 
 
@@ -846,7 +804,8 @@ def test_an_added_picture_shows_no_status_row(tmp_path, recorder):
     put(root, "logo.png", png(2, 2))
     journal.checkpoint("block")
     app.refresh()
-    assert recorder.ids() == ["diff", "images"]
+    assert recorder.ids() == ["diff"]
+    assert "logo.png" in previews(recorder)
 
 
 def test_many_findings_keep_the_view_valid(tmp_path, recorder):

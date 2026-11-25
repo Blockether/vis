@@ -139,13 +139,10 @@ class CommitMessage(BaseModel):
 SLOW = ("checks", "tests", "ai")
 # Git scopes: the "Uncommitted" scope and the "Automatic" base branch.
 _AGAINST = {"HEAD": "uncommitted changes", "base": "changes against the base branch"}
-# Nodes that one view holds at most: the view bound.
-MOST_NODES = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
-# The table of the changed pictures, and the rows that it holds at most.
-IMAGE_TABLE = "image-files"
-MOST_IMAGE_ROWS = ui.limit.bound("table", "rows")
+# The previews of changed pictures, sounds and videos that the diff holds at most.
+MOST_PREVIEWS = ui.limit.bound("diff", "previews")
 # Changed binary files that the app knows as a picture or not, newest first.
-MOST_KNOWN_FILES = 4 * MOST_IMAGE_ROWS
+MOST_KNOWN_FILES = 4 * MOST_PREVIEWS
 # Decoded picture bytes that the app shows together, old and new: the view bound.
 MOST_PICTURE_BYTES = _contracts.definition("view", "live_view")[
     "x-vis-max-picture-bytes"
@@ -264,8 +261,6 @@ class ReviewApp:
         self._images: OrderedDict[tuple, dict | None] = OrderedDict()
         # Whether a changed binary file is a picture, by the key of its image node.
         self._pictures: dict[tuple, bool] = {}
-        # The row ids of the pictures that a person opened, oldest first.
-        self._open: list[str] = []
         # The scope and the last results, saved at each paint for the next process.
         self._state_path = journal.path.with_suffix(".view.json")
         self._saved: dict | None = None
@@ -447,24 +442,27 @@ class ReviewApp:
         now = int(newest * 1000) or 1
         self._found_at = {f: self._found_at.get(f, now) for f in findings}
         threads, left = _threads(findings, shown, self._found_at)
+        previews, unshown = self._previews(
+            [d for d in diffs if d.path not in cut_paths]
+        )
         notice = self._notice()
-        notes = self._notes([*_left_out(cut, left), *_off_lines(findings, shown)])
-        nodes = [
+        notes = self._notes(
+            [*_left_out(cut, left), *unshown, *_off_lines(findings, shown)]
+        )
+        return [
             self._diff(
-                patch, threads, paths, bool(diffs or cut), end, is_cut=bool(cut)
+                patch,
+                threads,
+                paths,
+                bool(diffs or cut),
+                end,
+                is_cut=bool(cut),
+                previews=previews,
             ),
             *([notice] if notice else []),
             *self._git_nodes(),
             *([notes] if notes else []),
         ]
-        # The group of the images and its table are two nodes.
-        room = MOST_NODES - len(list(_contracts._wire_tree(nodes))) - 2
-        images = self.image_nodes(diffs, room)
-        if images:
-            nodes.append(
-                ui.group("images", *images, label="Changed images, sounds and videos")
-            )
-        return nodes
 
     def _keep_path(self, paths: list[str]) -> None:
         if self.path is not None and self.path not in paths:
@@ -896,8 +894,10 @@ class ReviewApp:
         end: int,
         *,
         is_cut: bool,
+        previews: list[dict],
     ) -> dict:
-        """The diff node of `patch` with its toolbar and `threads`, one for each finding on a line."""
+        """The diff node of `patch` with its toolbar, `threads`, one for each finding on
+        a line, and `previews`, one for each changed picture, sound and video."""
         return ui.diff(
             "diff",
             patch
@@ -914,49 +914,51 @@ class ReviewApp:
             else "now",
             threads=threads,
             children=self._toolbar(paths, has_diffs),
+            previews=previews,
         )
 
-    def image_nodes(self, diffs: list[FileDiff], room: int) -> list[dict]:
-        """The table of the changed pictures, sounds and videos, then each one that a person opened.
+    def _previews(self, diffs: list[FileDiff]) -> tuple[list[dict], list[str]]:
+        """The preview of each changed picture, sound and video of `diffs`, and a note
+        for each file that shows no preview.
 
-        A row of the table is no node and holds no bytes, so each changed file
-        has a row and none shows until a person presses its row. The view has room
-        for `room` open files, for `MOST_PICTURE_BYTES` and for `MOST_MEDIA_BYTES`:
-        when a new file needs that room, the files that were opened first close.
+        A surface shows a preview under the header of its file. The view holds
+        `MOST_PICTURE_BYTES` and `MOST_MEDIA_BYTES`: the files after the first file
+        that does not fit show no preview.
         """
-        files: dict[str, FileDiff] = {}
-        for diff in diffs:
-            if len(files) == MOST_IMAGE_ROWS:
-                break
-            if diff.is_binary and self._is_picture(diff):
-                files[_image_id(diff.path)] = diff
-        if not files:
-            return []
+        previews: list[dict] = []
+        notes: list[str] = []
+        over: list[str] = []
         budget, media_budget = MOST_PICTURE_BYTES, MOST_MEDIA_BYTES
-        shown: dict[str, dict] = {}
-        closed: set[str] = set()
-        for row_id in reversed(self._open):
-            # A picture of another range or file stays open for its return.
-            if (diff := files.get(row_id)) is None:
+        for diff in diffs:
+            if not (diff.is_binary and self._is_picture(diff)):
                 continue
             node = self._image(_image_key(diff), diff)
+            if node["type"] not in ("image", "media"):
+                notes.append(f"{node['text']}: {node.get('detail', '')}")
+                continue
             size = _contracts.node_picture_bytes(node)
             media = _contracts.node_media_bytes(node)
-            if closed or len(shown) == room or size > budget or media > media_budget:
-                closed.add(row_id)
+            if (
+                over
+                or len(previews) == MOST_PREVIEWS
+                or size > budget
+                or media > media_budget
+            ):
+                over.append(diff.path)
                 continue
             budget -= size
             media_budget -= media
-            shown[row_id] = dict(node, label=_file_label(diff))
-        self._open = [row_id for row_id in self._open if row_id not in closed]
-        table = ui.table(
-            IMAGE_TABLE,
-            columns=[ui.table.column("file", "File")],
-            rows=[ui.table.row(i, [_file_label(diff)]) for i, diff in files.items()],
-            is_selectable=True,
-            selected_ids=[row_id for row_id in files if row_id in shown],
-        )
-        return [table, *(shown[row_id] for row_id in files if row_id in shown)]
+            previews.append(ui.diff.preview(diff.path, node))
+        if over:
+            more = len(over) - MOST_CUT_NAMES
+            names = ", ".join(over[:MOST_CUT_NAMES]) + (
+                f" and {more} more" if more > 0 else ""
+            )
+            notes.append(
+                f"No preview, because the view is full: {names}. "
+                "Choose one file in More actions > File."
+            )
+        return previews, notes
 
     def _is_picture(self, diff: FileDiff) -> bool:
         """True when a surface can show the binary file `diff`: one read for each version."""
@@ -1040,8 +1042,6 @@ class ReviewApp:
                 self._repaint()
             elif kind == "activate" and node in BUTTONS:
                 getattr(self, "_" + node.replace("-", "_"))()
-            elif kind == "select" and node == IMAGE_TABLE:
-                self._press_images(list(event.get("item_ids") or []))
 
     def _activate_git(self, node: str) -> None:
         with self._lock:
@@ -1129,15 +1129,6 @@ class ReviewApp:
             if self._git_form == form and answer is not None:
                 self._git_message = answer.message.strip()[:2000]
                 self._repaint()
-
-    def _press_images(self, ids: list[str]) -> None:
-        """A press on one row opens or closes its picture; a longer selection is the open set."""
-        if len(ids) == 1:
-            is_open = ids[0] in self._open
-            self._open = [i for i in self._open if i != ids[0]] + ids * (not is_open)
-        else:
-            self._open = ids
-        self._repaint()
 
     def _seen(self) -> None:
         """A person works on a comment: the result of the last action leaves the app."""
@@ -1352,7 +1343,7 @@ def _file_label(diff: FileDiff) -> str:
 
 
 def _image_id(path: str) -> str:
-    """The id of the image node of the file `path`, and of its row in the table."""
+    """The id of the preview node of the file `path`."""
     return "image-" + hashlib.sha1(path.encode()).hexdigest()[:12]
 
 
@@ -1399,13 +1390,19 @@ def _node_bytes(node: dict) -> int:
 
 
 def _media_kind(data: bytes | None, path: str) -> str | None:
-    """"audio" or "video" for bytes that a surface plays, else None.
+    """ "audio" or "video" for bytes that a surface plays, else None.
 
     An MP4, Ogg or WebM container can hold either, so the file suffix decides.
     """
-    kinds = [kind for kind in ("audio", "video") if data and _contracts.media_type(data, kind)]
+    kinds = [
+        kind
+        for kind in ("audio", "video")
+        if data and _contracts.media_type(data, kind)
+    ]
     if len(kinds) > 1:
-        return "audio" if os.path.splitext(path)[1].lower() in _AUDIO_SUFFIXES else "video"
+        return (
+            "audio" if os.path.splitext(path)[1].lower() in _AUDIO_SUFFIXES else "video"
+        )
     return kinds[0] if kinds else None
 
 
@@ -1429,7 +1426,9 @@ def media_node(diff: FileDiff, old: bytes | None, new: bytes | None) -> dict | N
                 alt=f"The new version of {diff.path}"[:300],
                 before=old if is_old == kind else None,
             )
-        return ui.media(node_id, old, kind=kind, alt=f"The deleted file {diff.path}"[:300])
+        return ui.media(
+            node_id, old, kind=kind, alt=f"The deleted file {diff.path}"[:300]
+        )
     except ValueError as error:
         return ui.status(
             node_id,
@@ -1545,7 +1544,7 @@ def _shown_nodes(view) -> dict[str, dict] | None:
 
 
 # The keys of a diff that `set` replaces. Each other change needs a new node.
-_DIFF_SET = {"patch", "old_revision", "new_revision"}
+_DIFF_SET = {"patch", "old_revision", "new_revision", "previews"}
 
 
 def _ids(nodes: list[dict]) -> set[str]:

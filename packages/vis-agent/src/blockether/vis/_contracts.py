@@ -607,8 +607,20 @@ def read_media(media: Any) -> None:
         raise ValueError(f"media data is not {found} data")
 
 
+def _preview_nodes(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """The image and media nodes of the previews of diff `node`, else none."""
+    previews = node.get("previews") if node.get("type") == "diff" else None
+    return [
+        preview["node"]
+        for preview in (previews if isinstance(previews, list) else [])
+        if isinstance(preview, dict) and isinstance(preview.get("node"), dict)
+    ]
+
+
 def node_media_bytes(node: dict[str, Any]) -> int:
-    """The media bytes of one live node."""
+    """The media bytes of one live node, including the previews of a diff."""
+    if node.get("type") == "diff":
+        return sum(node_media_bytes(one) for one in _preview_nodes(node))
     if node.get("type") != "media":
         return 0
     before = node.get("before")
@@ -636,6 +648,8 @@ def picture_byte_count(data: Any) -> int:
 def node_picture_bytes(node: dict[str, Any]) -> int:
     """The picture bytes of one live node, including pictures in its items."""
     kind = node.get("type")
+    if kind == "diff":
+        return sum(node_picture_bytes(one) for one in _preview_nodes(node))
     if kind == "image":
         before = node.get("before")
         return picture_byte_count(node.get("data")) + picture_byte_count(
@@ -1468,6 +1482,17 @@ def _hand_lines(node: dict[str, Any], *, is_declaration: bool) -> list[str]:
                     lines.append(named_line(f"/threads/{i}/anchor", "anchor_order"))
         if (one := _repeated(_ids(node.get("threads")))) is not None:
             lines.append(named_line("/threads", "repeated_item_id", {"id": one}))
+        # The schema checked each preview node; the rules of its bytes run here.
+        previews = node.get("previews")
+        for i, preview in enumerate(previews if isinstance(previews, list) else []):
+            if isinstance(preview, dict) and isinstance(preview.get("node"), dict):
+                at = f"/previews/{i}/node"
+                lines += [
+                    at + (line[1:] if line.startswith("/ ") else line)
+                    for line in live_node_lines(
+                        preview["node"], is_declaration=is_declaration
+                    )
+                ]
     elif kind in ("stat", "steps", "badge", "list", "chart"):
         key = live_collection(kind)
         if key and (one := _repeated(_ids(node.get(key)))) is not None:

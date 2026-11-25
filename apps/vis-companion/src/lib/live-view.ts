@@ -505,6 +505,11 @@ export interface LiveThread {
   is_resolved?: boolean;
 }
 
+export interface LiveDiffPreview {
+  path: string;
+  node: LiveImageNode | LiveMediaNode;
+}
+
 /** A unified diff with its revisions and the threads anchored to its lines. */
 export interface LiveDiffNode extends LiveNodeBase {
   type: 'diff';
@@ -512,6 +517,7 @@ export interface LiveDiffNode extends LiveNodeBase {
   old_revision?: string;
   new_revision?: string;
   threads: LiveThread[];
+  previews?: LiveDiffPreview[];
   /** The toolbar: each button is one action, each group of buttons is one menu. */
   children?: LiveNode[];
 }
@@ -1682,6 +1688,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         ...(oldRevision ? { old_revision: oldRevision } : {}),
         ...(newRevision ? { new_revision: newRevision } : {}),
         threads: keyed(node.threads, threadFromWire),
+        ...optional('previews', Array.isArray(node.previews) ? diffPreviewsFromWire(node.previews) : undefined),
         ...diffToolbarFromWire(node.children),
       };
     }
@@ -1792,6 +1799,17 @@ function isDiffCommand(node: LiveNode): boolean {
 function diffToolbarFromWire(raw: unknown): { children?: LiveNode[] } {
   const children = liveNodesFromWire(raw).filter(isDiffCommand);
   return children.length > 0 ? { children } : {};
+}
+
+/** The media of a diff file, not part of the view's node tree. */
+function diffPreviewsFromWire(raw: unknown): LiveDiffPreview[] {
+  return keyed(raw, (preview) => {
+    const path = text(preview.path);
+    const rawNode = record(preview.node);
+    if (!path.trim() || (rawNode?.type !== 'image' && rawNode?.type !== 'media')) return null;
+    const node = liveNodeFromWire(rawNode);
+    return node?.type === 'image' || node?.type === 'media' ? { path, node } : null;
+  });
 }
 
 /** The `reveals` key of a card or a button, absent when blank. */
@@ -2222,6 +2240,7 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
         patch: 'patch' in op ? text(op.patch) : node.patch,
         old_revision: 'old_revision' in op ? optionalText(op.old_revision) : node.old_revision,
         new_revision: 'new_revision' in op ? optionalText(op.new_revision) : node.new_revision,
+        previews: 'previews' in op ? diffPreviewsFromWire(op.previews) : node.previews,
       };
     case 'thread':
       return 'label' in op ? { ...node, label: optionalText(op.label) } : node;

@@ -673,8 +673,10 @@
               ": " (str/replace (str body) #"\n" " ")))
        messages))
 
+(declare preview-facts)
+
 (defmethod node->markdown :diff
-  [{:keys [patch old-revision new-revision threads]} _]
+  [{:keys [patch old-revision new-revision threads previews]} _]
   (marked-lines :diff
                 (concat (keep identity
                               [(data-line (cond-> {}
@@ -696,7 +698,13 @@
                                                                       ":" (anchor-lines anchor)
                                                                       " " body)))
                                                       messages)))
-                                threads))))
+                                threads)
+                        (map (fn [preview]
+                               (str "preview "
+                                    (wire/json-str
+                                      (walk/postwalk #(if (map? %) (into (sorted-map) %) %)
+                                                     (wire/->wire (preview-facts preview))))))
+                             previews))))
 
 (defn- plain-number
   "`n` without a trailing `.0` when it is whole."
@@ -833,6 +841,20 @@
 
     before
     (assoc :before (picture-facts before))))
+
+(defn- preview-facts
+  [{:keys [path node]}]
+  {:path path
+   :node (merge (select-keys node [:id :type :label])
+                (if (= :image (:type node)) (image-facts node) (media-facts node)))})
+
+(defn- previews-elided
+  [previews]
+  (transduce (map (fn [{:keys [node]}]
+                    (if (= :image (:type node))
+                      (if (:before node) 2 1)
+                      (count (filter #(or (:data %) (:bytes %)) [node (:before node)])))))
+             + 0 previews))
 
 (defmethod node->markdown :image
   [node _]
@@ -1132,6 +1154,12 @@
 
                :media
                (media-facts node)
+
+               :diff
+               (if (seq (:previews node))
+                 (with-meta (update node :previews #(mapv preview-facts %))
+                   {:elided (previews-elided (:previews node))})
+                 node)
 
                :canvas
                (let [cards
@@ -1459,17 +1487,30 @@
         (or (some (fn [i]
                     (when (= fence (nth code i)) i))
                   (range 1 (count code)))
-            (invalid-markdown! at "a diff needs its closing fence"))]
+            (invalid-markdown! at "a diff needs its closing fence"))
 
-    (cond-> {:type :diff :patch (str/join "\n" (subvec code 1 closing))}
-      (:old-revision data)
-      (assoc :old-revision (:old-revision data))
+        previews
+        (into []
+              (comp (filter #(str/starts-with? % "preview "))
+                    (map #(wire/->engine (wire/parse-json (subs % (count "preview ")))))
+                    (map #(update % :node (fn [node]
+                                            (cond-> (update node :type keyword)
+                                              (:kind node) (update :kind keyword))))))
+              (subvec code (inc (long closing))))]
 
-      (:new-revision data)
-      (assoc :new-revision (:new-revision data))
+    (with-meta (cond-> {:type :diff :patch (str/join "\n" (subvec code 1 closing))}
+                 (:old-revision data)
+                 (assoc :old-revision (:old-revision data))
 
-      (seq (:threads data))
-      (assoc :threads (vec (:threads data))))))
+                 (:new-revision data)
+                 (assoc :new-revision (:new-revision data))
+
+                 (seq (:threads data))
+                 (assoc :threads (vec (:threads data)))
+
+                 (seq previews)
+                 (assoc :previews previews))
+      {:elided (previews-elided previews)})))
 
 (defmethod markdown->node :scene
   [_ {:keys [at lines]}]

@@ -136,13 +136,33 @@
                     rows)))
         (partition-by :item-id (plan-rows view node width disclosures))))
 
+(defn- preview-key
+  [{:keys [diff-id path preview]}]
+  [:picture diff-id path (:id preview)])
+
+(defn- diff-row-plans
+  [view width folded disclosures rows]
+  (mapcat (fn [{:keys [kind node-id path node] :as row}]
+            (if (= :diff-preview kind)
+              (let [owner {:diff-id node-id :path path :preview node}
+                    planned (cond-> node
+                              (= :image (:type node))
+                              (assoc :is-flipped (contains? folded (preview-key owner))))]
+                (into []
+                      (comp (remove #(= :node (get-in % [:entry :kind])))
+                            (map #(merge % owner)))
+                      (plan-rows view planned width disclosures)))
+              [row]))
+          rows))
+
 (defn- node-rows
   [view node width folded opts]
   (cond (:is-dialog node) []
         (= :diff (:type node))
         ;; Toolbar buttons that no key covers stand above the diff as rows.
         (into (into [] (mapcat #(plan-rows view % width (:disclosures opts))) (:children node))
-              (model/diff-rows (dissoc node :children) width folded opts))
+              (diff-row-plans view width folded (:disclosures opts)
+                              (model/diff-rows (dissoc node :children) width folded opts)))
         (= :thread (:type node))
         (into [{:kind :thread-node
                 :node-id (:id node)
@@ -707,8 +727,7 @@
 (defn compare-image
   "The image node with an old picture that `row` shows, or nil."
   [view row]
-  (when-let [node (some->> (:node-id row)
-                           (model/find-node view))]
+  (when-let [node (or (:preview row) (some->> (:node-id row) (model/find-node view)))]
     (when (and (= :image (:type node)) (:before node)) node)))
 
 (defn diff-view?
@@ -733,7 +752,7 @@
       row)))
 
 (defn- enter-row
-  [state {:keys [view rows]} {:keys [media!] :as effects}]
+  [state {:keys [view rows]} {:keys [inspect! media!] :as effects}]
   (let [row
         (selected-row state rows)
 
@@ -763,8 +782,12 @@
                 [:disclosures id]
                 (not (get (:disclosures state) id (:default-expanded node)))))
             (= :media-open (:kind entry))
-            (do ((or media! media/open!) (model/find-node view (:node-id entry)) (:item-id entry))
+            (do ((or media! media/open!)
+                 (or (:preview row) (model/find-node view (:node-id entry))) (:item-id entry))
                 state)
+
+            (and (= :picture-open (:kind entry)) (:preview row))
+            (do (inspect! (:preview row)) state)
 
             (model/read-only? view) (assoc state :save {:state :closed})
             :else (if-let [target (editor-target view row)]
@@ -787,9 +810,10 @@
 
 (defn- compare-key
   [state {:keys [view rows]}]
-  (if (compare-image view (nth rows (:selected state) nil))
-    (toggle-fold state [:picture (:node-id (nth rows (:selected state)))])
-    state))
+  (let [row (nth rows (:selected state) nil)]
+    (if (compare-image view row)
+      (toggle-fold state (if (:preview row) (preview-key row) [:picture (:node-id row)]))
+      state)))
 
 (defn- send-key-action
   "Send the saved comments with a new turn of the session, or else Send the app."

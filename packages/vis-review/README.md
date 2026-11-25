@@ -38,7 +38,7 @@ Each leader session lists the app from its start. A subagent session does not li
 - The findings of the checks and of the AI review, on their lines.
 - The state of the last run, for example **AI review in progress**. The Companion app shows it in the header of the app, next to the name. A result stays until you write or change a comment.
 - The review notes below the diff: the summary of the AI review and each finding that no shown line holds.
-- The changed pictures (PNG, JPEG, GIF and WebP), as a list with `+` for an added file, `-` for a deleted file and `•` for a modified file. Select a file of the list to open its picture, and select it again to close it. A changed picture shows its old and new version side by side. A picture over 2 MiB shows a note instead. The app holds 8 MiB of open pictures: when a new picture needs the room, the pictures that you opened first close.
+- The changed pictures (PNG, JPEG, GIF and WebP), sounds and videos, each under the header of its file in the diff. A changed file shows its old and new version. A picture over 2 MiB shows a note instead. The app holds 8 MiB of pictures and 16 MiB of sounds and videos: the files after the first file that does not fit show no preview, and a review note names them. To see one of them, pick it in **More actions › File**.
 - The log of the app: how long each check and AI review took, each failure with its stack trace, and each refused action.
 
 The buttons and their keys. Each key presses its button, and an upper-case key needs Shift.

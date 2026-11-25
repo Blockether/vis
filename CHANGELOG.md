@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Apps: the new `media` node (`vis.ui.media`) plays a sound or a video from bytes, a file or a web address in the terminal, the Companion and the web app. With `before`, it also plays the old version. One sound or video holds at most 8 MiB, and all media in one app hold at most 16 MiB. Review plays the old and the new version of a changed sound or video.
+- Apps: a `diff` node takes `previews` (`vis.ui.diff.preview(path, node)`). Each client shows the picture, sound or video of a changed file under the header of that file. Review shows its changed pictures, sounds and videos there and no longer has a separate list of them.
 - Provider: Google Antigravity (`antigravity`) signs in with a Google account and sends requests to the Cloud Code endpoint. Vis offers the models of the account, such as Gemini 4 Hydrogen, Gemini 3.8 Flash, Claude Opus 4.6 Thinking and GPT-OSS 120B, and takes their limits from the live model list. The provider limits show the remaining quota of each model pool (Gemini, Claude and GPT-OSS) and when an exhausted pool resets. Svar is pinned at 0.7.249.
 
 ### Fixed

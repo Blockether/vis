@@ -1567,7 +1567,14 @@
                  (assoc :threads (app-threads (:threads node)))
 
                  (some? (:children node))
-                 (assoc :children (diff-toolbar fail! context (:children node))))
+                 (assoc :children (diff-toolbar fail! context (:children node)))
+
+                 (sequential? (:previews node))
+                 (assoc :previews
+                        (mapv #(cond-> %
+                                 (map? (:node %))
+                                 (update :node (partial live-node fail! context)))
+                              (:previews node))))
 
                ;; The schema checks the bounds; the bytes of a picture are read here.
                :image
@@ -2078,6 +2085,18 @@
               (schema-long value))
    :patch (fn [_ value]
             value)
+   :previews (fn [fail! value]
+               (if (sequential? value)
+                 (mapv (fn [preview]
+                         (let [node (when (map? preview) (:node preview))]
+                           (if (and (map? node)
+                                    (nil? (view-spec/live-node-fault
+                                            (view-spec/fill-live-node (view-spec/wire-data node))
+                                            true)))
+                             (assoc preview :node (live-node fail! node))
+                             preview)))
+                       value)
+                 value))
    :old-revision (fn [_ value]
                    (schema-text value))
    :new-revision (fn [_ value]

@@ -2,7 +2,7 @@
 // Issue #421: the review nodes of an app attachment. A diff line opens a thread,
 // a draft saves only with the host acknowledgement, and the next message of the
 // session adds the saved drafts.
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppActionResult } from '../lib/app-actions';
@@ -73,6 +73,31 @@ it('saves all emoji at the draft limit and refuses a longer draft', async () => 
 });
 
 describe('DiffNodeView', () => {
+  it('shows both versions under the binary file header and hides them when folded', () => {
+    const sound = {
+      id: 'chime', type: 'media', kind: 'audio', alt: 'Chime',
+      url: 'https://example.com/after.wav', before: { url: 'https://example.com/before.wav' },
+    } as const;
+    const node: LiveDiffNode = {
+      ...DIFF,
+      id: 'review-binary',
+      patch: `diff --git a/a.txt b/a.txt\n${DIFF.patch}\ndiff --git a/chime.wav b/chime.wav\nBinary files a/chime.wav and b/chime.wav differ`,
+      previews: [{ path: 'chime.wav', node: sound }, { path: 'missing.wav', node: { ...sound, alt: 'Missing' } }],
+    };
+    render(<DiffNodeView node={node} />);
+    const file = within(screen.getByRole('region', { name: 'chime.wav' }));
+    const header = file.getByRole('button', { name: 'Fold chime.wav' });
+    const before = file.getByRole('group', { name: 'Before: Chime' });
+    expect(header.compareDocumentPosition(before) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(file.getByRole('group', { name: 'After: Chime' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'After: Missing' })).not.toBeInTheDocument();
+    fireEvent.click(header);
+    expect(file.queryByRole('group', { name: 'Before: Chime' })).not.toBeInTheDocument();
+    expect(file.queryByRole('group', { name: 'After: Chime' })).not.toBeInTheDocument();
+    fireEvent.click(file.getByRole('button', { name: 'Unfold chime.wav' }));
+    expect(file.getByRole('group', { name: 'After: Chime' })).toBeInTheDocument();
+  });
+
   it('opens an editor on the line that a keyboard activates, on that line side', async () => {
     const app = actions();
     render(<DiffNodeView node={DIFF} actions={app} />);

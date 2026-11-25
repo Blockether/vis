@@ -1069,12 +1069,18 @@
 
 (defn- app-entries
   [rows text-w]
-  (mapv (fn [row]
-          (let [{:keys [gutter body]} (app-model/row-parts row)]
-            {:kind :app-row
-             :node-id (:node-id row)
-             :tone (app-model/row-tone row)
-             :text (p/ellipsize (str gutter body) (max 1 (long text-w)))}))
+  (into []
+        (mapcat (fn [{:keys [kind path node node-id] :as row}]
+                  (if (= :diff-preview kind)
+                    (let [source {:diff-id node-id :path path}]
+                      (map #(assoc % :diff-preview source)
+                           (remove #(= :picture-open (:kind %))
+                                   (node-rows node {:text-w text-w}))))
+                    (let [{:keys [gutter body]} (app-model/row-parts row)]
+                      [{:kind :app-row
+                        :node-id node-id
+                        :tone (app-model/row-tone row)
+                        :text (p/ellipsize (str gutter body) (max 1 (long text-w)))}]))))
         rows))
 
 ;; An app's diff and thread paint read only here; the app surface owns their keys.
@@ -3776,9 +3782,12 @@
       (paint-plain! g left row inner-w t/dialog-hint-key text)
       (when (pos? width)
         (.register interactions/hit-map
-                   {:bounds {:row (+ (long row) (long *hit-row-offset*)) :col left :width width}
-                    :kind :live-media :view-id view-id :node-id (:node-id entry)
-                    :item-id (:item-id entry) :enabled? true})))
+                   (cond-> {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                                     :col left :width width}
+                            :kind :live-media :view-id view-id :node-id (:node-id entry)
+                            :item-id (:item-id entry) :enabled? true}
+                     (:diff-preview entry)
+                     (assoc :diff-preview (:diff-preview entry))))))
 
     :picture-open
     (paint-plain! g left row inner-w t/dialog-hint (:text entry))

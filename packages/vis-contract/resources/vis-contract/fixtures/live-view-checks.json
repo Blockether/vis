@@ -1700,6 +1700,123 @@
       }
     },
     {
+      "name": "a diff shows a sound under its file",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "--- a/a.wav\n+++ b/a.wav\n",
+            "previews": [
+              {
+                "path": "a.wav",
+                "node": {
+                  "id": "p",
+                  "type": "media",
+                  "kind": "audio",
+                  "alt": "x",
+                  "media_type": "audio/wav",
+                  "data": "UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQgAAACAoMCggGBAYA==",
+                  "before": {
+                    "media_type": "audio/wav",
+                    "data": "UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQgAAACAoMCggGBAYA=="
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "ok",
+        "cards": [],
+        "text": []
+      }
+    },
+    {
+      "name": "preview bytes that do not match the media type are a fault of the diff",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "--- a/a.wav\n+++ b/a.wav\n",
+            "previews": [
+              {
+                "path": "a.wav",
+                "node": {
+                  "id": "p",
+                  "type": "media",
+                  "kind": "audio",
+                  "alt": "x",
+                  "media_type": "audio/wav",
+                  "data": "aGVsbG8="
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "d"
+        ],
+        "text": [
+          "node d /previews/0/node - data is not audio/wav data (media)"
+        ]
+      }
+    },
+    {
+      "name": "a preview is only a picture, a sound or a video",
+      "view": {
+        "title": "Checks",
+        "nodes": [
+          {
+            "id": "a",
+            "type": "paragraph",
+            "text": "x"
+          },
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "--- a/a.wav\n+++ b/a.wav\n",
+            "previews": [
+              {
+                "path": "a.wav",
+                "node": {
+                  "id": "p",
+                  "type": "paragraph",
+                  "text": "x"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "class": "node",
+        "cards": [
+          "d"
+        ],
+        "text": [
+          "node d /previews/0/node/type - the value is not one of image, media (enum)"
+        ]
+      }
+    },
+    {
       "name": "a select value outside its options is a node fault",
       "view": {
         "title": "Checks",
@@ -5244,6 +5361,83 @@
     }
   ],
   "applies": [
+    {
+      "name": "a set of previews on a diff shows each one under its file",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "--- a/a.wav\n+++ b/a.wav\n"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "d",
+          "previews": [
+            {
+              "path": "a.wav",
+              "node": {
+                "id": "p",
+                "type": "media",
+                "kind": "audio",
+                "alt": "x",
+                "media_type": "audio/wav",
+                "data": "UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQgAAACAoMCggGBAYA=="
+              }
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "previews",
+          0,
+          "path"
+        ],
+        "value": "a.wav"
+      }
+    },
+    {
+      "name": "a set of previews with bytes that do not match the media type is refused",
+      "view": {
+        "title": "Apply",
+        "nodes": [
+          {
+            "id": "d",
+            "type": "diff",
+            "patch": "--- a/a.wav\n+++ b/a.wav\n"
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set",
+          "node_id": "d",
+          "previews": [
+            {
+              "path": "a.wav",
+              "node": {
+                "id": "p",
+                "type": "media",
+                "kind": "audio",
+                "alt": "x",
+                "media_type": "audio/wav",
+                "data": "aGVsbG8="
+              }
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "refusal": "Invalid live-view patch: node d /previews/0/node - data is not audio/wav data (media)"
+      }
+    },
     {
       "name": "a clear on a heading is refused, because a heading holds nothing to clear",
       "view": {

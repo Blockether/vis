@@ -312,6 +312,23 @@ describe('a patch frame', () => {
     expect(status.detail).toBe('host 2 of 3');
   });
 
+  it('reads and replaces the file previews of a diff', () => {
+    const image = primitives.nodes.find((node) => node.id === 'logo-change')!;
+    const sound = primitives.nodes.find((node) => node.id === 'chime-change')!;
+    const previews = [{ path: 'logo.png', node: image }, { path: 'chime.wav', node: sound }];
+    const view = liveViewFromWire({
+      id: 'review-view', title: 'Review',
+      nodes: [{ id: 'diff', type: 'diff', patch: '', previews }],
+    })!;
+    expect(nodeOfType(view, 'diff', 'diff')).toMatchObject({ previews });
+
+    const next = [{ path: 'new.wav', node: sound }];
+    const replaced = patched(view, 1, [{ op: 'set', node_id: 'diff', previews: next }]);
+    expect(nodeOfType(replaced, 'diff', 'diff')).toMatchObject({ previews: next });
+    const cleared = patched(replaced, 2, [{ op: 'set', node_id: 'diff', previews: [] }]);
+    expect(nodeOfType(cleared, 'diff', 'diff')).toMatchObject({ previews: [] });
+  });
+
   // The review app keeps its toolbar inside the diff: a frame that renames one of
   // those buttons must reach it, and a toolbar holds no other node kind.
   it('patches a button in the toolbar of a diff and drops other toolbar nodes', () => {

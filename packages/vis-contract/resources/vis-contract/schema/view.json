@@ -1104,6 +1104,37 @@
         "created_at"
       ]
     },
+    "diff_preview": {
+      "description": "The picture, sound or video of one changed file of a diff. With `before`, the node also holds the old version. The path is the path of the file in the patch.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "node": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/component"
+            },
+            {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "image",
+                    "media"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "node"
+      ]
+    },
     "thread": {
       "description": "A discussion with stable message ids. `draft` is the saved, unsent text of the human. The next message of the session takes each draft and its thread messages, and then the draft is removed. An empty draft adds the messages without a note.",
       "type": "object",
@@ -2101,6 +2132,14 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/thread"
+              },
+              "maxItems": 200
+            },
+            "previews": {
+              "description": "The pictures, sounds and videos of changed files. A surface shows each one under the header of its file in the patch.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/diff_preview"
               },
               "maxItems": 200
             },
@@ -3657,7 +3696,7 @@
           "code": ["label", "language", "text"],
           "spinner": ["is_active", "label", "text", "variant"],
           "button": ["clicks", "is_disabled", "label"],
-          "diff": ["label", "new_revision", "old_revision", "patch"],
+          "diff": ["label", "new_revision", "old_revision", "patch", "previews"],
           "image": ["label"],
           "media": ["label"],
           "scene": ["background", "fov", "is_wrapping", "label", "tick_ms"],
@@ -3876,6 +3915,13 @@
             "patch": {
               "type": "string",
               "maxLength": 1000000
+            },
+            "previews": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/diff_preview"
+              },
+              "maxItems": 200
             },
             "old_revision": {
               "$ref": "common.json#/$defs/non_blank_string"

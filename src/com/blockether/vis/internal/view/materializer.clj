@@ -720,8 +720,10 @@
        " "
        (wire/json-str (walk/postwalk #(if (map? %) (into (sorted-map) %) %) (wire/->wire value)))))
 
+(declare preview-facts)
+
 (defmethod node->markdown :diff
-  [{:keys [patch old-revision new-revision threads]} _]
+  [{:keys [patch old-revision new-revision threads previews]} _]
   (let [fenced (vec (fenced (str/split patch #"\n" -1)))]
     (marked-lines :diff
                   (concat [(tagged-json "revisions"
@@ -732,7 +734,8 @@
                                           new-revision
                                           (assoc :new-revision new-revision)))]
                           (update fenced 0 str "diff")
-                          (map #(tagged-json "thread" %) threads)))))
+                          (map #(tagged-json "thread" %) threads)
+                          (map #(tagged-json "preview" (preview-facts %)) previews)))))
 
 (defn- picture-facts
   "What a reader learns of picture `p` without its bytes: media type, size in
@@ -796,6 +799,25 @@
 (defmethod node->markdown :media
   [node _]
   (marked-lines :media [(tagged-json "media" (media-facts node))]))
+
+(defn- preview-facts
+  "Diff preview `preview` as the model reads it: the path and the facts of its
+   image or media node. The base64 bytes never reach the model."
+  [{:keys [path node]}]
+  {:path path
+   :node (merge (select-keys node [:id :type :label])
+                (if (= "image" (name (:type node))) (image-facts node) (media-facts node)))})
+
+(defn- previews-elided
+  "How many versions of the diff previews `previews` lose their bytes in the model copy."
+  [previews]
+  (transduce (map (fn [{:keys [node]}]
+                    (if (= "image" (name (:type node)))
+                      (if (:before node) 2 1)
+                      (count (filter #(or (:data %) (:bytes %)) [node (:before node)])))))
+             +
+             0
+             previews))
 
 (defmethod node->markdown :thread
   [node _]
@@ -1200,10 +1222,22 @@
                    (dissoc :is-selectable :selected-ids))
       {:elided (- (count issues) (count shown))})))
 
+(defn- budget-diff
+  "A diff node with each preview as facts: their bytes never reach the model, and they
+   count as elided."
+  [node _]
+  (if (seq (:previews node))
+    (with-meta (update node :previews #(mapv preview-facts %))
+      {:elided (previews-elided (:previews node))})
+    node))
+
 (defn- budget-node
   "One node as the model is handed it under `budget`; `:elided` meta counts what it left."
   [node budget]
   (case (:type node)
+    :diff
+    (budget-diff node budget)
+
     :log
     (budget-log node budget)
 
@@ -1587,12 +1621,22 @@
         (or (first (keep-indexed (fn [i line]
                                    (when (= fence line) i))
                                  more))
-            (invalid-markdown! at "a diff patch needs its closing fence"))]
+            (invalid-markdown! at "a diff patch needs its closing fence"))
 
-    (cond-> (merge {:type :diff :patch (str/join "\n" (take closing more))}
-                   (select-keys revisions [:old-revision :new-revision]))
-      (< (inc (long closing)) (count more))
-      (assoc :threads (mapv #(tagged-value at "thread" %) (drop (inc (long closing)) more))))))
+        [thread-lines preview-lines]
+        (split-with #(not (str/starts-with? % "preview ")) (drop (inc (long closing)) more))
+
+        previews
+        (mapv #(tagged-value at "preview" %) preview-lines)]
+
+    (with-meta (cond-> (merge {:type :diff :patch (str/join "\n" (take closing more))}
+                              (select-keys revisions [:old-revision :new-revision]))
+                 (seq thread-lines)
+                 (assoc :threads (mapv #(tagged-value at "thread" %) thread-lines))
+
+                 (seq previews)
+                 (assoc :previews previews))
+      {:elided (previews-elided previews)})))
 
 (defmethod markdown->node :thread
   [_ {:keys [at lines]}]

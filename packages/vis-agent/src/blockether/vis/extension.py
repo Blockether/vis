@@ -6306,13 +6306,15 @@ class Link(_KeyedNode):
 class DiffNode(_Node):
     """A unified diff that people review line by line, with threads on lines."""
 
-    def set(self, patch=None, *, old_revision=None, new_revision=None):
-        """Replace the patch or its revisions. Drafts of an older revision go stale."""
+    def set(self, patch=None, *, old_revision=None, new_revision=None, previews=None):
+        """Replace the patch, its revisions or its previews. Drafts of an older
+        revision go stale."""
         return self._op(
             "set",
             patch=None if patch is None else str(patch),
             old_revision=old_revision,
             new_revision=new_revision,
+            previews=None if previews is None else list(previews),
         )
 
     @property
@@ -9137,7 +9139,14 @@ def _ui_link(node_id, links=None, **spec):
 
 
 def _ui_diff(
-    node_id, patch, *, old_revision=None, new_revision=None, children=None, **spec
+    node_id,
+    patch,
+    *,
+    old_revision=None,
+    new_revision=None,
+    children=None,
+    previews=None,
+    **spec,
 ):
     """A unified diff that people review line by line in an app.
 
@@ -9148,6 +9157,8 @@ def _ui_diff(
     A group in a menu opens a submenu. `is_selected=True` marks the button of the
     current choice. `icon="refresh"` or `icon="more"` shows a picture instead of
     the label, and the label stays the accessible name.
+    `previews` holds a `vis.ui.diff.preview(...)` for each changed picture, sound or
+    video. A surface shows each one under the header of its file.
     """
     return _live_node(
         "diff",
@@ -9158,8 +9169,18 @@ def _ui_diff(
             old_revision=old_revision,
             new_revision=new_revision,
             children=None if children is None else list(children),
+            previews=None if previews is None else list(previews),
         ),
     )
+
+
+def _ui_diff_preview(path, node):
+    """The picture, sound or video of the changed file `path` of a diff.
+
+    `node` is a `vis.ui.image(...)` or a `vis.ui.media(...)`. With `before`, it
+    also holds the old version.
+    """
+    return {"path": str(path), "node": node}
 
 
 def _ui_picture_type(data):
@@ -9886,6 +9907,13 @@ class _LimitUI:
     fit = staticmethod(_ui_fit)
 
 
+class _DiffUI:
+    """Build a diff and the previews of its changed files."""
+
+    __call__ = staticmethod(_ui_diff)
+    preview = staticmethod(_ui_diff_preview)
+
+
 class _TableUI:
     """Build a table and its columns, rows, and groups."""
 
@@ -9984,7 +10012,7 @@ class _UI:
 
     # Apps
     app = _AppUI()
-    diff = staticmethod(_ui_diff)
+    diff = _DiffUI()
     image = staticmethod(_ui_image)
     media = staticmethod(_ui_media)
     picture = _PictureUI()

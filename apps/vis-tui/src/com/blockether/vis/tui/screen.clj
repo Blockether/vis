@@ -1216,7 +1216,13 @@
 
     :live-media
     (do (when-let [pane (live-pane db (:view-id hit))]
-          (media/open! (app-model/find-node (:view pane) (:node-id hit)) (:item-id hit)))
+          (let [view (:view pane)
+                id (:node-id hit)
+                preview (:diff-preview hit)]
+            (media/open! (if preview
+                           (app-model/find-preview view preview id)
+                           (app-model/find-node view id))
+                         (:item-id hit))))
         true)
 
     :live-activate

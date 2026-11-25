@@ -117,6 +117,45 @@
           (expect (not (str/includes? markdown (:data source))))))))
 
 (defdescribe
+  diff-previews
+  (it "shows a playable comparison under its file only while the file is open"
+      (let [node (fixture-node :media)
+            diff {:id "diff" :type :diff
+                  :patch (str "diff --git a/clip.wav b/clip.wav\n"
+                              "Binary files a/clip.wav and b/clip.wav differ\n")}
+            view (materializer/apply-patch
+                   {:id "v" :seq 1 :title "Comparison" :nodes [diff]}
+                   {:view-id "v" :seq 2
+                    :ops [{:op :set :node-id "diff"
+                           :previews [{:path "clip.wav" :node node}
+                                      {:path "missing.wav" :node (assoc node :id "missing")}]}]})
+            rows (surface/surface-rows view 60 #{})
+            from-file (drop-while #(not= :file (:kind %)) rows)
+            actions (keep-indexed (fn [i row]
+                                    (when (= :media-open (get-in row [:entry :kind])) i))
+                                  rows)
+            opened (atom [])
+            markdown (materializer/->markdown view)
+            facts (get-in (materializer/picture view) [:view :nodes 0 :previews])
+            parsed (materializer/parse-markdown markdown)]
+        (expect (= facts (get-in parsed [:view :nodes 0 :previews])))
+        (expect (not (str/includes? markdown (:data node))))
+        (expect (= [:media-facts :media-open :media-open]
+                   (mapv #(get-in % [:entry :kind]) (take 3 (rest from-file)))))
+        (doseq [i actions]
+          (surface/handle-key (assoc (surface/initial-state) :selected i)
+                              (KeyStroke. KeyType/Enter)
+                              {:view view :rows rows :list-h 12}
+                              {:media! (fn [node version] (swap! opened conj [node version]))}))
+        (expect (= [[node :before] [node :after]] @opened))
+        (let [folded (surface/handle-key (assoc (surface/initial-state) :selected (first actions))
+                                         (KeyStroke. KeyType/ArrowLeft)
+                                         {:view view :rows rows :list-h 12}
+                                         {})]
+          (expect (= #{"clip.wav"} (:folded folded)))
+          (expect (not-any? :entry (surface/surface-rows view 60 (:folded folded))))))))
+
+(defdescribe
   app-log-decisions
   (it "names the errors in the chip, and an empty log has no chip"
       (expect (nil? (app-log/chip-label [])))

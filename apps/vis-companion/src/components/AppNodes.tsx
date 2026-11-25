@@ -39,6 +39,7 @@ import {
   LIVE_MESSAGE_CHARS,
   isBlankDraft,
   type LiveDiffNode,
+  type LiveDiffPreview,
   type LiveMessage,
   type LiveNode,
   type LiveShortcut,
@@ -64,6 +65,8 @@ import {
   WrapIcon,
 } from './icons';
 import { DiffSearch, useDiffSearch } from './AppDiffSearch';
+import { ImageNodeView } from './AppImage';
+import { MediaNodeView } from './AppMedia';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { ariaShortcut } from '../lib/app-shortcuts';
 import { Button, CopyChip } from './ui';
@@ -801,6 +804,7 @@ function DiffStat({ additions, deletions, isFile = false }: DiffStatProps) {
 
 interface FileHeaderProps {
   file: AppDiffFile;
+  canFold: boolean;
   isOpen: boolean;
   onToggle: () => void;
 }
@@ -809,7 +813,7 @@ interface FileHeaderProps {
  * The band of one file: chevron, change mark, path, copy and the line counts. It
  * stays at the top while its lines scroll by, and a press folds the file.
  */
-function FileHeader({ file, isOpen, onToggle }: FileHeaderProps) {
+function FileHeader({ file, canFold, isOpen, onToggle }: FileHeaderProps) {
   const kind = fileChange(file);
   const change = CHANGE_MARK[kind];
   const renamed = file.old_path && file.new_path && file.old_path !== file.new_path;
@@ -828,8 +832,7 @@ function FileHeader({ file, isOpen, onToggle }: FileHeaderProps) {
       </span>
     </>
   );
-  // A file without hunks (empty, binary, mode-only) has no lines to show, so it does not fold.
-  if (file.hunks.length === 0) {
+  if (!canFold) {
     return (
       <header className="diff-file-header">
         <div className="diff-fold">
@@ -1135,7 +1138,18 @@ export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewP
       return next;
     });
 
-  const allFolded = files.length > 0 && files.every((file) => folded.has(file.path));
+  const previews = useMemo(() => {
+    const byPath = new Map<string, LiveDiffPreview['node'][]>();
+    for (const { path, node: preview } of node.previews ?? []) {
+      const held = byPath.get(path);
+      if (held) held.push(preview);
+      else byPath.set(path, [preview]);
+    }
+    return byPath;
+  }, [node.previews]);
+  const canFold = (file: AppDiffFile) => file.hunks.length > 0 || previews.has(file.path);
+  const foldable = files.filter(canFold);
+  const allFolded = foldable.length > 0 && foldable.every((file) => folded.has(file.path));
 
   return (
     <div
@@ -1182,7 +1196,7 @@ export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewP
         onSplit={setSplit}
         onWrap={() => setWrap(!wrap)}
         onTree={() => setTree(!tree)}
-        onFold={() => setFolded(allFolded ? new Set() : new Set(files.map((file) => file.path)))}
+        onFold={() => setFolded(allFolded ? new Set() : new Set(foldable.map((file) => file.path)))}
       />
       <div className={`min-w-0 ${tree ? 'diff-with-tree' : ''}`}>
         {tree && (
@@ -1261,7 +1275,12 @@ export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewP
               }
               aria-label={file.path}
             >
-              <FileHeader file={file} isOpen={!folded.has(file.path)} onToggle={() => toggle(file.path)} />
+              <FileHeader file={file} canFold={canFold(file)} isOpen={!folded.has(file.path)} onToggle={() => toggle(file.path)} />
+              {!folded.has(file.path) && previews.get(file.path)?.map((preview, at) => (
+                <div key={`${preview.id}:${at}`} className="p-2">
+                  {preview.type === 'image' ? <ImageNodeView node={preview} /> : <MediaNodeView node={preview} />}
+                </div>
+              ))}
               {!folded.has(file.path) && file.hunks.length > 0 && hasRows(file.path) && (
                 <div className="diff-file-scroll" data-diff-scroll>
                   {file.hunks.map((hunk, at) => (
