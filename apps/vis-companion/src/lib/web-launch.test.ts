@@ -11,6 +11,7 @@ import {
   takeWebLaunch,
   type WebLaunch,
 } from './web-launch';
+import { parseRoute } from './router';
 import { pendingRevocations } from './storage';
 import type { GatewayConn } from './types';
 
@@ -66,6 +67,17 @@ describe('web launch address', () => {
     expect(parseWebLaunch('#/s/123')).toBeNull();
     expect(parseWebLaunch('#launch=abc')).toBeNull();
     expect(parseWebLaunch('')).toBeNull();
+  });
+
+  it('opens the MCP App of a terminal link after the launch, and no other place', () => {
+    const route = '#/s/s%201?app=iter-1/2';
+    const launch = parseWebLaunch(`#launch=abc&gw=b3f1&open=${encodeURIComponent(route)}`);
+    expect(launch).toEqual({ code: 'abc', gatewayId: 'b3f1', open: route });
+    expect(parseRoute(launch?.open ?? '')).toEqual({ name: 'session', sid: 's 1', gw: undefined, app: 'iter-1/2' });
+    expect(parseWebLaunch(`#launch=abc&gw=b3f1&open=${encodeURIComponent('https://evil.example')}`)).toEqual({
+      code: 'abc',
+      gatewayId: 'b3f1',
+    });
   });
 
   it('takes the launch out of the address bar before the router reads it', () => {

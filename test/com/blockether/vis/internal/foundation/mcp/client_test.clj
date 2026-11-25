@@ -995,7 +995,8 @@
           (let [[asked answered] (mapv :message (requests-of requests "tools/call"))]
             (expect (= {"roots" {"listChanged" true}
                         "sampling" {}
-                        "extensions" {"io.modelcontextprotocol/tasks" {}}}
+                        "extensions" {"io.modelcontextprotocol/tasks" {}
+                                      "io.modelcontextprotocol/ui" {"mimeTypes" ["text/html;profile=mcp-app"]}}}
                        (get-in asked
                                ["params" "_meta" "io.modelcontextprotocol/clientCapabilities"])))
             (expect (= {"where" {"roots" roots} "what" model-answer}

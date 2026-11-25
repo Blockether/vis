@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
+            [com.blockether.vis.internal.foundation.mcp.apps :as mcp-apps]
             [com.blockether.vis.internal.gateway.server.fs :as fs-api]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -575,14 +576,16 @@
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (defn- page-media-type?
-  "True when `media-type` names an HTML page, which can tell the model its state."
+  "True when `media-type` names an HTML page or an MCP App, which can tell the model
+   its state. An MCP App does it with `ui/update-model-context`."
   [media-type]
-  (contains? #{(:html attachments/document-media-types) (:xhtml attachments/document-media-types)}
+  (contains? #{(:html attachments/document-media-types) (:xhtml attachments/document-media-types)
+               mcp-apps/envelope-media-type}
              (str/lower-case (str/trim (first (str/split (str media-type) #";"))))))
 
 (defn- attachment-agent-note-handler
   "PUT /v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note — keep what
-   one HTML page tells the model. The body is `{\"text\": …}`, the page state in
+   one HTML page or MCP App tells the model. The body is `{\"text\": …}`, the page state in
    plain text. The model reads the newest note of each page with the next user
    message. A blank text removes the note, and the same request twice gives the
    same state."

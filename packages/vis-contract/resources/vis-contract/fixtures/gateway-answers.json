@@ -2088,6 +2088,29 @@
         "goal": null
       }
     },
+    "POST /v1/sessions/:sid/mcp-apps/rpc": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "2 deployments"
+          }
+        ],
+        "structuredContent": {
+          "deployments": [
+            {
+              "id": "dep-1",
+              "status": "ready"
+            },
+            {
+              "id": "dep-2",
+              "status": "building"
+            }
+          ]
+        },
+        "isError": false
+      }
+    },
     "POST /v1/sessions/:sid/queue/send-now": {
       "marked": [],
       "skipped": []

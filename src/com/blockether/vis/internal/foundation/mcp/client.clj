@@ -50,6 +50,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.foundation.mcp.apps :as apps]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.util :as util]
@@ -165,8 +166,10 @@
 ;; Stateless revisions: request metadata, request headers and input rounds.
 
 (defn- client-capabilities
+  "What the client declares. Vis hosts MCP Apps for every server, so the UI
+   extension is always there."
   [spec]
-  (cond-> {}
+  (cond-> {"extensions" {apps/extension-id apps/capability}}
     (:elicitation? spec)
     (assoc "elicitation" {"form" {}})
 
@@ -185,8 +188,9 @@
    The client follows each task to its end, so it declares the tasks extension."
   [version spec]
   {"io.modelcontextprotocol/protocolVersion" version
-   "io.modelcontextprotocol/clientCapabilities" (assoc (client-capabilities spec)
-                                                  "extensions" {tasks-extension {}})
+   "io.modelcontextprotocol/clientCapabilities" (assoc-in (client-capabilities spec)
+                                                          ["extensions" tasks-extension]
+                                                          {})
    "io.modelcontextprotocol/clientInfo" client-info})
 
 (defn- header-value

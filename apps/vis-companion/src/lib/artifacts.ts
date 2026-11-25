@@ -19,6 +19,7 @@
 
 import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/diff.json';
 import { APP_ATTACHMENT_MEDIA } from './live-view';
+import { MCP_APP_MEDIA } from './mcp-app';
 import type {
   IterationAttachment,
   SessionArtifactRow,
@@ -192,7 +193,7 @@ export function attachmentIsAudio(attachment: IterationAttachment): boolean {
 // `audience: "user"`, so its bytes never reach the model and the app owes the
 // human a reader for them instead of one more line in the recorded-files row.
 export function attachmentIsDoc(attachment: IterationAttachment): boolean {
-  if (attachmentIsApp(attachment)) return false;
+  if (attachmentIsApp(attachment) || attachmentIsMcpApp(attachment)) return false;
   if (isXlsxMedia(attachment.media_type, attachment.filename)) return false;
   return (
     isDocMedia(attachment.media_type, attachment.filename) ||
@@ -244,12 +245,17 @@ export function attachmentIsLive(attachment: Partial<IterationAttachment>): bool
  * PRODUCED; what the turn DID stays in the transcript.
  */
 export function attachmentIsArtifact(attachment: Partial<IterationAttachment>): boolean {
-  return !attachmentIsLive(attachment) && !attachmentIsApp(attachment);
+  return !attachmentIsLive(attachment) && !attachmentIsApp(attachment) && !attachmentIsMcpApp(attachment);
 }
 
 /** An app attachment: its row opens the live app, not a file (`APP_ATTACHMENT_MEDIA`). */
 export function attachmentIsApp(attachment: Partial<IterationAttachment>): boolean {
   return baseMedia(attachment.media_type) === APP_ATTACHMENT_MEDIA;
+}
+
+/** An MCP App that a tool call opened: it renders in place (`MCP_APP_MEDIA`). */
+export function attachmentIsMcpApp(attachment: Partial<IterationAttachment>): boolean {
+  return baseMedia(attachment.media_type) === MCP_APP_MEDIA;
 }
 
 // A still, a clip and a recording belong to the SAME rail: each is something the

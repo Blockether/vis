@@ -1426,6 +1426,9 @@ class ViewRequests(TypedDict):
 ViewLog: TypeAlias = dict[str, JSONValue]
 
 
+McpAppRpcAnswer: TypeAlias = JSONValue
+
+
 class VoiceState(TypedDict):
     voice_session_id: str
     capture_generation: int
@@ -3305,6 +3308,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "POST /v1/sessions/:sid/forks": "SessionWrapped",
     "POST /v1/sessions/:sid/fs/actions/open": "SessionFsOpen",
     "POST /v1/sessions/:sid/keybindings/run": "KeybindingRunResult",
+    "POST /v1/sessions/:sid/mcp-apps/rpc": "McpAppRpcAnswer",
     "POST /v1/sessions/:sid/queue/send-now": "QueueSendNow",
     "POST /v1/sessions/:sid/resources/stop": "SessionResourceStop",
     "POST /v1/sessions/:sid/resume-queue": "TurnQueueStep",

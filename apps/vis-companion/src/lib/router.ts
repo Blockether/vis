@@ -9,6 +9,7 @@
 //   #/                                  → sessions navigator
 //   #/connect                           → gateways
 //   #/s/<sid>?gw=<gateway-id>           → open session <sid> on gateway <gw>
+//   #/s/<sid>?app=<iteration-id>/<n>    → and open its MCP App attachment full screen
 //
 // The gateway *id* (its stable, opaque `/healthz` instance id — NOT its URL)
 // rides in the link so the recipient's app can pick the right paired gateway
@@ -18,7 +19,7 @@
 export type Route =
   | { name: 'sessions' }
   | { name: 'connect' }
-  | { name: 'session'; sid: string; gw?: string };
+  | { name: 'session'; sid: string; gw?: string; app?: string };
 
 /** Parse `window.location.hash` into a Route. Unknown hashes → sessions. */
 export function parseRoute(hash: string): Route {
@@ -30,10 +31,12 @@ export function parseRoute(hash: string): Route {
   if (segs[0] === 's' && segs[1]) {
     const params = new URLSearchParams(queryPart);
     const gw = params.get('gw');
+    const app = params.get('app');
     return {
       name: 'session',
       sid: decodeURIComponent(segs[1]),
       gw: gw ? decodeURIComponent(gw) : undefined,
+      ...(app ? { app } : {}),
     };
   }
   return { name: 'sessions' };

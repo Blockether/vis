@@ -108,6 +108,7 @@ import type {
 import { PROTOCOL_HEADERS } from './compat';
 import { inputViewsFromWire, type HumanInputRequest } from './human-input';
 import type { ViewAction, ViewActionOutcome } from './view';
+import type { McpAppRpcAnswer } from './mcp-app';
 import {
   appSummary,
   applyLivePatch,
@@ -5986,6 +5987,18 @@ export class GatewayClient {
       `/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments/${index}/agent-note`,
       { text },
     );
+  }
+
+  /**
+   * Send one MCP request of an MCP App view to the server that opened it. The
+   * answer has `result`, or an `error` that the host gives to the view.
+   */
+  mcpAppRpc(sid: string, server: string, method: string, params: unknown): Promise<McpAppRpcAnswer> {
+    return this.request<McpAppRpcAnswer>('POST', `/v1/sessions/${encodeURIComponent(sid)}/mcp-apps/rpc`, {
+      server,
+      method,
+      params: params ?? {},
+    });
   }
 
   private static attachmentKey(sid: string, iterationId: string, index: number): string {

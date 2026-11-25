@@ -3537,7 +3537,16 @@
              local-path
              (artifact-inspector/reference-local-path row (vis/gateway-local?))]
 
-         (cond (attachments/live-artifact? row)
+         (cond (attachments/mcp-app-artifact? row)
+               (let [{:keys [status error]} (opener/open! (vis/mcp-app-url session-id
+                                                                           (:iteration-id row)
+                                                                           (:index row)))]
+                 (if (= :ok status)
+                   (vis/notify! "Opened the MCP app in the browser." :ttl-ms 2500)
+                   (vis/notify! (or error "The browser could not open the MCP app.")
+                                :level :warn
+                                :ttl-ms status-error-ttl-ms)))
+               (attachments/live-artifact? row)
                (do (vis/notify! "Loading recorded live view…" :ttl-ms 1500)
                    (if-let [bytes (vis/gateway-iteration-attachment-bytes session-id
                                                                           (:iteration-id row)

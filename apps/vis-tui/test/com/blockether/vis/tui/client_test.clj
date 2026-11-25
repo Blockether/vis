@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.client-test
   (:require [babashka.http-client :as http]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.paths :as paths]
@@ -1130,3 +1131,37 @@
                 (expect (string? first-key))
                 (expect (= first-key retry-key) "the retry is the same create")
                 (expect (not= retry-key next-key) "the next create is a new session"))))))))
+
+;; An MCP App cannot render in a terminal. The TUI opens it in the browser, and the
+;; web app must connect with the launch code and open that one app.
+(defdescribe mcp-app-opens-in-the-browser
+             (it "gives the browser a launch that opens the app of the attachment"
+                 (with-redefs-fn {#'client/target! (constantly {:base-url "http://127.0.0.1:7890"})
+                                  #'client/send-json! (fn [method path]
+                                                        (expect (= ["POST" "/v1/web/launches"]
+                                                                   [method path]))
+                                                        {"code" "c/1" "gateway_id" "g1"})}
+                   (fn []
+                     (let [url
+                           (client/mcp-app-url "s 1" "iter-1" 2)
+
+                           [address fragment]
+                           (str/split url #"#" 2)
+
+                           params
+                           (into {}
+                                 (for [pair
+                                       (str/split fragment #"&")
+
+                                       :let [[k v]
+                                             (str/split pair #"=" 2)]]
+
+                                   [k (java.net.URLDecoder/decode ^String v "UTF-8")]))
+
+                           [route query]
+                           (str/split (get params "open") #"\?" 2)]
+
+                       (expect (= "http://127.0.0.1:7890/" address))
+                       (expect (= {"launch" "c/1" "gw" "g1"} (dissoc params "open")))
+                       (expect (= "#/s/s%201" route))
+                       (expect (= "app=iter-1%2F2" query)))))))

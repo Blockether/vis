@@ -1146,6 +1146,38 @@
   [sid rid]
   (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources/logs?rid=" (enc rid))) "lines"))
 
+(defn mcp-app-url
+  "The address that opens MCP App attachment `idx` of iteration `iid` in session
+   `sid` full screen in the web app. The fragment has a one-time launch code, so
+   the browser connects to the gateway without a saved token, and the route of the
+   app. A browser never sends the fragment to a server."
+  [sid iid idx]
+  (let [entry
+        (target!)
+
+        body
+        (send-json! "POST" "/v1/web/launches")
+
+        code
+        (some-> (get body "code")
+                str
+                not-empty)
+
+        gateway-id
+        (some-> (get body "gateway_id")
+                str
+                not-empty)]
+
+    (when-not (and code gateway-id)
+      (throw (ex-info "the gateway gave no web launch code" {:type :gateway/no-web-launch})))
+    (str (base-url entry)
+         "/#launch=" (enc code)
+         "&gw=" (enc gateway-id)
+         ;; The web app reads the session path with `decodeURIComponent`, which
+         ;; keeps a `+`: a space in the path is `%20`.
+         "&open=" (enc (str "#/s/" (str/replace (enc sid) "+" "%20")
+                            "?app=" (enc (str iid "/" idx)))))))
+
 (defn iteration-attachment-bytes
   "Raw bytes (a byte-array) of ONE outbound artifact — iteration `iid`, its 0-based
    `idx` in the iteration's ordered attachment list — fetched from the daemon's

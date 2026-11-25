@@ -1,0 +1,55 @@
+{
+  "envelope": {
+    "protocol_version": "2026-01-26",
+    "call_id": "6f1d1f0e-3a55-4a5e-9a59-3c2b3c1d2e01",
+    "server": "acme-cloud",
+    "tool": {
+      "name": "list_deployments",
+      "title": "Deployments",
+      "inputSchema": {
+        "type": "object"
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://acme-cloud/deployments.html"
+        }
+      }
+    },
+    "resource_uri": "ui://acme-cloud/deployments.html",
+    "arguments": {
+      "env": "prod"
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "2 deployments"
+        }
+      ],
+      "structuredContent": {
+        "deployments": [
+          {
+            "id": "d1",
+            "status": "live"
+          },
+          {
+            "id": "d2",
+            "status": "ready"
+          }
+        ]
+      }
+    },
+    "html": "<!doctype html><html><head><title>Deployments</title></head><body><main id=\"app\"></main></body></html>",
+    "csp": {
+      "connectDomains": [
+        "https://api.acme.example"
+      ]
+    },
+    "content_security_policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self' data:; connect-src https://api.acme.example; frame-src 'none'; object-src 'none'; base-uri 'self'",
+    "permissions": {
+      "clipboardWrite": {}
+    },
+    "allow": "clipboard-write",
+    "prefers_border": true
+  }
+}

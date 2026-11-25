@@ -317,6 +317,17 @@
              str/trim
              str/lower-case)))
 
+(defn mcp-app-artifact?
+  "True for the media type of an MCP App that a tool call opened. The terminal
+   cannot host its view, so the browser opens it."
+  [artifact]
+  (= "application/vnd.vis.mcp-app+json"
+     (some-> (:media-type artifact)
+             (str/split #";" 2)
+             first
+             str/trim
+             str/lower-case)))
+
 (defn reference-artifact?
   "True when artifact row `artifact` names a file on the gateway machine and not bytes in
    the session database: its descriptor has `storage` reference (#450). The bytes route

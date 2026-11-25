@@ -52,11 +52,13 @@
             [com.blockether.vis.internal.config.validation :as validation]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.mcp.apps :as apps]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.foundation.mcp.elicitation :as elicitation]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
             [com.blockether.vis.internal.foundation.mcp.python-names :as python-names]
             [com.blockether.vis.internal.foundation.mcp.sampling :as sampling]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.util :as util]
@@ -1332,6 +1334,12 @@
                  :hint (str "Enabled servers: "
                             (pr-str (vec (keys (visible-servers (:session-id env))))))))))
 
+(defn- model-tools
+  "The tools of `conn` that the agent may see. An MCP App can keep a tool for its
+   view only (`_meta.ui.visibility` without \"model\"): the agent never sees it."
+  [conn]
+  (filterv apps/model-visible? (mcp/list-tools conn)))
+
 (defn- tool-rows
   "`conn`'s catalog in wire shape. Reads the conn's CACHED listing, so asking for
    schemas twice in a turn costs one RPC, not two."
@@ -1340,7 +1348,7 @@
           {"name" (get t "name")
            "description" (get t "description")
            "input_schema" (get t "inputSchema")})
-        (mcp/list-tools conn)))
+        (model-tools conn)))
 
 (defn- identifier
   "`name` as a block types it after a server: each character that a Python
@@ -1641,8 +1649,9 @@
                     (conn-of sid server)
 
                     tools
-                    (some-> (:tools conn)
-                            deref)
+                    (some->> (some-> (:tools conn)
+                                     deref)
+                             (filterv apps/model-visible?))
 
                     prompts
                     (cached-list conn "prompts/list")
@@ -1803,6 +1812,81 @@
          :server server
          :hint (str "`doc(" (python-name server) ")` prints what this server has."))))
 
+(defn- open-app!
+  "Host the MCP App of `tool` after the agent called it with `args` and got
+   `result`: read the view resource on `conn` and record the app envelope as a
+   user attachment of the running block. Gives `{\"resource_uri\" uri
+   \"attachment_id\" id}`, the URI with `\"error\"` when the view cannot open, or
+   nil for a tool without a view and for a call outside a block. A view that
+   fails never fails the call: the tool already ran."
+  [env server conn tool args result]
+  (when-let [uri (apps/resource-uri tool)]
+    (when mpl-capture/*attachment-sink*
+      (try (let [read
+                 (mcp/request conn
+                              "resources/read"
+                              {"uri" uri}
+                              (or (:timeout-ms conn) mcp/default-timeout-ms)
+                              (call-answers env server conn))
+
+                 bytes
+                 (.getBytes ^String (json/write-json-str
+                                      (apps/envelope {:server server
+                                                      :tool tool
+                                                      :arguments args
+                                                      :result result
+                                                      :view (apps/view-resource uri read)
+                                                      :call-id (str (random-uuid))}))
+                            StandardCharsets/UTF_8)
+
+                 recorded
+                 (mpl-capture/record-attachment!
+                   {:kind "file"
+                    :media-type apps/envelope-media-type
+                    :base64 (.encodeToString (Base64/getEncoder) bytes)
+                    :size (alength bytes)
+                    :filename (str (identifier server) "-" (identifier (get tool "name")) ".mcp-app.json")
+                    :audience "user"
+                    :label (or (not-empty (str (get tool "title"))) (get tool "name"))})]
+
+             {"resource_uri" uri "attachment_id" (:id recorded)})
+           (catch Throwable t
+             (tel/log! {:level :warn :id ::app-open-failed :data {:server server :uri uri} :error t})
+             {"resource_uri" uri "error" (ex-message t)})))))
+
+(defn app-request
+  "Send the MCP request `method` with `params` of a hosted view to its own server
+   `server`, as session `sid` sees it, and give the raw MCP result. A view reaches
+   only its own server, only the requests of [[apps/app-method?]], and only the
+   tools that list \"app\". A refusal throws an ex-info with an HTTP `:status`."
+  [sid server method params]
+  (when-not (apps/app-method? method)
+    (throw (ex-info (str "An MCP App cannot send " (pr-str method) " through Vis.")
+                    {:type :mcp-app/forbidden :status 403})))
+  (let [env {:session-id sid}
+        params (if (map? params) params {})
+        conn (when (scoped/resource-enabled? env :mcp server) (ensure-connected! sid server))]
+    (when-not conn
+      (throw (ex-info (str "MCP server '" server "' is not available.")
+                      {:type :mcp/unavailable :status 503})))
+    (with-current-era
+      sid
+      server
+      conn
+      (fn [conn]
+        (let [timeout (or (:timeout-ms conn) mcp/default-timeout-ms)]
+          (case method
+            "tools/call" (let [tool (get params "name")]
+                           (when-let [why (apps/refuse-app-call (mcp/list-tools conn) tool)]
+                             (throw (ex-info why {:type :mcp-app/forbidden :status 403})))
+                           (mcp/call-tool conn
+                                          tool
+                                          (let [a (get params "arguments")] (if (map? a) a {}))
+                                          timeout
+                                          (call-answers env server conn)))
+            "tools/list" {"tools" (filterv apps/app-callable? (mcp/list-tools conn))}
+            (mcp/request conn method params timeout (call-answers env server conn))))))))
+
 (defn- mcp-call-impl
   "The whole model-facing surface. `server` alone answers with that server's tools,
    descriptions and input schemas; `server` + `tool` invokes. A `tool` that names
@@ -1846,6 +1930,12 @@
                  ;; A tool of the server wins over a request of the same name.
                  (and (nil? row) (contains? mcp-methods tool))
                  (method-result env server conn tool args)
+                 ;; A tool that an MCP App keeps for its view only.
+                 (some #(and (= tool (get % "name")) (not (apps/model-visible? %)))
+                       (mcp/list-tools conn))
+                 (err :mcp/call
+                      (str "MCP server '" server "' keeps the tool '" tool "' for its app view only.")
+                      :server server)
                  ;; Unknown name, judged only against a catalog we actually have: a
                  ;; momentarily empty listing must never refuse a real call.
                  (and (seq rows) (nil? row))
@@ -1858,19 +1948,31 @@
                                    ")` lists the tools, and `doc("
                                    mine
                                    ".<tool>)` prints the input schema of one.")))
-                 :else (let [r (mcp/call-tool conn
+                 :else (let [args (if (map? args) args {})
+                             r (mcp/call-tool conn
                                               tool
-                                              (if (map? args) args {})
+                                              args
                                               (or (:timeout-ms conn) mcp/default-timeout-ms)
                                               ;; The server can ask the person of this session.
                                               (call-answers env server conn))
-                             is-error (boolean (get r "isError"))]
+                             is-error (boolean (get r "isError"))
+                             app (open-app! env
+                                            server
+                                            conn
+                                            (first (filter #(= tool (get % "name"))
+                                                     (mcp/list-tools conn)))
+                                            args
+                                            r)]
 
                          (ok :mcp/call
                              (cond-> {"server" server
                                       "tool" tool
                                       "content" (get r "content")
                                       "is_error" is-error}
+                               ;; The person sees the view of an MCP App in the session.
+                               app
+                               (assoc "app" app)
+
                                ;; The typed result of a tool with an output schema.
                                (contains? r "structuredContent")
                                (assoc "structured_content" (get r "structuredContent"))
@@ -1889,7 +1991,7 @@
 
 (def
   ^{:doc
-    "Invoke `tool` on configured MCP server `server` with `args` matching its input schema (omit or {} for none): {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}; text is at content[i][\"text\"], a tool with an output schema adds \"structured_content\", and a refused call carries \"input_schema\" back with it. Called with `server` alone it lists that server's catalog instead: {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}], \"methods\": [S]}; \"methods\" is there only for a server with resources or prompts. A `tool` that names one of these MCP requests sends it: `resources/list`, `resources/templates/list`, `resources/read` with {\"uri\": S}, `prompts/list`, `prompts/get` with {\"name\": S, \"arguments\": {...}}. The answer is {\"server\": S, \"method\": S} plus the keys of the MCP result; a list gives one page, and its \"nextCursor\" goes back as {\"cursor\": S}. Server names and status ride in ctx under env.mcp; the gateway connects and heals every enabled server on its own clock, so there is no connect/disconnect verb. Config: ~/.vis/state.yml :mcp :servers."
+    "Invoke `tool` on configured MCP server `server` with `args` matching its input schema (omit or {} for none): {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}; text is at content[i][\"text\"], a tool with an output schema adds \"structured_content\", a tool with an MCP App view adds \"app\": {\"resource_uri\": S, \"attachment_id\": S} (the person sees the view in the session), and a refused call carries \"input_schema\" back with it. Called with `server` alone it lists that server's catalog instead: {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}], \"methods\": [S]}; \"methods\" is there only for a server with resources or prompts. A `tool` that names one of these MCP requests sends it: `resources/list`, `resources/templates/list`, `resources/read` with {\"uri\": S}, `prompts/list`, `prompts/get` with {\"name\": S, \"arguments\": {...}}. The answer is {\"server\": S, \"method\": S} plus the keys of the MCP result; a list gives one page, and its \"nextCursor\" goes back as {\"cursor\": S}. Server names and status ride in ctx under env.mcp; the gateway connects and heals every enabled server on its own clock, so there is no connect/disconnect verb. Config: ~/.vis/state.yml :mcp :servers."
     :arglists '([server] [server tool] [server tool args])}
   mcp-call
   mcp-call-impl)
@@ -1976,7 +2078,7 @@
               server
               conn
               (fn [conn]
-                (let [tools (mcp/list-tools conn)
+                (let [tools (model-tools conn)
                       capabilities (:server-capabilities conn)
                       prompts (when (contains? capabilities "prompts")
                                 (mcp/list-all conn "prompts/list"))
@@ -2070,7 +2172,7 @@
       conn
       (fn [conn]
         (let [rows
-              (cond (not prompt?) (mcp/list-tools conn)
+              (cond (not prompt?) (model-tools conn)
                     (contains? (:server-capabilities conn) "prompts") (mcp/list-all conn
                                                                                     "prompts/list"))
 
@@ -2344,7 +2446,7 @@
       :hidden? true
       :name "mcp__call"
       :result
-      "String-keyed `{op,server,tool,content,is_error,structured_content?,input_schema?}`. The text of each content block is at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}],methods?}`. With an MCP request as `tool`: `{op,server,method}` plus the keys of the MCP result."
+      "String-keyed `{op,server,tool,content,is_error,structured_content?,input_schema?,app?}`. The text of each content block is at `block[\"text\"]`. `app` is `{resource_uri,attachment_id}` when the tool has an MCP App view: the person sees that view in the session, or `{resource_uri,error}` when it could not open. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}],methods?}`. With an MCP request as `tool`: `{op,server,method}` plus the keys of the MCP result."
       :description
       "Call a tool on an MCP server, with the names as strings. The call connects automatically. In `py3`, each server is a name of the sandbox, the `python_name` of its row in `session[\"env\"][\"mcp\"][\"servers\"]`: write `await <python_name>.<tool>(**arguments)`. Omit `tool` to get the input schemas of that server. For resources and prompts, pass an MCP request as `tool`: `resources/list`, `resources/templates/list`, `resources/read`, `prompts/list` or `prompts/get`. A tool name also matches when it has `_` for each character that an identifier cannot have."
       :call {:pos ["server"] :opt-pos ["tool" "args"]}

@@ -23,6 +23,8 @@ import type { GatewayConn } from './types';
 export interface WebLaunch {
   code: string;
   gatewayId: string;
+  /** The session route to open after the launch connects (`#/s/...`). */
+  open?: string;
 }
 
 /** What the gateway gives for a redeemed code. */
@@ -37,12 +39,17 @@ export interface WebLaunchGrant {
 /** A launch that cannot connect this browser. The message is for the reader. */
 export class WebLaunchError extends Error {}
 
-/** Read `#launch=<code>&gw=<id>`, or null for any other fragment. */
+/**
+ * Read `#launch=<code>&gw=<id>`, or null for any other fragment. An `open` value
+ * is a session route of this app, such as the MCP App that the terminal client opened.
+ */
 export function parseWebLaunch(hash: string): WebLaunch | null {
   const params = new URLSearchParams(String(hash ?? '').replace(/^#/, ''));
   const code = params.get('launch')?.trim();
   const gatewayId = params.get('gw')?.trim();
-  return code && gatewayId ? { code, gatewayId } : null;
+  if (!code || !gatewayId) return null;
+  const open = params.get('open')?.trim();
+  return open && open.startsWith('#/s/') ? { code, gatewayId, open } : { code, gatewayId };
 }
 
 /**

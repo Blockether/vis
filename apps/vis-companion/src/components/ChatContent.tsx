@@ -23,6 +23,7 @@ import { ArtifactLinkContext } from '../lib/artifact-links';
 import { measureClamped, useClampMotion } from '../lib/clamp-motion';
 import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
+import { McpAppAttachment } from './McpApp';
 import { LiveRunDialog, LiveRunRow, liveRunName } from './LiveArtifact';
 import { AppAttachmentRow } from './AppAttachment';
 import { LiveView } from './LiveView';
@@ -67,6 +68,7 @@ import {
   isZipMedia,
   attachmentBytes,
   attachmentIsApp,
+  attachmentIsMcpApp,
   attachmentIsAudio,
   attachmentIsDoc,
   attachmentIsImage,
@@ -2567,13 +2569,16 @@ export const AttachmentRail = memo(function AttachmentRail({
       entry.view_id &&
       attachments.findIndex((other) => other.view_id === entry.view_id) === at,
   );
+  // An MCP App renders in place, as the tool call that opened it.
+  const mcpApps = attachments.filter((entry) => attachmentIsMcpApp(entry) && entry.iteration_id);
   const files = recordedFiles(
     attachments.filter(
       (entry) =>
         !attachmentIsPlayable(entry) &&
         !attachmentIsDoc(entry) &&
         !attachmentIsLive(entry) &&
-        !attachmentIsApp(entry),
+        !attachmentIsApp(entry) &&
+        !attachmentIsMcpApp(entry),
     ),
   );
   const total = files.reduce((sum, file) => sum + file.count, 0);
@@ -2658,6 +2663,14 @@ export const AttachmentRail = memo(function AttachmentRail({
           ))}
         </DocStack>
       )}
+      {mcpApps.map((attachment) => (
+        <McpAppAttachment
+          key={`mcp-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
+          client={client}
+          sid={sid}
+          attachment={attachment}
+        />
+      ))}
       {page.rest.length > 0 && (
         <LoadMore
           label={`Load ${page.restLabel} of attachments`}

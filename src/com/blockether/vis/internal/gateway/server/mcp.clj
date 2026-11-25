@@ -161,6 +161,32 @@
   (try (http/json-response (mcp/logout-gateway-server-auth! (get-in request [:path-params :name])))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
+(defn- mcp-app-rpc-handler
+  "POST /v1/sessions/:sid/mcp-apps/rpc — one MCP request of a hosted MCP App view,
+   sent to the server that opened the view (`mcp/app-request`). The answer is
+   `{\"result\": R}`, or `{\"error\": {\"code\" \"message\"}}` that the host gives
+   to the view as its JSON-RPC error. Only a malformed body is an HTTP error."
+  [request]
+  (let [body
+        (try (http/body-json request) (catch Throwable _ nil))
+
+        server
+        (get body "server")
+
+        method
+        (get body "method")]
+
+    (if-not (and (string? server) (not (str/blank? server)) (string? method))
+      (http/error-response 400 :mcp-app/invalid-request "server and method are required")
+      (try (http/json-response {"result" (mcp/app-request (get-in request [:path-params :sid])
+                                                          server
+                                                          method
+                                                          (get body "params"))})
+           (catch Throwable e
+             (let [code (:code (ex-data e))]
+               (http/json-response {"error" {"code" (if (integer? code) code -32000)
+                                             "message" (or (ex-message e) "The request failed.")}})))))))
+
 (defn- global-only
   [handler]
   (fn [request]
@@ -196,4 +222,5 @@
    [:post "/v1/mcp/servers/:name/auth/complete"] (global-only mcp-auth-complete-handler)
    [:post "/v1/mcp/servers/:name/auth/poll"] (global-only mcp-auth-poll-handler)
    [:post "/v1/mcp/servers/:name/auth/cancel"] (global-only mcp-auth-cancel-handler)
-   [:post "/v1/mcp/servers/:name/auth/logout"] (global-only mcp-auth-logout-handler)})
+   [:post "/v1/mcp/servers/:name/auth/logout"] (global-only mcp-auth-logout-handler)
+   [:post "/v1/sessions/:sid/mcp-apps/rpc"] mcp-app-rpc-handler})

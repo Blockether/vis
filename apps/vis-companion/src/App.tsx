@@ -111,6 +111,7 @@ import {
   sessionHash,
   tabHash,
 } from './lib/router';
+import { requestMcpAppOpen } from './lib/mcp-app';
 import { parseTalkLink, talkConnection, type TalkLink } from './lib/talk';
 import { reclaimViewportForExternalNavigation, useVisualViewportShell } from './lib/viewport';
 import { watchBackGesture } from './lib/back-gesture';
@@ -725,6 +726,7 @@ export function App({ launch = null }: AppProps = {}) {
     (hash: string) => {
       const route = parseRoute(hash);
       if (route.name === 'session') {
+        if (route.app) requestMcpAppOpen(route.sid, route.app);
         const conn = (route.gw && conns.find((c) => c.id === route.gw)) || active;
         if (conn) {
           void openGatewaySession(conn, route.sid);
@@ -887,6 +889,8 @@ export function App({ launch = null }: AppProps = {}) {
         await refresh();
         setActive(conn);
         setTab('sessions');
+        // The first route reads the address: a launch that names a session opens it.
+        if (launch.open) window.history.replaceState(window.history.state, '', launch.open);
       } catch (error) {
         await refresh();
         setLaunchNotice(error instanceof Error ? error.message : String(error));

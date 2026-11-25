@@ -1579,6 +1579,17 @@
       "audience": "sdk",
       "operations": {
         "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "mcp_app_rpc_answer"
+        }
+      },
+      "path": "/v1/sessions/:sid/mcp-apps/rpc"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
           "request": "binary",
           "response": "json",
           "response_schema": "voice_job"
@@ -7952,6 +7963,172 @@
         "answers"
       ],
       "additionalProperties": true
+    },
+    "mcp_app_envelope": {
+      "type": "object",
+      "description": "The bytes of an MCP App attachment (media type application/vnd.vis.mcp-app+json): the app that one tool call opened, as a surface hosts it. The MCP values in tool, arguments, result and csp keep their MCP spelling.",
+      "properties": {
+        "protocol_version": {
+          "const": "2026-01-26"
+        },
+        "call_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "server": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "name"
+          ]
+        },
+        "resource_uri": {
+          "type": "string",
+          "pattern": "^ui://"
+        },
+        "arguments": {
+          "type": "object"
+        },
+        "result": {
+          "type": "object"
+        },
+        "html": {
+          "type": "string",
+          "minLength": 1
+        },
+        "csp": {
+          "type": "object",
+          "properties": {
+            "connectDomains": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            },
+            "resourceDomains": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            },
+            "frameDomains": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            },
+            "baseUriDomains": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "content_security_policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "permissions": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "camera",
+              "microphone",
+              "geolocation",
+              "clipboardWrite"
+            ]
+          },
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "allow": {
+          "type": "string"
+        },
+        "prefers_border": {
+          "type": "boolean"
+        },
+        "domain": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "protocol_version",
+        "call_id",
+        "server",
+        "tool",
+        "resource_uri",
+        "arguments",
+        "result",
+        "html",
+        "csp",
+        "content_security_policy",
+        "permissions",
+        "allow",
+        "prefers_border"
+      ],
+      "additionalProperties": false
+    },
+    "mcp_app_rpc_answer": {
+      "type": "object",
+      "description": "The answer to one MCP request of a hosted MCP App view: the raw MCP result, or a JSON-RPC error that the host gives to the view.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "error": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "integer"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "error"
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "app_door_answer": {
       "type": "object",

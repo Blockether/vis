@@ -910,6 +910,26 @@ and sends the refused request one more time.
 Vis keeps one stream open to each Streamable HTTP server. The server sends changes, such as a new
 tool list, and its questions on it. To turn the stream off, set `listen: false`.
 
+### Interactive tool results with MCP Apps
+
+Some servers give a tool an interactive view, such as a chart or a form, with the MCP Apps
+extension. Vis tells each server that it can show these views. When the model calls such a tool,
+the turn shows the view under the call:
+
+- The Companion app and the web app show the view in the transcript. Select the full screen
+  button to make it larger.
+- The terminal client cannot show a view. Select the attachment, and Vis opens the view in your
+  browser. The browser connects to the gateway with a one-time code.
+
+The view runs in a sandboxed frame. It cannot read the data of the app. It can reach only the
+network addresses that the server declared for it.
+
+A view can call the tools of its own server,
+but not a tool that the server keeps for the model only. The model does not see a tool that the
+server keeps for its view only. Before a view sends a message to the session, the app asks you to
+**Send** or **Deny** it. The model reads the newest state that the view reports with your next
+message.
+
 ### Questions, roots, and sampling
 
 A server can ask you for input in the middle of a tool call. Vis shows the question as a form in
