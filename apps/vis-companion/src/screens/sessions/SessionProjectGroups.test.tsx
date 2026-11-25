@@ -595,11 +595,18 @@ describe('ProjectGroup groups', () => {
     expect(within(sheet(name)).getAllByRole('button').map((button) => button.textContent)).toEqual([
       'Rename project',
       'Change folder',
+      'Copy path',
       'Settings',
       'Delete project',
     ]);
     await user.click(within(sheet(name)).getByText('Change folder'));
     expect(actions.move).toHaveBeenCalledWith(conn, expect.objectContaining({ root: ROOT }), expect.anything());
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    await user.click(dots);
+    await user.click(within(sheet(name)).getByText('Copy path'));
+    expect(writeText).toHaveBeenCalledWith(ROOT);
 
     await user.click(dots);
     await user.click(within(sheet(name)).getByText('Rename project'));
