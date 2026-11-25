@@ -1717,6 +1717,13 @@
         }
       }
     },
+    "GET /v1/sessions/:sid/workspace/branches": {
+      "branch": "main",
+      "branches": [
+        "main",
+        "feature"
+      ]
+    },
     "GET /v1/sessions/actions/search": {
       "query": "",
       "sessions": [
@@ -1935,6 +1942,13 @@
     "PATCH /v1/sessions/:sid/model": {
       "model": null,
       "default": null
+    },
+    "PATCH /v1/sessions/:sid/workspace/branch": {
+      "branch": "feature",
+      "branches": [
+        "feature",
+        "main"
+      ]
     },
     "PATCH /v1/sessions/:sid/workspace/root": {
       "workspace": {

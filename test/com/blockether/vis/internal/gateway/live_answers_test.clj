@@ -18,6 +18,7 @@
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.speech.core :as speech]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.workspace.git :as git]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io ByteArrayInputStream File]
            [java.nio.file Files]
@@ -149,6 +150,43 @@
                                  (str "/v1/projects/" (get project "id") "/sessions")
                                  {"order" [sid]}))))))
         (finally (delete-tree! project-root) (delete-tree! other-root))))))
+
+(defn- git!
+  "Run `git <args>` in `dir` with a fixed identity; fail the test when git fails."
+  [^File dir & args]
+  (let [{:keys [exit err]} (git/run-git dir (into ["-c" "user.name=t" "-c" "user.email=t@t"] args))]
+    (when-not (= 0 exit) (throw (ex-info (str "git failed: " err) {:args args})))))
+
+(defdescribe
+  workspace-branch-routes-answer-their-schema
+  (it "lists the local branches and switches the session workspace to another one"
+      (let [repo (temp-dir "vis-live-branches")]
+        (git! repo "init" "-b" "main")
+        (git! repo "commit" "--allow-empty" "-m" "one")
+        (git! repo "branch" "feature")
+        (try
+          (with-gateway
+            (fn [store handler]
+              (let [sid
+                    (str (h/store-session! store {:channel :api :title "Talk"}))
+
+                    base
+                    (str "/v1/sessions/" sid "/workspace")]
+
+                (expect (= 200 (first (answer handler :patch (str base "/root") {"path" (str repo)}))))
+                (let [[status body] (answer handler :get (str base "/branches") {})]
+                  (expect (= 200 status))
+                  (expect (= "main" (get body "branch")))
+                  (expect (= #{"main" "feature"} (set (get body "branches")))))
+                (let [[status body] (answer handler :patch (str base "/branch") {"branch" "feature"})]
+                  (expect (= 200 status))
+                  (expect (= "feature" (get body "branch"))))
+                ;; The session footer reads the new branch at once, not after its cache expires.
+                (expect (= "feature"
+                           (get-in (second (answer handler :get base {})) ["workspace" "git" "branch"])))
+                (expect (= 400
+                           (first (answer handler :patch (str base "/branch") {"branch" "--detach"})))))))
+          (finally (delete-tree! repo))))))
 
 (defdescribe provider-routes-answer-their-schema
              (it "provider status and the provider model list answer their schema"

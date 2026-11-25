@@ -165,6 +165,7 @@ export function renderApp({
           },
         },
       });
+    if (url.pathname.endsWith('/workspace/branches')) return answer({ branch: null, branches: [] });
     return answer({});
   }) as typeof fetch;
 
