@@ -967,6 +967,10 @@ ol.markdown-list > li::before {
 .diff-file {
   container-type: inline-size;
   background: var(--diff-paper);
+  /* A window resize lays out every box again. A file off the screen skips that layout
+     and its paint, so a long review does not slow each resize step. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--diff-file-height, 600px);
 }
 /* Code reads at 13/20, one step above the body text, as in T3 Code. */
 .app-diff .diff-table {

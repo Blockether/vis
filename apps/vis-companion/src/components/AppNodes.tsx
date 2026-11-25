@@ -1267,6 +1267,8 @@ export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewP
                 {
                   '--diff-number-width': `${numberWidth(digits.get(file.path) ?? 1)}px`,
                   '--diff-code-columns': columns.get(file.path) ?? 0,
+                  // The height that an unpainted file stands in for until it is painted once.
+                  '--diff-file-height': `${folded.has(file.path) ? DIFF_FILE_HEADER_HEIGHT : estimatedFileHeight(file)}px`,
                   minHeight:
                     folded.has(file.path) || hasRows(file.path)
                       ? undefined
