@@ -2,7 +2,13 @@
 // device. Reconcile on launch and fleet changes, reading device state before writing
 // only disagreements. Pending revocations outlive removal of a machine.
 
-import { clearRevocation, getGatewayNotify, pendingRevocations, setGatewayNotify } from './storage';
+import {
+  clearRevocation,
+  expireRevocations,
+  getGatewayNotify,
+  pendingRevocations,
+  setGatewayNotify,
+} from './storage';
 import { isHeldBy, notifyVerdict, rememberNotifyVerdict } from './notify-verdict';
 import { isProbeDue, noteReachable, noteUnreachable } from './reachability';
 import type { GatewayConn, PushDevice, PushStatus } from './types';
@@ -159,6 +165,7 @@ export async function drainPushRevocations(
   isCancelled: () => boolean = () => false,
 ): Promise<string[]> {
   const revoked: string[] = [];
+  await expireRevocations();
   for (const conn of await pendingRevocations()) {
     if (isCancelled()) break;
     // A machine that has been silent keeps its entry, but not the retry: this

@@ -42,6 +42,7 @@ import {
   unregisterFromPush,
   type PushGateway,
 } from './relay';
+import { GatewayError } from './gateway';
 import { getRelayGrant } from './storage';
 import type { PushDeviceInput, PushStatus } from './types';
 
@@ -303,5 +304,24 @@ describe('taking this device off a gateway', () => {
 
     await expect(unregisterFromPush(TOKEN, flaky)).rejects.toThrow('machine unreachable');
     expect(dropped).toEqual(['vg1.grant-1']);
+  });
+
+  // Regression, diagnostics export: a forgotten machine that was gone got one
+  // DELETE per id on every wake, and each one waited out the full timeout.
+  it('asks a machine that does not answer only once', async () => {
+    const relay = minter();
+    const keyless = gatewayOf(status());
+    await registerForPush(device(), keyless.gateway, relay.mint);
+
+    const asked: string[] = [];
+    const silent = {
+      unregister: async (id: string) => {
+        asked.push(id);
+        throw new GatewayError(0, 'gateway did not answer within 30s');
+      },
+    };
+
+    await expect(unregisterFromPush(TOKEN, silent)).rejects.toThrow('did not answer');
+    expect(asked).toEqual([TOKEN]);
   });
 });

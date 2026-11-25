@@ -530,17 +530,27 @@ async function forgetGatewayNotify(url: string): Promise<void> {
 // a stored "stop" (see lib/notify.ts): the durable half is the intent, not the
 // call. The moment a machine is dropped is often the moment it is unreachable,
 // and `drainPushRevocations` retries on every launch and wake until it accepts.
+//
+// The debt has an end. A machine that stays silent at that address for
+// `REVOCATION_TTL_MS` is gone or has moved: an old DHCP lease, another network,
+// a re-imaged box. A diagnostics export held eleven such machines, each asked
+// on every wake for days, and not one of them ever answered.
 const REVOKE_KEY = 'vis.notifyRevocations';
+const REVOCATION_TTL_MS = 30 * 24 * 60 * 60_000;
 
-/** Machines this device was taken off but has not managed to tell yet. */
-export async function pendingRevocations(): Promise<GatewayConn[]> {
+/** One revocation that is owed, and since when (absent in entries from older builds). */
+interface OwedRevocation extends GatewayConn {
+  owedSince?: number;
+}
+
+async function owedRevocations(): Promise<OwedRevocation[]> {
   const raw = await getRaw(REVOKE_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
-      (entry): entry is GatewayConn =>
+      (entry): entry is OwedRevocation =>
         Boolean(entry) &&
         typeof entry === 'object' &&
         typeof (entry as GatewayConn).url === 'string',
@@ -550,8 +560,27 @@ export async function pendingRevocations(): Promise<GatewayConn[]> {
   }
 }
 
-async function savePendingRevocations(pending: GatewayConn[]): Promise<void> {
+/** Machines this device was taken off but has not managed to tell yet. */
+export async function pendingRevocations(): Promise<GatewayConn[]> {
+  return (await owedRevocations()).map(({ url, token }) => ({ url, token }));
+}
+
+async function savePendingRevocations(pending: OwedRevocation[]): Promise<void> {
   await setRaw(REVOKE_KEY, JSON.stringify(pending));
+}
+
+/**
+ * Drop each revocation owed for longer than `REVOCATION_TTL_MS`. An entry from
+ * an older build has no date, so its clock starts now.
+ */
+export async function expireRevocations(now: number = Date.now()): Promise<void> {
+  const owed = await owedRevocations();
+  const kept = owed
+    .map((entry) => ({ ...entry, owedSince: entry.owedSince ?? now }))
+    .filter((entry) => now - entry.owedSince < REVOCATION_TTL_MS);
+  const isChanged =
+    kept.length !== owed.length || owed.some((entry) => typeof entry.owedSince !== 'number');
+  if (isChanged) await savePendingRevocations(kept);
 }
 
 /**
@@ -561,14 +590,14 @@ async function savePendingRevocations(pending: GatewayConn[]): Promise<void> {
  * deleted with the connection, and without it the DELETE cannot be made.
  */
 async function rememberRevocation(conn: GatewayConn): Promise<void> {
-  const pending = (await pendingRevocations()).filter((c) => c.url !== conn.url);
-  pending.push({ url: conn.url, token: conn.token });
+  const pending = (await owedRevocations()).filter((c) => c.url !== conn.url);
+  pending.push({ url: conn.url, token: conn.token, owedSince: Date.now() });
   await savePendingRevocations(pending);
 }
 
 /** That machine has taken this device off; stop asking it to. */
 export async function clearRevocation(url: string): Promise<void> {
-  const pending = await pendingRevocations();
+  const pending = await owedRevocations();
   const left = pending.filter((c) => c.url !== url);
   if (left.length === pending.length) return;
   await savePendingRevocations(left);

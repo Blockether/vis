@@ -20,6 +20,7 @@
 // Minting is deliberately rate-limited at the relay, so the grant is cached by
 // `storage` and reused across machines and launches; see `relayGrants`.
 
+import { GatewayError } from './gateway';
 import { getRelayGrant, relayGrants, setRelayGrant, type RelayGrant } from './storage';
 import type { PushDeviceInput, PushStatus } from './types';
 
@@ -245,6 +246,9 @@ export async function registeredIds(token: string): Promise<string[]> {
  * refusal left exactly that machine still pushing after the user had said stop.
  * The failure is still raised — the panel has to be able to say the machine has
  * not caught up — but only after nothing revocable is left behind.
+ *
+ * A machine that does not answer at all (status 0) is different: it refused
+ * nothing, and each other id would wait out the same timeout.
  */
 export async function unregisterFromPush(
   token: string,
@@ -256,6 +260,7 @@ export async function unregisterFromPush(
       await gateway.unregister(id);
     } catch (cause) {
       failure ??= cause;
+      if (cause instanceof GatewayError && cause.status === 0) break;
     }
   }
   if (failure) throw failure;

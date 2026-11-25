@@ -373,6 +373,26 @@ describe('forgetting a machine', () => {
     expect(asked).toEqual([BUILDBOX, BUILDBOX]);
   });
 
+  // Regression, diagnostics export: eleven forgotten machines that were gone
+  // were asked on every wake for days, because the debt never ended.
+  it('stops owing a machine that stayed silent for 30 days', async () => {
+    await saveConnections(paired);
+    await removeConnection(BUILDBOX);
+    const asked: string[] = [];
+    const silent = async (conn: GatewayConn) => {
+      asked.push(conn.url);
+      throw new Error('machine unreachable');
+    };
+    await drainPushRevocations('tok', silent);
+    afterGap(29 * 24 * 60 * 60_000);
+    await drainPushRevocations('tok', silent);
+    expect((await pendingRevocations()).map((c) => c.url)).toEqual([BUILDBOX]);
+    afterGap(2 * 24 * 60 * 60_000);
+    await drainPushRevocations('tok', silent);
+    expect(asked).toEqual([BUILDBOX, BUILDBOX]);
+    expect(await pendingRevocations()).toEqual([]);
+  });
+
   // Regression: a second wake duplicated a revocation while its first request was pending.
   it('does not repeat an unfinished revocation on a second wake', async () => {
     await saveConnections(paired);
