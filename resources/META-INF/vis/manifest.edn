@@ -9,6 +9,7 @@
                   com.blockether.vis.internal.foundation.harness.core/register!
                   com.blockether.vis.internal.provider.vendor.alibaba/register!
                   com.blockether.vis.internal.provider.vendor.anthropic/register!
+                  com.blockether.vis.internal.provider.vendor.antigravity/register!
                   com.blockether.vis.internal.provider.vendor.github-copilot/register!
                   com.blockether.vis.internal.provider.vendor.openai-codex/register!
                   com.blockether.vis.internal.provider.vendor.opencode-go/register!

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Provider: Google Antigravity (`antigravity`) signs in with a Google account and sends requests to the Cloud Code endpoint. Vis offers the models of the account, such as Gemini 4 Hydrogen, Gemini 3.8 Flash, Claude Opus 4.6 Thinking and GPT-OSS 120B, and takes their limits from the live model list. Svar is pinned at 0.7.247.
+
+### Fixed
+
+- Provider: the first turn on a provider whose model limits come only from its live model list no longer stops with **Model limits unavailable**. Before, Vis asked for the prompt cache identity before it loaded that list.
+
 ## [v0.5.34] - 2026-11-24
 
 ### Added

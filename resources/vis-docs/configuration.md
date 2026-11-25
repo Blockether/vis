@@ -300,8 +300,8 @@ next tool call.
 
 ## Providers and models
 
-The UI has presets and sign-in for OpenAI, Anthropic, OpenAI Codex, GitHub Copilot, Z.AI, Ollama,
-and LM Studio. For Anthropic, it has the API and the coding plan. In YAML, you can also declare an
+The UI has presets and sign-in for OpenAI, Anthropic, OpenAI Codex, GitHub Copilot, Google
+Antigravity, Z.AI, Ollama, and LM Studio. For Anthropic, it has the API and the coding plan. In YAML, you can also declare an
 endpoint that implements a supported API format, such as a local model:
 
 ```yaml

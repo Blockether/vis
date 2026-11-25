@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-11-24.
+> Generated 2026-11-25.
 
 Vis is a coding agent that runs Python, uses tools to inspect and change
 projects, and stores sessions locally. The `vis-agent` wrapper starts a JVM
@@ -149,7 +149,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/fff` | `0.12.21` | MIT | 12 KB | Blockether (in-house) |
 | `com.blockether/imaging` | `0.1.17` | MIT | 24 KB | Blockether (in-house) |
 | `com.blockether/parinferish` | `0.2.4` | MIT | 70 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.246` | Apache-2.0 | 1023 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.247` | Apache-2.0 | 1.0 MB | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:ca3f2f53f2023296ba761e809c0203ba54f0f941` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.042` | MIT | 49 KB | 3rd-party |
 | `com.fasterxml.jackson.core/jackson-core` | `2.22.4` | Apache-2.0 | 585 KB | 3rd-party |
@@ -307,6 +307,7 @@ Direct artifacts of at least 1 MB:
 | `tools.jackson.core/jackson-databind` | `3.2.4` | 1.9 MB |
 | `org.bouncycastle/bcpkix-jdk18on` | `1.85` | 1.3 MB |
 | `org.apache.commons/commons-compress` | `1.28.0` | 1.1 MB |
+| `com.blockether/svar` | `0.7.247` | 1.0 MB |
 
 Notes:
 - CPython is required by the core runtime and installed beside the binary (§4.2).
