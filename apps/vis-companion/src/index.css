@@ -1196,7 +1196,7 @@ ol.markdown-list > li::before {
   color: var(--fg);
 }
 .diff-base {
-  flex: 0 1 auto;
+  flex: 0 100 auto;
   color: var(--dialog-hint);
   white-space: nowrap;
 }
@@ -1222,9 +1222,12 @@ ol.markdown-list > li::before {
   flex: 0 1 auto;
   align-items: center;
   gap: 2px;
-  flex-wrap: wrap;
 }
-.diff-toolbar-summary > :not(.diff-commands),
+/* The menus keep one row: each label gives up width, then truncates. */
+.diff-commands > [data-view-control] {
+  flex-shrink: 1;
+}
+.diff-toolbar-summary > :not(.diff-commands, .diff-base),
 .diff-toolbar .diff-commands > button:first-child,
 .diff-toolbar .diff-commands > button:last-child {
   flex-shrink: 0;
@@ -1657,6 +1660,10 @@ ol.markdown-list > li::before {
   .diff-toolbar-summary > .diff-stat {
     margin-left: auto;
     margin-right: 4px;
+  }
+  /* The scope menu names the range; the base does not fit beside it on a phone. */
+  .diff-base {
+    display: none;
   }
 }
 

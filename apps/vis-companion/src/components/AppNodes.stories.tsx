@@ -329,7 +329,7 @@ const command = (id: string, label: string, variant: 'primary' | 'secondary' | '
   clicks: 0,
 });
 
-/** The toolbar that the review app puts in its diff: scope, file and actions menus. */
+/** The toolbar that the review app puts in its diff: the scope and Git menus, and an actions menu with the file menu. */
 const REVIEW_TOOLBAR: LiveDiffNode['children'] = [
   {
     id: 'scope',
@@ -344,16 +344,23 @@ const REVIEW_TOOLBAR: LiveDiffNode['children'] = [
     ],
   },
   {
-    id: 'file',
+    id: 'git-actions',
     type: 'menu',
-    label: 'All files',
-    children: [command('file-all', 'All files'), command('file:src/app.ts', 'src/app.ts')],
+    label: 'Git · main ↑0 ↓0',
+    children: [command('git-commit', 'Commit'), command('git-push', 'Push')],
   },
   {
     id: 'actions',
     type: 'menu',
     label: 'Actions',
+    icon: 'more',
     children: [
+      {
+        id: 'file',
+        type: 'menu',
+        label: 'All files',
+        children: [command('file-all', 'All files'), command('file:src/app.ts', 'src/app.ts')],
+      },
       command('refresh', 'Refresh'),
       command('checks', 'Run checks', 'primary'),
       command('tests', 'Run tests'),
@@ -374,6 +381,7 @@ function ReviewPanelFixture({ view }: { view: LiveView }) {
     id: 'review',
     type: 'diff',
     patch: REVIEW_PATCH,
+    old_revision: 'origin/main@73b88232',
     threads: [],
     children: REVIEW_TOOLBAR,
   });
@@ -402,6 +410,9 @@ function ReviewPanelFixture({ view }: { view: LiveView }) {
   };
   return <LiveViewPanel view={{ ...view, nodes: [node] }} app={actions} onActivate={() => {}} inDialog />;
 }
+
+/** The review panel on a phone: the scope and Git menus, the base and the line counts fit one row. */
+export const ReviewPanelPhone: Story = { ...ReviewPanel, decorators: width('390px') };
 
 /** An empty selection has no file headers or line controls. */
 export const NoChanges: Story = {
