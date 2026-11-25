@@ -2035,7 +2035,7 @@
               text (str/join "\n" rows)]
           (expect (= 1 (count (re-seq #"Outside" text))))
           (expect (= 1 (count (re-seq #"Inside" text))))
-          (expect (some #(re-find #"╭.*Verification.*╮" %) rows))))))
+          (expect (some #(re-find #"┌.*Verification.*┐" %) rows))))))
 
 (defdescribe composed-thread
   (it "paints the thread heading once, beside its sibling in a row"
@@ -2060,7 +2060,7 @@
                                          :children [{:id "two" :type :paragraph :text "Two"}
                                                     {:id "three" :type :paragraph :text "Three"}]}]}]}
               rows (screen-lines (app-frame view (surface/initial-state) w 28))]
-          (expect (some #(re-find #"╰.*╯.*╰.*╯" %) rows))))))
+          (expect (some #(re-find #"└.*┘.*└.*┘" %) rows))))))
 
 (defdescribe wide-toggle
   (it "keeps the focused segment visible and selects the clicked option"

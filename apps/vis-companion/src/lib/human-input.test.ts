@@ -76,7 +76,7 @@ describe('humanInputRequestFromWire', () => {
       'env:select',
       'key:password',
       'ok:checkbox',
-      'tags:multiselect',
+      'tags:select',
       'risk:range',
       'code:otp',
       'notify:plaintext',
@@ -259,13 +259,13 @@ describe('initialHumanInputValues', () => {
     });
   });
 
-  it('never starts a checkbox or multiselect from a foreign default', () => {
+  it('never starts a checkbox or multiple select from a foreign default', () => {
     const request = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
       nodes: [
         { id: 'flag', type: 'checkbox', default: 'yes' },
-        { id: 'many', type: 'multiselect', default: ['a', 7] },
+        { id: 'many', type: 'select', is_multiple: true, default: ['a', 7] },
       ],
     });
     expect(request && initialHumanInputValues(request)).toEqual({ flag: false, many: ['a'] });
@@ -334,7 +334,7 @@ describe('toggleHumanInputOption', () => {
   it('adds, removes, and keeps the request option order', () => {
     const request = parsed();
     const tags = request.nodes.find((field) => field.id === 'tags');
-    if (!tags) throw new Error('fixture must have a multiselect field');
+    if (!tags) throw new Error('fixture must have a multiple select field');
     expect(toggleHumanInputOption(tags, { tags: [] }, 'b')).toEqual(['b']);
     expect(toggleHumanInputOption(tags, { tags: ['b'] }, 'a')).toEqual(['a', 'b']);
     expect(toggleHumanInputOption(tags, { tags: ['a', 'b'] }, 'a')).toEqual(['b']);

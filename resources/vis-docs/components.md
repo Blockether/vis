@@ -229,8 +229,7 @@ live view, the input keeps its `value`.
 | `vis.ui.multiline(name)` | `multiline` | Text with line breaks |
 | `vis.ui.password(name)` | `password` | A `vis-secret:` handle |
 | `vis.ui.otp(name)` | `otp` | A `vis-secret:` handle for a code of digits |
-| `vis.ui.select(name, options)` | `select` | One option value |
-| `vis.ui.select.many(name, options)` | `multiselect` | A list of option values |
+| `vis.ui.select(name, options)` | `select` | One option value, or a list with `is_multiple=True` |
 | `vis.ui.toggle(name, options)` | `toggle` | One option value, or a list with `is_multiple=True` |
 | `vis.ui.checkbox(name)` | `checkbox` | `True` or `False` |
 | `vis.ui.slider(name, min=0, max=100, step=1)` | `range` | A number |
@@ -259,8 +258,8 @@ Read the text on the trusted side with `vis.reveal(handle)`. A live view never s
 
 ### Select
 
-`vis.ui.select(name, options, label="Target")` takes exactly one option. An option is a string, or
-`vis.ui.select.option(value, label)` when the value and the shown text differ.
+By default, `vis.ui.select(name, options, label="Target")` takes exactly one option. An option is
+a string, or `vis.ui.select.option(value, label)` when the value and the shown text differ.
 
 The Companion app shows two to four short options as one strip. Both clients show six or more
 options as one line with the current option. A press on that line opens a list, and in the terminal,
@@ -271,10 +270,9 @@ terminal shows at most eight rows. Arrow keys, Page Up, Page Down, Home, End, an
 move in the list. Enter or Space chooses an option and closes the list, but does not submit the
 form. Escape closes the list and keeps the value.
 
-### Multiselect
-
-`vis.ui.select.many(name, options)` takes any number of options. The value is a list in the
-declared order.
+Use `vis.ui.select(name, options, is_multiple=True)` to let the person choose any number of
+options. The value and `default` are lists in the order of `options`. Without `is_multiple=True`,
+`value` and `default` are strings or `None`.
 
 ### Checkbox
 
@@ -304,7 +302,7 @@ takes typed text and shows the form as a hint.
 
 Use `vis.ui.toggle(name, options, is_multiple=False)` when all two to eight choices should stay
 visible. The options appear as joined buttons. Use `is_multiple=True` to let the person choose
-more than one. The value is then a list, as for [Multiselect](#multiselect).
+more than one. The value is then a list, as for [Select](#select).
 
 Give `label` to name the input. An option from `vis.ui.toggle.option(value, label, icon=...)`
 shows only the [command icon](#command-icons) when you give one. The input supports `default`,

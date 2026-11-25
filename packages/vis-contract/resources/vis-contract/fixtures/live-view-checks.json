@@ -260,7 +260,8 @@
               {
                 "id": "tags",
                 "name": "tags",
-                "type": "multiselect",
+                "type": "select",
+                "is_multiple": true,
                 "label": "Tags",
                 "is_required": false,
                 "options": [
@@ -5715,6 +5716,50 @@
     }
   ],
   "applies": [
+    {
+      "name": "a select patch keeps multiple values in option order",
+      "view": {
+        "title": "Choose targets",
+        "nodes": [
+          {
+            "id": "targets",
+            "type": "select",
+            "is_multiple": true,
+            "options": [
+              {
+                "value": "a",
+                "label": "A"
+              },
+              {
+                "value": "b",
+                "label": "B"
+              }
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "set-value",
+          "node_id": "targets",
+          "value": [
+            "b",
+            "a"
+          ]
+        }
+      ],
+      "expect": {
+        "at": [
+          "nodes",
+          0,
+          "value"
+        ],
+        "value": [
+          "a",
+          "b"
+        ]
+      }
+    },
     {
       "name": "a set of previews on a diff shows each one under its file",
       "view": {

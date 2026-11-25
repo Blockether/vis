@@ -900,6 +900,7 @@
 (def ^:private input-domain-keys
   "The keys that bound the value of an input, as the wire spells them."
   {:options "options"
+   :is-multiple "is_multiple"
    :min "min"
    :max "max"
    :step "step"
@@ -1634,12 +1635,12 @@
               input-domain-keys)))))
 
 (defn- markdown-input-value
-  "The value that `text` paints for an input of `type`, or nil when it shows none."
-  [type text]
-  (cond (str/blank? text) nil
+  "Read the value shown by an input."
+  [type domain text]
+  (cond (:is-multiple domain) (if (str/blank? text) [] (str/split text #", "))
+        (str/blank? text) nil
         (contains? spec/secret-types type) nil
         (= :checkbox type) (= "yes" text)
-        (= :multiselect type) (str/split text #", ")
         (= :range type) (or (parse-long text) (parse-double text))
         :else text))
 
@@ -1652,7 +1653,7 @@
           [_ label value] (or (re-matches #"(?s)(.*?): (.*)" (str/join "\n" body))
                               (re-matches #"(?s)(.*?):()" (str/join "\n" body))
                               (invalid-markdown! at "an input needs a label and a value"))
-          value (markdown-input-value input-type value)]
+          value (markdown-input-value input-type domain value)]
 
       (cond-> (merge {:type input-type
                       :label label

@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Apps: a `diff` node takes `previews` (`vis.ui.diff.preview(path, node)`). Each client shows the picture, sound or video of a changed file under the header of that file. Review shows its changed pictures, sounds and videos there and no longer has a separate list of them.
 - Provider: Google Antigravity (`antigravity`) signs in with a Google account and sends requests to the Cloud Code endpoint. Vis offers the models of the account, such as Gemini 4 Hydrogen, Gemini 3.8 Flash, Claude Opus 4.6 Thinking and GPT-OSS 120B, and takes their limits from the live model list. The provider limits show the remaining quota of each model pool (Gemini, Claude and GPT-OSS) and when an exhausted pool resets. Svar is pinned at 0.7.249.
 
+### Changed
+
+- Apps: the `group` node is removed. Use the layout nodes `flex`, `grid`, `section`, `collapsible` and `card`. Section, card, dialog and Ask frames have square corners in the Companion, the web app and the terminal app.
+- Python SDK: the `multiselect` field and `vis.ui.select.many` are removed. Use `select` with `is_multiple=True`. Its answer is a list of option values in option order. The Companion and the terminal app use the option value, not the label, to keep a selection.
+
 ### Fixed
 
 - Provider: the first turn on a provider whose model limits come only from its live model list no longer stops with **Model limits unavailable**. Before, Vis asked for the prompt cache identity before it loaded that list.

@@ -2538,22 +2538,17 @@ export function isLiveSecretInput(node: LiveInputNode): boolean {
 /** True when `value` fits the domain of `node` (`spec/value-in-domain?`). */
 function inLiveInputDomain(node: LiveInputNode, value: unknown): boolean {
   const options = (node.field.options ?? []).map((option) => option.value);
-  const type = node.type === 'toggle' && node.field.is_multiple ? 'multiselect' : node.type;
-  switch (type) {
+  switch (node.type) {
     case 'checkbox':
       return typeof value === 'boolean';
     case 'range':
       return typeof value === 'number' && Number.isFinite(value);
     case 'select':
     case 'toggle':
-      return typeof value === 'string' && (options.length === 0 || options.includes(value));
-    case 'multiselect':
-      return (
-        Array.isArray(value) &&
-        value.every(
-          (item) => typeof item === 'string' && (options.length === 0 || options.includes(item)),
-        )
-      );
+      return node.field.is_multiple
+        ? Array.isArray(value) && new Set(value).size === value.length &&
+          value.every((item) => typeof item === 'string' && (options.length === 0 || options.includes(item)))
+        : typeof value === 'string' && (options.length === 0 || options.includes(value));
     default:
       return typeof value === 'string';
   }

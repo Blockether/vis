@@ -5231,7 +5231,7 @@ def ask(title, nodes, **options):
     # Flex, grid, section and collapsible arrange nodes and do not give
     # answers. They can nest. The values stay in one flat dict.
     # Dialog and menu nodes are only for live views.
-    # Field types: plaintext, password, multiline, select, multiselect,
+    # Field types: plaintext, password, multiline, select,
     # toggle, checkbox, range, datetime and otp.
     # Dialog options: description (prose under the title explaining
     # what the whole ask is about — it wraps), submit_label, cancel_label,
@@ -5325,18 +5325,12 @@ def _ui_multiline(name, **spec):
     return _node("multiline", name, spec)
 
 
-def _ui_select(name, options, **spec):
-    # Choose exactly ONE of `options` (plain strings, or `vis.ui.select.option(...)`
-    # pairs); answered as the chosen value.
+def _ui_select(name, options, *, is_multiple=False, **spec):
+    # The answer is one value or null. With is_multiple, it is a list in option order.
     spec["options"] = list(options)
+    if is_multiple is not False:
+        spec["is_multiple"] = is_multiple
     return _node("select", name, spec)
-
-
-def _ui_multiselect(name, options, **spec):
-    # Choose ANY of `options` (plain strings, or `vis.ui.select.option(...)` pairs);
-    # answered as a list, empty when nothing is ticked.
-    spec["options"] = list(options)
-    return _node("multiselect", name, spec)
 
 
 def _ui_checkbox(name, **spec):
@@ -5369,7 +5363,7 @@ def _ui_otp(name, **spec):
 
 
 def _ui_option(value, label=None):
-    # One entry of a select / multiselect: the value that is ANSWERED and the
+    # One entry of a select: the value that is ANSWERED and the
     # words shown for it. Given no label, the value shows itself.
     return {"value": value} if label is None else {"value": value, "label": label}
 
@@ -10025,7 +10019,6 @@ class _SelectUI:
     """Build a select of one option, a select of many options, and their options."""
 
     __call__ = staticmethod(_ui_select)
-    many = staticmethod(_ui_multiselect)
     option = staticmethod(_ui_option)
 
 

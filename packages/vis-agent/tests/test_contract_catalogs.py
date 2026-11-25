@@ -111,7 +111,6 @@ def test_the_outside_host_and_the_sdk_share_one_input_derivation():
         "checkbox",
         "datetime",
         "multiline",
-        "multiselect",
         "otp",
         "password",
         "plaintext",

@@ -544,7 +544,7 @@
                (some? (:is-growing field))
                (assoc :is-growing (:is-growing field))
 
-               (and (= :toggle field-type) (some? (:is-multiple field)))
+               (some? (:is-multiple field))
                (assoc :is-multiple (:is-multiple field))
 
                description
@@ -584,6 +584,11 @@
              _
              (when (and (= :form context) (:is-secret spec) (some? raw-default))
                (invalid-field! field-id "secret fields must not have a :default"))
+
+             _
+             (when (and (= :select field-type) (view-spec/multiple-choice? spec)
+                        (contains? field :default) (nil? raw-default))
+               (invalid-field! field-id "invalid :default — must be a list of option values"))
 
              [status default]
              (if (or (= :form context) (some? raw-default))
@@ -2190,32 +2195,26 @@
 
 (defn- coerce-select
   [{:keys [is-required options]} value]
-  (let [text
-        (trimmed value)
-
-        allowed
-        (set (map :value options))]
-
-    (cond (nil? text) (if is-required [:error "is required"] [:ok nil])
+  (let [text (when (string? value) (trimmed value))
+        allowed (set (map :value options))]
+    (cond (and (some? value) (not (string? value))) [:error "must be an option value"]
+          (nil? text) (if is-required [:error "is required"] [:ok nil])
           (contains? allowed text) [:ok text]
           :else [:error (str "must be one of " (str/join ", " (sort allowed)))])))
 
-(defn- coerce-multiselect
-  [{:keys [is-required options]} value]
-  (let [values (cond (nil? value) []
-                     (string? value) [value]
-                     (sequential? value) (vec value)
-                     (set? value) (vec value)
-                     :else ::invalid)]
-    (if (= ::invalid values)
+(defn- coerce-many-options
+  [{:keys [is-required options type]} value]
+  (let [values (if (nil? value) [] value)]
+    (if-not (and (sequential? values) (every? string? values))
       [:error "must be a list of option values"]
-      (let [picked (into [] (comp (keep trimmed) (distinct)) values)
-            allowed (set (map :value options))
-            unknown (remove allowed picked)]
-
+      (let [picked (set values)
+            allowed (mapv :value options)
+            unknown (remove (set allowed) picked)]
         (cond (seq unknown) [:error (str "unknown option " (str/join ", " (sort unknown)))]
+              (and (= :select type) (not= (count values) (count picked)))
+              [:error "must not repeat options"]
               (and is-required (empty? picked)) [:error "is required"]
-              :else [:ok picked])))))
+              :else [:ok (filterv picked allowed)])))))
 
 (defn- coerce-checkbox
   [{:keys [is-required]} value]
@@ -2303,7 +2302,7 @@
    `[:ok coerced]` or `[:error message]`."
   [{:keys [type] :as field} value]
   (cond (contains? view-spec/text-types type) (coerce-text field value)
-        (view-spec/multiple-choice? field) (coerce-multiselect field value)
+        (view-spec/multiple-choice? field) (coerce-many-options field value)
         (contains? view-spec/choice-types type) (coerce-select field value)
         (= :checkbox type) (coerce-checkbox field value)
         (= :range type) (coerce-range field value)
@@ -2399,7 +2398,7 @@
         {:keys [values errors]}
         (check-all fields coerced)
 
-        ;; Only multiselect coercion echoes submitted values. The other built-in
+        ;; Only multiple-choice coercion echoes submitted values. The other built-in
         ;; messages describe the spec: a one-letter password must not erase that
         ;; letter from "must be one of ...". Custom validator errors are untrusted.
         static-errors

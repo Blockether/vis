@@ -28,7 +28,6 @@ export const HUMAN_INPUT_FIELD_TYPES = [
   'password',
   'multiline',
   'select',
-  'multiselect',
   'toggle',
   'checkbox',
   'range',
@@ -316,7 +315,7 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
     ...(placeholder ? { placeholder } : {}),
     ...growth,
     ...(type === 'plaintext' ? viewCommandIcon(row.icon) : {}),
-    ...(type === 'toggle' && row.is_multiple === true ? { is_multiple: true } : {}),
+    ...((type === 'select' || type === 'toggle') && row.is_multiple === true ? { is_multiple: true } : {}),
     ...(options ? { options } : {}),
     ...(minLength ? { min_length: minLength } : {}),
     ...(maxLength ? { max_length: maxLength } : {}),
@@ -519,14 +518,14 @@ export function humanInputFormRefused(
 /** The value a field starts with: its own default, or the empty value of its type. */
 export function humanInputDefaultValue(field: HumanInputField): HumanInputValue {
   const fallback = field.default;
-  const type = field.type === 'toggle' && field.is_multiple ? 'multiselect' : field.type;
-  switch (type) {
+  if ((field.type === 'select' || field.type === 'toggle') && field.is_multiple) {
+    return Array.isArray(fallback)
+      ? fallback.filter((item): item is string => typeof item === 'string')
+      : [];
+  }
+  switch (field.type) {
     case 'checkbox':
       return fallback === true;
-    case 'multiselect':
-      return Array.isArray(fallback)
-        ? fallback.filter((item): item is string => typeof item === 'string')
-        : [];
     case 'range':
       return clampHumanInputRange(
         field,
@@ -552,7 +551,7 @@ export function initialHumanInputValues(request: HumanInputRequest): HumanInputV
   );
 }
 
-/** Toggle one option of a `multiselect`, preserving the request's option order. */
+/** Toggle one option of a multiple choice, preserving the request's option order. */
 export function toggleHumanInputOption(
   field: HumanInputField,
   values: HumanInputValues,

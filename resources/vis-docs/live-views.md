@@ -1384,10 +1384,9 @@ When one node breaks a rule, Vis shows an error card in its place and keeps the 
   In Vis, the line goes to the extension log. Outside Vis, it goes to stderr.
 - Vis drops a shortcut that names a node with an error card. Vis and the SDK each write one warning
   for each dropped shortcut. The other shortcuts work.
-- An input also breaks a rule when two options of a `select` or a `multiselect` have the same
-  value. A secret input (`password`, `otp`) with a `default` breaks a rule, and so does a node with
-  a `validate` list. Give `validate=` to the SDK builder of the input, because the SDK keeps the
-  function and your extension runs it.
+- A `select` with duplicate option values is invalid. A secret input (`password` or `otp`) with a
+  `default` is invalid. A node with a `validate` list is also invalid. Give `validate=` to the SDK
+  builder of the input. The SDK keeps the function, and your extension runs it.
 
 Vis refuses the whole view when the view itself is wrong. The SDK checks the view before it sends
 it and raises `RuntimeError` with the same text. A view is wrong in these cases:

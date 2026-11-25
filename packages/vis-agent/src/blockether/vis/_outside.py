@@ -1165,9 +1165,7 @@ _TEXT = {
     for kind, branch in _FIELD_SCHEMAS.items()
     if "min_length" in branch["properties"] and "min_length" not in branch["required"]
 }
-_CHOICE = {
-    kind for kind, branch in _FIELD_SCHEMAS.items() if "options" in branch["properties"]
-}
+_CHOICE = _contracts.choice_input_types()
 _SECRET = _contracts.secret_input_types()
 _RANGE = _FIELD_SCHEMAS["range"]["properties"]
 _OTP = _FIELD_SCHEMAS["otp"]["properties"]["max_length"]
@@ -1244,7 +1242,7 @@ def _prompt(node, kind):
         pairs = [_option_pair(o) for o in node.get("options") or []]
         for i, (_value, text) in enumerate(pairs, 1):
             print(f"  {i}) {text}", file=sys.stderr)
-        many = kind == "multiselect" or (kind == "toggle" and node.get("is_multiple"))
+        many = node.get("is_multiple") is True
         picked = input(
             f"{label} [{'numbers, comma separated' if many else 'number'}]: "
         )
@@ -1254,7 +1252,9 @@ def _prompt(node, kind):
             for p in chosen
             if p.isdigit() and 0 < int(p) <= len(pairs)
         ]
-        return values if many else (values[0] if values else None)
+        if many:
+            return values if chosen else node.get("default", [])
+        return values[0] if values else None
     if kind == "checkbox":
         default = bool(node.get("default"))
         typed = (
@@ -1298,11 +1298,16 @@ def _validate(node, value, values, counts, run):
     name = str(node.get("name"))
     if node.get("is_required") and (value is None or value == "" or value == []):
         return "is required"
+    if node.get("type") in _CHOICE:
+        choice = {
+            **node,
+            "options": [{"value": _option_pair(one)[0]} for one in node.get("options") or []],
+        }
+        if not _contracts.input_accepts(choice, value):
+            return "must use the declared options"
     if value is None or value == "":
         # A blank value is never validated: that is is_required's only job.
         return None
-    if node.get("type") == "toggle" and not _contracts.input_accepts(node, value):
-        return "must use the declared options"
     if node.get("type") == "datetime":
         complaint = (
             _contracts.datetime_complaint(node, value)
@@ -1369,6 +1374,9 @@ def request_input(request_json, counts_json, run):
                     value = _prompt(node, kind)
                 if value is None and node.get("default") is not None:
                     value = node.get("default")
+                if kind in _CHOICE and node.get("is_multiple") is True:
+                    options = [_option_pair(option)[0] for option in node.get("options") or []]
+                    value = _contracts.ordered_choice(options, value)
                 values[name] = value
                 complaint = _validate(node, value, values, counts, run)
                 if not complaint:
@@ -1444,6 +1452,15 @@ def _check_node(node, seen):
     seen.add(name)
     if kind in _CHOICE:
         options = node.get("options") or []
+        if "is_multiple" in node and not isinstance(node["is_multiple"], bool):
+            return f"{name!r} is_multiple must be true or false"
+        if kind == "select" and "default" in node:
+            choice = {
+                **node,
+                "options": [{"value": _option_pair(one)[0]} for one in options],
+            }
+            if not _contracts.input_accepts(choice, node["default"]):
+                return f"{name!r} default must use the declared options"
         rule = _FIELD_SCHEMAS[kind]["properties"]["options"]
         if len(options) < rule["minItems"]:
             return f"{name!r} is a {kind} and needs at least {rule['minItems']} options"

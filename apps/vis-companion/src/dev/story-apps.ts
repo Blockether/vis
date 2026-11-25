@@ -48,7 +48,7 @@ export interface StoryApp<S> {
   act: (state: S, action: ViewAction, values: Record<string, unknown>) => { state: S; answer?: AppAnswer };
 }
 
-const STORY_INPUT_TYPES = ['plaintext', 'multiline', 'select', 'multiselect', 'toggle', 'checkbox', 'range', 'datetime'];
+const STORY_INPUT_TYPES = ['plaintext', 'multiline', 'select', 'toggle', 'checkbox', 'range', 'datetime'];
 
 /** True when `id` names an input whose value the host keeps: no secret. */
 function isOpenInput(nodes: Record<string, unknown>[], id: string): boolean {
@@ -654,7 +654,8 @@ function wizardNodes(wizard: Wizard) {
           },
           {
             id: 'regions',
-            type: 'multiselect',
+            type: 'select',
+            is_multiple: true,
             label: 'Regions',
             options: [
               { value: 'eu', label: 'Europe' },

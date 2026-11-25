@@ -990,7 +990,8 @@ describe('set-value', () => {
           children: [
             {
               id: 'regions',
-              type: 'multiselect',
+              type: 'select',
+              is_multiple: true,
               label: 'Regions',
               options: [
                 { value: 'eu', label: 'EU' },

@@ -34,7 +34,8 @@
      :label "Env"
      :options [{:value "dev" :label "Dev"} {:value "prod" :label "Prod"}]}
     {:id "tags"
-     :type :multiselect
+     :type :select
+     :is-multiple true
      :label "Tags"
      :options [{:value "a" :label "Alpha"} {:value "b" :label "Beta"}]}
     {:id "ok" :type :checkbox :label "Confirm"}
@@ -151,7 +152,8 @@
                                          :default "y"
                                          :options [{:value "x" :label "X"} {:value "y" :label "Y"}]}
                                         {:id "d"
-                                         :type :multiselect
+                                         :type :select
+                                         :is-multiple true
                                          :label "D"
                                          :default ["x"]
                                          :options [{:value "x" :label "X"}]}]})]
@@ -229,9 +231,12 @@
                  (let [form (feed (hi/init-form (request))
                                   [{:kind :next} {:kind :next} {:kind :next} (ch \space)])]
                    (expect (= "prod" (get-in form [:values "env"])))))
-             (it "Space adds and removes multiselect values in declared order"
+             (it "Space adds and removes multiple select values in option order even with equal labels"
                  (let [base
-                       (assoc (hi/init-form (request)) :focus 5)
+                       (-> (request)
+                           (assoc-in [:nodes 3 :options 1 :label] "Alpha")
+                           hi/init-form
+                           (assoc :focus 5))
 
                        one
                        (feed base [(ch \space)])
@@ -1912,7 +1917,7 @@
                                                    :children [{:id "name" :type :plaintext :label "Name"}]}]})]
         (hi/paint! g 80 probe-rows form)
         (let [rows (map #(screen-row screen %) (range probe-rows))]
-          (expect (some #(re-find #"╭.*\+ Details.*╮" %) rows))
+          (expect (some #(re-find #"┌.*\+ Details.*┐" %) rows))
           (expect (some #(re-find #"│.*Check this value.*│" %) rows))
           (expect (some #(re-find #"│.*Name.*│" %) rows))
-          (expect (some #(re-find #"╰─+╯" %) rows))))))
+          (expect (some #(re-find #"└─+┘" %) rows))))))

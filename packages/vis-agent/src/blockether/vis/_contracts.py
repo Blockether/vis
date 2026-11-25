@@ -1061,14 +1061,38 @@ def _filled_item(shape: dict[str, Any], key: str, item: Any) -> Any:
     return item
 
 
+def ordered_choice(options: Any, value: Any) -> Any:
+    """Keep a valid list in option order; leave invalid data for the node check."""
+    if not isinstance(options, list) or not isinstance(value, list):
+        return value
+    if not all(isinstance(one, str) for one in value):
+        return value
+    picked = set(value)
+    ordered = [one for one in options if isinstance(one, str) and one in picked]
+    return ordered if len(ordered) == len(picked) == len(value) else value
+
+
+def _wire_option_values(node: dict[str, Any]) -> list[Any]:
+    options = node.get("options")
+    if not isinstance(options, list):
+        return []
+    return [option.get("value") for option in options if isinstance(option, dict)]
+
+
 def fill_live_node(node: Any) -> Any:
     """A filled copy of live wire node `node`, as every host fills it: a null key is
-    an absent key, a node without a type is a `plaintext` input, an input takes its
+    an absent key except for the value and default of a multiple select.
+    A node without a type is a `plaintext` input, an input takes its
     name and label from its id, a link with a scheme is a `url` link, and each
     required key with a schema `default` takes it. The children are filled too."""
     if not isinstance(node, dict):
         return node
-    node = {key: value for key, value in node.items() if value is not None}
+    many = node.get("type") == "select" and node.get("is_multiple") is True
+    node = {
+        key: value
+        for key, value in node.items()
+        if value is not None or (many and key in ("default", "value"))
+    }
     node.setdefault("type", "plaintext")
     found = component_variant(node["type"])
     shape = found[1] if found else {}
@@ -1086,6 +1110,11 @@ def fill_live_node(node: Any) -> Any:
         item_shape = _ref_definition(rule)
         if item_shape and isinstance(node.get(key), list):
             node[key] = [_filled_item(item_shape, key, one) for one in node[key]]
+    if node["type"] == "select" and node.get("is_multiple") is True:
+        options = _wire_option_values(node)
+        for key in ("default", "value"):
+            if key in node:
+                node[key] = ordered_choice(options, node[key])
     if isinstance(node.get("children"), list):
         node["children"] = [fill_live_node(child) for child in node["children"]]
     return node
@@ -1163,6 +1192,13 @@ def input_types() -> set[str]:
     return set(input_branches())
 
 
+def choice_input_types() -> set[str]:
+    """The types of inputs that take choices."""
+    return {
+        kind for kind, branch in input_branches().items() if "options" in branch["properties"]
+    }
+
+
 def secret_input_types() -> set[str]:
     """The type of each input component that hides its value."""
     return {
@@ -1230,8 +1266,6 @@ def datetime_complaint(node: dict[str, Any], value: str) -> str | None:
 
 def _in_domain(node: dict[str, Any], value: Any, *, is_default: bool) -> bool:
     kind = node.get("type")
-    if kind == "toggle":
-        kind = "multiselect" if node.get("is_multiple") else "select"
     if kind == "datetime":
         if value is None:
             return not is_default
@@ -1246,19 +1280,21 @@ def _in_domain(node: dict[str, Any], value: Any, *, is_default: bool) -> bool:
         for option in node.get("options") or []
         if isinstance(option, dict)
     }
+    if kind in choice_input_types():
+        if node.get("is_multiple") is True:
+            return (
+                isinstance(value, list)
+                and all(isinstance(one, str) and one in chosen for one in value)
+                and len(value) == len(set(value))
+            )
+        if value is None:
+            return not is_default or kind == "select"
+        return isinstance(value, str) and value in chosen
     if is_default:
         if value is None:
             return False
         if kind in text_kinds:
             return isinstance(value, str)
-        if kind == "select":
-            return isinstance(value, str) and value in chosen
-        if kind == "multiselect":
-            return (
-                isinstance(value, list)
-                and all(isinstance(one, str) and one in chosen for one in value)
-                and len(value) == len({json.dumps(one) for one in value})
-            )
         if kind == "checkbox":
             return isinstance(value, bool)
         if kind == "range":
@@ -1280,14 +1316,6 @@ def _in_domain(node: dict[str, Any], value: Any, *, is_default: bool) -> bool:
         n = _char_count(value)
         return (node.get("min_length") is None or node["min_length"] <= n) and (
             node.get("max_length") is None or n <= node["max_length"]
-        )
-    if kind == "select":
-        return value is None or (isinstance(value, str) and value in chosen)
-    if kind == "multiselect":
-        return (
-            isinstance(value, list)
-            and all(isinstance(one, str) and one in chosen for one in value)
-            and len(value) == len(set(value))
         )
     if kind == "checkbox":
         return isinstance(value, bool)
@@ -2096,6 +2124,8 @@ def apply_live_node_op(
     elif name == "set-value":
         if given.get("value") is None:
             node.pop("value", None)
+        elif kind == "select" and node.get("is_multiple") is True:
+            node["value"] = ordered_choice(_wire_option_values(node), given["value"])
         else:
             node["value"] = given["value"]
     elif name == "append" and kind == "log":

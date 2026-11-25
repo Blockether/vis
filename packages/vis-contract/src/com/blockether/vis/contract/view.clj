@@ -116,7 +116,16 @@
 (defn multiple-choice?
   "True when a choice field holds a list of option values."
   [{:keys [type is-multiple]}]
-  (or (= :multiselect type) (and (= :toggle type) (true? is-multiple))))
+  (and (contains? choice-types type) (true? is-multiple)))
+
+(defn ordered-choice
+  "Keep a valid choice list in option order. Leave invalid data for the node check."
+  [option-values value]
+  (if (vector? value)
+    (let [picked (set value)
+          ordered (filterv picked option-values)]
+      (if (= (count ordered) (count picked) (count value)) ordered value))
+    value))
 
 (def layout-terms
   "Wire layout terms, indexed by engine key."
@@ -750,7 +759,7 @@
         (option-values field)]
 
     (cond (not (contains? field :default)) true
-          (nil? default) false
+          (nil? default) (and (= :select type) (not (multiple-choice? field)))
           (contains? text-types type) (string? default)
           (multiple-choice? field)
           (and (vector? default) (every? chosen default) (= (count default) (count (set default))))
@@ -867,13 +876,7 @@
     :password
     (secret-in-domain? field value)
 
-    :select
-    (selected-in-domain? field value)
-
-    :multiselect
-    (picked-in-domain? field value)
-
-    :toggle
+    (:select :toggle)
     (if (multiple-choice? field)
       (picked-in-domain? field value)
       (selected-in-domain? field value))
@@ -1316,14 +1319,19 @@
 
 (defn fill-live-node
   "Live wire node `node` with the defaults that every host fills: a null key is an
-   absent key, a node without a type is a `plaintext` input, an input takes its name
+   absent key except for the value and default of a multiple select.
+   A node without a type is a `plaintext` input, an input takes its name
    and label from its id, a link with a scheme is a `url` link, and each required key
    with a schema `default` takes it. The children of a container are filled too."
   [node]
   (if-not (map? node)
     node
     (let [node
-          (into {} (remove (comp nil? val)) node)
+          (let [many? (and (= "select" (get node "type")) (true? (get node "is_multiple")))]
+            (into {}
+                  (remove (fn [[k v]]
+                            (and (nil? v) (not (and many? (#{"default" "value"} k))))))
+                  node))
 
           node
           (cond-> node
@@ -1370,6 +1378,16 @@
                      (or (get shape "properties") {}))]
 
       (cond-> node
+        (and (= "select" (get node "type"))
+             (true? (get node "is_multiple"))
+             (sequential? (get node "options")))
+        (as-> n
+          (let [values (map #(get % "value") (get n "options"))]
+            (reduce (fn [n k]
+                      (if (contains? n k) (update n k #(ordered-choice values %)) n))
+                    n
+                    ["default" "value"])))
+
         (and (container? (get node "type")) (sequential? (get node "children")))
         (update "children" #(mapv fill-live-node %))))))
 

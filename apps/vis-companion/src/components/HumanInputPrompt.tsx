@@ -628,8 +628,8 @@ export function HumanInputFieldRow({
     );
   }
 
-  if (field.type === 'select' || field.type === 'multiselect') {
-    const isMulti = field.type === 'multiselect';
+  if (field.type === 'select') {
+    const isMulti = field.is_multiple;
     const picked = typeof value === 'string' ? value : '';
     // In a compact slot every choice is one line that opens a list; the label names it.
     if (isInline) {
@@ -644,7 +644,7 @@ export function HumanInputFieldRow({
               options={options}
               values={chosen}
               noneLabel={empty}
-              onValuesChange={(next) => onChange(field.id, next)}
+              onValuesChange={(next) => onChange(field.id, options.map(({ value }) => value).filter((value) => next.includes(value)))}
             />
           ) : (
             <Select

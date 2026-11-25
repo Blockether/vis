@@ -13,7 +13,7 @@
    interaction is testable without a terminal.
 
    Navigation is a flat list of STOPS — one per text field, one per checkbox,
-   one per OPTION of a multiselect or a short select, and one for a long select,
+   one per option of a multiple or short single select, and one for a long single select,
    which opens a list — so ↑/↓/Tab walks the form the way the settings dialog
    walks its rows."
   (:require [clojure.string :as str]
@@ -165,8 +165,8 @@
       "◆")))
 
 (defn- multiple-choice?
-  [{:keys [type is-multiple]}]
-  (or (= :multiselect type) (and (= :toggle type) is-multiple)))
+  [{:keys [is-multiple]}]
+  (true? is-multiple))
 
 (defn toggle-value
   "Apply one segmentation choice. Multiple answers keep option order."
@@ -210,11 +210,12 @@
      :option-spans spans :is-focused (some? cursor)}))
 
 (defn- folded?
-  "True for a `:select` with so many options that the form shows it as one line
+  "True for a single `:select` with so many options that the form shows it as one line
    that opens a list. The contract owns the threshold, so the companion folds the
    same fields."
   [{:keys [type] :as field}]
-  (and (= :select type) (>= (count (field-options field)) (long hi-spec/select-fold-at))))
+  (and (= :select type) (not (multiple-choice? field))
+        (>= (count (field-options field)) (long hi-spec/select-fold-at))))
 
 (def ^:private menu-rows
   "The most options an open list shows before it scrolls. A short band shows fewer."
@@ -241,13 +242,9 @@
         (= :checkbox type) [{:kind :checkbox :field-id id}]
         (= :range type) [{:kind :range :field-id id}]
         (folded? field) [{:kind :menu :field-id id}]
-        (= :toggle type) (mapv (fn [{:keys [value]}]
-                                 {:kind (if (:is-multiple field) :multi-option :select-option)
-                                  :field-id id :value value})
-                               (field-options field))
         (contains? hi-spec/choice-types type)
         (mapv (fn [{:keys [value]}]
-                {:kind (if (= :multiselect type) :multi-option :select-option)
+                {:kind (if (multiple-choice? field) :multi-option :select-option)
                  :field-id id
                  :value value})
               (field-options field))
@@ -1117,15 +1114,12 @@
                                                       (when (= (:value option) (:value (focused-stop form))) i))
                                                     (field-options field)))) text-w)]
                 (contains? hi-spec/choice-types type)
-                (let [chosen (if (= :multiselect type) (set value) #{value})]
+                (let [multiple? (multiple-choice? field)
+                      chosen (if multiple? (set value) #{value})]
                   (mapv (fn [{:keys [value label]}]
                           {:kind :option
                            :field-id id
-                           ;; EXCLUSIVE (`:select`) or INCLUSIVE (`:multiselect`): the row
-                           ;; carries the ANSWER SHAPE, and the painter answers it with the
-                           ;; radio dot or the checkbox box — so the option itself says
-                           ;; whether picking a second one replaces the first or adds to it.
-                           :is-exclusive (= :select type)
+                           :is-exclusive (not multiple?)
                            :text (or label (str value))
                            :is-checked (contains? chosen value)
                            :is-focused (= (get index [id value]) focus)})
@@ -1531,13 +1525,7 @@
                          t/dialog-bg))
       nil)
 
-    ;; One row shape, TWO toggle vocabularies. An exclusive `:select` option wears
-    ;; the shared ●/○ radio mark — picking one drops the other; an inclusive
-    ;; `:multiselect` option wears the `[✓]`/`[ ]` box — pick as many as apply.
-    ;; Painting both with the radio dot made "choose any" look exactly like "choose
-    ;; one", which is the one thing an option row exists to say. The companion app
-    ;; already draws the two marks apart, so this is also what keeps the surfaces
-    ;; speaking one vocabulary.
+    ;; Single choice uses a radio dot. Multiple choice uses a checkbox.
     :option
     (do (dialogs/draw-toggle-row!
           g
@@ -1634,7 +1622,7 @@
   "One editable field row, with its label as the fallback hint."
   [{:keys [type label value] :as field} text-w]
   (if (contains? hi-spec/choice-types type)
-    (let [chosen (if (= :multiselect type) (set value) #{value})
+    (let [chosen (if (multiple-choice? field) (set value) #{value})
           labels (keep (fn [{:keys [value label]}]
                          (when (contains? chosen value) (or label (str value))))
                        (field-options field))]

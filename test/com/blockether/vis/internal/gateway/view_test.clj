@@ -631,7 +631,7 @@
      :options [{:value "prod"} {:value "stg" :label "Staging"}]}
     {:name "key" :type "password" :is-required true :max-length 40}
     {:id "ok" :type "checkbox" :label "Confirm" :default true}
-    {:id "tags" :type "multiselect" :options ["a" "b"] :default []}
+    {:id "tags" :type "select" :is-multiple true :options ["a" "b"] :default []}
     {:id "risk"
      :type "range"
      :label "Risk budget"

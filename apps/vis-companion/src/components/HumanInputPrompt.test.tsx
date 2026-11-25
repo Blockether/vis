@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { HumanInputFieldRow, HumanInputSheet } from './HumanInputPrompt';
 import { HUMAN_INPUT_REQUESTS } from '../dev/humanInputVariants';
 import fixture from '../lib/human-input.fixture.json';
+import canonical from '../../../../packages/vis-contract/resources/vis-contract/fixtures/view.json';
 import {
   humanInputIsDecoration,
   humanInputRequestFromWire,
@@ -253,6 +254,26 @@ describe('human input sheet', () => {
     expect(refused).toContain('must be 6 digits');
     expect(refused).toContain('must be an email address');
   });
+});
+
+it('adds a second choice to a multiple select in an Ask', async () => {
+  const shape = canonical.select_shapes.find(({ valid, fields }) => valid && fields.is_multiple);
+  if (!shape) throw new Error('the shared fixture must have a multiple select');
+  const request = humanInputRequestFromWire({
+    ...canonical.input,
+    nodes: [{ id: 'regions', type: 'select', label: 'Regions', ...shape.fields,
+      options: [{ value: 'a', label: 'Europe' }, { value: 'b', label: 'Asia' }],
+    }],
+  });
+  if (!request) throw new Error('the shared multiple select must parse');
+  const onChange = vi.fn();
+  cleanup();
+  render(<HumanInputSheet request={request} values={initialHumanInputValues(request)}
+    onChange={onChange} onSubmit={noop} onCancel={noop} />);
+  expect(screen.getByRole('checkbox', { name: 'Europe' })).toBeChecked();
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Asia' }));
+  expect(onChange).toHaveBeenCalledWith('regions', ['a', 'b']);
+  cleanup();
 });
 
 // FULL support, proved against the engine's own bytes

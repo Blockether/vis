@@ -27,6 +27,16 @@
           (expect
             (not (document/valid-json? "view" "operator_action" (assoc action "legacy" true))))))))
 
+(defdescribe select-shape-test
+  (it "accepts only the value shape of the select mode"
+      (let [cases (get (json/read-json (slurp (io/resource "vis-contract/fixtures/view.json")))
+                       "select_shapes")
+            select {"id" "s" "name" "s" "type" "select" "label" "Select"
+                    "is_required" false
+                    "options" [{"value" "a" "label" "A"} {"value" "b" "label" "B"}]}]
+        (doseq [{:strs [name fields valid]} cases]
+          (expect (= valid (document/valid-json? "view" "component" (merge select fields))) name)))))
+
 (defdescribe
   live-only-components-in-ask-forms
   (it "refuses each live-only component in the request and its public projection"
@@ -66,10 +76,10 @@
 
 (defdescribe every-input-field-crosses-the-real-projection
              (it "every input field crosses the real projection"
-                 (doseq [type ["checkbox" "multiline" "multiselect" "otp" "password" "plaintext"
+                 (doseq [type ["checkbox" "multiline" "otp" "password" "plaintext"
                                "range" "select" "toggle"]]
                    (let [field (cond-> {:type type :id "field" :label "Value"}
-                                 (#{"select" "multiselect" "toggle"} type)
+                                 (#{"select" "toggle"} type)
                                  (assoc :options ["one" "two"]))
                          projected (-> {:title "Fields" :nodes [{:type "flex" :children [field]}]}
                                        view/normalize-request
@@ -110,7 +120,7 @@
                  (set (keys contract/live-node-types))))
       (expect (= #{:otp :password} contract/secret-types))
       (expect (= #{:multiline :password :plaintext} contract/text-types))
-      (expect (= #{:multiselect :select :toggle} contract/choice-types))
+      (expect (= #{:select :toggle} contract/choice-types))
       (expect (= {:min 0 :max 100 :step 1} contract/range-defaults))
       (expect (= {:length 6 :ceiling 12} contract/otp-defaults))
       (expect (= #{:id :seq :created-at :owner :extension :is-stale :is-reconnectable :submissions

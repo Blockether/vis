@@ -162,7 +162,8 @@
         {
           "id": "tags",
           "name": "tags",
-          "type": "multiselect",
+          "type": "select",
+          "is_multiple": true,
           "label": "Tags",
           "is_required": false,
           "is_secret": false,

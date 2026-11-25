@@ -110,7 +110,7 @@
                                             (str "Try again " raw
                                                  " / " (get values "pw")
                                                  " / 123 456 / " (get values "code")))}
-                               {:id "choices" :type "multiselect" :options ["safe"]})
+                               {:id "choices" :type "select" :is-multiple true :options ["safe"]})
 
             result
             (hi/validate-values
@@ -467,16 +467,16 @@
         (expect (false? (:is-accepted outcome)))
         (expect (= {"name" "must be text" "body" "must be text"} (:errors outcome)))
         (expect (= "42" (get-in (hi/coerce-values fields {"name" 42}) [:values "name"])))))
-  (it "accepts one value or many for a multiselect and rejects unknown options"
-      (let [fields (normalized-fields {:id "tags" :type "multiselect" :options ["a" "b"]})]
-        (expect (= ["a"] (get-in (hi/coerce-values fields {"tags" "a"}) [:values "tags"])))
+  (it "orders multiple selections and refuses a scalar or unknown option"
+      (let [fields (normalized-fields {:id "tags" :type "select" :is-multiple true :options ["a" "b"]})]
+        (expect (false? (:is-accepted (hi/coerce-values fields {"tags" "a"}))))
         (expect (= ["a" "b"]
-                   (get-in (hi/coerce-values fields {"tags" ["a" "b" "a"]}) [:values "tags"])))
+                   (get-in (hi/coerce-values fields {"tags" ["b" "a"]}) [:values "tags"])))
         (expect (= [] (get-in (hi/coerce-values fields {}) [:values "tags"])))
         (expect (false? (:is-accepted (hi/coerce-values fields {"tags" ["z"]}))))))
-  (it "requires at least one option for a required multiselect"
+  (it "requires at least one option for a required multiple select"
       (let [fields (normalized-fields
-                     {:id "tags" :type "multiselect" :options ["a"] :is-required true})]
+                     {:id "tags" :type "select" :is-multiple true :options ["a"] :is-required true})]
         (expect (false? (:is-accepted (hi/coerce-values fields {"tags" []}))))))
   (it "coerces checkbox strings and defaults to false"
       (let [fields (normalized-fields {:id "ok" :type "checkbox"})]
@@ -1303,7 +1303,7 @@
                                {:name "notes" :type "multiline" :min-length 2 :max-length 40}
                                {:name "env" :type "select" :options ["dev" "prod"] :default "prod"}
                                {:name "tags"
-                                :type "multiselect"
+                                :type "select" :is-multiple true
                                 :options [{:value "a" :label "A"} {:value "b" :label "B"}]
                                 :default ["a"]} {:name "confirm" :type "checkbox" :default true}
                                {:name "pct" :type "range" :min 0 :max 100 :step 5 :default 25}
@@ -4263,8 +4263,7 @@
                   id (str (random-uuid))
                   path (live-sink/view-file sid id)
                   heading {:id "text" :type "paragraph" :text "Saved"}
-                  removed {:id "old" :type "group" :direction "row"
-                           :children [(assoc heading :id "child")]}
+                  removed {:id "old" :type "never-a-component"}
                   view {:id id :session-id sid :title "Saved" :placement :attachment
                         :channel-ids ["app"] :created-at 1 :timeout-ms 0 :seq 0
                         :nodes [(if added? heading removed)]}

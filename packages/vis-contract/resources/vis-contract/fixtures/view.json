@@ -1,4 +1,79 @@
 {
+  "select_shapes": [
+    {
+      "name": "single select takes text and null",
+      "fields": {
+        "default": "a",
+        "value": null
+      },
+      "valid": true
+    },
+    {
+      "name": "single select takes a null default",
+      "fields": {
+        "default": null,
+        "value": "b"
+      },
+      "valid": true
+    },
+    {
+      "name": "single select refuses a list value",
+      "fields": {
+        "value": [
+          "a"
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "single select refuses a list default",
+      "fields": {
+        "is_multiple": false,
+        "default": [
+          "a"
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "multiple select takes lists",
+      "fields": {
+        "is_multiple": true,
+        "default": [
+          "a"
+        ],
+        "value": [
+          "a",
+          "b"
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "multiple select refuses a text value",
+      "fields": {
+        "is_multiple": true,
+        "value": "a"
+      },
+      "valid": false
+    },
+    {
+      "name": "multiple select refuses a text default",
+      "fields": {
+        "is_multiple": true,
+        "default": "a"
+      },
+      "valid": false
+    },
+    {
+      "name": "multiple select refuses null",
+      "fields": {
+        "is_multiple": true,
+        "value": null
+      },
+      "valid": false
+    }
+  ],
   "input": {
     "id": "input-one",
     "title": "Name",

@@ -1084,7 +1084,8 @@ export const STORY_LIVE_FORM: LiveView = (() => {
       },
       {
         id: 'regions',
-        type: 'multiselect',
+        type: 'select',
+        is_multiple: true,
         label: 'Regions',
         options: [
           { value: 'eu', label: 'Europe' },

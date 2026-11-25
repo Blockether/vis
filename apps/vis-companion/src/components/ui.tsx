@@ -1289,7 +1289,7 @@ export function ViewSection({ label, description, icon, children }: {
 }) {
   const heading = useId();
   return (
-    <section aria-labelledby={label ? heading : undefined} className="min-w-0 space-y-3 rounded-[0.5rem] border border-edge-strong bg-panel px-4 py-3">
+    <section aria-labelledby={label ? heading : undefined} className="min-w-0 space-y-3 rounded-none border border-edge-strong bg-panel px-4 py-3">
       {(label || icon || description) && (
         <header className="space-y-0.5">
           {label ? <h3 id={heading} className="flex items-center gap-2 text-body font-semibold text-white">{icon}{label}</h3> : icon}
@@ -1307,7 +1307,7 @@ export function ViewCollapsible({ label, description, icon, isOpen, onToggle, ch
 }) {
   const id = useId();
   return (
-    <div className="min-w-0 rounded-[0.5rem] border border-edge-strong">
+    <div className="min-w-0 rounded-none border border-edge-strong">
       <Disclosure aria-controls={id} isOpen={isOpen} inlineChevron tone="branch" density="comfortable" className="justify-between px-4 py-3 [&>svg:last-child]:mt-0.5 [&>svg:last-child]:self-start" onClick={onToggle}>
         <span className="min-w-0">
           <span className="flex items-center gap-2">{icon}{label}</span>
@@ -1362,7 +1362,7 @@ export function ToggleGroup({ options, value, isMultiple, disabled, onToggle, ..
             onFocus={isMultiple ? undefined : () => setTabStop(option.value)}
             disabled={disabled}
             onClick={() => onToggle(option.value)}
-            className={`relative -ml-px inline-flex h-8 min-w-0 items-center justify-center border px-2.5 font-mono text-ui first:rounded-l-[0.375rem] last:rounded-r-[0.375rem] focus-visible:z-[2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 mouse:h-7 ${on ? 'z-[1] border-accent bg-accent text-accent-foreground' : 'border-field-edge bg-input text-white enabled:hover:text-accent-ink'}`}
+            className={`relative -ml-px inline-flex h-8 min-w-0 items-center justify-center border px-2.5 font-mono text-ui rounded-none focus-visible:z-[2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 mouse:h-7 ${on ? 'z-[1] border-accent bg-accent text-accent-foreground' : 'border-field-edge bg-input text-white enabled:hover:text-accent-ink'}`}
           >
             {option.icon ?? <span className="truncate">{option.label}</span>}
           </button>
@@ -2646,7 +2646,7 @@ export type DropdownItem = {
 };
 
 type DropdownLevel = { item: DropdownItem; trigger: HTMLButtonElement };
-const DROPDOWN_PANEL = 'w-[min(14rem,calc(100vw-1.5rem))] overflow-y-auto overscroll-contain rounded-[0.5rem] border border-dialog-edge bg-panel p-1 font-mono text-ui text-white shadow-float';
+const DROPDOWN_PANEL = 'w-[min(14rem,calc(100vw-1.5rem))] overflow-y-auto overscroll-contain rounded-none border border-dialog-edge bg-panel p-1 font-mono text-ui text-white shadow-float';
 
 function DropdownPanel({ id, label, items, branch, onSubmenu, onChoose, onBack, onDismiss, panelRef, style }: {
   id?: string;
@@ -2689,7 +2689,7 @@ function DropdownPanel({ id, label, items, branch, onSubmenu, onChoose, onBack, 
       }}
     >
       {onBack && (
-        <button type="button" role="menuitem" tabIndex={-1} className="flex min-h-10 w-full items-center gap-2 rounded-[0.25rem] px-2 text-left text-dialog-hint outline-none hover:bg-hover focus-visible:bg-hover mouse:min-h-7" onClick={onBack}>
+        <button type="button" role="menuitem" tabIndex={-1} className="flex min-h-10 w-full items-center gap-2 rounded-none px-2 text-left text-dialog-hint outline-none hover:bg-hover focus-visible:bg-hover mouse:min-h-7" onClick={onBack}>
           <ChevronIcon className="size-3 rotate-180" /> Back
         </button>
       )}
@@ -2707,7 +2707,7 @@ function DropdownPanel({ id, label, items, branch, onSubmenu, onChoose, onBack, 
           aria-haspopup={item.children ? 'menu' : undefined}
           aria-expanded={item.children ? branch === item.id : undefined}
           aria-keyshortcuts={item.shortcut}
-          className={`flex min-h-10 w-full items-center gap-2 rounded-[0.25rem] px-2 py-1.5 text-left outline-none enabled:hover:bg-hover focus-visible:bg-hover disabled:opacity-50 mouse:min-h-7 ${item.danger ? 'text-err-ink' : 'text-white'}`}
+          className={`flex min-h-10 w-full items-center gap-2 rounded-none px-2 py-1.5 text-left outline-none enabled:hover:bg-hover focus-visible:bg-hover disabled:opacity-50 mouse:min-h-7 ${item.danger ? 'text-err-ink' : 'text-white'}`}
           onClick={(event) => item.children ? onSubmenu(item, event.currentTarget) : onChoose(item.id)}
           onKeyDown={(event) => {
             if (event.key !== 'ArrowRight' || !item.children) return;

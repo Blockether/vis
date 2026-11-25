@@ -2122,7 +2122,7 @@ function ViewDialog({
   const close = () => void presentation.onActivate?.(node.id);
   return (
     <Modal size="fit" onDismiss={close}>
-      <DialogFrame title={node.label} subtitle={node.description} describeWithSubtitle onClose={close} manageFocus className="sm:rounded-[0.5rem]">
+      <DialogFrame title={node.label} subtitle={node.description} describeWithSubtitle onClose={close} manageFocus>
           <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
             <ViewFlex>
               {node.children.map((child) => (

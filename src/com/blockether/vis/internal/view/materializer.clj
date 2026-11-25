@@ -384,7 +384,10 @@
    check after the op holds the value to the input domain and refuses a value on a
    secret input."
   [node {:keys [value]}]
-  (if (nil? value) (dissoc node :value) (assoc node :value value)))
+  (cond (nil? value) (dissoc node :value)
+        (and (= :select (:type node)) (spec/multiple-choice? node))
+        (assoc node :value (spec/ordered-choice (map :value (:options node)) value))
+        :else (assoc node :value value)))
 
 (def ^:private view-appliers
   "The operations that change the view itself, not one of its nodes."

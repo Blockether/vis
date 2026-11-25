@@ -574,6 +574,25 @@
                           (expect (not= "Option 0" (first selected))))
                         (finally (.stopScreen screen))))))
 
+(defdescribe live-choice-identity-test
+  (it "keeps equal labels distinct when checking or submitting an option"
+      (let [options [{:value "alpha" :label "Alpha"} {:value "beta" :label "Alpha"}]
+            pick (fn [node keys]
+                   (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+                     (try
+                       (doseq [key keys] (.addInput terminal key))
+                       (dlg/live-input-value! screen (merge {:type :select :label "Choices" :options options} node))
+                       (finally (.stopScreen screen)))))]
+        (let [multiple {:is-multiple true}]
+          (expect (= {:value ["beta"]} (pick (assoc multiple :value ["beta"]) [(ks KeyType/Enter)])))
+          (expect (= {:value ["alpha"]} (pick multiple [(char-key \space) (ks KeyType/Enter)])))
+          (expect (= {:value ["alpha" "beta"]}
+                     (pick multiple [(ks KeyType/ArrowDown) (char-key \space)
+                                     (ks KeyType/ArrowUp) (char-key \space) (ks KeyType/Enter)]))))
+        (expect (= {:value "beta"} (pick {} [(ks KeyType/ArrowDown) (ks KeyType/Enter)])))
+        (expect (= {:value ["beta"]}
+                   (pick {:type :toggle :is-multiple true :default ["beta"]} [(ks KeyType/Enter)]))))))
+
 (defdescribe reusable-table-test
              (it "table rows keep fixed width and expose shared filtering"
                  (let [columns

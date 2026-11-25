@@ -1789,7 +1789,7 @@
             text (cap/frame-text (last (:frames capture)))
             rows (str/split-lines text)
             pane-width (count (some #(re-find #"┌─+┐" %) rows))
-            card-width (count (some #(re-find #"╭[^╮]*First card[^╮]*╮" %) rows))]
+            card-width (count (some #(re-find #"┌[^┐]*First card[^┐]*┐" %) rows))]
         (expect (< (/ pane-width 4) card-width (/ pane-width 2))))))
 
 (defn disclosure-review-pane

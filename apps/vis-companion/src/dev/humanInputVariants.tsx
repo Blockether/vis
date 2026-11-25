@@ -111,7 +111,8 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
           { value: 'beta', label: 'beta' },
         ],
       }),
-      field('stores', 'multiselect', 'Ship to', {
+      field('stores', 'select', 'Ship to', {
+        is_multiple: true,
         options: [
           { value: 'ios', label: 'TestFlight' },
           { value: 'android', label: 'Google Play' },

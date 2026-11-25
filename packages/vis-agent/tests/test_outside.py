@@ -749,6 +749,16 @@ def test_an_outside_form_returns_multiple_toggle_choices(monkeypatch):
     assert not vis.ask("Deploy", form)
 
 
+def test_an_outside_form_returns_multiple_select_choices_in_option_order(monkeypatch):
+    monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
+    form = [vis.ui.select("targets", ["dev", "test", "prod"], is_multiple=True)]
+    vis.outside.answer_with({"targets": ["test", "dev"]})
+    assert vis.ask("Deploy", form).values == {"targets": ["dev", "test"]}
+    for invalid in ("dev", ["missing"]):
+        vis.outside.answer_with({"targets": invalid})
+        assert not vis.ask("Deploy", form)
+
+
 def test_a_datetime_answer_must_have_the_form_of_its_mode(monkeypatch):
     monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
     form = [vis.ui.datetime("at", "time", min="09:00", max="17:30")]

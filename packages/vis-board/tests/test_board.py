@@ -162,6 +162,14 @@ def test_bad_event_does_not_end_the_app(saved, app):
     assert rec.node("issues")["issues"][0]["key"] == "ABPR-1"
 
 
+def _painted(rec, check):
+    """The issues of the view, after the bus thread has painted the change."""
+    end = time.monotonic() + 4
+    while not check(rec.node("issues")["issues"]) and time.monotonic() < end:
+        time.sleep(0.05)
+    return rec.node("issues")["issues"]
+
+
 def test_tools_change_the_board_and_refresh_open_views(saved, monkeypatch):
     rec = vis.testing.LiveRecorder(object())
     monkeypatch.setattr(vis._host, "live", rec.live)
@@ -170,14 +178,18 @@ def test_tools_change_the_board_and_refresh_open_views(saved, monkeypatch):
         made = tools.create_issue(
             "Make a test", values={"labels": ["sdk"], "is_flagged": True}
         )
-        assert rec.node("issues")["issues"][0]["key"] == made["key"]
+        assert _painted(rec, bool)[0]["key"] == made["key"]
         assert tools.list_issues("sdk", flagged=True) == [made]
         changed = tools.change_issue(made["key"], {"title": "Run the test"})
-        assert rec.node("issues")["issues"][0]["title"] == changed["title"]
+        issues = _painted(rec, lambda rows: rows[0]["title"] == changed["title"])
+        assert issues[0]["title"] == changed["title"]
         tools.move_issue(made["key"], "done", 0)
-        assert rec.node("issues")["issues"][0]["column"] == "done"
+        assert (
+            _painted(rec, lambda rows: rows[0]["column"] == "done")[0]["column"]
+            == "done"
+        )
         tools.delete_issue(made["key"])
-        assert not rec.node("issues")["issues"]
+        assert not _painted(rec, lambda rows: not rows)
         assert not saved.read()["issues"]
     finally:
         board.stop()
@@ -198,10 +210,7 @@ def test_store_change_refreshes_another_runtime(saved, monkeypatch):
     board = _board(saved).open()
     try:
         made = tools.create_issue("Made in a different runtime")
-        end = time.monotonic() + 4
-        while not rec.node("issues")["issues"] and time.monotonic() < end:
-            time.sleep(0.05)
-        assert rec.node("issues")["issues"] == [made]
+        assert _painted(rec, bool) == [made]
     finally:
         board.stop()
 

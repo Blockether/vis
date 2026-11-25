@@ -3184,78 +3184,6 @@
               "type": "boolean"
             },
             "is_secret": {
-              "const": false,
-              "readOnly": true
-            },
-            "default": {},
-            "validate": {
-              "type": "array",
-              "items": {},
-              "minItems": 1
-            },
-            "options": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "value": {
-                    "$ref": "common.json#/$defs/non_blank_string"
-                  },
-                  "label": {
-                    "$ref": "common.json#/$defs/non_blank_string"
-                  }
-                },
-                "required": [
-                  "value",
-                  "label"
-                ]
-              },
-              "minItems": 1
-            },
-            "value": {
-              "$ref": "#/$defs/input_value"
-            },
-            "type": {
-              "const": "multiselect"
-            },
-            "is_growing": {
-              "$ref": "#/$defs/is_growing"
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "options"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "name": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "label": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "description": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "placeholder": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "is_required": {
-              "default": false,
-              "type": "boolean"
-            },
-            "is_secret": {
               "const": true,
               "readOnly": true
             },
@@ -3547,10 +3475,30 @@
             },
             "is_growing": {
               "$ref": "#/$defs/is_growing"
+            },
+            "is_multiple": {
+              "type": "boolean",
+              "default": false
             }
           },
-          "description": "From `x-vis-fold-at` options on, a client shows the field as one line that opens a list. The client fits the list height to its screen.",
+          "description": "With `is_multiple`, a person can choose more than one option, and the answer is a list in option order. Without it, the answer is one value or null. For a single select, from `x-vis-fold-at` options on, a client shows the field as one line that opens a list. The client fits the list height to its screen.",
           "x-vis-fold-at": 6,
+          "if": {
+            "required": ["is_multiple"],
+            "properties": {"is_multiple": {"const": true}}
+          },
+          "then": {
+            "properties": {
+              "default": {"$ref": "#/$defs/multiple_choice_value"},
+              "value": {"$ref": "#/$defs/multiple_choice_value"}
+            }
+          },
+          "else": {
+            "properties": {
+              "default": {"type": ["string", "null"]},
+              "value": {"type": ["string", "null"]}
+            }
+          },
           "required": [
             "id",
             "name",
@@ -3561,6 +3509,11 @@
           ]
         }
       ]
+    },
+    "multiple_choice_value": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
     },
     "form_component": {
       "description": "A component in an Ask form. A dialog or menu can only be in a live view.",
@@ -4140,7 +4093,6 @@
           "checkbox": ["label"],
           "datetime": ["label"],
           "multiline": ["label"],
-          "multiselect": ["label"],
           "otp": ["label"],
           "password": ["label"],
           "plaintext": ["label"],
@@ -4197,7 +4149,6 @@
           "checkbox": ["value"],
           "datetime": ["value"],
           "multiline": ["value"],
-          "multiselect": ["value"],
           "otp": ["value"],
           "password": ["value"],
           "plaintext": ["value"],

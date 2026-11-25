@@ -50,7 +50,7 @@
                                                                  {"const" "b" "title" "B"}
                                                                  {"const" "c" "title" "C"}]}})
                "required" ["name" "admin"]}
-              {"name" "Ada" "age" "36" "score" "9.5" "admin" false "zone" "eu" "tags" ["a" "c"]}))))
+              {"name" "Ada" "age" "36" "score" "9.5" "admin" false "zone" "eu" "tags" ["c" "a"]}))))
   (it "leaves a blank optional answer out of the content"
       (expect (= {"action" "accept" "content" {"name" "Ada"}}
                  (ask {"type" "object"

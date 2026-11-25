@@ -52,7 +52,8 @@
     {
       "id": "tags",
       "name": "tags",
-      "type": "multiselect",
+      "type": "select",
+      "is_multiple": true,
       "label": "tags",
       "is_required": false,
       "options": [

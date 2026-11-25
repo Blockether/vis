@@ -462,7 +462,6 @@
                    (lv/input-values pane)))
         (expect (lv/submit-button? pane "apply"))
         (expect (not (lv/submit-button? pane "refresh")))
-        (expect (= :multiselect (:type (lv/input-node pane "tags"))))
         (expect (nil? (lv/input-node pane "apply")))))
   (it "paints a card with its title, figure and text, and only a selectable card acts"
       (let [pane

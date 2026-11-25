@@ -1348,9 +1348,9 @@
     (p/fill-rect! g (inc (long left)) row inner-w 1)
     (when (>= w 2)
       (p/put-str! g (+ (long left) 2) row
-                  (str (if top? "╭" "╰") label
+                  (str (if top? "┌" "└") label
                        (apply str (repeat (max 0 (- w 2 (long (p/display-width label)))) "─"))
-                       (if top? "╮" "╯"))))
+                       (if top? "┐" "┘"))))
     nil))
 
 (defn draw-section-body!
@@ -2566,16 +2566,15 @@
   ([^TerminalScreen screen title items opts] (list-dialog! screen title items opts)))
 
 (defn multi-select-dialog!
-  "Checkbox multi-select over `items` (vec of strings). Space toggles the
-   cursor row, `a` toggles all, Enter confirms, Esc cancels. Returns the vec
-   of selected strings (possibly empty) on confirm, nil on Esc. Mirrors the
-   web modal's alias chips — same proposed options, multi-pick semantics."
+  "Show checkboxes for strings or maps with a unique `:value` and a `:label`.
+   Space toggles the current row, `a` toggles all, and Enter returns the selected
+   values in item order. Esc returns nil."
   ([screen title items] (multi-select-dialog! screen title items #{}))
   ([^TerminalScreen screen title items initial]
    (with-modal-background
      screen
      (let [items
-           (vec items)
+           (mapv #(if (map? %) % {:value % :label %}) items)
 
            total
            (count items)
@@ -2586,11 +2585,11 @@
            scroll
            (atom 0)
 
+           values
+           (mapv :value items)
+
            checked
-           (atom (into #{}
-                       (keep-indexed (fn [idx item]
-                                       (when (contains? (set initial) item) idx)))
-                       items))]
+           (atom (into #{} (filter (set initial)) values))]
 
        (loop []
 
@@ -2610,7 +2609,7 @@
                [["↑/↓" "move"] ["Space" "toggle"] ["a" "all"] ["Enter" "start"] ["Esc" "cancel"]]
 
                item-w
-               (+ 6 (long (reduce max 0 (map #(p/display-width (str %)) items))))
+               (+ 6 (long (reduce max 0 (map #(p/display-width (:label %)) items))))
 
                bounds
                (draw-dialog-chrome! g
@@ -2647,8 +2646,8 @@
                                         row
                                         inner-w
                                         (= idx @selected)
-                                        (contains? @checked idx)
-                                        (nth items idx))))))
+                                        (contains? @checked (nth values idx))
+                                        (:label (nth items idx)))))))
            (draw-hint-bar! g left hint-row inner-w footer)
            (.setCursorPosition screen (p/cursor-pos 0 0))
            (frame/refresh! screen)
@@ -2667,16 +2666,17 @@
                  KeyType/PageDown
                  (do (swap! selected #(p/clamp (+ (long %) (long content-h)) 0 (max 0 (dec total))))
                      (recur))
-                 KeyType/Enter (mapv #(nth items %) (sort @checked))
+                 KeyType/Enter (filterv @checked values)
                  KeyType/Character
                  (let [c (lower-key-character key)]
                    (cond (= c \space) (do (when (pos? total)
-                                            (swap! checked #(if (contains? % @selected)
-                                                              (disj % @selected)
-                                                              (conj % @selected))))
+                                            (let [value (nth values @selected)]
+                                              (swap! checked #(if (contains? % value)
+                                                                (disj % value)
+                                                                (conj % value)))))
                                           (recur))
                          (= c \a)
-                         (do (swap! checked #(if (= (count %) total) #{} (set (range total))))
+                         (do (swap! checked #(if (= (count %) total) #{} (set values)))
                              (recur))
                          :else (recur)))
                  (recur))))))))))
@@ -10175,26 +10175,21 @@
   [screen {:keys [type label options value default is-secret mode is-multiple]}]
   (let [option-label (fn [o]
                        (or (:label o) (str (:value o))))]
-    (case (if (= :toggle type) (if is-multiple :multiselect :select) type)
+    (case type
       :checkbox
       {:value (not (boolean value))}
 
-      :select
-      (when-let [choice (list-dialog! screen
-                                      label
-                                      (mapv #(hash-map :label (option-label %) :value (:value %))
-                                            options)
-                                      {:enter-label "choose" :height :content})]
-        {:value (:value choice)})
-
-      :multiselect
-      (when-let [picked
-                 (multi-select-dialog!
-                   screen
-                   label
-                   (mapv option-label options)
-                   (into #{} (keep #(when (some #{(:value %)} (or value default)) (option-label %))) options))]
-        {:value (into [] (keep #(when (some #{(option-label %)} picked) (:value %))) options)})
+      (:select :toggle)
+      (if is-multiple
+        (when-let [picked (multi-select-dialog! screen label
+                                                  (mapv #(assoc % :label (option-label %)) options)
+                                                  (or value default))]
+          {:value picked})
+        (when-let [choice (list-dialog! screen
+                                       label
+                                       (mapv #(assoc % :id (:value %) :label (option-label %)) options)
+                                       {:enter-label "choose" :height :content})]
+          {:value (:value choice)}))
 
       :range
       (when-let [typed (text-input-dialog! screen label "Value" :initial (str value))]

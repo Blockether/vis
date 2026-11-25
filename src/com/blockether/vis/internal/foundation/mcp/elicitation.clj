@@ -68,10 +68,11 @@
           (assoc :description (get schema "description")))]
 
     (cond (and (= "array" type) (seq options)) (assoc base
-                                                 :type "multiselect"
+                                                 :type "select"
+                                                 :is-multiple true
                                                  :options options
-                                                 :default (filterv allowed
-                                                            (if (sequential? default) default [])))
+                                                 :default (let [picked (set (when (sequential? default) default))]
+                                                            (filterv picked (map :value options))))
           (seq options) (cond-> (assoc base
                                   :type "select"
                                   :options options)

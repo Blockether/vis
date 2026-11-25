@@ -128,12 +128,13 @@ def filters_node(data, filters, folders=()):
             label="Project",
             value=filters["project"],
         ),
-        vis.ui.select.many(
+        vis.ui.select(
             "assignees",
             [_option(i, name) for i, name in people] + [_option(NO_ONE, "Unassigned")],
             label="Assignee",
             placeholder="Assignee",
             value=filters["assignees"],
+            is_multiple=True,
         ),
         vis.ui.select(
             "epic",

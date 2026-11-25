@@ -18,6 +18,25 @@ _CASES = _FIXTURE["cases"]
 _PATCHES = _FIXTURE["patches"]
 
 
+_SELECT_SHAPES = json.loads(
+    (_contracts._DATA / "fixtures" / "view.json").read_text(encoding="utf-8")
+)["select_shapes"]
+
+
+@pytest.mark.parametrize("case", _SELECT_SHAPES, ids=lambda case: case["name"])
+def test_the_select_schema_accepts_only_the_value_shape_of_its_mode(case):
+    node = {
+        "id": "s",
+        "name": "s",
+        "type": "select",
+        "label": "Select",
+        "is_required": False,
+        "options": [{"value": "a", "label": "A"}, {"value": "b", "label": "B"}],
+        **case["fields"],
+    }
+    assert (not _contracts.problems("view", "component", node)) == case["valid"]
+
+
 def _with_nan(case):
     # JSON has no NaN, so the case names the path that holds it.
     view = json.loads(json.dumps(case["view"]))

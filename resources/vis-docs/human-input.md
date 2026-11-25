@@ -92,8 +92,7 @@ above the input. The optional `description` shows under the label.
 | `plaintext` | string | The default type. |
 | `password` | secret handle | Shown as dots. |
 | `multiline` | string | |
-| `select` | one option value | Exclusive: exactly one option, never none. |
-| `multiselect` | list of option values, in declared order | Inclusive: any number. Empty is legal unless required. |
+| `select` | one option value, or a list in option order with `is_multiple=True` | A multiple selection can be empty unless the field is required. |
 | `toggle` | one option value, or a list with `is_multiple=True` | [Joined options](components.md#toggle) that stay visible. |
 | `checkbox` | `true` or `false` | A required checkbox must be ticked. |
 | `range` | number | `min` (0), `max` (100), `step` (1). Out-of-range values are refused. |
@@ -101,7 +100,7 @@ above the input. The optional `description` shows under the label.
 | `otp` | secret handle | Digits only, one box per digit. `min_length` and `max_length` set the length (default 6, at most 12). |
 
 The common keys are `placeholder`, `default`, `is_required`, `min_length`, `max_length`, and
-`validate`. The two select types also take `options`. An option is a string, or
+`validate`. A `select` also takes `options`. An option is a string, or
 `{"value": ..., "label": ...}` when the stored value and the shown text differ. Vis refuses an
 answer that names an undeclared option.
 
