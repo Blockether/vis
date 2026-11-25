@@ -2477,6 +2477,7 @@
                          (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
                          {:result r})
                        (catch Throwable e
+                         (when (:vis/task-cancelled (ex-data e)) (throw e))
                          (let [ms (elapsed-ms ct0)]
                            ;; The caller gets the error, so a refused call is not a gateway warning.
                            (log-hook! :info ::fn-threw ext-ns sym :call ms (ex-message e))
@@ -2510,6 +2511,11 @@
 
           (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
           (observed-public-value result))))))
+
+(defn- cancelled-operation?
+  [t]
+  (or (:vis/task-cancelled (ex-data t))
+      (cancellation/cancellation? t)))
 
 (defn invoke-symbol-wrapper
   "Run one observed tool invocation and emit paired Activity lifecycle events.
@@ -2591,7 +2597,7 @@
                                          (assoc details
                                            :started-at-ms started-at-ms
                                            :outcome
-                                           (if (cancellation/cancellation? t) :cancelled :failed)
+                                           (if (cancelled-operation? t) :cancelled :failed)
                                            :error t)))
                    (throw t)))))))))
 
@@ -2638,7 +2644,7 @@
                (finish! :succeeded {:result {}}))
              value)
            (catch Throwable t
-             (finish! (if (cancellation/cancellation? t) :cancelled :failed) {:error t})
+             (finish! (if (cancelled-operation? t) :cancelled :failed) {:error t})
              (throw t))))))
 
 (def ^:private ^:dynamic *log-writer*

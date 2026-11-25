@@ -26,6 +26,8 @@
     [com.blockether.vis.internal.config.runtime-settings :as rt]
     [com.blockether.vis.internal.gateway.state :as gateway-state]
     [com.blockether.vis.internal.session.cancellation :as cancellation]
+    [com.blockether.vis.internal.session.agents :as session-agents]
+    [com.blockether.vis.internal.task :as task]
     [com.blockether.vis.internal.view.core :as human-input]
     [com.blockether.vis.internal.persistance.core :as ps]
     [com.blockether.vis.internal.persistance.sqlite.test-helpers :as db-test]
@@ -4542,7 +4544,7 @@ vis.register_extension(vis.Extension(
                  :active-extensions (atom [])}
 
                 code
-                "import json\nprint(json.dumps([start('x', aliases=['dev']), other(), start()]))"]
+                "import json\nprint(json.dumps([await start('x', aliases=['dev']), await other(), await start()]))"]
 
             (try (loop-env/sync-active-extension-symbols! env exts)
                  (let [result
@@ -4659,7 +4661,7 @@ vis.register_extension(vis.Extension(
                          (finally (ep/dispose-python-context! ctx)))))
 
                 report
-                "import json\nr = provider()\nprint(json.dumps([r['direct'], r['nested']]))"
+                "import json\nr = await provider()\nprint(json.dumps([r['direct'], r['nested']]))"
 
                 [a b]
                 ;; Two sessions at the same time: each call keeps its own provider.
@@ -4668,10 +4670,10 @@ vis.register_extension(vis.Extension(
             (expect (= "[\"prod\", \"prod\"]\n" a))
             (expect (= "[\"peer\", \"peer\"]\n" b))
             (expect (= "[null, null]\n" (run nil report)))
-            (expect (= "ran\n" (run "prod" "print(guarded())")))
-            (expect (str/includes? (run "peer" "print(guarded())") "provider peer may not run it"))
-            (expect (str/includes? (run nil "print(guarded())") "provider None may not run it"))
-            (expect (= "{'thread': None}\n" (run "prod" "print({k: v for k, v in in_thread().items() if k != 'op'})")))))))
+            (expect (= "ran\n" (run "prod" "print(await guarded())")))
+            (expect (str/includes? (run "peer" "print(await guarded())") "provider peer may not run it"))
+            (expect (str/includes? (run nil "print(await guarded())") "provider None may not run it"))
+            (expect (= "{'thread': None}\n" (run "prod" "print({k: v for k, v in (await in_thread()).items() if k != 'op'})")))))))
   (it "gives a later live view event no provider, also when a model tool call opened the view"
       (with-fresh-loaded
         {"provider_tool.py" provider-tool-py
@@ -4698,12 +4700,12 @@ vis.register_extension(vis.Extension(
                                   (constantly (io/file root "views"))}
                    #(do (loop-env/sync-active-extension-symbols! env exts)
                         (let [view-id (str/trim (run (assoc env :tool-call/provider "prod")
-                                                     "print(watch())"))]
+                                                     "print(await watch())"))]
                           (try (expect (:is-accepted (human-input/action! view-id {:action "activate"
                                                                                    :node-id "go"})))
                                (expect (= "[None]\n"
                                           (loop [attempt 0]
-                                            (let [out (run env "print(seen())")]
+                                            (let [out (run env "print(await seen())")]
                                               (if (or (not= "[]\n" out) (= attempt 100))
                                                 out
                                                 (do (Thread/sleep 100) (recur (inc attempt))))))))
@@ -4758,7 +4760,7 @@ vis.register_extension(vis.Extension(name='name-hook', description='Name fixture
                            (try (loop-env/sync-active-extension-symbols! env exts)
                                 (let [result (#'python-exec/run-python-code
                                               ctx
-                                              "print(nst.repl_start()); print(flat())"
+                                              "print(await nst.repl_start()); print(await flat())"
                                               :env
                                               env)]
                                   (or (get-in result [:error :message]) (:stdout result)))
@@ -4885,7 +4887,7 @@ vis.register_extension(vis.Extension(name='name-hook', description='Name fixture
                 check-activity
                 (fn [summary evidence]
                   (reset! snapshots [])
-                  (let [result (run-block "print(check_nesting())")
+                  (let [result (run-block "print(await check_nesting())")
                         rows (get-in result [:activity :rows])
                         row (first rows)]
 
@@ -4959,7 +4961,7 @@ vis.register_extension(vis.Extension(name='name-hook', description='Name fixture
                              (reset! snapshots [])
                              (#'python-exec/run-python-code
                               ctx
-                              (str "report = read_ci_report("
+                              (str "report = await read_ci_report("
                                    (json-text (str file))
                                    ")\nprint(report.passed, report.failed)\nprint(report.path)")
                               :env
@@ -8592,7 +8594,7 @@ vis.register_extension(vis.Extension(name='where', description='Process probe.',
                          (expect (:is-accepted (human-input/action! view-id {:action "connect"})))
                          (expect (:is-accepted (human-input/action! view-id {:action "activate" :node-id "go"})))
                          (loop-env/sync-active-extension-symbols! env [ext])
-                         (let [result (#'python-exec/run-python-code ctx "print(where())" :env env)]
+                         (let [result (#'python-exec/run-python-code ctx "print(await where())" :env env)]
                            (expect (nil? (:error result)) (pr-str result))
                            ;; One subscriber: the global app in the shared worker.
                            (expect (= "1" (str/trim (str (:stdout result)))) (pr-str result)))
@@ -9239,7 +9241,7 @@ vis.register_extension(vis.Extension(
                                                       ::interactive-hook
                                                       (fn [_])))
         (try (loop-env/sync-active-extension-symbols! env exts)
-             (#'python-exec/run-python-code ctx "print(start())" :env env)
+             (#'python-exec/run-python-code ctx "print(await start())" :env env)
              (finally (run! future-cancel answering)
                       (doseq [chan [:tui :app]]
                         (channel-events/remove-channel-event-listener! chan ::interactive-hook))
@@ -11514,6 +11516,206 @@ vis.register_extension(vis.Extension(
              (f ctx env)
              (finally (ep/dispose-python-context! ctx)))))))
 
+(defdescribe extension-task-cancellation-test
+  (it "cancels only the requested extension call and leaves its sibling running"
+      (with-watchdog-extension
+        (fn [ctx _]
+          (let [started (ep/run-python-block
+                          ctx
+                          (str "import asyncio\n"
+                               "slow = watchdog_probe.poll_cooperative(20)\n"
+                               "other = watchdog_probe.poll_cooperative(1)\n"
+                               "print(slow.done(), other.done())"))
+                answer (ep/run-python-block
+                         ctx
+                         (str "assert slow.cancel()\n"
+                              "try:\n"
+                              "    await asyncio.wait_for(slow, 3)\n"
+                              "except asyncio.CancelledError:\n"
+                              "    print('cancelled')\n"
+                              "print((await other).count)"))]
+            (expect (nil? (:error started)) (pr-str started))
+            (expect (= "False False\n" (:stdout started)))
+            (expect (nil? (:error answer)) (pr-str answer))
+            (expect (= "cancelled\n2\n" (:stdout answer))))))))
+
+(def ^:private task-watch-py
+  (str "from dataclasses import dataclass\n"
+       "from blockether.vis import extension as vis\n"
+       "\n"
+       "@dataclass\n"
+       "class WatchOutcome:\n"
+       "    is_stopped_by_human: bool\n"
+       "\n"
+       "def task_watch() -> WatchOutcome:\n"
+       "    \"\"\"Watch a fake run until the person stops it.\"\"\"\n"
+       "    with vis.live('Task watch', [vis.ui.status('count', '0')], flush_ms=0) as view:\n"
+       "        n = 0\n"
+       "        late = None\n"
+       "        while not view.sleep(0.05):\n"
+       "            n += 1\n"
+       "            try:\n"
+       "                view['count'].set(str(n))\n"
+       "                if late is None and vis.is_detached():\n"
+       "                    late = vis.live('Late task view', [vis.ui.status('late', 'Ready')])\n"
+       "            except vis.Interrupted:\n"
+       "                break\n"
+       "        return WatchOutcome(view.is_from_human)\n"
+       "\n"
+       "def task_locked_watch() -> WatchOutcome:\n"
+       "    \"\"\"Watch without letting the caller detach.\"\"\"\n"
+       "    return task_watch()\n"
+       "\n"
+       "def task_ask() -> bool:\n"
+       "    \"\"\"Ask the person from a Task that has detached.\"\"\"\n"
+       "    import time\n"
+       "    while not vis.is_detached():\n"
+       "        time.sleep(0.01)\n"
+       "    return bool(vis.ask('Detached question', [{'name': 'ok', 'type': 'checkbox'}],\n"
+       "                        timeout_ms=5000))\n"
+       "\n"
+       "vis.register_extension(vis.Extension(name='task-watch', alias='probe', description='Fake watch.', symbols=[\n"
+       "    vis.Symbol(task_watch, activity=vis.Activity(label='Watch run')),\n"
+       "    vis.Symbol(task_locked_watch, detachable=False,\n"
+       "               activity=vis.Activity(label='Watch run')),\n"
+       "    vis.Symbol(task_ask, activity=vis.Activity(label='Ask'))]))\n"))
+
+(defn- wait-for-task-watch [f]
+  (let [deadline (+ (System/nanoTime) 5000000000)]
+    (loop []
+      (or (f)
+          (when (< (System/nanoTime) deadline)
+            (Thread/sleep 10)
+            (recur))))))
+
+(defn- with-task-watch
+  [f]
+  (with-loaded
+    {"task_watch.py" task-watch-py}
+    (fn [loaded _]
+      (expect (zero? (:failed loaded)) (pr-str (pyx/load-failures)))
+      (let [sid (str (random-uuid))
+            home (atom {})
+            ctx (:python-context (ep/create-python-context {}
+                                                           (constantly [(.getCanonicalPath (temp-dir))])
+                                                           {:worker? true :session-id sid}
+                                                           nil))
+            ext (registered "task-watch")
+            env {:python-context ctx :session-id sid :extensions (atom [ext])
+                 :active-extensions (atom []) :task-view-home home}
+            block (fn [code] (#'python-exec/run-python-code ctx code :env env))
+            pictures (fn [] (filter #(= sid (:session-id %)) (human-input/live-views)))]
+        (try
+          (loop-env/sync-active-extension-symbols! env [ext])
+          (f {:sid sid :ctx ctx :home home :block block :pictures pictures})
+          (finally
+            (doseq [open (pictures)] (human-input/interrupt-live! (:id open)))
+            (ep/dispose-python-context! ctx)))))))
+
+(defn- awaiting-watch? [sid ctx]
+  (some->> (get @@#'ep/block-calls ctx) (task/awaited-ids sid) seq))
+
+(defdescribe detached-live-task-test
+  (it "releases the parent on a child question while the human can still stop the live run"
+      (with-task-watch
+        (fn [{:keys [sid ctx home block pictures]}]
+          (let [picture (fn [title] (some #(when (= title (:title %)) %) (pictures)))
+                watch (future (block (str "t = task_watch()\n"
+                                           "print((await t) is t)\n")))
+               open (wait-for-task-watch #(picture "Task watch"))]
+            (expect (some? open) (pr-str (deref watch 0 nil)))
+            (expect (wait-for-task-watch #(awaiting-watch? sid ctx)))
+            (with-redefs-fn {#'session-agents/info (constantly {:parent_id sid :leader_id sid
+                                                               :id "a2"})
+                            #'session-agents/runtime (atom {:live? (constantly true)
+                                                            :publish (constantly {:entry_id 42})})
+                            #'ps/db-council-get (constantly {:replies [{:reply_entry_id 43}]
+                                                             :content "Keep watching."})
+                            #'ps/db-council-delivered! (constantly nil)}
+              #(session-agents/ask {:session-id "child"} "Ready?"))
+            (let [answer (deref watch 2000 ::parked)]
+              (expect (nil? (:error answer)) (pr-str answer))
+              (expect (str/includes? (str (:stdout answer)) "True"))
+              (expect (= 1 (get-in answer [:activity :counts :running])))
+               (expect (= 0 (get-in answer [:activity :counts :cancelled])))
+               (expect (str/includes? (str (:stdout answer)) "Ready?")))
+            (let [late (wait-for-task-watch #(picture "Late task view"))
+                  before (:seq (picture "Task watch"))]
+              (expect (some? late))
+              (expect (= ["t1" "t1"] (mapv :task-id [open late])))
+               (expect (nil? (:owner late)))
+              (expect (some? (:owner open)))
+              (expect (integer? before))
+               (expect (wait-for-task-watch #(some-> (picture "Task watch") :seq (> before))))
+               (expect (= #{(:id open) (:id late)} (set (:view-ids (task/state sid "t1"))))))
+             (human-input/interrupt-live! (:id open) "Done watching.")
+             (expect (= :done (:state (task/await! sid "t1" {:timeout-ms 5000}))))
+             (expect (empty? (pictures)))
+             (let [filed (atom [])]
+               (with-redefs-fn {#'human-input/late-artifact-filer
+                               (atom (fn [id attachment]
+                                       (swap! filed conj [id (:view-id attachment)])))}
+                #(human-input/set-task-view-home! home "iteration"))
+              (expect (= 2 (count @filed)))
+              (expect (every? #(= "iteration" (first %)) @filed)))
+            (let [answer (block "print((await t).is_stopped_by_human)")]
+              (expect (nil? (:error answer)) (pr-str answer))
+              (expect (str/includes? (str (:stdout answer)) "True"))
+              (expect (str/includes? (str (:stdout answer)) "ended: await t1")))))))
+  (it "returns pending from asyncio.wait and lets a detached tool request human input"
+      (with-task-watch
+        (fn [{:keys [sid ctx block]}]
+          (let [prompt (promise)
+                listener (fn [event]
+                           (when (and (= sid (:session-id event)) (= :input (:kind event))
+                                      (= :view/open (:op event)))
+                             (deliver prompt (:view-id event))))]
+            (channel-events/add-channel-event-listener! :tui ::task-ask listener)
+            (try
+              (let [waiter (future (block (str "import asyncio\n"
+                                              "t = task_ask()\n"
+                                              "done, pending = await asyncio.wait({t})\n"
+                                              "print(not done and pending == {t})\n")))]
+                (expect (wait-for-task-watch #(awaiting-watch? sid ctx)))
+                (expect (= ["t1"] (mapv :id (task/detach-awaits! sid {:question "Ready?"}))))
+                (let [answer (deref waiter 5000 nil)]
+                  (expect (nil? (:error answer)) (pr-str answer))
+                  (expect (str/includes? (str (:stdout answer)) "True")))
+                (let [id (deref prompt 5000 nil)]
+                  (expect (string? id))
+                  (expect (= {:is-accepted true} (human-input/submit! id {"ok" true}))))
+                (let [answer (block "print(await t)")]
+                  (expect (nil? (:error answer)) (pr-str answer))
+                  (expect (str/includes? (str (:stdout answer)) "True"))))
+              (finally (channel-events/remove-channel-event-listener! :tui ::task-ask)))))))
+  (it "does not detach a protected tool and closes its view on Task cancellation"
+      (with-task-watch
+        (fn [{:keys [sid ctx block pictures]}]
+          (let [closed (promise)
+                listener (fn [event]
+                           (when (and (= sid (:session-id event)) (= :view/close (:op event)))
+                             (deliver closed (:result event))))]
+            (channel-events/add-channel-event-listener! :tui ::cancel-watch listener)
+            (try
+              (let [watch (future (block (str "import asyncio\n"
+                                             "t = task_locked_watch()\n"
+                                             "try:\n"
+                                             "    await t\n"
+                                             "except asyncio.CancelledError:\n"
+                                             "    print('cancelled')\n")))]
+                (expect (wait-for-task-watch #(seq (pictures))))
+                (expect (wait-for-task-watch #(awaiting-watch? sid ctx)))
+                (expect (empty? (task/detach-awaits! sid {:question "Ready?"})))
+                (expect (not (realized? watch)))
+                (expect (task/cancel! sid "t1" :agent))
+                (expect (= :cancelled (:reason (deref closed 5000 nil))))
+                (let [answer (deref watch 5000 nil)]
+                  (expect (= "cancelled\n" (:stdout answer)) (pr-str answer))
+                   (expect (= ["cancelled"] (mapv :state (get-in answer [:activity :rows])))
+                           (pr-str (:activity answer))))
+                (expect (empty? (pictures))))
+              (finally (channel-events/remove-channel-event-listener! :tui ::cancel-watch))))))))
+
 (def ^:private ^:dynamic *watchdog*
   "The `{:ctx :env}` that the tests of one watchdog describe share."
   nil)
@@ -11833,12 +12035,15 @@ vis.register_extension(vis.Extension(
   ;; Issue #187: exercise different worker paths and verify a disabled fix is detected.
   {:context [shared-watchdog]}
   (it "detects the original timeout when dispatch parking is deliberately disabled"
-      (let [{:keys [ctx env]} *watchdog*]
-        (with-redefs [rt/park-blocking-wall (fn [thunk]
-                                              (thunk))]
-          (let [result (watchdog-block ctx env "await watchdog_probe.poll(0.9)\n")]
+      (let [{:keys [ctx env]} *watchdog*
+            wall rt/parkable-wall]
+        (with-redefs [rt/parkable-wall (fn [start timeout]
+                                        (assoc (wall start timeout) :hold nil))]
+          (let [result (watchdog-block ctx env "timed = watchdog_probe.poll(0.9)\nawait timed\n")]
             (expect (true? (:timeout? result)) (pr-str result))
-            (expect (some? (:error result)))))))
+            (expect (some? (:error result)))))
+        (let [drained (watchdog-block ctx env "await timed\n")]
+          (expect (nil? (:error drained)) (pr-str drained)))))
   (it "keeps a sibling call parked when a concurrent operation fails"
       (let [{:keys [ctx env]}
             *watchdog*
@@ -11891,8 +12096,8 @@ vis.register_extension(vis.Extension(
         (expect (= "operation expired\nresumed" (str/trim (or (:stdout result) ""))))
         (expect (true? (:timeout? runaway)))
         (expect (not (worker/retired? ctx)))))
-  (it "retires an uncooperative extension after cancellation instead of leaking work"
-      ;; This test retires the sandbox, so it makes its own.
+  (it "stops waiting for an uncooperative Task without retiring the sandbox"
+      ;; A native wait can outlive the block stop. The sandbox must stay usable.
       (with-watchdog-extension
         (fn [ctx env]
           (let [token
@@ -11913,16 +12118,17 @@ vis.register_extension(vis.Extension(
                                                  (assoc env
                                                    :cancel-token token
                                                    :python-context-retired-atom retired)
-                                                 "await watchdog_probe.poll(30)\n"
+                                                 "pending = watchdog_probe.poll(30)\nawait pending\n"
                                                  :tool-event-fn
                                                  #(when (= :start (:phase %))
                                                     (deliver started true)))]
                    (expect (some? (:error cancelled)))
                    (expect (not (:timeout? cancelled)))
-                   (expect (loop [remaining 100]
-                             (cond (and @retired (worker/retired? ctx)) true
-                                   (zero? remaining) false
-                                   :else (do (Thread/sleep 50) (recur (dec remaining)))))))
+                   (expect (not @retired))
+                   (expect (not (worker/retired? ctx)))
+                   (let [after (watchdog-block ctx env "print(pending.done())\nprint(42)")]
+                     (expect (nil? (:error after)) (pr-str after))
+                     (expect (= "False\n42\n" (:stdout after)))))
                  (finally (cancellation/cancel! token :test-cleanup) (deref stopper 5000 nil)))))))
   (it
     "restores the watchdog and context after cancelling a cooperative extension"
@@ -11996,7 +12202,7 @@ vis.register_extension(vis.Extension(
                (ep/run-python-block
                  ctx
                  (str
-                   "print(probe.echo('positional'))\n" "print(probe.echo(value='keyword'))\n"
+                   "print(await probe.echo('positional'))\n" "print(await probe.echo(value='keyword'))\n"
                    "assert await probe.echo(value='hello') == 'hello!'\n"
                    "assert await probe.echo('hello', suffix='?') == 'hello?'\n"
                    "assert await probe.echo(value='hello', suffix='.') == 'hello.'\n"
@@ -12006,6 +12212,7 @@ vis.register_extension(vis.Extension(
                    "assert (await probe.mapping(payload={'x': 1}))['x'] == 1\n"
                    "assert await gather(probe.echo(value='a'), probe.echo(value='b')) == ['a!', 'b!']\n"
                    "assert await asyncio.to_thread(probe.echo, value='thread', suffix='?') == 'thread?'\n"
+                   "assert await asyncio.to_thread(lambda *, value: value, value=42) == 42\n"
                    "print('ok')"))]
               (expect (nil? (:error answer)) (pr-str answer))
               (expect (= "positional!\nkeyword!\nok\n" (:stdout answer))))

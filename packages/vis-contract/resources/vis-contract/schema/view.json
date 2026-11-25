@@ -3836,6 +3836,10 @@
           "$ref": "#/$defs/live_owner",
           "readOnly": true
         },
+        "task_id": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "readOnly": true
+        },
         "title": {
           "$ref": "common.json#/$defs/non_blank_string"
         },

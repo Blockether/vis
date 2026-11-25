@@ -49,6 +49,7 @@
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis-python-runtime :as runtime]
+            [com.blockether.vis.internal.task :as task]
             [taoensso.telemere :as tel])
   (:import
     (com.blockether.vispython Locations Sources)
@@ -217,27 +218,29 @@
                (catch Exception _ nil))
           caller)]
 
-    (swap! (:serving peer) assoc id (Thread/currentThread))
-    (let [reply (if (and (string? caller) (contains? @(:host-sessions peer) caller))
-                  {"value"
-                   (binding [python-host/*guest-thread?* guest-thread?]
-                     (python-host/dispatch caller (get message "tool") (get message "payload")))}
-                  {"error" "Worker is not authorized for this host session"})]
+    (swap! (:serving peer) assoc id {:thread (Thread/currentThread) :call (get message "call")})
+    (let [reply (try (if (and (string? caller) (contains? @(:host-sessions peer) caller))
+                       {"value"
+                        (binding [python-host/*guest-thread?* guest-thread?
+                                  python-host/*callback-call* (get message "call")]
+                          (python-host/dispatch caller (get message "tool") (get message "payload")))}
+                       {"error" "Worker is not authorized for this host session"})
+                     (catch Exception e
+                       (tel/log! {:level :error :id ::host-callback-failed :error e}
+                                 "Python worker host callback failed")
+                       {"error" "Vis could not serve this Python host callback"}))]
       (when (child/claim-reply! peer id) (child/send-line! peer (assoc reply "id" id))))))
 
 (defn- fail-host-calls!
-  "Fail every host call the child has in flight on `peer`: each guest thread
-   parked in one unwinds with the error, and the tool thread serving it is
-   interrupted so a bounded wait stops early instead of running to its deadline.
-   Process-wide on purpose, like the interpreter interrupt it accompanies: one
-   worker is one session's Python, so every call it has open belongs to the
-   block being cancelled or to a tool that block is waiting on."
-  [peer reason]
-  (let [[before _] (swap-vals! (:serving peer) empty)]
-    (doseq [[id ^Thread thread] before]
+  "Release only callbacks of the interrupted call, or all callbacks on a legacy stop."
+  [peer call reason]
+  (let [matches? (fn [[_ serving]] (or (nil? call) (= call (:call serving))))
+        [before _] (swap-vals! (:serving peer) #(into {} (remove matches?) %))
+        claimed (filter matches? before)]
+    (doseq [[id {:keys [^Thread thread]}] claimed]
       (.interrupt thread)
       (child/send-line! peer {"id" id "error" (str reason)}))
-    (count before)))
+    (count claimed)))
 
 ;; The parent half
 
@@ -1091,6 +1094,19 @@
   (when-let [state (get @workers k)]
     (when (alive? state) (.pid ^Process (:process state)))))
 
+(defn- publish-worker! [k state]
+  (swap! workers assoc k state)
+  (when-let [context (cond (instance? TrustedExtensionWorker k) (:session k)
+                           (and (string? k) (not= k shared-key)) k)]
+    (.thenRun (.onExit ^Process (:process state))
+              ^Runnable
+              (fn []
+                (with-worker-lock k false
+                  (fn []
+                    (when (identical? state (get @workers k))
+                      (task/sweep! (python-host/task-session context) :worker-death)))))))
+  state)
+
 (defn- live
   "Start a worker only for a new key. A dead or retired worker has lost its
    namespace and host bindings; only a rebuilt environment may replace it."
@@ -1115,8 +1131,7 @@
                    {:type :vis/python-worker-retired :worker k :reason reason})))
         (or state
             (let [started (or (take-spare! k) (start! k))]
-              (swap! workers assoc k started)
-              started))))))
+              (publish-worker! k started)))))))
 
 (defn start-worker!
   "Start the worker for `k` before its first request, so that independent
@@ -1140,7 +1155,7 @@
                         (let [started (or (take-spare! k) (start! k))]
                           (try (warm-up! (:peer started) warmup)
                                (catch Throwable t (stop-state! started) (throw t)))
-                          (swap! workers assoc k started)))))
+                          (publish-worker! k started)))))
   nil)
 
 (def ^:private INTERRUPT_REPLY_MS
@@ -1148,7 +1163,7 @@
   1000)
 
 (defn- ask
-  [k op session code]
+  [k op session code & [call]]
   (let [peer
         (:peer (live k))
 
@@ -1168,7 +1183,9 @@
       (child/request! peer
                       (cond-> {"op" op "session" session}
                         code
-                        (assoc "code" code)))
+                        (assoc "code" code)
+                         call
+                        (assoc "call" call)))
       (catch Throwable error (when newly-assigned? (swap! sessions disj session)) (throw error)))))
 
 (defn install-runtime!
@@ -1183,13 +1200,17 @@
 
 (defn install-module! [k session module] (ask k "install-module" session module))
 
-(defn exec! [k session code] (ask k "exec" session code))
+(defn- run-call [k op session code]
+  (let [[ctx call] python-host/*driver-call*]
+    (ask k op session code (if (= ctx session) call (task/call-id)))))
 
-(defn run [k session code] (ask k "run" session code))
+(defn exec! [k session code] (run-call k "exec" session code))
 
-(defn run-block [k session code] (ask k "run-block" session code))
+(defn run [k session code] (run-call k "run" session code))
 
-(defn eval-str [k session code] (ask k "eval" session code))
+(defn run-block [k session code] (run-call k "run-block" session code))
+
+(defn eval-str [k session code] (run-call k "eval" session code))
 
 (defn close-session! [k session] (ask k "close" session nil))
 
@@ -1204,12 +1225,20 @@
           vals
           vec))
 
-(defn interrupt!
+(defn pending-call-replies
+  "The replies still owed by one invocation; never include background work."
+  [k call]
+  (when-let [peer (:peer (get @workers k))]
+    (into [] (keep (fn [[id active]]
+                     (when (= call (:call active)) (get @(:pending peer) id))))
+          (get-in @(:rpc-state peer) [:outbound :active]))))
+
+(defn- interrupt-request!
   "Interrupt the current worker for `session` without starting a replacement.
    Fail its host calls too, so a guest parked in one can unwind. The entire
    exchange is bounded, including writes; on timeout the caller must retire
    the unresponsive worker. Answer whether the child acknowledged the interrupt."
-  [k session]
+  [k session call kind]
   (when-let [state (let [state (get @workers k)]
                      (when (alive? state) state))]
     (let
@@ -1222,10 +1251,12 @@
          (bound-fn
            []
            (try
-             (child/request! peer {"op" "interrupt" "session" session})
+             (child/request! peer
+                              (cond-> {"op" "interrupt" "session" session}
+                                call (assoc "call" call "kind" (name kind))))
              (finally
                (fail-host-calls!
-                 peer
+                 peer call
                  "the block was interrupted while this host call was still running; its result is discarded"))))
          {:platform? true})]
 
@@ -1238,6 +1269,29 @@
              reply)
            (catch ExecutionException error (throw (.getCause error)))
            (finally (future-cancel control))))))
+
+(defn interrupt!
+  "Interrupt the entire worker. Use only for a legacy invocation without an ID."
+  [k session]
+  (interrupt-request! k session nil :interrupt))
+
+(defn interrupt-call!
+  "Request a Python exception in one invocation and release only its host callbacks."
+  [k session call kind]
+  (interrupt-request! k session call kind))
+
+(defn call-interrupter
+  "Retry only while the target invocation is still active."
+  [k session call]
+  (fn [kind]
+    (cancellation/worker-future
+      "vis-task-interrupt"
+      (fn []
+        (loop []
+          (when (and (python-host/active-call? session call)
+                     (not (interrupt-call! k session call kind)))
+            (Thread/sleep 10)
+            (recur)))))))
 
 (defn stdin! [k session text] (ask k "stdin" session (str text)))
 

@@ -8794,44 +8794,53 @@
             (dissoc state :rows)))))))
 
 (defn db-activity-settle!
-  "Close still-running invocations in bounded batches at the enclosing evaluation boundary."
-  [db aid outcome summary]
-  (sqlite-write-tx!
-    db
-    (fn [tx]
-      (when-let [history
-                 (query-one! tx {:select [:*] :from [:activity_history] :where [:= :id (str aid)]})]
-        (let [metadata (<-blob (:metadata history))]
-          (when (pos? (long (get-in metadata [:counts :running] 0)))
-            (loop []
+  "Close selected running invocations in bounded batches."
+  [db aid outcome summary selection]
+  (let [aid (str aid)]
+    (sqlite-write-tx!
+      db
+      (fn [tx]
+        (when-let [history
+                   (query-one! tx {:select [:*] :from [:activity_history] :where [:= :id aid]})]
+          (let [metadata (<-blob (:metadata history))]
+            (if-not (pos? (long (get-in metadata [:counts :running] 0)))
+              metadata
+              (let [amount
+                    (loop [after 0
+                           amount 0]
 
-              (let [rows (query! tx
-                                 {:select [:payload]
-                                  :from [:activity_invocation]
-                                  :where [:and [:= :history_id (str aid)] [:= :state "running"]]
-                                  :order-by [[:sequence :asc]]
-                                  :limit 32})]
-                (when (seq rows)
-                  (doseq [item rows]
-                    (let [row (assoc (<-blob (:payload item))
-                                :state outcome
-                                :summary summary)
-                          record (activity-record (str aid) row)]
+                      (let [batch (query! tx
+                                          {:select [:id :sequence :payload]
+                                           :from [:activity_invocation]
+                                           :where [:and [:= :history_id aid] [:= :state "running"]
+                                                   [:> :sequence after]]
+                                           :order-by [[:sequence :asc]]
+                                           :limit 32})
+                            selected (filter #(activity/selected-invocation? selection (:id %))
+                                             batch)]
 
-                      (execute! tx
-                                {:update :activity_invocation
-                                 :set (dissoc record :history_id :id)
-                                 :where [:and [:= :history_id (str aid)] [:= :id (:id row)]]})))
-                  (recur))))
-            (execute! tx
-                      {:update :activity_history
-                       :set {:metadata (->blob (dissoc (activity/settle-running (assoc metadata
-                                                                                  :rows [])
-                                                                                outcome
-                                                                                summary)
-                                                 :rows))
-                             :revision (inc (long (:revision history)))}
-                       :where [:= :id (str aid)]})))))))
+                        (if (seq batch)
+                          (do (doseq [item selected]
+                                (let [record (activity-record aid
+                                                              (assoc (<-blob (:payload item))
+                                                                :state outcome
+                                                                :summary summary))]
+                                  (execute! tx
+                                            {:update :activity_invocation
+                                             :set (dissoc record :history_id :id)
+                                             :where [:and [:= :history_id aid]
+                                                     [:= :id (:id item)]]})))
+                              (recur (long (:sequence (peek batch))) (+ amount (count selected))))
+                          amount)))
+                    settled (activity/settle-count metadata outcome amount)]
+
+                (when (pos? amount)
+                  (execute! tx
+                            {:update :activity_history
+                             :set {:metadata (->blob settled)
+                                   :revision (inc (long (:revision history)))}
+                             :where [:= :id aid]}))
+                settled))))))))
 
 (defn db-activity-page
   "A session-authorized, keyset page of complete records. Search never clips retention."

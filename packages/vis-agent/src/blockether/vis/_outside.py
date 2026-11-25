@@ -1858,6 +1858,7 @@ _IMPLEMENTATIONS = {
     "jailed_shell": jailed_shell,
     "call_env": call_env,
     "tool_call_provider": tool_call_provider,
+    "is_detached": lambda: False,
     "request": request,
     "bound_session": bound_session,
     "call_tool": call_tool,

@@ -89,7 +89,7 @@
                                    :apply! (fn [event]
                                              (swap! applied conj event)
                                              {})
-                                   :settle! (fn [_ _]
+                                   :settle! (fn [_ _ _]
                                               nil)
                                    :page (fn []
                                            nil)}})]
@@ -97,6 +97,38 @@
         (run! #(run-operation! activity %) (concat team-details publish-details))
         (expect (= {} (block/settle! activity {})))
         (expect (= [] @applied))))
+  (it "ends ordinary calls but records Task events after the block ends"
+      (let [settled (promise)
+            activity (block/start! {:on-late-snapshot #(when (= 1 (get-in % [:counts :succeeded]))
+                                                        (deliver settled %))})
+            owner ["session" "t1"]
+            release! (block/hold! activity owner)
+            ctx (:context activity)
+            watch (event/invocation ctx nil)
+            ordinary (event/invocation ctx nil)]
+        (try
+          (block/record! activity owner (event/start-event ctx watch details))
+          (block/record! activity (event/start-event ctx ordinary details))
+          (let [r (:activity (block/settle! activity {}))]
+            (expect (= {:running 1 :succeeded 0 :failed 0 :cancelled 1} (:counts r))))
+          (block/record! activity owner (event/terminal-event ctx watch
+                                                             (assoc details :outcome :succeeded
+                                                                    :started-at-ms 0)))
+          (release! {:state :done})
+          (expect (= {:running 0 :succeeded 1 :failed 0 :cancelled 1}
+                     (:counts (deref settled 3000 nil))))
+          (finally (release! {:state :cancelled})))))
+  (it "settles a Task without a tool terminal when the session sweeps it"
+      (let [settled (promise)
+            activity (block/start! {:on-late-snapshot #(deliver settled %)})
+            owner ["session" "t1"]
+            release! (block/hold! activity owner)
+            ctx (:context activity)
+            watch (event/invocation ctx nil)]
+        (block/record! activity owner (event/start-event ctx watch details))
+        (expect (= "running" (get-in (block/settle! activity {}) [:activity :state])))
+        (release! {:state :cancelled})
+        (expect (= "cancelled" (:state (deref settled 3000 nil))))))
   (it "drops an event that arrives after the block settled"
       (let [seen
             (atom [])
@@ -112,7 +144,7 @@
         (let [activity (block/start! {:store {:history-id "history-1"
                                               :apply! (fn [_]
                                                         (throw (ex-info "Storage unavailable" {})))
-                                              :settle! (fn [_ _]
+                                              :settle! (fn [_ _ _]
                                                          nil)
                                               :page (fn []
                                                       nil)}})]

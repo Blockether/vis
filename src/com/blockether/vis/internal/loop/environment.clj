@@ -35,6 +35,7 @@
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -282,6 +283,8 @@
                 [:bind
                  {:sym target
                   :val f
+                  :task? (:ext.symbol/python-task? entry)
+                   :detachable? (:ext.symbol/detachable? entry)
                   :doc (extension/symbol-doc-text entry)
                   :signature (extension/symbol-signature entry)
                   :contract (extension/symbol-contract entry (env/sym->py-name target))
@@ -816,6 +819,7 @@
                                             ;; The extension workers start while the
                                             ;; sandbox builds, not after it (#396).
                                             (assoc network-opts
+                                               :session-id session-id
                                               :on-configured
                                               (fn [session]
                                                 (when-let [environment @environment-atom]
@@ -1104,7 +1108,13 @@
 
 ;; Run after config reload; keep the Var so namespace reloads retain live wiring.
 (defonce ^:private _policy-reload-hook
-  (extension/register-reload-hook! ::security-policy-reload #'mark-policy-reload!))
+  (extension/register-reload-hook!
+     ::security-policy-reload
+     (fn []
+       (doseq [[_ {:keys [environment]}] @cache]
+         (when-let [session (:session-id environment)]
+           (task/sweep! session :reload)))
+       (mark-policy-reload!))))
 
 (defn cache-key
   "Normalize an id-shaped value (UUID or string-UUID) to a UUID
@@ -1447,6 +1457,7 @@
 
                (when (and cur
                           (>= (long idle) (long min-idle-ms))
+                          (not (task/live? (:session-id (:environment cur))))
                           (not (and (= :idle-timeout cause)
                                     (drives-owned-view? (:environment cur)))))
                  (try (binding [python-worker/*keep-children?* true]

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vis.blockether.com/schema/task.json",
+  "type": "object",
+  "required": [
+    "id",
+    "session_id",
+    "kind",
+    "name",
+    "state",
+    "origin",
+    "started_at",
+    "view_ids",
+    "detached"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "$ref": "#/$defs/kind"
+    },
+    "name": {
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/state"
+    },
+    "origin": {
+      "$ref": "#/$defs/origin"
+    },
+    "started_at": {
+      "type": "integer"
+    },
+    "ended_at": {
+      "type": "integer"
+    },
+    "cancel_reason": {
+      "enum": [
+        "agent",
+        "person",
+        "turn",
+        "reload",
+        "session_close",
+        "worker_death"
+      ]
+    },
+    "error": {
+      "type": "string"
+    },
+    "view_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "detached": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "kind": {
+      "enum": [
+        "tool",
+        "shell",
+        "mcp",
+        "subagent"
+      ]
+    },
+    "state": {
+      "enum": [
+        "running",
+        "done",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "turn": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "iteration": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "block": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

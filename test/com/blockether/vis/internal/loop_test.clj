@@ -12855,9 +12855,9 @@
               activity/settle-running
 
               [result left]
-              (with-redefs [activity/settle-running (fn [state outcome summary]
+              (with-redefs [activity/settle-running (fn [state outcome summary selection]
                                                       (swap! outcomes conj outcome)
-                                                      (settle-running state outcome summary))]
+                                                      (settle-running state outcome summary selection))]
                 (cancelled-watching-block
                   (str (open-a-view)
                        "print('polled once')\n"

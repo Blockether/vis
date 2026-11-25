@@ -38,6 +38,7 @@
             [com.blockether.vis.internal.view.validation :as validation]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.task :as task]
             [taoensso.telemere :as tel])
   (:import [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
 
@@ -69,6 +70,10 @@
 (def ^:dynamic *block-owner*
   "The current block's owner token: an atom that becomes true when execution ends.
    Host callbacks inherit this binding. Views keep it until they close."
+  nil)
+
+(def ^:dynamic *task-view-home*
+  "The originating iteration's late artifact home for a Task view."
   nil)
 
 (def ^:dynamic *live-owner*
@@ -1866,7 +1871,10 @@
                  :channel-ids (normalize-channel-ids view invalid-live-view!)
                  :seq 0
                  :created-at (util/now-ms)}
-          (and extension/*current-invocation-id* (not owned?))
+          (and (= :inline placement) task/*task*)
+          (assoc :task-id (second task/*task*))
+
+          (and extension/*current-invocation-id* (not owned?) (not (task/detached?)))
           (assoc :owner
             (cond-> {:invocation-id extension/*current-invocation-id*}
               extension/*activity-history-id*
@@ -3411,6 +3419,8 @@
                                      :view-id (:id view)
                                      :audience "user"})))
 
+(declare close-live!)
+
 (defn- mount-live!
   "Register `record`, the normalized declaration of a new live view, and tell the
    surfaces. Answers the materialized view."
@@ -3436,10 +3446,18 @@
         view
         (materializer/materialize record)
 
+        task-owner
+        (when-not (or owned app?) task/*task*)
+
+        cell
+        (atom view)
+
         entry
         {:kind :live
          :id view-id
-         :view (atom view)
+         :task-owner task-owner
+         :late-home (when task-owner *task-view-home*)
+         :view cell
          ;; What the human DID in this view, in order: changes, submits and
          ;; activations. The owner reads them with `events`, waiting when none is new.
          :events (atom {:cursor 0 :items []})
@@ -3452,7 +3470,7 @@
          ;; gateway thread, which holds no artifacts of its own, and the record still
          ;; belongs to the block whose run produced it.
          :attachment-sink (when-not (or owned app?) mpl-capture/*attachment-sink*)
-         :block-owner (when-not (or owned app?) *block-owner*)
+         :block-owner (when-not (or owned app? (task/detached?)) *block-owner*)
          ;; The eval wall of the block that opened it, LIFTED for as long as the
          ;; view is open. A run SHOWING its work is never billed a deadline: a CI
          ;; run takes fifteen minutes and the Python watchdog around the block
@@ -3476,20 +3494,27 @@
                      (tree-seq :children :children {:children (:nodes view)})))
           (assoc :compacted-bytes (atom (.length ^java.io.File file))))]
 
-    (swap! pending assoc view-id entry)
-    (when owned (save-owned-soon!))
-    (when app? (file-app! view))
-    (tel/log! {:level :debug
-               :id ::live-opened
-               :data {:view-id view-id :title (:title view) :nodes (mapv :id (:nodes view))}
-               :msg "Live view opened"})
-    (when (zero? (long (publish! (:channel-ids entry)
-                                 (lifecycle-event :view/open entry {:view view}))))
-      (tel/log! {:level :warn
-                 :id ::live-unwatched
-                 :data {:view-id view-id :title (:title view) :channel-ids (:channel-ids entry)}
-                 :msg (str "Live view reached no channel — nobody is watching it. It still runs, "
-                           "and it still ends in the verdict the model reads")}))
+    (locking cell
+      (when (and task-owner
+                 (not (task/track-view! task-owner view-id
+                                       #(locking cell (close-live! view-id %)))))
+        (sink/close! file {:view-id view-id :reason :interrupted :is-completed false
+                           :is-from-human false :view view})
+        (invalid-live-view! "the Task that opened this view ended"))
+      (swap! pending assoc view-id entry)
+      (when owned (save-owned-soon!))
+      (when app? (file-app! view))
+      (tel/log! {:level :debug
+                 :id ::live-opened
+                 :data {:view-id view-id :title (:title view) :nodes (mapv :id (:nodes view))}
+                 :msg "Live view opened"})
+      (when (zero? (long (publish! (:channel-ids entry)
+                                   (lifecycle-event :view/open entry {:view view}))))
+        (tel/log! {:level :warn
+                   :id ::live-unwatched
+                   :data {:view-id view-id :title (:title view) :channel-ids (:channel-ids entry)}
+                   :msg (str "Live view reached no channel — nobody is watching it. It still runs, "
+                             "and it still ends in the verdict the model reads")})))
     view))
 
 (defn open-live!
@@ -3819,6 +3844,26 @@
                                :msg "Late live-view artifact could not be filed"})
                     false)))))
 
+(defn- file-task-artifact!
+  [home attachment]
+  (let [id (locking home
+             (if (contains? @home :iteration-id)
+               (:iteration-id @home)
+               (do (swap! home update :attachments (fnil conj []) attachment)
+                   ::queued)))]
+    (or (= ::queued id) (and id (file-late-artifact! id attachment)))))
+
+(defn set-task-view-home!
+  "Set the persisted iteration for its Task views and file any early closes."
+  [home iteration-id]
+  (when home
+    (let [attachments (locking home
+                        (let [attachments (:attachments @home)]
+                          (reset! home {:iteration-id iteration-id})
+                          attachments))]
+      (when iteration-id
+        (doseq [attachment attachments] (file-late-artifact! iteration-id attachment))))))
+
 (defn close-live!
   "End live view `view-id` and return what the model should read. nil when the
    view was already closed, so a `finally` closing what an interrupt already
@@ -3900,6 +3945,7 @@
                [old _] (swap-vals! pending dissoc view-id)]
 
            (when (contains? old view-id)
+             (when-let [owner (:task-owner entry)] (task/forget-view! owner view-id))
              (let [;; WHERE the row goes. A block collecting HERE — the view opened and
                    ;; closed inside one run, or carried into a later block — takes it out
                    ;; with its own artifacts. A human's stop arriving after that block
@@ -3909,10 +3955,16 @@
                    attachment (some-> artifact
                                       live-attachment)
                    filed? (and attachment
-                               (if-let [home (and (nil? mpl-capture/*attachment-sink*)
-                                                  (:late-home entry))]
-                                 (file-late-artifact! home attachment)
-                                 (some? (binding [mpl-capture/*attachment-sink*
+                               (if-let [home (when (if-let [owner (:task-owner entry)]
+                                                  (or (nil? (:block-owner entry))
+                                                      @(:block-owner entry)
+                                                      (:detached (apply task/state owner)))
+                                                  (nil? mpl-capture/*attachment-sink*))
+                                                (:late-home entry))]
+                                  (if (:task-owner entry)
+                                    (file-task-artifact! home attachment)
+                                    (file-late-artifact! home attachment))
+                                  (some? (binding [mpl-capture/*attachment-sink*
                                                   (or mpl-capture/*attachment-sink*
                                                       (:attachment-sink entry))]
                                           (mpl-capture/record-attachment! attachment)))))
@@ -4155,6 +4207,7 @@
             (and (= :live (:kind entry))
                  (not (:is-app entry))
                  (= session-id (:session-id entry))
+                 (nil? (:task-owner entry))
                  (nil? (:late-home entry))
                  (or (nil? (:block-owner entry)) @(:block-owner entry))))
 
@@ -4181,7 +4234,8 @@
     []
     (->> @pending
          vals
-         (filter #(and (= :live (:kind %)) (identical? block-owner (:block-owner %))))
+         (filter #(and (= :live (:kind %)) (nil? (:task-owner %))
+                       (identical? block-owner (:block-owner %))))
          (sort-by (juxt :created-at :id))
          (keep #(close-live! (:id %) ending))
          vec)))

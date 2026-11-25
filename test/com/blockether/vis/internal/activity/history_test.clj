@@ -230,12 +230,36 @@
                  (try (db/db-activity-apply! store sid aid start)
                       nil
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
-      (db/db-activity-settle! store aid :cancelled "Stopped")
+      (db/db-activity-settle! store aid :cancelled "Stopped" {})
       (let [page (db/db-activity-page store sid aid {})]
         (expect (= ["cancelled"] (mapv :state (:rows page))))
         (expect (= 0 (get-in page [:counts :running])))
-        (db/db-activity-settle! store aid :failed "Late failure")
+        (db/db-activity-settle! store aid :failed "Late failure" {})
         (expect (= page (db/db-activity-page store sid aid {})))))))
+
+(defdescribe task-owned-history-test
+  (it "leaves a Task row running through block settlement and saves its late terminal"
+      (let [store (h/store)
+            sid (h/store-session! store {})
+            aid (str (random-uuid))
+            ctx (event/context)
+            watch (event/invocation ctx nil)
+            details {:operation :watch :presenter :generic}
+            other {:operation :read-record :presenter :generic}]
+        (db/db-activity-apply! store sid aid (event/start-event ctx watch details))
+        ;; Put the excluded row first and span more than one SQLite batch.
+        (dotimes [_ 33]
+          (db/db-activity-apply! store sid aid (event/start-event ctx (event/invocation ctx nil) other)))
+        (db/db-activity-settle! store aid :cancelled "Block ended" {:except #{(:invocation-id watch)}})
+        (expect (= {:running 1 :succeeded 0 :failed 0 :cancelled 33}
+                   (:counts (db/db-activity-page store sid aid {}))))
+        (db/db-activity-apply! store sid aid (event/terminal-event ctx watch
+                                                                  (assoc details :outcome :succeeded
+                                                                         :started-at-ms 0)))
+        (let [page (db/db-activity-page store sid aid {})]
+          (expect (= {:running 0 :succeeded 1 :failed 0 :cancelled 33} (:counts page)))
+          (expect (= "succeeded" (some #(when (= (:id %) (:invocation-id watch)) (:state %))
+                                        (:rows page))))))))
 
 (defdescribe
   byte-bounded-grouped-pages-test

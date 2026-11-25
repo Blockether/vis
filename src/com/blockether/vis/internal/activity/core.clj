@@ -164,29 +164,37 @@
                          (pos? (long (get-in next [:counts :cancelled] 0))) :cancelled
                          :else :succeeded)))))))
 
-(defn settle-running
-  "Finalize every invocation still running when its enclosing evaluation ends.
+(defn selected-invocation?
+  "True when the settlement includes this invocation ID."
+  [{:keys [only except]} id]
+  (and (or (nil? only) (contains? only id)) (not (contains? except id))))
 
-   `outcome` is `:failed` or `:cancelled`; no synthetic lifecycle event is
-   invented. The receipt records that the evaluation, not the tool wrapper,
-   supplied the terminal boundary."
-  [state outcome summary]
-  (let [running (long (get-in state [:counts :running] 0))]
-    (if (zero? running)
-      state
-      (-> state
-          (update :rows
-                  (fn [rows]
-                    (mapv (fn [row]
-                            (cond-> row
-                              (= :running (:state row))
-                              (assoc :state
-                                outcome :summary
-                                summary)))
-                          rows)))
-          (assoc :state outcome)
-          (assoc-in [:counts :running] 0)
-          (update-in [:counts outcome] (fnil + 0) running)))))
+(defn settle-count
+  "Update Activity totals for a number of running rows settled by an owner."
+  [state outcome ^long amount]
+  (if (zero? amount)
+    state
+    (let [counts (-> (:counts state)
+                     (update :running - amount)
+                     (update outcome (fnil + 0) amount))]
+      (assoc state :counts counts
+             :state (cond (pos? (long (:running counts))) :running
+                          (pos? (long (:failed counts))) :failed
+                          (pos? (long (:cancelled counts))) :cancelled
+                          :else :succeeded)))))
+
+(defn settle-running
+  "Settle running invocations selected at the end of their block or Task."
+  ([state outcome summary] (settle-running state outcome summary {}))
+  ([state outcome summary selection]
+   (let [selected? #(and (= :running (:state %)) (selected-invocation? selection (:id %)))
+         amount (count (filter selected? (:rows state)))]
+     (-> state
+         (update :rows #(mapv (fn [row]
+                                (cond-> row
+                                  (selected? row) (assoc :state outcome :summary summary)))
+                              %))
+         (settle-count outcome amount)))))
 
 (defn detected?
   "True once at least one invocation was observed.

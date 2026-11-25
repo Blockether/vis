@@ -1132,6 +1132,13 @@
                                                           :activity snapshot}
                                                    settled?
                                                    (assoc :settled? true)))))
+                    activity-publication (atom {:published? false})
+                    late-activity! (when emit-activity!
+                                     (fn [snapshot]
+                                       (locking activity-publication
+                                         (if (:published? @activity-publication)
+                                           (emit-activity! snapshot true)
+                                           (swap! activity-publication assoc :pending snapshot)))))
                     goal-halt (goals/halt-result environment goal-at-request-start)
                     raw-execution
                     (try
@@ -1179,6 +1186,7 @@
                                                            (when emit-activity!
                                                              (fn [snapshot]
                                                                (emit-activity! snapshot false)))
+                                                            :activity/on-late-snapshot late-activity!
                                                            ;; A block that computes without a tool call
                                                            ;; names its busy time and its wall.
                                                            :python/on-busy
@@ -1229,10 +1237,13 @@
                     execution* (assoc execution
                                  :envelope envelope
                                  :role block-role)
-                    _ (when (and emit-activity! (map? (:activity execution*)))
-                        ;; The last revision has the same event type as the running
-                        ;; replacements, but is durable. Output remains output.
-                        (emit-activity! (:activity execution*) true))]
+                    _ (when emit-activity!
+                        (locking activity-publication
+                          (when (map? (:activity execution*))
+                            (emit-activity! (:activity execution*) true))
+                          (let [{:keys [pending]} @activity-publication]
+                            (reset! activity-publication {:published? true})
+                            (when pending (emit-activity! pending true)))))]
 
                 ;; Stream each block result immediately, except model-facing preflight rejections.
                 (when (and on-chunk (not preflight-error))
@@ -3189,6 +3200,9 @@
         applied-route-command
         (atom (if route-change (:command route-change) route-command-at-turn-start))
 
+        task-view-home
+        (atom {})
+
         iteration-result
         ;; Per-iteration request attempts; see [[request-with-retries]].
         (with-council-execution
@@ -3281,7 +3295,7 @@
                         (reset! provider-replay-evidence nil)
                         (reset! provider-stream {})
                         (run-iteration
-                          attempt-env
+                          (assoc attempt-env :task-view-home task-view-home)
                           @effective-messages-atom
                           {:iteration iteration
                            :request-context request-context
@@ -3409,6 +3423,7 @@
 
     (assoc state
       :iteration-result iteration-result
+      :task-view-home task-view-home
       :resolved-model resolved-model)))
 
 (defn- apply-result
@@ -3420,7 +3435,7 @@
            messages note-prompt-cache-status! on-chunk pre-resolved-model prompt-cache-status-atom
            provider-stream reasoning-effort request-budget-atom resolved-model session-turn-id
            stable-prompt-messages standing-ctx-atom trace trace-store trailer-iters turn-position
-           turn-pricing user-input user-request]}]
+           task-view-home turn-pricing user-input user-request]}]
   (if-let [iteration-error-data (::loop-errors/iteration-error iteration-result)]
     ;; Cancellation short-circuit. When the user pressed Esc mid-call, `cancel!`
     ;; flipped the flag BEFORE future-cancel, so the interrupt-shaped error is a
@@ -3438,25 +3453,25 @@
                              deref
                              :best-answer
                              :value)
-              stored? (when (util/non-blank-string? streamed-reasoning)
-                        (ctx-loop/set-turn-state! environment
-                                                  :iteration-id
-                                                  (persistance/db-store-iteration!
-                                                    (:db-info environment)
-                                                    {:session-turn-id session-turn-id
-                                                     :council-input council-input
-                                                     :user-input (transcript/persisted-user-input
-                                                                   user-input)
-                                                     :vars []
-                                                     :code ""
-                                                     :thinking streamed-reasoning
-                                                     :duration-ms 0
-                                                     :llm-full-duration-ms 0
-                                                     :llm-messages effective-messages
-                                                     :llm-provider (:provider resolved-model)
-                                                     :llm-model (some-> (:name resolved-model)
-                                                                        str)}))
-                        true)
+              stored-id (when (util/non-blank-string? streamed-reasoning)
+                          (persistance/db-store-iteration!
+                           (:db-info environment)
+                           {:session-turn-id session-turn-id
+                            :council-input council-input
+                            :user-input (transcript/persisted-user-input
+                                          user-input)
+                            :vars []
+                            :code ""
+                            :thinking streamed-reasoning
+                            :duration-ms 0
+                            :llm-full-duration-ms 0
+                            :llm-messages effective-messages
+                            :llm-provider (:provider resolved-model)
+                            :llm-model (some-> (:name resolved-model)
+                                               str)}))
+              stored? (some? stored-id)
+              _ (when stored? (ctx-loop/set-turn-state! environment :iteration-id stored-id))
+              _ (view/set-task-view-home! task-view-home stored-id)
               result (merge {:answer (or sticky
                                          (when (util/non-blank-string? streamed-content)
                                            {:answer streamed-content}))
@@ -3524,6 +3539,7 @@
                   (:cost-usd tc))))]
 
         (ctx-loop/set-turn-state! environment :iteration-id err-iteration-id)
+        (view/set-task-view-home! task-view-home err-iteration-id)
         ;; A recoverable iteration error remains useful live feedback.
         ;; Terminal failures instead produce exactly one canonical provider
         ;; card below; emitting this raw chunk first made the TUI show an
@@ -3753,6 +3769,7 @@
                   (:tokens tc) :cost-usd
                   (:cost-usd tc)))))
           _ (ctx-loop/set-turn-state! environment :iteration-id iteration-id)
+          _ (view/set-task-view-home! task-view-home iteration-id)
           ;; A view still open when the block ends outlives the collector that
           ;; block was draining: from here on its record belongs to the
           ;; ITERATION, which is only nameable now.

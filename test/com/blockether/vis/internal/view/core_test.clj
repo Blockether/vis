@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.channel.events :as ce]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.view.core :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.view.sink :as live-sink]
@@ -2676,6 +2677,32 @@
                    (expect (= [(:id b)] (mapv :view-id @b-sink)))
                    (expect (empty? (hi/close-abandoned! nil {:reason reason}))))
                  (finally (hi/close-live! (:id a)) (hi/close-live! (:id b)))))))))
+  (it "does not end a live view still driven by a Task when its opening block fails"
+      (recorded
+        (fn []
+          (let [sid (str (random-uuid))
+                owner (atom false)
+                opened (promise)
+                finish (promise)
+                row (task/start! sid {:name "watch"}
+                                 (fn []
+                                   (binding [hi/*block-owner* owner]
+                                     (deliver opened
+                                              (hi/open-live! (assoc (live-spec {:id "status"
+                                                                                :type "status"
+                                                                                :text "Running"})
+                                                                    :session-id sid))))
+                                   @finish
+                                   {:state :done}))
+                id (:id (deref opened 5000 nil))]
+            (try
+              (expect (string? id))
+              (expect (empty? (hi/close-abandoned! owner {:reason :failed})))
+              (expect (some? (hi/live-view id)))
+              (deliver finish true)
+              (expect (= :done (:state (task/await! sid (:id row) {:timeout-ms 5000}))))
+              (expect (nil? (hi/live-view id)))
+              (finally (deliver finish true) (task/sweep! sid :session-close)))))))
   (it "adopts only ended blocks in the owning session and never changes their home"
       (recorded
         (fn []

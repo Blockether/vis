@@ -66,6 +66,7 @@
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.view.core :as view]
@@ -78,7 +79,7 @@
            [java.nio.file.attribute FileAttribute]
            [java.util.concurrent ArrayBlockingQueue ThreadFactory ThreadPoolExecutor ThreadPoolExecutor$AbortPolicy TimeUnit]
            [java.util.concurrent.atomic AtomicLong]
-           [java.util.concurrent.locks Condition ReentrantLock]))
+           [java.util.concurrent.locks Condition Lock ReentrantLock ReentrantReadWriteLock]))
 
 (set! *warn-on-reflection* true)
 
@@ -242,7 +243,12 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   (open-pending! sess)
   (let [text (try (pyext/run (worker-for sess) sess expr)
                   (catch Throwable t
-                    (throw (ex-info (raised-message t) {:type ::python-raised :session sess} t))))]
+                    (let [message (raised-message t)]
+                      (throw (ex-info message
+                                      (cond-> {:type ::python-raised :session sess}
+                                        (re-find #"^CancelledError(?::|$)" message)
+                                        (assoc :vis/task-cancelled true))
+                                      t)))))]
     (when (and text (not= "null" text)) (json/read-json text :key-fn identity))))
 
 (defn- python-call-expr
@@ -634,6 +640,24 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   [label]
   (str "vis_ext_" (.incrementAndGet ^AtomicLong context-seq)
        "_" (str/replace (str label) #"[^A-Za-z0-9_]" "_")))
+
+(defonce ^:private bus-gates (atom {}))
+
+(defn- with-bus-gate [ctx listener? f]
+  (let [^ReentrantReadWriteLock gate
+        (get-in (swap! bus-gates update ctx
+                       (fn [entry]
+                         (if entry (update entry :users inc)
+                             {:gate (ReentrantReadWriteLock. true) :users 1})))
+                [ctx :gate])
+        ^Lock lock (if listener? (.writeLock gate) (.readLock gate))]
+    (try (.lockInterruptibly lock)
+         (try (f) (finally (.unlock lock)))
+         (finally (swap! bus-gates
+                         (fn [gates]
+                           (if (= 1 (get-in gates [ctx :users]))
+                             (dissoc gates ctx)
+                             (update-in gates [ctx :users] dec))))))))
 
 (defonce ^:private ^java.util.concurrent.ConcurrentHashMap evaluation-locks
   ;; trusted worker key -> monitor. One worker holds every extension namespace of a session.
@@ -1328,6 +1352,8 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
           (fn []
             (merge *call-env*
                    (paths/scratch-env (:session/scratch extension/*current-environment*)))))
+    (put! g "__vis_host_is_detached__"
+          (fn [] (and (not python-host/*guest-thread?*) (task/detached?))))
     (put! g
           "__vis_host_tool_call_provider__"
           (fn []
@@ -1501,13 +1527,14 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
                              ;; A callback of this namespace can close the subscription
                              ;; while the signal waits for the namespace. So check again,
                              ;; and no delivery starts after `close()` returns.
-                             (python-host/conveying
-                               sess
-                               (when (bus/open? @id)
-                                 (f [{"topic" (get signal "topic")
-                                      "data_json" (bus/data-json signal)
-                                      "scope" (get signal "scope")
-                                      "published_at_ms" (get signal "published_at_ms")}])))))))
+                             (with-bus-gate sess true
+                               #(python-host/conveying
+                                  sess
+                                  (when (bus/open? @id)
+                                    (f [{"topic" (get signal "topic")
+                                         "data_json" (bus/data-json signal)
+                                         "scope" (get signal "scope")
+                                         "published_at_ms" (get signal "published_at_ms")}]))))))))
               @id)))
     (put! g
           "__vis_host_bus_unsubscribe__"
@@ -2212,7 +2239,13 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
            {:ext {:ext/name ext-name}
             :symbol (when (= ext-name (extension/current-extension-id)) extension/*current-symbol*)
             :env effective-env}
-           (python-host/conveying call-ctx (perf/timed :pyext/call (call-py call-ctx call-f args))))
+           (with-bus-gate call-ctx false
+             (fn []
+               (let [call (task/call-id)]
+                 (python-host/conveying* call-ctx call
+                   (fn []
+                     (task/install-interrupt! (pyext/call-interrupter (worker-for call-ctx) call-ctx call))
+                     (perf/timed :pyext/call (call-py call-ctx call-f args))))))))
          (catch Throwable t
            ;; A reload must not replay an operation which already ran and failed.
            (throw (ex-info (ex-message t) (assoc (ex-data t) ::call-started true) t)))
@@ -2318,6 +2351,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (let [argv (vec args)]
       (try (extension/success {:result (call-py-ext ext-name nil ctx pyfn argv)})
            (catch Throwable t
+             (when (:vis/task-cancelled (ex-data t)) (throw t))
              (if-let [fresh (and (not *healing-symbol*)
                                  (not (::call-started (ex-data t)))
                                  ;; A reload removed or changed a refused callable (#415).
@@ -2753,7 +2787,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 (defn- ->symbol-entry
   "Turn one Python callable registration into an ordinary observed tool entry."
   [ext-name ctx sym spec]
-  (extension/python-symbol-entry sym spec (tool-adapter ext-name sym ctx (get spec "fn"))))
+  (assoc (extension/python-symbol-entry sym spec (tool-adapter ext-name sym ctx (get spec "fn")))
+         :ext.symbol/python-task? true
+          :ext.symbol/detachable? (not= false (get spec "detachable"))))
 
 (defn- ->symbol-entries
   "Expand a flat function or an object namespace into registry tool entries."

@@ -20,10 +20,11 @@
    block sits inside it."
   (:require [charred.api :as json]
             [clojure.string :as str]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.persistance.codec :as codec]
             [com.blockether.vis-python-runtime :as runtime]
-            [taoensso.telemere :as tel])
-  (:import [java.util.concurrent.locks ReentrantLock]))
+            [com.blockether.vis.internal.task :as task]
+            [taoensso.telemere :as tel]))
 
 (def ^:dynamic *guest-thread?*
   "True while the host serves a call from a thread that the guest created.
@@ -106,73 +107,33 @@
        (catch NullPointerException e {"error" (host-null-fault tool e)})
        (catch Throwable t
          (cond-> {"error" (or (ex-message t) (str t))}
+           (:vis/task-cancelled (ex-data t))
+           (assoc "cancelled" true)
+
            (failure-data t)
            (assoc "error_data" (failure-data t))))))
 
-(defonce
-  ^:private
-  ^{:doc
-    "session id -> the dynamic binding frame of whoever is driving that session.
+(defonce ^:private frames (atom {}))
 
-   A block's driver binds Vars around the call it makes - the attachment sink is
-   the loud one - and then the interpreter serves the block on ONE pinned thread
-   of its own, while a `par` worker upcalls from a CPython thread that was never
-   in Clojure at all. Neither sees the driver's `binding`, so a tool reading a
-   dynamic Var would find it unbound and refuse work it was asked for.
-
-   The driver publishes its frame here for the length of the call and
-   [[dispatch]] installs it around the tool it serves: the bindings that reach a
-   door are the ones of the block that asked, whichever thread the door runs on."}
-  frames
-  (atom {}))
-
-(defonce ^:private
-         ^{:doc
-           "Context locks retained by active drivers and waiters, removed after the last release."}
-         frame-locks
-  (atom {}))
-
-(defn- retain-frame-lock!
-  ^ReentrantLock [session]
-  (get-in (swap! frame-locks update
-            session
-            (fn [entry]
-              (if entry (update entry :users inc) {:lock (ReentrantLock. true) :users 1})))
-          [session :lock]))
-
-(defn- release-frame-lock!
-  [session]
-  (swap! frame-locks (fn [locks]
-                       (if (= 1 (get-in locks [session :users]))
-                         (dissoc locks session)
-                         (update-in locks [session :users] dec)))))
+(def ^:dynamic *driver-call* nil)
+(def ^:dynamic *caller* nil)
+(def ^:dynamic *callback-call* nil)
+(def ^:dynamic *task-origin* nil)
+(def ^:dynamic *hold-task-activity* nil)
 
 (defn conveying*
-  "Call `f`, conveying THIS thread's dynamic bindings to `session`'s host calls.
+  "Publish this invocation's bindings for callbacks on another thread."
+  [session call f]
+  (let [key [session call]]
+    (binding [*driver-call* key]
+      (swap! frames assoc key (clojure.lang.Var/getThreadBindingFrame))
+      (try (f) (finally (swap! frames dissoc key))))))
 
-   A context has no invocation identity on its host callbacks, so its complete
-   driver calls must run one at a time. Waiting is interruptible; other contexts
-   remain independent. Reentrant calls restore the outer driver's frame."
-  [session f]
-  (let [lock (retain-frame-lock! session)]
-    (try (.lockInterruptibly lock)
-         (try (let [previous (get @frames session)]
-                (swap! frames assoc session (clojure.lang.Var/getThreadBindingFrame))
-                (try (f)
-                     (finally (if previous
-                                (swap! frames assoc session previous)
-                                (swap! frames dissoc session)))))
-              (finally (.unlock lock)))
-         ;; Include queued callers in the count: interruption must not replace the
-         ;; lock or frame that another driver still owns.
-         (finally (release-frame-lock! session)))))
+(defn active-call? [session call] (contains? @frames [session call]))
 
 (defmacro conveying
-  "Evaluate `body`, conveying the current dynamic bindings to `session`'s host calls."
   [session & body]
-  `(conveying* ~session
-               (fn []
-                 ~@body)))
+  `(conveying* ~session (task/call-id) (fn [] ~@body)))
 
 (def ^:dynamic *door*
   "`[session thread]` while `thread` serves a host call that the driver of `session`
@@ -191,19 +152,20 @@
   "[[answer]], under the binding frame the driver of `session` published.
    [[*guest-thread?*]] stays from the serving thread, because the driver's frame
    belongs to another call."
-  [session tool f args]
-  (if-let [frame (get @frames session)]
+  [session call tool f args]
+  (if-let [frame (get @frames [session call])]
     (let [held (clojure.lang.Var/getThreadBindingFrame)
           guest-thread? *guest-thread?*]
 
       (clojure.lang.Var/resetThreadBindingFrame frame)
       (try (binding [*guest-thread?* guest-thread?
                      ;; A thread that the guest created is not the call that the driver waits for.
-                     *door* (when-not guest-thread? [session (Thread/currentThread)])]
+                     *door* (when-not guest-thread? [session (Thread/currentThread)])
+                     *caller* [session call]]
 
              (answer tool f args))
            (finally (clojure.lang.Var/resetThreadBindingFrame held))))
-    (answer tool f args)))
+    (binding [*caller* [session call]] (answer tool f args))))
 
 (defn- guest-records
   "`x` with each record that the guest sent read as a plain map of its fields.
@@ -234,6 +196,105 @@
     (seq kwargs)
     (conj (with-meta kwargs {::keyword-arguments true}))))
 
+(defonce ^:private task-sessions (atom {}))
+
+(defn own-tasks! [context session]
+  (when session (swap! task-sessions assoc context (str session)))
+  nil)
+
+(defn task-session [context] (get @task-sessions context context))
+
+(defonce ^:private task-tools (atom {}))
+
+(defn mark-task-tools!
+  "Mark the sandbox bindings owned by a Python extension."
+  [session entries]
+  (swap! task-tools update session
+         (fn [held]
+           (reduce (fn [m {:keys [name task? detachable?]}]
+                     (if task? (assoc m name {:detachable? (not= false detachable?)}) (dissoc m name)))
+                   held entries))))
+
+(defn- task-outcome [reply]
+  (cond (get reply "cancelled") {:state :cancelled}
+        (contains? reply "error") {:state :failed :error (get reply "error")
+                                   :error-data (get reply "error_data")}
+        :else {:state :done :value (get reply "value")}))
+
+(defn- task-call [session call tool f request]
+  (let [[arg x] (get request "args")
+        sid (task-session session)]
+    (case tool
+      "_task_start"
+      (if-let [tool-spec (and f (get-in @task-tools [session arg]))]
+        (let [args (call-args (guest-records (get request "tool_args"))
+                              (guest-records (get request "kwargs")))
+              row (task/start! sid (assoc tool-spec :kind :tool
+                                           :name (str arg (get request "call_display" "(...)"))
+                                           :origin *task-origin* :hold-activity *hold-task-activity*)
+                               #(binding [rt/*blocking-wall-park* nil
+                                          rt/*blocking-wall-hold* nil]
+                                  (task-outcome (answer arg f args))))]
+          {"id" (:id row) "name" (:name row)})
+        (throw (ex-info (str "no Task tool named `" arg "` in this session") {})))
+      "_task_await"
+      (let [token (when-let [token (get x "token")] [call token])
+            opts {:block call :token token :timeout-ms (min 250 (long (get x "timeout_ms" 0)))
+                  :leave? (true? (get x "leave"))
+                  :hold rt/*blocking-wall-hold*}
+            result (task/await! sid arg opts)]
+        (if result
+          (cond-> {"state" (name (:state result))}
+            (contains? result :value) (assoc "value" (:value result))
+            (:message result) (assoc "message" (:message result))
+            (:cancelling result) (assoc "cancelling" (:cancelling result))
+            (:error result) (assoc "error" (:error result))
+            (:error-data result) (assoc "error_data" (:error-data result)))
+          {"state" "missing"}))
+      "_task_ack" (task/acknowledge! sid arg)
+      "_task_cancel" (task/cancel! sid arg :agent :cancel x)
+      "_task_state" (if-let [row (task/state sid arg)] (name (:state row)) "missing")
+      "_task_cancelling" (task/cancelling sid arg)
+      "_task_uncancel" (task/uncancel! sid arg)
+      "_task_rename" (task/rename! sid arg (str x))
+      "_task_list" (mapv #(select-keys % [:id :name]) (task/tasks sid)))))
+
+(def ^:private task-ops
+  #{"_task_start" "_task_await" "_task_ack" "_task_cancel" "_task_state" "_task_cancelling"
+    "_task_uncancel" "_task_rename" "_task_list"})
+
+(defn- dispatch-call
+  [caller call tool payload]
+  (let [request
+        (json/read-json payload)
+
+        claimed
+        (get request "session")
+
+        session
+        (if (str/blank? (str caller)) nil caller)
+
+        args
+        (call-args (guest-records (get request "args")) (guest-records (get request "kwargs")))
+
+        task-op? (and session (not *guest-thread?*) (contains? task-ops tool))
+        start-tool (first (get request "args"))
+        f (if task-op?
+            (fn [] (task-call session call tool (get-in @registry [session start-tool]) request))
+            (or (get-in @registry [session tool]) (get-in @registry [door-session tool])))]
+
+    (when (and claimed session (not= claimed session))
+      ;; A stale envelope never selects another session's closure or permissions.
+      ;; Only the connection-bound caller decides which registered tool can run.
+      (tel/log! {:level (if f :debug :warn)
+                 :id ::session-mismatch
+                 :data {:tool tool :caller session :claimed claimed :served? (some? f)}
+                 :msg "a sandbox call named a session other than its own"}))
+    (envelope tool
+              (if f
+                (answer-in-frame session call tool f (when-not task-op? args))
+                {"error" (str "no vis tool named `" tool "` in this session")}))))
+
 (defn dispatch
   "Serve one call from the sandbox: WHO called, `payload` in, reply JSON out.
 
@@ -249,33 +310,11 @@
    without an interpreter. It never throws: a failure is a reply the guest
    raises as `RuntimeError`, because a host that throws here unwinds through the
    interpreter's upcall stub."
-  [caller tool payload]
-  (let [request
-        (json/read-json payload)
-
-        claimed
-        (get request "session")
-
-        session
-        (if (str/blank? (str caller)) nil caller)
-
-        args
-        (call-args (guest-records (get request "args")) (guest-records (get request "kwargs")))
-
-        f
-        (or (get-in @registry [session tool]) (get-in @registry [door-session tool]))]
-
-    (when (and claimed session (not= claimed session))
-      ;; A stale envelope never selects another session's closure or permissions.
-      ;; Only the connection-bound caller decides which registered tool can run.
-      (tel/log! {:level (if f :debug :warn)
-                 :id ::session-mismatch
-                 :data {:tool tool :caller session :claimed claimed :served? (some? f)}
-                 :msg "a sandbox call named a session other than its own"}))
-    (envelope tool
-              (if f
-                (answer-in-frame session tool f args)
-                {"error" (str "no vis tool named `" tool "` in this session")}))))
+  ([caller tool payload]
+   (let [[driver call] *driver-call*]
+     (dispatch-call caller (or *callback-call* (when (= caller driver) call)) tool payload)))
+  ([caller call tool payload]
+   (dispatch-call caller call tool payload)))
 
 (defonce ^:private
          ^{:doc "Whether THIS process has already handed the interpreter its host function."} bound
@@ -303,7 +342,7 @@
   (when-not @bound
     (locking bound
       (when-not @bound
-        (try (runtime/bind-host! dispatch)
+        (try (runtime/bind-host-with-call! dispatch)
              (reset! bound true)
              (catch Throwable t
                (tel/log!
@@ -367,6 +406,7 @@
    forgetting it is what takes the capability back."
   [session names]
   (swap! registry update session #(apply dissoc % names))
+  (swap! task-tools update session #(apply dissoc % names))
   nil)
 
 (defn forget-session!
@@ -378,4 +418,6 @@
   [session]
   (let [gone (count (get @registry session))]
     (swap! registry dissoc session)
+    (swap! task-tools dissoc session)
+    (swap! task-sessions dissoc session)
     gone))

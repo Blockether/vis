@@ -18,8 +18,10 @@
             [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.python.env :as env]
+            [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.view.materializer :as live]
@@ -89,8 +91,11 @@
   "Cancel whatever is EXECUTING in `python-context` right now, at a bytecode
    boundary. Protocol failures propagate: unlike a normal false reply, they mean
    the session worker itself cannot be trusted or reused."
-  [python-context]
-  (boolean (when python-context (env/interrupt-guest! python-context))))
+  [python-context await-unwind?]
+  (boolean (when python-context
+             (if await-unwind?
+               (env/interrupt-guest! python-context false)
+               (env/interrupt-guest! python-context)))))
 
 (defn retire-python-context-once!
   "Kill one abandoned environment's Python process at most once. Process teardown
@@ -156,7 +161,7 @@
         (env/pending-guest-replies python-context)
 
         landed?
-        (try (interrupt-guest! python-context)
+        (try (interrupt-guest! python-context await-unwind?)
              (catch Throwable t
                (retire-python-worker! python-context
                                       exec-future
@@ -298,6 +303,20 @@
                 (fn [printed]
                   (if (str/blank? (str printed)) document (str printed "\n\n" document))))))))
 
+(defn- envelope-with-task-notices
+  [envelope]
+  (let [ended (for [{:keys [id name]} (:task-ended-notices envelope)]
+                (str "[Vis] " name " ended: await " id))
+        detached (for [{:keys [task reason]} (:task-detach-notices envelope)
+                       :let [{:keys [id name]} task
+                             child (or (:id reason) (:title reason) (:session-id reason))]]
+                   (str "[Vis] " name " runs in the background. " child " asks: "
+                        (pr-str (util/redact-secret-text (:question reason)))
+                        ". Await " id " later."))]
+    (cond-> (dissoc envelope :task-ended-notices :task-detach-notices)
+      (or (seq ended) (seq detached))
+      (update :stdout #(str/join "\n" (concat ended (when-not (str/blank? %) [%]) detached))))))
+
 (defn- envelope-with-human-stops
   "Append one host line to stdout for each live view that a person stopped in this block.
    The stop and its note go to the extension that drove the view, and the block's own
@@ -324,7 +343,7 @@
       (let [history-id (str (random-uuid))]
         {:history-id history-id
          :apply! #(persistance/db-activity-apply! db sid history-id %)
-         :settle! #(persistance/db-activity-settle! db history-id %1 %2)
+         :settle! #(persistance/db-activity-settle! db history-id %1 %2 %3)
          :page #(persistance/db-activity-page db sid history-id {})}))))
 
 (def ^:private BUSY_NOTICE_MS
@@ -509,6 +528,7 @@
         activity-block
         (activity-block/start! {:store (activity-store env)
                                 :on-snapshot (:activity/on-snapshot env)
+                                :on-late-snapshot (:activity/on-late-snapshot env)
                                 :on-event tool-event-fn})
 
         cancel-token
@@ -610,8 +630,11 @@
                           rt/*blocking-wall-hold*
                           eval-hold
 
+                          python-host/*hold-task-activity*
+                          (partial activity-block/hold! activity-block)
+
                           extension/*tool-event-sink*
-                          (partial activity-block/record! activity-block)
+                          (fn [event] (activity-block/record! activity-block task/*task* event))
 
                           extension/*tool-event-context*
                           (:context activity-block)
@@ -626,7 +649,10 @@
                           reinspection-sink
 
                           view/*block-owner*
-                          block-owner]
+                          block-owner
+
+                          view/*task-view-home*
+                          (:task-view-home env)]
 
                   ;; One persistent interpreter per session: globals (defs,
                   ;; imports, vars) carry across calls/turns NATURALLY.
@@ -637,7 +663,9 @@
                           (fn [{:keys [code]}]
                             (let [out (env/run-python-block python-context
                                                             code
-                                                            {:form-cap (:form-cap env)})]
+                                                            {:form-cap (:form-cap env)
+                                                              :origin (select-keys extension/*op-hook-context*
+                                                                                   [:turn :iteration])})]
                               (if (:error out)
                                 (extension/failure {:result out :error (:error out)})
                                 (extension/success {:result out}))))
@@ -648,7 +676,7 @@
                         out
                         (or (:result result) {:forms [] :error (:error result)})]
 
-                    (assoc out
+                    (assoc (envelope-with-task-notices out)
                       :lru {}
                       :reinspect-attachments (mpl-capture/drain-reinspections reinspection-sink)))))
               (catch Throwable e

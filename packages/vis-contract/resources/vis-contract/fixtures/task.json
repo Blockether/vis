@@ -1,0 +1,16 @@
+{
+  "id": "t3",
+  "session_id": "session",
+  "kind": "tool",
+  "name": "t3 gh.watch(42)",
+  "state": "done",
+  "origin": {
+    "turn": 1,
+    "iteration": 2,
+    "block": "block-3"
+  },
+  "started_at": 1700000000000,
+  "ended_at": 1700000001000,
+  "view_ids": [],
+  "detached": true
+}

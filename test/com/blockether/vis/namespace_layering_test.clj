@@ -81,7 +81,7 @@
     ;; Merged configuration and the catalogs it reads.
     [config
      [config extension.registry extension.manifest provider.catalog provider.credential-command
-      provider.error session.cancellation workspace.core]]
+      provider.error session.cancellation task workspace.core]]
     ;; Domain services.
     [services
      [extension provider workspace session channel sandbox attachment external-opener context python

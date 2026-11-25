@@ -39,6 +39,7 @@
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.python.worker :as pyext]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
@@ -102,23 +103,29 @@
 ;; process" and "in this session's worker" is made once, by name, instead of at
 ;; fifteen call sites.
 
+(defn- local-driver [session f]
+  (let [[context call] python-host/*driver-call*]
+    (if (= session context)
+      (runtime/with-call call f)
+      (f))))
+
 (defn- py-exec!
   [session code]
   (if-let [k (worker-of session)]
     (pyext/exec! k session code)
-    (runtime/exec! session code)))
+    (local-driver session #(runtime/exec! session code))))
 
 (defn- py-run
   [session code]
   (if-let [k (worker-of session)]
     (pyext/run k session code)
-    (runtime/run session code)))
+    (local-driver session #(runtime/run session code))))
 
 (defn- py-run-block
   [session code]
   (if-let [k (worker-of session)]
     (pyext/run-block k session code)
-    (runtime/run-block session code)))
+    (local-driver session #(runtime/run-block session code))))
 
 (defn- py-install-runtime!
   [session]
@@ -768,6 +775,8 @@
       (assert-unowned-bindings! session protected)
       (add-protected-names! session protected)
       (when (seq tools) (python-host/install-tools! session tools (partial py-install-tool!)))
+      (python-host/mark-task-tools! session entries)
+      (update-json! session "__vis_task_tools__" (into {} (map (juxt :name (comp boolean :task?))) entries))
       (doseq [{:keys [name val]}
               entries
 
@@ -1423,6 +1432,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                             (map #(first (str/split (sym->py-name %) #"\." 2))
                                  (keys custom-bindings)))
   (let [session (new-session-name)]
+    (python-host/own-tasks! session (:session-id network-opts))
     ;; A gateway session configures its process boundary BEFORE any request can
     ;; start the worker. The worker then installs the audit-hook backstop before
     ;; the first model block. A one-shot CLI already owns its process.
@@ -1449,6 +1459,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                                       (:filesystem-policy-fn network-opts)))
     (py-stdin! session (guest-stdin-text stdin))
     (perf/timed :sandbox/install-runtime (py-install-runtime! session))
+    (py-exec! session "__vis_task_registry__ = True")
     ;; Mirror stdout across the process boundary as it is written. A cancelled
     ;; block parked inside C may be killed before its StringIO outcome returns.
     (python-host/install-sync-tools! session
@@ -1575,6 +1586,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
   [session]
   (when session
     (swap! disposed-sessions conj session)
+    (task/sweep! (python-host/task-session session) :session-close)
     (swap! restore-reports dissoc session)
     (discard-block-stdout! session)
     (python-host/forget-session! session)
@@ -1701,18 +1713,38 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    either — that one would carry the runtime but none of the session's tools."
   [session]
   (when-let [k (worker-of session)]
+    (task/sweep! (python-host/task-session session) :worker-death)
     (pyext/retire-worker! k "its interpreter or control plane stopped answering")
     (close-extension-contexts! session))
   (try (python-host/forget-session! session) (catch Throwable _ nil))
   nil)
 
+(defonce ^:private block-calls (atom {}))
+
 (defn pending-guest-replies
-  "Snapshot actual sandbox and trusted-extension completions before interrupting.
-   Cancelling a host caller does not settle these replies."
+  "Snapshot replies for the block being stopped; background work is not part of its unwind."
   [session]
-  (if-let [k (worker-of session)]
-    (into (vec (pyext/pending-replies k)) (pyext/pending-replies (pyext/extension-worker-key k)))
-    []))
+  (when-let [k (worker-of session)]
+    (when-let [call (get @block-calls session)]
+      (pyext/pending-call-replies k call))))
+
+(defn- with-block-call [session origin f]
+  (let [call (task/call-id)
+        sid (python-host/task-session session)
+        ended (task/take-ended-notices! sid)]
+    (swap! block-calls assoc session call)
+    (try (binding [python-host/*task-origin* (assoc origin :block call)]
+           (let [result (python-host/conveying* session call f)
+                 detached (task/take-detach-notices! sid call)]
+             (cond-> result
+               (seq ended) (assoc :task-ended-notices ended)
+               (seq detached) (assoc :task-detach-notices detached))))
+         (finally (task/leave-block! sid call)
+                   (task/take-detach-notices! sid call)
+                   (swap! block-calls (fn [calls]
+                                      (if (= call (get calls session))
+                                        (dissoc calls session)
+                                        calls)))))))
 
 (defn interrupt-guest!
   "Ask the interpreter to raise `KeyboardInterrupt` in the thread running guest
@@ -1723,8 +1755,18 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    see it until it returns. A normal false means no block was running. Worker
    protocol failures throw so the loop can distinguish a dead control plane from
    that harmless race and retire only the broken process."
-  [session]
-  (boolean (when session (py-interrupt! session))))
+  ([session] (interrupt-guest! session true))
+  ([session stop-awaited?]
+   (boolean
+     (when session
+       (if-let [k (worker-of session)]
+         (when-let [call (get @block-calls session)]
+           (when stop-awaited?
+             (let [sid (python-host/task-session session)]
+               (doseq [id (task/awaited-ids sid call)]
+                 (task/cancel! sid id :turn :interrupt))))
+           (pyext/interrupt-call! k session call :interrupt))
+         (py-interrupt! session))))))
 
 (def ^:private excerpt-width
   "Characters of the failing line an excerpt shows. A longer line shows only this
@@ -2230,7 +2272,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    A session this process already disposed is REFUSED: the interpreter would
    otherwise mint the namespace again, empty, and run the block without one of
    its doors."
-  [session code & [_opts]]
+  [session code & [opts]]
   (when (contains? @disposed-sessions session)
     (throw (ex-info (str "python session " session " was disposed")
                     {:type :vis/session-disposed :session session})))
@@ -2246,9 +2288,10 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
         (with-bindings {#'extension/*current-form-idx* 0 #'mpl-capture/*attachment-sink* sink}
           ;; The doors run on the interpreter's own threads, so the bindings above
           ;; travel to them explicitly - see `python-host/conveying`.
-          (python-host/conveying
-            session
-            (let [outcome (or (read-json (py-run-block session source)) {})
+          (with-block-call
+            session (:origin opts)
+            (fn []
+             (let [outcome (or (read-json (py-run-block session source)) {})
                   _ (discard-block-stdout! session)
                   out (not-empty (str/trim-newline (str (:stdout outcome))))
                   printed? (and out (not (str/blank? out)))
@@ -2269,7 +2312,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                 (assoc :error (map-python-error session raised source))
 
                 attachments
-                (assoc :attachments attachments)))))))))
+                (assoc :attachments attachments))))))))))
 
 (defn system-var-sym? [sym] (contains? SYSTEM_VAR_NAMES sym))
 

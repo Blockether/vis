@@ -251,7 +251,7 @@
   (db-council-unavailable! [db-info sid id])
   ;; --- Activity ---
   (db-activity-apply! [db-info sid aid event])
-  (db-activity-settle! [db-info aid outcome summary])
+  (db-activity-settle! [db-info aid outcome summary selection])
   (db-activity-page [db-info sid aid opts]))
 
 (defprotocol AutomationStore

@@ -20,6 +20,7 @@
             [com.blockether.vis.internal.python.runtime]
             [com.blockether.vis.internal.sandbox.jail]
             [com.blockether.vis.internal.util]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis-python-runtime]
             [lazytest.core :refer [defdescribe describe expect it]]
             [taoensso.telemere :as tel])
@@ -51,6 +52,196 @@
         (:python-context made)]
 
     (try (f session) (finally (env/dispose-python-context! session)))))
+
+(defdescribe worker-host-task-test
+  (it "starts Tasks before await, carries them across blocks, and cancels only one"
+      (with-worker-context
+        (fn [session]
+          (let [started (promise)
+                finish (promise)
+                cancel (promise)]
+            (env/set-python-bindings!
+              session [{:sym 'task-watch :task? true
+                        :val (fn [value]
+                               (if (= value 1)
+                                 (do (task/install-interrupt! #(deliver cancel %))
+                                     (deliver started true)
+                                     @cancel
+                                     (throw (ex-info "cancelled" {:vis/task-cancelled true})))
+                                 (do @finish value)))}])
+            (try
+              (let [first-block (env/run-python-block session
+                                  "a = task_watch(1)
+b = task_watch(2)
+print(a.done(), b.done())")]
+                (expect (= "False False\n" (:stdout first-block)) (pr-str first-block)))
+              (expect (true? (deref started 5000 nil)))
+              (let [next-block (env/run-python-block session
+                                  "import asyncio
+print(a in asyncio.all_tasks(), b in asyncio.all_tasks())
+import importlib
+assert isinstance(a, importlib.import_module('asyncio').Task)
+assert a.get_name() == 't1 task_watch(1)'
+assert a.cancel('only a')
+try:
+    await a
+except asyncio.CancelledError as e:
+    assert e.args == ('only a',)
+    print('cancelled', b.done())")]
+                (expect (= "True True\ncancelled False\n" (:stdout next-block)) (pr-str next-block)))
+              (expect (= :cancel @cancel))
+              (deliver finish true)
+              (let [last-block (env/run-python-block session
+                                  "print(await b)
+print(b in asyncio.all_tasks())")]
+                (expect (= "2\nFalse\n" (:stdout last-block)) (pr-str last-block)))
+              (finally (deliver finish true) (deliver cancel :interrupt))))))))
+
+(defdescribe worker-host-task-composition-test
+  (it "composes host and local Tasks with gather, as_completed and TaskGroup"
+      (with-worker-context
+        (fn [session]
+          (env/set-python-bindings! session [{:sym 'task-value :task? true :val identity}])
+          (let [answer (env/run-python-block session
+                          "import asyncio
+async def local():
+    assert asyncio.current_task() is not None
+    return 1
+print(await asyncio.gather(asyncio.create_task(local()), task_value(2)))
+for awaitable in asyncio.as_completed([task_value(3)]):
+    print(await awaitable)
+async with asyncio.TaskGroup() as group:
+    member = group.create_task(task_value(4))
+print(member.result())")]
+            (expect (= "[1, 2]\n3\n4\n" (:stdout answer)) (pr-str answer)))))))
+
+(defdescribe worker-host-task-turn-stop-test
+  (it "stops the Task awaited by the active block and keeps the other Task alive"
+      (with-worker-context
+        (fn [session]
+          (let [requested (promise)
+                finish (promise)]
+            (env/set-python-bindings!
+              session [{:sym 'task-watch :task? true
+                        :val (fn [kind]
+                               (if (= kind "foreground")
+                                 (do (task/install-interrupt! #(deliver requested %))
+                                     @requested
+                                     (throw (ex-info "interrupted" {:vis/task-cancelled true})))
+                                 @finish))}])
+            (try (let [start (env/run-python-block session
+                               "foreground = task_watch('foreground')
+background = task_watch('background')")]
+                   (expect (nil? (:error start)) (pr-str start)))
+                 (let [execution (future (env/run-python-block session "await foreground"))]
+                   (try (expect (true? (loop [left 500]
+                                         (cond (some #{"t1"}
+                                                     (task/awaited-ids session
+                                                                       (get @@#'env/block-calls session))) true
+                                               (zero? left) false
+                                               :else (do (Thread/sleep 10) (recur (dec left)))))))
+                        (expect (true? (env/interrupt-guest! session)))
+                        (expect (= :interrupt (deref requested 5000 ::timeout)))
+                        (expect (not= ::timeout (deref execution 5000 ::timeout)))
+                        (finally (future-cancel execution))))
+                 (deliver finish 17)
+                 (let [result (future (env/run-python-block session "print(await background)"))]
+                   (try (let [reply (deref result 5000 ::timeout)]
+                          (expect (= "17\n" (:stdout reply)) (pr-str reply)))
+                        (finally (future-cancel result))))
+                 (finally (deliver requested :interrupt) (deliver finish nil))))))))
+
+(defdescribe worker-host-task-asyncio-test
+  (it "keeps wait and shield non-cancelling and lists finished unread Tasks"
+      (with-worker-context
+        (fn [session]
+          (let [finish (promise)]
+            (env/set-python-bindings! session [{:sym 'task-watch :task? true :val (fn [] @finish)}])
+            (try (let [answer (env/run-python-block session
+                                "import asyncio
+subject = task_watch()
+done, pending = await asyncio.wait([subject], timeout=0.02)
+assert not done and pending == {subject}
+shielded = asyncio.shield(subject)
+try:
+    await asyncio.wait_for(shielded, 0.02)
+except TimeoutError:
+    pass
+assert not subject.done() and subject.cancelling() == 0
+assert asyncio.create_task(subject) is subject
+print('waiting')")]
+                   (expect (= "waiting\n" (:stdout answer)) (pr-str answer)))
+                 (deliver finish 42)
+                 (let [answer (env/run-python-block session
+                                "done, pending = await asyncio.wait([subject])
+assert done == {subject} and not pending
+assert subject in asyncio.all_tasks()
+print(subject.result(), await subject)
+assert subject not in asyncio.all_tasks()")]
+                   (expect (= "42 42\n" (:stdout answer)) (pr-str answer)))
+                 (finally (deliver finish 0))))))))
+
+(defdescribe worker-to-thread-test
+  (it "keeps the Task returned by a plain function"
+      (with-worker-context
+        (fn [session]
+          (env/set-python-bindings! session [{:sym 'task-value :task? true :val identity}])
+          (let [answer (env/run-python-block session
+                          "import asyncio
+t = task_value(17)
+def return_existing():
+    return t
+out = await asyncio.to_thread(return_existing)
+print(out is t, await t)")]
+            (expect (= "True 17\n" (:stdout answer)) (pr-str answer))))))
+  (it "lets siblings run and requests cancellation when a host tool times out"
+      (with-worker-context
+        (fn [session]
+          (let [requested (promise)]
+            (env/set-python-bindings!
+              session [{:sym 'task-slow :task? true
+                        :val (fn []
+                               (task/install-interrupt! #(deliver requested %))
+                               (deref requested 1500 nil)
+                               42)}])
+            (try
+              (let [answer (env/run-python-block session
+                             "import asyncio
+import importlib
+std = importlib.import_module('asyncio')
+seen = []
+async def beat():
+    await asyncio.sleep(0.02)
+    seen.append('tick')
+sibling = std.create_task(beat())
+try:
+    await asyncio.wait_for(asyncio.to_thread(task_slow), 0.2)
+except TimeoutError:
+    print('timeout', seen)
+await sibling")]
+                (expect (= "timeout ['tick']\n" (:stdout answer)) (pr-str answer))
+                (expect (= :cancel (deref requested 2000 nil))))
+              (finally (deliver requested :interrupt))))))))
+
+(defdescribe worker-task-timeout-test
+  (it "waits for a timed-out Task to finish handling the cancellation"
+      (with-worker-context
+        (fn [session]
+          (let [cancel (promise)]
+            (env/set-python-bindings!
+              session [{:sym 'recover :task? true
+                        :val (fn []
+                               (task/install-interrupt! #(deliver cancel %))
+                               @cancel
+                               (Thread/sleep 100)
+                               42)}])
+            (try
+              (let [answer (env/run-python-block session
+                             "import asyncio
+t = recover()
+print(await asyncio.wait_for(t, 0.02), t.done(), t.cancelled())")]
+                (expect (= "42 True False\n" (:stdout answer)) (pr-str answer)))
+              (finally (deliver cancel :interrupt))))))))
 
 (defdescribe
   worker-session-state-test
@@ -221,6 +412,22 @@ print(worker_value)"))))
                          (expect (= fresh (loop/send! id "after reload")))
                          (expect (= 1 @builds))
                          (expect (identical? (:lock entry) (:lock (get @loop-env/cache id)))))))))))
+
+(defdescribe worker-task-death-test
+  (it "sweeps the session Tasks when a worker dies"
+      (with-worker-context
+        (fn [session]
+          (let [cancelled (promise)]
+            (task/start! session {:name "watch"}
+              (fn []
+                (task/install-interrupt! #(deliver cancelled %))
+                @cancelled
+                {:state :cancelled}))
+            (let [^Process process (:process (get @@#'worker/workers session))]
+              (.destroyForcibly process)
+              (expect (.waitFor process 10 java.util.concurrent.TimeUnit/SECONDS))
+              (expect (= :interrupt (deref cancelled 5000 ::timeout)))
+              (expect (empty? (task/tasks session)))))))))
 
 (defdescribe worker-unexpected-exit-test
              ;; Regression: a native image-library crash must not silently replace a fully
@@ -1014,17 +1221,19 @@ print(worker_value)"))))
                          (expect (not= ::parked (deref execution 5000 ::parked)))
                          (if native-wait?
                            (do
-                             ;; The caller can finish while its trusted extension remains in C.
-                             (expect (.waitFor process 10 java.util.concurrent.TimeUnit/SECONDS))
-                             (expect (true? @retired))
-                             (expect (false? (env/context-enterable? {:python-context session}))))
+                             ;; An untracked call does not own the whole trusted worker.
+                             (expect (.isAlive process))
+                             (expect (false? @retired)))
                            (do
                              ;; New work may outlive the previous interrupt's unwind deadline.
-                             (expect (= "41\n"
-                                        (:stdout
-                                          (env/run-python-block
-                                            session
-                                            "import time\ntime.sleep(0.6)\nprint(worker_value)"))))
+                             (let [next-block (future (env/run-python-block
+                                                       session
+                                                       "import time\ntime.sleep(0.6)\nprint(worker_value)"))]
+                               (try (let [reply (deref next-block 5000 ::timeout)]
+                                      (expect (= "41\n" (:stdout reply))
+                                              (pr-str reply (worker-peer/rpc-snapshot
+                                                             (:peer (get @@#'worker/workers session))))))
+                                    (finally (future-cancel next-block))))
                              (expect (= "42" (worker/eval-str key caller "extension_value")))
                              (expect (identical? process
                                                  (:process (get @(var-get #'worker/workers) key))))
@@ -1035,7 +1244,7 @@ print(worker_value)"))))
               (finally (deliver released "null") (worker/stop-worker! key) (.delete marker)))))))))
 
 (defdescribe trusted-extension-cancellation-test
-             (it "retires a trusted extension stuck in C after its sandbox caller unwinds"
+             (it "keeps an unrelated trusted worker alive when a block stops"
                  (assert-trusted-cancellation true))
              (it "preserves both interpreters and subsequent work after cancelling a host wait"
                  (assert-trusted-cancellation false)))
@@ -1155,7 +1364,7 @@ print(worker_value)"))))
         peer
         {:pending (atom {})
          :rpc-state (atom {})
-         :serving (atom (if blocked-op {} {"host-call" (Thread.)}))
+         :serving (atom (if blocked-op {} {"host-call" {:thread (Thread.)}}))
          :seq (AtomicLong. 0)}]
 
     (swap! @#'worker/workers assoc key {:peer peer})
@@ -1259,22 +1468,9 @@ print(worker_value)"))))
 
 (defdescribe
   worker-control-plane-test
-  (it "interrupts trusted extension waits before releasing the session sandbox"
-      ;; SDK cancellation must close an extension's input view before ending the turn.
+  (it "does not interrupt a worker with no active block"
       (with-worker-context (fn [session]
-                             (let [calls (atom [])]
-                               (with-redefs [worker/interrupt! (fn [key caller]
-                                                                 (swap! calls conj [key caller])
-                                                                 true)]
-                                 (expect (true? (env/interrupt-guest! session))))
-                               (expect (= [[(worker/extension-worker-key session) session]
-                                           [session session]]
-                                          @calls))))))
-  (it "reports an extension interrupt even if its sandbox already stopped"
-      (with-worker-context (fn [session]
-                             (with-redefs [worker/interrupt! (fn [key _]
-                                                               (not= session key))]
-                               (expect (true? (env/interrupt-guest! session)))))))
+                             (expect (false? (env/interrupt-guest! session))))))
   (it "bounds an interrupt whose child never replies"
       (let [pending
             (atom {})
@@ -1335,7 +1531,12 @@ print(worker_value)"))))
                        (expect (re-find #"(?i)interrupt" (str answer))))
                      (expect (worker/worker-live? session))
                      ;; The same worker, its tools intact, serves the next block.
-                     (expect (= "ok\n" (:stdout (env/run-python-block session "print('ok')"))))
+                     (let [next-block (future (env/run-python-block session "print('ok')"))]
+                       (try (let [answer (deref next-block 5000 ::parked)]
+                              (expect (= "ok\n" (:stdout answer))
+  (pr-str answer (worker-peer/rpc-snapshot
+                  (:peer (get @@#'worker/workers session))))))
+                            (finally (future-cancel next-block))))
                      (finally (deliver released true))))))))))
   (it "refuses to restart a retired worker until its session is rebuilt"
       (with-worker-context (fn [session]
@@ -1789,7 +1990,9 @@ print(worker_value)"))))
           (atom {})
 
           state
-          {:peer {:host-sessions (atom #{})}}
+          {:peer {:host-sessions (atom #{})}
+           :process (proxy [Process] []
+                      (onExit [] (java.util.concurrent.CompletableFuture.)))}
 
           call
           (fn [k]

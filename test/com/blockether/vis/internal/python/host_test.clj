@@ -12,8 +12,7 @@
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
-            [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.lang Thread$State]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- reply
   "The reply map for one call to `tool` with `args` in `session`."
@@ -50,17 +49,6 @@
         (future (deliver thread (Thread/currentThread)) (f))]
 
     {:thread thread :result result}))
-
-(defn- parked?
-  "Wait until a driver is blocked either on the context lock or on a test gate."
-  [call]
-  (when-let [^Thread thread (deref (:thread call) 5000 nil)]
-    (let [deadline (+ (System/nanoTime) 5000000000)]
-      (loop []
-
-        (cond (#{Thread$State/WAITING Thread$State/TIMED_WAITING} (.getState thread)) true
-              (>= (System/nanoTime) deadline) false
-              :else (do (Thread/sleep 1) (recur)))))))
 
 (defn- publish-from-callback
   "Dispatch without driver bindings, as on an extension worker's host-callback thread."
@@ -171,92 +159,45 @@
                  ;; not have; the extension host binds its own, in its own process.
                  (let [bound (deref #'python-host/bound)]
                    (try (reset! (deref #'python-host/bound) false)
-                        (with-redefs [runtime/bind-host! (fn [_]
+                        (with-redefs [runtime/bind-host-with-call! (fn [_]
                                                            (throw (ex-info "no library here" {})))]
                           ;; a process with nothing to bind says so instead of throwing
                           (expect (false? (python-host/bind!))))
                         ;; and it stays retryable, so the next caller with an interpreter binds
                         (let [handed (atom nil)]
-                          (with-redefs [runtime/bind-host! (fn [f]
+                          (with-redefs [runtime/bind-host-with-call! (fn [f]
                                                              (reset! handed f)
                                                              nil)]
                             (expect (true? (python-host/bind!)))
                             (expect (some? @handed))))
                         (finally (reset! (deref #'python-host/bound) bound))))))
 
-(defdescribe
-  concurrent-calls-keep-their-activity-sinks-test
-  (it
-    "concurrent calls keep their activity sinks"
-    ;; #283: a second driver replaced the first frame, then either driver removed it.
-    (let [session
-          (block-session! {"publish" extension/publish-activity!})
-
-          events
-          (atom [])
-
-          first-entered
-          (promise)
-
-          first-release
-          (promise)
-
-          second-release
-          (promise)
-
-          second-entered
-          (atom false)
-
-          second-call
-          (atom nil)
-
-          first-call
-          (start-call #(binding [extension/*activity-content-sink*
-                                 (fn [p]
-                                   (swap! events conj [:first (get p "headline")]))]
-                         (python-host/conveying session
-                                                (deliver first-entered true)
-                                                @first-release
-                                                (publish-from-callback session "First call"))))]
-
-      (try (expect (true? (deref first-entered 5000 nil)))
-           (reset! second-call (start-call #(binding [extension/*activity-content-sink*
-                                                      (fn [p]
-                                                        (swap! events conj
-                                                          [:second (get p "headline")]))]
-                                              (python-host/conveying
-                                                session
-                                                (reset! second-entered true)
-                                                @second-release
-                                                (publish-from-callback session "Second call")))))
-           ;; Both implementations park here: the broken one has entered the body and
-           ;; overwritten the frame; the fixed one is still waiting for the context.
-           (expect (parked? @second-call))
-           (let [overlapped?
-                 @second-entered
-
-                 first-reply
-                 (do (deliver first-release true) (deref (:result first-call) 5000 ::timeout))
-
-                 second-reply
-                 (do (deliver second-release true) (deref (:result @second-call) 5000 ::timeout))]
-
-             (expect (= [[:first "First call"] [:second "Second call"]] @events)
-                     (str "Activity sink ownership: " (pr-str @events)))
-             (expect (false? overlapped?))
-             (expect (= {"value" true} first-reply))
-             (expect (= {"value" true} second-reply)))
-           (expect (not (contains? @@#'python-host/frames session)))
-           (finally (deliver first-release true)
-                    (deliver second-release true)
-                    (doseq [call
-                            [first-call @second-call]
-
-                            :when call]
-
-                      (future-cancel (:result call)))
-                    (python-host/forget-session! session)
-                    (runtime/close-session! session))))))
+(defdescribe concurrent-calls-keep-their-activity-sinks-test
+  (it "keeps activity sinks separate while calls in the same session overlap"
+      (let [session (block-session! {"publish" extension/publish-activity!})
+            events (atom [])
+            entered (promise)
+            release (promise)
+            publish (fn [call]
+                      (json/read-json
+                        (python-host/dispatch session call "publish"
+                                              (json/write-json-str {"args" [{}]}))))
+            one (future (binding [extension/*activity-content-sink* (fn [_] (swap! events conj :one))]
+                          (python-host/conveying* session "one"
+                            #(do (deliver entered true) @release (publish "one")))))]
+        (try (expect (true? (deref entered 5000 nil)))
+             (let [two (future (binding [extension/*activity-content-sink* (fn [_] (swap! events conj :two))]
+                                 (python-host/conveying* session "two" #(publish "two"))))]
+               (try (expect (= {"value" true} (deref two 5000 ::timeout)))
+                    (expect (not (realized? one)))
+                    (finally (future-cancel two))))
+             (deliver release true)
+             (expect (= {"value" true} (deref one 5000 ::timeout)))
+             (expect (= [:two :one] @events))
+             (finally (deliver release true)
+                      (future-cancel one)
+                      (python-host/forget-session! session)
+                      (runtime/close-session! session))))))
 
 (defdescribe
   nested-calls-restore-the-outer-activity-sink-test
@@ -321,93 +262,21 @@
                         (expect (= :first (deref (:result first-call) 5000 ::timeout)))
                         (doseq [session [one two]]
                           (expect (not (contains? @@#'python-host/frames session)))
-                          (expect (not (contains? @@#'python-host/frame-locks session))))
+                          (expect (not-any? #(= session (first %)) (keys @@#'python-host/frames))))
                         (finally (deliver release true) (future-cancel (:result first-call)))))))
 
 (defdescribe failed-calls-release-the-context-test
-             (it "failed calls release the context"
-                 ;; #283: successful nesting and a failing outer call must both release their leases.
-                 (let [session
-                       (str "vis-host-failure-" (System/nanoTime))
-
-                       failure
-                       (ex-info "Driver failed" {})]
-
-                   (expect (identical?
-                             failure
-                             (try (python-host/conveying
-                                    session
-                                    (expect (= :nested (python-host/conveying session :nested)))
-                                    (expect (contains? @@#'python-host/frames session))
-                                    (expect
-                                      (= 1 (get-in @@#'python-host/frame-locks [session :users])))
-                                    (throw failure))
-                                  (catch Throwable t t))))
-                   (expect (not (contains? @@#'python-host/frames session)))
-                   (expect (not (contains? @@#'python-host/frame-locks session)))
-                   (expect (= :recovered (python-host/conveying session :recovered)))
-                   (expect (not (contains? @@#'python-host/frame-locks session))))))
-
-(defdescribe
-  interrupted-waiter-preserves-the-active-context-test
-  (it "interrupted waiter preserves the active context"
-      ;; #283: cancelling a queued call must not remove the active frame or its lock.
-      (let [session
-            (str "vis-host-interrupted-" (System/nanoTime))
-
-            entered
-            (promise)
-
-            release
-            (promise)
-
-            waiter-entered
-            (atom false)
-
-            waiter
-            (atom nil)
-
-            next-call
-            (atom nil)
-
-            holder
-            (start-call #(python-host/conveying session (deliver entered true) @release :holder))]
-
-        (try (expect (true? (deref entered 5000 nil)))
-             (let [frame
-                   (get @@#'python-host/frames session)
-
-                   lock
-                   (get-in @@#'python-host/frame-locks [session :lock])]
-
-               (reset! waiter (start-call #(try (python-host/conveying session
-                                                                       (reset! waiter-entered true)
-                                                                       :unexpected)
-                                                (catch InterruptedException _ :interrupted))))
-               (expect (parked? @waiter))
-               (expect (= 2 (get-in @@#'python-host/frame-locks [session :users])))
-               (.interrupt ^Thread (deref (:thread @waiter) 5000 nil))
-               (expect (= :interrupted (deref (:result @waiter) 5000 ::timeout)))
-               (expect (false? @waiter-entered))
-               (expect (identical? frame (get @@#'python-host/frames session)))
-               (expect (identical? lock (get-in @@#'python-host/frame-locks [session :lock])))
-               (expect (= 1 (get-in @@#'python-host/frame-locks [session :users])))
-               (reset! next-call (start-call #(python-host/conveying session :next)))
-               (expect (parked? @next-call))
-               (expect (not (realized? (:result @next-call))))
-               (expect (identical? lock (get-in @@#'python-host/frame-locks [session :lock])))
-               (deliver release true)
-               (expect (= :holder (deref (:result holder) 5000 ::timeout)))
-               (expect (= :next (deref (:result @next-call) 5000 ::timeout))))
-             (expect (not (contains? @@#'python-host/frames session)))
-             (expect (not (contains? @@#'python-host/frame-locks session)))
-             (finally (deliver release true)
-                      (doseq [call
-                              [holder @waiter @next-call]
-
-                              :when call]
-
-                        (future-cancel (:result call))))))))
+  (it "a failing invocation releases its frame, not the other invocation's frame"
+      (let [session "vis-host-frame-failure"
+            failure (ex-info "Driver failed" {})]
+        (python-host/conveying* session "outer"
+          (fn []
+            (expect (identical? failure
+                                (try (python-host/conveying* session "inner" #(throw failure))
+                                     (catch Throwable e e))))
+            (expect (python-host/active-call? session "outer"))
+            (expect (not (python-host/active-call? session "inner")))))
+        (expect (not (python-host/active-call? session "outer"))))))
 
 (defdescribe guest-thread-frame-test
              ;; #405: a guest thread that meets an active call must keep its limits.
@@ -419,11 +288,12 @@
                        (binding [python-host/*guest-thread?* false]
                          (clojure.lang.Var/getThreadBindingFrame))]
 
-                   (swap! @#'python-host/frames assoc session driver)
+                   (swap! @#'python-host/frames assoc [session "call"] driver)
                    (try (expect (= {"value" true}
                                    (binding [python-host/*guest-thread?* true]
                                      (#'python-host/answer-in-frame
                                       session
+                                      "call"
                                       "fixture"
                                       (fn []
                                         python-host/*guest-thread?*)
@@ -431,8 +301,9 @@
                         (expect (= {"value" false}
                                    (#'python-host/answer-in-frame
                                     session
+                                    "call"
                                     "fixture"
                                     (fn []
                                       python-host/*guest-thread?*)
                                     [])))
-                        (finally (swap! @#'python-host/frames dissoc session))))))
+                        (finally (swap! @#'python-host/frames dissoc [session "call"]))))))

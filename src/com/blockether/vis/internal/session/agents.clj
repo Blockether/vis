@@ -19,7 +19,8 @@
             [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.internal.session.iteration :as iteration]
             [com.blockether.vis.internal.session.model :as smodel]
-            [com.blockether.vis.internal.util :as util]))
+            [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.task :as task]))
 
 (defn info [db sid] (when (and db sid) (ps/db-agent-info db sid)))
 
@@ -1634,6 +1635,8 @@
             (:entry_id entry)]
 
         (swap! questions assoc sid (merge {:question question :entry_id entry-id} request))
+        (task/detach-awaits! parent (merge {:session-id sid :question question}
+                                           (select-keys me [:id :title])))
         ;; A reply in this process signals the thread, and a cancel of this child signals its team.
         ;; The tick covers a reply from another process and a stopped parent.
         (try (let [ks [[:thread (str entry-id)] [:team (str (or (:leader_id me) parent))]]]

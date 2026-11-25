@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import time
+from asyncio import CancelledError as _CancelledError
 from collections.abc import Callable, Mapping, Sequence
 from collections.abc import MutableMapping as _MutableMapping
 from contextlib import contextmanager
@@ -162,6 +163,10 @@ class Host(Protocol):
 
     def call_env(self) -> Mapping[str, str | None]:
         """Read the variables that `before` op hooks added to the current tool call."""
+        ...
+
+    def is_detached(self) -> bool:
+        """True when the current tool let its caller continue without it."""
         ...
 
     def tool_call_provider(self) -> str | None:
@@ -2792,6 +2797,7 @@ class Symbol:
             a public Python identifier.
         tag: Default operation classification, one of the `method` tags.
         is_hidden: Hide the symbol from discovery without removing the callable.
+        detachable: Let the host release a caller that waits for this tool.
         activity: Human-facing presentation for a function. Declare one on every
             exported callable. For an object, leave this unset and put an Activity
             on every exported `method` instead.
@@ -2814,8 +2820,11 @@ class Symbol:
     tag: SymbolTag = "observation"
     is_hidden: bool = False
     activity: Activity | None = None
+    detachable: bool = True
 
     def __post_init__(self):
+        if type(self.detachable) is not bool:
+            raise TypeError("vis.Symbol detachable must be a boolean")
         if type(self.is_hidden) is not bool:
             raise TypeError("vis.Symbol is_hidden must be a boolean")
         self._spec()  # Pure validation; register_extension() installs adapters.
@@ -2839,9 +2848,10 @@ class Symbol:
 
     def _spec(self):
         if inspect.isroutine(self.fn):
-            return _symbol_spec(
+            spec = _symbol_spec(
                 self.fn, self.name, self.tag, self.is_hidden, self.activity
             )
+            return dict(spec, detachable=self.detachable)
         if names := _symbol_tag_names(self.tag):
             raise ValueError(f"vis.Symbol tag must be one of {names}")
         if self.activity is not None:
@@ -2862,7 +2872,11 @@ class Symbol:
             raise ValueError(
                 "vis.Symbol(object, ...) requires at least one public method"
             )
-        return {"marker": "namespace", "name": self.name, "methods": methods}
+        return {
+            "marker": "namespace",
+            "name": self.name,
+            "methods": [dict(method, detachable=self.detachable) for method in methods],
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -4180,6 +4194,11 @@ def call_env() -> dict[str, str | None]:
     the result is empty.
     """
     return dict(_host.call_env() or {})
+
+
+def is_detached() -> bool:
+    """Return True if the current tool runs as a detached Task."""
+    return bool(_host.is_detached())
 
 
 def tool_call_provider() -> str | None:
@@ -7377,6 +7396,8 @@ class LiveView:
     def __exit__(self, kind, error, traceback):
         if error is None:
             self.close()
+        elif isinstance(error, _CancelledError):
+            self.close(reason="cancelled")
         else:
             # The run died mid-way and still owes the model the picture the
             # human was watching, with the reason it stopped.
