@@ -72,6 +72,27 @@ it('ends a mouse drag when the owner points the camera again', () => {
   expect(pose()).toEqual(owner);
 });
 
+it('keeps the page text unselected while a mouse drags the board', () => {
+  const { frame } = board();
+  const page = document.body.appendChild(document.createElement('p'));
+  page.textContent = 'Replies waiting';
+  const mouse = (clientX: number) => ({ pointerId: 1, pointerType: 'mouse', buttons: 1, clientX });
+  const selectPage = () => {
+    document.getSelection()?.selectAllChildren(page);
+    fireEvent(document, new Event('selectionchange'));
+  };
+  fireEvent.pointerDown(frame, mouse(100));
+  selectPage();
+  fireEvent.pointerMove(frame, mouse(120));
+  expect(document.getSelection()?.toString()).toBe('');
+  selectPage();
+  expect(document.getSelection()?.toString()).toBe('');
+  fireEvent.pointerUp(frame, mouse(120));
+  selectPage();
+  expect(document.getSelection()?.toString()).toBe('Replies waiting');
+  page.remove();
+});
+
 it('keeps the whole board fitted when the frame changes size', () => {
   const sizes = new Map<Element, () => void>();
   const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320);

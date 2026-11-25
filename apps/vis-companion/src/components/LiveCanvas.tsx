@@ -100,6 +100,17 @@ function inFrame(frame: HTMLElement | null, point: Point): Point {
  */
 const scaleStep = (value: number) => String(Math.round(value * 20) / 20);
 
+const unselect = () => document.getSelection()?.removeAllRanges();
+
+/**
+ * A mouse press on the board starts a text selection, and a drag that leaves the
+ * frame extends it over the page. While the board moves, the page stays unselected.
+ */
+function holdUnselected(isHeld: boolean) {
+  if (isHeld) unselect();
+  document[isHeld ? 'addEventListener' : 'removeEventListener']('selectionchange', unselect);
+}
+
 /**
  * The items and the arrows at full size. The camera moves the element around this
  * board, so a pan or a zoom draws none of it again. The frames stand under the
@@ -353,6 +364,7 @@ export function LiveCanvas({
       pointers.current.clear();
       safariPinch.current = null;
       if (node) delete node.dataset.dragging;
+      holdUnselected(false);
     }
     if (cameraMode.current === 'manual') return;
     camera.current = cameraMode.current === 'fit' ? whole : target;
@@ -473,6 +485,8 @@ export function LiveCanvas({
     };
   }, [measureCards]);
   useLayoutEffect(measureCards, [measureCards, node.cards, flow]);
+  useEffect(() => () => holdUnselected(false), []);
+
   useEffect(() => {
     let isMounted = true;
     document.fonts?.ready.then(() => isMounted && measureCards());
@@ -508,6 +522,7 @@ export function LiveCanvas({
         state.hasMoved = true;
         event.currentTarget.setPointerCapture(event.pointerId);
         event.currentTarget.dataset.dragging = 'true';
+        holdUnselected(true);
       }
       held.set(event.pointerId, point);
       const { x, y, scale } = readCamera();
@@ -528,6 +543,7 @@ export function LiveCanvas({
   function onPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
     if (pointers.current.delete(event.pointerId) && pointers.current.size === 0) {
       delete event.currentTarget.dataset.dragging;
+      holdUnselected(false);
     }
   }
 
