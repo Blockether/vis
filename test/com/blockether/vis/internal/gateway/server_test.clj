@@ -4523,6 +4523,28 @@
                        (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))
 
 (defdescribe
+  mcp-app-rpc-answers-the-view-test
+  (it "gives the view the MCP result or a JSON-RPC error, and a malformed body is 400"
+      (with-redefs-fn {#'gw-http/body-json (constantly {"server" "acme" "method" "tools/list" "params" {}})
+                       #'mcp-core/app-request (fn [sid server method params]
+                                                {"tools" [{"name" "promote"}]
+                                                 "called" [sid server method params]})}
+        (fn []
+          (let [response (#'mcp-api/mcp-app-rpc-handler {:path-params {:sid "s1"}})]
+            (expect (= 200 (:status response)))
+            (expect (= {"result" {"tools" [{"name" "promote"}] "called" ["s1" "acme" "tools/list" {}]}}
+                       (wire/parse-json (:body response)))))))
+      (with-redefs-fn {#'gw-http/body-json (constantly {"server" "acme" "method" "tools/call"})
+                       #'mcp-core/app-request (fn [& _]
+                                                (throw (ex-info "Not an app tool" {:code -32601})))}
+        (fn []
+          (expect (= {"error" {"code" -32601 "message" "Not an app tool"}}
+                     (wire/parse-json (:body (#'mcp-api/mcp-app-rpc-handler {:path-params {:sid "s1"}})))))))
+      (with-redefs-fn {#'gw-http/body-json (constantly {"method" "tools/list"})}
+        (fn []
+          (expect (= 400 (:status (#'mcp-api/mcp-app-rpc-handler {:path-params {:sid "s1"}}))))))))
+
+(defdescribe
   mcp-validation-errors-preserve-the-original-failure-test
   (it "mcp validation errors preserve the original failure"
       (doseq [type [:mcp/http-error :mcp/oauth-required :mcp/protocol :mcp/unknown]]

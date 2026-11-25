@@ -87,6 +87,7 @@
    "devices.devices[]" "The device record of the push relay. It is not mapped yet."
    "devices.push"
    "The push transport status has one entry for each transport. It is not mapped yet."
+   "mcp_app_rpc_answer|0.result" "The raw MCP result. The MCP method of the request defines its fields."
    "models_catalog.models[]" "Each provider adds its own model fields."
    "openapi_document.info" "The OpenAPI Info object. The OpenAPI 3.1 schema defines it."
    "openapi_document.paths" "The OpenAPI Paths object. The OpenAPI 3.1 schema defines it."

@@ -1375,6 +1375,25 @@ class Routes:
         )
         return response.json()
 
+    def post_session_mcp_apps_rpc(
+        self,
+        sid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> _types.McpAppRpcAnswer:
+        """POST /v1/sessions/:sid/mcp-apps/rpc — json response."""
+        response = self._client._request(
+            "POST",
+            "/v1/sessions/:sid/mcp-apps/rpc",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def get_session_snapshot(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
     ) -> Response:
