@@ -976,3 +976,41 @@ describe('a toolbar and a dialog of an app', () => {
     expect(onActivate).toHaveBeenCalledWith('new-issue');
   });
 });
+
+// User report: a switch in the app band showed its group name above two squeezed tabs.
+it('shows a switch in a toolbar as one control without a visible group name', async () => {
+  const onActivate = vi.fn(async () => {});
+  const choice = (id: string, label: string, selected: boolean) => ({
+    id,
+    type: 'button',
+    label,
+    is_selected: selected,
+  });
+  const parsed = liveViewFromWire({
+    ...fixture,
+    nodes: [
+      {
+        id: 'band',
+        type: 'group',
+        direction: 'toolbar',
+        label: 'Area',
+        children: [
+          {
+            id: 'area',
+            type: 'group',
+            direction: 'row',
+            label: 'Area',
+            children: [choice('work', 'Workspace', true), choice('temp', 'Temporary', false)],
+          },
+        ],
+      },
+    ],
+  });
+  if (!parsed) throw new Error('the view must be paintable');
+  render(<LiveViewPanel view={parsed} onActivate={onActivate} />);
+  expect(screen.getByRole('group', { name: 'Area' })).toBeTruthy();
+  expect(screen.queryByText('Area')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Workspace' })).toHaveAttribute('aria-pressed', 'true');
+  fireEvent.click(screen.getByRole('button', { name: 'Temporary' }));
+  await waitFor(() => expect(onActivate).toHaveBeenCalledWith('temp'));
+});

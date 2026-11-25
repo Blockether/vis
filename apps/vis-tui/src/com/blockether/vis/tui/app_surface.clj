@@ -202,21 +202,17 @@
    of them, so no verb moves behind C-x without a decision of the app."
   (into #{} (map str) "uwftiacvsrl"))
 
-(defn- choice-strip?
-  "True when group `node` holds only choice buttons: a strip of tabs."
-  [node]
-  (let [children (:children node)]
-    (and (= :group (:type node))
-         (< 1 (count children))
-         (every? #(and (= :button (:type %)) (some? (:is-selected %))) children))))
-
 (defn- buttons-in
   "The buttons of `nodes` in reading order. A button of a strip of tabs has `::tab?`."
   [nodes]
   (mapcat (fn [node]
-            (cond (or (:is-dialog node) (lv/toolbar? node)) []
+            (cond (:is-dialog node) []
+                  ;; A toolbar keeps its own rows; only its switch takes tab keys.
+                  (lv/toolbar? node) (mapcat #(when (lv/choice-strip? %)
+                                                (map (fn [tab] (assoc tab ::tab? true)) (:children %)))
+                                             (:children node))
                   (= :button (:type node)) [node]
-                  (choice-strip? node) (map #(assoc % ::tab? true) (:children node))
+                  (lv/choice-strip? node) (map #(assoc % ::tab? true) (:children node))
                   :else (buttons-in (:children node))))
           nodes))
 
@@ -293,7 +289,7 @@
   "The switch of diff `node`: its first `row` strip of tabs, or nil."
   [node]
   (when (= :diff (:type node))
-    (first (filter #(and (= :row (:direction %)) (choice-strip? %)) (:children node)))))
+    (first (filter #(and (= :row (:direction %)) (lv/choice-strip? %)) (:children node)))))
 
 (defn- keyed-buttons
   "Remove buttons named by shortcuts before layout, including nested controls. A diff

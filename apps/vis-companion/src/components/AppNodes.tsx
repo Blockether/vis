@@ -1404,9 +1404,8 @@ interface DiffCommandProps {
 }
 
 /** True for a `row` group of two or more choice buttons: a segmented switch, not a menu. */
-function isDiffSwitch(node: LiveNode): node is Extract<LiveNode, { type: 'group' }> {
+function isDiffSwitch(node: Extract<LiveNode, { type: 'group' }>): boolean {
   return (
-    node.type === 'group' &&
     node.direction === 'row' &&
     node.children.length > 1 &&
     node.children.every((child) => child.type === 'button' && child.is_selected !== undefined)
@@ -1417,7 +1416,7 @@ function isDiffSwitch(node: LiveNode): node is Extract<LiveNode, { type: 'group'
 function DiffCommand({ node, state, keys }: DiffCommandProps) {
   if (node.type !== 'group' && node.type !== 'button') return null;
   const Icon = node.icon ? COMMAND_ICONS[node.icon] : undefined;
-  if (isDiffSwitch(node)) {
+  if (node.type === 'group' && isDiffSwitch(node)) {
     return (
       <span className="diff-layout diff-switch" role="group" aria-label={node.label} data-node-id={node.id}>
         {node.children.map((choice) => {

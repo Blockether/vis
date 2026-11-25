@@ -2134,7 +2134,16 @@ const TAB_HOLD_MS = 3000;
  * the network, and a tab that waits for it reads as a slow app. The choice of the
  * owner replaces the pressed one when it changes, or when the owner stays silent.
  */
-function ChoiceStrip({ node, presentation }: { node: LiveGroupNode; presentation: NodePresentation }) {
+function ChoiceStrip({
+  node,
+  presentation,
+  isCompact = false,
+}: {
+  node: LiveGroupNode;
+  presentation: NodePresentation;
+  /** The strip stands in a toolbar: a segmented switch one control high, like the diff layout switch. */
+  isCompact?: boolean;
+}) {
   const tabs = node.children.filter((child) => child.type === 'button');
   const owned = tabs.find((tab) => tab.is_selected)?.id ?? null;
   const [pressed, setPressed] = useState<{ id: string; from: string | null } | null>(null);
@@ -2157,6 +2166,35 @@ function ChoiceStrip({ node, presentation }: { node: LiveGroupNode; presentation
         }
       }
     : undefined;
+  if (isCompact) {
+    return (
+      <div
+        role="group"
+        aria-label={node.label ?? 'Views'}
+        data-view-layout="switch"
+        className="flex shrink-0 gap-0.5 rounded-lg bg-(--hover) p-0.5"
+      >
+        {tabs.map((tab) => {
+          const shortcut = presentation.keys?.get(tab.id);
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              className="app-focus-ring h-7 whitespace-nowrap rounded-md px-2 text-ui font-medium text-dialog-hint hover:text-fg aria-pressed:bg-(--diff-paper) aria-pressed:text-fg aria-pressed:shadow-sm mouse:h-6"
+              data-node-id={tab.id}
+              title={shortcut ? `${tab.label} (${shortcut.key})` : tab.label}
+              aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
+              aria-pressed={tab.id === shown}
+              disabled={presentation.isSettled || tab.is_disabled || !press}
+              onClick={() => void press?.(tab.id)}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div
       role="group"
@@ -2254,8 +2292,10 @@ function NodeCell({
       (node.type === 'log' || node.type === 'group') &&
       node.default_expanded === true;
   const label = node.label || (node.type === 'log' ? 'Output' : node.id);
+  // A strip of choices in a toolbar is one segmented control: no name above it, no squeeze.
+  const isSwitch = inToolbar && node.type === 'group' && isChoiceStrip(node);
   return (
-    <div className="min-w-0 space-y-2">
+    <div className={isSwitch ? 'shrink-0' : 'min-w-0 space-y-2'}>
       {isLiveInputNode(node) ? (
         <LiveInput node={node} presentation={presentation} isInline={inToolbar} />
       ) : isDisclosure ? (
@@ -2286,8 +2326,9 @@ function NodeCell({
         node.label &&
         node.type !== 'button' &&
         node.type !== 'card' &&
-        // A toolbar is named for a screen reader only.
+        // A toolbar and its switch are named for a screen reader only.
         !isToolbar &&
+        !isSwitch &&
         // These nodes show their names in their own toolbars.
         node.type !== 'diff' && node.type !== 'board' && <NodeLabel>{node.label}</NodeLabel>
       )}
@@ -2300,7 +2341,7 @@ function NodeCell({
           className={`min-w-0 ${isDisclosure && node.type !== 'log' ? 'pl-5' : ''}`}
         >
           {node.type === 'group' && isChoiceStrip(node) && (
-            <ChoiceStrip node={node} presentation={presentation} />
+            <ChoiceStrip node={node} presentation={presentation} isCompact={isSwitch} />
           )}
           {node.type === 'group' && !isChoiceStrip(node) && (
             <ViewLayout
@@ -2835,7 +2876,16 @@ export function LiveViewPanel({
               if (inHeader && !detail) return null;
               if (band && node.id === bandToolbar) {
                 return createPortal(
-                  <span key={node.id} className="flex min-w-0 shrink items-center px-2">
+                  <span
+                    key={node.id}
+                    // A switch keeps its words; the status beside the name gives up width first.
+                    className={`flex items-center px-2 ${
+                      node.type === 'group' &&
+                      node.children.every((child) => child.type === 'group' && isChoiceStrip(child))
+                        ? 'shrink-0'
+                        : 'min-w-0 shrink'
+                    }`}
+                  >
                     <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
                   </span>,
                   band,

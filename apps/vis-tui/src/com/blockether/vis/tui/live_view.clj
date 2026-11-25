@@ -2724,6 +2724,14 @@
   [node]
   (and (= :group (:type node)) (= :toolbar (:direction node))))
 
+(defn choice-strip?
+  "True when group `node` holds only choice buttons: a strip of tabs, or the switch of a toolbar."
+  [node]
+  (let [children (:children node)]
+    (and (= :group (:type node))
+         (< 1 (count children))
+         (every? #(and (= :button (:type %)) (some? (:is-selected %))) children))))
+
 (defn- node-section
   "One node's rows, `text-w` columns wide: its label, then what the node paints.
 
@@ -2761,6 +2769,14 @@
         toolbar
         (toolbar? node)
 
+        ;; A switch in a toolbar packs its choices at their own width, like the app band.
+        switch?
+        (and (:toolbar? node-ctx) (choice-strip? node))
+
+        ;; A switch and a toolbar of switches name themselves for a screen reader only.
+        unnamed?
+        (or switch? (and toolbar (seq (:children node)) (every? choice-strip? (:children node))))
+
         children
         (cond->> (not-empty (remove :is-dialog (:children node)))
           (or toolbar (= :wrap (:direction node)))
@@ -2779,9 +2795,9 @@
 
         layout
         (cond (nil? children) :leaf
-              (and (= :row (:direction node)) (columns/row-fits? body-w n)) :row
+              (and (not switch?) (= :row (:direction node)) (columns/row-fits? body-w n)) :row
               (< 1 span) :grid
-              (and (or toolbar (= :wrap (:direction node))) (< 1 n)) :wrap
+              (and (or toolbar switch? (= :wrap (:direction node))) (< 1 n)) :wrap
               :else :stack)
 
         cell-w
@@ -2817,7 +2833,7 @@
                (when (= :log (:type node))
                  (str " · " (long (or (:total-lines node) (count (:lines node)))) " lines")))
           ;; A button names itself, and the field renderer draws a field's label.
-          (when-not (or (= :button (:type node)) (contains? input-node-types (:type node)))
+          (when-not (or unnamed? (= :button (:type node)) (contains? input-node-types (:type node)))
             (flat-text (:label node))))]
 
     (with-meta (cond-> []

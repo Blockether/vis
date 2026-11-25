@@ -1149,6 +1149,22 @@ ol.markdown-list > li::before {
   background: var(--hover);
   color: var(--fg);
 }
+/* An app switch in the band keeps its words: its choices are not square verbs. */
+.pane-header [data-view-layout='switch'] button {
+  width: auto;
+  height: 32px;
+  border-radius: 6px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.pane-header [data-view-layout='switch'] button[aria-pressed='true'] {
+  background: var(--diff-paper);
+  color: var(--fg);
+}
+@media (pointer: fine) {
+  .pane-header [data-view-layout='switch'] button {
+    height: 24px;
+  }
+}
 .diff-base {
   flex: 0 1 auto;
   color: var(--dialog-hint);

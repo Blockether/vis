@@ -1495,6 +1495,20 @@
                   (assoc :shortcuts [{:key "1" :node-id "workspace"} {:key "2" :node-id "temp"}]))
             head (first (filter #(= :diff-head (:kind %)) (surface/surface-rows v 80 #{})))]
         (expect (str/ends-with? (:text head) "[1 Workspace │ 2 • Temporary]"))))
+  ;; User report: a switch in the app band showed its group name twice and had no keys.
+  (it "gives a toolbar switch tab keys and shows it as one unnamed row"
+      (let [choice (fn [id label selected?] {:id id :type :button :label label :is-selected selected?})
+            band {:id "band" :type :group :direction :toolbar :label "Area"
+                  :children [{:id "area" :type :group :direction :row :label "Area"
+                              :children [(choice "work" "Workspace" true)
+                                         (choice "temp" "Temporary" false)]}]}
+            v (surface/auto-keyed (update view :nodes #(into [band] %)))
+            rows (surface/surface-rows v 80 #{})
+            texts (map :text rows)]
+        (expect (= [{:key "1" :node-id "work"} {:key "2" :node-id "temp"}]
+                   (take 2 (:shortcuts v))))
+        (expect (not-any? #(= "Area" %) texts))
+        (expect (some #(= ["work" "temp"] (mapv :node-id (get-in % [:entry :cells]))) rows))))
   (it "uses the current button label and leaves disabled keys out of the legend"
       (let [v (assoc game :shortcuts [{:key "g" :node-id "go"} {:key "o" :node-id "off"}])]
         (expect (= [["g" "Go"]] (surface/shortcut-legend v)))

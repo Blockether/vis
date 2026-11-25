@@ -8942,6 +8942,8 @@ def _ui_toolbar(*fields):
 
     An input in a toolbar shows its label only as its accessible name, so give it a
     ``placeholder``. The first toolbar at the top level of an app stands in the app band.
+    A group of two or more buttons that each have ``is_selected`` is a switch there:
+    its choices stand side by side as one control, without the group label.
     """
     return _group("toolbar", fields)
 

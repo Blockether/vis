@@ -4740,7 +4740,7 @@
         "wrap",
         "toolbar"
       ],
-      "description": "How a group arranges its children. A `toolbar` puts compact children on one line that wraps: a text or choice input shows its label only as its accessible name, and a checkbox keeps its label next to the box. A surface shows the first toolbar at the top level of an app in the band of the app. The other toolbars stay in their places."
+      "description": "How a group arranges its children. A `toolbar` puts compact children on one line that wraps: a text or choice input shows its label only as its accessible name, and a checkbox keeps its label next to the box. A surface shows the first toolbar at the top level of an app in the band of the app. The other toolbars stay in their places. A group of two or more buttons that each have `is_selected` in a toolbar is a switch: its choices stand side by side as one control, without the group label."
     },
     "spinner_variant": {
       "oneOf": [
