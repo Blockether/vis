@@ -271,13 +271,24 @@
               (it "show a note that repeats the answer only once, as the answer"
                   (expect (= 1 (count (re-seq #"Fixed\." out)))))))
   (describe "a wake from a subagent of the session"
-            (it "hides its request, as the session screen does"
-                (let [doc {"session" {"id" "s1"}
-                           "child_session_ids" ["child"]
-                           "turns" [{"request" "agent done"
-                                     "request_kind" "council"
-                                     "council" {"author_session_id" "child"}}]}]
-                  (expect (not (str/includes? (transcript-export/markdown doc) "agent done")))))))
+            ;; User report 2026-11-26: a leader turn that a child's Council entry started showed no
+            ;; request, so it read as an answer to nothing.
+            (it
+              "shows its request as one line that names the subagent, as the session screen does"
+              (let [doc
+                    {"session" {"id" "s1"}
+                     "child_session_ids" ["child"]
+                     "agents"
+                     [{"session_id" "child" "team_id" "t" "role" "implement" "title" "Fix parser"}]
+                     "turns" [{"request" "Subagent child — completed\nTask: # Goal"
+                               "request_kind" "council"
+                               "council" {"author_session_id" "child"}}]}
+
+                    out
+                    (transcript-export/markdown doc)]
+
+                (expect (str/includes? out "## Council\n\nIMPLEMENT | Fix parser: completed\n\n"))
+                (expect (not (str/includes? out "# Goal")))))))
 
 (defn- metric
   "The value of the row `label` in the Metrics table of `markdown`."

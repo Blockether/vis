@@ -2299,14 +2299,16 @@
                                                 (:agents (summary sid)))))
             note
             (fn [m]
-              (let [line (one-line (first (str/split-lines (str/trim (str (:text m))))))
+              (let [author (get-in m [:council "author_session_id"])
+                    line (one-line (first (str/split-lines (str/trim (str (:text m))))))
+                    ;; The outcome entry of the host starts `Subagent <id> — completed`: the
+                    ;; agent name already tells who.
+                    outcome (str "Subagent " author " — ")
+                    line (cond-> line (str/starts-with? line outcome) (subs (count outcome)))
                     line
                     (if (> (count line) note-width) (str (subs line 0 (dec note-width)) "…") line)]
 
-                (traffic-note m
-                              (str (get names (get-in m [:council "author_session_id"]) "Subagent")
-                                   ": "
-                                   line))))]
+                (traffic-note m (str (get names author "Subagent") ": " line))))]
 
         (mapv #(if (child-traffic? % child-ids) (note %) %) messages)))))
 

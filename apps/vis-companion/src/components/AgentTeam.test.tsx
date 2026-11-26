@@ -353,6 +353,13 @@ describe('child wake', () => {
     expect(childWakeCouncil(peer, [fixer], 'leader')).toBe(peer);
     expect(childWakeCouncil(council, [fixer], 'other')).toBe(council);
   });
+
+  it('shows the outcome entry of a child as its status, not its session id', () => {
+    const fixer: Subagent = { ...child, role: 'implement', title: 'Fix parser' };
+    const outcome: CouncilRequest = { entry_id: 8, thread_id: 8, author_session_id: 'child',
+      content: 'Subagent child — completed\nTask: # Goal' };
+    expect(childWakeCouncil(outcome, [fixer], 'leader')?.content).toBe('IMPLEMENT | Fix parser: completed');
+  });
 });
 
 describe('team line', () => {

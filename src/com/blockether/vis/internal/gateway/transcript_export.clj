@@ -595,14 +595,66 @@
                 "</details>\n\n"))
          (when (seq attachments) (str (str/join "\n" (map attachment-line attachments)) "\n\n")))))
 
+(defn- agent-names
+  "The name of each agent of `data` by session id, as the team rows give it: `IMPLEMENT | Fix
+   parser`, or `#n` for an agent without a title. `n` is its start order in its team."
+  [data]
+  (first
+    (reduce (fn [[names counts] agent]
+              (let [sid
+                    (get agent "session_id")
+
+                    team
+                    (get agent "team_id")
+
+                    n
+                    (inc (long (get counts team 0)))]
+
+                (if (or (nil? sid) (contains? names sid))
+                  [names counts]
+                  [(assoc names
+                     sid (str (some-> (get agent "role")
+                                      str/trim
+                                      not-empty
+                                      str/upper-case
+                                      (str " | "))
+                              (or (some-> (get agent "title")
+                                          str/trim
+                                          not-empty)
+                                  (str "#" n)))) (assoc counts team n)])))
+            [{} {}]
+            (get data "agents"))))
+
+(defn- child-wake-line
+  "The Council entry of a subagent that started `turn`, as one line that names the agent, such as
+   `IMPLEMENT | Fix parser: completed`. The subagent pages hold the full message."
+  [names author request]
+  (let [line
+        (str/replace (str (first (str/split-lines request))) #"\s+" " ")
+
+        ;; The outcome entry of the host starts `Subagent <id> — completed`: the name tells who.
+        outcome
+        (str "Subagent " author " — ")
+
+        line
+        (cond-> line
+          (str/starts-with? line outcome)
+          (subs (count outcome)))]
+
+    (str (get names author "Subagent")
+         ": "
+         (if (> (count line) 120) (str (subs line 0 119) "…") line))))
+
 (defn- turn-markdown
-  [{:keys [agent-name children]} turn]
+  [{:keys [agent-name children names]} turn]
   (let [request
         (str/trim (str (or (get turn "display_request") (get turn "request"))))
 
-        hidden?
-        (and (= "council" (get turn "request_kind"))
-             (contains? children (get-in turn ["council" "author_session_id"])))
+        author
+        (get-in turn ["council" "author_session_id"])
+
+        child-wake?
+        (and (= "council" (get turn "request_kind")) (contains? children author))
 
         answer
         (str/join "\n\n"
@@ -615,7 +667,8 @@
                   (remove str/blank?
                     [(get turn "meta_summary") (web-duration (get turn "duration_ms"))]))]
 
-    (str (when-not hidden?
+    (str (if child-wake?
+           (str "## Council\n\n" (child-wake-line names author request) "\n\n")
            (str "## You\n\n" (if (str/blank? request) "_(empty)_" request)
                 "\n\n" (when-let [attachments (seq (get turn "attachments"))]
                          (str (str/join "\n" (map attachment-line attachments)) "\n\n"))))
@@ -639,7 +692,8 @@
 
         context
         {:agent-name (or (not-empty (get session "agent_name")) "Vis")
-         :children (set (get data "child_session_ids"))}]
+         :children (set (get data "child_session_ids"))
+         :names (agent-names data)}]
 
     (str "# "
          title

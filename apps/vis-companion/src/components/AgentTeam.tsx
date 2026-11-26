@@ -100,7 +100,10 @@ export function childWakeCouncil(
   const author = council?.author_session_id;
   const agent = author == null ? undefined : agents.find((a) => a.session_id === author && a.parent_id === leader);
   if (!council || !agent) return council;
-  const line = (council.content ?? '').trim().split('\n')[0].replace(/\s+/g, ' ').trim();
+  const first = (council.content ?? '').trim().split('\n')[0].replace(/\s+/g, ' ').trim();
+  // The outcome entry of the host starts `Subagent <id> — completed`: the agent name already tells who.
+  const outcome = `Subagent ${author} — `;
+  const line = first.startsWith(outcome) ? first.slice(outcome.length) : first;
   const short = line.length > NOTE_WIDTH ? `${line.slice(0, NOTE_WIDTH - 1)}…` : line;
   const role = agent.role?.trim() ? `${agent.role.trim().toUpperCase()} | ` : '';
   const content = `${role}${agentLabel(agent, agents)}: ${short}`;

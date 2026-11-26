@@ -1130,7 +1130,16 @@
           (expect (identical? peer other) "Peer messages stay whole")
           (expect (identical? note (first (team/child-traffic-notes "leader" [child peer])))
                   "An unchanged note keeps its identity")
-          (expect (= 2 (count notes)))))))
+          (expect (= 2 (count notes))))))
+  (it "shows the outcome entry of a child as its status, not its session id"
+      (with-redefs [team/summary (constantly {:agents
+                                              (assoc-in waiting-team [1 "title"] "Fix parser")})]
+        (let [outcome {:role :user
+                       :request-kind :council
+                       :text "Subagent c2 — completed\nTask: # Goal"
+                       :council {"author_session_id" "c2" "thread_id" 8}}]
+          (expect (= "IMPLEMENT | Fix parser: completed"
+                     (:text (first (team/child-traffic-notes "leader" [outcome])))))))))
 
 (defdescribe
   row-markdown-test
