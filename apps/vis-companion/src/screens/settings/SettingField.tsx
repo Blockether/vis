@@ -230,15 +230,15 @@ function StringList({
     <fieldset disabled={disabled} className="min-w-0 space-y-2">
       <ListHeader label={`Add ${name.toLowerCase()}`} hint={hint} onAdd={() => onChange([...rows, numbers ? 0 : ''])}>
         {label}{tag}
+        {/* Hidden, so it goes in the legend: a sibling would keep the spacing margin under the legend. */}
+        {!!suggestions?.length && (
+          <datalist id={suggestionsId}>
+            {suggestions.map((suggestion) => (
+              <option key={suggestion} value={suggestion} />
+            ))}
+          </datalist>
+        )}
       </ListHeader>
-      {/* Hidden, but a trailing child would keep the spacing margin under the last row. */}
-      {!!suggestions?.length && (
-        <datalist id={suggestionsId}>
-          {suggestions.map((suggestion) => (
-            <option key={suggestion} value={suggestion} />
-          ))}
-        </datalist>
-      )}
       {rows.map((entry, index) => (
         <div key={index} className="flex min-w-0 items-center gap-2">
           <Input
