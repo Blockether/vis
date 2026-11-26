@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.sandbox.scoped-policy :as policy]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
+            [com.blockether.vis.internal.foundation.mcp.client :as client]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
@@ -417,17 +418,90 @@
         (expect (empty?
                   (scoped/definitions db (scoped/target db "session" other) ["mcp" "servers"])))
         (expect (scoped/resource-enabled? env :mcp "local"))
+        ;; Regression: a hosted MCP App view of a scoped server got "not available".
+        (with-redefs [mcp/ensure-in-pool!
+                      (fn [& _]
+                        {:spec {}})
+
+                      client/list-tools
+                      (constantly [])]
+
+          (expect (= {"tools" []} (mcp/app-request db sid "local" "tools/list" {}))))
         (mcp/set-scoped-server-enabled! db target "local" false)
         (expect (false? (scoped/resource-enabled? env :mcp "local")))
         (expect (scoped/resource-enabled? {:db-info db :session-id other} :mcp "local"))
-        (expect (= :mcp/invalid-server
-                   (try (mcp/save-scoped-server! db
-                                                 target
-                                                 "secret"
-                                                 {"url" "https://gateway.example.com/mcp"
-                                                  "headers" {"Authorization" "test"}})
-                        nil
-                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        ;; A scoped HTTP server keeps its own bearer header. The inventory names it
+        ;; and never returns its value; an edit that omits it keeps it on the same
+        ;; origin and drops it on another one.
+        (let [row
+              (mcp/save-scoped-server! db
+                                       target
+                                       "secret"
+                                       {"transport" "streamable_http"
+                                        "url" "https://gateway.example.com/mcp"
+                                        "headers" {"Authorization" "Bearer kb-scoped-token"}})
+
+              stored
+              #(get-in (first (filter (comp #{"secret"} :name)
+                                      (scoped/definitions db target ["mcp" "servers"])))
+                       [:value "headers"])]
+
+          (expect (= ["Authorization"] (get row "header_names")))
+          (expect (not (str/includes? (pr-str (mcp/scoped-servers db target)) "kb-scoped-token")))
+          (mcp/save-scoped-server! db
+                                   target
+                                   "secret"
+                                   {"transport" "streamable_http"
+                                    "url" "https://gateway.example.com/v2"})
+          (expect (= {"Authorization" "Bearer kb-scoped-token"} (stored)))
+          (mcp/save-scoped-server! db
+                                   target
+                                   "secret"
+                                   {"transport" "streamable_http"
+                                    "url" "https://other.example.com/mcp"})
+          (expect (nil? (stored)))
+          ;; Regression: an edit of the other headers dropped the stored token; a
+          ;; blank value removes it.
+          (mcp/save-scoped-server! db
+                                   target
+                                   "secret"
+                                   {"transport" "streamable_http"
+                                    "url" "https://gateway.example.com/mcp"
+                                    "headers" {"Authorization" "Bearer kb-scoped-token"}})
+          (mcp/save-scoped-server! db
+                                   target
+                                   "secret"
+                                   {"transport" "streamable_http"
+                                    "url" "https://gateway.example.com/mcp"
+                                    "headers" {"X-Team" "blue"}})
+          (expect (= {"Authorization" "Bearer kb-scoped-token" "X-Team" "blue"} (stored)))
+          (mcp/save-scoped-server! db
+                                   target
+                                   "secret"
+                                   {"transport" "streamable_http"
+                                    "url" "https://gateway.example.com/mcp"
+                                    "headers" {"X-Team" "red" "Authorization" ""}})
+          (expect (= {"X-Team" "red"} (stored)))
+          (mcp/save-scoped-server! db
+                                   target
+                                   "secret"
+                                   {"transport" "streamable_http" "url" "https://other.example.com/mcp" "headers" {}})
+          ;; Regression: a project server's OAuth challenge was seen only by its
+          ;; probe, so the row lost `needs_auth` after the save.
+          (with-redefs [client/connect (fn [_ spec]
+                                         (some-> (:www-auth-atom spec) (reset! "Bearer realm=\"mcp\""))
+                                         (throw (ex-info "401" {:type :mcp/http-error :status 401})))]
+            (expect (true? (get (mcp/test-scoped-server! db
+                                                         target
+                                                         "secret"
+                                                         {"transport" "streamable_http"
+                                                          "url" "https://other.example.com/mcp"})
+                                "needs_auth"))))
+          (expect (true? (get (first (filter #(= "secret" (get % "name")) (get (mcp/scoped-servers db target) "servers")))
+                              "needs_auth")))
+          ;; Without a static header the scoped server signs in with OAuth.
+          (expect (fn? (:bearer-fn (#'mcp/oauth-server-spec db target "secret"))))
+          (mcp/delete-scoped-server! db target "secret"))
         (mcp/delete-scoped-server! db target "local")
         (expect (empty? (scoped/definitions db target ["mcp" "servers"]))))))
   (it "denies a saved raw extension handle after the engine is switched off"

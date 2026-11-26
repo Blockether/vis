@@ -3327,11 +3327,12 @@ export class GatewayClient {
   // Tokens and PKCE stay here on the paired gateway. Every client takes the
   // loopback callback: a phone's native receiver binds that port and opens the
   // browser itself; web/TUI clients use it directly. No relay option.
-  async mcpAuthStart(name: string): Promise<McpAuthFlow> {
+  // A scoped server signs in from its own settings target; the tokens stay the machine's.
+  async mcpAuthStart(name: string, target?: SettingsTarget): Promise<McpAuthFlow> {
     return this.request<McpAuthFlow>(
       'POST',
       `/v1/mcp/servers/${encodeURIComponent(name)}/auth/start`,
-      { callback_mode: 'loopback' },
+      { callback_mode: 'loopback', ...target },
     );
   }
 
@@ -3357,17 +3358,20 @@ export class GatewayClient {
     });
   }
 
-  async mcpAuthLogout(name: string): Promise<McpAuthStatus> {
+  async mcpAuthLogout(name: string, target?: SettingsTarget): Promise<McpAuthStatus> {
     return this.request<McpAuthStatus>(
       'POST',
       `/v1/mcp/servers/${encodeURIComponent(name)}/auth/logout`,
+      { ...target },
     );
   }
 
-  async testMcpServer(name: string, server: McpServerInput): Promise<McpTestResult> {
+  // The target lets an edit that leaves the credentials blank probe with the stored ones.
+  async testMcpServer(name: string, server: McpServerInput, target?: SettingsTarget): Promise<McpTestResult> {
     return this.request<McpTestResult>('POST', '/v1/mcp/servers/actions/test', {
       name,
       server,
+      ...target,
     });
   }
 

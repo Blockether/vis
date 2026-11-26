@@ -7,7 +7,7 @@
    only renders that inventory and posts verbs to `/v1/mcp/servers` and
    `/v1/mcp/servers/:name/{actions,auth}/…`. So a TUI attached to a REMOTE
    gateway adds, edits and authorizes servers exactly like the phone app does,
-   and the terminal never holds a token, a PKCE verifier, or a child process.
+   and the terminal never stores a token, a PKCE verifier, or a child process.
 
    `server-status`, `tokenize-command`, `parse-kv`, `row->form`, `form->spec`
    and `spec-problem` are pure so the row text and the wire spec are
@@ -114,7 +114,6 @@
    :cwd (str (or (get row "cwd") ""))
    :url (str (or (get row "url") ""))
    :env (kv->text (get row "env"))
-   :headers (kv->text (get row "headers"))
    :timeout-ms (str (or (get row "timeout_ms") ""))
    :is-enabled (if (contains? row "enabled") (flag row "enabled") true)})
 
@@ -127,12 +126,18 @@
   "The wire spec for the gateway's save and test verbs. Only the keys the chosen
    transport owns are sent and blank optionals are dropped, so an edit that
    leaves the header field empty preserves the secret the daemon holds."
-  [{:keys [transport command-line cwd url env headers timeout-ms is-enabled]}]
+  [{:keys [transport command-line cwd url env headers bearer-token timeout-ms is-enabled]}]
   (let [http?
         (remote? transport)
 
         argv
         (tokenize-command command-line)
+
+        headers
+        (if (str/blank? bearer-token)
+          headers
+          (assoc (into {} (remove (fn [[k _]] (= "authorization" (str/lower-case k)))) headers)
+            "Authorization" (str "Bearer " bearer-token)))
 
         timeout
         (parse-long (str/trim (str timeout-ms)))]
@@ -152,8 +157,8 @@
       (and http? (not (str/blank? (str url))))
       (assoc "url" (str/trim (str url)))
 
-      (and http? (parse-kv headers))
-      (assoc "headers" (parse-kv headers))
+      (and http? (some? headers))
+      (assoc "headers" headers)
 
       (some? timeout)
       (assoc "timeout_ms" timeout))))
@@ -196,12 +201,52 @@
           form
           prompts))
 
+(defn- read-headers!
+  "Read one header per prompt so a value can contain commas. Nil cancels."
+  [{:keys [read! note!]} stored?]
+  (loop [headers {}]
+    (when-let [entry (read! (if (empty? headers)
+                             "Header (Name: value or Name=value):"
+                             "Next header (blank to finish):")
+                           {:mask \*
+                            :placeholder (if (and stored? (empty? headers))
+                                           "new values replace stored headers"
+                                           "blank to finish")})]
+      (if (str/blank? entry)
+        headers
+        (if-let [[_ name value] (re-matches #"([!#$%&'*+.^_`|~0-9A-Za-z-]+)\s*[:=]\s*(.*)" entry)]
+          (recur (assoc headers name value))
+          (do (note! title "Enter a header name followed by `:` or `=` and its value.")
+              (recur headers)))))))
+
+(defn- http-credentials!
+  "Omit a blank credential edit unless the user explicitly clears stored headers."
+  [{:keys [read! choose!] :as q} row]
+  (let [stored? (seq (get row "header_names"))]
+    (when-let [token (read! "Bearer token:" {:mask \*
+                                            :placeholder (if stored?
+                                                           "blank keeps stored credentials unless replaced"
+                                                           "blank if not needed")})]
+      (when-let [headers (read-headers! q stored?)]
+        (cond (or (not (str/blank? token)) (seq headers))
+              {:bearer-token token :headers headers}
+
+              stored?
+              (case (choose! "Stored token and headers"
+                             [{:id :keep :key \k :label "Keep"}
+                              {:id :clear :key \r :label "Remove all"}])
+                :keep {}
+                :clear {:headers {}}
+                nil)
+
+              :else {})))))
+
 (defn- field-prompts
   "The fields one transport actually has, as prompts for `ask-all`. Each is ONE
    band question: the label is the band's own title, and the example the old
    dialog spent four lines of prose on rides IN the field as a placeholder — the
    only part of that prose that ever answered the question."
-  [read! transport]
+  [{:keys [read!] :as q} transport row]
   (let [timeout [:timeout-ms
                  (fn [f]
                    (read! "Timeout in ms (blank for the default):"
@@ -212,12 +257,8 @@
         (fn [f]
           (read! "URL:"
                  {:initial (str (:url f))
-                  :placeholder "https://example.com/mcp — sign in afterwards with `Sign in`"}))]
-       [:headers
-        (fn [f]
-          (read! "Headers, KEY=value, comma separated:"
-                 {:initial (str (:headers f))
-                  :placeholder "blank keeps what the gateway already stores"}))] timeout]
+                  :placeholder "https://example.com/mcp"}))]
+       [:http-credentials (fn [_] (http-credentials! q row))] timeout]
       [[:command-line
         (fn [f]
           (read! "Command:"
@@ -260,11 +301,8 @@
                                     "Name:"
                                     {:placeholder "a short id for this server, e.g. filesystem"})
                                   str/trim))]
-        (when-let [filled (ask-all (assoc form :transport transport)
-                                   (cond->> (field-prompts (:read! q) transport)
-                                     dlg/*settings-target*
-                                     (remove #(#{:env :headers} (first %)))))]
-          [server (form->spec filled)])))))
+        (when-let [filled (ask-all (assoc form :transport transport) (field-prompts q transport row))]
+          [server (form->spec (merge filled (:http-credentials filled)))])))))
 
 (defn save-server!
   "Add or edit ONE gateway-managed server, every question inside the CALLER'S own
@@ -277,19 +315,21 @@
     (try (when-let [[server spec] (collect-spec! q row)]
            (if-let [problem (spec-problem server spec)]
              ((:note! q) title problem)
-             (let [verdict (when-not dlg/*settings-target*
-                             (try (vis/gateway-mcp-test-server! server spec)
-                                  (catch Exception e {"error" (ex-message e)})))
+             (let [verdict (try (if dlg/*settings-target*
+                                  (vis/gateway-mcp-test-server! server spec dlg/*settings-target*)
+                                  (vis/gateway-mcp-test-server! server spec))
+                                (catch Exception e {"error" (ex-message e)}))
                    tools (tool-count verdict)
-                   summary (cond dlg/*settings-target*
-                                 "Saved for this scope; connects when the session first uses it."
-                                 (get verdict "is_connected")
+                   summary (cond (get verdict "is_connected")
                                  (str "Connected · " tools (if (= 1 tools) " tool" " tools"))
-                                 ;; A successful disconnected HTTP probe is the gateway's
-                                 ;; OAuth challenge verdict, not an unreachable endpoint.
-                                 (and (remote? (get spec "transport"))
-                                      (false? (get verdict "is_connected"))
-                                      (not (get verdict "error")))
+                                 (and (false? (get verdict "is_connected"))
+                                      (not (get verdict "error"))
+                                      (mcp-model/needs-oauth?
+                                        (assoc verdict
+                                          "url" (get spec "url")
+                                          "header_names" (if (contains? spec "headers")
+                                                           (keys (get spec "headers"))
+                                                           (get row "header_names")))))
                                  "Sign-in required · save, then choose Sign in"
                                  :else (str "Could not connect: "
                                             (or (get verdict "error")
@@ -311,7 +351,9 @@
    when the paired gateway is remote. Credentials never leave the gateway."
   [q server]
   (let [flow
-        (vis/gateway-mcp-auth-start! server)
+        (if dlg/*settings-target*
+          (vis/gateway-mcp-auth-start! server dlg/*settings-target*)
+          (vis/gateway-mcp-auth-start! server))
 
         flow-id
         (get flow "flow_id")]
@@ -324,7 +366,7 @@
                                   #(vis/gateway-mcp-auth-complete! server flow-id %)
                                   #(vis/gateway-mcp-auth-poll! server flow-id)
                                   #(vis/gateway-mcp-auth-cancel! server flow-id))]
-        (cond (= "ok" (get verdict "status")) (do (vis/gateway-mcp-start-server! server) nil)
+        (cond (= "ok" (get verdict "status")) nil
               (nil? verdict) nil
               :else ((:note! q)
                       title
@@ -368,7 +410,9 @@
            (authorize! q server)
 
            :logout
-           (vis/gateway-mcp-auth-logout! server)
+           (if dlg/*settings-target*
+             (vis/gateway-mcp-auth-logout! server dlg/*settings-target*)
+             (vis/gateway-mcp-auth-logout! server))
 
            :edit
            (save-server! screen g region row)

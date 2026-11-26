@@ -4474,7 +4474,7 @@
                          :description (mcp-model/server-status row)
                          :inline-description true
                          :server (cond-> row
-                                   *settings-target*
+                                   (and *settings-target* (not= "global" (get row "source")))
                                    (assoc "is_scoped" true))})
                       servers)
                 (when (seq (str error))

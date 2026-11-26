@@ -12,6 +12,7 @@
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.mcp :as mcp]
             [com.blockether.vis.tui.mcp-model :as mcp-model]
+            [com.blockether.vis.tui.oauth :as oauth]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.transient :as tr]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -146,7 +147,7 @@
                   "headers" {"Authorization" "Bearer t"}}
                  (mcp/form->spec {:transport "streamable_http"
                                   :url " https://mcp.example.com/mcp "
-                                  :headers "Authorization=Bearer t"
+                                  :headers {"Authorization" "Bearer t"}
                                   :command-line "npx -y files"
                                   :cwd "/srv"
                                   :is-enabled false}))))
@@ -161,7 +162,6 @@
       (expect (= {"transport" "streamable_http" "enabled" true "url" "https://mcp.example.com/mcp"}
                  (mcp/form->spec {:transport "streamable_http"
                                   :url "https://mcp.example.com/mcp"
-                                  :headers ""
                                   :timeout-ms ""
                                   :is-enabled true}))))
   (it "round-trips an existing row through the edit form"
@@ -309,7 +309,8 @@
                         dlg/band-questions (band-stub {"MCP · add server" "streamable_http"
                                                        "Name:" "remote"
                                                        "URL:" "https://gateway.example.com/mcp"
-                                                       "Headers, KEY=value, comma separated:" ""
+                                                       "Bearer token:" ""
+                                                       "Header (Name: value or Name=value):" ""
                                                        "Timeout in ms (blank for the default):" ""
                                                        "Add MCP server `remote`?" true}
                                                       log)
@@ -418,14 +419,93 @@
           (expect (str/includes? text expected))
           (expect (str/includes? text "MCP · repo"))))))
 
-(defdescribe scoped-mcp-actions-test
-             (it "never offers global lifecycle or credentials in a local scope"
-                 (let [row
-                       (assoc http-server
-                         "is_scoped" true
-                         "is_override" false)
+(defdescribe
+  scoped-mcp-actions-test
+  (it "offers OAuth but no machine lifecycle action for a scoped definition"
+      (let [row (assoc http-server "is_scoped" true "needs_auth" true)
+            actions #(set (map :id (mcp-model/server-actions %)))]
+        (expect (= #{:disable :edit :auth :details} (actions row)))
+        (expect (= #{:disable :edit :auth :logout :details}
+                   (actions (assoc row "needs_auth" false "is_authorized" true))))))
+  (it "does not offer machine lifecycle or removal for an inherited global row"
+      (let [row (assoc http-server "source" "global" "needs_auth" true)]
+        (expect (= #{:disable :edit :auth :details}
+                   (set (map :id (mcp-model/server-actions row)))))))
+  (it "does not ask public or statically authorized servers to sign in"
+      (doseq [row [(assoc http-server "needs_auth" false)
+                   (assoc http-server "needs_auth" true "header_names" ["aUtHoRiZaTiOn"])]]
+        (expect (= "idle" (mcp/server-status row))))
+      (expect (not-any? (comp #{:auth :logout} :id)
+                        (mcp-model/server-actions
+                          (assoc http-server "needs_auth" true "header_names" ["authorization"]))))))
 
-                       actions
-                       (mcp-model/server-actions row)]
+(defdescribe
+  scoped-oauth-routing-test
+  (it "signs in and out at the settings target without starting a machine server"
+      (let [target {:scope "project" :target-id "p"}
+            row (assoc http-server "is_scoped" true)
+            calls (atom [])]
+        (with-redefs [dlg/host-band-region (fn [_ region] region)
+                      dlg/band-questions (band-stub {} (atom []))
+                      vis/gateway-mcp-auth-start! (fn [name scope]
+                                                    (swap! calls conj [:auth name scope])
+                                                    {"flow_id" "flow" "url" "https://example.com/login"})
+                      vis/gateway-mcp-auth-logout! (fn [& args] (swap! calls conj (into [:logout] args)))
+                      vis/gateway-mcp-start-server! (fn [& args] (swap! calls conj (into [:start] args)))
+                      oauth/login! (constantly {"status" "ok"})]
+          (binding [dlg/*settings-target* target]
+            (mcp/run-action! nil nil nil row :auth)
+            (mcp/run-action! nil nil nil row :logout))
+          (expect (= [[:auth "notion" target] [:logout "notion" target]] @calls))))))
 
-                   (expect (= #{:disable :edit :details} (set (map :id actions)))))))
+(defdescribe
+  mcp-credentials-test
+  (it "probes and saves a masked bearer token and header at each settings target"
+      (doseq [target [nil {:scope "project" :target-id "p"}
+                      {:scope "group" :target-id "g"} {:scope "session" :target-id "s"}]]
+        (let [log (atom [])
+              probe (atom nil)
+              save (atom nil)
+              spec {"transport" "streamable_http" "enabled" true
+                    "url" "https://mcp.example.com/sse"
+                    "headers" {"Authorization" "Bearer example-token" "Accept" "a, b"}}]
+          (with-redefs [dlg/host-band-region (fn [_ region] region)
+                        dlg/band-questions
+                        (band-stub {"URL:" "https://mcp.example.com/sse"
+                                    "Bearer token:" "example-token"
+                                    "Header (Name: value or Name=value):" "Accept: a, b"
+                                    "Next header (blank to finish):" ""
+                                    "Timeout in ms (blank for the default):" ""
+                                    "Save changes to `notion`?" true}
+                                   log)
+                        vis/gateway-mcp-test-server! (fn [& args]
+                                                       (reset! probe args)
+                                                       {"is_connected" true})
+                        vis/gateway-mcp-save-server! (fn [& args] (reset! save args))]
+            (binding [dlg/*settings-target* target]
+              (mcp/save-server! nil nil nil http-server))
+            (let [request (cond-> ["notion" spec] target (conj target))]
+              (expect (= request @probe))
+              (expect (= request @save)))
+            (expect (= \* (some (fn [[_ label opts]]
+                                   (when (= label "Bearer token:") (:mask opts)))
+                                 @log)))))))
+  (it "keeps stored headers on a blank edit unless removal is chosen"
+      (doseq [[choice expected] [[:keep nil] [:clear {}]]]
+        (let [save (atom nil)
+              row (assoc http-server "header_names" ["Authorization"])]
+          (with-redefs [dlg/host-band-region (fn [_ region] region)
+                        dlg/band-questions
+                        (band-stub {"URL:" "https://mcp.example.com/sse"
+                                    "Bearer token:" ""
+                                    "Header (Name: value or Name=value):" ""
+                                    "Stored token and headers" choice
+                                    "Timeout in ms (blank for the default):" ""
+                                    "Save changes to `notion`?" true}
+                                   (atom []))
+                        vis/gateway-mcp-test-server! (constantly {"is_connected" true})
+                        vis/gateway-mcp-save-server! (fn [_ spec _] (reset! save spec))]
+            (binding [dlg/*settings-target* {:scope "project" :target-id "p"}]
+              (mcp/save-server! nil nil nil row))
+            (expect (some? @save))
+            (expect (= expected (get @save "headers"))))))))

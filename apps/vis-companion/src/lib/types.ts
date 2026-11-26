@@ -653,6 +653,11 @@ export interface McpServer {
   is_killed: boolean;
   /** HTTP servers only: whether the gateway already holds a usable OAuth token. */
   is_authorized?: boolean;
+  /** HTTP servers only: a connect asked for an OAuth sign-in and no token is on file. */
+  needs_auth?: boolean;
+  /** Names of the stored request headers and environment variables. Values never travel. */
+  header_names?: string[];
+  env_names?: string[];
   command?: string;
   /** Non-secret rest of the spec, so a client can render an edit form without losing them. */
   args?: string[];
@@ -705,6 +710,8 @@ export interface McpServerInput {
 export interface McpTestResult {
   name: string;
   is_connected: boolean;
+  /** The server answered with an OAuth Bearer challenge: save it, then sign in. */
+  needs_auth?: boolean;
   tools: Array<{ name?: string; description?: string }>;
 }
 

@@ -63,8 +63,8 @@ def test_gateway_routes_and_lease_policy_are_shared():
     assert len(routes) == 184
     assert len(operations) == 223
     assert Counter(operation["request"] for operation in operations) == {
-        "none": 137,
-        "json": 80,
+        "none": 135,
+        "json": 82,
         "binary": 6,
     }
     assert by_path["/v1/decisions/models"]["operations"]["get"] == {

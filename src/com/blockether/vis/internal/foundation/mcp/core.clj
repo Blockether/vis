@@ -368,6 +368,29 @@
 
 (defn- clear-auth-backoff! [k] (swap! auth-backoff dissoc k) nil)
 
+(defn- server-of-key
+  "The server name of a pool key: `server` or `[session-id server]`."
+  [k]
+  (if (vector? k) (second k) k))
+
+(defonce ^:private challenged-origins (atom #{})) ; #{[server origin]} that a probe saw ask for OAuth
+
+(defn- awaits-sign-in?
+  "Whether a connect of `server`, in any pool, ended in an OAuth sign-in request,
+   or a probe of `server` at `origin` did. A project or group server has no
+   connection until a session uses it, so only its probe can tell."
+  ([server] (boolean (some #(= server (server-of-key %)) (keys @auth-backoff))))
+  ([server origin] (or (awaits-sign-in? server) (contains? @challenged-origins [server origin]))))
+
+(defn- release-auth-everywhere!
+  "Forget the auth refusals and failed connects of `server` in every pool, so the
+   next connect after a sign-in, sign-out or credential edit asks again."
+  [server]
+  (let [ours? #(= server (server-of-key %))]
+    (swap! auth-backoff #(into {} (remove (comp ours? key)) %))
+    (swap! connect-failures #(into {} (remove (comp ours? key)) %)))
+  nil)
+
 (defn- revive!
   "Release the kill brake on `server` — every explicit start path calls this, or
    the start would be undone by the next reconcile. Releases the auth backoff
@@ -406,6 +429,16 @@
                  conn))]
     (when conn (try (mcp/close conn) (catch Throwable _ nil))))
   nil)
+
+(defn- close-session-conns!
+  "Close every session connection of `server`; the next call connects again."
+  [server]
+  (doseq [k
+          (keys @session-conns)
+
+          :when (= server (second k))]
+
+    (close-in-pool! session-conns k)))
 
 (defn- ensure-in-pool!
   "Idempotently connect `server` under `spec`, caching the conn (with the spec it
@@ -533,8 +566,9 @@
 
                     (if (= value (:raw cached))
                       [name (:spec cached)]
-                      ;; Never attach a global OAuth token to a scoped namesake.
-                      (let [spec (->client-spec nil (config/runtime-config value))]
+                      ;; Tokens are bound to their origin, so a scoped namesake at
+                      ;; another URL never gets the token of the global server.
+                      (let [spec (->client-spec name (config/runtime-config value))]
                         (swap! scoped-spec-cache assoc k {:raw value :spec spec})
                         [name spec]))))))
         (session-definitions session-id)))
@@ -732,18 +766,82 @@
                       "edit it there.")
                     {:type :mcp/not-managed :server name}))))
 
+(defn- url-origin
+  "The lower-case `scheme://authority` of `url`, or nil."
+  [url]
+  (when (string? url)
+    (try (let [u (java.net.URI. ^String url)]
+           (when (.getAuthority u) (str/lower-case (str (.getScheme u) "://" (.getAuthority u)))))
+         (catch Exception _ nil))))
+
 (defn- with-preserved-secrets
-  "Carry `env`/`headers` forward from the persisted spec when the incoming one
-   OMITS that key. The sanitized inventory a client reads never carries those
-   values, so a save that round-tripped through a UI would otherwise wipe the
-   server's credentials. An explicit key — including `{}` — still replaces."
+  "Carry `env`, `headers` and `auth` forward from the persisted spec when the
+   incoming one OMITS that key. The sanitized inventory a client reads never
+   carries those values, so a save that round-tripped through a UI would otherwise
+   wipe the server's credentials. An explicit key — including `{}` — still
+   replaces. A client edits the token apart from the other headers, so non-empty
+   `headers` without `Authorization` keep the stored one, and a blank header value
+   removes that header. `headers` and `auth` follow only an unchanged URL origin:
+   a token must never go to a new host."
   [previous next]
-  (reduce (fn [spec k]
-            (if (or (contains? next k) (not (contains? previous k)))
-              spec
-              (assoc spec k (get previous k))))
-          next
-          ["env" "headers"]))
+  (let [same-origin?
+        (= (url-origin (get previous "url")) (url-origin (get next "url")))
+
+        auth-key
+        (fn [headers]
+          (some #(when (= "authorization" (str/lower-case (name %))) %) (keys headers)))
+
+        spec
+        (reduce (fn [spec k]
+                  (if (or (contains? next k)
+                          (not (contains? previous k))
+                          (and (not= "env" k) (not same-origin?)))
+                    spec
+                    (assoc spec k (get previous k))))
+                next
+                ["env" "headers" "auth"])
+
+        headers
+        (get spec "headers")
+
+        stored
+        (when same-origin?
+          (some->> (get previous "headers")
+                   auth-key
+                   (find (get previous "headers"))))
+
+        headers
+        (cond-> headers
+          (and (seq headers) stored (not (auth-key headers)))
+          (conj stored))]
+
+    (if (map? headers)
+      (assoc spec "headers" (into {} (remove (comp str/blank? str val)) headers))
+      spec)))
+
+(defn- credential-names
+  "The names, never the values, of the headers and environment variables of
+   `raw-spec`, so a client can say what is stored without seeing it."
+  [raw-spec]
+  (let [names (fn [k]
+                (some->> (get raw-spec k)
+                         not-empty
+                         keys
+                         (map name)
+                         sort
+                         vec))]
+    (cond-> {}
+      (names "headers")
+      (assoc "header_names" (names "headers"))
+
+      (names "env")
+      (assoc "env_names" (names "env")))))
+
+(defn- auth-row
+  "The OAuth fields of the inventory row of HTTP server `name` at `url`."
+  [name url]
+  (let [authorized? (boolean (get (mcp-oauth/token-status name url) "is_authorized"))]
+    {"is_authorized" authorized? "needs_auth" (and (not authorized?) (awaits-sign-in? name (url-origin url)))}))
 
 (defn set-session-servers!
   "Attach `servers` — `{name raw-spec}`, each raw spec shaped exactly like a
@@ -818,7 +916,8 @@
         connected?
         (boolean (and conn (mcp/alive? conn)))]
 
-    (cond-> {"name" name
+    (cond-> (merge (credential-names raw-spec)
+                   {"name" name
              "transport" (wire-transport spec)
              "enabled" (enabled? spec)
              "is_connected" connected?
@@ -832,7 +931,7 @@
              "is_managed" (boolean is-managed)
              ;; Stopped by a client and HELD down until explicitly started again.
              "is_killed" (killed? name)
-             "tools" tools}
+                    "tools" tools})
       (:command spec)
       (assoc "command" (:command spec))
 
@@ -850,12 +949,10 @@
       (:timeout-ms spec)
       (assoc "timeout_ms" (:timeout-ms spec))
 
+      ;; OAuth is only ever an HTTP concern. `needs_auth` lets a client offer
+      ;; "Sign in" only to a server that asked for it, not to a public one.
       (:url spec)
-      ;; OAuth is only ever an HTTP concern; `is_authorized` lets a client offer
-      ;; "Sign in" instead of letting the user stare at a server that 401s.
-      (assoc "url"
-        (:url spec) "is_authorized"
-        (get (mcp-oauth/token-status name (:url spec)) "is_authorized")))))
+      (merge {"url" (:url spec)} (auth-row name (:url spec))))))
 
 (defn gateway-servers
   "Sanitized MCP inventory for gateway management. Secrets (env and header values)
@@ -987,6 +1084,9 @@
                                (boolean (and conn (mcp/alive? conn)))]
 
                            (merge (select-keys value ["command" "args" "cwd" "url" "timeout_ms"])
+                                  (credential-names value)
+                                  (when-let [url (get value "url")]
+                                    (auth-row name url))
                                   {"name" name
                                    "transport" (wire-transport (config/runtime-config value))
                                    "enabled" (and (not (false? (get value "enabled")))
@@ -1001,8 +1101,26 @@
                                    "is_managed" true})))
                        definitions)})))
 
+(defn- own-definition
+  "The definition of `name` that settings `target` itself writes, or nil."
+  [db target name]
+  (if (= "global" (:scope target))
+    (get (machine-servers) name)
+    (get (normalize-servers (scoped/own-definitions db target ["mcp" "servers"])) name)))
+
+(defn- without-literal-client-secret
+  "`spec` without a literal `auth.client_secret`, which goes to the owner-only
+   secret store of `name` instead: a scoped definition can live in a project
+   file. An `${ENV}` reference stays in the definition."
+  [name spec]
+  (let [secret (get-in spec ["auth" "client_secret"])]
+    (if (and (string? secret) (not (str/blank? secret)) (not (str/includes? secret "${")))
+      (do (mcp-oauth/save-client-secret! name secret) (update spec "auth" dissoc "client_secret"))
+      spec)))
+
 (defn save-scoped-server!
-  "Write a scoped definition. Credentials and OAuth administration stay global."
+  "Write a scoped definition with its own credentials. A save that omits `env`,
+   `headers` or `auth` keeps the ones this target stores (`with-preserved-secrets`)."
   [db target name raw-spec]
   (if (= "global" (:scope target))
     (save-gateway-server! name raw-spec)
@@ -1010,15 +1128,16 @@
           (server-name name)
 
           spec
-          (dissoc raw-spec "name")]
+          (when (map? raw-spec)
+            (->> (dissoc raw-spec "name")
+                 (with-preserved-secrets (own-definition db target name))
+                 (without-literal-client-secret name)))]
 
-      (when-not (and (map? raw-spec) (validation/valid? {"mcp" {"servers" {name spec}}}))
+      (when-not (and spec (validation/valid? {"mcp" {"servers" {name spec}}}))
         (throw (ex-info "Invalid MCP server definition" {:type :mcp/invalid-server})))
-      (when (or (seq (get spec "env")) (seq (get spec "headers")) (seq (get spec "auth")))
-        (throw (ex-info "MCP credentials and environment belong to global server definitions"
-                        {:type :mcp/invalid-server})))
       (drop-scoped-aliases! db target name)
       (scoped/set-definition! db target ["mcp" "servers"] name spec)
+      (release-auth-everywhere! name)
       (first (filter #(= name (get % "name")) (get (scoped-servers db target) "servers"))))))
 
 (defn delete-scoped-server!
@@ -1089,28 +1208,51 @@
 ;; lands by itself (the browser did reach this host's listener) or they hand back
 ;; the redirect URL the user was dumped on.
 
-(defn- oauth-server-spec
-  "The live client spec for an HTTP `name`, or a typed refusal."
-  [name]
-  (let [spec (get (configured-servers) name)]
+(defn- http-spec!
+  "`spec` of `name` when it is an HTTP server, or a typed refusal."
+  [name spec]
     (when-not spec
       (throw (ex-info "Unknown or disabled MCP server" {:type :mcp/not-found :server name})))
     (when-not (:url spec)
       (throw (ex-info (str "MCP server '" name "' is a stdio server; OAuth applies to HTTP servers")
                       {:type :mcp/invalid-server :server name})))
-    spec))
+  spec)
+
+(defn- scoped-definition
+  "The resolved definition row of `name` at settings `target`, or a typed refusal."
+  [db target name]
+  (or (first (filter #(= name (:name %)) (definitions db target)))
+      (throw (ex-info "Unknown MCP server in this settings target"
+                      {:type :mcp/not-found :server name}))))
+
+(defn- oauth-server-spec
+  "The live client spec for an HTTP `name` as settings `target` resolves it (nil
+   is global), or a typed refusal. A session spec keeps the live challenge."
+  ([name] (http-spec! name (get (configured-servers) name)))
+  ([db target name]
+   (if (or (nil? target) (= "global" (:scope target)))
+     (oauth-server-spec name)
+     (let [{:keys [value source]}
+           (scoped-definition db target name)
+
+           cached
+           (when (= "session" (:scope target)) (get @scoped-spec-cache [(:target-id target) name]))]
+
+       (cond (= "global" source) (oauth-server-spec name)
+             (= value (:raw cached)) (http-spec! name (:spec cached))
+             :else (http-spec! name (->client-spec name (config/runtime-config value))))))))
 
 (defn start-gateway-server-auth!
   "Begin a headless OAuth 2.1 flow for HTTP server `name`. Returns
    `{flow_id, server, kind, url, redirect_uri, callback_mode, expires_at_ms, status}`.
    `callback-mode` is loopback (default) or app (direct native return); never a relay."
   ([name] (start-gateway-server-auth! name {}))
-  ([name {:keys [callback-mode]}]
+  ([name {:keys [callback-mode db target]}]
    (let [name
          (server-name name)
 
          spec
-         (oauth-server-spec name)
+         (oauth-server-spec db target name)
 
          auth
          (:auth spec)]
@@ -1149,7 +1291,10 @@
         server
         (get row "server")]
 
-    (when (and (= "ok" status) server (not (conn-of server))) (revive! server) (reconcile-async!)))
+    (when (and (= "ok" status) server)
+      ;; Every pool may hold a refusal of this server: a scoped definition too.
+      (release-auth-everywhere! server)
+      (when-not (conn-of server) (revive! server) (reconcile-async!))))
   row)
 
 (defn complete-gateway-server-auth!
@@ -1176,24 +1321,31 @@
     (mcp-oauth/token-status name (:url (get (configured-servers) name)))))
 
 (defn logout-gateway-server-auth!
-  "Forget the persisted OAuth tokens for `name` and drop the connection that was
-   using them."
-  [name]
+  "Forget the persisted OAuth tokens for `name` and drop every connection that was
+   using them. The tokens belong to the machine, so a scoped definition of `name`
+   at settings `target` signs out the same tokens."
+  ([name] (logout-gateway-server-auth! nil nil name))
+  ([db target name]
   (let [name
         (server-name name)
 
         tokens
-        (mcp-oauth/token-status name)]
+         (mcp-oauth/token-status name)
+
+         scoped?
+         (and db target (not= "global" (:scope target)))]
 
     ;; Tokens of a removed server may still be on file; forgetting them stays allowed.
     (when-not (or (get (raw-servers) name)
+                   (and scoped? (some #(= name (:name %)) (definitions db target)))
                   (get tokens "is_authorized")
                   (get tokens "has_refresh_token"))
       (throw (ex-info "Unknown MCP server" {:type :mcp/not-found :server name})))
     (mcp-oauth/forget! name)
     (disconnect! name)
-    (clear-auth-backoff! name)
-    (mcp-oauth/token-status name)))
+    (close-session-conns! name)
+    (release-auth-everywhere! name)
+    (mcp-oauth/token-status name))))
 
 (defn test-gateway-server!
   "Probe a candidate without saving it; return only non-secret tool metadata.
@@ -1212,6 +1364,7 @@
     (try (let [conn (mcp/connect name spec)]
            (try {"name" name
                  "is_connected" true
+                 "needs_auth" false
                  "tools" (mapv (fn [tool]
                                  {"name" (get tool "name") "description" (get tool "description")})
                                (mcp/list-tools conn))}
@@ -1223,8 +1376,21 @@
                     (some->> (some-> ^clojure.lang.IDeref (:www-auth-atom spec)
                                      deref)
                              (re-find #"(?i)^\s*Bearer(?:\s|$)")))
-             {"name" name "is_connected" false "tools" []}
+             (do (swap! challenged-origins conj [name (url-origin (:url spec))])
+                 {"name" name "is_connected" false "needs_auth" true "tools" []})
              (throw e))))))
+
+(defn test-scoped-server!
+  "Probe a candidate for settings `target` without saving it. An edit that omits
+   `env`, `headers` or `auth` is probed with what this target stores for `name`,
+   as the save will keep them."
+  [db target name raw-spec]
+  (when-not (map? raw-spec)
+    (throw (ex-info "MCP server must be an object" {:type :mcp/invalid-server})))
+  (let [name (server-name name)]
+    (test-gateway-server! name
+                          (with-preserved-secrets (own-definition db target name)
+                                                  (dissoc raw-spec "name")))))
 
 ;; Verb implementations (env injected by the gate as the first arg)
 
@@ -1877,36 +2043,44 @@
 
 (defn app-request
   "Send the MCP request `method` with `params` of a hosted view to its own server
-   `server`, as session `sid` sees it, and give the raw MCP result. A view reaches
+   `server`, as session `sid` sees it in `db`, and give the raw MCP result. A view reaches
    only its own server, only the requests of [[apps/app-method?]], and only the
    tools that list \"app\". A refusal throws an ex-info with an HTTP `:status`."
-  [sid server method params]
+  [db sid server method params]
   (when-not (apps/app-method? method)
     (throw (ex-info (str "An MCP App cannot send " (pr-str method) " through Vis.")
                     {:type :mcp-app/forbidden :status 403})))
-  (let [env {:session-id sid}
-        params (if (map? params) params {})
-        conn (when (scoped/resource-enabled? env :mcp server) (ensure-connected! sid server))]
-    (when-not conn
-      (throw (ex-info (str "MCP server '" server "' is not available.")
-                      {:type :mcp/unavailable :status 503})))
-    (with-current-era
-      sid
-      server
-      conn
-      (fn [conn]
-        (let [timeout (or (:timeout-ms conn) mcp/default-timeout-ms)]
-          (case method
-            "tools/call" (let [tool (get params "name")]
-                           (when-let [why (apps/refuse-app-call (mcp/list-tools conn) tool)]
-                             (throw (ex-info why {:type :mcp-app/forbidden :status 403})))
-                           (call-once conn
-                                          tool
-                                          (let [a (get params "arguments")] (if (map? a) a {}))
-                                          timeout
-                                          (call-answers env server conn)))
-            "tools/list" {"tools" (filterv apps/app-callable? (mcp/list-tools conn))}
-            (mcp/request conn method params timeout (call-answers env server conn))))))))
+  ;; Scoped definitions are read from the bound session environment.
+  (binding [extension/*current-environment* {:session-id sid :db-info db}]
+    (let [env extension/*current-environment*
+          params (if (map? params) params {})
+          conn (when (scoped/resource-enabled? env :mcp server) (ensure-connected! sid server))]
+
+      (when-not conn
+        (throw (ex-info (str "MCP server '" server "' is not available.")
+                        {:type :mcp/unavailable :status 503})))
+      (with-current-era
+        sid
+        server
+        conn
+        (fn [conn]
+          (let [timeout (or (:timeout-ms conn) mcp/default-timeout-ms)]
+            (case method
+              "tools/call"
+              (let [tool (get params "name")]
+                (when-let [why (apps/refuse-app-call (mcp/list-tools conn) tool)]
+                  (throw (ex-info why {:type :mcp-app/forbidden :status 403})))
+                (call-once conn
+                           tool
+                           (let [a (get params "arguments")]
+                             (if (map? a) a {}))
+                           timeout
+                           (call-answers env server conn)))
+
+              "tools/list"
+              {"tools" (filterv apps/app-callable? (mcp/list-tools conn))}
+
+              (mcp/request conn method params timeout (call-answers env server conn)))))))))
 
 (defn- mcp-call-impl
   "The whole model-facing surface. `server` alone answers with that server's tools,

@@ -91,8 +91,11 @@
 (defn- test-mcp-server-handler
   [request]
   (try (let [body (http/body-json request)]
-         (http/json-response (mcp/test-gateway-server! (get body "name")
-                                                       (or (get body "server") body))))
+         (http/json-response (mcp/test-scoped-server! (lp/db-info)
+                                                      (settings-target request body)
+                                                      (get body "name")
+                                                      (or (get body "server")
+                                                          (dissoc body "scope" "target_id")))))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
        (catch Throwable e (http/error-response 400 :mcp/test-failed (ex-message e)))))
 
@@ -112,9 +115,12 @@
   "Begin headless MCP OAuth. Optional callback_mode selects loopback or direct app
    return; the client cannot supply an arbitrary redirect URI."
   [request]
-  (try (http/json-response (mcp/start-gateway-server-auth!
+  (try (let [body (http/body-json request)]
+         (http/json-response (mcp/start-gateway-server-auth!
                              (get-in request [:path-params :name])
-                             {:callback-mode (get (http/body-json request) "callback_mode")}))
+                               {:callback-mode (get body "callback_mode")
+                                :db (lp/db-info)
+                                :target (settings-target request body)})))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
        (catch Throwable e (http/error-response 400 :mcp/oauth-failed (ex-message e)))))
 
@@ -158,7 +164,10 @@
 
 (defn- mcp-auth-logout-handler
   [request]
-  (try (http/json-response (mcp/logout-gateway-server-auth! (get-in request [:path-params :name])))
+  (try (http/json-response (mcp/logout-gateway-server-auth!
+                             (lp/db-info)
+                             (settings-target request (http/body-json request))
+                             (get-in request [:path-params :name])))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- mcp-app-rpc-handler
@@ -178,7 +187,8 @@
 
     (if-not (and (string? server) (not (str/blank? server)) (string? method))
       (http/error-response 400 :mcp-app/invalid-request "server and method are required")
-      (try (http/json-response {"result" (mcp/app-request (get-in request [:path-params :sid])
+      (try (http/json-response {"result" (mcp/app-request (lp/db-info)
+                                                          (get-in request [:path-params :sid])
                                                           server
                                                           method
                                                           (get body "params"))})
@@ -212,15 +222,15 @@
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/mcp/servers"] mcp-servers-handler
    [:post "/v1/mcp/servers"] save-mcp-server-handler
-   [:post "/v1/mcp/servers/actions/test"] (global-only test-mcp-server-handler)
+   [:post "/v1/mcp/servers/actions/test"] test-mcp-server-handler
    [:put "/v1/mcp/servers/:name"] save-mcp-server-handler
    [:delete "/v1/mcp/servers/:name"] delete-mcp-server-handler
    [:post "/v1/mcp/servers/:name/actions/enable"] set-mcp-server-enabled-handler
    [:post "/v1/mcp/servers/:name/actions/kill"] (global-only kill-mcp-server-handler)
    [:post "/v1/mcp/servers/:name/actions/start"] (global-only start-mcp-server-handler)
-   [:post "/v1/mcp/servers/:name/auth/start"] (global-only mcp-auth-start-handler)
+   [:post "/v1/mcp/servers/:name/auth/start"] mcp-auth-start-handler
    [:post "/v1/mcp/servers/:name/auth/complete"] (global-only mcp-auth-complete-handler)
    [:post "/v1/mcp/servers/:name/auth/poll"] (global-only mcp-auth-poll-handler)
    [:post "/v1/mcp/servers/:name/auth/cancel"] (global-only mcp-auth-cancel-handler)
-   [:post "/v1/mcp/servers/:name/auth/logout"] (global-only mcp-auth-logout-handler)
+   [:post "/v1/mcp/servers/:name/auth/logout"] mcp-auth-logout-handler
    [:post "/v1/sessions/:sid/mcp-apps/rpc"] mcp-app-rpc-handler})

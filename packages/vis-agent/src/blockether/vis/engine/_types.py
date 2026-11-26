@@ -265,6 +265,10 @@ class McpServer(TypedDict):
     is_managed: bool
     is_killed: NotRequired[bool]
     tools: NotRequired[int | None]
+    is_authorized: NotRequired[bool]
+    needs_auth: NotRequired[bool]
+    header_names: NotRequired[list[str]]
+    env_names: NotRequired[list[str]]
 
 
 class McpServers(TypedDict):
@@ -314,6 +318,7 @@ class McpTestToolsItem(TypedDict):
 class McpTest(TypedDict):
     name: str
     is_connected: bool
+    needs_auth: NotRequired[bool]
     tools: list[McpTestToolsItem]
 
 

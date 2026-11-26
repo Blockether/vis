@@ -392,7 +392,7 @@
       "audience": "sdk",
       "operations": {
         "post": {
-          "request": "none",
+          "request": "json",
           "response": "json",
           "response_schema": "mcp_token_status"
         }
@@ -414,7 +414,7 @@
       "audience": "sdk",
       "operations": {
         "post": {
-          "request": "none",
+          "request": "json",
           "response": "json",
           "response_schema": "mcp_auth_flow"
         }
@@ -7724,6 +7724,28 @@
             "integer",
             "null"
           ]
+        },
+        "is_authorized": {
+          "type": "boolean",
+          "description": "An HTTP server only: this machine has OAuth tokens for the server URL."
+        },
+        "needs_auth": {
+          "type": "boolean",
+          "description": "An HTTP server only: a connect asked for an OAuth sign-in, and no token is on file."
+        },
+        "header_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The names of the stored request headers. Values never leave the gateway."
+        },
+        "env_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The names of the stored environment variables. Values never leave the gateway."
         }
       },
       "required": [
@@ -7761,6 +7783,10 @@
         },
         "is_connected": {
           "type": "boolean"
+        },
+        "needs_auth": {
+          "type": "boolean",
+          "description": "The server answered with an OAuth Bearer challenge: save it, then sign in."
         },
         "tools": {
           "type": "array",

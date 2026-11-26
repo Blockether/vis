@@ -216,7 +216,7 @@
                        ;; The transport reads the body as a stream.
                        :body (java.io.ByteArrayInputStream. (.getBytes "Unauthorized" "UTF-8"))})]
 
-        (expect (= {"name" "remote" "is_connected" false "tools" []}
+        (expect (= {"name" "remote" "is_connected" false "needs_auth" true "tools" []}
                    (mcp/test-gateway-server! "remote"
                                              {"transport" "streamable_http"
                                               "url" "https://gateway.example.com/mcp"})))))

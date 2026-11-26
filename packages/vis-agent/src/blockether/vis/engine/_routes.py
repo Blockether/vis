@@ -349,7 +349,12 @@ class Routes:
         return response.json()
 
     def post_mcp_server_auth_logout(
-        self, name: str, *, query: Query | None = None, timeout: float | None = None
+        self,
+        name: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
     ) -> _types.McpTokenStatus:
         """POST /v1/mcp/servers/:name/auth/logout — json response."""
         response = self._client._request(
@@ -358,6 +363,7 @@ class Routes:
             path={"name": name},
             query=query,
             timeout=timeout,
+            body=body,
         )
         return response.json()
 
@@ -381,7 +387,12 @@ class Routes:
         return response.json()
 
     def post_mcp_server_auth_start(
-        self, name: str, *, query: Query | None = None, timeout: float | None = None
+        self,
+        name: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
     ) -> _types.McpAuthFlow:
         """POST /v1/mcp/servers/:name/auth/start — json response."""
         response = self._client._request(
@@ -390,6 +401,7 @@ class Routes:
             path={"name": name},
             query=query,
             timeout=timeout,
+            body=body,
         )
         return response.json()
 

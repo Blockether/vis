@@ -89,7 +89,7 @@ it('opens the browser at once, without a panel, and finishes when the callback r
       }),
     ),
   );
-  expect(gateway.mcpAuthStart).toHaveBeenCalledExactlyOnceWith('work');
+  expect(gateway.mcpAuthStart).toHaveBeenCalledExactlyOnceWith('work', undefined);
   expect(opened).not.toHaveBeenCalled();
   // The row says so; there is no explanatory block under it and nothing to paste.
   expect(screen.getByText('signing in')).toBeVisible();

@@ -4548,7 +4548,9 @@
                                             (swap! calls conj [:start name])
                                             {"name" name "is_killed" false})
          #'mcp-core/start-gateway-server-auth! (fn [name opts]
-                                                 (swap! calls conj [:auth-start name opts])
+                                                 (swap! calls conj
+                                                   [:auth-start name (:callback-mode opts)
+                                                    (:scope (:target opts))])
                                                  flow)
          #'mcp-core/complete-gateway-server-auth! (fn [flow-id input]
                                                     (swap! calls conj
@@ -4559,8 +4561,13 @@
                                                 flow)
          #'mcp-core/cancel-gateway-server-auth! (fn [flow-id]
                                                   {"flow_id" flow-id "is_cancelled" true})
-         #'mcp-core/logout-gateway-server-auth! (fn [name]
-                                                  {"server" name "is_authorized" false})}
+         #'mcp-core/logout-gateway-server-auth! (fn [_db _target name]
+                                                  {"server" name
+                                                   "is_authorized" false
+                                                   "is_expired" false
+                                                   "has_refresh_token" false
+                                                   "expires_at_ms" nil
+                                                   "scope" nil})}
         (fn []
           (let [params {:path-params {:name "remote"}}]
             (expect (= 200 (:status (#'mcp-api/kill-mcp-server-handler params))))
@@ -4578,7 +4585,7 @@
             (expect (= 200 (:status (#'mcp-api/mcp-auth-cancel-handler params))))
             (expect (= 200 (:status (#'mcp-api/mcp-auth-logout-handler params))))
             (expect
-              (= [[:kill "remote"] [:start "remote"] [:auth-start "remote" {:callback-mode "app"}]
+              (= [[:kill "remote"] [:start "remote"] [:auth-start "remote" "app" "global"]
                   [:auth-complete "f-1" "https://cb.example.test/?code=abc"] [:auth-poll "f-1"]]
                  @calls))))))))
 
@@ -4604,7 +4611,7 @@
   mcp-app-rpc-answers-the-view-test
   (it "gives the view the MCP result or a JSON-RPC error, and a malformed body is 400"
       (with-redefs-fn {#'gw-http/body-json (constantly {"server" "acme" "method" "tools/list" "params" {}})
-                       #'mcp-core/app-request (fn [sid server method params]
+                       #'mcp-core/app-request (fn [_db sid server method params]
                                                 {"tools" [{"name" "promote"}]
                                                  "called" [sid server method params]})}
         (fn []

@@ -179,7 +179,7 @@
       (let [calls (atom [])]
         (with-server calls
                      (expect (= {"count" 2}
-                                (get (mcp/app-request "s1" "acme" "tools/call" {"name" "promote" "arguments" {"id" "d1"}})
+                                (get (mcp/app-request nil "s1" "acme" "tools/call" {"name" "promote" "arguments" {"id" "d1"}})
                                      "structuredContent")))
                      (expect (= [["tools/call" "promote" {"id" "d1"}]] @calls)))))
   (it "refuses a model-only tool, an unknown tool and a request outside MCP Apps"
@@ -190,11 +190,11 @@
                                               ["prompts/get" {"name" "x"}]
                                               ["sampling/createMessage" {}]]]
                        (expect (= 403
-                                  (try (mcp/app-request "s1" "acme" method params) nil
+                                  (try (mcp/app-request nil "s1" "acme" method params) nil
                                        (catch clojure.lang.ExceptionInfo e (:status (ex-data e)))))))
                      (expect (empty? @calls)))))
   (it "lists only the tools that a view may call"
       (let [calls (atom [])]
         (with-server calls
                      (expect (= ["list_deployments" "promote"]
-                                (mapv #(get % "name") (get (mcp/app-request "s1" "acme" "tools/list" {}) "tools"))))))))
+                                (mapv #(get % "name") (get (mcp/app-request nil "s1" "acme" "tools/list" {}) "tools"))))))))

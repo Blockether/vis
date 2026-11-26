@@ -19,6 +19,19 @@
   [row]
   (and (flag row "enabled") (not (flag row "is_killed"))))
 
+(defn oauth-applicable?
+  "An HTTP server with its own Authorization header does not use OAuth."
+  [row]
+  (and (some? (get row "url"))
+       (not-any? #(= "authorization" (str/lower-case %)) (get row "header_names"))))
+
+(defn needs-oauth?
+  "Use the challenge verdict, or the old guess if the gateway omitted it."
+  [row]
+  (and (oauth-applicable? row)
+       (not (flag row "is_authorized"))
+       (get row "needs_auth" true)))
+
 (defn server-status
   "Human one-liner for one sanitized inventory row.
 
@@ -37,10 +50,10 @@
                 (pos? tools)
                 (conj (str tools (if (= 1 tools) " tool" " tools")))
 
-                (and (get row "url") (not (flag row "is_authorized")))
+                (needs-oauth? row)
                 (conj "needs sign-in")
 
-                (and (get row "url") (flag row "is_authorized"))
+                (and (oauth-applicable? row) (flag row "is_authorized"))
                 (conj "signed in")
 
                 (not (flag row "is_managed"))
@@ -49,18 +62,19 @@
 (defn server-actions
   "The verbs offered for one row, in the order they matter.
 
-   Kill/start are RUNTIME and always available (they work on hand-written
-   servers too); enable/disable/remove persist and therefore only appear for
-   gateway-managed ones; the OAuth verbs only for HTTP servers.
+   Kill/start are machine-wide, including for hand-written servers. From a
+   scoped view, enable/disable/edit affect only that scope, and removal is
+   available only for an override. OAuth works on any HTTP definition that
+   does not send its own Authorization header.
 
    Every verb carries its own transient key and group, so the letter a user learns
    belongs to the verb and not to whatever widget happens to paint it."
   [row]
-  (let [scoped?
-        (flag row "is_scoped")
+  (let [local-view?
+        (or (flag row "is_scoped") (= "global" (get row "source")))
 
-        http?
-        (some? (get row "url"))
+        oauth?
+        (oauth-applicable? row)
 
         managed?
         (flag row "is_managed")
@@ -69,10 +83,10 @@
         (flag row "is_authorized")]
 
     (cond-> []
-      (and (not scoped?) (flag row "is_killed"))
+      (and (not local-view?) (flag row "is_killed"))
       (conj {:id :start :key "s" :group :runtime :label "Start"})
 
-      (and (not scoped?) (not (flag row "is_killed")))
+      (and (not local-view?) (not (flag row "is_killed")))
       (conj {:id :kill :key "k" :group :runtime :label "Kill"})
 
       (and managed? (flag row "enabled"))
@@ -84,13 +98,15 @@
       managed?
       (conj {:id :edit :key "c" :group :config :label "Edit…"})
 
-      (and managed? (or (not scoped?) (flag row "is_override")))
-      (conj {:id :remove :key "x" :group :config :label (if scoped? "Use inherited" "Remove")})
+      (and managed? (or (not local-view?) (flag row "is_override")))
+      (conj {:id :remove :key "x" :group :config :label (if local-view? "Use inherited" "Remove")})
 
-      (and http? (not scoped?))
-      (conj {:id :auth :key "a" :group :account :label (if authorized? "Re-authorize" "Sign in")})
+      oauth?
+      (conj {:id :auth :key "a" :group :account :label (cond authorized? "Sign in again"
+                                                              (needs-oauth? row) "Sign in"
+                                                              :else "Sign in with OAuth…")})
 
-      (and http? authorized? (not scoped?))
+      (and oauth? authorized?)
       (conj {:id :logout :key "o" :group :account :label "Sign out"})
 
       :always

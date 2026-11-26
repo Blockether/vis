@@ -1345,8 +1345,9 @@
   "Connect a CANDIDATE spec without saving it and return `{name, is_connected,
    tools}`. The gateway opens and closes the connection, so a bad command or an
    unreachable endpoint is reported before it is ever persisted."
-  [server spec]
-  (send-json! "POST" "/v1/mcp/servers/actions/test" {:name server :server spec}))
+  ([server spec] (mcp-test-server! server spec nil))
+  ([server spec target]
+   (send-json! "POST" "/v1/mcp/servers/actions/test" (merge target {:name server :server spec}))))
 
 (defn mcp-kill-server!
   "Stop a server NOW and hold it down until it is started again. Runtime only —
@@ -1377,8 +1378,9 @@
 (defn mcp-auth-start!
   "Begin headless OAuth for an HTTP MCP server. Returns the wire flow
    (`flow_id`, `kind`, `url`, `redirect_uri`, `expires_at_ms`, `status`)."
-  [server]
-  (send-json! "POST" (str "/v1/mcp/servers/" (enc server) "/auth/start")))
+  ([server] (mcp-auth-start! server nil))
+  ([server target]
+   (send-json! "POST" (str "/v1/mcp/servers/" (enc server) "/auth/start") target)))
 
 (defn mcp-auth-complete!
   "Finish a flow with the redirect URL the user pasted back (or a bare code)."
@@ -1398,8 +1400,9 @@
 
 (defn mcp-auth-logout!
   "Forget the gateway's persisted OAuth tokens for a server."
-  [server]
-  (send-json! "POST" (str "/v1/mcp/servers/" (enc server) "/auth/logout")))
+  ([server] (mcp-auth-logout! server nil))
+  ([server target]
+   (send-json! "POST" (str "/v1/mcp/servers/" (enc server) "/auth/logout") target)))
 
 (defn- decode-workspace
   "The gateway serves the workspace in THE canonical string-keyed wire shape

@@ -918,7 +918,10 @@
             (client/mcp-servers target)
             (client/mcp-save-server! "docs" {"command" "echo"} target)
             (client/mcp-set-server-enabled! "docs" false target)
-            (client/mcp-delete-server! "docs" target)))
+            (client/mcp-delete-server! "docs" target)
+            (client/mcp-test-server! "docs" {"command" "echo"} target)
+            (client/mcp-auth-start! "docs" target)
+            (client/mcp-auth-logout! "docs" target)))
         (expect
           (= [["GET" "/v1/settings?channel=tui&scope=session&target_id=a%2Fb"]
               ["GET" "/v1/settings/subagents?scope=session&target_id=a%2Fb"]
@@ -927,7 +930,10 @@
               ["GET" "/v1/mcp/servers?scope=session&target_id=a%2Fb"]
               ["POST" "/v1/mcp/servers" (merge target {:name "docs" :server {"command" "echo"}})]
               ["POST" "/v1/mcp/servers/docs/actions/enable" (merge target {:enabled false})]
-              ["DELETE" "/v1/mcp/servers/docs?scope=session&target_id=a%2Fb"]]
+              ["DELETE" "/v1/mcp/servers/docs?scope=session&target_id=a%2Fb"]
+              ["POST" "/v1/mcp/servers/actions/test" (merge target {:name "docs" :server {"command" "echo"}})]
+              ["POST" "/v1/mcp/servers/docs/auth/start" target]
+              ["POST" "/v1/mcp/servers/docs/auth/logout" target]]
              @asked)))))
 
 (defn- rv

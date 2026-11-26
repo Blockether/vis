@@ -39,6 +39,7 @@ import {
 import {
   Banner,
   Button,
+  Checkbox,
   Chip,
   ConfirmRow,
   IconButton,
@@ -940,6 +941,13 @@ export function McpServersPanel({
   const [url, setUrl] = useState('');
   const [env, setEnv] = useState('');
   const [headers, setHeaders] = useState('');
+  // Write-only: sent as `Authorization: Bearer …`, never read back.
+  const [bearer, setBearer] = useState('');
+  // An edit that drops the stored headers and environment instead of keeping them.
+  const [isClearingSecrets, setIsClearingSecrets] = useState(false);
+  // Servers whose save-time probe met an OAuth challenge: they offer sign-in at
+  // once, before any session has tried to connect them.
+  const [challenged, setChallenged] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [test, setTest] = useState<McpTestResult | null>(null);
@@ -1063,7 +1071,14 @@ export function McpServersPanel({
         authEpoch.current += 1;
         setAuth(null);
         setBusy(null);
-        if (verdict.status === 'ok') void loadRef.current();
+        if (verdict.status === 'ok') {
+          setChallenged((current) => {
+            const next = new Set(current);
+            next.delete(flow.server);
+            return next;
+          });
+          void loadRef.current();
+        }
         else setError(verdict.message ?? 'Authorization failed. Start sign-in again.');
       },
       undefined,
@@ -1091,6 +1106,8 @@ export function McpServersPanel({
     setUrl(server?.url ?? '');
     setEnv('');
     setHeaders('');
+    setBearer('');
+    setIsClearingSecrets(false);
     setShowForm(true);
   }
 
@@ -1104,21 +1121,34 @@ export function McpServersPanel({
     setUrl('');
     setEnv('');
     setHeaders('');
+    setBearer('');
+    setIsClearingSecrets(false);
   }
 
   const spec = (): McpServerInput => {
-    const keyValues = (text: string) =>
+    // A header line is `Name: value` or `Name=value`; a name holds neither sign,
+    // so the first one splits. An environment line is always `NAME=value`.
+    const keyValues = (text: string, separator: RegExp) =>
       Object.fromEntries(
         text
           .split('\n')
           .map((line) => line.trim())
           .filter(Boolean)
           .map((line) => {
-            const index = line.indexOf('=');
-            return [line.slice(0, index).trim(), line.slice(index + 1)];
+            const index = line.search(separator);
+            return index < 0 ? ['', ''] : [line.slice(0, index).trim(), line.slice(index + 1).trim()];
           })
           .filter(([key]) => key),
       );
+    const token = bearer.trim().replace(/^Bearer\s+/i, '');
+    const headerMap: Record<string, string> = {
+      ...keyValues(headers, /[:=]/),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+    // The gateway keeps a stored token that an edit of the other headers omits;
+    // a blank value removes it, so clearing with new headers drops the token too.
+    if (isClearingSecrets && !token && Object.keys(headerMap).length) headerMap.Authorization = '';
+    const envMap = keyValues(env, /=/);
     // An edit must not silently re-enable a disabled server or drop its timeout:
     // the row carries the whole non-secret spec, so both are carried back.
     const kept = {
@@ -1135,13 +1165,14 @@ export function McpServersPanel({
             .map((arg) => arg.trim())
             .filter(Boolean),
           ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
-          ...(env.trim() ? { env: keyValues(env) } : {}),
+          // An omitted key keeps what the gateway stores; `{}` clears it.
+          ...(Object.keys(envMap).length || isClearingSecrets ? { env: envMap } : {}),
         }
       : {
           ...kept,
           transport,
           url: url.trim(),
-          ...(headers.trim() ? { headers: keyValues(headers) } : {}),
+          ...(Object.keys(headerMap).length || isClearingSecrets ? { headers: headerMap } : {}),
         };
   };
 
@@ -1149,6 +1180,8 @@ export function McpServersPanel({
     if (!name.trim()) return 'Server name is required.';
     if (transport === 'stdio' && !command.trim()) return 'An executable is required.';
     if (transport !== 'stdio' && !url.trim()) return 'An MCP endpoint is required.';
+    if (transport !== 'stdio' && headers.trim() && !Object.keys(spec().headers ?? {}).length)
+      return 'Write each header as Name: value.';
     return null;
   };
 
@@ -1160,8 +1193,10 @@ export function McpServersPanel({
     const candidate = spec();
     setBusy('save');
     try {
-      if (!isScoped) setTest(await client.testMcpServer(serverName, candidate));
+      const probe = await client.testMcpServer(serverName, candidate, target);
+      setTest(probe);
       await client.saveMcpServer(serverName, candidate, target);
+      if (probe.needs_auth) setChallenged((current) => new Set(current).add(serverName));
       closeForm();
       await load();
     } catch (e) {
@@ -1212,7 +1247,7 @@ export function McpServersPanel({
     setError(null);
     const tab = reserveAuthTab();
     try {
-      const flow = await client.mcpAuthStart(server.name);
+      const flow = await client.mcpAuthStart(server.name, target);
       if (authEpoch.current !== epoch) {
         tab?.close();
         await client.mcpAuthCancel(flow.server, flow.flow_id).catch(() => {});
@@ -1243,7 +1278,7 @@ export function McpServersPanel({
   async function signOut(server: McpServer) {
     setBusy(server.name);
     try {
-      await client.mcpAuthLogout(server.name);
+      await client.mcpAuthLogout(server.name, target);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -1332,11 +1367,11 @@ export function McpServersPanel({
               autoCorrect="off"
             />
           </FormLabel>
-          {!isScoped && <FormLabel
+          <FormLabel
             label="Environment variables (optional)"
             hint={
-              editing
-                ? 'One NAME=value per line. Leave blank to keep the values already stored.'
+              editing?.env_names?.length
+                ? `Stored: ${editing.env_names.join(', ')}. Leave blank to keep them; an entry replaces them all.`
                 : 'One NAME=value per line. Values are write-only after saving.'
             }
           >
@@ -1346,7 +1381,7 @@ export function McpServersPanel({
               placeholder="API_TOKEN=…"
               className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none mouse:text-ui"
             />
-          </FormLabel>}
+          </FormLabel>
         </>
       ) : (
         <>
@@ -1360,24 +1395,53 @@ export function McpServersPanel({
               autoCorrect="off"
             />
           </FormLabel>
-          {!isScoped && <FormLabel
-            label="Headers (optional)"
+          <FormLabel
+            label="Bearer token (optional)"
             hint={
-              editing
-                ? 'One NAME=value per line. Leave blank to keep the values already stored.'
-                : 'One NAME=value per line. Values are write-only after saving.'
+              editing && hasStaticAuth(editing)
+                ? 'A token is stored. Leave blank to keep it.'
+                : 'Sent as Authorization: Bearer <token>. Leave blank for OAuth sign-in or a public server.'
+            }
+          >
+            <Input
+              type="password"
+              value={bearer}
+              onChange={(event) => setBearer(event.target.value)}
+              placeholder={editing && hasStaticAuth(editing) ? '••••••••' : 'Paste a token'}
+              autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+          </FormLabel>
+          <FormLabel
+            label="Other headers (optional)"
+            hint={
+              editing?.header_names?.length
+                ? `Stored: ${editing.header_names.join(', ')}. Leave blank to keep them; an entry replaces all but the token.`
+                : 'One Name: value per line. Values are write-only after saving.'
             }
           >
             <textarea
               value={headers}
               onChange={(event) => setHeaders(event.target.value)}
-              placeholder="Authorization=Bearer …"
+              placeholder="X-Api-Key: …"
               className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none mouse:text-ui"
             />
-          </FormLabel>}
+          </FormLabel>
         </>
       )}
-      {test && (
+      {editing && (editing.header_names?.length || editing.env_names?.length) ? (
+        <Checkbox isOn={isClearingSecrets} onClick={() => setIsClearingSecrets((value) => !value)}>
+          {editing.transport === 'stdio'
+            ? 'Remove the stored environment variables'
+            : 'Remove the stored token and headers'}
+        </Checkbox>
+      ) : null}
+      {test?.needs_auth && (
+        <Banner kind="warn">{test.name} asks for an OAuth sign-in. Save it, then choose Sign in.</Banner>
+      )}
+      {test && !test.needs_auth && (
         <Banner kind="ok">
           Validated {test.name}: {test.tools.length} tools discovered.
         </Banner>
@@ -1460,8 +1524,13 @@ export function McpServersPanel({
           const actions: SwipeAction[] = [];
           // A signed-out server's one missing verb is a real button on the row, not a
           // menu item: the status word beside the chevron only reports the state.
-          const needsSignIn = !isScoped && !!server.url && !server.is_authorized && !isSigningIn;
-          if (!isScoped && server.url && !needsSignIn)
+          const canSignIn = !!server.url && !hasStaticAuth(server);
+          const needsSignIn =
+            !isSigningIn && (needsOAuth(server) || (canSignIn && !server.is_authorized && challenged.has(server.name)));
+          // A server that the gateway says needs no sign-in gets no sign-in verb.
+          const offersAuth =
+            isSigningIn || !!server.is_authorized || (server.needs_auth === undefined && !server.is_connected);
+          if (canSignIn && !needsSignIn && offersAuth)
             actions.push(
               // While the browser holds the sign-in, the same slot takes it back.
               isSigningIn
@@ -1474,15 +1543,15 @@ export function McpServersPanel({
                   }
                 : {
                     key: 'auth',
-                    label: 'Re-auth',
-                    name: `Sign in to ${server.name} again`,
+                    label: server.is_authorized ? 'Re-auth' : 'Sign in',
+                    name: server.is_authorized ? `Sign in to ${server.name} again` : `Sign in to ${server.name} with OAuth`,
                     icon: <ArrowOutIcon className="size-4" />,
                     onSelect: () => {
                       if (idle) void authorize(server);
                     },
                   },
             );
-          if (!isScoped && server.url && server.is_authorized)
+          if (server.url && server.is_authorized)
             actions.push({
               key: 'signout',
               label: 'Sign out',
@@ -1643,6 +1712,20 @@ function gatewayErrorMessage(error: unknown): string | null {
   return typeof message === 'string' && message ? message : null;
 }
 
+/** Whether `server` sends its own `Authorization` header, so OAuth does not apply. */
+function hasStaticAuth(server: McpServer): boolean {
+  return (server.header_names ?? []).some((name) => name.toLowerCase() === 'authorization');
+}
+
+/**
+ * Whether an HTTP server waits for an OAuth sign-in. The gateway says so after a
+ * connect met the challenge; a gateway without `needs_auth` keeps the old guess.
+ */
+function needsOAuth(server: McpServer): boolean {
+  if (!server.url || server.is_authorized || hasStaticAuth(server)) return false;
+  return server.needs_auth ?? !server.is_connected;
+}
+
 /** Connection status is separate from the enable switch, which only reports configuration. */
 function mcpServerState(
   server: McpServer,
@@ -1670,16 +1753,16 @@ function mcpServerState(
     };
   if (!server.enabled) return { tone: 'text-dialog-hint', label: 'Disabled', word: 'off' };
   if (server.is_connected) return { tone: 'text-ok', label: 'Connected', word: tools };
-  if (server.status === 'disconnected')
-    return { tone: 'text-dialog-hint', label: 'Connects when a session uses it', word: 'not connected' };
-  if (server.status === 'unhealthy' || timedOut)
-    return { tone: 'text-err', label: 'Unhealthy — could not connect', word: 'unhealthy' };
-  if (server.url && !server.is_authorized)
+  if (needsOAuth(server))
     return {
       tone: 'text-warn',
       label: 'Not signed in — sign in to connect',
       word: 'not signed in',
     };
+  if (server.status === 'disconnected')
+    return { tone: 'text-dialog-hint', label: 'Connects when a session uses it', word: 'not connected' };
+  if (server.status === 'unhealthy' || timedOut)
+    return { tone: 'text-err', label: 'Unhealthy — could not connect', word: 'unhealthy' };
   return {
     tone: 'text-warn',
     label: 'Connecting',
@@ -1697,8 +1780,19 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
     if (server.cwd) rows.push(['Directory', server.cwd]);
   } else {
     rows.push(['Endpoint', server.url ?? '']);
-    rows.push(['Sign-in', server.is_authorized ? 'Signed in' : 'Not signed in']);
+    rows.push([
+      'Sign-in',
+      hasStaticAuth(server)
+        ? 'Bearer token'
+        : server.is_authorized
+          ? 'Signed in'
+          : needsOAuth(server)
+            ? 'OAuth sign-in required'
+            : 'Not signed in',
+    ]);
+    if (server.header_names?.length) rows.push(['Headers', server.header_names.join(', ')]);
   }
+  if (server.env_names?.length) rows.push(['Environment', server.env_names.join(', ')]);
   rows.push(['Tools', String(server.tools)]);
   return (
     <div
