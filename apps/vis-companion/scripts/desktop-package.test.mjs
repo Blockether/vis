@@ -14,6 +14,7 @@ import {
   PAKE_VERSION,
   PROXY_BROWSER_COMMANDS,
   RFD_DEPENDENCY,
+  DRAG_STRIP_ONLY,
   TITLE_BAR_STYLE,
   TRAFFIC_LIGHTS,
   WEB_CONTENT_RELOAD,
@@ -34,6 +35,9 @@ vi.mock('node:fs', async (importOriginal) => {
     readFileSync: vi.fn((...args) => {
       if (String(args[0]).endsWith('lib.rs')) {
         return 'mod util;\nfn run() { builder.invoke_handler(tauri::generate_handler![download_file,]); }\nfn setup() {\n            let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;\n}\n';
+      }
+      if (String(args[0]).endsWith('style.js')) {
+        return `  if (immersive) {\n    topPaddingStyleElement.textContent = isMac\n      ? topPaddingCSS\n      : \`#pake-top-dom {}\`;\n  }\n`;
       }
       if (String(args[0]).endsWith('window.rs')) {
         return `    {\n        window_builder = window_builder.title_bar_style(title_bar_style);\n    }\n`;
@@ -208,6 +212,26 @@ describe('desktop package', () => {
         String(path).endsWith('default.json'),
       );
       expect(JSON.parse(capability).permissions).toContain('core:window:allow-internal-toggle-maximize');
+    } finally {
+      readFileSync.mockImplementation(fresh);
+    }
+  });
+
+  // Pake's padding for other web apps matched the split shell and put a gap under the app bar.
+  it('keeps only the drag strip of the padding Pake adds under the macOS title bar', () => {
+    vi.clearAllMocks();
+    prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env });
+    const [, style] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('style.js'));
+    expect(style).not.toContain('topPaddingCSS');
+    expect(style).toContain(`${DRAG_STRIP_ONLY}#pake-top-dom {}\``);
+    const fresh = readFileSync.getMockImplementation();
+    readFileSync.mockImplementation((path, ...rest) =>
+      String(path).endsWith('style.js') ? style : fresh(path, ...rest),
+    );
+    try {
+      vi.clearAllMocks();
+      prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env });
+      expect(writeFileSync.mock.calls.some(([path]) => String(path).endsWith('style.js'))).toBe(false);
     } finally {
       readFileSync.mockImplementation(fresh);
     }

@@ -159,6 +159,14 @@ export const TRAFFIC_LIGHTS = `if window_config.hide_title_bar {
                 .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
         }`;
 
+/**
+ * Pake pads elements of other web apps under the macOS overlay title bar. Its generic
+ * `.flex.w-full.h-full.overflow-hidden` rule matched the shell's split `<main>` and put a
+ * 20px gap under the app bar, so the host keeps only Pake's drag strip rules.
+ */
+export const SITE_PADDING = 'topPaddingStyleElement.textContent = isMac\n      ? topPaddingCSS\n      : `';
+export const DRAG_STRIP_ONLY = 'topPaddingStyleElement.textContent = `';
+
 /** The double click on the app bar zooms the window, as on a native title bar. */
 export const ZOOM_PERMISSION = 'core:window:allow-internal-toggle-maximize';
 
@@ -240,6 +248,13 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
     .replace(new RegExp(`\\n *if window_config\\.hide_title_bar \\{\\n[^}]*\\.traffic_light_position\\([^}]*\\}`), '')
     .replace(TITLE_BAR_STYLE, `${TITLE_BAR_STYLE}\n        ${TRAFFIC_LIGHTS}`);
   writeFileSync(windowPath, windowSource);
+  const stylePath = join(sourceDir, 'inject', 'style.js');
+  const style = readFileSync(stylePath, 'utf8');
+  if (style.includes(SITE_PADDING)) {
+    writeFileSync(stylePath, style.replace(SITE_PADDING, DRAG_STRIP_ONLY));
+  } else if (!style.includes(DRAG_STRIP_ONLY)) {
+    throw new Error('Pake title bar padding changed');
+  }
   const cargoPath = join(pakeDir, 'src-tauri', 'Cargo.toml');
   const cargo = readFileSync(cargoPath, 'utf8');
   if (!/^rfd = /m.test(cargo)) {
