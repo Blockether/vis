@@ -62,6 +62,7 @@ import {
 import type { SessionArtifact } from '../lib/artifacts';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import { disclosureAnchor, isDisclosureMoving } from '../lib/clamp-motion';
+import { holdWidthWhileResizing } from '../lib/settled-width';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
 import { BrandLogo } from '../components/BrandLogo';
 import { Banner, ComposerButton, IconButton, LoadMore, Spinner, TextButton } from '../components/ui';
@@ -2261,6 +2262,14 @@ export function SessionScreen({
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
   }, [captureScrollAnchor, markLowestEnd, syncJump]);
+
+  // A window drag or a panel drag lays the prose out one time, when it stops.
+  useLayoutEffect(() => {
+    const viewport = scrollRef.current;
+    const transcript = transcriptRef.current;
+    if (!viewport || !transcript) return;
+    return holdWidthWhileResizing(transcript, viewport);
+  }, []);
 
   // Rotation is one transaction: snapshot before intermediate reflows, then wait
   // two paint frames after the final viewport measurement before restoring once.
