@@ -1346,11 +1346,11 @@
      (ps/db-agent-update! db sid {:result (:text args) :outcome (:outcome args)})
      (result :council.result args))))
 
-(defn- wait-timeout
+(defn- reply-timeout-s
   [opts default]
-  (let [t (or (:timeout_secs opts) default)]
+  (let [t (or (:reply_timeout_s opts) default)]
     (when-not (and (number? t) (<= 1 t 1800))
-      (fail! :invalid-request "timeout_secs must be 1..1800"))
+      (fail! :invalid-request "reply_timeout_s must be 1..1800"))
     t))
 
 (defn- task-spec
@@ -1472,7 +1472,7 @@
   "Publish `question` to the parent of the calling child and wait for the reply text. The wait
    continues while the parent runs, or while its turn ended to ask the person (see the
    `:awaits-person?` runtime operation). Answers nil when the parent is neither, the child is
-   cancelled or `timeout_secs` (default 600) ends. `request` adds a budget or file request to the
+   cancelled or `reply_timeout_s` (default 600) ends. `request` adds a budget or file request to the
    open question: `{:budget …}` or `{:files …}`."
   [env op question request opts]
   (let [db
@@ -1488,7 +1488,7 @@
         (when-not me (fail! :invalid-request (str op " works only in a subagent")))
 
         deadline
-        (util/deadline-ms (wait-timeout (walk/keywordize-keys opts) 600))
+        (util/deadline-ms (reply-timeout-s (walk/keywordize-keys opts) 600))
 
         parent
         (str (:parent_id me))
@@ -1532,7 +1532,7 @@
 (defn ask
   "As a subagent, ask your parent for a decision and wait for the reply text. If only the person
    can decide, your parent asks the person and you keep waiting. Returns None when the parent
-   stops or does not reply within timeout_secs (default 600). Then choose the safest option and
+   stops or does not reply within reply_timeout_s (default 600). Then choose the safest option and
    say so in your answer."
   ([env question] (ask env question {}))
   ([env question opts]
@@ -1544,7 +1544,7 @@
   "As a subagent, ask your parent for more model iterations and wait for the answer. Ask before
    your budget ends, with the number that you need and the reason. Returns a dict with granted
    (0 when the parent refuses), iteration_budget and reply. reply is None when the parent is not
-   running or does not answer within timeout_secs (default 600)."
+   running or does not answer within reply_timeout_s (default 600)."
   ([env iterations reason] (ask-budget env iterations reason {}))
   ([env iterations reason opts]
    (when-not (and (integer? iterations) (<= 1 (long iterations)))
@@ -1590,7 +1590,7 @@
 
    Returns a dict with granted, files (your grant now), missing and reply. granted is True
    only when the grant covers every write rule that you asked for. missing lists the others. reply
-   is None when the parent is not running or does not answer within timeout_secs (default 600).
+   is None when the parent is not running or does not answer within reply_timeout_s (default 600).
 
    After a grant, your Python sandbox restarts before the next block and restores your saved
    helpers."
@@ -2060,13 +2060,13 @@
        [#'extend-agent 'council.extend {:pos ["session_id" "iterations"]} [] records]
        [#'deny-agent 'council.deny {:pos ["session_id" "reason"]} [] records]
        [#'grant-files 'council.grant {:pos ["session_id" "files"]} [] records]
-       [#'ask 'council.ask {:pos ["question"] :rest :always} ["timeout_secs"]
+       [#'ask 'council.ask {:pos ["question"] :rest :always} ["reply_timeout_s"]
         "A plain string with the parent's reply, or None."]
        [#'ask-budget 'council.ask_budget {:pos ["iterations" "reason"] :rest :always}
-        ["timeout_secs"] "A dict with `granted`, `iteration_budget` and `reply`."]
+        ["reply_timeout_s"] "A dict with `granted`, `iteration_budget` and `reply`."]
        [#'report-result 'council.result {:pos ["text"] :rest :always} ["outcome"]
         "A dict with `text` and, for a verifier, `outcome`."]
-       [#'ask-files 'council.ask_files {:pos ["files" "reason"] :rest :always} ["timeout_secs"]
+       [#'ask-files 'council.ask_files {:pos ["files" "reason"] :rest :always} ["reply_timeout_s"]
         "A dict with `granted`, `files`, `missing` and `reply`."]])))
 
 (defn routing-change

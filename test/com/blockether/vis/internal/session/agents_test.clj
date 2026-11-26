@@ -426,6 +426,27 @@
     (let [r (snapshot env child)]
       (if (or (= "asking" (get r "status")) (> n 50)) r (do (Thread/sleep 100) (recur (inc n)))))))
 
+(defdescribe council-reply-timeout-test
+  (it "rejects an out-of-range reply deadline on each Council request"
+      (let [db (h/store)
+            leader (str (h/store-session! db {:channel :api}))
+            child (child! db leader {})
+            env {:db-info db :session-id child}]
+        (with-fake-runtime db (atom #{})
+          (fn [_]
+            (let [ctx (#'shell-fixture/py-ctx env)]
+              (try
+                (doseq [call ["council.ask('Which parser?', reply_timeout_s=0)"
+                              "council.ask_budget(2, 'More tests', reply_timeout_s=0)"
+                              "council.ask_files({'write': ['docs/**']}, 'For docs', reply_timeout_s=0)"]]
+                  (let [result (binding [extension/*current-environment* env]
+                                 (python-env/run-python-block ctx
+                                   (str "try:\n    await " call "\n"
+                                        "except Exception as error:\n    print(error)")))]
+                    (expect (str/includes? (or (:stdout result) "") "reply_timeout_s must be 1..1800")
+                            (pr-str result))))
+                (finally (python-env/dispose-python-context! ctx)))))))))
+
 (defdescribe council-readiness-test
   (it "wakes only on committed requests, with a cursor over each recipient's children"
       (let [db (h/store)
@@ -449,7 +470,7 @@
                          entry)))
               (with-redefs [ps/db-council-get (fn [_ id] (get @entries id))]
                 (let [watch (agents/watch-requests! leader nil)
-                      asking (future (outcome #(agents/ask (child first-child) "Which parser?" {:timeout_secs 12})))]
+                      asking (future (outcome #(agents/ask (child first-child) "Which parser?" {:reply_timeout_s 12})))]
                   (try
                     (let [entry-id (deref published 2000 nil)]
                       (expect (some? entry-id))
@@ -459,7 +480,7 @@
                       (let [first-batch (:value (wait-for watch))
                             after (:cursor first-batch)
                             next-watch (agents/watch-requests! leader after)
-                            files (future (outcome #(agents/ask-files (child second-child) {"write" ["/w/b/**"]} "For docs" {:timeout_secs 12})))]
+                            files (future (outcome #(agents/ask-files (child second-child) {"write" ["/w/b/**"]} "For docs" {:reply_timeout_s 12})))]
                         (expect (= [{:session_id first-child :entry_id entry-id}] (:requests first-batch)))
                         (try
                           (let [file-batch (:value (wait-for next-watch))
@@ -487,7 +508,7 @@
                             (outcome #(agents/operation! owner :answer {:session_id first-child :text "Use Clojure"}))
                             (expect (= "Use Clojure" (deref asking 3000 ::timeout)))
                             (let [budget-watch (agents/watch-requests! leader (:cursor both))
-                                  budget (future (outcome #(agents/ask-budget (child first-child) 2 "More tests" {:timeout_secs 12})))]
+                                  budget (future (outcome #(agents/ask-budget (child first-child) 2 "More tests" {:reply_timeout_s 12})))]
                               (try
                                 (expect (= [first-child] (mapv :session_id (get-in (wait-for budget-watch) [:value :requests]))))
                                 (expect (= 2 (get-in (agents/open-request first-child) [:budget :iterations])))
@@ -643,7 +664,7 @@
             (let [asked (future (outcome #(agents/ask-budget child-env
                                                              10
                                                              "The suite has 40 files"
-                                                             {:timeout_secs 10})))
+                                                             {:reply_timeout_s 10})))
                   r (asking-record env child)
                   changed (ns-resolve 'com.blockether.vis.internal.session.agents 'watch-requests!)]
               (expect (some? changed))
@@ -667,7 +688,7 @@
                          (deref asked 5000 ::timeout))))
             (let [asked (future
                           (outcome
-                            #(agents/ask-budget child-env 50 "More tests" {:timeout_secs 10})))]
+                            #(agents/ask-budget child-env 50 "More tests" {:reply_timeout_s 10})))]
               (asking-record env child)
               (expect (nil? (get (first (outcome
                                           #(agents/deny-agent env child "Stop at the parser.")))
@@ -679,7 +700,7 @@
             (expect (= :invalid-request (outcome #(agents/deny-agent env child "No request"))))
             ;; A person answers the question of a child for its parent (the Questions inbox).
             (let [asked (future (outcome
-                                  #(agents/ask child-env "Which parser?" {:timeout_secs 10})))]
+                                  #(agents/ask child-env "Which parser?" {:reply_timeout_s 10})))]
               (asking-record env child)
               (expect (nil? (get (first (agents/operation! env
                                                            :answer
@@ -733,7 +754,7 @@
                   (future (outcome #(agents/ask-files child-env
                                                       {"write" ["/w/b/x.txt"]}
                                                       "The fix touches b"
-                                                      {:timeout_secs 10})))
+                                                      {:reply_timeout_s 10})))
 
                   r
                   (asking-record env child)]
@@ -762,7 +783,7 @@
             (let [asked (future (outcome #(agents/ask-files child-env
                                                             {"write" ["/w/c"]}
                                                             "More"
-                                                            {:timeout_secs 10})))]
+                                                            {:reply_timeout_s 10})))]
               (asking-record env child)
               (outcome #(agents/deny-agent env child "Use a/ only"))
               (let [denied (deref asked 5000 ::timeout)]
@@ -774,7 +795,7 @@
             (let [asked (future (outcome #(agents/ask-files child-env
                                                             {"write" ["/w/a/c/y.txt" "/w/d.txt"]}
                                                             "Two files"
-                                                            {:timeout_secs 10})))]
+                                                            {:reply_timeout_s 10})))]
               (asking-record env child)
               (outcome #(agents/grant-files env child {"write" ["/w/e.txt"]}))
               (let [partial (deref asked 5000 ::timeout)]
@@ -2015,7 +2036,7 @@
         (with-fake-runtime db (atom #{leader})
           (fn [_]
             (let [asked (future (agents/ask {:db-info db :session-id child}
-                                            "Which parser?" {:timeout_secs 10}))]
+                                            "Which parser?" {:reply_timeout_s 10}))]
               (try (expect (= "asking" (get (asking-record env child) "status")))
                    (expect (= :detached (:state (task/await! leader id {:block "b" :token "wait"}))))
                    (expect (= :running (:state (task/await! leader id {:block "b" :token "observe" :observation? true}))))
@@ -2043,7 +2064,7 @@
                                               (get @entries id))]
               (let [asked (future (outcome #(agents/ask {:db-info db :session-id child}
                                                         "Which parser?"
-                                                        {:timeout_secs 20})))
+                                                        {:reply_timeout_s 20})))
                     _ (asking-record {:db-info db :session-id leader} child)
                     entry-id (some (fn [[id e]]
                                      (when (= "Which parser?" (:content e)) id))
@@ -2069,7 +2090,7 @@
             (with-redefs [ps/db-council-get (fn [_ id] (get @entries id))]
               (let [asked (future (outcome #(agents/ask {:db-info db :session-id child}
                                                         "Which parser?"
-                                                        {:timeout_secs 20})))
+                                                        {:reply_timeout_s 20})))
                     _ (asking-record env child)
                     entry-id (some (fn [[id e]] (when (= "Which parser?" (:content e)) id))
                                    @entries)]
@@ -2685,7 +2706,7 @@
           (with-redefs [ps/db-council-get (fn [_ id]
                                             (get @entries id))]
             (let [asked (future (outcome
-                                  #(agents/ask child-env "Keep the old API?" {:timeout_secs 20})))]
+                                  #(agents/ask child-env "Keep the old API?" {:reply_timeout_s 20})))]
               (asking-record env child)
               (expect (= [{:session_id child :entry_id (:entry_id (agents/open-request child))}]
                          (agents/open-questions db leader))
@@ -2701,7 +2722,7 @@
               (reset! live #{leader})
               (agents/operation! env :answer {:session_id child :text "Keep it."})
               (expect (= "Keep it." (deref asked 5000 ::timeout))))
-            (let [asked (future (outcome #(agents/ask child-env "Again?" {:timeout_secs 20})))]
+            (let [asked (future (outcome #(agents/ask child-env "Again?" {:reply_timeout_s 20})))]
               (asking-record env child)
               ;; The person cancels the next leader turn instead of an answer.
               (reset! live #{})
@@ -2710,7 +2731,7 @@
                       "A parent that neither runs nor waits for the person ends the wait"))
             (reset! live #{leader})
             (reset! suspended? true)
-            (let [asked (future (outcome #(agents/ask child-env "Last?" {:timeout_secs 20})))]
+            (let [asked (future (outcome #(agents/ask child-env "Last?" {:reply_timeout_s 20})))]
               (asking-record env child)
               (reset! live #{})
               (ps/db-agent-update! db child {:status "cancelled"})
@@ -2945,7 +2966,7 @@
           (expect (map? (outcome #(agents/ask-budget {:db-info db :session-id big}
                                                      5000
                                                      "Large"
-                                                     {:timeout_secs 1})))
+                                                     {:reply_timeout_s 1})))
                   "A child can ask for more than 600"))))))
 
 (defdescribe

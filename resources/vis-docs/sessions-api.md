@@ -987,8 +987,9 @@ receipts. The page reads always return whole receipts.
 ## Track Tasks
 
 List the session's Tasks to find an operation that your program needs to monitor or stop. A list
-contains running Tasks and finished Tasks whose results the agent has not acknowledged. After
-acknowledgement, a request for that Task returns 404.
+contains running Tasks and finished Tasks whose results the agent has not acknowledged. An
+acknowledged Task leaves the list, but you can still read its final state by ID. The session
+keeps up to 128 acknowledged Tasks. After a receipt is removed, a read by ID returns 404.
 
 <div data-variant="python">
 

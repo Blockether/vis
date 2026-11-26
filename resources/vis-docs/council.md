@@ -172,8 +172,8 @@ message is not an answer. New pings wait while a required reply is open.
 
 A session that your session started can ask a question that only you can decide. Your session
 asks you in its answer, and its turn ends as suspended. After you answer, it replies in its next
-turn. The asking session waits until its `timeout_secs` ends. A one-shot command-line run has
-nobody to ask, so it answers each question itself.
+turn. `reply_timeout_s` sets how many seconds the asking session waits for a reply. A one-shot
+command-line run has nobody to ask, so it answers each question itself.
 
 ### Check for an answer
 
