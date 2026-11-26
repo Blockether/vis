@@ -324,6 +324,37 @@ describe('a finished turn is skipped at its own measured size', () => {
     expect(box.style.contentVisibility).toBe('');
   });
 
+  it('holds the skip while only its contents report the skip', () => {
+    const { box } = mount();
+    layout(box, 390, 4321);
+    flushFrames();
+    waitOut();
+
+    // Chromium reports the armed box itself as visible and its contents as skipped.
+    const inner = box.firstElementChild as HTMLElement;
+    inner.checkVisibility = (options?: CheckVisibilityOptions) => !options?.contentVisibilityAuto;
+    layout(box, 844, 4321);
+    resized(box);
+    flushFrames();
+
+    expect(box.style.contentVisibility).toBe('auto');
+  });
+
+  it('holds the skip while the engine reports it skipped', () => {
+    const { box } = mount();
+    layout(box, 390, 4321);
+    flushFrames();
+    waitOut();
+
+    const skipped = Object.assign(new Event('contentvisibilityautostatechange'), { skipped: true });
+    box.dispatchEvent(skipped);
+    layout(box, 844, 4321);
+    resized(box);
+    flushFrames();
+
+    expect(box.style.contentVisibility).toBe('auto');
+  });
+
   it('drops the skip when content lands under it', async () => {
     const { box } = mount();
     layout(box, 390, 4321);

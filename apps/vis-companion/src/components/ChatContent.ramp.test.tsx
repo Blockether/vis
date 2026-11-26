@@ -66,11 +66,11 @@ function rampFrames(
     let frames = 0;
     let previous = -1;
     while (queue.length > 0 && frames < 2000) {
-      const tick = queue.shift();
-      if (!tick) break;
+      // One frame runs every callback requested before it, as a browser does.
+      const ticks = queue.splice(0);
       clock += FRAME_MS;
       act(() => {
-        tick(clock);
+        for (const tick of ticks) tick(clock);
       });
       frames += 1;
       // The backfill is over once a whole frame mounted nothing new.

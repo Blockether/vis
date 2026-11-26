@@ -2009,17 +2009,50 @@ const pendingBoxes = new Set<Element>();
 let boxFrame: number | null = null;
 let boxObserver: ResizeObserver | null = null;
 
+/** The last skip state that the engine reported for each box. */
+const skipStates = new WeakMap<Element, boolean>();
+let skipStatesWatched = false;
+
+function watchSkipStates() {
+  if (skipStatesWatched || typeof document === 'undefined') return;
+  skipStatesWatched = true;
+  // The event does not bubble. A capture listener on the document still gets it.
+  document.addEventListener(
+    'contentvisibilityautostatechange',
+    (event) => {
+      if (event.target instanceof Element)
+        skipStates.set(event.target, (event as Event & { skipped: boolean }).skipped);
+    },
+    true,
+  );
+}
+
 /**
- * True while WebKit is SKIPPING this subtree for `content-visibility:auto`.
+ * True while the engine is SKIPPING this subtree for `content-visibility:auto`.
  *
  * Nothing inside a skipped box is laid out, so every metric it reports is the
  * placeholder that was written for it — believing one is how a measurement
  * decays back into a guess.
  */
 function isPaintSkipped(box: Element): boolean {
-  return typeof box.checkVisibility === 'function'
-    ? !box.checkVisibility({ contentVisibilityAuto: true })
-    : false;
+  // The engine reports a change only, and not again when the same box is armed again. So
+  // the last report stays, and it is true only while the box is armed.
+  const armed = box instanceof HTMLElement && box.style.contentVisibility === 'auto';
+  const known = armed ? skipStates.get(box) : undefined;
+  if (known === true) return true;
+  if (typeof box.checkVisibility === 'function' && !box.checkVisibility({ contentVisibilityAuto: true }))
+    return true;
+  if (known === false || !armed) return false;
+  // The box that holds `content-visibility:auto` stays visible itself; only its contents
+  // are skipped. Chromium answers so. This read lays out a skipped subtree, so the
+  // engine's own event answers first.
+  const inner = box.firstElementChild;
+  return (
+    inner !== null &&
+    typeof inner.checkVisibility === 'function' &&
+    inner.checkVisibility() &&
+    !inner.checkVisibility({ contentVisibilityAuto: true })
+  );
 }
 
 function flushBoxes() {
@@ -3723,7 +3756,7 @@ export const IterationTrace = memo(function IterationTrace({
             liveViews={liveViews}
             strayViews={index === shown.length - 1 ? strayViews : NO_LIVE_VIEWS}
             appViews={appViews}
-            settled={live && index < shown.length - 1}
+            settled={!live || index < shown.length - 1}
           />
         ))}
       </div>
@@ -4367,15 +4400,27 @@ function inDocumentOrder(boxes: Element[]): Element[] {
 
 function settle(hood: Neighbourhood): void {
   const order = inDocumentOrder([...hood.seen.keys()]);
+  // Neighbours are siblings: the steps of one turn, or the turns. Else the turn above the
+  // one on screen had the last step of that turn as its neighbour, and stayed skipped.
+  const siblings = new Map<Element | null, Element[]>();
+  for (const box of order) {
+    let owner = box.parentElement;
+    while (owner && !hood.seen.has(owner)) owner = owner.parentElement;
+    const group = siblings.get(owner);
+    if (group) group.push(box);
+    else siblings.set(owner, [box]);
+  }
   const warm = new Set<Element>();
-  order.forEach((box, at) => {
-    if (!hood.seen.get(box)) return;
-    const before = order[at - 1];
-    const after = order[at + 1];
-    warm.add(box);
-    if (before) warm.add(before);
-    if (after) warm.add(after);
-  });
+  for (const group of siblings.values()) {
+    group.forEach((box, at) => {
+      if (!hood.seen.get(box)) return;
+      const before = group[at - 1];
+      const after = group[at + 1];
+      warm.add(box);
+      if (before) warm.add(before);
+      if (after) warm.add(after);
+    });
+  }
   for (const box of order) {
     const near = warm.has(box);
     if (hood.told.get(box) === near) continue;
@@ -4438,6 +4483,7 @@ function useMeasuredPaintSkip(live: boolean) {
   useLayoutEffect(() => {
     const box = ref.current;
     if (!box) return;
+    watchSkipStates();
 
     type Size = { width: number; height: number };
     /** The size the skip is armed with, or null while the turn is still open. */
