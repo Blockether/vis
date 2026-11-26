@@ -2256,12 +2256,59 @@
 
 (defn child-traffic?
   "Whether `message` is a Council request that an agent of the session sent, such as a
-   child's answer or question. The leader transcript hides it."
+   child's answer or question. The leader transcript shows it as one line: see
+   [[child-traffic-notes]]."
   [message child-ids]
   (boolean (and (seq child-ids)
                 (= :user (:role message))
                 (= :council (:request-kind message))
                 (contains? child-ids (get-in message [:council "author_session_id"])))))
+
+(def ^:private ^:const note-width "Characters of the message that a child traffic note keeps." 120)
+
+(defonce ^:private ^java.util.IdentityHashMap note-memo (java.util.IdentityHashMap. 64))
+
+(defn- traffic-note
+  [message text]
+  (locking note-memo
+    (let [[cached note] (.get ^java.util.IdentityHashMap note-memo message)]
+      (if (and note (= cached text))
+        note
+        (let [note (assoc message :text text)]
+          (when (> (.size ^java.util.IdentityHashMap note-memo) 512)
+            (.clear ^java.util.IdentityHashMap note-memo))
+          (.put ^java.util.IdentityHashMap note-memo message [text note])
+          note)))))
+
+(defn child-traffic-notes
+  "`messages` with each Council request from an agent of `sid` ([[child-traffic?]]) cut to one
+   line that names the agent, such as `IMPLEMENT | Fix parser: Fix round in progress.` The dock
+   and the team block show the full message; the line tells why the leader turn started. An
+   unchanged line keeps the message identity, so height caches still hit."
+  [sid messages]
+  (let [child-ids (child-session-ids sid messages)]
+    (if-not (some #(child-traffic? % child-ids) messages)
+      messages
+      (let [names (into {}
+                        (map (fn [[n agent]]
+                               [(get agent "session_id")
+                                (str (some-> (role-word agent)
+                                             (str " | "))
+                                     (agent-label n agent))]))
+                        (numbered (merge-agents (merge-agents [] (mapcat :session-agents messages))
+                                                (:agents (summary sid)))))
+            note
+            (fn [m]
+              (let [line (one-line (first (str/split-lines (str/trim (str (:text m))))))
+                    line
+                    (if (> (count line) note-width) (str (subs line 0 (dec note-width)) "…") line)]
+
+                (traffic-note m
+                              (str (get names (get-in m [:council "author_session_id"]) "Subagent")
+                                   ": "
+                                   line))))]
+
+        (mapv #(if (child-traffic? % child-ids) (note %) %) messages)))))
 
 (defn- key-type [key] (when (instance? KeyStroke key) (.getKeyType ^KeyStroke key)))
 

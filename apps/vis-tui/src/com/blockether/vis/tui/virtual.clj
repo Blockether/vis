@@ -1447,7 +1447,7 @@
   "Sticky real height, else the memoized estimate, for each message from index
    `from`, appended to the first `from` items of `prev`. Returns
    `{:est heights :est-off cumulative-offsets}`."
-  [messages bubble-w settings detail-expansions session-id hidden prev from]
+  [messages bubble-w settings detail-expansions session-id prev from]
   (let [from
         (long from)
 
@@ -1469,16 +1469,14 @@
                   (nth messages i)
 
                   h
-                  (if (contains? hidden i)
-                    0
-                    (or (height-cache-get m bubble-w settings detail-expansions session-id)
-                        (estimated-height-cached messages
-                                                 settings
-                                                 bubble-w
-                                                 i
-                                                 m
-                                                 detail-expansions
-                                                 session-id)))]
+                  (or (height-cache-get m bubble-w settings detail-expansions session-id)
+                      (estimated-height-cached messages
+                                               settings
+                                               bubble-w
+                                               i
+                                               m
+                                               detail-expansions
+                                               session-id))]
 
               (recur (unchecked-inc i) (conj! acc h)))
             (persistent! acc)))
@@ -1502,7 +1500,7 @@
   "`pass-1-heights*`, reusing the previous frame's heights for the leading
    messages that did not change, while the context and every sticky height
    stay the same."
-  [messages bubble-w settings detail-expansions session-id hidden]
+  [messages bubble-w settings detail-expansions session-id]
   (let [gen
         (.get ^AtomicLong height-cache-gen)
 
@@ -1515,8 +1513,7 @@
              (== (long bubble-w) (long (:bubble-w memo)))
              (identical? settings (:settings memo))
              (identical? detail-expansions (:detail-expansions memo))
-             (= session-id (:session-id memo))
-             (= hidden (:hidden memo)))
+             (= session-id (:session-id memo)))
 
         from
         (if reusable? (shared-prefix messages (:messages memo)) 0)]
@@ -1528,7 +1525,6 @@
                                     settings
                                     detail-expansions
                                     session-id
-                                    hidden
                                     (when reusable? (:result memo))
                                     from)]
         ;; `gen` was read first: a height pinned meanwhile makes the next frame miss.
@@ -1538,7 +1534,6 @@
                   :settings settings
                   :detail-expansions detail-expansions
                   :session-id session-id
-                  :hidden hidden
                   :messages messages
                   :result result})
         result))))
@@ -1613,26 +1608,19 @@
         (squash-cross-message-errors-cached messages)
 
         ;; The turn that started a team carries its team card from the cached snapshot.
+        ;; Council traffic between the leader and its own agents takes one line: the dock and the
+        ;; team block show the agents, and the line tells why the turn started.
         messages
-        (agent-team/decorate-messages
-          messages
+        (agent-team/child-traffic-notes
           session-id
-          running-turn-id
-          #(render/detail-expanded? detail-expansions session-id % false))
+          (agent-team/decorate-messages
+            messages
+            session-id
+            running-turn-id
+            #(render/detail-expanded? detail-expansions session-id % false)))
 
         n
         (long (count messages))
-
-        ;; Council traffic between the leader and its own agents takes no rows; the dock and
-        ;; the team block show the agents instead.
-        hidden
-        (let [child-ids (agent-team/child-session-ids session-id messages)]
-          (if (empty? child-ids)
-            #{}
-            (into #{}
-                  (keep-indexed (fn [i m]
-                                  (when (agent-team/child-traffic? m child-ids) i)))
-                  messages)))
 
         ;; Pass 1 ── sticky-real height if we've measured this
         ;; message before, otherwise the cheap estimate. Identity-
@@ -1641,7 +1629,7 @@
         ;; - no more `total-h` jitter on scroll, no more
         ;; click-to-position landing in the wrong row.
         {:keys [est est-off]}
-        (pass-1-heights messages bubble-w settings detail-expansions session-id hidden)
+        (pass-1-heights messages bubble-w settings detail-expansions session-id)
 
         est-tot
         (long (peek est-off))
@@ -1774,10 +1762,7 @@
             {:idx i :projected pm :height real-h}))
 
         project-idx!
-        (fn [^long i]
-          (if (contains? hidden i)
-            {:idx i :projected nil :height 0 :hidden? true}
-            (project-idx* i)))
+        project-idx*
 
         result
         (if (nil? scroll)
@@ -1837,12 +1822,11 @@
 
                 visible-set
                 (into []
-                      (comp (remove :hidden?)
-                            (map (fn [{:keys [^long idx ^long height projected]}]
-                                   {:idx idx
-                                    :height height
-                                    :projected projected
-                                    :top (- (long (nth offsets' idx)) eff)})))
+                      (map (fn [{:keys [^long idx ^long height projected]}]
+                             {:idx idx
+                              :height height
+                              :projected projected
+                              :top (- (long (nth offsets' idx)) eff)}))
                       tail)]
 
             {:total-h total-h'
@@ -2007,12 +1991,11 @@
 
                 visible-set
                 (into []
-                      (comp (remove :hidden?)
-                            (map (fn [{:keys [^long idx ^long height projected]}]
-                                   {:idx idx
-                                    :height height
-                                    :projected projected
-                                    :top (- (long (nth offsets'' idx)) eff-3)})))
+                      (map (fn [{:keys [^long idx ^long height projected]}]
+                             {:idx idx
+                              :height height
+                              :projected projected
+                              :top (- (long (nth offsets'' idx)) eff-3)}))
                       projected-all)]
 
             {:total-h total-h''

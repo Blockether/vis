@@ -271,7 +271,8 @@
                   (expect (= [] visible)))))
   (describe
     "subagent traffic"
-    (it "gives a Council request from an own subagent no rows, in both scroll modes"
+    ;; User report 2026-11-26: a hidden request left a leader turn that answered nothing.
+    (it "shows an own subagent's Council request as one named line in both scroll modes"
         (with-redefs [agent-team/summary (constantly {:agents [{"session_id" "child"
                                                                 "team_id" "turn-9"
                                                                 "task" "t"
@@ -286,9 +287,11 @@
             (doseq [scroll [nil 0]]
               (let [{:keys [heights visible]}
                     (virtual/layout msgs bubble-w settings scroll 200 {} {:session-id "leader"})]
-                (expect (zero? (long (nth heights 1))))
+                (expect (pos? (long (nth heights 1))))
                 (expect (pos? (long (nth heights 2))) "A peer's Council message stays")
-                (expect (not-any? #(= 1 (:idx %)) visible))
+                (expect (str/includes? (str (:text (:projected (some #(when (= 1 (:idx %)) %)
+                                                                     visible))))
+                                       "#1: CHILD ANSWER"))
                 (expect (some #(= 3 (:idx %)) visible))))))))
   (describe "single message smaller than viewport"
             (it "is fully visible at top, eff-scroll = 0"
