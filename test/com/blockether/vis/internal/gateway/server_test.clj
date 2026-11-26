@@ -5764,6 +5764,90 @@
       (expect (nil? (carried (answer {"limit" "20" "archived" "only"}))))
       (expect (nil? (carried (answer {"limit" "20" "after" "2:-4000:a"})))))))
 
+;; Regression, user report in this Vis session: a project painted its bands with a
+;; `/v1/session-groups` read beside each read of its rows. The project's head carries them.
+(defdescribe
+  project-head-carries-its-group-page
+  (it
+    "a grouped project head carries its page of groups in the asked view and window"
+    (let [seen
+          (atom nil)
+
+          groups
+          (atom [{"id" "g-1" "project_id" "p-1" "name" "Old" "color" "blue" "session_count" 2}])
+
+          pid
+          #uuid "00000000-0000-0000-0000-000000000001"
+
+          answer
+          (fn [query]
+            (with-redefs [state/list-sessions-page
+                          (fn [_ opts]
+                            (reset! seen opts)
+                            {:sessions [] :awaiting [] :grouped [] :total 0 :limit 20 :next-cursor nil :has-more false})
+
+                          state/projects-overview
+                          (constantly {:projects []})
+
+                          state/get-project-by-root
+                          (fn [_ root]
+                            (when (= "/known" root) {"id" (str pid)}))
+
+                          state/list-session-groups-page
+                          (fn [asked opts]
+                            (expect (= pid asked))
+                            {:groups @groups :total 3 :session-total 2 :limit (:limit opts) :offset (or (:offset opts) 0)
+                             :has-more true :asked opts})]
+
+              (#'sessions-api/list-sessions-handler {:query-params query})))
+
+          wall
+          (fn [response]
+            (get (wire/parse-json (:body response)) "session_group_page"))
+
+          archive
+          {"root" "/known" "grouped" "aside" "archived" "only" "group_limit" "15" "group_offset" "15"}
+
+          head
+          (answer archive)]
+
+      (expect (= {"project_id" (str pid) "groups" @groups "total" 3 "session_total" 2 "limit" 15 "offset" 15
+                  "has_more" true}
+                 (wall head)))
+      ;; the shelves follow the same page of bands
+      (expect (= ["g-1"] (:group-ids @seen)))
+      (swap! groups assoc-in [0 "name"] "New")
+      ;; a renamed band is a new answer, never a 304 of the old one
+      (expect (not= (get-in head [:headers "ETag"]) (get-in (answer archive) [:headers "ETag"])))
+      ;; the live wall is never paged
+      (expect (nil? (get (wall (answer {"root" "/known" "grouped" "aside"})) "limit")))
+      ;; a root without a project has an empty page, not an absent one
+      (expect (= [] (get (wall (answer {"root" "/unknown" "grouped" "aside"})) "groups")))
+      ;; no wall on a tail, on an ungrouped read or on the fleet
+      (expect (nil? (wall (answer (assoc archive "after" "2:-4000:a")))))
+      (expect (nil? (wall (answer {"root" "/known"}))))
+      (expect (nil? (wall (answer {"grouped" "aside"})))))))
+
+;; Regression, user report in this Vis session: a search scope picker read the groups of
+;; each project with its own request. One project list carries them all.
+(defdescribe
+  project-list-carries-every-group-on-request
+  (it
+    "include=groups adds the groups of the listed projects, archived ones too"
+    (let [answer
+          (fn [query]
+            (with-redefs [state/list-projects
+                          (constantly [{"id" "p-1" "name" "vis" "created_at" 1}])
+
+                          state/all-session-groups
+                          (constantly [{"id" "g-1" "project_id" "p-1" "name" "Old" "archived_at" 5}
+                                       {"id" "g-2" "project_id" "p-other" "name" "Other" "archived_at" nil}])]
+
+              (wire/parse-json (:body (#'projects-api/list-projects-handler {:query-params query})))))]
+
+      (expect (= ["g-1"] (mapv #(get % "id") (get (answer {"include" "groups"}) "session_groups"))))
+      (expect (not (contains? (answer {}) "session_groups"))))))
+
 ;; Regression, user report (paraphrased: "the list keeps jumping while I read it"): the
 ;; navigator key used to LEAD with a band, so a run parked on a human was lifted into
 ;; the first window - moving every row under the reader and pushing another session out
@@ -5959,8 +6043,9 @@
                                                   (when (= "/repo" root) {"id" (str pid)}))
                       state/list-session-groups-page (fn [project opts]
                                                        (reset! asked [project opts])
-                                                       {:groups [{"id" "g3"} {"id" "g4"}]
+                                                       {:groups [{"id" "g3" "name" "c"} {"id" "g4" "name" "d"}]
                                                         :total 9
+                                                        :session-total 0
                                                         :limit (:limit opts)
                                                         :offset (:offset opts)
                                                         :has-more true})]

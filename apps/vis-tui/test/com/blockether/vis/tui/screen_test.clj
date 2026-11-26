@@ -1478,9 +1478,9 @@
                                                        (swap! requests conj [query opts])
                                                        {:sessions [{"id" "a" "title" "Kept"}]
                                                         :next-cursor "next"})
-                       #'vis/gateway-list-projects (fn [_]
-                                                     (swap! requests conj :projects)
-                                                     [{"id" "p1" "name" "Project"}])
+                        #'vis/gateway-project-search-catalog (fn []
+                                                                (swap! requests conj :projects)
+                                                                {:projects [{"id" "p1" "name" "Project"}]})
                        #'vis/gateway-list-session-groups (fn [_]
                                                            (swap! requests conj :groups)
                                                            [{"id" "g1" "name" "Group"}])}
@@ -1523,8 +1523,7 @@
                                                          (swap! reads inc)
                                                          @release
                                                          {:sessions [{"id" "a"}] :next-cursor nil})
-                         #'vis/gateway-list-projects (fn [_]
-                                                       [])}
+                         #'vis/gateway-project-search-catalog (constantly {:projects []})}
           (fn []
             (expect (true? (#'screen/warm-picker-cache! "a")))
             (expect (false? (#'screen/warm-picker-cache! "a")))
@@ -1638,13 +1637,27 @@
             (expect
               (= {:rank 1 :kind :request :request-snippet "…needle…" :reply-snippet nil :hits []}
                  (get (:matches answer) "far"))))))))
-  ;; Regression, user report (paraphrased: the project picker offered no projects).
-  ;; There is no project-less scope, and the gateway refuses a group read without a
-  ;; project, so one such read failed the whole catalog.
-  (it "reads the search catalog with one group read per project"
+  (it "loads archived and empty groups with the projects, without extra reads"
+      (let [project {"id" "p1" "name" "Workbench"}
+            group {"id" "g1" "name" "Planning" "project_id" "p1" "archived_at" "today"}
+            reads (atom [])]
+        (with-redefs-fn {#'vis/send-json!
+                         (fn [_ path]
+                           (swap! reads conj path)
+                           (cond
+                             (= path "/v1/projects?archived=include&include=groups")
+                             {"projects" [project] "session_groups" [group]}
+                             (str/starts-with? path "/v1/projects?") {"projects" [project]}
+                             :else {"groups" []}))}
+          (fn []
+            (expect (= {:projects [project] :groups {"g1" group}}
+                       (#'screen/fleet-search-catalog)))
+            (expect (= ["/v1/projects?archived=include&include=groups"] @reads))))))
+  ;; The gateway requires a project for a legacy group read.
+  (it "reads groups by project when an older gateway only returns projects"
       (let [reads (atom [])]
-        (with-redefs [vis/gateway-list-projects (fn [_]
-                                                  [{"id" "p1" "name" "Workbench"}])
+        (with-redefs [vis/gateway-project-search-catalog
+                      (constantly {:projects [{"id" "p1" "name" "Workbench"}]})
                       vis/gateway-list-session-groups
                       (fn [opts]
                         (swap! reads conj opts)

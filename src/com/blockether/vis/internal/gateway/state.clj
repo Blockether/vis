@@ -10489,6 +10489,12 @@
   []
   (mapv session-group-wire (lp/live-session-groups)))
 
+(defn all-session-groups
+  "Wire groups of every project, archived ones included, in one read: the catalog a
+   search scope picker names groups from."
+  []
+  (mapv session-group-wire (lp/session-groups :all {:archived :include})))
+
 (defn list-session-groups-page
   "One WINDOW of a project's groups, with the facts a pager prints:
    `{:groups … :total … :session-total … :limit … :offset … :has-more …}`.

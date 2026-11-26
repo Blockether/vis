@@ -502,7 +502,7 @@
             answers
             (atom [{:status 200
                     :headers {"etag" "W/\"a\""}
-                    :body "{\"sessions\":[{\"id\":\"s1\"}],\"total\":1}"}
+                    :body "{\"sessions\":[{\"id\":\"s1\"}],\"total\":1,\"session_group_page\":{\"groups\":[{\"id\":\"g1\"}],\"total\":1,\"session_total\":2,\"has_more\":false}}"}
                    {:status 304 :headers {"etag" "W/\"a\""} :body ""}])]
 
         (with-redefs-fn {#'client/etag-cache* (atom {})
@@ -515,11 +515,25 @@
                                                [path (get-in opts [:headers "If-None-Match"])])
                                              (let [[a] (swap-vals! answers #(vec (rest %)))]
                                                (first a)))}
-          #(let [first-page (client/list-sessions-page {:limit 5}) second-page
-                 (client/list-sessions-page {:limit 5})] (expect (= [{"id" "s1"}]
-                                                                    (:sessions first-page)))
+          #(let [opts {:limit 5 :project-id "p1" :grouped :aside}
+                 first-page (client/list-sessions-page opts)
+                 second-page (client/list-sessions-page opts)]
+             (expect (= [{"id" "s1"}] (:sessions first-page)))
+             (expect (= {:groups [{"id" "g1"}] :total 1 :session-total 2 :has-more false}
+                        (:session-group-page second-page)))
              (expect (= first-page second-page))))
         (expect (= [nil "W/\"a\""] (mapv second @sent))))))
+
+(defdescribe session-group-archive-read
+             (it "finds archived groups when it reads a project's groups"
+                 (with-redefs-fn
+                   {#'client/send-json! (fn [_ path]
+                                         {"groups" (when (str/includes? path "archived=include")
+                                                     [{"id" "g1" "archived_at" "today"}])})}
+                   #(expect (= ["g1"]
+                               (mapv (fn [group] (get group "id"))
+                                     (client/list-session-groups {:project-id "p1"
+                                                                  :archived :include})))))))
 
 (defdescribe
   session-export-test

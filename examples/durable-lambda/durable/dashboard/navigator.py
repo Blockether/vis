@@ -102,6 +102,11 @@ def joined(request: Request, raw: bytes, ask: Callable[[str, str], bytes | None]
     seen = active + archived if view == "include" else active if view == "exclude" else archived
     if path == SEARCH:
         return json.dumps(found(fields, answer, seen, ask)).encode()
+    # The groups of a page of one project get the counts of the other shards. The groups of
+    # each project in a list of all projects do not: the client then reads them for each project.
+    answer.pop("session_groups", None)
+    if isinstance(answer.get("session_group_page"), dict) and "root" in fields:
+        counted(fields, answer["session_group_page"], active + archived)
     return json.dumps(listed(fields, answer, active, seen, ask)).encode()
 
 

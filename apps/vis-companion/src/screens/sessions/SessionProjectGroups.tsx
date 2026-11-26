@@ -803,10 +803,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   // third page of them names the same shelves tomorrow (`state/list-session-groups-page`).
   // The live wall is never paged: every live group is read, with every session filed under it.
   const [groupPage, setGroupPage] = useState(1);
-  // ONE WINDOW OVER THE ARCHIVED WALL, ASKED FOR BY BOTH READS. The bands on this page and
-  // the sessions filed under them are two halves of one answer, so the session read carries
-  // the same window: `grouped` then holds those bands' rows and nothing from a shelf that
-  // is off the page (`listProjectPage`). The live wall has no window at all.
+  // One window cuts both the group names and their rows. The live wall is not paged.
   const bandWindow = useMemo<BandWindow | undefined>(
     () =>
       groupArchived === 'only'
@@ -967,6 +964,19 @@ export const ProjectGroup = memo(function ProjectGroup({
   // for a `revision` that no page read answered yet: the read after a sent message.
   // The reader then goes back to the new order. Hiding the list reads nothing, and a
   // hidden read warms no transcript and reads no page ahead.
+  // Only a head in the wall's own view can answer it. Remember an absent page too:
+  // an older gateway needs a separate wall read, which can then run in parallel.
+  const readGroupsAside = groupArchived !== archived || start > 0;
+  const [answeredWall, setAnsweredWall] = useState<{
+    page: SessionGroupPage | null;
+    view: ArchiveView;
+    offset: number;
+    read: number;
+  } | null>(null);
+  const answerWall = useCallback((page: SessionGroupPage | null, view: ArchiveView, offset: number, read: number) => {
+    setAnsweredWall((held) => held?.page === page && held.view === view && held.offset === offset && held.read === read
+      ? held : { page, view, offset, read });
+  }, []);
   const pageRevision = useRef(revision);
   useEffect(() => {
     if (!isShowing || searching) return;
@@ -1035,7 +1045,10 @@ export const ProjectGroup = memo(function ProjectGroup({
           view: archived,
           read: groupsRead,
         }));
-        noteRefresh('page', groupsRead);
+        if (!readGroupsAside && !after) {
+          answerWall(answer.groupPage ?? null, archived, bandOffset, groupsRead);
+          noteRefresh('page', groupsRead);
+        }
         // Behind the answer, never beside it: the reader's own page is never waiting on
         // a read taken for a page they have not asked for. A project that has ended
         // (`nextCursor === ''`) is not read past.
@@ -1069,11 +1082,10 @@ export const ProjectGroup = memo(function ProjectGroup({
     };
   }, [
     conn, root, start, pageSize, isVisible, isShowing, searching, archived, bandWindow,
-    bandOffset, getClient, groupsRead, revision, pageCheck, noteRefresh,
+    bandOffset, getClient, groupsRead, revision, pageCheck, noteRefresh, readGroupsAside, answerWall,
   ]);
   // Tail pages omit grouped rows. Read them separately there and when archive views differ.
   // The limit applies to loose rows; grouped rows cover the complete band window.
-  const readGroupsAside = groupArchived !== archived || start > 0;
   const [groupedPage, setGroupedPage] = useState<{
     view: ArchiveView;
     offset: number;
@@ -1098,6 +1110,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           rows: keepUnchanged(held?.rows ?? NO_ROWS, answer.grouped),
           read: groupsRead,
         }));
+        answerWall(answer.groupPage ?? null, groupArchived, bandOffset, groupsRead);
         noteRefresh('page', groupsRead);
       })
       .catch(() => {
@@ -1109,7 +1122,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     };
   }, [
     conn, root, isVisible, isShowing, searching, groupArchived, readGroupsAside, bandWindow,
-    bandOffset, getClient, groupsRead, revision, pageCheck, noteRefresh,
+    bandOffset, getClient, groupsRead, revision, pageCheck, noteRefresh, answerWall,
   ]);
   // The count under the header and the pages beside it are ONE number — the
   // project's own total, as the gateway counted it. Under a query the complete
@@ -1312,23 +1325,23 @@ export const ProjectGroup = memo(function ProjectGroup({
   // exists here is a band every client of the machine paints. Read as soon as the
   // project is on screen, so a project that opens paints its bands already named.
   // The gateway owns the groups and their archive stamps, not this device.
-  // Revalidate on fleet changes and on every accepted snapshot of this machine, including
-  // one whose head window did not move: that read is this wall's only safety net.
-  // A wall comes back on screen without a read of its own: the list reads every machine
-  // when it shows again, and that read moves `reads`. Only a new question reads the wall.
-  // The head of that fleet read carries the live wall of every project
-  // (`headSessionGroups`), so the live view takes it from there. The wall is read here
-  // for the archive, for a head without walls, and after a local edit until an answer
-  // that follows the edit lands: a head that left before the edit holds the old wall.
+  // A matching project head carries the wall with its rows. The fleet head can
+  // update live group names without reading the project. Older gateways may need
+  // a separate read. Showing the list again does not ask for that read by itself.
+  const matching = answeredWall?.page && answeredWall.view === groupArchived &&
+    answeredWall.offset === bandOffset && answeredWall.read === groupsRead ? answeredWall : null;
+  const needsLegacyWall = answeredWall?.page === null;
   const wallAsked = useRef('');
   const wallRead = useRef(0);
+  const wallAnswer = useRef<typeof matching>(null);
   const wasVisible = useRef(isVisible);
   useEffect(() => {
     const isBack = isVisible && !wasVisible.current;
     wasVisible.current = isVisible;
-    if (!isVisible || (isBack && wallAsked.current !== '')) return;
+    if (!isVisible) return;
     const question = `${machineKey(conn)}\u0000${root}\u0000${groupArchived}\u0000${bandOffset}\u0000${groupsRead}\u0000${reads}`;
-    if (question === wallAsked.current) return;
+    const newPage = matching?.page && matching !== wallAnswer.current ? matching : null;
+    if (!newPage && (question === wallAsked.current || (isBack && wallAsked.current !== ''))) return;
     const api = getClient(conn);
     const take = (answer: SessionGroupPage | null) => {
       wallAsked.current = question;
@@ -1339,14 +1352,22 @@ export const ProjectGroup = memo(function ProjectGroup({
       setGroupsReady({ view: groupArchived, offset: bandOffset, read: groupsRead });
       noteRefresh('groups', groupsRead);
     };
+    if (newPage) {
+      wallAnswer.current = newPage;
+      take(newPage.page);
+      return;
+    }
     const carried =
       groupArchived === 'exclude' && !bandWindow && wallRead.current === groupsRead
         ? api.headSessionGroups(root)
         : null;
-    if (carried) {
-      take(carried);
+    if (carried || matching?.page) {
+      take(carried ?? matching?.page ?? null);
       return;
     }
+    // Wait for the matching head before falling back. If no project page is
+    // needed (a folded project or search), only the catalog can supply its wall.
+    if (isShowing && !searching && !needsLegacyWall) return;
     const control = new AbortController();
     let live = true;
     void (async () => {
@@ -1365,7 +1386,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     };
   }, [
     conn, root, isVisible, groupArchived, bandWindow, bandOffset, getClient, groupsRead, reads,
-    noteRefresh,
+    noteRefresh, isShowing, searching, matching, needsLegacyWall,
   ]);
   useEffect(() => {
     if (

@@ -47,20 +47,33 @@
       (update (http/json-response payload) :headers merge base))))
 
 (defn- list-projects-handler
-  "GET /v1/projects[?owner=…&archived=exclude|include|only] — the owner's
-   projects (projects are CROSS-CHANNEL), each with a live session_count."
+  "GET /v1/projects[?owner=…&archived=exclude|include|only&include=groups] — the owner's
+   projects (projects are CROSS-CHANNEL), each with a live session_count.
+
+   `include=groups` adds `session_groups`: every group of the listed projects,
+   archived ones included, from one read. A search scope picker names each project's
+   groups from it instead of one `/v1/session-groups` read for each project."
   [request]
   (let [owner
         (not-empty (get-in request [:query-params "owner"]))
 
         archived
-        (http/query-archived request)]
+        (http/query-archived request)
+
+        groups?
+        (= "groups" (get-in request [:query-params "include"]))]
 
     (if (= :invalid archived)
       (http/archived-400)
-      (http/json-response {:projects (state/list-projects (cond-> {:archived archived}
-                                                            owner
-                                                            (assoc :owner-id owner)))}))))
+      (let [projects (state/list-projects (cond-> {:archived archived}
+                                            owner
+                                            (assoc :owner-id owner)))
+            listed (into #{} (map #(str (get % "id"))) projects)]
+        (http/json-response
+          (cond-> {:projects projects}
+            groups?
+            (assoc :session_groups
+                   (filterv #(contains? listed (str (get % "project_id"))) (state/all-session-groups)))))))))
 
 (defn- create-project-handler
   "POST /v1/projects {name, color?, owner_id?, root?} — create a (cross-channel) project."

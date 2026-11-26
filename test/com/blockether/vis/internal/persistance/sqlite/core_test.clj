@@ -5983,7 +5983,10 @@
           names (fn [] (set (map (juxt :project-id :name) (persistance/db-list-session-groups s :all {}))))]
       (expect (= #{[(:id spel) "Browser"] [(:id vis) "Gateway"]} (names)))
       (persistance/db-update-session-group! s (:id gateway) {:name "Gateway v2"})
-      (expect (= #{[(:id spel) "Browser"] [(:id vis) "Gateway v2"]} (names))))))
+      (expect (= #{[(:id spel) "Browser"] [(:id vis) "Gateway v2"]} (names)))
+      ;; the archive view reads every project too
+      (expect (= #{"Release"}
+                 (set (map :name (persistance/db-list-session-groups s :all {:archived :only}))))))))
 
 ;; Regression, issue #155: session usage was summed from the rollup a turn writes
 ;; when it ENDS, so a stopped or still-running turn dropped its tokens and its

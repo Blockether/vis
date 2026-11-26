@@ -261,9 +261,9 @@
         (#'screen/request-project! project-a nil)
         (expect (empty? @requests) "No gateway I/O or local view creation on input")
         ((first @workers))
-        (expect (= [:groups :sessions :sessions] (mapv first @requests)))
-        (expect (= :aside (get-in @requests [1 1 :grouped])))
-        (expect (<= (get-in @requests [1 1 :limit]) 30))
+        (expect (= [:sessions :groups :sessions] (mapv first @requests)))
+        (expect (= :aside (get-in @requests [0 1 :grouped])))
+        (expect (<= (get-in @requests [0 1 :limit]) 30))
         (expect (= ["a1"] (get-in @requests [2 1 :ids])))
         (expect (= "a1" (get-in @state/app-db [:project-sidebar :pages "a" :current "id"])))
         (expect (= "saved-outside-tui"
@@ -2112,8 +2112,8 @@
         (expect (nil? (get-in @state/app-db [:project-sidebar :pages "a" :after])))
         (expect (empty? (get-in @state/app-db [:project-sidebar :pages "a" :history])))
         (#'screen/load-project-page! "a")
-        (expect (= :only (get-in @asked [1 1 :archived])))
-        (expect (= :exclude (get-in @asked [2 1 :archived])))
+        (expect (= [[:sessions :only] [:sessions :exclude] [:groups :exclude]]
+                   (mapv (fn [[kind opts]] [kind (:archived opts)]) (take 3 @asked))))
         (let [entries (projects/sidebar-entries @state/app-db)]
           (expect (some #(= "Archived sessions" (:label %)) entries))
           (expect (= ["filed-active" "away"]
@@ -2123,7 +2123,7 @@
         (expect (false? (get-in @state/app-db [:project-sidebar :session-archived? "a"])))
         (expect (= [group-release] (get-in @state/app-db [:project-sidebar :groups "a"])))
         (#'screen/load-project-page! "a")
-        (expect (= :exclude (get-in @asked [5 1 :archived])))
+        (expect (= :exclude (get-in @asked [4 1 :archived])))
         (expect (= ["a1" "filed-active" "loose"]
                    (mapv #(get-in % [:session "id"])
                          (filter #(= :project-session (:kind %))
@@ -3314,10 +3314,8 @@
           (expect (= ["filed-archived" "loose"]
                      (mapv #(get-in % [:session "id"])
                            (filter #(= :project-session (:kind %)) entries)))))
-        (expect (= :only (:archived (second (first @requests)))))
-        (expect (= :exclude (:archived (second (second @requests)))))
-        (expect (some #(= :only (:archived (second %)))
-                      (filter #(= :sessions (first %)) @requests)))
+         (expect (= [[:sessions :exclude] [:sessions :only] [:groups :only]]
+                    (mapv (fn [[kind opts]] [kind (:archived opts)]) (take 3 @requests))))
         (state/dispatch [:project-session-archive-toggle "a"])
         (#'screen/load-project-page! "a")
         (expect (= ["filed-archived"]
@@ -3335,6 +3333,36 @@
         (state/dispatch [:project-page-loaded "a" "empty"
                          {:sessions [] :grouped [] :current nil :loading? false}
                          {:groups [] :total 0}])))))
+
+(defdescribe
+  project-sidebar-reads-groups-with-sessions
+  (it "takes the wall and its rows from the head of the matching archive view"
+      (let [requests (atom [])
+            group (assoc group-release "archived_at" "today")
+            wall {:groups [group] :total 1 :session-total 1 :has-more false}
+            filed {"id" "filed" "group_id" "g1"}
+            db (-> (fixture-db)
+                   (dissoc :active-project-id)
+                   (assoc-in [:project-sidebar :group-archived? "a"] true)
+                   (assoc-in [:project-sidebar :pages "a"]
+                             {:after "next" :dirty (state/session-draft-ids (fixture-db))
+                              :group-offset 15}))]
+        (with-redefs [state/app-db (atom db)
+                      vis/worker-future (fn [_ f] (f))
+                      vis/gateway-list-session-groups-page
+                      (fn [_] (swap! requests conj :extra-read) {:groups [] :total 0})
+                      vis/gateway-list-sessions-page
+                      (fn [{:keys [archived after group-limit group-offset]}]
+                        (swap! requests conj [archived after group-limit group-offset])
+                        (if (and (= :only archived) (nil? after))
+                          {:sessions [] :grouped [filed] :session-group-page wall}
+                          {:sessions [{"id" "loose"}] :grouped []}))]
+          (#'screen/load-project-page! "a")
+          (expect (= [[:exclude "next" 15 15] [:only nil 15 15]] @requests))
+          (expect (= [group] (get-in @state/app-db [:project-sidebar :groups "a"])))
+          (expect (= [filed] (get-in @state/app-db [:project-sidebar :pages "a" :grouped])))
+          (expect (= [{"id" "loose"}]
+                     (get-in @state/app-db [:project-sidebar :pages "a" :sessions])))))))
 
 ;; Regression, user report (paraphrased: "groups gather sessions, so every live group must
 ;; always show; only archived groups, which pile up, may be paged, the same in the app and

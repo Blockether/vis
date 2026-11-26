@@ -270,7 +270,8 @@
                    (some-> (:overview payload)
                            (dissoc :server_time_ms))
                    ;; A renamed or filed group moves no row, but the head carries the walls.
-                   (:session-groups payload)]))
+                   (:session-groups payload)
+                   (:session-group-page payload)]))
 
 (def ^:private default-session-window
   "Rows a list read is answered with when it named neither a window nor a cut. Nothing
@@ -314,19 +315,26 @@
 
 (defn- session-list-payload
   [{:keys [root project-id grouped archived dirty after group-id ids id-prefix] :as opts} group-limit group-offset]
-  (let [;; The shelves follow the same page as the group list.
+  (let [;; ONE project's wall, cut to the page of bands the client paints. The
+        ;; shelves follow it, and the head of the read carries it whole, so a project
+        ;; reads its bands and their rows in one request (`session_group_page`).
+        project-cut?
+        (or (some? root) (seq (str project-id)))
+
+        pid
+        (when (and (= "aside" grouped) project-cut? (or (some? group-limit) (nil? after)))
+          (or (some-> project-id parse-uuid)
+              (some-> (when (seq root) (state/get-project-by-root "local" root))
+                      (get "id")
+                      parse-uuid)))
+
+        wall
+        (when pid
+          (state/list-session-groups-page pid {:archived archived :limit group-limit :offset group-offset}))
+
         group-ids
-        (when (and (= "aside" grouped) (some? group-limit))
-          (let [pid (or (some-> project-id parse-uuid)
-                        (some-> (when (seq root) (state/get-project-by-root "local" root))
-                                (get "id")
-                                parse-uuid))]
-            (when pid
-              (mapv #(get % "id")
-                    (:groups (state/list-session-groups-page pid
-                                                             {:archived archived
-                                                              :limit group-limit
-                                                              :offset group-offset}))))))
+        (when (and wall (some? group-limit))
+          (mapv #(get % "id") (:groups wall)))
 
         page
         (state/list-sessions-page :all (assoc opts :group-ids group-ids))]
@@ -345,7 +353,27 @@
       ;; one `/v1/session-groups` read for each project on the screen.
       (and (nil? after) (nil? root) (empty? (str project-id)) (nil? group-id) (empty? ids)
            (nil? id-prefix) (= :exclude archived))
-      (assoc :session-groups (state/live-session-groups)))))
+      (assoc :session-groups (state/live-session-groups))
+
+      ;; A project the gateway holds no project for has no bands: an empty page, never
+      ;; an absent one, because absent means a gateway that does not carry the wall.
+      (and (= "aside" grouped) project-cut? (nil? after))
+      (assoc :session-group-page
+             (if wall
+               {:project_id (str pid)
+                :groups (:groups wall)
+                :total (:total wall)
+                :session_total (:session-total wall)
+                :limit (:limit wall)
+                :offset (:offset wall)
+                :has-more (:has-more wall)}
+               {:project_id nil
+                :groups []
+                :total 0
+                :session_total 0
+                :limit group-limit
+                :offset (max 0 (long (or group-offset 0)))
+                :has-more false})))))
 
 (defn- list-sessions-handler
   "GET /v1/sessions[?limit=&after=&root=&project_id=&id_prefix=&ids=&grouped=&include_empty=] —

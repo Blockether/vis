@@ -283,6 +283,30 @@ describe('a project shows the sessions it archived', () => {
     await waitFor(() => expect(painted()).toEqual([ACTIVE.id, AWAY_LOOSE.id]));
   });
 
+  it('takes the archive wall from the matching project page without a separate read', async () => {
+    const client = machine();
+    const page = (groups: SessionGroup[], bands?: BandWindow) => ({
+      project_id: STORY_NEWER_PROJECT.projectId, groups, total: groups.length,
+      session_total: groups.reduce((sum, group) => sum + group.session_count, 0),
+      limit: bands?.limit ?? null, offset: bands?.offset ?? 0, has_more: false,
+    });
+    const bundled = vi.fn(async (
+      _root: string, _limit: number, _after: string, _pins: Map<string, string>,
+      _signal?: AbortSignal, _persistHead?: boolean, view: ArchiveView = 'exclude',
+      bands?: BandWindow,
+    ) => view === 'only'
+      ? { ...ARCHIVE_PAGE, groupPage: page([RECEIPTS], bands) }
+      : { ...ACTIVE_PAGE, groupPage: page([WALLET], bands) });
+    const { user } = mount({ ...client, listProjectPage: bundled });
+    await band('Wallet work');
+
+    await press(user, 'Show archived groups');
+    expect(painted(await band('Receipts'))).toEqual([AWAY_FILED.id]);
+    await press(user, 'Show archived sessions', 'sessions');
+    await waitFor(() => expect(painted()).toEqual([AWAY_FILED.id, AWAY_LOOSE.id]));
+    expect(client.listSessionGroups).not.toHaveBeenCalled();
+  });
+
   it('remembers an archived group view without archiving loose sessions', async () => {
     const first = mount();
     await band('Wallet work');

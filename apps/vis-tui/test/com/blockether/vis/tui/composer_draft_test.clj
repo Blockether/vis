@@ -296,9 +296,10 @@
           (#'screen/load-project-page! "p" true)
           (expect (nil? (:after (first @asked))))
           (expect (empty? (get-in @state/app-db [:project-sidebar :pages "p" :history])))
+          (reset! asked [])
           (swap! state/app-db assoc-in [:project-sidebar :pages "p" :after] "next-cursor")
           (#'screen/load-project-page! "p" true)
-          (expect (= "next-cursor" (:after (last @asked)))))))
+          (expect (= ["next-cursor" nil] (mapv :after @asked))))))
   (it "includes dirty identities in the separate group window when archive views differ"
       (let [asked
             (atom [])

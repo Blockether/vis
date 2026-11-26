@@ -2302,6 +2302,28 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
     const from = Math.max(0, Number(offset ?? 0));
     return limit == null ? wall.slice(from) : wall.slice(from, from + limit);
   };
+  const groupPage = (root: string | null, url: URL, asked: string | null, skipped: string | null) => {
+    const project = projects.find((entry) => entry.root === root);
+    const keeps = archiveView(url);
+    const wall = project ? wallOf(root, url).map((band) => ({
+      ...band,
+      session_count: project.rows.filter(
+        (row) => !gone.has(row.id) && bandOf(row) === band.id && keeps(row),
+      ).length,
+    })) : [];
+    const limit = asked == null ? null : Math.max(0, Number(asked));
+    const offset = Math.max(0, Number(skipped ?? 0));
+    const groups = bandWindow(wall, limit, skipped);
+    return {
+      project_id: project?.projectId ?? null,
+      groups,
+      total: wall.length,
+      session_total: wall.reduce((sum, band) => sum + band.session_count, 0),
+      limit,
+      offset,
+      has_more: limit != null && offset + groups.length < wall.length,
+    };
+  };
   const sent = (init?: RequestInit) =>
     JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<string, unknown>;
   const answer = (body: unknown) =>
@@ -2313,6 +2335,15 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(href);
     if (url.pathname === '/v1/projects/overview') return answer(overview);
+    if (url.pathname === '/v1/projects' && (init?.method ?? 'GET') === 'GET')
+      return answer({
+        projects: projects.map((project) => ({
+          id: project.projectId, name: project.name, workspace_root: project.root,
+        })),
+        ...(url.searchParams.get('include') === 'groups'
+          ? { session_groups: projects.flatMap(bandsOf) }
+          : {}),
+      });
     if (url.pathname === '/v1/sessions' && (init?.method ?? 'GET') === 'GET') {
       const root = url.searchParams.get('root');
       const keeps = archiveView(url);
@@ -2327,22 +2358,15 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
       // standing on and only the sessions filed under THOSE come back beside the window —
       // the way `:group-ids` cuts `state/list-sessions-page`.
       const asked = url.searchParams.get('group_limit');
-      const painted =
-        aside && asked != null
-          ? new Set(
-              bandWindow(
-                wallOf(root, url),
-                Math.max(0, Number(asked)),
-                url.searchParams.get('group_offset'),
-              ).map((band) => band.id),
-            )
-          : null;
-      const shelved = aside
+      const after = url.searchParams.get('after');
+      const wall = aside && root && !after
+        ? groupPage(root, url, asked, url.searchParams.get('group_offset')) : null;
+      const painted = asked != null && wall ? new Set(wall.groups.map((band) => band.id)) : null;
+      const shelved = aside && !after
         ? found.filter((row) => bandOf(row) !== null && (!painted || painted.has(bandOf(row)!)))
         : [];
       const listed = aside ? found.filter((row) => bandOf(row) === null) : found;
       const limit = Number(url.searchParams.get('limit') ?? listed.length) || listed.length;
-      const after = url.searchParams.get('after');
       const from = after ? listed.findIndex((row) => fleetCursor(row) === after) + 1 : 0;
       const window = after && from === 0 ? [] : listed.slice(from, from + limit);
       const last = window[window.length - 1];
@@ -2354,40 +2378,12 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
         has_more: hasMore,
         next_cursor: hasMore && last ? fleetCursor(last) : null,
         ...(after || root ? {} : { overview }),
+        ...(wall ? { session_group_page: wall } : {}),
       });
     }
     if (url.pathname === '/v1/session-groups') {
-      const project = projectAt(url.searchParams.get('root'));
-      if ((init?.method ?? 'GET') === 'GET') {
-        const keeps = archiveView(url);
-        const wall = wallOf(url.searchParams.get('root'), url).map((band) => ({
-          // A BAND COUNTS WHAT THE VIEW ASKING FOR IT CAN SEE. A session archived inside a
-          // group that is still live is not on the live list, so the band over it does not
-          // stand there counting a row nothing under it paints.
-          ...band,
-          session_count: (project?.rows ?? []).filter(
-            (row) => !gone.has(row.id) && bandOf(row) === band.id && keeps(row),
-          ).length,
-        }));
-        const limit = url.searchParams.get('limit');
-        const window = bandWindow(
-          wall,
-          limit == null ? null : Math.max(0, Number(limit)),
-          url.searchParams.get('offset'),
-        );
-        const offset = Math.max(0, Number(url.searchParams.get('offset') ?? 0));
-        return answer({
-          project_id: project?.projectId ?? null,
-          groups: window,
-          total: wall.length,
-          // COUNTED OVER THE WHOLE WALL, never the page of it: an archive tally says how much
-          // a project has filed away however few bands the reader is standing on.
-          session_total: wall.reduce((sum, band) => sum + band.session_count, 0),
-          limit: limit == null ? null : Math.max(0, Number(limit)),
-          offset,
-          has_more: limit != null && offset + window.length < wall.length,
-        });
-      }
+      if ((init?.method ?? 'GET') === 'GET')
+        return answer(groupPage(url.searchParams.get('root'), url, url.searchParams.get('limit'), url.searchParams.get('offset')));
       const body = sent(init);
       const owner = projectAt(typeof body.root === 'string' ? body.root : null);
       const group: SessionGroup = {

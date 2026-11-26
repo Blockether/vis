@@ -344,15 +344,6 @@ class Project(TypedDict):
     archived_at: NotRequired[int | None]
 
 
-class ProjectList(TypedDict):
-    projects: list[Project]
-
-
-class ProjectSessionsMoved(TypedDict):
-    project_id: str
-    count: int
-
-
 class SessionGroupRecord(TypedDict):
     id: str
     project_id: NotRequired[str | None]
@@ -362,6 +353,16 @@ class SessionGroupRecord(TypedDict):
     session_count: NotRequired[int]
     created_at: NotRequired[int]
     archived_at: NotRequired[int | None]
+
+
+class ProjectList(TypedDict):
+    projects: list[Project]
+    session_groups: NotRequired[list[SessionGroupRecord]]
+
+
+class ProjectSessionsMoved(TypedDict):
+    project_id: str
+    count: int
 
 
 class SessionGroupPage(TypedDict):
@@ -731,6 +732,7 @@ RouterPatch: TypeAlias = RouterSelection | RouterFleet
 class SessionList(TypedDict):
     sessions: list[SessionRecord]
     session_groups: NotRequired[list[SessionGroupRecord]]
+    session_group_page: NotRequired[SessionGroupPage]
 
 
 class SessionCreated(TypedDict):

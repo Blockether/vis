@@ -1451,6 +1451,8 @@ export interface ProjectPage {
    * (`listProjectPage`).
    */
   grouped: Session[];
+  /** The matching wall on a head read; absent from pins written by older clients. */
+  groupPage?: SessionGroupPage | null;
 }
 /**
  * The project windows ONE reader is holding, and the validator each was issued
@@ -4703,6 +4705,7 @@ export class GatewayClient {
       sessions?: Session[];
       awaiting?: Session[];
       grouped?: Session[];
+      session_group_page?: SessionGroupPage;
       total?: number;
       next_cursor?: string | null;
     }>(
@@ -4729,8 +4732,11 @@ export class GatewayClient {
       }
       // The saved head is the project's ACTIVE first page: a reveal is a look at another
       // list, and a cold start must not paint the archive in its place.
-      if (persistHead && !after && archived === 'exclude' && limit <= MAX_PROJECT_HEAD_ROWS)
+      if (persistHead && !after && archived === 'exclude' && limit <= MAX_PROJECT_HEAD_ROWS) {
         writeSnapshot(this.snapshotKey('project-head', root), { key, ...window });
+        if (window.page.groupPage && !bands)
+          this.saveOpeningWall(root, this.groupWallKey(root, archived), window.page.groupPage);
+      }
       if (window.etag) pins.set(key, window);
       else pins.delete(key);
       return window.page;
@@ -4758,6 +4764,7 @@ export class GatewayClient {
       nextCursor: res.data?.next_cursor ?? '',
       awaiting,
       grouped,
+      groupPage: !after ? (res.data?.session_group_page ?? null) : null,
     };
     return remember({ etag: res.etag ?? '', page });
   }
@@ -4885,12 +4892,15 @@ export class GatewayClient {
     };
   }
 
-  /** The complete project catalog, including archived and empty projects. */
-  async listProjects(signal?: AbortSignal): Promise<Project[]> {
-    const answer = await this.request<{ projects?: Project[] }>(
-      'GET', '/v1/projects?archived=include', undefined, signal,
+  /** The search catalog, including archived and empty projects and groups. */
+  async listProjectCatalog(signal?: AbortSignal): Promise<{
+    projects: Project[];
+    groups: SessionGroup[] | null;
+  }> {
+    const answer = await this.request<{ projects?: Project[]; session_groups?: SessionGroup[] }>(
+      'GET', '/v1/projects?archived=include&include=groups', undefined, signal,
     );
-    return answer.projects ?? [];
+    return { projects: answer.projects ?? [], groups: answer.session_groups ?? null };
   }
 
   /**
@@ -5336,12 +5346,15 @@ export class GatewayClient {
 
   /** A band changed on this device must not be painted from a wall saved before the change. */
   private forgetGroupWalls(owner: { root?: string; gid?: string | null; projectId?: string | null }): void {
-    const prefix = `${this.snapshotKey('project-groups')}\u0000`;
+    const walls = `${this.snapshotKey('project-groups')}\u0000`;
+    const heads = `${this.snapshotKey('project-head')}\u0000`;
     for (const [key, value] of snapshots) {
-      if (!key.startsWith(prefix)) continue;
-      const { page } = value as { page: SessionGroupPage };
+      const page = key.startsWith(walls) ? (value as SavedGroupWall).page
+        : key.startsWith(heads) ? (value as { page: ProjectPage }).page.groupPage
+        : null;
+      if (!page) continue;
       if (
-        (owner.root && key === this.snapshotKey('project-groups', owner.root)) ||
+        (owner.root && (key === walls + owner.root || key === heads + owner.root)) ||
         (owner.projectId && page.project_id === owner.projectId) ||
         (owner.gid && page.groups.some((group) => group.id === owner.gid))
       )

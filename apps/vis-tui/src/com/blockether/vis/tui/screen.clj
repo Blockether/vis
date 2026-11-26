@@ -7541,14 +7541,15 @@
 (defn- fleet-search-catalog
   "Complete project and group names for the picker, including archived and empty projects."
   []
-  (let [projects
-        (vec (vis/gateway-list-projects {:archived :include}))
+  (let [{:keys [projects session-groups]}
+        (vis/gateway-project-search-catalog)
 
         groups
-        (mapcat (fn [project]
-                  (vis/gateway-list-session-groups {:project-id (get project "id")
-                                                    :archived :include}))
-                projects)]
+        (or session-groups
+            (mapcat (fn [project]
+                      (vis/gateway-list-session-groups {:project-id (get project "id")
+                                                        :archived :include}))
+                    projects))]
 
     {:projects projects :groups (into {} (map (juxt #(str (get % "id")) identity)) groups)}))
 
@@ -7911,32 +7912,33 @@
       "tui-project-page"
       (fn []
         (try
-          (let [groups
-                (vis/gateway-list-session-groups-page
-                  {:project-id pid :archived group-archive :limit group-limit :offset group-offset})
+          (let [group-window
+                {:project-id pid
+                 :dirty draft-ids
+                 :archived group-archive
+                 :grouped :aside
+                 :group-limit group-limit
+                 :group-offset group-offset}
 
                 sessions
-                (vis/gateway-list-sessions-page {:project-id pid
-                                                 :dirty draft-ids
-                                                 :limit limit
-                                                 :after (:after page)
-                                                 :archived session-archive
-                                                 :grouped :aside
-                                                 :group-limit group-limit
-                                                 :group-offset group-offset})
+                (vis/gateway-list-sessions-page (assoc group-window
+                                                  :limit limit
+                                                  :after (:after page)
+                                                  :archived session-archive))
 
-                ;; The two sets switch archives independently. Read the group's
-                ;; members with the group view when the loose window differs.
+                ;; The two sets switch archives independently, and only the head carries the wall.
+                group-head
+                (if (and (= group-archive session-archive) (nil? (:after page)))
+                  sessions
+                  (vis/gateway-list-sessions-page (assoc group-window :limit 1)))
+
+                groups
+                (or (:session-group-page group-head)
+                    (vis/gateway-list-session-groups-page
+                      {:project-id pid :archived group-archive :limit group-limit :offset group-offset}))
+
                 grouped
-                (if (= group-archive session-archive)
-                  (:grouped sessions)
-                  (:grouped (vis/gateway-list-sessions-page {:project-id pid
-                                                             :dirty draft-ids
-                                                             :limit 1
-                                                             :archived group-archive
-                                                             :grouped :aside
-                                                             :group-limit group-limit
-                                                             :group-offset group-offset})))
+                (:grouped group-head)
 
                 active-id
                 (when (= pid (:active-project-id @state/app-db))
@@ -7953,7 +7955,7 @@
                                                                      :archived session-archive}))))
 
                 page-data
-                (assoc sessions
+                (assoc (dissoc sessions :session-group-page)
                   :grouped grouped
                   :current current)
 
@@ -9093,14 +9095,14 @@
                   str
                   not-empty)
 
+          verb
+          (group-verb-actions action)
+
           group
-          (when (and pid gid)
+          (when (and pid gid (not= :new verb))
             (some #(when (= gid (str (get % "id"))) %)
                   (try (vis/gateway-list-session-groups {:project-id pid :archived :include})
-                       (catch Throwable _ nil))))
-
-          verb
-          (group-verb-actions action)]
+                       (catch Throwable _ nil))))]
 
       (cond (nil? pid) (vis/notify! "Add this session to a project first - groups live inside one"
                                     :level :warn

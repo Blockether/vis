@@ -3339,6 +3339,10 @@
           "items": {
             "$ref": "#/$defs/session_group"
           }
+        },
+        "session_group_page": {
+          "description": "Head of a grouped=aside list cut to one project: its page of groups in the same archive view and group window.",
+          "$ref": "#/$defs/session_group_page"
         }
       },
       "required": [
@@ -6491,6 +6495,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/project"
+          }
+        },
+        "session_groups": {
+          "description": "With include=groups only: every group of the listed projects, archived ones included.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/session_group"
           }
         }
       },

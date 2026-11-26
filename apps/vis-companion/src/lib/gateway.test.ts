@@ -526,6 +526,31 @@ describe('GatewayClient project-page snapshots', () => {
     expect(cold.heldProjectPage(root, 15, '', new Map(), 'only')).toBeNull();
   });
 
+  it('restores group names with a conditional project-head read after restart', async () => {
+    const groupPage = {
+      project_id: 'alpha',
+      groups: [{ id: 'g1', project_id: 'alpha', name: 'Named group', color: 'blue', session_count: 1 }],
+      total: 1, session_total: 1, limit: null, offset: 0, has_more: false,
+    };
+    const fetches = vi.fn((_url: string, _init?: RequestInit) => Promise.resolve(new Response(null, { status: 304 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sessions, total: 1, session_group_page: groupPage }), {
+        headers: { ETag: '"head"' },
+      }));
+    vi.stubGlobal('fetch', fetches);
+    const gateway = await import('./gateway');
+    const root = '/Users/dev/alpha';
+    const client = new gateway.GatewayClient(conn);
+    const pins = new Map();
+    await client.listProjectPage(root, 15, '', pins, undefined, true);
+    expect(await client.listProjectPage(root, 15, '', pins)).toMatchObject({ groupPage });
+    gateway.persistGatewayCaches();
+
+    vi.resetModules();
+    const cold = new (await import('./gateway')).GatewayClient(conn);
+    expect(await cold.listProjectPage(root, 15, '', new Map())).toMatchObject({ groupPage });
+    expect(new Headers(fetches.mock.calls[2][1]?.headers).get('if-none-match')).toBe('"head"');
+  });
+
   // THE BAND WINDOW IS PART OF THE QUESTION. A project's rows are answered for the page of
   // GROUPS the reader is standing on, so a page held for another page of bands is not an
   // answer to this one.
@@ -2527,7 +2552,7 @@ describe('GatewayClient search scopes', () => {
     vi.stubGlobal('fetch', fetches);
     const { GatewayClient } = await import('./gateway');
     const client = new GatewayClient(conn);
-    expect(await client.listProjects()).toEqual(projects);
+    expect(await client.listProjectCatalog()).toEqual({ projects, groups: null });
     expect(String(fetches.mock.calls[0][0])).toContain('/v1/projects?archived=include');
   });
 });

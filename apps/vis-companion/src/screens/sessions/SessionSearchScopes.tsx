@@ -30,8 +30,20 @@ export function useSessionSearchScope(
     const controller = new AbortController();
     void Promise.allSettled(conns.map(async (conn) => {
       const api = getClient(conn);
-      const projects = await api.listProjects(controller.signal);
-      // Each project's groups are a read of their own. One that fails costs that project its
+      const { projects, groups } = await api.listProjectCatalog(controller.signal);
+      if (groups) {
+        const byProject = new Map<string, SessionGroup[]>();
+        for (const group of groups) {
+          if (group.project_id === null) continue;
+          const projectGroups = byProject.get(group.project_id) ?? [];
+          projectGroups.push(group);
+          byProject.set(group.project_id, projectGroups);
+        }
+        return projects.map((project) => ({
+          conn, project, unread: false, groups: byProject.get(project.id) ?? [],
+        }));
+      }
+      // On an older gateway each project's groups are a read of their own. One that fails costs that project its
       // group choices, never the machine its projects: one refused read used to leave the
       // project picker with no project at all.
       return Promise.all(projects.map(async (project): Promise<CatalogProject> => {

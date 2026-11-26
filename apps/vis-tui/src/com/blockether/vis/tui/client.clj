@@ -724,6 +724,13 @@
   [opts]
   (get (send-json! "GET" (session-window-path opts)) "sessions"))
 
+(defn- session-group-page
+  [body]
+  {:groups (vec (get body "groups"))
+   :total (long (or (get body "total") 0))
+   :session-total (long (or (get body "session_total") 0))
+   :has-more (boolean (get body "has_more"))})
+
 (defn list-sessions-page
   "One window of the session list WITH the walk that continues it:
    `{:sessions rows :grouped rows :next-cursor str-or-nil :has-more bool :total n}`.
@@ -735,11 +742,13 @@
    With `:grouped :aside` the sessions a human FILED in a group leave that window and come
    back COMPLETE under `:grouped`, while `:total`, `:next-cursor` and `:has-more` describe
    the loose sessions alone. A group is a shelf a surface paints whole, however deep in the
-   fleet its rows sit; without the option `:grouped` is empty and nothing moves."
+   fleet its rows sit. A project head also carries `:session-group-page` when the gateway
+   supplies it. Without `:grouped :aside`, `:grouped` is empty."
   [opts]
   (let [body (revalidated-json! (session-window-path opts))]
     {:sessions (vec (get body "sessions"))
      :grouped (vec (get body "grouped"))
+     :session-group-page (some-> (get body "session_group_page") session-group-page)
      :awaiting (vec (get body "awaiting"))
      :next-cursor (get body "next_cursor")
      :has-more (boolean (get body "has_more"))
@@ -830,6 +839,13 @@
 
      (get (send-json! "GET" path) "projects"))))
 
+(defn project-search-catalog
+  "The projects and their groups for search, including the archive. Older gateways omit groups."
+  []
+  (let [body (send-json! "GET" "/v1/projects?archived=include&include=groups")]
+    {:projects (vec (get body "projects"))
+     :session-groups (get body "session_groups")}))
+
 (defn projects-overview
   "GET /v1/projects/overview — every project with its counts plus the gateway's
    totals, in one answer (`state/projects-overview`). `:dirty` names local unsent drafts."
@@ -913,10 +929,11 @@
    them in. `opts` names the project by :project-id, or by the workspace :root a
    client already holds (a read never creates a project). Returns the :groups
    vector; a project without groups simply has none."
-  [{:keys [project-id root owner]}]
+  [{:keys [project-id root owner archived]}]
   (let [qs (->> [(when project-id (str "project=" (enc project-id)))
                  (when (and (nil? project-id) root) (str "root=" (enc root)))
-                 (when owner (str "owner=" (enc owner)))]
+                 (when owner (str "owner=" (enc owner)))
+                  (when archived (str "archived=" (enc (name archived))))]
                 (remove nil?)
                 (str/join "&"))]
     (get (send-json! "GET"
@@ -940,10 +957,7 @@
         body
         (revalidated-json! (str "/v1/session-groups?" qs))]
 
-    {:groups (vec (get body "groups"))
-     :total (long (or (get body "total") 0))
-     :session-total (long (or (get body "session_total") 0))
-     :has-more (boolean (get body "has_more"))}))
+    (session-group-page body)))
 
 (defn create-session-group!
   "POST /v1/session-groups - create a group inside a project named by :project-id
@@ -2759,6 +2773,8 @@
 (def gateway-local? local-gateway?)
 
 (def gateway-list-projects list-projects)
+
+(def gateway-project-search-catalog project-search-catalog)
 
 (def gateway-list-session-groups list-session-groups)
 
