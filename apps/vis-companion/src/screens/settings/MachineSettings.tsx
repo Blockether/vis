@@ -1799,16 +1799,15 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
     if (server.cwd) rows.push(['Directory', server.cwd]);
   } else {
     rows.push(['Endpoint', maskedQuery(server.url ?? '')]);
-    rows.push([
-      'Sign-in',
-      hasStaticAuth(server)
-        ? 'Bearer token'
-        : server.is_authorized
-          ? 'Signed in'
-          : needsOAuth(server)
-            ? 'OAuth sign-in required'
-            : 'Not needed',
-    ]);
+    // A server without OAuth or a token has no sign-in, so it gets no row.
+    const signIn = hasStaticAuth(server)
+      ? 'Bearer token'
+      : server.is_authorized
+        ? 'Signed in'
+        : needsOAuth(server)
+          ? 'OAuth sign-in required'
+          : null;
+    if (signIn) rows.push(['Sign-in', signIn]);
     if (server.header_names?.length) rows.push(['Headers', server.header_names.join(', ')]);
   }
   if (server.env_names?.length) rows.push(['Environment', server.env_names.join(', ')]);

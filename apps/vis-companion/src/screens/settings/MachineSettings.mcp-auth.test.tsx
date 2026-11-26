@@ -99,14 +99,15 @@ it('removes a stored token when the other headers are replaced', async () => {
 
 // Regression: a working server with its key in the URL said "Not signed in",
 // and the screen showed the key.
-it('says a key-in-URL server needs no sign-in and hides the key', async () => {
+it('shows no sign-in for a key-in-URL server and hides the key', async () => {
   const url = 'https://mcp.example.com/?access=kb-url-key';
   const client = gateway({ ...SERVER, url, needs_auth: false, is_connected: true, status: 'connected', tools: 4 } as McpServer);
   renderOpenBands(<McpServersPanel client={client as unknown as GatewayClient} target={PROJECT} />);
   await waitFor(() => expect(client.mcpServers).toHaveBeenCalledOnce());
   fireEvent.click(screen.getByText('work'));
   const details = await screen.findByRole('region', { name: 'work details' });
-  expect(details).toHaveTextContent('Not needed');
+  expect(details).toHaveTextContent('Tools');
+  expect(details).not.toHaveTextContent('Sign-in');
   expect(document.body).not.toHaveTextContent('kb-url-key');
   expect(document.body.innerHTML).not.toContain('kb-url-key');
 });
