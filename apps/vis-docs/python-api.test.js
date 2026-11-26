@@ -66,7 +66,9 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
     const document = dom.window.document;
     expect(exports).toContain('Subagent');
     expect(exports).toContain('SubagentRecord');
-    for (const name of exports.filter((name) => !['Subagent', 'SubagentRecord'].includes(name)))
+    expect(exports).toContain('SubagentTask');
+    const hidden = ['Subagent', 'SubagentRecord', 'SubagentTask'];
+    for (const name of exports.filter((name) => !hidden.includes(name)))
       expect(document.getElementById(name), name).not.toBeNull();
     for (const name of [
       'Agent.run',

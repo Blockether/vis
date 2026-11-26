@@ -5,6 +5,7 @@
     {% set experimental = [
         "blockether.vis.engine.Subagent",
         "blockether.vis.engine.SubagentRecord",
+        "blockether.vis.engine.SubagentTask",
         "blockether.vis.engine.Council.spawn",
         "blockether.vis.engine.Council.run",
         "blockether.vis.engine.Council.extend",
@@ -15,7 +16,7 @@
         "blockether.vis.engine.Council.wake",
         "blockether.vis.engine.Council.timeline",
     ] %}
-    {% if doc.fullname not in experimental and not doc.fullname.startswith(("blockether.vis.engine.Subagent.", "blockether.vis.engine.SubagentRecord.")) %}
+    {% if doc.fullname not in experimental and not doc.fullname.startswith(("blockether.vis.engine.Subagent.", "blockether.vis.engine.SubagentRecord.", "blockether.vis.engine.SubagentTask.")) %}
         {{ default_is_public(doc) }}
     {% endif %}
 {% endmacro %}
