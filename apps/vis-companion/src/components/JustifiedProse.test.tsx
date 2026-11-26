@@ -428,7 +428,7 @@ describe('justified prose', () => {
   });
 
   it('checks a window resize at once, and a window drag once where it comes to rest', async () => {
-    const view = render(<Markdown>{coded}</Markdown>);
+    render(<Markdown>{coded}</Markdown>);
     await settle();
     const resized = () =>
       act(() => {
