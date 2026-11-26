@@ -115,7 +115,7 @@ del process, start
 print('started')")]
             (expect (= "started\n" (:stdout started)) (pr-str started)))
           (let [completed (env/run-python-block session
-                            "import json
+                            "import asyncio, json
 [process] = asyncio.all_tasks() - {asyncio.current_task()}
 result = await process
 assert result is await process
@@ -127,7 +127,8 @@ except RuntimeError as error:
     assert 'no longer the same process' in str(error)
 else:
     raise AssertionError('stale handle read the replacement log')
-assert fresh.wait(1) is fresh and fresh.timed_out and not fresh.cancelled()
+done, pending = await asyncio.wait([fresh], timeout=0.1)
+assert not done and pending == {fresh} and not fresh.cancelled()
 assert fresh.cancel()
 try:
     await fresh

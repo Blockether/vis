@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Apps: the `group` node is removed. Use the layout nodes `flex`, `grid`, `section`, `collapsible` and `card`. Section, card, dialog and Ask frames have square corners in the Companion, the web app and the terminal app.
 - Python SDK: the `multiselect` field and `vis.ui.select.many` are removed. Use `select` with `is_multiple=True`. Its answer is a list of option values in option order. The Companion and the terminal app use the option value, not the label, to keep a selection.
+- Tasks: shell handle fields now give the current process state on each read. Sandbox shell and subagent Tasks no longer have a `wait` method. Use `asyncio.wait([task], timeout=seconds)` in the sandbox or `concurrent.futures.wait([sh], timeout=seconds)` for extension shell handles. Read `child.record()` for the current subagent record.
 
 ### Fixed
 

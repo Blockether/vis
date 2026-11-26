@@ -7411,7 +7411,7 @@
   (it "does not widen the wall for a tool call, because a tool call parks it"
       (doseq [code ["await shell({\"command\": \"clojure -M:test\", \"timeout_secs\": 180})"
                     "r = await shell(command=\"sleep 300\")"
-                    "sh = await shell(\"make\")\nr = sh.wait(600)" "r = sh.wait(secs=600)"
+                    "sh = await shell(\"make\")\nawait asyncio.wait([sh], timeout=600)"
                     "secs = 600\nr = await shell(op=\"wait\", id=\"j\", timeout_secs=secs)"
                     "await probe(timeout_ms=300000)" "r = await block(secs=600)"
                     ;; `subprocess` never starts a process here, so it buys no time.

@@ -202,7 +202,8 @@ Python coroutines stay in their block. Use `asyncio.all_tasks()` in any block, e
 fold. It lists running host Tasks, host Tasks with unread results, and current Python Tasks.
 
 Use `done()` to check a Task without reading the result. Use `result()` or `exception()` only
-after the Task ends.
+after the Task ends. Read the shell fields or call `child.record()` on a subagent Task to get
+its current state without waiting for the result.
 
 A Task notice shows an ID such as `t3`, not a Python variable. To find a Task you did not save,
 look for the ID at the start of its default name:
@@ -247,8 +248,25 @@ result = await sh
 print(result.exit, result.out)
 ```
 
-The result is a dictionary. To read more output, use `sh.logs()`. See `doc("shell")` for the
+To wait up to a limit without cancelling, use `asyncio.wait`. Read the fields on `sh` after
+the wait, even if the process is still running:
+
+```python
+sh = await shell("python -m pytest")
+done, pending = await asyncio.wait([sh], timeout=2)
+print(sh.status, sh.out)
+```
+
+Each field read gives the current value. For example, use `sh.out`, `sh["out"]`, or
+`sh.get("out")`. After the process ends, the fields give the final values. The result from
+`await sh` is a fixed dictionary. For more output, use `sh.logs()`. See `doc("shell")` for the
 process controls.
+
+Live reads do not give `timed_out` or `timeout_secs`. Check `sh in pending` to see if the wait
+ended before the process. On Linux, `sh.waiting_for_input` is true if you started the process
+with `stdin="tty"` and a process in its tree is waiting for input from its terminal. On macOS,
+the field is false. A process that runs for at least 30 seconds with no output and less than
+1 percent CPU use can give a `sh.note`.
 
 ## What the sandbox may do
 

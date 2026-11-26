@@ -192,14 +192,14 @@
    [:record-plain "out = await tool('svc.plain')"] [:tool-failure "out = await tool('svc.fail')"]
    ;; -- a shell handle --
    [:shell-wait
-    "sh = await tool('shell', {'command': 'echo handle'})\nr = sh.wait(20).result() if hasattr(sh, 'task_id') else sh.result(20)\nout = [r['status'], r['exit'], r['out'], sh.logs()['out']]"]
+    "sh = await tool('shell', {'command': 'echo handle'})\nr = await sh if hasattr(sh, 'task_id') else sh.result(20)\nout = [r['status'], r['exit'], r['out'], sh.logs()['out']]"]
    [:shell-logs-lines
-    "sh = await tool('shell', {'command': 'seq 1 20'})\nr = sh.wait(20).result() if hasattr(sh, 'task_id') else sh.result(20)\nout = sh.logs(0, 10)['out']"]
+    "sh = await tool('shell', {'command': 'seq 1 20'})\nr = await sh if hasattr(sh, 'task_id') else sh.result(20)\nout = sh.logs(0, 10)['out']"]
    [:shell-type
-    "sh = await tool('shell', {'command': 'read word; echo got-$word', 'stdin': 'tty'})\nsh.type('typed\\n')\nr = sh.wait(20).result() if hasattr(sh, 'task_id') else sh.result(20)\nout = [r['status'], 'got-typed' in r['out']]"]
+    "sh = await tool('shell', {'command': 'read word; echo got-$word', 'stdin': 'tty'})\nsh.type('typed\\n')\nr = await sh if hasattr(sh, 'task_id') else sh.result(20)\nout = [r['status'], 'got-typed' in r['out']]"]
    [:shell-stop
     "sh = await tool('shell', {'command': 'sleep 30'})\nout = sh.cancel()"]
-   [:shell-wrong-key "sh = await tool('shell', {'command': 'true'})\nr = sh.wait(20).result() if hasattr(sh, 'task_id') else sh.result(20)\nout = r['nope']"]
+   [:shell-wrong-key "sh = await tool('shell', {'command': 'true'})\nr = await sh if hasattr(sh, 'task_id') else sh.result(20)\nout = r['nope']"]
    ;; -- pages of ls and grep --
    [:ls-pages
     "page = await tool('ls', ROOT, limit=1)\nout = [type(page).__name__, str(page), str(next(page, None)), str(page.all()), [str(p) for p in page.pages()]]"]

@@ -9,7 +9,7 @@ import sys
 import textwrap
 import threading
 import time
-from concurrent.futures import CancelledError
+from concurrent.futures import CancelledError, wait
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -298,13 +298,10 @@ def test_shell_runs_a_command_and_answers_the_engine_shape(command):
     assert run.logs()["out"] == "hello"
 
 
-def test_the_start_answer_says_running_also_for_a_command_that_ends_at_once():
-    # Only a later call reads the exit. The engine can answer `exited` here, so the
-    # contract fixture does not hold this answer.
+def test_a_completed_process_reports_its_final_state_without_a_result_reader():
     run = vis.shell({"command": "true"})
-    time.sleep(0.5)
-    assert (run["status"], run["exit"], run["is_eof"]) == ("running", None, False)
-    assert run.result(10)["status"] == "exited"
+    assert wait([run], timeout=5).done == {run}
+    assert (run["status"], run["exit"], run["is_eof"]) == ("exited", 0, True)
 
 
 def test_a_start_with_a_live_id_starts_no_second_process():
@@ -650,7 +647,6 @@ def test_every_spawn_op_the_engine_speaks_starts_a_process(op):
     # The engine's `shell` takes `{"op": "run"|"background", …}`; an extension that
     # writes what the engine documents must not be refused out here.
     started = vis.shell({"op": op, "command": "printf hi"})
-    assert started["stage"] == op
     run = started.result(10)
     assert run["exit"] == 0
     assert run["out"] == "hi"

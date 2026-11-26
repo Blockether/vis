@@ -134,7 +134,7 @@
     (if (or (:interrupt-complete entry)
             (and (:cancel-on-request? entry) (get-in entry [:row :cancel-reason])))
       (do (doseq [rollback (:handoff-rollbacks entry)] (rollback))
-          (assoc (select-keys outcome [:record]) :state :cancelled))
+          (assoc (select-keys outcome [:record :snapshot]) :state :cancelled))
       outcome)))
 
 (defn- settle!
@@ -165,7 +165,7 @@
                                            (:cancelling %) (assoc :cancelling (:cancelling %))
                                            (and (= :cancelled state) (:cancel-message %))
                                            (assoc :message (:cancel-message %))))
-                        (dissoc :interrupt :interrupt-complete :waiters :snapshot :admit :detach-reason)
+                        (dissoc :interrupt :interrupt-complete :waiters :snapshot :shell-snapshot :admit :detach-reason)
                         (update :row merge (cond-> {:state state :view-ids []
                                                    :ended-at (System/currentTimeMillis)}
                                              error (assoc :error error)))))
@@ -224,11 +224,21 @@
   (and (some? generation)
        (= generation (get-in @sessions (conj (key-for session id) :guest-data :generation)))))
 
+(defn shell-snapshot
+  "Read only the shell generation named by this capability."
+  [session task-id generation origin id]
+  (let [{:keys [guest-data outcome shell-snapshot]} (get-in @sessions (key-for session task-id))]
+    (when (and generation (= generation (:generation guest-data))
+               (= origin (:shell-origin guest-data)) (= id (get-in guest-data [:snapshot "id"])))
+      (if outcome
+        (or (:snapshot outcome) (:value outcome))
+        (when shell-snapshot (shell-snapshot))))))
+
 (defn start-manual!
   "Register work whose owner will call `complete!` with an outcome function once
    it ends. Its interrupt is installed before the row becomes visible."
   [session opts interrupt]
-  (let [extra (merge (select-keys opts [:resource :snapshot :external-settlement? :admit :detach-reason])
+  (let [extra (merge (select-keys opts [:resource :snapshot :shell-snapshot :external-settlement? :admit :detach-reason])
                      {:manual? true :interrupt interrupt})
         [{:keys [id] :as row} ticket] (register! session opts extra)]
     {:row row :complete! (partial settle! session id ticket)}))

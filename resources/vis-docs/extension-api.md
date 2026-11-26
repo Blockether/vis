@@ -2067,10 +2067,14 @@ configuration on disk, read again at every spawn, with or without a session.
 `vis.shell("npm test", cwd="app")` and `vis.shell({"command": "npm test", "cwd": "app"})` start
 the same process. The child runs under a terminal, and Vis keeps its output in a log.
 
-`vis.shell` and `vis.jailed_shell` return a synchronous `concurrent.futures.Future` for the
-process. Use `sh.result(timeout=30)` to wait up to 30 seconds for the exit. A wait that reaches
-its limit raises `TimeoutError` and leaves the process running. A nonzero exit code is part of
-the result, not an exception.
+`vis.shell` and `vis.jailed_shell` return a `concurrent.futures.Future` for the process. Each
+read of a field such as `sh.status` or `sh.out` gives the current value. After the process ends,
+the fields give the final values. Use `concurrent.futures.wait([sh], timeout=30)` to wait up to
+30 seconds without cancelling the process. The wait returns the sets of done and pending Futures.
+
+Use `sh.result()` for the final result. If you pass a timeout to `sh.result()` and it expires,
+`sh.result()` raises `TimeoutError` and leaves the process running. A nonzero exit code is part
+of the result, not an exception.
 
 Use `sh.done()` to check completion and `sh.exception(timeout=30)` to read a process error.
 Use `sh.add_done_callback(fn)` to receive the Future when the process ends. A callback can run
@@ -2078,13 +2082,17 @@ on a background thread. Use `sh.cancel()` to request cancellation of the process
 children. If the process was cancelled, `sh.result()` raises `concurrent.futures.CancelledError`.
 
 By default, a read from the child's stdin gives end of input. To send a line with
-`sh.type("y")`, add `stdin="tty"` when you start the process. To read output while the process
-runs, use [`sh.logs()`](#read-the-shell-log).
+`sh.type("y")`, add `stdin="tty"` when you start the process. For more output than `sh.out`
+gives, use [`sh.logs()`](#read-the-shell-log).
 
 ```python
+from concurrent.futures import wait
+
 sh = vis.shell("npm test", cwd="app")
-result = sh.result(timeout=30)
-print(result.exit, result.out)
+done, pending = wait([sh], timeout=30)
+print(sh.status, sh.out)
+if sh in done:
+    print(sh.result().exit)
 ```
 
 A jailed child sees the session's roots and the egress proxy. A language runtime may need more.
@@ -2144,6 +2152,8 @@ a bound session. The local process has these differences:
 - The command runs with `/bin/sh -c`, not with `bash -lc`.
 - `vis.jailed_shell` raises an error, because no jail exists there.
 - No session holds the shell, so `attach` and `keys` are empty and `note` names a local process.
+- Without a terminal, `waiting_for_input` is always `False`, and `note` never says that a quiet
+  process can wait for input.
 - The start answer always has the status `running`. In Vis, a command that ends at once can show
   `exited` there.
 - A value of `env` is a string, a number, a boolean, or `None`. A source map, such as

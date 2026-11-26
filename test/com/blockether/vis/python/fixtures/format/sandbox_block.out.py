@@ -9,7 +9,7 @@ print(r)
 sh = await shell(
     "cd project && git status --porcelain=v1 | head -100 && echo --- && git log --oneline -5"
 )
-r = await sh.wait(30)
+r = await sh
 print(r["out"][-6000:])
 results = await gather(
     *[fetch(url, timeout=10) for url in urls if url.startswith("https://")],

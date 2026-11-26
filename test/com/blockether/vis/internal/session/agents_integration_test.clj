@@ -592,7 +592,9 @@
                                        "print(a.id, b.session_id, isinstance(a, asyncio.Task))"))
                  2 (code-response (str "assert a in asyncio.all_tasks()\n"
                                        "assert a.record().answer == 'Done'\n"
-                                       "assert a.wait(0).status == 'completed'\n"
+                                       "try:\n    a.wait\nexcept AttributeError as exc:\n"
+                                       "    assert 'asyncio.wait' in str(exc) and '.record()' in str(exc)\n"
+                                       "else:\n    raise AssertionError('The SubagentTask still has wait')\n"
                                        "print((await a).answer, a in asyncio.all_tasks(), b in asyncio.all_tasks())"))
                  {:stop-reason :end :content "Bindings invoked"}))}
             #(turn/run-turn! env "Exercise registered Python methods" {}))

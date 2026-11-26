@@ -4929,20 +4929,34 @@ class ShellFuture(Future[ShellResult]):
         return self._vis_snapshot.logs
 
     def type(self, text, is_enter=True):
-        answer = self._op("send", text=str(text), is_enter=bool(is_enter))
-        self._vis_snapshot = self._result_from(answer)
+        self._op("send", text=str(text), is_enter=bool(is_enter))
         return self
 
+    def _read_snapshot(self):
+        if self.done():
+            if not self.cancelled() and self.exception() is None:
+                return self.result()
+            return self._vis_snapshot
+        value = self._op("snapshot")
+        if self._vis_snapshot.get("already_running") and value["status"] == "running":
+            value = {**value, "already_running": True}
+        return self._result_from(value)
+
     def __getitem__(self, key):
-        return self._vis_snapshot[key]
+        return self._read_snapshot()[key]
 
     def get(self, key, default=None):
-        return self._vis_snapshot.get(key, default)
+        return self._read_snapshot().get(key, default)
 
     def __getattr__(self, name):
+        if name == "wait":
+            raise AttributeError(
+                "Use concurrent.futures.wait([task], timeout=seconds), "
+                "then read the fields on task."
+            )
         if name.startswith("_"):
             raise AttributeError(name)
-        return getattr(self._vis_snapshot, name)
+        return getattr(self._read_snapshot(), name)
 
     def running(self):
         return not self.done()
@@ -4961,6 +4975,8 @@ class ShellFuture(Future[ShellResult]):
                 state = answer["state"]
                 if state != "running":
                     break
+            if "snapshot" in answer:
+                self._vis_snapshot = self._result_from(answer["snapshot"])
             if state == "done":
                 result = self._result_from(answer["value"])
             elif state == "cancelled":
@@ -4996,7 +5012,9 @@ def _sdk_shell_call(name, args, options):
 def shell(*args, **options):
     """Start a command and return a ShellFuture.
 
-    Use `result(timeout=...)` to wait for its ShellResult. `cancel()` requests
+    Read the fields on the Future for the current process state, or call
+    `result()` for the final ShellResult. Use `concurrent.futures.wait([sh],
+    timeout=seconds)` to wait without cancelling the process. `cancel()` requests
     cancellation. `logs()` reads process output, and `type()` sends input.
     The sandbox's `shell` uses a Task instead.
 

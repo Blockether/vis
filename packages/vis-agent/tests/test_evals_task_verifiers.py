@@ -369,11 +369,42 @@ def test_host_capture_uses_only_the_trial_session_journal_and_questions(tmp_path
     }
 
 
-@pytest.mark.parametrize("dead", [False, True])
-def test_shell_needs_live_control_and_real_terminal_events(tmp_path, dead):
+@pytest.mark.parametrize(
+    "case",
+    [
+        "live",
+        "aliased",
+        "inline",
+        "contains",
+        "dead",
+        "unrelated-wait",
+        "logs-only",
+        "hard-coded-running",
+        "unused-membership",
+        "rebound-pending",
+        "done-set",
+    ],
+)
+def test_shell_needs_live_control_and_real_terminal_events(tmp_path, case):
     hold, finish = "python3 shell_probe.py hold", "python3 shell_probe.py finish"
-    control = """sh.wait(.2)
-running = not sh.done()
+    wait = "done, pending = await asyncio.wait([sh], timeout=.2)"
+    if case == "aliased":
+        wait = "from asyncio import wait as pause\nhandles = {sh}\ndone, pending = await pause(handles, timeout=.2)"
+    elif case == "unrelated-wait":
+        wait = "done, pending = await other.wait([sh], timeout=.2)"
+    output = {"aliased": 'sh.get("out")', "logs-only": "sh.logs().out"}.get(
+        case, "sh.out"
+    )
+    running = {
+        "hard-coded-running": "True",
+        "contains": "pending.__contains__(sh)",
+        "done-set": "sh in done",
+    }.get(case, "sh in pending")
+    if case == "rebound-pending":
+        wait += "\npending = {sh}"
+    control = f"""{wait}
+running = {running}
+start_output = {output}
 sh.cancel()
 try:
     await sh
@@ -382,9 +413,18 @@ except asyncio.CancelledError:
 cancelled = sh.cancelled()
 """
     first = f"sh = await shell({hold!r})\n" + (
-        "if False:\n" + textwrap.indent(control, "    ") if dead else control
+        "if False:\n" + textwrap.indent(control, "    ") if case == "dead" else control
     )
-    second = f"sh2 = await shell(command={finish!r})\nr = await sh2\nprint(r.out)"
+    report_value = {"unused-membership": "True", "inline": "sh in pending"}.get(
+        case, "running"
+    )
+    second = f"""import json
+sh2 = await shell(command={finish!r})
+r = await sh2
+report = {{"running": {report_value}, "start_output": start_output,
+          "cancelled": cancelled, "exit": r.exit, "output": r.out}}
+print(json.dumps(report))
+"""
     events = shell_events(state="cancelled") + shell_events("t2")
     events[1]["task"]["cancel_reason"] = "agent"
     block1 = atif.block(
@@ -408,16 +448,13 @@ cancelled = sh.cancelled()
         {"command": hold, "exit": None, "output": "hold-started"},
         {"command": finish, "exit": 0, "output": "finish-ok"},
     ]
-    assert (
-        check(
-            tmp_path,
-            "task-shell-lifecycle",
-            block1,
-            block2,
-            host={"events": events, "shells": shells},
-        )
-        is not dead
-    )
+    assert check(
+        tmp_path,
+        "task-shell-lifecycle",
+        block1,
+        block2,
+        host={"events": events, "shells": shells},
+    ) is (case in {"live", "aliased", "inline", "contains"})
     assert not check(tmp_path, "task-shell-lifecycle", block1, block2)
 
 

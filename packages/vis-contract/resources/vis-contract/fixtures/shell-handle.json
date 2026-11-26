@@ -11,6 +11,7 @@
     "other-origin": "Outside Vis, there is no second active session tool with a separate trust origin."
   },
   "runner": [
+    "from concurrent.futures import wait",
     "import json",
     "import time",
     "",
@@ -31,9 +32,6 @@
     "",
     "",
     "def finish(sh, seconds=30):",
-    "    if hasattr(sh, \"task_id\"):",
-    "        sh.wait(seconds)",
-    "        return sh.result()",
     "    return sh.result(seconds)",
     "",
     "",
@@ -57,7 +55,8 @@
     "        sh = door(*case.get(\"args\", []), **case.get(\"kwargs\", {}))",
     "    except Exception as error:",
     "        return refusal(error)",
-    "    scope = {\"sh\": sh, \"view\": view, \"door\": door, \"until\": until, \"finish\": finish, \"other_door\": other_door}",
+    "    token = \"'\" + str(sh.get(\"id\")) + \"'\"",
+    "    scope = {\"sh\": sh, \"view\": view, \"door\": door, \"until\": until, \"finish\": finish, \"other_door\": other_door, \"wait\": wait}",
     "    try:",
     "        exec(\"\\n\".join(case[\"steps\"]), scope)",
     "        answer = scope.get(\"answer\")",
@@ -66,7 +65,7 @@
     "    finally:",
     "        if hasattr(sh, \"cancel\") and not sh.done():",
     "            sh.cancel()",
-    "    return masked(json.loads(json.dumps(answer)), \"'\" + str(sh.get(\"id\")) + \"'\")"
+    "    return masked(json.loads(json.dumps(answer)), token)"
   ],
   "cases": [
     {
@@ -660,45 +659,41 @@
       "name": "the start answer has no output",
       "args": [
         {
-          "command": "sleep 2; echo done"
+          "command": "sleep 30"
         }
       ],
       "steps": [
-        "answer = view(sh, 'stage', 'status', 'exit', 'timed_out', 'timeout_secs', 'out', 'out_omitted_chars', 'offset', 'next_offset', 'is_eof')"
+        "answer = view(sh, 'stage', 'status', 'exit', 'out', 'out_omitted_chars', 'offset', 'next_offset', 'is_eof')",
+        "answer += [sh.get('timed_out', 'absent'), sh.get('timeout_secs', 'absent')]"
       ],
       "expect": [
         "run",
         "running",
         null,
-        false,
-        null,
         "",
         0,
         0,
         0,
-        false
+        false,
+        "absent",
+        "absent"
       ]
     },
     {
-      "name": "the start answer of a fast command has no output",
+      "name": "a completed handle gives its final fields",
       "args": [
         {
           "command": "echo fast"
         }
       ],
       "steps": [
-        "import time",
-        "time.sleep(1)",
-        "answer = view(sh, 'stage', 'timed_out', 'timeout_secs', 'out', 'out_omitted_chars', 'offset', 'next_offset')"
+        "assert wait([sh], timeout=5).done == {sh}",
+        "answer = [sh.status, sh['exit'], sh.get('out')]"
       ],
       "expect": [
-        "run",
-        false,
-        null,
-        "",
+        "exited",
         0,
-        0,
-        0
+        "fast\n"
       ]
     },
     {
@@ -723,23 +718,19 @@
       "name": "a bounded observation does not cancel a command",
       "args": [
         {
-          "command": "sleep 20"
+          "command": "printf ready; sleep 20"
         }
       ],
       "steps": [
-        "try:",
-        "    if hasattr(sh, \"task_id\"):",
-        "        sh.wait(0)",
-        "        assert sh[\"timed_out\"]",
-        "    else:",
-        "        sh.result(0)",
-        "except TimeoutError:",
-        "    pass",
-        "answer = [sh.done(), sh.cancelled()]"
+        "until(sh, 'ready')",
+        "done, pending = wait([sh], timeout=0.02)",
+        "answer = [not done, pending == {sh}, sh.cancelled(), sh.out]"
       ],
       "expect": [
+        true,
+        true,
         false,
-        false
+        "ready"
       ]
     },
     {
@@ -1050,15 +1041,10 @@
         }
       ],
       "steps": [
-        "answer = [sh.type('hello') is sh] + view(sh, 'stage', 'out', 'offset', 'next_offset')"
+        "answer = sh.type('hello') is sh",
+        "assert 'got:hello' in finish(sh).out"
       ],
-      "expect": [
-        true,
-        "send",
-        "",
-        0,
-        0
-      ]
+      "expect": true
     },
     {
       "name": "type without a terminal stdin",
@@ -1068,13 +1054,9 @@
         }
       ],
       "steps": [
-        "sh.type('x')",
-        "answer = view(sh, 'stage', 'note')"
+        "answer = sh.type('x') is sh and sh.status == 'running'"
       ],
-      "expect": [
-        "send",
-        "The stdin of this shell is empty, so only a program that opens its terminal reads this. To type into stdin, start the command with {\"stdin\": \"tty\"}."
-      ],
+      "expect": true,
       "outside": {
         "reason": "pipe",
         "expect": {
@@ -1661,22 +1643,16 @@
         }
       ],
       "steps": [
-        "answer = [str(sh['note']).startswith('Spawned'), str(sh['attach']).startswith('vis-agent extension shell attach')]"
+        "answer = str(sh['attach']).startswith('vis-agent extension shell attach')"
       ],
-      "expect": [
-        true,
-        true
-      ],
+      "expect": true,
       "outside": {
         "reason": "local",
-        "expect": [
-          false,
-          false
-        ]
+        "expect": false
       }
     },
     {
-      "name": "the answer of type shows the keys",
+      "name": "a field read after type gives the final process result",
       "args": [
         {
           "command": "stty -onlcr <&1 2>/dev/null; echo ready; read x; echo got:$x",
@@ -1685,21 +1661,15 @@
       ],
       "steps": [
         "until(sh, 'ready')",
-        "answer = view(sh.type('hello'), 'stage', 'keys', 'note')"
+        "sh.type('hello')",
+        "assert wait([sh], timeout=5).done == {sh}",
+        "answer = [sh['stage'], sh.get('keys'), 'got:hello' in sh.out]"
       ],
       "expect": [
-        "send",
-        "\"hello\" ↵",
-        null
-      ],
-      "outside": {
-        "reason": "local",
-        "expect": [
-          "send",
-          null,
-          "vis-agent outside a Vis session: a local subprocess, no jail"
-        ]
-      }
+        "run",
+        null,
+        true
+      ]
     },
     {
       "name": "a log page answers the text reads",

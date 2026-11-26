@@ -15,7 +15,7 @@
 
    1. `sh = await shell(\"ls\")` — `bash -lc` in the workspace root, spawned under
       a REAL pty, its merged output streamed verbatim to a log FILE and registered
-      as a session RESOURCE. `sh.wait(30)` is what fills `exit`/`out`. Output is
+      as a session resource. `sh.exit` and `sh.out` read the current state. Output is
       bounded at READ time to a head+tail budget per stream, so only the MIDDLE of a
       huge stream is dropped, never its start or end. A non-zero exit is DATA the
       model reads, not an error.
@@ -35,15 +35,13 @@
    ten-line window) and returns a page NOW; `page[-4000:]` slices that page's `out`
    text directly, `next(page)` continues the read and `page.pages()` walks its ready
    pages lazily, bounded to ten by default, while
-   `lines=-10` walks back up. `sh.wait(30)` is the bounded poll loop written once
-   in the engine, `sh.type(\"y\")` types into the pty and `sh.cancel()` kills the tree.
+   `lines=-10` walks back up. Use `await asyncio.wait([sh], timeout=30)` for a
+   bounded wait. `sh.type(\"y\")` types into the terminal. `sh.cancel()` stops the process tree.
    There are no id-taking verbs to re-type an id into; re-issuing a LIVE id gives
    the same handle back.
 
-   STATUS is not a stage of its own: EVERY answer of EVERY stage already says what the
-   shell is doing — `status`/`exit`, `started_at`/`finished_at`/`uptime_ms`, `log_path`,
-   and the live `cpu_ms`/`cpu_percent`/`rss_bytes` of its process tree — so \"is it done
-   yet\" is read off the result already in hand and never costs a second call.
+   Each field read on the Task gives the current process state. The final result
+   and log pages are fixed maps.
 
    `shell-dispatch` survives as the INTERNAL grammar the Python-extension entry
    points use, since those hand-author an options map and genuinely need an `op`.
@@ -780,13 +778,9 @@
 (def ^:private shell-result-base
   "The ONE result shape of the whole shell family — every stage, every tool.
 
-   `shell` itself, each result or snapshot (`await sh`, `sh.logs`, `sh.type`, `sh.wait`) and
-   an argv run all answer THIS key set, so a caller reads `r[\"exit\"]`, `r[\"out\"]`,
-   `r[\"command\"]` and `r[\"status\"]` the same way whatever produced the map and no
-   key can KeyError. `stage` names the producer (`run` / `background` / `logs` /
-   `send` / `wait`) — it is the only thing that varies, and it varies as DATA, not
-   as a different shape. A key a stage has nothing to say about stays
-    present-but-neutral rather than vanishing.
+   Final results and operation results have this key set. A live Task read
+   omits `timed_out` and `timeout_secs`: reading the fields does not wait.
+   `stage` identifies the operation that gave the result.
 
     But a key DERIVABLE from another key is not carried at all — one fact, one
     field: `pid` already says the child was spawned, `status` \"stopped\" already
@@ -828,7 +822,7 @@
    "rss_bytes" nil
    "timed_out" false
    "timeout_secs" nil
-   ;; A `wait` that ended because the process blocks in a read on its terminal.
+   ;; A live process is waiting for input from its terminal.
    "waiting_for_input" false
    ;; OUTPUT, under ONE name everywhere: `out` — what a run captured, and what a
    ;; log read returned. Named for what it HOLDS, not for one of the two fds it
@@ -1307,7 +1301,7 @@
                         (assoc-in m
                           path
                           (-> entry
-                              (dissoc :pump :send :bridge)
+                              (dissoc :pump :send :bridge :final :usage)
                               (assoc :proc {:pid (:pid p)})))
                         m))))
   nil)
@@ -1473,6 +1467,30 @@
                                         (.pid h))
                                       handles))))))
 
+(defn- cached-process-usage [{:keys [usage proc]} defer?]
+  (if-not usage
+    (when-not defer? (process-usage (:pid proc)))
+    (let [{:keys [until sample refreshing?] :as cached} @usage]
+      (if (or refreshing? (and until (< (System/nanoTime) (long until))))
+        sample
+        (if-not (compare-and-set! usage cached (assoc cached :refreshing? true))
+          (:sample @usage)
+          (let [refresh! (fn []
+                           (let [measured (volatile! sample)]
+                             (try
+                               (vreset! measured (process-usage (:pid proc)))
+                               (finally
+                                 (reset! usage {:until (+ (System/nanoTime) 2000000000)
+                                                :sample @measured})))))]
+            (if defer?
+              ;; A refused submission (executor shut down) must not leave the cache
+              ;; marked as refreshing forever, and a field read must not throw.
+              (do (try (future (refresh!))
+                       (catch java.util.concurrent.RejectedExecutionException _
+                         (swap! usage dissoc :refreshing?)))
+                  sample)
+              (refresh!))))))))
+
 (def ^:private read-syscall
   "Number of the `read` syscall in `/proc/<pid>/syscall`, by `os.arch`. x86-64 has its
    own table; arm64 uses the generic table."
@@ -1505,7 +1523,7 @@
           (tree-handles pid))))
 
 (def ^:private quiet-note-ms
-  "A wait at least this long with no output and almost no CPU adds a note: the process
+  "A process live at least this long with no output and almost no CPU adds a note: the process
    can wait for input, a lock or the network. Only a note, because the signs are the same
    for all three."
   30000)
@@ -1521,9 +1539,8 @@
    so a lifecycle stage says what the shell it acts on is running and the result
    never echoes it under a second name.
 
-   `:sample-usage?` false drops the three cost numbers — the ONE caller that
-   wants that is the wait loop's polling read, which never looks at them."
-  [op id entry & [{:keys [sample-usage?] :or {sample-usage? true}}]]
+   All reads share a short-lived cost sample for this process."
+  [op id entry & [{:keys [sample-usage? defer-usage?] :or {sample-usage? true}}]]
   (let [exit
         (some-> (:exit entry)
                 deref)
@@ -1534,18 +1551,7 @@
     (shell-result
       op
       (merge
-        ;; Live cost of the tree, sampled HERE so every stage reports the same
-        ;; three numbers the same way. Skipped once the child is gone: there is
-        ;; nothing to sample, and a stale sample would be a lie.
-        ;;
-        ;; And skipped when the caller declared it reads none. A sample forks
-        ;; `ps`, which measured ~14 ms of CPU per call here, so the wait loop's
-        ;; 2/10/50 ms cadence spent roughly a THIRD OF A CORE per waiting shell
-        ;; on samples nobody read: ~27 of them a second, of which exactly one —
-        ;; the last — reaches a caller. A JFR profile of a live gateway is what
-        ;; found it, with 388 of 395 process spawns in a 46 s window coming from
-        ;; this one loop.
-        (when (and sample-usage? (nil? exit)) (process-usage (:pid (:proc entry))))
+        (when (and sample-usage? (nil? exit)) (cached-process-usage entry defer-usage?))
         {"id" id
          "command" (:command entry)
          "cwd" (:dir entry)
@@ -1582,19 +1588,42 @@
 
 (defn- result-window
   [stage id entry]
-  (let [file (io/file (:log-path entry))
+  (let [core (bg-core stage id entry)
+        file (io/file (:log-path entry))
         end (.length file)
         {:keys [text omitted]} (capture-log file)]
-    (assoc (bg-core stage id entry)
+    (assoc core
            "out" (normalize-terminal-output text)
            "out_omitted_chars" (long (or omitted 0))
            "duration_ms" (max 0 (- (long (or @(:exited-at entry) (util/now-ms)))
                                       (long (:started-at entry))))
            "next_offset" end)))
 
+(defn- live-process-snapshot [id entry]
+  (let [result (bg-core "run" id entry {:defer-usage? true})
+        file (io/file (:log-path entry))
+        chunk (shell-log/read-chunk id file {:limit shell-log/max-chunk-bytes})
+        out (normalize-terminal-output (:text chunk))
+        live? (live-entry? entry)
+        uptime (get result "uptime_ms")]
+    (cond-> (assoc result "out" out
+                          "duration_ms" uptime
+                          "offset" (:offset chunk)
+                          "next_offset" (:next-offset chunk)
+                          "waiting_for_input" (boolean (and live? (:stdin-tty? entry)
+                                                            (terminal-reader (:pid (:proc entry))))))
+      (= "running" (get result "status")) (dissoc "timed_out" "timeout_secs")
+      (and live? (>= (long uptime) (long quiet-note-ms))
+           (str/blank? out)
+           (some-> (get result "cpu_percent") double (< 1.0)))
+      (assoc "note" (str "No output and almost no CPU for " (quot uptime 1000)
+                         " s. Check the log with sh.logs(-20).")))))
+
 (defn- register-process!
   [env id {:keys [exit generation log-path command] :as entry}]
   (let [session (:session-id env)
+        final (atom nil)
+        entry (assoc entry :usage (atom nil) :final final)
         snapshot (bg-core "run" id entry {:sample-usage? false})
         {:keys [row complete!]}
         (task/start-manual!
@@ -1602,32 +1631,36 @@
           {:kind :shell :name (str "shell(" (pr-str (one-line command 72)) ")")
            :origin python-host/*task-origin*
            :guest? (= "tool" (env-origin env))
-           :guest-data {:generation generation :snapshot snapshot}}
+           :shell-snapshot #(or @final (let [current (live-process-snapshot id entry)] (or @final current)))
+           :guest-data {:generation generation :snapshot snapshot :shell-origin (env-origin env)}}
           (fn [_] (stop-bg-generation! session id exit)))]
     (assoc entry :task row :complete! complete! :log-path log-path)))
 
 (defn- finish-process!
-  [session id {:keys [exit exited-at proc log-error stopped? bridge complete!] :as entry} index-fn code]
+  [session id {:keys [exit exited-at proc log-error stopped? bridge complete! final] :as entry} index-fn code]
   (let [retire (delay
-                 #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-                 (locking (bg-lifecycle-lock session id)
-                   (compare-and-set! exited-at nil (util/now-ms))
-                   (reset! exit code)
-                   (when (identical? exit (:exit (bg-entry session id)))
-                     (index-fn {:ended-at @exited-at :exit code})
-                     (when (and bridge (not @stopped?))
-                       (try ((:stop bridge)) (catch Throwable _ nil)))
-                     (retire-bg-entry! session id proc)
-                     (when-not @stopped?
-                       (resources/update! session id {:status :exited
-                                                      :detail (or @log-error (str "exit " code " — log on disk"))})))))
-        outcome (fn []
-                  @retire
-                  (cond @stopped? {:state :cancelled}
-                        @log-error {:state :failed :error @log-error}
-                        (nil? code) {:state :failed :error "Shell exit code is unavailable."}
-                        :else {:state :done :value (result-window "run" id (dissoc entry :bridge))}))]
-    (try (complete! outcome) (finally @retire))))
+                 (compare-and-set! exited-at nil (util/now-ms))
+                 (reset! exit code)
+                 (let [error (or @log-error (when (nil? code) "Shell exit code is unavailable."))
+                       snapshot (cond-> (result-window "run" id (dissoc entry :bridge))
+                                  @stopped? (assoc "status" "stopped")
+                                  (and error (not @stopped?)) (assoc "status" "failed" "note" error)
+                                  true (assoc "is_eof" true))]
+                   (reset! final snapshot)
+                   #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+                   (locking (bg-lifecycle-lock session id)
+                     (when (identical? exit (:exit (bg-entry session id)))
+                       (index-fn {:ended-at @exited-at :exit code})
+                       (when (and bridge (not @stopped?))
+                         (try ((:stop bridge)) (catch Throwable _ nil)))
+                       (retire-bg-entry! session id proc)
+                       (when-not @stopped?
+                         (resources/update! session id {:status :exited
+                                                        :detail (or error (str "exit " code " — log on disk"))}))))
+                   (cond @stopped? {:state :cancelled :snapshot snapshot}
+                         error {:state :failed :error error :snapshot snapshot}
+                         :else {:state :done :value snapshot :snapshot snapshot})))]
+    (try (complete! #(deref retire)) (finally @retire))))
 
 (defn- process-descriptor
   [entry snapshot]
@@ -1843,7 +1876,7 @@
    between a run and a background shell, so the two must not answer with two
    different maps: `id`, `command` and `status` are read the same way on every
    stage. `timed_out` is FALSE — no wait was made, so none expired — and `exit` is
-   nil until `sh.wait(secs)` fills it."
+   nil until the process exits."
   [r]
   (let [m (:result r)]
     (assoc r
@@ -1864,7 +1897,7 @@
                            (str "Spawned: the shell runs under id '"
                                 (get m "id")
                                 "' — read it with sh.logs(offset=0), type at it with"
-                                " sh.type(text), wait for it with sh.wait(secs), and"
+                                " sh.type(text), wait for it with await sh, and"
                                 " stop it with sh.cancel().")))
       :op :shell)))
 
@@ -2220,7 +2253,7 @@
    caller authors an options map by hand and therefore genuinely needs an `op`
    discriminator. The MODEL never reaches this: it calls the `shell` PYTHON verb —
    one call that spawns one command — and drives what came back through the
-   HANDLE's own methods (`sh.logs()`, `sh.wait()`, `sh.type(\"y\")`, `sh.cancel()`), so one
+   HANDLE's own methods (`sh.logs()`, `sh.type(\"y\")`, `sh.cancel()`), so one
    disambiguate."
   [env opts]
   (when-not (opts-arg? opts)
@@ -2303,8 +2336,7 @@
       "run"
       ;; There is no `wait` on the REQUEST. A run ALWAYS spawns under a real PTY and
       ;; returns NOW with its handle, so one call has one meaning and a number can
-      ;; never select a second mode. Waiting is `sh.wait(secs)` on the handle — the
-      ;; one place that can also read, type and stop — and the log file every run
+      ;; never select a second mode. A caller can await the handle. The log file every run
       ;; leaves behind is the FEATURE: "what did that build print" stays answerable
       ;; by id for as long as the session lives.
       (do (reject-text)
@@ -2356,6 +2388,13 @@
                            " — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".")
                       {:type ::unknown-op :op op})))))
 
+(defn shell-snapshot
+  "Read the process or its final result without waiting."
+  [env opts]
+  (or (task/shell-snapshot (:session-id env) (get opts "task_id") (get opts "token")
+                           (env-origin env) (str (get opts "id")))
+      (throw (ex-info "This shell handle has no process generation." {:id (get opts "id")}))))
+
 (defn sdk-task-op
   "Drive the exact process that the SDK installation admitted."
   [{:keys [session task-id id origin token]} op opts]
@@ -2368,6 +2407,7 @@
                 {"state" "missing"})
       "cancel" (boolean (and (task/owns-generation? session task-id token)
                              (task/cancel! session task-id :agent)))
+      "snapshot" (shell-snapshot env {"id" id "token" token "task_id" task-id})
       ("logs" "send") (:result (shell-dispatch env (assoc opts "op" op "id" id "token" token)))
       (throw (ex-info "Unknown SDK shell Task operation." {:op op})))))
 
@@ -2621,38 +2661,6 @@
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "logs")))
 
-(defn shell-snapshot
-  "Read or probe a ShellTask without waiting."
-  [env opts]
-  (let [id (str (get opts "id"))
-        entry (bg-entry (:session-id env) id)
-        token (get opts "token")]
-    (when-not (and entry token)
-      (throw (ex-info "This shell handle has no process generation." {:id id})))
-    (authorize-origin! env id entry token)
-    (cond (get opts "budget")
-          (let [seconds (clamp-timeout-secs (get opts "seconds") "seconds")]
-            (if (get opts "sample_cpu")
-              {"seconds" seconds
-               "cpu_ms" (when (and (live-entry? entry) (>= (* 1000 seconds) (long quiet-note-ms)))
-                          (get (process-usage (:pid (:proc entry))) "cpu_ms"))}
-              seconds))
-          (get opts "probe") (when (and (:stdin-tty? entry) (live-entry? entry))
-                              (terminal-reader (:pid (:proc entry))))
-          :else (let [result (result-window "wait" id entry)
-                      seconds (clamp-timeout-secs (get opts "seconds") "seconds")
-                      elapsed (long (or (get opts "elapsed_ms") 0))]
-                  (cond-> (assoc result "timeout_secs" seconds)
-                    (and (live-entry? entry) (>= elapsed (long quiet-note-ms))
-                         (str/blank? (get result "out"))
-                         (if-let [cpu-end (when (number? (get opts "cpu_start_ms"))
-                                            (get result "cpu_ms"))]
-                           (let [used (- cpu-end (get opts "cpu_start_ms"))]
-                             (and (not (neg? used)) (< (* 100 used) elapsed)))
-                           (some-> (get result "cpu_percent") double (< 1.0))))
-                    (assoc "note" (str "No output and almost no CPU for " (quot elapsed 1000)
-                                       " s. Check the log with sh.logs(-20).")))))))
-
 (defn shell-type
   "`sh.type(\"y\")` — type keystrokes at a background shell's stdin.
    `is_enter` (default true) submits the line, which is what an interactive prompt
@@ -2708,28 +2716,13 @@
       (when (= 1 (count hits)) (present-str (:script (first hits)))))))
 
 (defn- shell-ticker
-  "LIVE-TICKER phrase for one shell call — what the bubble says while the call is
-   still in flight, completing `Vis is …`. The spawn and every method on its
-   handle say here what they are doing.
-
-   A transport's own name answers nothing: `_shell-wait tt` names neither the
-   command nor the budget, which is exactly how a wait that is doing its job reads
-   as a wait stuck on nothing. Naming the HANDLE answers no better — `tt` is
-   bookkeeping the caller invented and nobody else can resolve. So the sentence
-   names the COMMAND and the budget — `running: npm test`, `waiting up to 60s for:
-   npm test` — taken from the spawn's OWN arguments, and otherwise read live from
-   the registry so `wait`/`logs`/`stop`, which run no command of their own, still
-   say which bash they act on. `the shell` when neither answers: a generic noun
-   tells the reader as much as a private token and misleads less."
+  "Show the command of a shell call while it is in progress."
   [op]
   (fn [_env args]
     (let [input
           (shell-call-opts (case op
                              "run"
                              ["command"]
-
-                             "wait"
-                             ["id" "seconds"]
 
                              "send"
                              ["id" "text"]
@@ -2742,11 +2735,6 @@
                   str
                   str/trim
                   not-empty)
-
-          ;; The budget the wait really gets, clamped like the wait itself.
-          secs
-          (try (clamp-timeout-secs (opt input :seconds) "seconds")
-               (catch Throwable _ rt/DEFAULT_SHELL_TIMEOUT_SECS))
 
           ;; The spawn KNOWS its command — it is right there in the call — while a
           ;; lifecycle stage has to look up the shell it acts on.
@@ -2763,9 +2751,6 @@
           (case op
             "run"
             "running"
-
-            "wait"
-            (str "waiting up to " secs "s for")
 
             "logs"
             "reading the log of"
@@ -2803,12 +2788,9 @@
      (str
        "Use `sh = await shell(command, cwd=dir)` to start one `bash -lc` command under a terminal. "
        "The call starts a Task that gives the running process handle. `result = await sh` waits for the exit. "
-       "`sh.wait(seconds)` waits synchronously, refreshes `sh`, and returns that same handle without "
-       "cancelling the process. Read `sh.status` after the call. Do not await its return unless you want "
-       "to wait for the process to end. `timed_out` describes the bounded wait. "
-       "Give a nonnegative whole number of seconds. The wait uses at least 1 second and at most "
-       max-timeout-secs " seconds as its limit. If you omit seconds, the limit is "
-       default-timeout-secs " seconds. `sh.cancel()` requests cancellation. "
+       "Read `sh.status` or `sh.out` for the current state. "
+       "Use `done, pending = await asyncio.wait([sh], timeout=seconds)` to wait up to a limit "
+       "without cancelling the process. `sh.cancel()` requests cancellation. "
        "Use `await shell(op=\"attach\", id=alias)` to recover a live handle from the same trust origin "
        "without starting a command. Starting with the same live alias also returns that shell.\n\n"
        "`sh.logs()` reads the tail, even after cancellation. `sh.logs(-50)` gives the last 50 lines. "
@@ -2818,9 +2800,9 @@
        "the text. `is_eof` marks the end of this snapshot. Read the log again for new output. Do not rerun "
        "the command.\n\n"
        "Standard input gives end of input by default. Use `stdin=\"tty\"` to let the program read "
-       "`sh.type(text)` or input from a person. `sh.type(text)` refreshes and returns `sh`. "
-       "A wait can return early with `waiting_for_input=True` when a program reads from its terminal. "
-       "This flag is exact only on Linux. A wait with little CPU use and no output can add a `note`.\n\n"
+       "`sh.type(text)` or input from a person. `sh.type(text)` returns `sh`. "
+       "`sh.waiting_for_input` is true when a program waits for input from its terminal (Linux only). "
+       "After 30 seconds, a process with little CPU use and no output can have a `note`.\n\n"
        "Keep command output. Read or filter the log in Python instead of using `| head`, `| tail`, "
        "`| grep`, `2>/dev/null`, or `> file` to trim it. A pipeline reports the exit of its last command.\n\n"
        "`env` sets variables for this run over the project variables. Use a literal for a switch. "
@@ -2885,7 +2867,7 @@
      :on-error-fn (shell-on-error :_shell-type)}))
 
 (defn- shell-snapshot-tool
-  "Read a process snapshot for ShellTask.wait without waiting."
+  "Read the current fields of a shell Task."
   [opts]
   (shell-snapshot extension/*current-environment* opts))
 
@@ -2909,8 +2891,9 @@
     (str "## Shell\n"
          "Use `shell` to run programs. Use Python for file and data work. "
          "`sh = await shell(cmd)` gives the running handle, not the result. "
-         "`sh.wait(2)` returns the same handle after a bounded wait in whole seconds. Read `sh.status`. "
-         "Do not await `sh.wait(2)`. `await sh` waits for the exit. See `doc(\"shell\")`.")))
+         "Read `sh.status` and `sh.out` for the current state. "
+         "Use `await asyncio.wait([sh], timeout=2)` to wait up to a limit without cancelling. "
+         "`await sh` waits for the exit. See `doc(\"shell\")`.")))
 
 (defn shell-attach-command
   "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live

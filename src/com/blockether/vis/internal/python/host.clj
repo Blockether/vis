@@ -243,6 +243,7 @@
   [result]
   (cond-> {"state" (name (:state result))}
     (contains? result :value) (assoc "value" (:value result))
+    (and (:snapshot result) (not (contains? result :value))) (assoc "snapshot" (:snapshot result))
     (:message result) (assoc "message" (:message result))
     (:cancelling result) (assoc "cancelling" (:cancelling result))
     (:error result) (assoc "error" (:error result))

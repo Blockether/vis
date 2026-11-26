@@ -6936,7 +6936,7 @@ vis.register_extension(vis.Extension(
                                                                                "token" "envelope-token"
                                                                                "snapshot" {"id" "test" "stage" :run}}}
                                                  :op :shell :metadata {:duration-ms 1}}))
-                        shell/sdk-task-op (fn [cap _ _] {"state" "done" "value" {"out" (:task-id cap)}})]
+                        shell/sdk-task-op (fn [cap _ _] {"state" "done" "value" {"out" (:task-id cap) "stage" "run"}})]
             (binding [extension/*current-environment* env]
               ;; Python sees the UNWRAPPED, deep-stringified `:result` only.
               (expect (= ["echo hi" "run"] (:result (run))))))))))
@@ -11657,7 +11657,7 @@ vis.register_extension(vis.Extension(
               (expect (str/includes? (str (:stdout answer)) "find Task t1 in asyncio.all_tasks()")))))))
   (it "returns pending from asyncio.wait and lets a detached tool request human input"
       (with-task-watch
-        (fn [{:keys [sid ctx block]}]
+        (fn [{:keys [sid block]}]
           (let [prompt (promise)
                 listener (fn [event]
                            (when (and (= sid (:session-id event)) (= :input (:kind event))
@@ -11669,7 +11669,7 @@ vis.register_extension(vis.Extension(
                                               "t = task_ask()\n"
                                               "done, pending = await asyncio.wait({t})\n"
                                               "print(not done and pending == {t})\n")))]
-                (expect (wait-for-task-watch #(awaiting-watch? sid ctx)))
+                (expect (wait-for-task-watch #(seq (get-in @@#'task/sessions [sid :entries "t1" :waiters]))))
                 (expect (= ["t1"] (mapv :id (task/detach-awaits! sid {:question "Ready?"}))))
                 (let [answer (deref waiter 5000 nil)]
                   (expect (nil? (:error answer)) (pr-str answer))
@@ -11857,7 +11857,7 @@ vis.register_extension(vis.Extension(
             result
             (watchdog-block ctx
                             env
-                            "while True:\n    pass\nsh = await shell('true')\nsh.wait(600)\n")]
+                            "while True:\n    pass\nsh = await shell('true')\nawait sh\n")]
 
         (expect (true? (:timeout? result)))
         (expect (not (worker/retired? ctx)))))

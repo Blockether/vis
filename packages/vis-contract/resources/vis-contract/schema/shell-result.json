@@ -29,12 +29,19 @@
         "stage",
         "started_at",
         "status",
-        "timed_out",
-        "timeout_secs",
         "uptime_ms",
         "waiting_for_input"
       ],
       "additionalProperties": false,
+      "if": {
+        "properties": {
+          "stage": {"const": "run"},
+          "status": {"const": "running"}
+        }
+      },
+      "else": {
+        "required": ["timed_out", "timeout_secs"]
+      },
       "properties": {
         "already_running": {
           "type": "boolean"
@@ -143,8 +150,7 @@
           "enum": [
             "run",
             "logs",
-            "send",
-            "wait"
+            "send"
           ]
         },
         "started_at": {

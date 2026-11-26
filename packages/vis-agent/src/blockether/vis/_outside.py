@@ -749,7 +749,7 @@ class _Run:
                 pass
             self.poll()
             self.is_stopped = True
-            self._terminal = {"state": "cancelled"}
+            self._terminal = {"state": "cancelled", "snapshot": self._final_snapshot()}
             return True
 
     def outcome(self, timeout_ms):
@@ -759,23 +759,51 @@ class _Run:
                 if self._terminal is not None:
                     return self._terminal
                 if self.poll() is not None:
-                    raw = self.log()
-                    out, omitted = _result_text(raw)
-                    self._terminal = {
-                        "state": "done",
-                        "value": _result(
-                            self,
-                            "run",
-                            out=out,
-                            out_omitted_chars=omitted,
-                            next_offset=len(raw),
-                        ),
-                    }
+                    self._terminal = {"state": "done", "value": self._final_snapshot()}
                     return self._terminal
             left = deadline - time.monotonic()
             if left <= 0:
                 return {"state": "running"}
             time.sleep(min(0.05, left))
+
+    def _final_snapshot(self):
+        result = _result(self, "run")
+        raw = self.log()
+        out, omitted = _result_text(raw)
+        return dict(result, out=out, out_omitted_chars=omitted, next_offset=len(raw))
+
+    def snapshot(self):
+        # A cancelling thread must keep the group leader unreaped. Do not wait
+        # for that thread, and do not poll the subprocess while it has the lock.
+        terminal = self._terminal
+        if terminal is not None:
+            return terminal.get("snapshot") or terminal["value"]
+        if self._lock.acquire(blocking=False):
+            try:
+                self.poll()
+            finally:
+                self._lock.release()
+        result = _result(self, "run", refresh=False)
+        start = end = 0
+        raw = b""
+        try:
+            with open(self.log_path, "rb") as log:
+                end = log.seek(0, os.SEEK_END)
+                start = log.seek(max(0, end - _LOG_PAGE_CAP_BYTES))
+                raw = log.read(end - start)
+        except OSError:
+            pass
+        while raw and start and raw[0] & 0xC0 == 0x80:
+            raw = raw[1:]
+            start += 1
+        result.update(out=raw.decode("utf-8", "replace"), offset=start, next_offset=end)
+        if result["status"] == "running":
+            result.pop("timed_out")
+            result.pop("timeout_secs")
+        terminal = self._terminal
+        if terminal is not None:
+            return terminal.get("snapshot") or terminal["value"]
+        return result
 
     def log(self):
         try:
@@ -916,10 +944,16 @@ def _shell_option(opts, *names):
     return next((opts[name] for name in names if opts.get(name) is not None), None)
 
 
-def _result(run, stage, **fields):
+def _result(run, stage, *, refresh=True, **fields):
     # Log pages and the terminal result include log text and its cursor.
-    code = run.poll()
+    if refresh:
+        run.poll()
+    finished = run.finished_at
+    code = run.process.returncode if finished is not None else None
+    if code is not None and code < 0:
+        code = 128 - code
     now = time.time()
+    ended = finished if finished is not None else now
     result: dict[str, Any] = dict.fromkeys(_SHELL_RESULT_KEYS)
     result.update(
         {
@@ -929,13 +963,17 @@ def _result(run, stage, **fields):
             "command": (
                 run.command if isinstance(run.command, str) else shlex.join(run.command)
             ),
-            "status": "running" if code is None else "exited",
+            "status": "stopped"
+            if run.is_stopped
+            else "running"
+            if code is None
+            else "exited",
             "pid": run.process.pid,
             "exit": code,
-            "duration_ms": int(((run.finished_at or now) - run.started_at) * 1000),
-            "uptime_ms": int((now - run.started_at) * 1000),
+            "duration_ms": int((ended - run.started_at) * 1000),
+            "uptime_ms": int((ended - run.started_at) * 1000),
             "started_at": int(run.started_at * 1000),
-            "finished_at": int(run.finished_at * 1000) if run.finished_at else None,
+            "finished_at": int(finished * 1000) if finished is not None else None,
             "log_path": run.log_path,
             "timed_out": False,
             "timeout_secs": None,
@@ -1137,6 +1175,8 @@ def shell_task(run, op, opts):
         return run.outcome(min(250, opts.get("timeout_ms", 0)))
     if op == "cancel":
         return run.cancel()
+    if op == "snapshot":
+        return run.snapshot()
     if op == "logs":
         offset = _whole(_shell_option(opts, "offset", "start"), "offset")
         lines = _whole(_shell_option(opts, "lines", "n", "tail"), "lines")

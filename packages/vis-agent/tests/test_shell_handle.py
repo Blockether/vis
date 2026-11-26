@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 from concurrent.futures import CancelledError, Future, as_completed, wait
 
 import blockether.vis.extension as vis
@@ -56,6 +57,76 @@ def test_done_callback_reads_the_outcome_without_a_caller_waiting(complete):
         assert sh.result(0) is sh.result(0)
     finally:
         sh.cancel()
+
+
+def test_field_reads_follow_the_process_before_and_after_completion():
+    sh = vis.shell("printf start; read word; printf '%s' \"$word\"", stdin="tty")
+    try:
+        with pytest.raises(AttributeError, match=r"concurrent\.futures\.wait"):
+            _ = sh.wait
+        assert wait([sh], timeout=0.02).not_done == {sh}
+        deadline = time.monotonic() + 5
+        while "start" not in sh.logs().out and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert sh.status == "running"
+        assert sh["out"] == "start"
+        assert sh.get("exit") is None
+        assert "timed_out" not in sh.keys()
+        assert "timeout_secs" not in sh.keys()
+        sh.type("finish")
+        assert wait([sh], timeout=5).done == {sh}
+        assert sh.status == "exited"
+        assert sh["out"] == "startfinish"
+        assert sh.get("exit") == 0
+    finally:
+        sh.cancel()
+
+
+def test_live_field_read_uses_the_bounded_tail():
+    sh = vis.shell(
+        "printf BEGIN; printf '%01000000d' 0; printf END; read word", stdin="tty"
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while "END" not in sh.out and time.monotonic() < deadline:
+            time.sleep(0.01)
+        out = sh.out
+        assert out.endswith("END") and "BEGIN" not in out
+        assert len(out) <= 262144 and sh.offset > 0
+        sh.type("finish")
+        assert sh.result(5).out.startswith("BEGIN")
+    finally:
+        sh.cancel()
+
+
+def test_live_field_read_does_not_wait_on_the_cancelling_process(monkeypatch):
+    cancelling = threading.Event()
+    release = threading.Event()
+    original = _outside._Run.signal_group
+
+    def signal(run, sig):
+        cancelling.set()
+        assert release.wait(5)
+        original(run, sig)
+
+    monkeypatch.setattr(_outside._Run, "signal_group", signal)
+    sh = vis.shell("sleep 30")
+    cancel = threading.Thread(target=sh.cancel)
+    cancel.start()
+    try:
+        assert cancelling.wait(5)
+        read = Future()
+        reader = threading.Thread(
+            target=lambda: read.set_result(sh.status), daemon=True
+        )
+        reader.start()
+        assert read.result(1) == "running"
+    finally:
+        release.set()
+        cancel.join(5)
+        assert wait([sh], timeout=5).done == {sh}
+    assert sh.status == "stopped"
+    assert isinstance(sh.exit, int)
 
 
 @pytest.mark.parametrize("collect", ["wait", "as_completed"])

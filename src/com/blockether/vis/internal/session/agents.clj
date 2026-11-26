@@ -1354,8 +1354,9 @@
 
    Use `await child` for the final record. If the wait returns `child` with a question open, answer
    the request before you await it again. If a question is already open, the await can return at once.
-   `child.record()` reads the current record. `child.wait(seconds)` waits for a snapshot without
-   cancelling. `child.cancel()` requests cancellation of this attempt only.
+   `child.record()` reads the current record. `await asyncio.wait([child], timeout=seconds)` waits
+   without cancelling; then read `child.record()`. `child.cancel()` requests cancellation of this
+   attempt only.
    Awaiting a cancelled attempt raises `asyncio.CancelledError`.
 
    `child.id` is the child ID (a1, a2, ...). `child.session_id` is the child session ID.

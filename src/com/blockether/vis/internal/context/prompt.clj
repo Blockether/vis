@@ -812,10 +812,10 @@
            "\nUse extension tools by their bound names. Do not import extensions."
            ;; The limit is `VIS_PY_SCAN_ENTRIES` in vis-python-runtime `vispython.c`.
            "\nDirectory walks cap at 10,000 entries per block. Use narrow `ls` or `grep`."
-           "\nTool Tasks run when called. Await them or pass them to `asyncio.wait_for`, `asyncio.wait`, "
-           "`asyncio.shield`, or `asyncio.gather`. Do not wrap Tasks or retry the call. "
-           "Find Tasks across turns with `asyncio.all_tasks()`. "
-           "If a child question releases a wait, reply and await the same Task. `doc(\"python-sandbox\")` has details."
+           "\nTool Tasks run when called. Use `await asyncio.wait([task], timeout=seconds)` "
+           "to wait without cancelling. Read fields for current state. Await Tasks for results. "
+           "Do not wrap Tasks or retry calls. Find Tasks with `asyncio.all_tasks()`. "
+           "If a child question releases a wait, reply and await the same Task. See `doc(\"python-sandbox\")`."
            "\n" (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block

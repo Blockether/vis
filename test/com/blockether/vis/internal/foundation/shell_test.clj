@@ -129,13 +129,13 @@
 (defn- shell-wait* [env id {:keys [seconds offset]}]
   (let [session (:session-id env)
         entry (#'shell/bg-entry session id)
-        opts {"id" id "token" (:generation entry) "seconds" seconds}
         _ (when-not entry (throw (ex-info "shell: unknown id" {:id id})))
-        {limit "seconds" cpu-start "cpu_ms"} (shell/shell-snapshot env (assoc opts "budget" true "sample_cpu" true))
-        outcome (task/await! session (get-in entry [:task :id]) {:timeout-ms (* 1000 limit)})
-        result (or (:value outcome) (shell/shell-snapshot env (assoc opts "elapsed_ms" (* 1000 limit)
-                                                                        "cpu_start_ms" cpu-start)))]
-    {:result (cond-> (assoc result "stage" "wait" "timed_out" (= :running (:state outcome)))
+        opts {"id" id "token" (:generation entry) "task_id" (get-in entry [:task :id])}
+        budget (#'shell/clamp-timeout-secs seconds "seconds")
+        _ (#'shell/authorize-origin! env id entry (:generation entry))
+        outcome (task/await! session (get opts "task_id") {:timeout-ms (* 1000 budget)})
+        result (or (:value outcome) (shell/shell-snapshot env opts))]
+    {:result (cond-> (assoc result "timed_out" (= :running (:state outcome)))
                offset (merge (select-keys (:result (shell-logs* env id {:offset offset}))
                                            ["out" "offset" "next_offset" "is_eof"])))}))
 
@@ -1509,17 +1509,16 @@
                            marker
                            "'; sleep 30") marker])]]
             (let [id (if worked "quiet-after-work" "quiet")]
-              (try (shell* env {"command" command "id" id "timeout_secs" 1})
-                 ;; The marker says that the work ended, so the wait sees only the sleep.
-                 (when worked (poll #(.isFile worked) true? 100))
-                 (with-redefs-fn (cond-> {#'shell/quiet-note-ms 500}
+              (try (with-redefs-fn (cond-> {#'shell/quiet-note-ms 500}
                                    worked
                                    ;; Linux ps reports lifetime CPU percent. Simulate it on macOS too.
                                    (assoc #'shell/process-usage (constantly {"cpu_ms" 500 "cpu_percent" 25.0})))
                    (fn []
+                     (shell* env {"command" command "id" id "timeout_secs" 1})
+                     (when worked (poll #(.isFile worked) true? 100))
                      (let [r (wait* env id 2)]
                        (expect (true? (get r "timed_out")))
-                       (expect (str/includes? (str (get r "note")) "No output") command))))
+                       (expect (= (nil? worked) (str/includes? (str (get r "note")) "No output")) command))))
                  (finally (resources/stop-all! sid)
                           (some-> worked
                                   .delete)))))))))
@@ -1708,33 +1707,7 @@
   ;; number at all, so nineteen samples in twenty were taken and dropped unread.
   ;; At ~14 ms of CPU per fork and ~27 polls a second, that was roughly a third
   ;; of a core burned per waiting shell to produce one number.
-  (it "samples the tree cost ONCE per wait, not once per poll"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let [sid "shell-wait-usage-sampling"
-                  env {:session-id sid}
-                  usage-var #'shell/process-usage
-                  sample @usage-var
-                  calls (atom 0)]
-
-              (try (shell-bg* env "dev" "sleep 30")
-                   (let [waited (with-redefs-fn {usage-var (fn [pid]
-                                                             (swap! calls inc)
-                                                             (sample pid))}
-                                  (fn []
-                                    (wait* env "dev" 1)))]
-                     ;; A whole second of polling on a shell that prints nothing: dozens
-                     ;; of reads, ONE sample — the one that reaches the caller.
-                     (expect (= 1 @calls))
-                     ;; And it is a real sample, not a dropped field: the wait expired,
-                     ;; the child did not, so the three numbers say what it costs.
-                     (expect (= "running" (get waited "status")))
-                     (expect (true? (get waited "timed_out")))
-                     (expect (pos? (long (get waited "rss_bytes"))))
-                     (expect (number? (get waited "cpu_percent")))
-                     (expect (number? (get waited "cpu_ms"))))
-                   (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
+)
 
 (defdescribe
   shell-one-shape-test
@@ -1770,7 +1743,7 @@
                               (ks stopped)
                               (ks git)))
                    ;; `stage` is the ONE thing that varies, and it varies as DATA.
-                   (expect (= ["run" "run" "logs" "logs" "wait" "send" "cancel" "run"]
+                   (expect (= ["run" "run" "logs" "logs" "run" "send" "cancel" "run"]
                               (mapv #(get % "stage") [run bg logs2 logs waited sent stopped git])))
                    ;; The bytes have ONE name, whether the call waited for them or
                    ;; came back for them later.
@@ -1799,7 +1772,7 @@
                                   (expect (true? (get r "timed_out")))
                                   (expect (= "running" (get r "status")))
                                   (expect (< (count (get r "out")) 500000))
-                                  (expect (pos? (long (get r "out_omitted_chars")))))
+                                  (expect (pos? (long (get r "offset")))))
                                 (finally (resources/stop-all! sid))))))))
   (it "answers from the LOG once the process is gone, and moves no cursor twice"
       (with-shell-on
@@ -2214,6 +2187,85 @@
                        (expect (or (nil? child) (shell-pid-gone? child)) (str "spawned pid " child)))))
                  (finally (deliver gate true))))))))
 
+(defdescribe shell-live-snapshot-test
+  (it "reads a stale sample without waiting for the only refresh in a burst"
+      (let [calls (atom 0)
+            entered (promise)
+            release (promise)]
+        (with-shell-task-context
+          (fn [_ ctx]
+            (with-redefs-fn {#'shell/process-usage (fn [_]
+                                                     (if (= 1 (swap! calls inc))
+                                                       {"rss_bytes" 4096}
+                                                       (do (deliver entered true)
+                                                           @release
+                                                           {"rss_bytes" 8192})))}
+              (fn []
+                (py ctx "sh = await shell('sleep 30', id='sampled')\nTrue")
+                (expect (= 4096 (poll #(py ctx "sh.rss_bytes") some? 100)))
+                (Thread/sleep 2100)
+                (let [reader (future (py ctx "[sh.status, sh.id, sh.exit, sh.rss_bytes, sh.rss_bytes]"))]
+                  (try
+                    (expect (true? (deref entered 3000 nil)))
+                    (expect (= ["running" "sampled" nil 4096 4096]
+                               (deref reader 1500 ::blocked)))
+                    (expect (= 2 @calls))
+                    (finally (deliver release true)
+                             (deref reader 3000 nil))))
+                (expect (= 8192 (poll #(py ctx "sh.rss_bytes") #(= 8192 %) 100)))))))))
+  (it "returns the bounded tail while the process still runs"
+      (with-shell-task-context
+        (fn [_ ctx]
+          (expect (= [true true true true]
+                     (py ctx (str "import asyncio\n"
+                                  "sh = await shell(\"printf BEGIN; printf '%01000000d' 0; printf END; read word\", stdin='tty')\n"
+                                  "while 'END' not in sh.logs().out:\n    await asyncio.sleep(.02)\n"
+                                  "out = sh.out\n"
+                                  "['BEGIN' not in out, out.endswith('END'), len(out) <= 262144, sh.offset > 0]")))))))
+  (it "reads the retired generation before its Task has published the outcome"
+      (with-shell-task-context
+        (fn [_ ctx]
+          (let [retired (promise)
+                release (promise)
+                settle @#'task/settle!]
+            (try
+              (with-redefs-fn {#'task/settle! (fn [sid id ticket produce]
+                                              (settle sid id ticket
+                                                      (fn []
+                                                        (let [outcome (produce)]
+                                                          (when (= "printf old" (get-in outcome [:value "command"]))
+                                                            (deliver retired true)
+                                                            (deref release 10000 nil))
+                                                          outcome))))}
+                (fn []
+                  (expect (true? (py ctx "old = await shell('printf old', id='reused')\nTrue")))
+                  (expect (true? (deref retired 5000 nil)))
+                  (expect (= ["exited" "old" 0 "new"]
+                             (py ctx (str "new = await shell('printf new', id='reused')\n"
+                                          "[old.status, old.out, old.exit, (await new).out]"))))))
+              (finally (deliver release true)))))))
+  (it "keeps the final fields after a pump error"
+      (with-shell-task-context
+        (fn [_ ctx]
+          (with-redefs [shell-log/drain! (fn [& _] (throw (ex-info "test pump error" {})))]
+            (expect (= ["failed" true true]
+                       (py ctx (str "sh = await shell('sleep 30')\n"
+                                    "try:\n    await sh\nexcept RuntimeError:\n    pass\n"
+                                    "[sh.status, 'test pump error' in sh.note, isinstance(sh.out, str)]"))))))))
+  (it "keeps the cancelled generation fields after awaiting and reusing its alias"
+      (with-shell-task-context
+        (fn [_ ctx]
+          (expect (= ["stopped" true true true "new"]
+                     (py ctx (str "import asyncio\n"
+                                  "old = await shell('printf old; read word', id='reused', stdin='tty')\n"
+                                  "while 'old' not in old.logs().out:\n    await asyncio.sleep(.02)\n"
+                                  "old.cancel()\ntry:\n    await old\nexcept asyncio.CancelledError:\n    pass\n"
+                                  "first = [old.status, old.out, old.exit]\n"
+                                  "new = await shell('printf new', id='reused')\n"
+                                  "new_result = await new\n"
+                                  "[old.status, old.out == 'old', isinstance(old.exit, int),"
+                                  " first == [old.status, old.out, old.exit], new_result.out]"))))))))
+
 (defdescribe shell-await-stop-test
   (it "turn Stop kills only the shell awaited by that block"
       (with-shell-task-context (fn [sid c]
@@ -2237,7 +2289,7 @@
   (it "keeps the process alive when Stop interrupts a bounded observation"
       (with-shell-task-context (fn [sid c]
              (let [[id pid] (py c "b = await shell('sleep 30', id='bounded')\n[b.task_id, b.pid]")
-                   waiter (future (ep/run-python-block c "b.wait(60)"))]
+                   waiter (future (ep/run-python-block c "import asyncio\nawait asyncio.wait([b], timeout=60)"))]
                (try
                  (loop [n 0]
                    (when (and (< n 120) (not (seq (get-in @@#'task/sessions [sid :entries id :waiters]))))
@@ -2271,10 +2323,10 @@
                               "l = b.logs(limit=10)\n"
                               "s = b.cancel()\n" "[b['stage'], l['stage'], s, s is b]"))))
              (finally (resources/stop-all! sid)))))
-  (it "bounds sh.wait(secs) even when the command NEVER stops printing"
+  (it "bounds asyncio.wait even when the command NEVER stops printing"
       ;; Regression, shell audit: the poll loop only checked its deadline once the log
       ;; was at EOF, so a command with bytes always available (`yes`, a chatty build)
-      ;; never reached the clock and `sh.wait(1)` ran until the sandbox watchdog.
+      ;; never reached the clock and the block ran until the sandbox watchdog.
       (let [sid
             (str "py-wait-bound-" (System/nanoTime))
 
@@ -2283,12 +2335,12 @@
 
         (try (expect (= [true "running" true]
                         (py c
-                            (str "import time\n"
+                            (str "import asyncio, time\n"
                                  "sh = await shell('while true; do echo x; done',"
                                  " {'id':'chatty'})\n"
-                                 "t0 = time.time()\n" "r = sh.wait(1)\n"
+                                 "t0 = time.time()\n" "done, pending = await asyncio.wait([sh], timeout=1)\n"
                                  "took = time.time() - t0\n"
-                                 "seen = [bool(r['timed_out']), r['status'], took < 45]\n"
+                                 "seen = [sh in pending, sh['status'], took < 45]\n"
                                  "sh.cancel()\n" "seen"))))
              (finally (resources/stop-all! sid)))))
   (it
@@ -2305,14 +2357,14 @@
       (try
         (expect
           (=
-            [true "ShellTask" false true "exited" false "" false true]
+            [true "ShellTask" false true "exited" true false true]
             (py
               c
               (str
                 "sh = await shell('read x; echo got $x', {'id':'handle', 'stdin':'tty'})\n"
-                "sent = sh.type('ready')['out'][-300:]\n"
-                "w = sh.wait(30)\n"
-                "seen = ['got ready' in w['out'], w['status'], w['timed_out']]\n"
+                "sent = sh.type('ready') is sh\n"
+                "await sh\n"
+                "seen = ['got ready' in sh['out'], sh['status']]\n"
                 "stopped = sh.cancel()\n"
                 "[isinstance(sh, __import__('asyncio').Task), type(sh).__name__, 'shell_logs' in globals()]"
                 " + seen + [sent, stopped," " 'got ready' in sh.logs(-7)['out']]"))))
@@ -2331,7 +2383,7 @@
                         (py c
                             (str "sh = await shell('for i in $(seq 1 40); do echo line-$i;"
                                  " done', {'id':'walk'})\n"
-                                 "sh.wait(30)\n" "a = sh.logs(lines=3)\n"
+                                 "await sh\n" "a = sh.logs(lines=3)\n"
                                  "b = sh.logs(n=3)\n" "head = sh.logs(0, 10)\n"
                                  "try:\n" "    sh.logs(nlines=3)\n"
                                  "    refusal = 'nothing was refused'\n" "except TypeError as e:\n"
@@ -2360,7 +2412,7 @@
                   (py c
                       (str
                         "status_res = await shell('printf abcdefghij',"
-                        " {'id':'text'})\n" "status_res.wait(30)\n"
+                        " {'id':'text'})\n" "await status_res\n"
                         "page = status_res.logs(-120)\n" "tail = page[-4000:]\n"
                         "lines = status_res.logs.splitlines()\n"
                         "[tail == page['out'], ('STATUS:' + page[-4:]) == 'STATUS:ghij',"
@@ -2416,7 +2468,7 @@
                 (py c
                     (str "sh = await shell('for i in $(seq 1 40); do echo line-$i;"
                          " done', {'id':'pages'})\n"
-                         "sh.wait(30)\n" "try:\n"
+                         "await sh\n" "try:\n"
                          "    next(sh)\n" "    refusal = 'nothing was refused'\n"
                          "except TypeError as e:\n" "    refusal = str(e)\n"
                          "first = sh.logs(0, lines=10)\n" "second = next(first)\n"
@@ -2452,7 +2504,7 @@
         (try (expect (= [true true true]
                         (py c
                             (str "sh = await shell('for i in $(seq 1 40); do echo line-$i;"
-                                 " done', {'id':'back'})\n" "sh.wait(30)\n"
+                                 " done', {'id':'back'})\n" "await sh\n"
                                  "down = sh.logs(0, 10)\n"
                                  "further = sh.logs(down['next_offset'], 10)\n"
                                  "up = sh.logs(down['next_offset'], -10)\n" "sh.cancel()\n"
@@ -2583,7 +2635,7 @@
                   (binding [rt/*eval-timeout-ms* 1000]
                     (#'python-exec/run-python-code
                      c
-                     "sh = await shell('sleep 2; echo done')\nprint(sh.wait(10)['out'].strip())\n"
+                     "sh = await shell('sleep 2; echo done')\nprint((await sh)['out'].strip())\n"
                      :env
                      {:python-context c :session-id sid})))]
                (expect (not (:timeout? result)) (pr-str result))
@@ -2655,11 +2707,11 @@
              ;; it re-reads without sleeping, and nothing in it noticed that the turn had
              ;; been cancelled: only the WAITER unwound while the guest thread stayed
              ;; parked, and the session it owned was unusable from then on.
-             (it "unwinds a parked sh.wait at the cancel and REUSES the session"
+             (it "unwinds a parked asyncio.wait at the cancel and REUSES the session"
                  (let [result (interrupt-during "shell-wait-cancel-test"
-                                                (str "sh = await shell("
+                                                (str "import asyncio\nsh = await shell("
                                                      "'while true; do echo x; done',"
-                                                     " {'id':'parked'})\n" "sh.wait(60)"))]
+                                                     " {'id':'parked'})\n" "await asyncio.wait([sh], timeout=60)"))]
                    ;; The host interrupt can finish the block before the guest signal,
                    ;; so :landed may be false. Require the actual unwind and session
                    ;; reuse rather than an acknowledgement of an already-finished block.
@@ -3144,10 +3196,10 @@
 
         (try (expect (= [true "audit-A" "audit-A" "audit-B"]
                         (py c
-                            (str "a = await shell('printf audit-A')\n" "a.wait(20)\n"
-                                 "b = await shell('printf audit-B')\n" "b.wait(20)\n"
+                            (str "a = await shell('printf audit-A')\n" "await a\n"
+                                 "b = await shell('printf audit-B')\n" "await b\n"
                                  "[a['id'] != b['id'], a.logs()['out'],"
-                                 " a.wait(20)['out'], b.logs()['out']]"))))
+                                 " a['out'], b.logs()['out']]"))))
              (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))
 
 ;; Regression, session report 6342aada-69e1-473b-a0cc-53a7e81e5bfd: two SEQUENTIAL

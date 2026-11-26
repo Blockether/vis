@@ -216,7 +216,7 @@
       (try
         (with-redefs-fn
           {#'python-code
-           "sh = await shell(r\"printf '\\033[32mgreen\\033[m\\n\\033]0;title\\007body [m\\n'\")\nassert sh.wait(20)['exit'] == 0\nparts = []\noffset = 0\nfor _ in range(100):\n    page = sh.logs(offset, limit=1)\n    assert page['offset'] == offset, repr(page)\n    assert page['next_offset'] - page['offset'] <= 1, repr(page)\n    parts.append(page['out'])\n    if page['is_eof']:\n        break\n    assert page['next_offset'] > offset\n    offset = page['next_offset']\nelse:\n    raise AssertionError('Shell log cursor did not finish')\nassert ''.join(parts) == 'green\\nbody [m\\n', repr(''.join(parts))\nprint('native-shell-pages-done')"
+           "sh = await shell(r\"printf '\\033[32mgreen\\033[m\\n\\033]0;title\\007body [m\\n'\")\nimport asyncio\ndone, _ = await asyncio.wait([sh], timeout=20)\nassert sh in done and sh.exit == 0\nparts = []\noffset = 0\nfor _ in range(100):\n    page = sh.logs(offset, limit=1)\n    assert page['offset'] == offset, repr(page)\n    assert page['next_offset'] - page['offset'] <= 1, repr(page)\n    parts.append(page['out'])\n    if page['is_eof']:\n        break\n    assert page['next_offset'] > offset\n    offset = page['next_offset']\nelse:\n    raise AssertionError('Shell log cursor did not finish')\nassert ''.join(parts) == 'green\\nbody [m\\n', repr(''.join(parts))\nprint('native-shell-pages-done')"
            #'binary/stream-body
            (fn [reply]
              (if (= 1 (swap! calls inc)) (tool-reply true) (original-stream reply)))
