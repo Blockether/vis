@@ -41,6 +41,32 @@
                (expect (<= 40 (long (:duration-ms stored)) 10000) (pr-str stored)))
              (finally (loop-env/dispose-environment! environment))))))
 
+(defdescribe
+  council-turn-title-test
+  (it "keeps an untitled session until a user sends a request"
+      (let [environment (loop-env/create-environment ::router {:db :memory})
+            db (:db-info environment)
+            sid (:session-id environment)
+            title #(:title (persistance/db-get-session db sid))
+            starting-title (title)
+            entry (-> (persistance/db-council-insert!
+                        db {:author_sid "child" :activation_id "child-turn" :title "Review"
+                            :content "Please review the changes." :created_at 1
+                            :idempotency_key "review" :fingerprint "review"}
+                        [] false)
+                      :entry)]
+        (try (with-redefs [iteration/iteration-loop
+                           (fn [& _]
+                             {:status :success :answer "done" :iteration-count 1 :trace []})]
+               (expect (= :success
+                          (:status (turn/run-turn! environment "Council notification #123"
+                                                   {:request-kind :council
+                                                    :council-entry-id (:entry_id entry)}))))
+               (expect (= starting-title (title)))
+               (turn/run-turn! environment "Review the changes" {})
+               (expect (= "Review the changes" (title))))
+             (finally (loop-env/dispose-environment! environment))))))
+
 ;; #456: an extension automation runs its callback as the turn. It must make no model
 ;; request: the iteration loop stays unused and the turn stores no tokens.
 (defdescribe

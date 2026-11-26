@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 import { renderSessionScreen, sessionFixture } from './session-screen-harness';
+import councilWake from '../../../../packages/vis-contract/resources/vis-contract/fixtures/council-wake.json';
 import activityFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import { reduceRunningTurnEvent } from '../lib/running-turn';
 import type { SseEvent, TranscriptTurn } from '../lib/types';
@@ -66,6 +67,53 @@ describe('turn header metadata', () => {
 });
 
 describe('Council transcript requests', () => {
+  it('shows the wire note as literal text in stored turns and the full entry without a note', async () => {
+    const turns: TranscriptTurn[] = councilWake.turns.map((turn) => ({ ...turn, request_kind: 'council', status: 'done' }));
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const view = renderSessionScreen({ client: { transcript: async () => turns } });
+    try {
+      for (const { council } of councilWake.turns) {
+        const header = await screen.findByText(`Council · Thread #${council.thread_id}`);
+        const body = header.closest('article')!;
+        expect(body).toHaveTextContent(council.note ?? council.content);
+        if (council.note) {
+          expect(within(body).queryByRole('button', { name: 'Show full message' })).toBeNull();
+          expect(body).not.toHaveTextContent(council.content);
+          fireEvent.click(within(body).getByRole('button', { name: 'Copy Council message' }));
+          await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(council.content));
+        }
+      }
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('shows a live Council wake before the first iteration without attributing it to the user', async () => {
+    const { turn_id, request, council } = councilWake.turns[0];
+    renderSessionScreen({
+      session: sessionFixture({
+        live: true,
+        current_turn_id: turn_id,
+        running_request: request,
+        running_request_kind: 'council',
+        running_council: council,
+      }),
+      client: { transcript: async () => [], turnTrace: async () => [] },
+      subscriptions: {
+        subscribeConnection: (on: (live: boolean) => void) => {
+          on(true);
+          return () => {};
+        },
+      },
+    });
+    expect(await screen.findByText(council.note!)).toBeVisible();
+    expect(screen.getByText('Council · Thread #11')).toBeVisible();
+    expect(screen.getByText('Vis received a Council message')).toBeVisible();
+    expect(screen.queryByText('Vis sent your message')).toBeNull();
+  });
+
   it.each([false, true])('keeps persisted provenance when live=%s', async (live) => {
     const council = {
       entry_id: 42,

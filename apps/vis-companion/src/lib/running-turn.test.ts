@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import councilWake from '../../../../packages/vis-contract/resources/vis-contract/fixtures/council-wake.json';
 import activityFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import {
   providerWaitDetail,
@@ -52,14 +53,14 @@ function thought(turn: ReturnType<typeof reduceRunningTurnEvent>): string | unde
 
 describe('Council request provenance', () => {
   it('preserves the actual entry and kind from the live event', () => {
-    const council = { entry_id: 42, thread_id: 42, content: 'Actual request' };
+    const { council, turn_id, request, request_kind } = councilWake.turns[0];
     const turn = reduceRunningTurnEvent(
       null,
       event({
         type: 'turn.started',
-        turn_id: 'council-turn',
-        request: council.content,
-        request_kind: 'council',
+        turn_id,
+        request,
+        request_kind,
         council,
       }),
     );

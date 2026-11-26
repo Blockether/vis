@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { agentStep, LEADER_STEP, PathStep, type AgentStep } from '../components/AgentCrumb';
-import { agentsByTurn, childWakeCouncil, storedLeaderLane, TurnAgents } from '../components/AgentTeam';
+import { agentsByTurn, storedLeaderLane, TurnAgents } from '../components/AgentTeam';
 import { SessionStatsPanel } from '../components/SessionList';
 import {
   OUTLINE_MIN_TURNS,
@@ -143,7 +143,7 @@ function SessionTranscript({ data, client, top, onOpen }: {
     () => [session.workspace?.root],
     [session.workspace?.root],
   );
-  const outline = useMemo(() => turns.map((turn) => outlineEntry(turn)), [turns]);
+  const outline = useMemo(() => turns.map(outlineEntry), [turns]);
   const teams = useMemo(() => agentsByTurn(data.agents), [data.agents]);
   const showsOutline = turns.length >= OUTLINE_MIN_TURNS;
   const [showsMetrics, setShowsMetrics] = useState(false);
@@ -216,7 +216,6 @@ function SessionTranscript({ data, client, top, onOpen }: {
                 near={near}
                 turn={turn}
                 isFirst={index === 0}
-                council={childWakeCouncil(turn.council, data.agents, session.id)}
                 agentName={session.agent_name}
                 settled
                 whole
@@ -499,8 +498,8 @@ function lineCount(text: string, width: number): number {
  * The estimated height of a turn that is not drawn yet, in pixels: its request, its answer and
  * one digest row for about every two steps. The reading anchor absorbs the error.
  */
-function estimatedHeight(turn: ExportTurn, answer: string): number {
-  const request = turn.request ? 56 + 24 * lineCount(turn.request, 90) : 0;
+function estimatedHeight(turn: ExportTurn, answer: string, requestLines: number): number {
+  const request = requestLines > 0 ? 56 + 24 * requestLines : 0;
   const steps = Math.min(turn.iteration_count ?? 0, 40);
   return request + 48 + 26 * lineCount(answer, 100) + 22 * steps;
 }
@@ -545,7 +544,10 @@ function ExportTurnRow({
   );
   const answer = useMemo(() => (drawn ? '' : answerMarkdown(turn.content ?? [])), [drawn, turn.content]);
   if (drawn) return <StoredTurnRow {...row} turn={drawn} />;
-  const height = estimatedHeight(turn, answer);
+  const isCouncil = turn.request_kind === 'council';
+  const note = isCouncil ? turn.council?.note : undefined;
+  const request = note ?? (isCouncil ? turn.council?.content : undefined) ?? turn.request;
+  const height = estimatedHeight(turn, answer, note !== undefined ? 1 : request ? lineCount(request, 90) : 0);
   return (
     <div
       ref={boxRef}
@@ -554,7 +556,8 @@ function ExportTurnRow({
       style={{ height, contentVisibility: 'auto', containIntrinsicSize: `auto ${height}px` }}
     >
       <div className="whitespace-pre-wrap break-words text-body text-dialog-hint">
-        {row.council?.content ?? turn.request}
+        {isCouncil && <div>Council</div>}
+        {note !== undefined ? <div className="truncate">{note}</div> : request}
         {'\n'}
         {answer}
       </div>

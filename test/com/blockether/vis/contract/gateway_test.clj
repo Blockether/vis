@@ -5,8 +5,20 @@
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as contract]
             com.blockether.vis.internal.gateway.server
+            [com.blockether.vis.internal.gateway.state :as state]
             [lazytest.core :refer [defdescribe expect it]]
             [reitit.core :as reitit]))
+
+(defdescribe council-wake-contract-test
+  (it "gives each Council wake the same note on the turn wire"
+      (let [{:keys [agents turns]}
+            (json/read-str (slurp (io/resource "vis-contract/fixtures/council-wake.json"))
+                           :key-fn keyword)]
+        (doseq [{:keys [council] :as turn} turns]
+          (expect (document/valid? "gateway" "turn"
+                                   (assoc turn :session_id "lead" :status "completed" :created_at 0)))
+          (expect (= (:note council) (state/council-note "lead" agents (dissoc council :note)))
+                  (:turn_id turn))))))
 
 (def ^:private http-methods #{:delete :get :patch :post :put})
 

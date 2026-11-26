@@ -66,7 +66,11 @@
     [com.blockether.vis.internal.session.atif-import :as atif-import]
     [com.blockether.vis.internal.session.snapshot :as snapshot]
     [com.blockether.vis.internal.workspace.core :as workspace]
-    [taoensso.telemere :as tel]))
+    [taoensso.telemere :as tel])
+  (:import [java.util Locale]
+           [org.commonmark.ext.gfm.strikethrough StrikethroughExtension]
+           [org.commonmark.node Code Node Text]
+           [org.commonmark.parser Parser]))
 
 (def ^:private EVENT_RING_MAX
   "Per-session event-log ring size. Older events stay durable in the session
@@ -86,6 +90,66 @@
   "Cut text without splitting a UTF-16 surrogate pair."
   [^String s ^long limit]
   (if (<= (count s) limit) s (str (util/truncate s limit) " …[truncated]")))
+
+(def ^:private agent-result-title "Subagent result")
+
+(defn- agent-result-prefix [sid] (str "Subagent " sid " — "))
+
+(def ^:private ^Parser council-note-parser
+  (-> (Parser/builder)
+      (.extensions [(StrikethroughExtension/create)])
+      (.build)))
+
+(defn- council-line-text [line]
+  (letfn [(node-text [^Node node]
+            (cond (instance? Text node) (.getLiteral ^Text node)
+                  (instance? Code node) (str "`" (.getLiteral ^Code node) "`")
+                  :else (apply str (map node-text (children (.getFirstChild node))))))
+          (children [^Node node]
+            (take-while some? (iterate (fn [^Node n] (when n (.getNext n))) node)))]
+    (node-text (.parse council-note-parser line))))
+
+(defn- one-line [s] (str/trim (str/replace (str s) #"(?U)\s+" " ")))
+
+(defn- agent-note-title [agent team]
+  (or (not-empty (one-line (:title agent)))
+      (str "#" (->> team
+                    (filter #(= (:team_id agent) (:team_id %)))
+                    (sort-by :created_at)
+                    (take-while #(not= (:session_id agent) (:session_id %)))
+                    count
+                    inc))))
+
+(defn council-note
+  "The plain-text note of a Council turn that a direct child of `sid` started."
+  [sid team entry]
+  (let [author (or (:author_session_id entry) (:author-session-id entry))
+        agent (when author
+                (some #(when (and (= (str author) (str (:session_id %)))
+                                  (= (str sid) (str (:parent_id %))))
+                         %)
+                      team))]
+    (when agent
+      (let [role (one-line (:role agent))
+            title (agent-note-title agent team)
+            body (str (:content entry))
+            prefix (agent-result-prefix author)
+            text (if (and (= "host" (:source entry)) (= agent-result-title (:title entry))
+                          (str/starts-with? body prefix))
+                   (first (str/split (subs body (count prefix)) #"\R" 2))
+                   (some-> (some #(when (seq (one-line %)) %) (str/split body #"\R"))
+                           str/trim
+                           council-line-text))
+            ^String note (str (when (seq role) (str (.toUpperCase ^String role Locale/ROOT) " | "))
+                              title ": " (one-line text))]
+        (if (> (.codePointCount note 0 (.length note)) 120)
+          (str (subs note 0 (.offsetByCodePoints note 0 119)) "…")
+          note)))))
+
+(defn- turn-council [sid team entry]
+  (if-let [note (and entry (not (:note entry)) (council-note sid @team entry))]
+    (assoc entry :note note)
+    entry))
 
 (defn- bounded-pr
   "Bound diagnostic `pr-str` values before they enter an event."
@@ -1219,6 +1283,8 @@
                                    :session_id (str sid)
                                    :status "running"
                                    :request (get event "request")
+                                   :request_kind (get event "request_kind")
+                                   :council (some-> (get event "council") (update-keys keyword))
                                    :event_start_seq n
                                    :started_at (or (get event "started_at") (util/now-ms))})
                         (update :turn-order
@@ -2684,6 +2750,10 @@
                  :role (or (:role turn) "assistant")
                  :content (vec (or (:content turn) []))
                  :created_at started-at)
+          (cond-> (:council turn)
+            (assoc :council (turn-council (:session_id turn)
+                                         (delay (persistance/db-agent-list (lp/db-info) (:session_id turn)))
+                                         (:council turn))))
           (update :status #(if (= "running" %) "streaming" %))))))
 
 (defn- date->ms [d] (when (instance? java.util.Date d) (.getTime ^java.util.Date d)))
@@ -2833,7 +2903,7 @@
 
 (defn- persisted-turn->wire
   "Project one durable engine turn into the canonical role/content message shape."
-  [sid row]
+  [sid team row]
   (let [id
         (str (:id row))
 
@@ -2851,7 +2921,7 @@
      :status status
      :request (or (get-in row [:council :content]) (:user-request row))
      :request_kind (:request-kind row)
-     :council (:council row)
+     :council (turn-council sid team (:council row))
      :content (vec (or (:content row) []))
      :iteration_count (:iteration-count row)
      :duration_ms (:duration-ms row)
@@ -2907,11 +2977,14 @@
         att-by-soul
         (row-attachments (lp/db-info) (map :id persisted-rows))
 
+        team
+        (delay (persistance/db-agent-list (lp/db-info) sid))
+
         persisted
         (->> persisted-rows
              (remove #(contains? live-ids (str (:id %))))
              (map (fn [row]
-                    (let [wire (persisted-turn->wire sid row)]
+                    (let [wire (persisted-turn->wire sid team row)]
                       (if-let [atts (seq (get att-by-soul (:turn_id wire)))]
                         (assoc wire :attachments atts)
                         wire))))
@@ -2928,7 +3001,7 @@
   (try
     (let [db (lp/db-info)]
       (or (some->> (persistance/db-read-session-turn db sid tid)
-                   (persisted-turn->wire sid)
+                   (persisted-turn->wire sid (delay (persistance/db-agent-list db sid)))
                    wire/canonical)
           (:content (persistance/db-get-extension-aggregate
                       db {:extension-id 'com.blockether.vis.internal.gateway.state
@@ -3965,13 +4038,14 @@
    the turn of each follow-up Council ping. So the transcript shows the team with the rest of the
    turn, and a client does not wait for a second read. A turn without subagents gets no key. One
    read lists the children of `sid` and one read its clocks; only the children of these turns are
-   built."
+   built. The same roster supplies the Council notes."
   [db sid rows]
-  (let [ids
+  (let [team (delay (persistance/db-agent-list db sid))
+        ids
         (into #{} (map #(get % "turn_id")) rows)
 
         views
-        (->> (persistance/db-agent-list db sid)
+        (->> @team
              (keep (fn [child]
                      (let [own (filterv ids (child-turns child))]
                        (when (seq own) [own (agent-view db child)]))))
@@ -3983,16 +4057,20 @@
         (when (seq views)
           (into {} (map (juxt :turn_id identity)) (clock-rows db sid (set (keys views)))))]
 
-    (if (empty? views)
-      rows
-      (mapv (fn [row]
-              (let [turn (get row "turn_id")]
-                (if-let [team (get views turn)]
-                  (cond-> (assoc row "agents" (wire/canonical team))
-                    (get clocks turn)
-                    (assoc "team_clock" (wire/canonical (get clocks turn))))
-                  row)))
-            rows))))
+    (mapv (fn [row]
+            (let [turn (get row "turn_id")
+                  entry (some-> (get row "council") (update-keys keyword))
+                  note (:note (turn-council sid team entry))]
+              (cond-> row
+                (get views turn)
+                (assoc "agents" (wire/canonical (get views turn)))
+
+                (get clocks turn)
+                (assoc "team_clock" (wire/canonical (get clocks turn)))
+
+                note
+                (assoc-in ["council" "note"] note))))
+          rows)))
 
 (defn transcript
   "Rich persisted transcript rows for `sid` in THE canonical wire shape
@@ -4275,9 +4353,7 @@
                                       (get % "markdown")
                                       (get % "message"))
                                  (:content patch)))
-            content (str "Subagent "
-                         sid
-                         " — "
+            content (str (agent-result-prefix sid)
                          (:status child)
                          "\nTask: "
                          (subs (:task child) 0 (min 2000 (count (:task child))))
@@ -4292,7 +4368,7 @@
            :source "host"
            :activation-id (str "agent-result:" tid)
            :self-wake? true}
-          {:title "Subagent result"
+          {:title agent-result-title
            :content content
            :ping (if cancelled? [] (vec (distinct [(:parent_id child) (:leader_id child)])))
            :idempotency_key (str "agent-result:" tid)})))))
@@ -6275,7 +6351,9 @@
                                   :request (or display-request request)
                                   :display_request display-request
                                   :request_kind (or (:request_kind (turn-record sid tid)) "user")
-                                  :council (:council (turn-record sid tid))
+                                  :council (turn-council sid
+                                                         (delay (persistance/db-agent-list (lp/db-info) sid))
+                                                         (:council (turn-record sid tid)))
                                   :started_at (or (:started_at (turn-record sid tid))
                                                   (util/now-ms))}
                            queued?
@@ -6723,6 +6801,14 @@
           wake-activation
           (when council-ping (assoc (fresh-council) :wake? true))
 
+          council-entry
+          (when council-ping
+            (turn-council sid
+                          (delay (persistance/db-agent-list (:db council-ping) sid))
+                          (select-keys (:entry council-ping)
+                                       [:entry_id :thread_id :content :title :source
+                                        :author_session_id :reply_required])))
+
           decision
           (volatile! nil)]
 
@@ -6827,11 +6913,8 @@
                                                :request_kind (if council-ping "council" "user")
                                                :cancel-token token
                                                :started_at started-at}
-                                        council-ping
-                                        (assoc :council
-                                          (select-keys (:entry council-ping)
-                                                       [:entry_id :thread_id :content :title :source
-                                                        :author_session_id :reply_required]))
+                                        council-entry
+                                        (assoc :council council-entry)
 
                                         idempotency-key
                                         (assoc :idempotency_key idempotency-key)
@@ -8191,8 +8274,16 @@
                                                (get-in entry [:turns live-turn-id :status]))
                                   (do (journal/retract-live! sid) nil)
                                   live-turn-id)))
-          current-turn (merge (get-in entry [:turns current-turn-id])
-                              (turn-metadata sid current-turn-id))
+          local-turn (get-in entry [:turns current-turn-id])
+          stored-row (delay (persistance/db-read-session-turn (lp/db-info) sid current-turn-id))
+          metadata (turn-metadata sid current-turn-id stored-row)
+          current-turn (merge (or local-turn
+                                  (when (and current-turn-id metadata)
+                                    (when-let [stored @stored-row]
+                                      {:request (:user-request stored)
+                                       :request_kind (:request-kind stored)
+                                       :council (:council stored)})))
+                              metadata)
           last-turn (some->> (:turn-order entry)
                              peek
                              (get (:turns entry)))
@@ -8318,7 +8409,8 @@
             (or (get-in current-turn [:council :content]) (:request current-turn))
             :running_request_kind
             (or (:request_kind current-turn) "user") :running_council
-            (:council current-turn))
+            (turn-council sid (delay (persistance/db-agent-list (lp/db-info) sid))
+                          (:council current-turn)))
 
           (and current-turn-id (nat-int? (:started_at current-turn)))
           (assoc :running_started_at (:started_at current-turn))
@@ -8382,7 +8474,10 @@
         (try (lp/db-info) (catch Throwable _ nil))
 
         rows
-        (when db (try (persistance/db-list-session-turns db sid) (catch Throwable _ nil)))]
+        (when db (try (persistance/db-list-session-turns db sid) (catch Throwable _ nil)))
+
+        team
+        (delay (persistance/db-agent-list db sid))]
 
     (mapv (fn [row]
             (let [answer (answer-excerpt (:content row))]
@@ -8390,7 +8485,7 @@
                                        :request (or (get-in row [:council :content])
                                                     (:user-request row))
                                        :request_kind (:request-kind row)
-                                       :council (:council row)
+                                       :council (turn-council sid team (:council row))
                                        :status (wire-turn-status row)
                                        :created_at (date->ms (:created-at row))}
                                 answer
@@ -10325,20 +10420,23 @@
      (if db
        (mapv (fn [{:keys [id rank in-title? in-request? in-reply? in-thinking? request-snippet
                           reply-snippet hits]}]
-               {:session_id (str id)
-                :rank (long (or rank 0))
-                :is_in_title (boolean in-title?)
-                :is_in_request (boolean in-request?)
-                :is_in_reply (boolean in-reply?)
-                :is_in_thinking (boolean in-thinking?)
-                :request_snippet request-snippet
-                :reply_snippet reply-snippet
-                :hits (mapv (fn [h]
-                              {:side (name (:side h))
-                               :snippet (:snippet h)
-                               :at (some-> (:at h)
-                                           inst-ms)})
-                            (or hits []))})
+               (let [team (delay (persistance/db-agent-list db id))]
+                 {:session_id (str id)
+                  :rank (long (or rank 0))
+                  :is_in_title (boolean in-title?)
+                  :is_in_request (boolean in-request?)
+                  :is_in_reply (boolean in-reply?)
+                  :is_in_thinking (boolean in-thinking?)
+                  :request_snippet request-snippet
+                  :reply_snippet reply-snippet
+                  :hits (mapv (fn [{:keys [side snippet at request-kind council]}]
+                                (cond-> {:side (name side) :snippet snippet :at (some-> at inst-ms)}
+                                  request-kind
+                                  (assoc :request_kind (name request-kind))
+
+                                  council
+                                  (assoc :council (turn-council id team council))))
+                              (or hits []))}))
              (if (some? session-ids)
                (persistance/db-search-session-matches db channel query session-ids)
                (persistance/db-search-session-matches db channel query)))

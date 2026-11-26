@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.transcript-export :as transcript-export]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.core :as ps]
@@ -170,6 +171,38 @@
                                                            (get turn "iterations_chunk"))))))))))
         (finally (ps/db-dispose-connection! db))))))
 
+(defdescribe council-wake-export-test
+  (it "keeps one agent and the same Council note in history, forks, search and export"
+      (let [db (ps/db-create-connection! :memory)]
+        (try
+          (with-redefs [lp/db-info (constantly db)]
+            (let [leader (str (h/store-session! db {:channel :api}))
+                  first-turn (str (ps/db-store-session-turn! db {:parent-session-id leader
+                                                                 :user-request "Fix the parser"}))
+                  child (spawn! db leader first-turn "Check the parser")
+                  body "**Zebracanvas** is ready.\n\nThe full report follows."
+                  entry (-> (ps/db-council-insert! db
+                                                  {:author_sid child :activation_id "child-turn"
+                                                   :content body :source "sdk" :title "Parser check" :created_at 1
+                                                   :idempotency_key "review" :fingerprint "review"}
+                                                  [] false)
+                            :entry)
+                  wake (str (ps/db-store-session-turn! db {:parent-session-id leader
+                                                           :request-kind :council
+                                                           :council-entry-id (:entry_id entry)
+                                                           :user-request "Read the Council input"}))
+                  export (transcript-export/export-data leader)
+                  search (wire/canonical (state/search-session-matches "Zebracanvas"))
+                  expected (get-in export ["turns" 1 "council"])]
+              (expect (= body (get expected "content")))
+              (expect (str/ends-with? (get expected "note") ": Zebracanvas is ready."))
+              (expect (= [expected expected expected]
+                         [(get-in (state/stored-turn leader wake) ["council"])
+                          (get-in (peek (state/fork-points leader)) ["council"])
+                          (get-in search [0 "hits" 0 "council"])]))
+              (expect (= [child] (mapv #(get % "session_id") (get export "agents"))))))
+          (finally (ps/db-dispose-connection! db))))))
+
 ;; A page with many request images held their bytes in the JSON, so the page parsed megabytes of
 ;; base64 before it drew anything.
 (defdescribe
@@ -277,17 +310,19 @@
               "shows its request as one line that names the subagent, as the session screen does"
               (let [doc
                     {"session" {"id" "s1"}
-                     "child_session_ids" ["child"]
-                     "agents"
-                     [{"session_id" "child" "team_id" "t" "role" "implement" "title" "Fix parser"}]
-                     "turns" [{"request" "Subagent child — completed\nTask: # Goal"
-                               "request_kind" "council"
-                               "council" {"author_session_id" "child"}}]}
+                     "turns" [{"request_kind" "council"
+                               "council" {"content" "Subagent child — completed\nTask: # Goal"
+                                          "note" "IMPLEMENT | Fix parser: linked [text](url)"}}
+                              {"request_kind" "council"
+                               "council" {"content" "Please read.\n\n**Second paragraph.**"}}]}
 
                     out
                     (transcript-export/markdown doc)]
 
-                (expect (str/includes? out "## Council\n\nIMPLEMENT | Fix parser: completed\n\n"))
+                (expect (str/includes? out (str "## Council\n\nIMPLEMENT \\| Fix parser\\: linked "
+                                                "\\[text\\]\\(url\\)\n\n")))
+                (expect (str/includes? out "## Council\n\nPlease read.\n\n**Second paragraph.**"))
+                (expect (not (str/includes? out "## You")))
                 (expect (not (str/includes? out "# Goal")))))))
 
 (defn- metric

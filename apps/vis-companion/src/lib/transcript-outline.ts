@@ -23,6 +23,7 @@ export interface OutlineEntry {
   status: OutlineStatus | null;
   /** The turn answered a Council message, not a prompt from the reader. */
   isCouncil: boolean;
+  isCouncilNote?: true;
 }
 
 /** The state of a turn's answer, as the outline preview names it. */
@@ -243,12 +244,15 @@ export function outlineEntry(turn: {
   const answer = turn.content ? answerMarkdown(turn.content) : (turn.answer ?? '');
   const status = outlineStatus(turn.status, turn.prior_outcome);
   const forked = turn.is_forked || turn.content?.some(isForkNotice);
+  const isCouncil = turn.request_kind === 'council';
+  const note = isCouncil ? turn.council?.note : undefined;
   return {
     id: turn.turn_id,
-    label: promptLabel(turn.request || turn.council?.content, turn.attachments?.length ?? 0),
+    label: note ?? promptLabel(isCouncil ? turn.council?.content ?? turn.request : turn.request, turn.attachments?.length ?? 0),
     answer: answerExcerpt(answer.slice(0, ANSWER_SOURCE_MAX)),
     status: status === 'cancelled' && forked ? 'forked' : status,
-    isCouncil: turn.request_kind === 'council',
+    isCouncil,
+    ...(note !== undefined ? { isCouncilNote: true } : {}),
   };
 }
 

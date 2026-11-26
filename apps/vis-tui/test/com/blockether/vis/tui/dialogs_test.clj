@@ -4627,3 +4627,28 @@
       (expect (nil? (:error capture)))
       (expect (= "  " (subs (nth lines top) (inc (long corner)) (+ (long corner) 3))))
       (expect (= "  " (subs (nth lines (inc (long bottom))) left (+ (long left) 2)))))))
+
+(defdescribe council-turn-picker-test
+  (it "labels Council turns in the fork picker and the recent and matched messages"
+      (let [note "CHECK | Fix: `parser`"
+            turn {"turn_id" "t1" "request_kind" "council" "request" "Raw request"
+                  "council" {"note" note}}
+            fallback (assoc turn "turn_id" "t2" "council" {"content" "Full entry\nNext line"})
+            hit {"side" "request" "request_kind" "council" "snippet" "Fix: parser"
+                 "council" {"note" note}}
+            turns (with-redefs-fn {#'vis/send-json! (fn [_ _] {"turns" [turn fallback]})}
+                    #(vis/fork-points "session"))
+            match (#'vis/session-match "session" {"hits" [hit]})
+            recent (#'dlg/navigator-recent-entries (reverse turns))
+            opts {:width 40 :height 20}
+            entry {:title "T" :recent recent}
+            plan (#'dlg/navigator-preview-lines entry "" opts)
+            matched (#'dlg/navigator-preview-lines (assoc entry :transcript-match match) "Fix" opts)
+            line-text (fn [line] (apply str (map :text (:segments line))))]
+        (expect (= ["Council: CHECK | Fix: `parser`" "Council: Full entry"]
+                   (mapv :label (dlg/fork-turn-items turns))))
+        (expect (= ["Council" "Council"] (mapv :label recent)))
+        (expect (= [note "Full entry"] (mapv :text recent)))
+        (expect (= note (line-text (nth plan 3))))
+        (expect (= "Council" (:label (nth matched 2))))
+        (expect (= note (line-text (nth matched 3)))))))

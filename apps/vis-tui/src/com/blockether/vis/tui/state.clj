@@ -1157,7 +1157,10 @@
   (->> (or history [])
        (keep (fn [message]
                (let [text (:text message)]
-                 (when (and (= :user (:role message)) (remembered-text? db text)) text))))
+                 (when (and (= :user (:role message))
+                            (not= :council (:request-kind message))
+                            (remembered-text? db text))
+                   text))))
        bounded-input-history))
 
 (defn- hydrate-input-history
@@ -5263,7 +5266,9 @@
     (if (clojure.string/blank? needle)
       {:hits [] :total 0}
       (let [counts (keep-indexed (fn [i m]
-                                   (let [hay (cond-> (str (:text m))
+                                   (let [hay (cond-> (str (or (get-in m [:council "note"])
+                                                               (get-in m [:council "content"])
+                                                               (:text m)))
                                                (not case?)
                                                clojure.string/lower-case)
                                          c (loop [from 0

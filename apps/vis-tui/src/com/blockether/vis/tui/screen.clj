@@ -2295,7 +2295,7 @@
                                                       (:confidence message)
                                                       (= :cancelled (:status message))
                                                       opts)))
-    (or (:copy-source-text message) (:text message) "")))
+    (or (get-in message [:council "content"]) (:copy-source-text message) (:text message) "")))
 
 (defn- bubble-copy-regions
   "Return absolute screen-cell rectangles for single-click whole-bubble copy.

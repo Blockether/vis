@@ -11115,8 +11115,7 @@
   ([answer bubble-w] (format-answer-markdown answer bubble-w nil))
   ([answer bubble-w opts] (:text (format-answer-markdown-data answer bubble-w opts))))
 
-(defn format-council-request-data
-  "Council requests render as user-prose Markdown, preview four rows and keep per-turn disclosure controls."
+(defn- format-council-entry-data
   [text bubble-w {:keys [session-id session-turn-id detail-expansions] :as opts}]
   (let [content-w
         (max 10 (- (long bubble-w) 4))
@@ -11156,6 +11155,14 @@
                                    :node-id node-id}))]
 
     (entries->payload (into body control))))
+
+(defn format-council-request-data
+  "Show the note in one plain row, or preview the entry as Markdown with disclosure."
+  [text note bubble-w opts]
+  (if (some? note)
+    (let [line (p/ellipsize note (max 1 (- (long bubble-w) 4)))]
+      (entries->payload [{:line line :meta nil}]))
+    (format-council-entry-data text bubble-w opts)))
 
 ;;; Messages area
 ;; `screen.clj` derives width from these public constants so formatting and paint agree.

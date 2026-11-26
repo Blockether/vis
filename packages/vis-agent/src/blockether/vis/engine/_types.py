@@ -488,6 +488,21 @@ class SessionWorkspace(TypedDict):
     label: str | None
 
 
+class TurnCouncil(TypedDict):
+    """The Council entry that started the turn. The note is plain text for display;
+    content is the full entry.
+    """
+
+    entry_id: int
+    thread_id: int
+    author_session_id: str
+    source: str
+    title: NotRequired[str | None]
+    content: str
+    reply_required: NotRequired[bool]
+    note: NotRequired[str]
+
+
 TurnOpenStatus: TypeAlias = Literal["pending", "queued", "streaming"]
 
 
@@ -535,7 +550,7 @@ class TurnRecord(TypedDict):
     iteration: NotRequired[int]
     sent_at: NotRequired[int]
     iteration_count: NotRequired[int]
-    council: NotRequired[dict[str, JSONValue] | None]
+    council: NotRequired[TurnCouncil | None]
     tokens: NotRequired[TurnTokens]
     cost: NotRequired[TurnCost]
 
@@ -587,7 +602,7 @@ class SessionRecord(TypedDict):
     modified_at: NotRequired[int]
     running_request: NotRequired[str]
     running_request_kind: NotRequired[str]
-    running_council: NotRequired[JSONValue]
+    running_council: NotRequired[TurnCouncil | None]
     running_started_at: NotRequired[int]
     running_position: NotRequired[int]
     running_created_at: NotRequired[int]
@@ -1268,7 +1283,7 @@ class SessionForkTurnsTurnsItem(TypedDict):
     turn_id: str
     request: NotRequired[str | None]
     request_kind: NotRequired[str]
-    council: NotRequired[dict[str, JSONValue] | None]
+    council: NotRequired[TurnCouncil | None]
     status: str
     created_at: int
     answer: NotRequired[str | None]
@@ -1500,8 +1515,12 @@ class Forgotten(TypedDict):
 SessionSuggestions: TypeAlias = list[JSONValue]
 
 
+class TranscriptTurnsItem(TypedDict):
+    council: NotRequired[TurnCouncil | None]
+
+
 class TranscriptRecord(TypedDict):
-    turns: list[dict[str, JSONValue]]
+    turns: list[TranscriptTurnsItem]
     total: int
     offset: int
     has_more: bool
@@ -3211,7 +3230,7 @@ class TurnStartedData(TypedDict):
     request: NotRequired[str | None]
     display_request: NotRequired[str | None]
     request_kind: NotRequired[str]
-    council: NotRequired[dict[str, JSONValue] | None]
+    council: NotRequired[TurnCouncil | None]
     started_at: NotRequired[int]
     is_queued: NotRequired[bool]
     resumed: NotRequired[bool]

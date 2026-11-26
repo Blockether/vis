@@ -563,11 +563,13 @@
 
      (cond
        (and (= role :user) (= :council (:request-kind message)))
-       ;; Council previews reserve only four body rows and the disclosure, not the full request.
-       (long (+ 5
-                (if (any-details-expanded? message detail-expansions session-id)
-                  (prose-rows-est text prose-w)
-                  (min 4 (prose-rows-est text prose-w)))))
+       (if (get-in message [:council "note"])
+         5 ; label, two padding rows, note, gap
+         ;; The preview reserves four body rows and the disclosure.
+         (long (+ 5
+                  (if (any-details-expanded? message detail-expansions session-id)
+                    (prose-rows-est text prose-w)
+                    (min 4 (prose-rows-est text prose-w))))))
        (= role :user)
        ;; label + top/bottom pad + gap (see bubble-height*) + 2 rows of
        ;; markdown block-gap slack — pasted JSON/log blobs grow a couple of
@@ -934,7 +936,7 @@
    (let [message
          (assoc message
            :session-id session-id
-           :copy-source-text (:text message)
+           :copy-source-text (or (get-in message [:council "content"]) (:text message))
            ;; Zen mode shows no turn summary line (model, tokens, speed, cost, time).
            :hide-meta? (boolean (get settings :zen-mode)))
 
@@ -975,7 +977,8 @@
 
      (cond (and (= :user (:role message)) (= :council (:request-kind message)))
            (let [{:keys [text lines line-meta]} (render/format-council-request-data
-                                                  (:text message)
+                                                  (:copy-source-text message)
+                                                  (get-in message [:council "note"])
                                                   bubble-w
                                                   {:session-id session-id
                                                    :session-turn-id (turn-identity message)
@@ -1608,16 +1611,12 @@
         (squash-cross-message-errors-cached messages)
 
         ;; The turn that started a team carries its team card from the cached snapshot.
-        ;; Council traffic between the leader and its own agents takes one line: the dock and the
-        ;; team block show the agents, and the line tells why the turn started.
         messages
-        (agent-team/child-traffic-notes
+        (agent-team/decorate-messages
+          messages
           session-id
-          (agent-team/decorate-messages
-            messages
-            session-id
-            running-turn-id
-            #(render/detail-expanded? detail-expansions session-id % false)))
+          running-turn-id
+          #(render/detail-expanded? detail-expansions session-id % false))
 
         n
         (long (count messages))

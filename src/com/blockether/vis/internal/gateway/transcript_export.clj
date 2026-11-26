@@ -121,21 +121,36 @@
 
                       [iid idx])))))
 
+(defn- export-agents [turns roster]
+  (let [rows (mapcat #(get % "agents") turns)
+        ids (distinct (map #(get % "session_id") rows))
+        by-id (group-by #(get % "session_id") rows)
+        order (into {} (map-indexed (fn [i row] [(str (:session_id row)) i])) roster)]
+    (->> ids
+         (keep (fn [sid]
+                 (when sid
+                   (let [copies (get by-id sid)]
+                     (assoc (first copies)
+                       "turn_ids" (into [] (distinct) (mapcat #(get % "turn_ids") copies)))))))
+         (sort-by (juxt #(get % "created_at") #(get order (get % "session_id"))))
+         vec)))
+
 (defn export-data
   "The JSON document of session `sid` for an export, or nil when no session has that id. The
    turns are the complete rows of the session screen: no window and no step limit. The agents
    are the team rows of those turns."
   [sid]
   (when-let [soul (state/soul sid)]
-    (let [turns (:turns (state/transcript-page sid {:full-attachments? true}))]
+    (let [turns (:turns (state/transcript-page sid {:full-attachments? true}))
+          roster (persistance/db-agent-list (lp/db-info) sid)]
       {"session" (select-keys soul ["id" "title" "agent_name" "workspace" "model" "model_pref"])
        "usage" (state/session-usage-info sid)
        "turns" turns
        "child_session_ids" (into []
                                  (keep #(some-> (:session_id %)
                                                 str))
-                                 (persistance/db-agent-list (lp/db-info) sid))
-       "agents" (into [] (mapcat #(get % "agents")) turns)
+                                 roster)
+       "agents" (export-agents turns roster)
        "attachments" (attachment-files turns)})))
 
 (defn- subagent-documents
@@ -595,66 +610,19 @@
                 "</details>\n\n"))
          (when (seq attachments) (str (str/join "\n" (map attachment-line attachments)) "\n\n")))))
 
-(defn- agent-names
-  "The name of each agent of `data` by session id, as the team rows give it: `IMPLEMENT | Fix
-   parser`, or `#n` for an agent without a title. `n` is its start order in its team."
-  [data]
-  (first
-    (reduce (fn [[names counts] agent]
-              (let [sid
-                    (get agent "session_id")
-
-                    team
-                    (get agent "team_id")
-
-                    n
-                    (inc (long (get counts team 0)))]
-
-                (if (or (nil? sid) (contains? names sid))
-                  [names counts]
-                  [(assoc names
-                     sid (str (some-> (get agent "role")
-                                      str/trim
-                                      not-empty
-                                      str/upper-case
-                                      (str " | "))
-                              (or (some-> (get agent "title")
-                                          str/trim
-                                          not-empty)
-                                  (str "#" n)))) (assoc counts team n)])))
-            [{} {}]
-            (get data "agents"))))
-
-(defn- child-wake-line
-  "The Council entry of a subagent that started `turn`, as one line that names the agent, such as
-   `IMPLEMENT | Fix parser: completed`. The subagent pages hold the full message."
-  [names author request]
-  (let [line
-        (str/replace (str (first (str/split-lines request))) #"\s+" " ")
-
-        ;; The outcome entry of the host starts `Subagent <id> — completed`: the name tells who.
-        outcome
-        (str "Subagent " author " — ")
-
-        line
-        (cond-> line
-          (str/starts-with? line outcome)
-          (subs (count outcome)))]
-
-    (str (get names author "Subagent")
-         ": "
-         (if (> (count line) 120) (str (subs line 0 119) "…") line))))
+(defn- plain-markdown [text]
+  (str/replace text #"[!\"#$%&'()*+,./:;<=>?@\[\]\\^_`{|}~-]" #(str "\\" %)))
 
 (defn- turn-markdown
-  [{:keys [agent-name children names]} turn]
+  [agent-name turn]
   (let [request
         (str/trim (str (or (get turn "display_request") (get turn "request"))))
 
-        author
-        (get-in turn ["council" "author_session_id"])
+        council?
+        (= "council" (get turn "request_kind"))
 
-        child-wake?
-        (and (= "council" (get turn "request_kind")) (contains? children author))
+        council
+        (get turn "council")
 
         answer
         (str/join "\n\n"
@@ -667,8 +635,11 @@
                   (remove str/blank?
                     [(get turn "meta_summary") (web-duration (get turn "duration_ms"))]))]
 
-    (str (if child-wake?
-           (str "## Council\n\n" (child-wake-line names author request) "\n\n")
+    (str (if council?
+           (str "## Council\n\n" (if-let [note (get council "note")]
+                                      (plain-markdown note)
+                                      (or (get council "content") request))
+                "\n\n")
            (str "## You\n\n" (if (str/blank? request) "_(empty)_" request)
                 "\n\n" (when-let [attachments (seq (get turn "attachments"))]
                          (str (str/join "\n" (map attachment-line attachments)) "\n\n"))))
@@ -690,10 +661,8 @@
         title
         (or (not-empty (get session "title")) "Session")
 
-        context
-        {:agent-name (or (not-empty (get session "agent_name")) "Vis")
-         :children (set (get data "child_session_ids"))
-         :names (agent-names data)}]
+        agent-name
+        (or (not-empty (get session "agent_name")) "Vis")]
 
     (str "# "
          title
@@ -706,7 +675,7 @@
          (metrics-markdown session (get data "usage"))
          (failed-tools-markdown turns)
          (if (seq turns)
-           (str/join "---\n\n" (map #(turn-markdown context %) turns))
+           (str/join "---\n\n" (map #(turn-markdown agent-name %) turns))
            "_This session has no turns._\n"))))
 
 (defn md

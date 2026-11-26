@@ -697,7 +697,9 @@ export function TranscriptOutline({
               </p>
               {previewStatus && <p className={`shrink-0 font-bold ${previewStatus.tone}`}>{previewStatus.label}</p>}
             </div>
-            <p className="mt-1 line-clamp-3 text-body font-bold text-dialog-foreground">{preview.entry.label}</p>
+            <p className={`mt-1 ${preview.entry.isCouncilNote ? 'truncate' : 'line-clamp-3'} text-body font-bold text-dialog-foreground`}>
+              {preview.entry.label}
+            </p>
             {preview.entry.answer && (
               <div ref={answerRef} className="mt-2">
                 <JustifiedProse

@@ -6,6 +6,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import councilWake from '../../../../packages/vis-contract/resources/vis-contract/fixtures/council-wake.json';
 import exportFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/transcript-export.json';
 import { GatewayClient } from '../lib/gateway';
 import { parseTranscriptExport, SNAPSHOT_GATEWAY } from '../lib/transcript-export';
@@ -55,6 +56,23 @@ const agentRow = (sid: string) => {
 };
 
 const path = () => screen.getByRole('navigation', { name: 'Subagent path' });
+
+it('uses the wire note to paint and size a deferred Council turn', () => {
+  const turn = councilWake.turns[2];
+  renderExport({
+    ...EXPORT,
+    turns: [
+      { ...turn, iterations_chunk: 'vis-chunk-1' },
+      { turn_id: 'one-line', request: 'One line', iterations_chunk: 'vis-chunk-1' },
+    ],
+  });
+  const note = screen.getByText(turn.council.note!);
+  const row = note.closest<HTMLElement>('[data-turn-id]')!;
+  const oneLine = screen.getByText('One line').closest<HTMLElement>('[data-turn-id]')!;
+  expect(within(row).getByText('Council')).toBeVisible();
+  expect(row).not.toHaveTextContent('More.');
+  expect(row.style.height).toBe(oneLine.style.height);
+});
 
 describe('the subagent rows of an HTML export', () => {
   it('open the conversation of a subagent and of its own subagent, and lead back to the leader', async () => {

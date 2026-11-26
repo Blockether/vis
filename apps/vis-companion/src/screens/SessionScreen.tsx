@@ -27,7 +27,7 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { TurnAgents, agentsByTurn, childWakeCouncil, currentTurn, dockTeams, leaderLane, storedAgents, storedClocks, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, currentTurn, dockTeams, leaderLane, storedAgents, storedClocks, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { useSessionActive } from '../lib/session-active';
 import { AgentDock } from '../components/AgentDock';
@@ -214,7 +214,6 @@ import type {
   Toggle,
   GatewayAttachment,
   TranscriptAttachment,
-  CouncilRequest,
 } from '../lib/types';
 import {
   startWavRecording,
@@ -501,6 +500,8 @@ function runningTurnAsTranscriptTurn(turn: RunningTurn): TranscriptTurn {
     position: turn.position,
     created_at: turn.createdAt ?? turn.startedAt,
     request: turn.request,
+    request_kind: turn.requestKind,
+    council: turn.council,
     status: turn.status,
     iterations: turn.iterations,
     iterations_offset: turn.iterationsOffset,
@@ -590,8 +591,10 @@ function runningTurnPhase(
     const recording = turn.attachments?.some((file) => file.media_type.startsWith('audio/'));
     return `Sending ${recording ? 'the recording' : 'attachments'} · ${turn.upload.percent}%`;
   }
-  if (iteration === 0)
+  if (iteration === 0) {
+    if (turn.requestKind === 'council') return `${agentName} received a Council message`;
     return commandPhase(turn.request, agentName) ?? `${agentName} sent your message`;
+  }
 
   const suffix = `(iter ${iteration})`;
 
@@ -5221,12 +5224,6 @@ export function SessionScreen({
     },
     [teams, clocks, docked, onOpenSession],
   );
-  // A wake that one of this leader's subagents sent shows as one line that names the agent:
-  // the team rows show their work, and the line tells why the turn started.
-  const shownCouncil = useCallback(
-    (council: CouncilRequest | undefined) => childWakeCouncil(council, agents, sid),
-    [agents, sid],
-  );
   // Activity is transcript-native, like in the TUI. Resolve its live picture before
   // building either row owner so optimistic and persisted handoff paints one slot.
   const revealFiledLiveRecord = useCallback(
@@ -5524,7 +5521,6 @@ export function SessionScreen({
           key={turn.turn_id}
           turn={turn}
           isFirst={index === 0}
-          council={shownCouncil(turn.council)}
           agentName={session?.agent_name}
           onFork={turn.turn_id ? () => void forkThrough(turn.turn_id) : undefined}
           isForking={forkingTurnId === turn.turn_id}
@@ -5541,7 +5537,6 @@ export function SessionScreen({
       )),
     [
       teamFor,
-      shownCouncil,
       visibleTurns,
       turnsSettled,
       hasRunningTurn,
@@ -5598,12 +5593,12 @@ export function SessionScreen({
         data-live="true"
         data-turn-id={runningTurn.id}
       >
-        {(runningTurn.request || (liveAttachments?.length ?? 0) > 0) && (
+        {(runningTurn.requestKind === 'council' || runningTurn.request || (liveAttachments?.length ?? 0) > 0) && (
           <UserMessage
             position={runningTurn.position}
             createdAt={runningTurn.createdAt ?? runningTurn.startedAt}
             requestKind={runningTurn.requestKind}
-            council={shownCouncil(runningTurn.council)}
+            council={runningTurn.council}
             attachments={liveAttachments}
             client={client}
             sid={sid}
@@ -5640,7 +5635,6 @@ export function SessionScreen({
     );
   }, [
     teamFor,
-    shownCouncil,
     runningTurn,
     turns.length,
     openedAt,
@@ -5666,12 +5660,12 @@ export function SessionScreen({
         data-settling="true"
         data-turn-id={settlingTurn.id}
       >
-        {(settlingTurn.request || (attachments?.length ?? 0) > 0) && (
+        {(settlingTurn.requestKind === 'council' || settlingTurn.request || (attachments?.length ?? 0) > 0) && (
           <UserMessage
             position={settlingTurn.position}
             createdAt={settlingTurn.createdAt ?? settlingTurn.startedAt}
             requestKind={settlingTurn.requestKind}
-            council={shownCouncil(settlingTurn.council)}
+            council={settlingTurn.council}
             attachments={attachments}
             client={client}
             sid={sid}
@@ -5694,7 +5688,6 @@ export function SessionScreen({
     );
   }, [
     teamFor,
-    shownCouncil,
     settlingShown,
     settlingTurn,
     fetchedRunningTurnAttachments,
@@ -5963,7 +5956,7 @@ export function SessionScreen({
   const runningAttachments = runningTurn?.attachments;
   const runningStatus = runningTurn?.status;
   const outlineEntries = useMemo(() => {
-    const held = paintableTurns.map((turn) => outlineEntry(turn));
+    const held = paintableTurns.map(outlineEntry);
     if (runningTurnId)
       held.push(
         outlineEntry({
@@ -5993,7 +5986,7 @@ export function SessionScreen({
   const readOutline = (signal: AbortSignal) =>
     client
       .forkPoints(sid, signal)
-      .then((points) => (points ?? []).map((point) => outlineEntry(point)));
+      .then((points) => (points ?? []).map(outlineEntry));
 
   // How long the finger stays down before the mode flips. Long enough that a tap
   // is never a switch, short enough that the switch is not a wait.

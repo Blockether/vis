@@ -444,6 +444,9 @@
         resume
         (:resume loop-opts)
 
+        council-turn?
+        (= :council (:request-kind loop-opts))
+
         park-requested?
         (get-in loop-opts [:hooks :park-requested?])
 
@@ -500,7 +503,7 @@
                                   :iteration-id nil)
 
         _
-        (when-not resume (titling/maybe-auto-title! env user-request))
+        (when-not (or resume council-turn?) (titling/maybe-auto-title! env user-request))
 
         goal-at-turn-start
         (let [sid
@@ -553,7 +556,8 @@
         ;; remains deferred so it cannot take a rate-limited gateway's slot away from
         ;; the user's request (Blockether/vis#71). A no-op unless `titling.mode` is `llm`.
         _
-        (when (and (= :success (:status result))
+        (when (and (not council-turn?)
+                   (= :success (:status result))
                    (nil? (goals/turn-halt-result env goal-at-turn-start)))
           (titling/after-turn-auto-title! env user-request))
 
@@ -972,13 +976,14 @@
 
     (cond automation-run (run-automation-turn! env user-request automation-run loop-opts)
           resume
-          ;; It continues with the request text that its turn row stores.
-          (run-normal-turn! env
-                            (or (:user-request (persistance/db-read-session-turn (:db-info env)
-                                                                                 (:session-id env)
-                                                                                 (:turn-id resume)))
-                                user-request)
-                            loop-opts)
+          ;; Continue with the text and request kind that the turn row stores.
+          (let [stored (persistance/db-read-session-turn (:db-info env)
+                                                        (:session-id env)
+                                                        (:turn-id resume))]
+            (run-normal-turn! env
+                              (or (:user-request stored) user-request)
+                              (cond-> loop-opts
+                                (:request-kind stored) (assoc :request-kind (:request-kind stored)))))
           :else
           (if-let [bang (parse-bang user-request)]
             (run-bang-turn! env user-request bang loop-opts)

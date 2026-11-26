@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mergeQueueBacklog } from './gateway';
 import { STORY_GOAL } from '../dev/story-data';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
+import councilWake from '../../../../packages/vis-contract/resources/vis-contract/fixtures/council-wake.json';
 import streamCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-stream.json';
 import viewCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/view.json';
 import type { Session } from './types';
@@ -2525,6 +2526,16 @@ it('rejects a marked HTTP 200 Activity export and preserves ordinary body failur
 });
 
 describe('GatewayClient search scopes', () => {
+  it('keeps the Council entry on a matched request', async () => {
+    const { council, request, request_kind } = councilWake.turns[0];
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      sessions: [{ id: 'lead', match: { hits: [{ side: 'request', snippet: request, request_kind, council }] } }],
+    }))));
+    const { GatewayClient } = await import('./gateway');
+    const search = await new GatewayClient(conn).searchSessions('completed');
+    expect(search.matches[0].hits).toEqual([{ side: 'request', snippet: request, at: null, requestKind: 'council', council }]);
+  });
+
   it('sends project and OR-group scopes with the cursor and keeps empty scopes explicit', async () => {
     const fetches = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ sessions: [], total: 0 })));
     vi.stubGlobal('fetch', fetches);

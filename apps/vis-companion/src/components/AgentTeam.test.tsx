@@ -6,7 +6,7 @@ import type { GatewayClient } from '../lib/gateway';
 import teamFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/team-updated.json';
 import { SessionEventsContext } from '../lib/session-events';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { CouncilRequest, SseEvent, Subagent, TranscriptTurn } from '../lib/types';
+import type { SseEvent, Subagent, TranscriptTurn } from '../lib/types';
 import { AgentDock } from './AgentDock';
 import {
   TurnAgents,
@@ -16,7 +16,6 @@ import {
   agentBars,
   agentUpdate,
   agentsByTurn,
-  childWakeCouncil,
   leaderLane,
   leaderParts,
   storedAgents,
@@ -336,29 +335,6 @@ describe('agent row notes', () => {
   // User report 2026-11-02: a row showed the Markdown markers of a note.
   it('shows a Markdown note in its row without the markers', () => {
     expect(agentUpdate({ ...child, note: '## Done\n**Fixing** the `parser`' })).toBe('Done Fixing the `parser`');
-  });
-});
-
-describe('child wake', () => {
-  // User report 2026-11-26: a leader turn that a child's Council entry started showed no request,
-  // so it read as an answer to nothing.
-  it('shows the Council entry of a child as one line that names the child', () => {
-    const fixer: Subagent = { ...child, role: 'implement', title: 'Fix parser' };
-    const council: CouncilRequest = { entry_id: 7, thread_id: 7, author_session_id: 'child',
-      content: 'Fix round in progress.\n\nFocused SDK 135 passed.' };
-    const note = childWakeCouncil(council, [fixer], 'leader');
-    expect(note?.content).toBe('IMPLEMENT | Fix parser: Fix round in progress.');
-    expect(childWakeCouncil(council, [fixer], 'leader')).toBe(note);
-    const peer = { ...council, author_session_id: 'peer' };
-    expect(childWakeCouncil(peer, [fixer], 'leader')).toBe(peer);
-    expect(childWakeCouncil(council, [fixer], 'other')).toBe(council);
-  });
-
-  it('shows the outcome entry of a child as its status, not its session id', () => {
-    const fixer: Subagent = { ...child, role: 'implement', title: 'Fix parser' };
-    const outcome: CouncilRequest = { entry_id: 8, thread_id: 8, author_session_id: 'child',
-      content: 'Subagent child — completed\nTask: # Goal' };
-    expect(childWakeCouncil(outcome, [fixer], 'leader')?.content).toBe('IMPLEMENT | Fix parser: completed');
   });
 });
 

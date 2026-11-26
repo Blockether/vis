@@ -165,3 +165,50 @@
         (exec! "UPDATE session_turn_state SET status = 'interrupted' WHERE id = 'reply'")
         (expect (= "interrupted" (:last_status (first (table-rows)))))
         (finally (fs/delete-tree dir))))))
+
+(defdescribe
+  council-request-search-migration-test
+  (it "reindexes an existing Council turn with the text people see"
+      (let [dir (fs/create-temp-dir {:prefix "vis-migration-request-search-"})
+            ds (doto (SQLiteDataSource.) (.setUrl (str "jdbc:sqlite:" (io/file (str dir) "vis.db"))))
+            migrate! #(migration/migrate! ds ["db/sqlite/migration"] {:shared? true})
+            exec! #(jdbc/execute! ds [%] {:builder-fn rs/as-unqualified-lower-maps})
+            snippets (fn [text]
+                       (mapv :snippet
+                             (jdbc/execute!
+                               ds
+                               [(str "SELECT snippet(transcript_request_fts, 0, '', '', '…', 20) AS snippet "
+                                     "FROM transcript_request_fts WHERE transcript_request_fts MATCH ?")
+                                text]
+                               {:builder-fn rs/as-unqualified-lower-maps})))]
+        (try (migrate!)
+             (doseq [{:keys [name]} (exec! (str "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                                                "AND name GLOB 'trg_transcript_request_fts_*'"))]
+               (exec! (str "DROP TRIGGER " name)))
+             (exec! "DROP TABLE transcript_request_fts")
+             (exec! "DROP VIEW IF EXISTS transcript_request_text")
+             (exec! (str "CREATE VIRTUAL TABLE transcript_request_fts USING fts5("
+                         "user_request, content='session_turn_soul', content_rowid='rowid', "
+                         "tokenize='unicode61', prefix='2 3')"))
+             (exec! "INSERT INTO session_soul (id, created_at, claimed_at) VALUES ('soul', 0, 0)")
+             (exec! "INSERT INTO workspace (id, repo_id, root, created_at) VALUES ('ws', 'repo', '/', 0)")
+             (exec! (str "INSERT INTO session_state (id, session_soul_id, workspace_id, version, created_at) "
+                         "VALUES ('state', 'soul', 'ws', 0, 0)"))
+             (exec! (str "INSERT INTO council_entry (id, author_sid, activation_id, title, content, created_at, idempotency_key, fingerprint) "
+                         "VALUES (1, 'child', 'active', 'Review', 'Zebracanvas needs review', 0, 'one', 'one')"))
+             (exec! (str "INSERT INTO session_turn_soul (id, session_state_id, position, created_at, request_kind, council_entry_id, user_request) "
+                         "VALUES ('turn', 'state', 1, 0, 'council', 1, 'Quartzflag is model-only')"))
+             (exec! "INSERT INTO transcript_request_fts(transcript_request_fts) VALUES ('rebuild')")
+             (expect (= ["Quartzflag is model-only"] (snippets "Quartzflag")))
+             (migrate!)
+             (expect (= ["Zebracanvas needs review"] (snippets "Zebracanvas")))
+             (expect (empty? (snippets "Quartzflag")))
+             (with-open [observer (jdbc/get-connection ds)]
+               (let [version #(:data_version (jdbc/execute-one! observer ["PRAGMA data_version"]
+                                                               {:builder-fn rs/as-unqualified-lower-maps}))
+                     before (version)]
+                 (migrate!)
+                 (expect (= before (version)))))
+             (exec! "DELETE FROM session_turn_soul WHERE id = 'turn'")
+             (expect (empty? (snippets "Zebracanvas")))
+             (finally (fs/delete-tree dir))))))

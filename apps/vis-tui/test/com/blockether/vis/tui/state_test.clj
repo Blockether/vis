@@ -7176,3 +7176,13 @@
             (expect (= {:vis.channel-tui/baseline :expand} (:detail-expansions db')))
             (expect (= (count messages) (virtual/height-cache-size)))
             (virtual/stop-rewarm!))))))
+
+(defdescribe council-note-find-and-recall-test
+  (it "finds the shown note and does not add the Council entry to prompt recall"
+      (let [prompt {:role :user :text "Human prompt"}
+            council {:role :user :request-kind :council :text "Raw text"
+                     :council {"content" "Raw text" "note" "Agent note"}}
+            messages [prompt council]]
+        (expect (= [1] (:hits (#'state/search-hits messages "agent note" false))))
+        (expect (empty? (:hits (#'state/search-hits messages "raw text" false))))
+        (expect (= ["Human prompt"] (#'state/history-user-texts {} messages))))))

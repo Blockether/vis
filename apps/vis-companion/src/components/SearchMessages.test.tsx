@@ -2,6 +2,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import councilWake from '../../../../packages/vis-contract/resources/vis-contract/fixtures/council-wake.json';
 import { STORY_SESSION_SEARCH_MATCH } from '../dev/story-data';
 import type { SessionMatch } from '../lib/gateway';
 import { SearchMessages } from './SearchMessages';
@@ -130,6 +131,24 @@ describe('search messages pane without a message match', () => {
     recentPane('windows', turns, STORY_SESSION_SEARCH_MATCH);
 
     expect(screen.queryByText('Second ask')).toBeNull();
+  });
+
+  it('shows Council entries from recent turns and matched requests under Council', () => {
+    const councilTurns: ForkPoint[] = councilWake.turns.map((turn) => ({ ...turn, request_kind: 'council' }));
+    const { unmount } = recentPane('', councilTurns);
+    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual(
+      [...councilWake.turns].reverse().map(({ council }) => `Council${council.note ?? council.content}`),
+    );
+    unmount();
+
+    const { council, request } = councilWake.turns[1];
+    const { container } = recentPane('two', [], {
+      ...STORY_SESSION_SEARCH_MATCH,
+      hits: [{ side: 'request', requestKind: 'council', council, snippet: request, at: null }],
+    });
+    expect(screen.getByRole('listitem')).toHaveTextContent(`Council${council.note}`);
+    expect(marks(container)).toEqual(['two']);
+    expect(container.querySelector('code')).toBeNull();
   });
 
   it('keeps the six newest turns and cuts a long request', () => {

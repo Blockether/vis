@@ -2310,7 +2310,7 @@
                       not-empty)}))
 
 (defn- transcript-hit-sql
-  "FTS query for ONE side (`:request` from the user's own text, `:reply` from
+  "FTS query for ONE side (`:request` from visible request text, `:reply` from
    assistant prose/thinking): session soul id, FTS rowid, the row's `created_at`
    and the `snippet()` window(s) that say WHY it matched — newest first, in ONE
    statement.
@@ -2397,7 +2397,10 @@
            :reply
            "it.created_at")]
 
-     (str "SELECT cs.id AS sid, f.rid AS rid, "
+     (str "SELECT cs.id AS sid, f.rid AS rid, ts.request_kind, ts.council_entry_id, "
+          "ce.thread_id AS council_thread_id, ce.content AS council_content, "
+          "ce.title AS council_title, ce.author_sid AS council_author_sid, "
+          "ce.source AS council_source, ce.reply_required AS council_reply_required, "
           cols
           ", "
           at
@@ -2433,9 +2436,21 @@
           ") f "
           joins
           "JOIN session_soul cs ON cs.id = s.session_soul_id "
+          "LEFT JOIN council_entry ce ON ce.id = ts.council_entry_id "
           "WHERE cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL"
           chan-sql
           " ORDER BY f.rid DESC"))))
+
+(defn- turn-council-entry
+  [row]
+  (when-let [id (:council_entry_id row)]
+    {:entry-id id
+     :thread-id (or (:council_thread_id row) id)
+     :content (:council_content row)
+     :title (:council_title row)
+     :author-session-id (:council_author_sid row)
+     :source (:council_source row)
+     :reply-required (= 1 (:council_reply_required row))}))
 
 (defn- transcript-hit-rows
   "FTS hits on ONE side, FAIRLY capped: up to `transcript-hits-per-session`
@@ -2487,8 +2502,11 @@
              :rows)]
 
     (mapv (fn [row]
-            (let [hit (hit-snippet side row)]
-              {:sid (str (:sid row)) :side (:side hit side) :at (:at row) :snippet (:snippet hit)}))
+            (let [hit (hit-snippet side row)
+                  council (turn-council-entry row)]
+              (cond-> {:sid (str (:sid row)) :side (:side hit side) :at (:at row) :snippet (:snippet hit)
+                       :request-kind (->kw-back (:request_kind row))}
+                council (assoc :council council))))
           kept)))
 
 (defn- title-hit-rows
@@ -2639,7 +2657,7 @@
               :request-snippet (side-snip :request)
               :reply-snippet (side-snip :reply :thinking)
               :hits (mapv (fn [h]
-                            {:side (:side h) :snippet (:snippet h) :at (->date (:at h))})
+                            (-> h (dissoc :sid) (update :at ->date)))
                           kept)})))
        ;; Freshest first; the band and then the id keep the order TOTAL, so the
        ;; same store answers the same query the same way every time.
@@ -2652,10 +2670,11 @@
 
    `{:id uuid :rank 0-3 :in-title? bool :in-request? bool :in-reply? bool
      :in-thinking? bool :request-snippet str-or-nil :reply-snippet str-or-nil
-     :hits [{:side :request|:reply|:thinking :snippet str :at Date}]}`
+     :hits [{:side :request|:reply|:thinking :snippet str :at Date
+              :request-kind :user|:council :council optional-entry}]}`
 
    `:in-title?` = the session's own name matched (`title-hit-rows`, substring);
-   `:in-request?` = the user's request (`session_turn_soul.user_request`) matched;
+   `:in-request?` = the visible request or Council entry matched;
    `:in-reply?` = the assistant's ANSWER (`llm_assistant_prose`) matched;
    `:in-thinking?` = its reasoning aside (`llm_thinking`) matched — the weakest
    band, since it is what neither of them said. Any of the four can be true
@@ -5945,13 +5964,7 @@
     ;; (intentionally no `(:title row)` branch)
     (:council_entry_id row)
     (assoc :council
-      {:entry-id (:council_entry_id row)
-       :thread-id (or (:council_thread_id row) (:council_entry_id row))
-       :content (:council_content row)
-       :title (:council_title row)
-       :author-session-id (:council_author_sid row)
-       :source (:council_source row)
-       :reply-required (= 1 (:council_reply_required row))})
+      (turn-council-entry row))
 
     (:content_json row)
     (assoc :content (json/read-json (:content_json row)))

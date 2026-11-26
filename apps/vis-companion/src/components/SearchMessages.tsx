@@ -104,79 +104,89 @@ function MessageList({
 }) {
   return (
     <ol className="divide-y divide-edge">
-      {hits.map((hit, index) => (
-        <li key={`${hit.side}-${hit.at ?? index}`}>
-          <button
-            type="button"
-            onClick={onOpen}
-            className="block w-full py-2 pl-4 pr-3 text-left active:bg-hover focus-visible:bg-hover focus-visible:outline-none"
-          >
-            <span className="flex items-baseline gap-2 font-mono text-meta">
-              <span
-                className={`font-bold ${hit.side === 'request' ? 'text-you-role' : 'text-vis-role'}`}
-              >
-                {hit.side === 'request' ? 'You' : 'Vis'}
-              </span>
-              {hit.side === 'thinking' && <span className="text-dialog-hint">thinking</span>}
-              {hit.at !== null && (
-                <span className="ml-auto whitespace-nowrap text-dialog-hint tabular-nums">
-                  {timeLabel(new Date(hit.at).toISOString())}
+      {hits.map((hit, index) => {
+        const isCouncil = hit.side === 'request' && hit.requestKind === 'council';
+        const councilNote = isCouncil ? hit.council?.note : undefined;
+        return (
+          <li key={`${hit.side}-${hit.at ?? index}`}>
+            <button
+              type="button"
+              onClick={onOpen}
+              className="block w-full py-2 pl-4 pr-3 text-left active:bg-hover focus-visible:bg-hover focus-visible:outline-none"
+            >
+              <span className="flex items-baseline gap-2 font-mono text-meta">
+                <span
+                  className={`font-bold ${hit.side === 'request' ? 'text-you-role' : 'text-vis-role'}`}
+                >
+                  {isCouncil ? 'Council' : hit.side === 'request' ? 'You' : 'Vis'}
                 </span>
-              )}
-            </span>
-            {/* Phrasing elements only: the row is a button. Prose is justified like the chat.
-                Blocks keep a gap, as the chat's paragraphs do. */}
-            <span className="mt-1 block space-y-2 break-words font-mono text-ui text-dialog-foreground">
-              <ReactMarkdown
-                remarkPlugins={[remarkMessageGfm]}
-                rehypePlugins={[[highlightMarkdown, terms]]}
-                skipHtml
-                allowedElements={[
-                  'p',
-                  'strong',
-                  'em',
-                  'del',
-                  'code',
-                  'br',
-                  'mark',
-                  'ul',
-                  'ol',
-                  'li',
-                  'h1',
-                  'h2',
-                  'h3',
-                  'h4',
-                  'h5',
-                  'h6',
-                ]}
-                unwrapDisallowed
-                components={{
-                  p: ({ children }) => (
-                    <JustifiedProse as="span" className={`block ${PROSE}`}>
-                      {children}
-                    </JustifiedProse>
-                  ),
-                  ...HEADINGS,
-                  ul: ({ children }) => <span className="block list-disc pl-5">{children}</span>,
-                  ol: ({ children }) => <span className="block list-decimal pl-6">{children}</span>,
-                  li: ({ children }) => (
-                    <JustifiedProse as="span" className={`list-item ${PROSE}`}>
-                      {children}
-                    </JustifiedProse>
-                  ),
-                  strong: ({ children }) => <strong className="font-bold">{children}</strong>,
-                  code: ({ children }) => (
-                    <code className="bg-panel-2 px-0.5 font-mono">{children}</code>
-                  ),
-                  mark: ({ children }) => <mark className={MARK}>{children}</mark>,
-                }}
-              >
-                {hit.snippet}
-              </ReactMarkdown>
-            </span>
-          </button>
-        </li>
-      ))}
+                {hit.side === 'thinking' && <span className="text-dialog-hint">thinking</span>}
+                {hit.at !== null && (
+                  <span className="ml-auto whitespace-nowrap text-dialog-hint tabular-nums">
+                    {timeLabel(new Date(hit.at).toISOString())}
+                  </span>
+                )}
+              </span>
+              {/* Phrasing elements only: the row is a button. Prose is justified like the chat.
+                  Blocks keep a gap, as the chat's paragraphs do. */}
+              <span className="mt-1 block space-y-2 break-words font-mono text-ui text-dialog-foreground">
+                {councilNote !== undefined ? (
+                  <span className="block truncate">
+                    <Highlighted text={councilNote} terms={terms} />
+                  </span>
+                ) : (
+                  <ReactMarkdown
+                    remarkPlugins={[remarkMessageGfm]}
+                    rehypePlugins={[[highlightMarkdown, terms]]}
+                    skipHtml
+                    allowedElements={[
+                      'p',
+                      'strong',
+                      'em',
+                      'del',
+                      'code',
+                      'br',
+                      'mark',
+                      'ul',
+                      'ol',
+                      'li',
+                      'h1',
+                      'h2',
+                      'h3',
+                      'h4',
+                      'h5',
+                      'h6',
+                    ]}
+                    unwrapDisallowed
+                    components={{
+                      p: ({ children }) => (
+                        <JustifiedProse as="span" className={`block ${PROSE}`}>
+                          {children}
+                        </JustifiedProse>
+                      ),
+                      ...HEADINGS,
+                      ul: ({ children }) => <span className="block list-disc pl-5">{children}</span>,
+                      ol: ({ children }) => <span className="block list-decimal pl-6">{children}</span>,
+                      li: ({ children }) => (
+                        <JustifiedProse as="span" className={`list-item ${PROSE}`}>
+                          {children}
+                        </JustifiedProse>
+                      ),
+                      strong: ({ children }) => <strong className="font-bold">{children}</strong>,
+                      code: ({ children }) => (
+                        <code className="bg-panel-2 px-0.5 font-mono">{children}</code>
+                      ),
+                      mark: ({ children }) => <mark className={MARK}>{children}</mark>,
+                    }}
+                  >
+                    {(isCouncil ? hit.council?.content : undefined) ?? hit.snippet}
+                  </ReactMarkdown>
+                )}
+              </span>
+            </button>
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -202,7 +212,15 @@ function recentHits(turns: readonly ForkPoint[]): SessionMatchHit[] {
       const request = turn.request?.trim() ?? '';
       const answer = turn.answer?.trim() ?? '';
       const hits: SessionMatchHit[] = [];
-      if (request) {
+      if (turn.request_kind === 'council') {
+        hits.push({
+          side: 'request',
+          requestKind: 'council',
+          council: turn.council,
+          snippet: request,
+          at: turn.created_at ?? null,
+        });
+      } else if (request) {
         const snippet =
           request.length > RECENT_CHARS ? `${request.slice(0, RECENT_CHARS - 1).trimEnd()}…` : request;
         hits.push({ side: 'request', snippet, at: turn.created_at ?? null });

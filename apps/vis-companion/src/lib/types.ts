@@ -1620,6 +1620,7 @@ export interface CouncilRequest {
   entry_id: number;
   thread_id: number;
   content: string;
+  note?: string;
   title?: string | null;
   author_session_id?: string;
   source?: string;

@@ -1,3 +1,4 @@
+import councilWake from '../../../../packages/vis-contract/resources/vis-contract/fixtures/council-wake.json';
 import { describe, expect, it } from 'vitest';
 
 import { EDGE_MARGIN } from './anchored-menu';
@@ -105,6 +106,15 @@ describe('outlineEntry', () => {
     expect(
       outlineEntry({ turn_id: 't2', request: 'hi', request_kind: 'council', answer: '## Yes\n\nIt is.', status: 'failed' }),
     ).toEqual({ id: 't2', label: 'hi', answer: 'Yes It is.', status: 'failed', isCouncil: true });
+  });
+
+  it('uses the wire note for a Council turn, and the entry when there is no note', () => {
+    for (const turn of councilWake.turns) {
+      expect(outlineEntry({ ...turn, request_kind: 'council' })).toMatchObject({
+        label: turn.council.note ?? turn.council.content,
+        isCouncil: true,
+      });
+    }
   });
 
   it('names a turn that a fork settled as forked, not as cancelled', () => {

@@ -1947,6 +1947,19 @@
              (expect (nil? (:current-turn cancelled)))
              (expect (= "cancelled" (get-in cancelled [:turns "T2" :status]))))
            (finally (swap! reg dissoc sid))))
+    (it "keeps the Council note and full entry when another process starts the turn"
+        (let [entry {"entry_id" 7 "thread_id" 7 "author_session_id" "child"
+                     "source" "sdk" "content" "Full entry.\nMore detail."
+                     "note" "VERIFY | Review: Full entry."}]
+          (try
+            (swap! reg assoc sid {:next-seq 0})
+            (#'state/ingest-mirrored-event!
+             sid false {"type" "turn.started" "turn_id" "TW" "request" "Model instruction"
+                        "request_kind" "council" "council" entry})
+            (let [turn (state/get-turn sid "TW")]
+              (expect (= ["council" entry (get entry "content")]
+                         (mapv turn ["request_kind" "council" "request"]))))
+            (finally (swap! reg dissoc sid)))))
     (it "ignores mirrored events for a session this process never touched"
         (expect (nil? (#'state/ingest-mirrored-event!
                        "never-touched-sid"

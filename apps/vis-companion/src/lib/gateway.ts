@@ -40,6 +40,8 @@ import { flattenSettings, replaceSetting } from './setting-tree';
 import { randomUuid } from './uuid';
 import type {
   ArchiveView,
+  CouncilRequest,
+  RequestKind,
   AttachmentLink,
   AuthFlow,
   AuthVerdict,
@@ -267,6 +269,8 @@ export function onTurnSending(
 // session, best band first.
 export interface SessionMatchHit {
   side: 'request' | 'reply' | 'thinking';
+  requestKind?: RequestKind;
+  council?: CouncilRequest;
   snippet: string;
   at: number | null;
 }
@@ -299,7 +303,13 @@ interface RawSessionMatch {
   is_in_thinking?: boolean;
   request_snippet?: string | null;
   reply_snippet?: string | null;
-  hits?: { side?: string; snippet?: string | null; at?: number | null }[];
+  hits?: {
+    side?: string;
+    snippet?: string | null;
+    at?: number | null;
+    request_kind?: RequestKind;
+    council?: CouncilRequest;
+  }[];
 }
 
 /**
@@ -329,7 +339,7 @@ function sessionMatch(sessionId: string, m: RawSessionMatch): SessionMatch {
     requestSnippet: m.request_snippet ?? null,
     replySnippet: m.reply_snippet ?? null,
     hits: (m.hits ?? [])
-      .filter((h) => Boolean(h.snippet?.trim()))
+      .filter((h) => Boolean(h.snippet?.trim()) || h.request_kind === 'council')
       .map((h) => ({
         side:
           h.side === 'request'
@@ -337,7 +347,9 @@ function sessionMatch(sessionId: string, m: RawSessionMatch): SessionMatch {
             : h.side === 'thinking'
               ? ('thinking' as const)
               : ('reply' as const),
-        snippet: h.snippet as string,
+        snippet: h.snippet ?? '',
+        ...(h.request_kind ? { requestKind: h.request_kind } : {}),
+        ...(h.council ? { council: h.council } : {}),
         at: h.at ?? null,
       })),
   };

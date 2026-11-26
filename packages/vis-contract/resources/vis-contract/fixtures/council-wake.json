@@ -1,0 +1,82 @@
+{
+  "description": "Leader turns that a Council entry started (`request_kind` `council`). `agents` are the agent rows of the leader `lead`. The gateway gives `council.note` only when the entry author is an agent whose `parent_id` is the session of the turn: one plain-text line, `ROLE | title: text`. ROLE is the agent role in capitals, left out with its ` | ` when the agent has no role; title is the agent title, else `#n`, its start order in its team. text is the agent status of a host outcome entry (`source` `host`, `title` `Subagent result`, content `Subagent <author> — <status>\\n…`), else the first non-blank line of the entry: whitespace runs become one space, inline Markdown markers go away except the backticks of inline code, a link or image keeps its text, a heading or list marker goes away. A note of more than 120 code points, label included, keeps 119 and ends with `…`. A client shows the note as plain text in one row, under the Council label, and keeps `council.content` for copy and detail. A turn without a note shows the full entry under the Council label, never as a person's message.",
+  "agents": [
+    {
+      "session_id": "fix",
+      "parent_id": "lead",
+      "leader_id": "lead",
+      "team_id": "lead-turn-1",
+      "role": "implement",
+      "title": "Fix parser",
+      "status": "completed",
+      "created_at": 1000
+    },
+    {
+      "session_id": "check",
+      "parent_id": "lead",
+      "leader_id": "lead",
+      "team_id": "lead-turn-1",
+      "role": "verify",
+      "status": "running",
+      "created_at": 2000
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": "t1",
+      "request_kind": "council",
+      "request": "Subagent fix — completed\nTask: # Goal\nFix the parser.",
+      "display_request": "Subagent fix — completed\nTask: # Goal\nFix the parser.",
+      "council": {
+        "entry_id": 11,
+        "thread_id": 11,
+        "author_session_id": "fix",
+        "source": "host",
+        "title": "Subagent result",
+        "content": "Subagent fix — completed\nTask: # Goal\nFix the parser.",
+        "note": "IMPLEMENT | Fix parser: completed"
+      }
+    },
+    {
+      "turn_id": "t2",
+      "request_kind": "council",
+      "request": "\n## Found **two** bugs in `parse.clj` — see [the log](https://example.com/log)\n\nDetails follow.",
+      "display_request": "\n## Found **two** bugs in `parse.clj` — see [the log](https://example.com/log)\n\nDetails follow.",
+      "council": {
+        "entry_id": 12,
+        "thread_id": 12,
+        "author_session_id": "check",
+        "source": "sdk",
+        "content": "\n## Found **two** bugs in `parse.clj` — see [the log](https://example.com/log)\n\nDetails follow.",
+        "note": "VERIFY | #2: Found two bugs in `parse.clj` — see the log"
+      }
+    },
+    {
+      "turn_id": "t3",
+      "request_kind": "council",
+      "request": "Checked module1, module2, module3, module4, module5, module6, module7, module8, module9, module10, module11, module12, module13, module14, module15, module16, module17, module18, module19, module20, module21, module22, module23, module24, module25, module26, module27, module28, module29\nMore.",
+      "display_request": "Checked module1, module2, module3, module4, module5, module6, module7, module8, module9, module10, module11, module12, module13, module14, module15, module16, module17, module18, module19, module20, module21, module22, module23, module24, module25, module26, module27, module28, module29\nMore.",
+      "council": {
+        "entry_id": 13,
+        "thread_id": 13,
+        "author_session_id": "check",
+        "source": "sdk",
+        "content": "Checked module1, module2, module3, module4, module5, module6, module7, module8, module9, module10, module11, module12, module13, module14, module15, module16, module17, module18, module19, module20, module21, module22, module23, module24, module25, module26, module27, module28, module29\nMore.",
+        "note": "VERIFY | #2: Checked module1, module2, module3, module4, module5, module6, module7, module8, module9, module10, module1…"
+      }
+    },
+    {
+      "turn_id": "t4",
+      "request_kind": "council",
+      "request": "Please review the release notes.",
+      "display_request": "Please review the release notes.",
+      "council": {
+        "entry_id": 14,
+        "thread_id": 14,
+        "author_session_id": "peer",
+        "source": "sdk",
+        "content": "Please review the release notes."
+      }
+    }
+  ]
+}

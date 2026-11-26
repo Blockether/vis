@@ -1225,6 +1225,7 @@ function assistantUsage(turn: TranscriptTurn): boolean {
 
 function commandTurn(turn: TranscriptTurn): boolean {
   const request = (turn.request ?? '').trimStart();
+  if (turn.request_kind === 'council') return false;
   return request.startsWith('/') || request.startsWith('!');
 }
 
@@ -4261,6 +4262,7 @@ function runningTurnPhase(turn: TranscriptTurn, agentName: string): string {
   const iteration = iterations.length;
   const request = (turn.request ?? '').trim();
   if (iteration === 0) {
+    if (turn.request_kind === 'council') return `${agentName} received a Council message`;
     if (request.startsWith('!&')) return `${agentName} is starting a command`;
     if (request.startsWith('!')) return `${agentName} is running a command`;
     if (request.startsWith('/')) return `${agentName} is running: ${request.split(/\s+/, 1)[0]}`;
@@ -5373,6 +5375,7 @@ export const UserMessage = memo(function UserMessage({
   sid?: string;
   turnId?: string;
 }) {
+  const councilNote = requestKind === 'council' ? council?.note : undefined;
   const parts = parseUserMessage(children);
   const words = parts.some((part) => part.type !== 'text' || part.text.trim() !== '');
   // Persisted user images re-render from DB-owned base64 (survives a restart even
@@ -5439,7 +5442,10 @@ export const UserMessage = memo(function UserMessage({
             council &&
             ` · Thread #${council.thread_id}`}
         </span>
-        <TurnStamp position={position} createdAt={createdAt} />
+        <div className="flex items-center gap-2">
+          {councilNote !== undefined && council && <CopyChip value={council.content} label="Copy Council message" />}
+          <TurnStamp position={position} createdAt={createdAt} />
+        </div>
       </div>
       {/* A message that is ONLY an attachment has no body, and the bubble painted
           for it anyway was a bare strip of paper with the role's rail down its
@@ -5449,7 +5455,9 @@ export const UserMessage = memo(function UserMessage({
         <div
           className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui mouse:text-title text-you-message-foreground ${PROSE}`}
         >
-          {requestKind === 'council' ? (
+          {councilNote !== undefined ? (
+            <div className="truncate">{councilNote}</div>
+          ) : requestKind === 'council' ? (
             <CouncilRequestBody>{council?.content ?? children}</CouncilRequestBody>
           ) : (
             <UserMessageParts parts={parts} />

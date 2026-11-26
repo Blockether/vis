@@ -1105,10 +1105,16 @@ CREATE INDEX idx_attachment_compaction_pending
 -- a query containing punctuation only matches nothing.
 -- =============================================================================
 
--- User requests.
+-- The request index and its snippets use the text that people see.
+CREATE VIEW transcript_request_text AS
+SELECT ts.rowid AS rowid,
+       CASE ts.request_kind WHEN 'council' THEN ce.content ELSE ts.user_request END AS user_request
+FROM session_turn_soul ts
+LEFT JOIN council_entry ce ON ce.id = ts.council_entry_id;
+
 CREATE VIRTUAL TABLE transcript_request_fts USING fts5(
   user_request,
-  content='session_turn_soul',
+  content='transcript_request_text',
   content_rowid='rowid',
   tokenize='unicode61',
   -- 2- and 3-char PREFIX indexes: mid-typing queries (`di`, `dia`) resolve from
@@ -1120,23 +1126,29 @@ CREATE TRIGGER trg_transcript_request_fts_ai
 AFTER INSERT ON session_turn_soul
 BEGIN
   INSERT INTO transcript_request_fts(rowid, user_request)
-  VALUES (new.rowid, new.user_request);
+  SELECT rowid, user_request FROM transcript_request_text WHERE rowid = new.rowid;
 END;
 
 CREATE TRIGGER trg_transcript_request_fts_ad
 AFTER DELETE ON session_turn_soul
 BEGIN
   INSERT INTO transcript_request_fts(transcript_request_fts, rowid, user_request)
-  VALUES ('delete', old.rowid, old.user_request);
+  VALUES ('delete', old.rowid,
+          CASE old.request_kind WHEN 'council' THEN
+            (SELECT content FROM council_entry WHERE id = old.council_entry_id)
+          ELSE old.user_request END);
 END;
 
 CREATE TRIGGER trg_transcript_request_fts_au
 AFTER UPDATE ON session_turn_soul
 BEGIN
   INSERT INTO transcript_request_fts(transcript_request_fts, rowid, user_request)
-  VALUES ('delete', old.rowid, old.user_request);
+  VALUES ('delete', old.rowid,
+          CASE old.request_kind WHEN 'council' THEN
+            (SELECT content FROM council_entry WHERE id = old.council_entry_id)
+          ELSE old.user_request END);
   INSERT INTO transcript_request_fts(rowid, user_request)
-  VALUES (new.rowid, new.user_request);
+  SELECT rowid, user_request FROM transcript_request_text WHERE rowid = new.rowid;
 END;
 
 -- Assistant iterations. Only HUMAN-READABLE reply text is indexed:
@@ -1178,7 +1190,6 @@ END;
 -- Fresh V1 databases have no transcript rows yet, but keeping the canonical
 -- rebuilds here makes the baseline correct when installed over a pre-populated
 -- SQLite schema that Flyway has just baselined at version 0.
-INSERT INTO transcript_request_fts(transcript_request_fts) VALUES ('rebuild');
 INSERT INTO transcript_reply_fts(transcript_reply_fts) VALUES ('rebuild');
 
 -- Council is an append-only project log. Activation identities are process-local targets.
@@ -1203,6 +1214,8 @@ CREATE TABLE council_entry (
 );
 CREATE INDEX idx_council_group ON council_entry(group_id, id);
 CREATE INDEX idx_council_thread ON council_entry(group_id, thread_id, id);
+
+INSERT INTO transcript_request_fts(transcript_request_fts) VALUES ('rebuild');
 CREATE TABLE council_ping (
   recipient_sid TEXT NOT NULL,
   activation_id TEXT NOT NULL,

@@ -1,11 +1,14 @@
 (ns com.blockether.vis.tui.council-transcript-test
-  (:require [clojure.string :as str]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.presentation :as presentation]
             [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -54,7 +57,7 @@
       (let [message
             {:role :user
              :request-kind :council
-             :council council-entry
+             :council (assoc council-entry "content" text)
              :text text
              :session-turn-id "council-turn"}
 
@@ -192,3 +195,33 @@
                                    {:session-id "session"})]
                    (expect (= ["Short request"] (mapv visible (:prewrapped-lines projected))))
                    (expect (every? nil? (:line-meta projected))))))
+
+(defdescribe council-wake-fixture-test
+  (it "paints the gateway note in one plain row and copies the full entry"
+      (let [{:strs [turns]} (json/read-json (slurp (io/resource "vis-contract/fixtures/council-wake.json")))
+            width 140]
+        (doseq [turn turns]
+          (let [message (first (#'chat/turns->messages [turn]))
+                {:strs [note content thread_id]} (get turn "council")
+                warmed (virtual/warm-heights! [message] width {})
+                {:keys [height projected]} (first (:visible (virtual/layout [message] width {} nil 30 {})))
+                frame (cap/capture! {:cols width :rows 12
+                                     :paint! (fn [{:keys [g]}]
+                                               (render/draw-chat-bubble! g projected 0 0 width))})]
+            (expect (= warmed height))
+            (expect (nil? (:error frame)))
+            (expect (str/includes? (cap/frame-text frame) (str "Council · Thread #" thread_id)))
+            (expect (= [(or note content)] (mapv visible (:prewrapped-lines projected))))
+            (expect (str/includes? (cap/frame-text frame) (or note content)))
+            (expect (= content (#'screen/copyable-bubble-text projected width {} {})))
+            (when note
+              (expect (every? nil? (:line-meta projected)))
+              (expect (= height (virtual/estimated-height message width))))))))
+  (it "updates a measured turn and clips the new note at the pane width"
+      (let [width 24
+            message {:role :user :request-kind :council :session-turn-id "note-update"
+                     :text "Raw text" :council {"content" "Raw text"}}
+            projected (fn [m] (-> (virtual/layout [m] width {} nil 30 {}) :visible first :projected))
+            updated (assoc-in message [:council "note"] "**Fix** `parser` 日本語")]
+        (expect (= ["Raw text"] (mapv visible (:prewrapped-lines (projected message)))))
+        (expect (= ["**Fix** `parser` 日…"] (:prewrapped-lines (projected updated)))))))

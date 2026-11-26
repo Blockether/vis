@@ -767,6 +767,8 @@
    :reply-snippet (get m "reply_snippet")
    :hits (mapv (fn [h]
                  {:side (keyword (or (get h "side") "reply"))
+                  :request-kind (some-> (get h "request_kind") keyword)
+                  :council (get h "council")
                   :snippet (get h "snippet")
                   :at (get h "at")})
                (or (get m "hits") []))})
@@ -1446,6 +1448,8 @@
           {:id (get row "turn_id")
            :position (inc (long index))
            :user-request (get row "request")
+           :request-kind (some-> (get row "request_kind") keyword)
+           :council (get row "council")
            :created-at (get row "created_at")
            :answer (get row "answer")})
         (range)

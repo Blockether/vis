@@ -682,9 +682,31 @@
               (.setString st 2 name)
               (with-open [rs (.executeQuery st)]
                 (and (.next rs)
-                     (or (= "table" kind)
+                     (or (and (= "table" kind) (not (re-find #"(?i)using\s+fts5" sql)))
                          (= (schema-sql-key sql) (schema-sql-key (.getString rs "sql")))))))
             objects)))
+
+(defn- install-transcript-request-index!
+  "Replace an old request index and rebuild it from visible requests in one transaction."
+  [^DataSource ds locations]
+  (let [objects (filterv (fn [{:keys [name]}]
+                           (or (#{"transcript_request_text" "transcript_request_fts"} name)
+                               (str/starts-with? name "trg_transcript_request_fts_")))
+                         (canonical-objects (migration-sql-texts locations)))]
+    (when (seq objects)
+      (with-open [conn (.getConnection ds)]
+        (when-not (derived-schema-match? conn objects)
+          (with-open [transaction (.createStatement conn)]
+            (.executeUpdate transaction "BEGIN IMMEDIATE")
+            (try (when-not (derived-schema-match? conn objects)
+                   (doseq [{:keys [kind name]} (rseq objects)]
+                     (execute-ddl! conn (str "DROP " kind " IF EXISTS " name)))
+                   (doseq [{:keys [sql]} objects]
+                     (execute-ddl! conn sql))
+                   (execute-ddl! conn (str "INSERT INTO transcript_request_fts(transcript_request_fts) "
+                                          "VALUES ('rebuild')")))
+                 (.executeUpdate transaction "COMMIT")
+                 (catch Throwable error (.executeUpdate transaction "ROLLBACK") (throw error)))))))))
 
 (defn- install-derived-tables!
   "Install or repair each derived table, its triggers, and its data in one transaction.
@@ -1190,5 +1212,6 @@
        (copy-retired-values! ds)
        (drop-retired-columns! ds locs)
        (record-generation! ds))
+     (install-transcript-request-index! ds locs)
      (install-derived-tables! ds locs)
      ds)))

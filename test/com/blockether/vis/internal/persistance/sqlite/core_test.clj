@@ -1576,6 +1576,10 @@
                        ["CREATE TABLE session_attachment (id TEXT PRIMARY KEY NOT NULL)"])
         (jdbc/execute! (:datasource s1)
                        ["ALTER TABLE session_state DROP COLUMN prompt_cache_state"])
+        (doseq [suffix ["ai" "ad" "au"]]
+          (jdbc/execute! (:datasource s1) [(str "DROP TRIGGER trg_transcript_request_fts_" suffix)]))
+        (jdbc/execute! (:datasource s1) ["DROP TABLE transcript_request_fts"])
+        (jdbc/execute! (:datasource s1) ["DROP VIEW transcript_request_text"])
         (doseq [table ["council_ping" "council_entry"]]
           (jdbc/execute! (:datasource s1) [(str "DROP TABLE " table)]))
         (doseq [column ["council_input" "council_publications" "user_input" "llm_assistant_raw"
@@ -2862,6 +2866,30 @@
         (expect (= [cid] (persistance/db-search-session-ids s :all "filtering")))
         (expect (= [cid] (persistance/db-search-session-ids s :all "FILTER")))
         (expect (= [] (persistance/db-search-session-ids s :all "nomatch")))))
+  (it "finds the Council entry instead of the hidden wake instruction"
+      (let [s (h/store)
+            cid (h/store-session! s {:channel :tui :title "Review"})
+            content "Zebracanvas needs review"
+            entry (-> (persistance/db-council-insert!
+                        s
+                        {:author_sid "child" :activation_id "child-turn" :title "Review"
+                         :content content :created_at 1 :idempotency_key "review"
+                         :fingerprint "review"}
+                        [] false)
+                      :entry)
+            _ (persistance/db-store-session-turn!
+                s {:parent-session-id cid :request-kind :council
+                   :council-entry-id (:entry_id entry) :user-request "Quartzflag is model-only"})
+            matches (persistance/db-search-session-matches s :all "Zebracanvas")
+            hit (get-in matches [0 :hits 0])]
+        (expect (= [cid] (mapv :id matches)))
+        (expect (= [:request :council content] ((juxt :side :request-kind :snippet) hit)))
+        (expect (= [(:entry_id entry) "child" content]
+                   ((juxt :entry-id :author-session-id :content) (:council hit))))
+        (expect (= [] (persistance/db-search-session-matches s :all "Quartzflag")))
+        (expect (= [] (persistance/db-search s "Quartzflag" nil)))
+        (expect (= ["[Zebracanvas] needs review"]
+                   (mapv :snippet (persistance/db-search s "Zebracanvas" nil))))))
   (it "matches a session by assistant iteration prose"
       (let [s
             (h/store)

@@ -5788,7 +5788,14 @@
           "minLength": 1
         },
         "running_council": {
-          "$ref": "#/$defs/turn/properties/council"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/turn_council"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "running_started_at": {
           "type": "integer",
@@ -5827,7 +5834,33 @@
         },
         "match": {
           "type": "object",
-          "description": "Why a search row matched the query. Only search rows carry it."
+          "description": "Why a search row matched the query. Only search rows carry it.",
+          "properties": {
+            "hits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "side": {
+                    "enum": ["request", "reply", "thinking"]
+                  },
+                  "snippet": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "integer"
+                  },
+                  "request_kind": {
+                    "enum": ["user", "council"]
+                  },
+                  "council": {
+                    "$ref": "#/$defs/turn_council"
+                  }
+                },
+                "required": ["side", "snippet", "at"]
+              }
+            }
+          }
         }
       },
       "required": [
@@ -8610,6 +8643,52 @@
         }
       ]
     },
+    "turn_council": {
+      "description": "The Council entry that started the turn. The note is plain text for display; content is the full entry.",
+      "type": "object",
+      "properties": {
+        "entry_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "thread_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "author_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content": {
+          "type": "string"
+        },
+        "reply_required": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "pattern": "^[^\\r\\n\\u000B\\u000C\\u0085\\u2028\\u2029]+$"
+        }
+      },
+      "required": [
+        "entry_id",
+        "thread_id",
+        "author_session_id",
+        "source",
+        "content"
+      ]
+    },
     "turn": {
       "type": "object",
       "description": "One turn of a session as the turn routes answer it. The engine can add fields.",
@@ -8699,7 +8778,7 @@
         "council": {
           "anyOf": [
             {
-              "type": "object"
+              "$ref": "#/$defs/turn_council"
             },
             {
               "type": "null"
@@ -8888,7 +8967,19 @@
         "turns": {
           "type": "array",
           "items": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "council": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/turn_council"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
           }
         },
         "total": {
@@ -9202,7 +9293,7 @@
               "council": {
                 "anyOf": [
                   {
-                    "type": "object"
+                    "$ref": "#/$defs/turn_council"
                   },
                   {
                     "type": "null"
@@ -12518,9 +12609,13 @@
           "minLength": 1
         },
         "council": {
-          "type": [
-            "object",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/turn_council"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "started_at": {

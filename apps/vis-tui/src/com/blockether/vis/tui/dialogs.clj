@@ -8134,9 +8134,8 @@
               (recur (inc i) from acc))))))))
 
 (defn- navigator-preview-entries
-  "Message rows for a body match: ONE row per MATCH HIT, newest first — `You`
-   for a hit in the user's own request, `Vis` for one in the assistant's reply or
-   its thinking (`:side`). `:at` is the message time in epoch ms when the gateway
+  "Message rows for a body match: One row per hit, newest first. Label each request `You` or
+   `Council`, and each reply or thinking hit `Vis`. `:at` is the message time in epoch ms when the gateway
    sent it.
 
    Falls back to the legacy single request/reply snippet pair when the caller
@@ -8146,12 +8145,15 @@
     (let [hits (into []
                      (comp (filter #(not (str/blank? (:snippet %))))
                            (map (fn [h]
-                                  (let [side (or (:side h) :reply)]
-                                    {:label (if (= :request side) "You" "Vis")
+                                  (let [side (or (:side h) :reply)
+                                        council? (and (= :request side) (= :council (:request-kind h)))
+                                        note (when council? (get-in h [:council "note"]))]
+                                    {:label (cond council? "Council" (= :request side) "You" :else "Vis")
+                                     :plain? (some? note)
                                      :role (if (= :request side) :user :ai)
                                      :side side
                                      :at (:at h)
-                                     :text (:snippet h)}))))
+                                     :text (or note (:snippet h))}))))
                      (:hits match))]
       (if (seq hits)
         hits
@@ -8176,16 +8178,22 @@
    messages, so a held arrow key does not read every session that it passes."
   120)
 
+(defn- council-turn-preview
+  "The Council note, or the first line of the entry."
+  [{:keys [council user-request]}]
+  (or (get council "note")
+      (first (str/split-lines (str/trim (str (or (get council "content") user-request)))))))
+
 (defn- navigator-recent-entries
   "Message rows for the newest turns of a session, newest turn first. Each turn gives
-   its request (`You`, with the turn's time) and then the start of its answer (`Vis`).
+   its request (`You` or `Council`, with the turn's time) and then the start of its answer (`Vis`).
    `turns` are oldest-first `fork-points` rows. A long request is cut and ends with `…`."
   [turns]
   (into []
         (mapcat
-          (fn [{:keys [user-request answer created-at]}]
-            (let [request
-                  (str/trim (str user-request))
+          (fn [{:keys [user-request answer created-at request-kind] :as turn}]
+            (let [council? (= :council request-kind)
+                  request (if council? (council-turn-preview turn) (str/trim (str user-request)))
 
                   answer
                   (str/trim (str answer))
@@ -8195,7 +8203,8 @@
 
               (cond-> []
                 (seq request)
-                (conj {:label "You"
+                (conj {:label (if council? "Council" "You")
+                       :plain? council?
                        :role :user
                        :side :request
                        :at created-at
@@ -8425,7 +8434,7 @@
 
         ->groups
         (fn [entries]
-          (mapv (fn [{:keys [label role side at text]}]
+          (mapv (fn [{:keys [label role side at text plain?]}]
                   (into [{:kind :label
                           :label label
                           :role role
@@ -8435,7 +8444,9 @@
                                (if (empty? runs)
                                  {:kind :blank}
                                  {:kind :text :segments (navigator-run-segments runs query)})))
-                        (navigator-markdown-lines text width)))
+                        (if plain?
+                           [[{:text (p/ellipsize text width)}]]
+                           (navigator-markdown-lines text width))))
                 entries))
 
         fit
@@ -9783,7 +9794,7 @@
 (defn fork-turn-items
   "Rows for the fork-at-turn palette (`searchable-select!`), one per turn of the
    current session (from `db-list-session-turns`), top-to-bottom. Each row's
-   `:label` is the turn's user message (whitespace-collapsed, truncated) and
+   `:label` is the turn's request or Council entry (cut to fit) and
    `:hint` its ordinal `tN`; `:turn-id` carries the `session_turn_soul` id the
    fork copies THROUGH — selecting a row forks the session keeping every turn up
    to and INCLUDING it. Type to filter by message text."
@@ -9792,19 +9803,20 @@
           (let [n
                 (or (:position turn) (inc (long i)))
 
-                req
-                (some-> (:user-request turn)
-                        str
-                        str/trim)
+                council?
+                (= :council (:request-kind turn))
 
-                req
-                (if (or (nil? req) (str/blank? req)) "(no message)" req)
+                request
+                (if council? (council-turn-preview turn) (str/trim (str (:user-request turn))))
 
-                one-line
-                (str/replace req #"\s+" " ")
+                request
+                (if (str/blank? request) "(no message)" request)
 
                 label
-                (if (> (count one-line) 72) (str (subs one-line 0 71) "…") one-line)]
+                (if council? (str "Council: " request) (str/replace request #"\s+" " "))
+
+                label
+                (p/ellipsize label 72)]
 
             {:label label :hint (str "t" n) :turn-id (:id turn)}))
         (range)

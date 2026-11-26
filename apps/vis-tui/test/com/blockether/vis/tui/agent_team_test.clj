@@ -1089,58 +1089,6 @@
                    (expect (nil? (:dock (.lookup interactions/hit-map (int 40) (int 13))))))))
              (finally (team/scroll-dock! "leader" "turn-1" -100) (team/toggle-dock! "leader"))))))
 
-(defdescribe child-traffic-test
-             (it "finds the Council requests that the leader's own agents send"
-                 (with-redefs [team/summary (constantly {:agents waiting-team})]
-                   (let [ids (team/child-session-ids "leader" [])
-                         council (fn [author]
-                                   {:role :user
-                                    :request-kind :council
-                                    :council {"author_session_id" author}})]
-
-                     (expect (team/child-traffic? (council "c2") ids))
-                     (expect (not (team/child-traffic? (council "peer") ids)) "Peer messages stay")
-                     (expect (not (team/child-traffic? {:role :user :text "hi"} ids)))
-                     (expect (not (team/child-traffic? (council "c2") #{}))))))
-             ;; The transcript turn holds its team, so the traffic of its children is known before
-             ;; the first team read.
-             (it "finds the traffic of the children that the transcript turns hold"
-                 (with-redefs [team/summary (constantly nil)]
-                   (expect (= #{"c9"}
-                              (team/child-session-ids
-                                "leader"
-                                [{:role :assistant :session-agents [{"session_id" "c9"}]}]))))))
-
-(defdescribe
-  child-traffic-notes-test
-  ;; User report 2026-11-26: a leader turn that a child's Council entry started showed no
-  ;; request, so it read as an answer to nothing.
-  (it "shows the Council request of a child as one line that names the child"
-      (with-redefs [team/summary (constantly {:agents
-                                              (assoc-in waiting-team [1 "title"] "Fix parser")})]
-        (let [child {:role :user
-                     :request-kind :council
-                     :text "Fix round in progress.\n\nFocused SDK 135 passed."
-                     :council {"author_session_id" "c2" "thread_id" 7}}
-              peer (assoc-in child [:council "author_session_id"] "peer")
-              [note other :as notes] (team/child-traffic-notes "leader" [child peer])]
-
-          (expect (= "IMPLEMENT | Fix parser: Fix round in progress." (:text note)))
-          (expect (= :council (:request-kind note)) "The Council label stays")
-          (expect (identical? peer other) "Peer messages stay whole")
-          (expect (identical? note (first (team/child-traffic-notes "leader" [child peer])))
-                  "An unchanged note keeps its identity")
-          (expect (= 2 (count notes))))))
-  (it "shows the outcome entry of a child as its status, not its session id"
-      (with-redefs [team/summary (constantly {:agents
-                                              (assoc-in waiting-team [1 "title"] "Fix parser")})]
-        (let [outcome {:role :user
-                       :request-kind :council
-                       :text "Subagent c2 — completed\nTask: # Goal"
-                       :council {"author_session_id" "c2" "thread_id" 8}}]
-          (expect (= "IMPLEMENT | Fix parser: completed"
-                     (:text (first (team/child-traffic-notes "leader" [outcome])))))))))
-
 (defdescribe
   row-markdown-test
   ;; User report 2026-11-22: a quoted `: ping\\n\\n` read as broken escapes without its backticks.
